@@ -2034,10 +2034,26 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         self.invalidate_screen_cache()
         self.post_message(NavigateToScreen(TAB_LIBRARY, {LIBRARY_NAV_CONTEXT_MODE: "notes"}))
 
-    def open_chat_with_handoff(self, payload: ChatHandoffPayload) -> None:
+    def open_chat_with_handoff(
+        self,
+        payload: ChatHandoffPayload,
+        *,
+        action_label: str = "Use in Chat",
+    ) -> None:
+        """Stage a handoff payload for Chat and navigate there.
+
+        Args:
+            payload: The handoff payload to stage as pending Chat context.
+            action_label: The calling surface's own action label (e.g. "Use
+                in Chat" for the legacy MediaWindow_v2/search_rag_window
+                surfaces, "Use in Console" for Library) so the blocked-gate
+                notify below reads honestly for whichever button the user
+                actually pressed, instead of always saying "Chat" even from
+                a destination whose own button says "Console" (M2).
+        """
         if not get_cli_setting("chat_defaults", "enable_tabs", True):
             self.notify(
-                "Use in Chat requires chat tabs to be enabled.",
+                f"{action_label} requires chat tabs to be enabled.",
                 severity="warning",
             )
             return

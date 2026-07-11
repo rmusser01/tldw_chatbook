@@ -511,7 +511,7 @@ class LibraryRagQueryState:
             include_citations=include_citations,
             status="ready" if enabled else "blocked",
             run_action=LibraryRagActionState(
-                label="Run Search/RAG",
+                label="Run",
                 enabled=enabled,
                 widget_id=LIBRARY_RAG_RUN_ACTION_ID,
                 disabled_reason=disabled_reason,
@@ -650,15 +650,29 @@ class LibraryRagResultRow:
 
     @property
     def row_badge_label(self) -> str:
-        """One-line source authority summary for result list scanning."""
-        return " | ".join(
-            (
-                self.source_type_badge_label,
-                self.workspace_badge_label,
-                self.citation_count_badge_label,
-                self.eligibility_badge_label,
-            )
-        )
+        """One-line source authority summary for result list scanning.
+
+        Humanized composition (UX wave M5): badges that would only restate
+        the default/no-signal case are dropped rather than listed
+        unconditionally, and the remainder is joined with the app-wide
+        " · " separator (not "|"). The source-type badge always appears;
+        the workspace badge is dropped when it is the default "all
+        workspaces"; the citation-count badge appears only when there are
+        citations; eligibility contributes nothing when "eligible" and
+        "excluded from context" when "blocked". Examples: "media",
+        "media · 2 citations", "media · excluded from context". The
+        individual badge properties above are unchanged -- other call
+        sites/tests depend on their current behavior.
+        """
+        parts = [self.source_type_badge_label]
+        workspace_label = self.workspace_badge_label
+        if workspace_label != "all workspaces":
+            parts.append(workspace_label)
+        if len(self.citations) > 0:
+            parts.append(self.citation_count_badge_label)
+        if self.eligibility_badge_label == "blocked":
+            parts.append("excluded from context")
+        return " · ".join(parts)
 
     @property
     def source_identity_label(self) -> str:

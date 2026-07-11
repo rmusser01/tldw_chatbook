@@ -243,7 +243,7 @@ async def test_library_search_rag_panel_exposes_blocked_recovery_for_empty_query
         visible_text = _visible_text(screen)
 
         assert query_input.value == ""
-        assert str(run_button.label) == "Run Search/RAG"
+        assert str(run_button.label) == "Run"
         assert run_button.disabled is True
         assert "Enter a question or search query" in str(run_button.tooltip)
         assert not screen.query(".library-rag-result-action")
@@ -256,7 +256,7 @@ async def test_library_search_rag_panel_exposes_blocked_recovery_for_empty_query
         assert not screen.query("#library-rag-run-disabled-reason")
         assert "Blocked: enter a question or search query." not in visible_text
         assert "Blocked | Enter a question before running retrieval." not in visible_text
-        assert "Scope: all local | Notes 1 | Media 1 | Conversations 1" in visible_text
+        assert "Scope: all local sources" in visible_text
         # A4: the retired-workbench shortcuts line is gone; Enter-to-run
         # keeps working (covered by the keyboard-enter pilot below).
         assert not screen.query("#library-rag-query-shortcuts")
@@ -284,7 +284,7 @@ async def test_library_search_rag_task_loop_orders_query_before_scope_and_result
         assert child_ids.index("library-rag-source-scope") < child_ids.index(
             "library-rag-results"
         )
-        assert "Scope: all local | Notes 1 | Media 1 | Conversations 1" in _visible_text(screen)
+        assert "Scope: all local sources" in _visible_text(screen)
 
 
 @pytest.mark.asyncio
@@ -534,7 +534,10 @@ async def test_library_search_rag_selected_result_evidence_metadata() -> None:
         await _wait_for_evidence_selected(screen, pilot, "Incident Review")
 
         visible_text = _visible_text(screen)
-        assert "note | workspace-a | 1 citation | eligible" in visible_text
+        # UX wave M5: humanized badge composition -- "eligible" contributes
+        # nothing (only a "blocked" -> "excluded from context" badge is
+        # shown), joined with " · " instead of "|".
+        assert "note · workspace-a · 1 citation" in visible_text
         assert screen.query_one("#library-rag-use-selected-in-console", Button).disabled is False
         assert "Expired credential caused the incident." in visible_text
         assert "Citations: Incident Review p.2" in visible_text

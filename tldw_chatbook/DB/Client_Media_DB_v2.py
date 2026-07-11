@@ -4548,7 +4548,8 @@ class MediaDatabase:
         Returns:
             A tuple containing:
                 - results (List[sqlite3.Row]): List of Row objects for the current page.
-                                               Each row contains 'id', 'title', 'type'.
+                                               Each row contains 'id', 'title', 'type',
+                                               'last_modified'.
                 - total_pages (int): Total number of pages for active items.
                 - current_page (int): The requested page number.
                 - total_items (int): The total number of active items matching the criteria.
@@ -4583,7 +4584,7 @@ class MediaDatabase:
             if total_items > 0:
                 # Order by most recently modified, then ID for stable pagination
                 items_query = """
-                              SELECT id, title, type
+                              SELECT id, title, type, last_modified
                               FROM Media
                               WHERE deleted = 0
                                 AND is_trash = 0

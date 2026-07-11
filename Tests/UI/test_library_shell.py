@@ -430,6 +430,36 @@ async def test_library_shell_flashcards_row_renders_handoff_canvas():
 
 
 @pytest.mark.asyncio
+async def test_library_shell_handoff_canvas_button_reads_continue_in_study():
+    """UX wave L2: the handoff canvas action button reads as a verb
+    ("Continue in Study") for every study handoff kind, instead of
+    restating the destination's own name a second time -- the header
+    already says "Flashcards"/"Study decks"/"Quizzes". Header/purpose
+    still use the mode's own copy (unchanged); button ids are unchanged.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        for row_id, button_id, header in (
+            ("#library-row-create-flashcards", "#library-open-flashcards", "Flashcards"),
+            ("#library-row-create-study", "#library-open-study", "Study decks"),
+            ("#library-row-create-quizzes", "#library-open-quizzes", "Quizzes"),
+        ):
+            screen.query_one(row_id).press()
+            await _wait_for_selector(screen, pilot, button_id)
+
+            title = screen.query_one("#library-active-mode-title", Static)
+            assert str(title.renderable) == header
+            button = screen.query_one(button_id, Button)
+            assert str(button.label) == "Continue in Study"
+
+
+@pytest.mark.asyncio
 async def test_library_shell_search_row_renders_first_class_canvas():
     """Browse ▸ Search/RAG is a first-class canvas row now, not a legacy
     "mode" row: pressing it mounts ``LibrarySearchRagPanel`` directly (no
@@ -1506,7 +1536,9 @@ async def test_library_shell_browse_media_renders_canvas_with_rows_and_preview()
 
         preview = str(screen.query_one("#library-media-preview-lines").renderable)
         assert "Product Demo Video" in preview
-        assert screen.query_one("#library-media-open")
+        # UX wave M2: names the real destination -- "Open in Media" read
+        # like a no-op from a screen already showing media.
+        assert str(screen.query_one("#library-media-open", Button).label) == "Open in Media manager"
 
 
 @pytest.mark.asyncio
@@ -1636,6 +1668,56 @@ async def test_library_shell_media_row_opens_full_viewer_with_content():
         content_container = screen.query_one("#library-media-viewer-content")
         content_text = str(content_container.query_one(Static).renderable)
         assert "Full transcript: the interview recording" in content_text
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_viewer_uses_destination_honest_labels():
+    """UX wave M2: the full viewer's Open/Use-in actions name their real
+    destinations. "Open in Media" read like a no-op from a screen already
+    showing media; "Use in Chat" is inaccurate once staged as Console live
+    work (the same handoff every other Library "Use in Console" action --
+    notes, conversations -- already uses). Button ids are unchanged.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-use-in-chat")
+
+        assert str(screen.query_one("#library-media-open", Button).label) == "Open in Media manager"
+        assert str(screen.query_one("#library-media-use-in-chat", Button).label) == "Use in Console"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_analysis_button_reads_add_when_no_analysis():
+    """UX wave L1: the analysis toggle reads "Add analysis" when the viewer
+    has no analysis text yet (mirroring the Read-it-later conditional), and
+    "Edit analysis" once analysis exists -- covered by the existing
+    ``test_library_shell_media_analysis_edit_shows_prefilled_textarea``.
+    """
+    app = _build_test_app()
+    media_items = _two_media_items()
+    media_items[0]["versions"] = []
+    _seed_conversations(app, _two_conversations(), media=media_items)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-analysis-edit")
+
+        assert str(screen.query_one("#library-media-analysis-edit", Button).label) == "Add analysis"
 
 
 @pytest.mark.asyncio
@@ -3228,7 +3310,7 @@ async def test_library_shell_search_run_button_shows_searching_while_gated():
             run_buttons = list(screen.query("#library-rag-run-query"))
             if (
                 run_buttons
-                and str(run_buttons[0].label) == "Run Search/RAG"
+                and str(run_buttons[0].label) == "Run"
                 and run_buttons[0].disabled is False
             ):
                 break

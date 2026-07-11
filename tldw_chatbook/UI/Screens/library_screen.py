@@ -184,16 +184,22 @@ LIBRARY_STUDY_HANDOFF_MODES = {
         # consolidation).
         "header": "Study decks",
         "action_label": "Study Dashboard",
+        # UX wave L2: the button reads as a verb ("Continue in Study")
+        # instead of restating the destination's own name -- action_label
+        # still backs the header/purpose/recovery copy below.
+        "button_label": "Continue in Study",
         "purpose": "Plan study decks from Library sources.",
     },
     "flashcards": {
         "header": "Flashcards",
         "action_label": "Flashcards",
+        "button_label": "Continue in Study",
         "purpose": "Generate or review cards from Library sources.",
     },
     "quizzes": {
         "header": "Quizzes",
         "action_label": "Quizzes",
+        "button_label": "Continue in Study",
         "purpose": "Generate or resume quizzes from Library sources.",
     },
 }
@@ -1493,7 +1499,7 @@ class LibraryScreen(BaseAppScreen):
 
         Mirrors ``_selected_conversation_handoff_payload``, but reads the
         currently loaded media detail (``_library_media_detail``) instead of
-        a selected browser row -- the media viewer's "Use in Chat" action
+        a selected browser row -- the media viewer's "Use in Console" action
         stages whatever item is open in the in-canvas viewer, not a row
         selection from the list.
 
@@ -1863,6 +1869,7 @@ class LibraryScreen(BaseAppScreen):
         return {
             "header": mode["header"],
             "action_label": action_label,
+            "button_label": mode["button_label"],
             "purpose": mode["purpose"],
             "context": context_copy,
             "owner": LIBRARY_STUDY_HANDOFF_OWNERSHIP_COPY,
@@ -2006,7 +2013,7 @@ class LibraryScreen(BaseAppScreen):
         }.get(kind, "library-open-study")
         handoff_toolbar = Horizontal(
             Button(
-                copy["action_label"],
+                copy["button_label"],
                 id=action_button_id,
                 # D3: the Open action is the canvas's primary control.
                 classes="library-canvas-action console-action-primary",
@@ -3749,7 +3756,7 @@ class LibraryScreen(BaseAppScreen):
             if callable(notify):
                 notify("Console handoff is unavailable for Library Notes.", severity="warning")
             return
-        open_chat_with_handoff(payload)
+        open_chat_with_handoff(payload, action_label="Use in Console")
 
     @on(Button.Pressed, "#library-note-use-in-console")
     def handle_library_note_use_in_console(self, event: Button.Pressed) -> None:
@@ -6134,7 +6141,7 @@ class LibraryScreen(BaseAppScreen):
         """Hand off the selected media item to the Media screen.
 
         Args:
-            event: Button press event emitted by the "Open in Media" action.
+            event: Button press event emitted by the "Open in Media manager" action.
         """
         event.stop()
         self.post_message(NavigateToScreen("media"))
@@ -7152,13 +7159,11 @@ class LibraryScreen(BaseAppScreen):
 
     @staticmethod
     def _library_rag_scope_summary(panel_state: LibraryRagPanelState) -> str:
-        counts = {option.source_type: option.count for option in panel_state.scope.options}
-        return (
-            "Scope: all local"
-            f" | Notes {counts.get('notes', 0)}"
-            f" | Media {counts.get('media', 0)}"
-            f" | Conversations {counts.get('conversations', 0)}"
-        )
+        # UX wave L6: kept in lockstep with the panel's own
+        # ``_scope_summary`` (library_search_rag_panel.py) -- both build the
+        # same "#library-rag-scope-summary" text, one for initial compose
+        # and one for the incremental refresh path.
+        return "Scope: all local sources"
 
     def _open_selected_conversation_handoff(self) -> None:
         workspace_state = self._library_workspace_depth_state()
@@ -7177,7 +7182,7 @@ class LibraryScreen(BaseAppScreen):
             if callable(notify):
                 notify("Console handoff is unavailable for Library Conversations.", severity="warning")
             return
-        open_chat_with_handoff(payload)
+        open_chat_with_handoff(payload, action_label="Use in Console")
 
     @on(Button.Pressed, "#library-conversation-open-console")
     def open_selected_conversation_in_console(self, event: Button.Pressed) -> None:
@@ -7219,14 +7224,14 @@ class LibraryScreen(BaseAppScreen):
             if callable(notify):
                 notify("Console handoff is unavailable for Library Media.", severity="warning")
             return
-        open_chat_with_handoff(payload)
+        open_chat_with_handoff(payload, action_label="Use in Console")
 
     @on(Button.Pressed, "#library-media-use-in-chat")
     def use_media_in_chat(self, event: Button.Pressed) -> None:
-        """Handle the media viewer's "Use in Chat" action.
+        """Handle the media viewer's "Use in Console" action.
 
         Args:
-            event: Button press event emitted by the viewer's "Use in Chat" action.
+            event: Button press event emitted by the viewer's "Use in Console" action.
         """
         event.stop()
         self._open_selected_media_handoff()
@@ -7331,5 +7336,6 @@ class LibraryScreen(BaseAppScreen):
                 source_owner="local",
                 source_selector_state="local",
                 metadata=self._source_snapshot_metadata(),
-            )
+            ),
+            action_label="Use in Console",
         )

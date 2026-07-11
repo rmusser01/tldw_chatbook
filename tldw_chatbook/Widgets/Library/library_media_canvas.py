@@ -100,7 +100,7 @@ class LibraryMediaCanvas(Vertical):
             toolbar.styles.height = "auto"
             with toolbar:
                 yield Button(
-                    "Open in Media",
+                    "Open in Media manager",
                     id="library-media-open",
                     classes="library-canvas-action",
                     compact=True,

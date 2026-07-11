@@ -116,14 +116,13 @@ class LibrarySearchRagPanel(VerticalScroll):
 
 
 def _scope_summary(state: LibraryRagPanelState) -> str:
-    """Return a compact source scope line for the main Search/RAG work lane."""
-    counts = {option.source_type: option.count for option in state.scope.options}
-    return (
-        "Scope: all local"
-        f" | Notes {counts.get('notes', 0)}"
-        f" | Media {counts.get('media', 0)}"
-        f" | Conversations {counts.get('conversations', 0)}"
-    )
+    """Return a compact source scope line for the main Search/RAG work lane.
+
+    UX wave L6: drops the per-source counts -- the toggle buttons directly
+    below (``library_rag_scope_toggle_children``) already carry each
+    source's count, so restating them here was redundant chrome.
+    """
+    return "Scope: all local sources"
 
 
 def _scope_toggle_label(option: LibraryRagSourceOption) -> str:

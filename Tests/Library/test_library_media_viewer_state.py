@@ -90,6 +90,28 @@ def test_author_url_keywords_omitted_when_absent():
     }
 
 
+def test_url_line_omitted_for_local_scheme():
+    """UX wave L3: a ``local://`` URL is an internal identifier, not a
+    user-meaningful link -- the metadata line is hidden, but the edit-form
+    field still prefills the real stored value.
+    """
+    detail = {"media_id": "1", "title": "T", "type": "video", "url": "local://media/1"}
+
+    state = build_library_media_viewer_state(detail, now=NOW)
+
+    assert state.metadata_lines == ("Type: video",)
+    assert state.edit_fields["url"] == "local://media/1"
+
+
+def test_url_line_present_for_https_scheme():
+    """A real https:// URL still renders its metadata line as before."""
+    detail = {"media_id": "1", "title": "T", "type": "video", "url": "https://example.com/a"}
+
+    state = build_library_media_viewer_state(detail, now=NOW)
+
+    assert "URL: https://example.com/a" in state.metadata_lines
+
+
 def test_keywords_list_joined_with_comma_space():
     """Keywords list is joined with ', ' preserving order."""
     detail = {"media_id": "1", "title": "T", "type": "video", "keywords": ["zeta", "alpha", "mid"]}

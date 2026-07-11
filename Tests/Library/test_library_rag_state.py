@@ -220,6 +220,71 @@ def test_result_row_provenance_is_immutable_snapshot() -> None:
         row.provenance["rank"] = 2
 
 
+def test_row_badge_label_bare_source_type_when_no_signal() -> None:
+    """UX wave M5: default workspace, zero citations, eligible -> just the
+    source type, no "all workspaces"/"0 citations"/"eligible" filler.
+    """
+    row = LibraryRagResultRow.from_result(
+        {
+            "title": "Roadmap",
+            "provenance": {"source_type": "media"},
+        }
+    )
+
+    assert row.row_badge_label == "media"
+
+
+def test_row_badge_label_includes_citations_only_when_present() -> None:
+    row = LibraryRagResultRow.from_result(
+        {
+            "title": "Roadmap",
+            "provenance": {"source_type": "media"},
+            "citations": [{"label": "Roadmap p.1"}, {"label": "Roadmap p.2"}],
+        }
+    )
+
+    assert row.row_badge_label == "media · 2 citations"
+
+
+def test_row_badge_label_maps_blocked_eligibility_to_excluded_from_context() -> None:
+    row = LibraryRagResultRow.from_result(
+        {
+            "title": "Roadmap",
+            "provenance": {"source_type": "media", "active_context_eligible": False},
+        }
+    )
+
+    assert row.row_badge_label == "media · excluded from context"
+
+
+def test_row_badge_label_includes_non_default_workspace() -> None:
+    row = LibraryRagResultRow.from_result(
+        {
+            "title": "Roadmap",
+            "provenance": {"source_type": "media", "workspace_id": "workspace-a"},
+        }
+    )
+
+    assert row.row_badge_label == "media · workspace-a"
+
+
+def test_row_badge_label_joins_with_middle_dot_not_pipe() -> None:
+    row = LibraryRagResultRow.from_result(
+        {
+            "title": "Roadmap",
+            "provenance": {
+                "source_type": "media",
+                "workspace_id": "workspace-a",
+                "active_context_eligible": False,
+            },
+            "citations": [{"label": "Roadmap p.1"}],
+        }
+    )
+
+    assert row.row_badge_label == "media · workspace-a · 1 citation · excluded from context"
+    assert "|" not in row.row_badge_label
+
+
 def test_panel_state_tracks_retrieval_status_and_console_action_readiness() -> None:
     blocked = LibraryRagPanelState.from_values(
         source_counts={
@@ -295,7 +360,7 @@ def test_panel_state_searching_status_overrides_run_action_only_when_reached() -
         retrieval_status="searching",
     )
     assert searching_blocked.retrieval_status == "blocked"
-    assert searching_blocked.query_state.run_action.label == "Run Search/RAG"
+    assert searching_blocked.query_state.run_action.label == "Run"
     assert searching_blocked.query_state.run_action.enabled is False
 
 
