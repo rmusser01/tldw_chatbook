@@ -52,7 +52,7 @@ def notes_service(test_db, temp_dir):
 @pytest.fixture
 def sync_service(notes_service, test_db):
     # Mirrors exactly how the Library screen builds this
-    # (``_run_library_notes_sync`` / notes_workbench_panes.py:794-804):
+    # (``_run_library_notes_sync`` in library_screen.py):
     # NotesSyncService(notes_service=..., db=...).
     return NotesSyncService(notes_service=notes_service, db=test_db)
 

@@ -264,7 +264,7 @@ def build_note_export_content(
     *,
     now: datetime | None = None,
 ) -> str:
-    """Render a note's export text, mirroring ``notes_screen._build_export_content``.
+    """Render a note's export text, mirroring the retired standalone Notes screen's export builder.
 
     Args:
         title: The note's current (possibly unsaved) title. Blank/whitespace
@@ -385,13 +385,13 @@ def note_template_keywords(template: Any) -> tuple[str, ...]:
 
 
 def _note_template_label(key: str, template: Any) -> str:
-    """Human label for a template row (pure mirror of the workbench helper).
+    """Human label for a template row.
 
     Strips the redundant "template" wording from descriptions ("Template
-    for meeting notes" -> "Meeting notes") exactly like
-    ``notes_workbench_panes.template_display_label`` -- replicated here so
-    the pure module stays Textual-free (the workbench module imports
-    Textual and is slated for deletion with the standalone screen).
+    for meeting notes" -> "Meeting notes") exactly like the retired
+    standalone Notes screen's workbench helper did -- replicated here so
+    the pure module stays Textual-free (that workbench module imported
+    Textual and was deleted with the standalone screen).
     """
     raw = ""
     if isinstance(template, Mapping):
