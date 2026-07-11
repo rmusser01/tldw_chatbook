@@ -660,6 +660,53 @@ class SettingsScreen(BaseAppScreen):
         )
         self.manual_sync_rows = self._manual_sync_loading_rows()
 
+    def save_state(self) -> dict[str, object]:
+        """Save process-local Settings navigation and draft state."""
+        state = super().save_state()
+        if not isinstance(state, dict):
+            state = {}
+        state["active_category"] = self.active_category
+        state["category_search_query"] = self._sanitize_category_search_query(
+            self.category_search_query
+        )
+        state["settings_drafts"] = copy.deepcopy(self._settings_drafts)
+        return state
+
+    def restore_state(self, state: dict[str, object]) -> None:
+        """Restore validated process-local Settings state on a fresh screen."""
+        super().restore_state(state)
+        if not isinstance(state, dict):
+            return
+
+        try:
+            category = SettingsCategoryId(state.get("active_category"))
+        except (TypeError, ValueError):
+            pass
+        else:
+            self.active_category = category.value
+
+        query = state.get("category_search_query")
+        if isinstance(query, str):
+            self.category_search_query = self._sanitize_category_search_query(query)
+
+        drafts = state.get("settings_drafts")
+        if isinstance(drafts, Mapping):
+            valid_drafts = {
+                category: draft
+                for category, draft in drafts.items()
+                if isinstance(category, SettingsCategoryId)
+                and isinstance(draft, SettingsDraft)
+                and draft.category is category
+                and isinstance(draft.originals, dict)
+                and isinstance(draft.values, dict)
+                and all(isinstance(key, str) for key in draft.originals)
+                and all(isinstance(key, str) for key in draft.values)
+            }
+            try:
+                self._settings_drafts = copy.deepcopy(valid_drafts)
+            except Exception:
+                logger.debug("Ignoring malformed Settings draft state", exc_info=True)
+
     def on_mount(self) -> None:
         super().on_mount()
         self._queue_server_sync_workspace_handoff_refresh()

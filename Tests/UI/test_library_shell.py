@@ -4980,6 +4980,116 @@ async def test_library_flush_pending_work_saves_dirty_note_and_reports_conflicts
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "transition",
+    (
+        "navigation_context",
+        "rail_row",
+        "notes_sync",
+        "note_row",
+        "note_back",
+        "note_delete",
+        "open_media",
+        "open_note",
+    ),
+)
+async def test_library_destructive_transitions_abort_when_failed_save_leaves_note_dirty(
+    monkeypatch,
+    transition,
+):
+    """Every note-editor exit must preserve state after a save exception."""
+    app = _build_test_app()
+    save_calls = []
+
+    def failing_save_note(**kwargs):
+        save_calls.append(kwargs)
+        raise RuntimeError("simulated save failure")
+
+    app.notes_scope_service = Mock(save_note=failing_save_note)
+    screen = LibraryScreen(app)
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
+    screen._library_notes_view = "editor"
+    screen._selected_note_id = "n-current"
+    screen._library_note_detail = {
+        "id": "n-current",
+        "title": "Current note",
+        "content": "persisted body",
+        "version": 4,
+    }
+    screen._library_note_version = 4
+    screen._library_note_dirty = True
+    screen._library_note_autosave_state = "idle"
+    screen._library_note_editor_armed = True
+    screen._selected_media_id = "media-current"
+    screen._library_media_view = "list"
+    screen._library_media_detail = {"id": "media-current"}
+    monkeypatch.setattr(
+        screen,
+        "_read_library_note_editor_fields",
+        lambda: ("Current note", "unsaved body", "alpha"),
+    )
+    monkeypatch.setattr(screen, "refresh", Mock())
+    monkeypatch.setattr(screen, "run_worker", Mock())
+    monkeypatch.setattr(screen, "call_after_refresh", Mock())
+
+    # Keep the real save/error handling while omitting the unrelated worker
+    # drain from this direct, unmounted unit test.
+    async def flush_save():
+        await screen._save_library_note(explicit=False)
+
+    monkeypatch.setattr(screen, "_flush_library_note_save", flush_save)
+    preserved_state = (
+        screen._library_selected_row_id,
+        screen._library_notes_view,
+        screen._selected_note_id,
+        screen._library_note_detail,
+        screen._library_note_version,
+        screen._library_note_confirming_delete,
+        screen._library_note_editor_armed,
+        screen._selected_media_id,
+        screen._library_media_view,
+        screen._library_media_detail,
+    )
+
+    event = Mock()
+    event.button.note_id = "n-next"
+    if transition == "navigation_context":
+        await screen._apply_navigation_context_after_flush(
+            {LIBRARY_NAV_CONTEXT_NOTES_CREATE: True}
+        )
+    elif transition == "rail_row":
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_MEDIA)
+    elif transition == "notes_sync":
+        await screen.handle_library_notes_sync_open(event)
+    elif transition == "note_row":
+        await screen.handle_library_notes_row(event)
+    elif transition == "note_back":
+        await screen.handle_library_note_back(event)
+    elif transition == "note_delete":
+        await screen.handle_library_note_delete(event)
+    elif transition == "open_media":
+        await screen._open_library_item_by_id("media", "media-next")
+    else:
+        await screen._open_library_item_by_id("notes", "n-next")
+
+    assert save_calls, "the transition never reached the raising save seam"
+    assert screen._library_note_autosave_state == "error"
+    assert screen._library_note_dirty is True
+    assert (
+        screen._library_selected_row_id,
+        screen._library_notes_view,
+        screen._selected_note_id,
+        screen._library_note_detail,
+        screen._library_note_version,
+        screen._library_note_confirming_delete,
+        screen._library_note_editor_armed,
+        screen._selected_media_id,
+        screen._library_media_view,
+        screen._library_media_detail,
+    ) == preserved_state
+
+
+@pytest.mark.asyncio
 async def test_library_shell_note_flush_on_back_saves_before_view_switches():
     """Editing the body then immediately pressing Back must flush (await)
     the pending save before the canvas leaves the editor -- proven by

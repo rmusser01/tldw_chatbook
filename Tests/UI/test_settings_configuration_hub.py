@@ -2094,6 +2094,70 @@ def test_settings_category_search_normalizes_oversized_control_input():
     assert "\x00" not in normalized
 
 
+def test_settings_state_round_trip_preserves_active_work_without_aliasing():
+    original = SettingsScreen(_build_test_app())
+    original.active_category = SettingsCategoryId.CONSOLE_BEHAVIOR.value
+    original.category_search_query = "console"
+    draft = SettingsDraft(category=SettingsCategoryId.CONSOLE_BEHAVIOR)
+    draft.set_value(
+        "console_background_effects",
+        {"effects": ["none"]},
+        {"effects": ["stars"]},
+    )
+    original._settings_drafts[SettingsCategoryId.CONSOLE_BEHAVIOR] = draft
+
+    state = original.save_state()
+    restored = SettingsScreen(_build_test_app())
+    restored.restore_state(state)
+
+    assert restored.active_category == SettingsCategoryId.CONSOLE_BEHAVIOR.value
+    assert restored.category_search_query == "console"
+    restored_draft = restored._settings_drafts[SettingsCategoryId.CONSOLE_BEHAVIOR]
+    assert restored_draft == draft
+    assert restored_draft is not draft
+    assert restored_draft.values is not draft.values
+    assert state["settings_drafts"][SettingsCategoryId.CONSOLE_BEHAVIOR] is not draft
+
+    restored_draft.values["console_background_effects"]["effects"].append("rain")
+    assert draft.values["console_background_effects"] == {"effects": ["stars"]}
+    assert state["settings_drafts"][SettingsCategoryId.CONSOLE_BEHAVIOR].values[
+        "console_background_effects"
+    ] == {"effects": ["stars"]}
+
+
+@pytest.mark.parametrize(
+    "malformed_state",
+    (
+        None,
+        [],
+        {
+            "active_category": "not-a-category",
+            "category_search_query": object(),
+            "settings_drafts": {"console-behavior": object()},
+        },
+        {
+            "settings_drafts": {
+                SettingsCategoryId.CONSOLE_BEHAVIOR: SettingsDraft(
+                    category=SettingsCategoryId.CONSOLE_BEHAVIOR,
+                    originals=[],
+                    values=[],
+                )
+            }
+        },
+    ),
+)
+def test_settings_restore_state_ignores_malformed_values(malformed_state):
+    screen = SettingsScreen(_build_test_app())
+
+    screen.restore_state(malformed_state)
+    saved_state = screen.save_state()
+
+    assert screen.active_category == SettingsCategoryId.OVERVIEW.value
+    assert screen.category_search_query == ""
+    assert screen._settings_drafts == {}
+    assert isinstance(saved_state, dict)
+
+
 @pytest.mark.asyncio
 async def test_settings_category_search_escape_clears_filter():
     app = _build_test_app()

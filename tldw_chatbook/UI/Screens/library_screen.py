@@ -903,7 +903,7 @@ class LibraryScreen(BaseAppScreen):
             # recompose the canvas out from under the pending debounced
             # autosave, destroying the #library-note-body it reads and dropping
             # the last edits. Flush first (awaited, off this sync nav path),
-            # mirroring _select_library_rail_row; an unresolved conflict aborts.
+            # mirroring _select_library_rail_row; unsaved edits abort it.
             self.run_worker(
                 self._apply_navigation_context_after_flush(context),
                 exclusive=True,
@@ -919,12 +919,12 @@ class LibraryScreen(BaseAppScreen):
 
         The mounted dirty-editor branch of ``apply_navigation_context`` routes
         here so the pending save is awaited before the recompose that tears the
-        editor down. An unresolved save conflict aborts the switch, leaving the
-        editor and its conflict banner in place for the user to resolve -- the
-        same guard ``_select_library_rail_row`` applies.
+        editor down. If unsaved edits survive the flush, the switch aborts and
+        leaves the editor in place -- the same guard
+        ``_select_library_rail_row`` applies.
         """
         await self._flush_library_note_save()
-        if self._library_note_autosave_state == "conflict":
+        if self._library_note_dirty:
             return
         self._apply_navigation_context_state(context)
 
@@ -4941,11 +4941,11 @@ class LibraryScreen(BaseAppScreen):
         always drives the recomposed canvas.
 
         A dirty note edit is flushed first (awaited) so leaving via the rail
-        never silently discards unsaved text; an unresolved save conflict
-        aborts the row switch entirely so the user must resolve it first.
+        never silently discards unsaved text; any unsaved edit surviving the
+        flush aborts the row switch entirely.
         """
         await self._flush_library_note_save()
-        if self._library_note_autosave_state == "conflict":
+        if self._library_note_dirty:
             return
         self._library_selected_row_id = row_id
         # A rail-row press is always a fresh entry into a content type, so
@@ -5267,7 +5267,7 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         await self._flush_library_note_save()
-        if self._library_note_autosave_state == "conflict":
+        if self._library_note_dirty:
             return
         self._ensure_library_notes_sync_config_loaded()
         self._library_notes_view = "sync"
@@ -6062,14 +6062,14 @@ class LibraryScreen(BaseAppScreen):
 
         Flushes any dirty edit from a previously-open note first (awaited)
         so switching notes never silently discards unsaved text; an
-        unresolved save conflict aborts the switch so it can be resolved.
+        unsaved edit surviving the flush aborts the switch.
 
         Args:
             event: Button press event emitted by a note row button.
         """
         event.stop()
         await self._flush_library_note_save()
-        if self._library_note_autosave_state == "conflict":
+        if self._library_note_dirty:
             return
         note_id = str(getattr(event.button, "note_id", "") or "")
         if note_id:
@@ -6101,15 +6101,15 @@ class LibraryScreen(BaseAppScreen):
         """Return the Library notes canvas from the editor to its list view.
 
         Flushes a dirty edit first (awaited) so Back never silently
-        discards unsaved text; an unresolved save conflict aborts the
-        navigation so the user resolves it via Overwrite/Reload first.
+        discards unsaved text; an unsaved edit surviving the flush aborts the
+        navigation.
 
         Args:
             event: Button press event emitted by the "‹ Back to list" action.
         """
         event.stop()
         await self._flush_library_note_save()
-        if self._library_note_autosave_state == "conflict":
+        if self._library_note_dirty:
             return
         self._reset_library_note_editor_state()
         self.refresh(recompose=True)
@@ -6125,16 +6125,15 @@ class LibraryScreen(BaseAppScreen):
         is pressed.
 
         Flushes a dirty edit first (awaited) so the version the confirmed
-        delete sends is never stale; an unresolved save conflict aborts
-        entering the confirm state so the user resolves it via
-        Overwrite/Reload first, same as Back and note-row selection.
+        delete sends is never stale; an unsaved edit surviving the flush
+        aborts entering the confirm state, same as Back and note-row selection.
 
         Args:
             event: Button press event emitted by the editor's "Delete" action.
         """
         event.stop()
         await self._flush_library_note_save()
-        if self._library_note_autosave_state == "conflict":
+        if self._library_note_dirty:
             return
         self._library_note_confirming_delete = True
         self._library_note_editor_armed = False
@@ -7880,7 +7879,7 @@ class LibraryScreen(BaseAppScreen):
 
         if source_type == "media":
             await self._flush_library_note_save()
-            if self._library_note_autosave_state == "conflict":
+            if self._library_note_dirty:
                 return
             # Mirrors handle_library_media_row's full state-set EXACTLY so
             # the recomposed canvas lands on a clean viewer, never a stale
@@ -7905,7 +7904,7 @@ class LibraryScreen(BaseAppScreen):
 
         if source_type == "notes":
             await self._flush_library_note_save()
-            if self._library_note_autosave_state == "conflict":
+            if self._library_note_dirty:
                 return
             # Reset first for a clean slate (also stops any autosave timer,
             # clears dirty/conflict/preview state), then apply the actual

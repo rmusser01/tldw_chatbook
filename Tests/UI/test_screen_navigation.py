@@ -549,6 +549,61 @@ async def test_navigation_flushes_outgoing_screen_and_honors_veto(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_navigation_flush_exception_warns_and_aborts_switch(monkeypatch):
+    """A broken outgoing flush must fail closed while pending edits may exist."""
+    app = _build_test_app()
+    created_screens = []
+    switched_screens = []
+    saved_states = []
+    notifications = []
+
+    class FakeTargetScreen:
+        screen_name = "chat"
+
+        def __init__(self, app_instance):
+            created_screens.append(app_instance)
+
+    class FakeOutgoingScreen:
+        screen_name = "library"
+
+        async def flush_pending_work(self):
+            raise RuntimeError("simulated flush failure")
+
+        def save_state(self):
+            saved_states.append(True)
+            return {}
+
+    async def fake_switch_screen(screen):
+        switched_screens.append(screen)
+
+    monkeypatch.setattr(
+        app,
+        "_resolve_screen_navigation_target",
+        lambda target: ("chat", "chat", FakeTargetScreen),
+    )
+    monkeypatch.setattr(app, "switch_screen", fake_switch_screen)
+    monkeypatch.setattr(
+        app,
+        "notify",
+        lambda message, **kwargs: notifications.append((message, kwargs)),
+    )
+    outgoing = FakeOutgoingScreen()
+    monkeypatch.setattr(type(app), "screen", property(lambda self: outgoing))
+
+    await app.handle_screen_navigation(NavigateToScreen("chat"))
+
+    assert switched_screens == []
+    assert created_screens == []
+    assert saved_states == []
+    assert notifications == [
+        (
+            "Couldn't save pending changes before switching screens.",
+            {"severity": "warning"},
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_rapid_tab_switch_storm_leaves_no_zombie_widgets():
     """Live-repro regression lock for the rapid-tab-switch freeze.
 

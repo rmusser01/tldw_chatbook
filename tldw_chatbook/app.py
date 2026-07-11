@@ -4466,9 +4466,8 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                     )
                     return
             except Exception as e:
-                # Fail OPEN: a buggy flush must not permanently trap the
-                # user on this screen -- but the potential loss of pending
-                # work is surfaced, not silent.
+                # The outgoing instance may be the only place pending edits
+                # still exist, so a failed flush must abort the transition.
                 logger.opt(exception=True).error(
                     "Error flushing outgoing screen "
                     f"{getattr(current_screen, 'screen_name', type(current_screen).__name__)!r} "
@@ -4481,6 +4480,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                     )
                 except Exception:
                     pass
+                return
 
         # Save state of current screen before switching
         if current_screen and hasattr(current_screen, 'save_state'):
