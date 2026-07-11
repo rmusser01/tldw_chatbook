@@ -1399,16 +1399,11 @@ def test_app_detail_hook_navigates_library_with_ingest_context_for_handled_inges
     assert posted.screen_context == {LIBRARY_NAV_CONTEXT_INGEST: True}
 
 
-def test_app_detail_hook_invalidates_cached_library_screen_for_ingest_detail():
-    """Home's ``Open details`` deep link must drop any cached Library screen
-    before navigating (mirrors ``open_notes_workspace``).
-
-    Library is a CACHEABLE route: without invalidation the deep link switches
-    to an already-mounted-then-unmounted cached instance that advances the
-    screen stack but never repaints (the live symptom -- the terminal keeps
-    rendering Home even though the app is "on" Library). The flashcards deep
-    link never hit this because Study is not a cacheable route and always
-    builds a fresh screen. This is the RED regression guard for that fix.
+def test_app_detail_hook_navigates_library_for_ingest_detail():
+    """Home's ``Open details`` deep link posts a Library navigation with the
+    ingest nav-context (screen instance caching was removed entirely after
+    the rapid-tab-switch freeze, so every navigation now composes a fresh,
+    cleanly repainted Library screen -- no invalidation step remains).
     """
     app = _build_test_app()
     adapter = RecordingHomeActiveWorkAdapter(
@@ -1425,15 +1420,12 @@ def test_app_detail_hook_invalidates_cached_library_screen_for_ingest_detail():
     app.home_active_work_adapter = adapter
     app.notify = Mock()
     app.post_message = Mock()
-    library_sentinel = object()
-    app._screen_cache = {TAB_LIBRARY: library_sentinel}
 
     app.open_active_home_item_details(
         target_id="local:ingest:ingest-job-1",
         target_route="library",
     )
 
-    assert TAB_LIBRARY not in app._screen_cache
     posted = app.post_message.call_args.args[0]
     assert posted.screen_name == "library"
     assert posted.screen_context == {LIBRARY_NAV_CONTEXT_INGEST: True}
@@ -1454,13 +1446,10 @@ async def test_home_open_details_button_click_navigates_library_for_failed_inges
     app.library_ingest_jobs.mark_failed(job.job_id, error="Unsupported extension")
     app.notify = Mock()
     app.post_message = Mock()
-    # A Library screen the user already visited is cached under TAB_LIBRARY.
-    # The live bug: switching back to this cached-then-unmounted instance from
-    # the ingest deep link advanced the screen stack to Library but never
-    # repainted (the terminal stayed on Home). The fix drops the cached
-    # instance so a fresh Library screen composes + mounts + repaints.
-    library_sentinel = object()
-    app._screen_cache = {TAB_LIBRARY: library_sentinel}
+    # Navigation composes a FRESH Library screen on every visit (screen
+    # instance caching was removed after it caused the rapid-tab-switch
+    # freeze), so the deep link always lands on a cleanly mounted,
+    # repainted ingest canvas.
     host = HomeHarness(app)
 
     async with host.run_test(size=HOME_TEST_SIZE) as pilot:
@@ -1488,11 +1477,6 @@ async def test_home_open_details_button_click_navigates_library_for_failed_inges
         f"post_message calls: {app.post_message.call_args_list}"
     )
     assert navigations[-1].screen_context == {LIBRARY_NAV_CONTEXT_INGEST: True}
-    # The stale cached Library screen must be dropped so the deep link lands
-    # on a freshly composed, repainted ingest canvas (regression guard for the
-    # live "advances to Library but keeps rendering Home" symptom).
-    assert app._screen_cache.get(TAB_LIBRARY) is not library_sentinel
-    assert TAB_LIBRARY not in app._screen_cache
 
 
 def test_retry_active_home_item_requeues_ingest_job_via_real_seam():
