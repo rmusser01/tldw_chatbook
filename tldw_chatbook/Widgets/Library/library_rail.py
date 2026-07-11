@@ -212,11 +212,12 @@ class LibraryRail(Vertical):
                     id=f"{LIBRARY_RAIL_ROW_PREFIX}{row.row_id}",
                     classes="library-rail-row",
                     compact=True,
+                    disabled=row.disabled,
                 )
                 button.row_id = row.row_id
                 button.target_kind = row.target_kind
                 button.target_id = row.target_id
-                button.tooltip = row.title
+                button.tooltip = row.disabled_tooltip if row.disabled and row.disabled_tooltip else row.title
                 button.set_class(selected, "library-rail-row-selected")
                 if row.count_emphasis:
                     button.add_class(f"library-rail-row-due-{row.count_emphasis}")

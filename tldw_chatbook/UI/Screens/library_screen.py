@@ -34,6 +34,15 @@ from ...DB.ChaChaNotes_DB import ConflictError
 from ...Library.library_collections_service import LibraryCollectionsServiceError
 from ...Library.library_collections_state import LibraryCollectionsPanelState
 from ...Library.library_conversations_state import build_library_conversations_state
+from ...Library.library_export_scope import ExportScope, count_export_scope
+from ...Library.library_export_state import (
+    DEFAULT_MEDIA_QUALITY,
+    LibraryExportFormState,
+    build_library_export_form_state,
+    default_export_name,
+    next_media_quality,
+    normalize_export_destination,
+)
 from ...Library.library_ingest_jobs import LibraryIngestJob
 from ...Library.library_ingest_state import (
     INGEST_UNAVAILABLE_COPY,
@@ -101,6 +110,7 @@ from ...Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_NOTES,
     LIBRARY_ROW_BROWSE_SEARCH,
     LIBRARY_ROW_CREATE_NOTE,
+    LIBRARY_ROW_INGEST_EXPORT,
     LIBRARY_ROW_INGEST_MEDIA,
     LibraryShellInput,
     build_library_shell_state,
@@ -120,6 +130,7 @@ from ...Widgets.Console.console_rail_section import (
 from ...Widgets.Library import (
     LibraryCollectionsPanel,
     LibraryConversationsCanvas,
+    LibraryExportCanvas,
     LibraryIngestCanvas,
     LibraryMediaCanvas,
     LibraryMediaViewer,
@@ -595,6 +606,19 @@ class LibraryScreen(BaseAppScreen):
         # (not here) so a re-mounted, cached screen instance never treats
         # jobs that finished in a previous mount as a fresh transition.
         self._library_ingest_last_done_count: int = 0
+        # Export canvas state (F4 Task 2). ``_library_export_counts`` is
+        # ``None`` until the counts worker lands a result for the current
+        # scope (drives ``LibraryExportFormState.counts_loading`` --
+        # deliberately not a separate boolean flag, so "loading" and "no
+        # result yet" can never drift apart). ``_library_export_form`` is
+        # a plain dict (not a dataclass, unlike the ingest form echo)
+        # since Task 3 reads specific keys off it directly per the F4
+        # plan's screen-attrs contract.
+        self._library_export_scope: ExportScope = ExportScope(kind="everything")
+        self._library_export_counts: dict[str, int] | None = None
+        self._library_export_form: dict[str, Any] = self._default_library_export_form()
+        self._library_export_running: bool = False
+        self._library_export_error: str = ""
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -2497,6 +2521,11 @@ class LibraryScreen(BaseAppScreen):
                         self._build_library_ingest_state(),
                         id="library-ingest-canvas",
                     )
+                elif shell.canvas_kind == "export":
+                    yield LibraryExportCanvas(
+                        self._build_library_export_state(),
+                        id="library-export-canvas",
+                    )
                 elif shell.canvas_kind == "handoff":
                     # Study/Flashcards/Quizzes rows (L3b Task 8): a first-class
                     # canvas kind of their own, sourced entirely from
@@ -2905,6 +2934,174 @@ class LibraryScreen(BaseAppScreen):
         local form echo resets.
         """
         self._library_ingest_form = LibraryIngestFormState()
+
+    # ----- Export canvas -------------------------------------------------
+
+    @staticmethod
+    def _default_library_export_form() -> dict[str, Any]:
+        """Build a fresh export form echo: today's stamped name, nothing else set."""
+        return {
+            "name": default_export_name(),
+            "description": "",
+            "quality": DEFAULT_MEDIA_QUALITY,
+            "destination": "",
+            "destination_exists": False,
+        }
+
+    def _reset_library_export_transient_state(self, scope: ExportScope | None = None) -> None:
+        """Clear the export canvas's scope/counts/form to defaults on entry.
+
+        Called from both entry points into the export canvas -- the rail
+        row's own ``_select_library_rail_row`` switch (always the default
+        Everything ``scope``) and the browse-canvas "Export…" section
+        actions (``_open_library_export_canvas``, their own pre-scoped
+        ``ExportScope``) -- so neither a stale form from a previous Export
+        visit nor a stale scope/counts pairing from a different section
+        ever reappears. The name field re-stamps today's local date every
+        time (mirrors the ingest form's own from-scratch reset), never
+        carrying a previous visit's edited name forward.
+
+        Args:
+            scope: The scope to open the canvas with; defaults to
+                ``ExportScope(kind="everything")`` when omitted.
+        """
+        self._library_export_scope = scope or ExportScope(kind="everything")
+        self._library_export_counts = None
+        self._library_export_form = self._default_library_export_form()
+        self._library_export_running = False
+        self._library_export_error = ""
+
+    async def _open_library_export_canvas(self, scope: ExportScope) -> None:
+        """Open the export canvas pre-scoped to a browse section's own filter.
+
+        Wired to each browse canvas's "Export…" action (media/
+        conversations/notes) -- mirrors ``_select_library_rail_row``'s
+        dirty-note-flush discipline for switching canvases, but only
+        touches the export-specific state (the rail row's own switch
+        already resets everything else on the way past); the caller's
+        ``scope`` survives untouched (unlike a plain rail-row switch,
+        which always resets to Everything).
+
+        Args:
+            scope: The section-specific scope to open the form with (e.g.
+                ``ExportScope(kind="media", media_type=...)``).
+        """
+        await self._flush_library_note_save()
+        if self._library_note_autosave_state == "conflict":
+            return
+        self._library_selected_row_id = LIBRARY_ROW_INGEST_EXPORT
+        self._reset_library_export_transient_state(scope)
+        self.refresh(recompose=True)
+        self._start_library_export_counts_worker()
+
+    def _resolve_library_export_chachanotes_db(self) -> Any:
+        """Return the ChaChaNotes DB handle for export counts.
+
+        Mirrors ``_resolve_library_notes_sync_db``'s exact access path
+        (prefer ``app_instance.chachanotes_db``, fall back to
+        ``notes_service.db``) -- the same canonical DB-access path this
+        screen already uses elsewhere, per the F4 brief's requirement that
+        the counts worker reach the DB the same way the rest of the
+        screen does.
+        """
+        notes_service = getattr(self.app_instance, "notes_service", None)
+        return getattr(self.app_instance, "chachanotes_db", None) or getattr(
+            notes_service, "db", None
+        )
+
+    @staticmethod
+    def _compute_library_export_counts(
+        scope: ExportScope, media_db: Any, chachanotes_db: Any
+    ) -> dict[str, int]:
+        """Run the full-query, uncapped counts for ``scope`` (never a rendered snapshot).
+
+        A quiet-degrade failure (a missing DB seam, an unexpected DB
+        error) reports all-zero counts rather than raising -- the export
+        canvas simply shows "Nothing to export in this scope." rather
+        than crashing the recompose; the failure is still logged.
+        """
+        try:
+            return count_export_scope(scope, media_db, chachanotes_db)
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Library export counts failed for scope {scope!r}."
+            )
+            return {"media": 0, "conversations": 0, "notes": 0}
+
+    def _start_library_export_counts_worker(self) -> None:
+        """Kick off the export scope's full-query counts (Task 1's resolver).
+
+        In-memory SQLite connections are thread-local -- only the thread
+        that created/migrated the DB has a working connection (same guard
+        as ``_fetch_library_conversation_by_id``/
+        ``_count_library_create_rail_metric`` elsewhere on this screen).
+        When either DB is memory-backed (the test suite's fixtures, and
+        any other future in-memory deployment), the count runs inline on
+        the calling (UI) thread instead of a real worker thread -- a
+        worker thread would only ever see a blank, unmigrated connection.
+        A real (file-backed) deployment always takes the
+        ``group="library_export_counts"`` worker-thread path.
+        """
+        scope = self._library_export_scope
+        media_db = getattr(self.app_instance, "media_db", None)
+        chachanotes_db = self._resolve_library_export_chachanotes_db()
+        if bool(getattr(media_db, "is_memory_db", False)) or bool(
+            getattr(chachanotes_db, "is_memory_db", False)
+        ):
+            counts = self._compute_library_export_counts(scope, media_db, chachanotes_db)
+            self._apply_library_export_counts(scope, counts)
+            return
+        self._run_library_export_counts_worker(scope, media_db, chachanotes_db)
+
+    @work(thread=True, exclusive=True, group="library_export_counts")
+    def _run_library_export_counts_worker(
+        self, scope: ExportScope, media_db: Any, chachanotes_db: Any
+    ) -> None:
+        counts = self._compute_library_export_counts(scope, media_db, chachanotes_db)
+        # ``self.app`` (Textual's own running-App property), not
+        # ``self.app_instance`` -- ``call_from_thread`` needs the App whose
+        # event loop is actually running this screen (see
+        # ``_run_library_notes_sync``'s ``progress_callback`` for the full
+        # reasoning). Guarded the same way: a shutdown mid-worker must
+        # never surface as a crash.
+        try:
+            self.app.call_from_thread(self._apply_library_export_counts, scope, counts)
+        except RuntimeError:
+            pass
+
+    def _apply_library_export_counts(self, scope: ExportScope, counts: dict[str, int]) -> None:
+        """Marshal a landed counts result onto the export form (UI thread).
+
+        Guards against a stale result from a scope the user has since
+        navigated away from (a second "Export…" press, or another rail
+        row entirely, before the first counts worker finished) -- dropped
+        rather than overwriting fresher (or absent) counts.
+
+        Args:
+            scope: The scope the landed ``counts`` were computed for.
+            counts: The landed counts (keys "media"/"conversations"/"notes").
+        """
+        if scope != self._library_export_scope:
+            return
+        self._library_export_counts = counts
+        if self.is_mounted and self._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT:
+            self.refresh(recompose=True)
+
+    def _build_library_export_state(self) -> LibraryExportFormState:
+        """Build the export canvas's full display state from screen fields."""
+        form = self._library_export_form
+        return build_library_export_form_state(
+            scope=self._library_export_scope,
+            counts=self._library_export_counts,
+            name=str(form.get("name", "")),
+            description=str(form.get("description", "")),
+            media_quality=str(form.get("quality", DEFAULT_MEDIA_QUALITY)),
+            destination=str(form.get("destination", "")),
+            destination_exists=bool(form.get("destination_exists", False)),
+            running=self._library_export_running,
+            status_line="",
+            error_line=self._library_export_error,
+        )
 
     def _library_ingest_registry(self) -> Any:
         """Return the app's ingest job registry, or ``None`` when absent."""
@@ -4143,6 +4340,11 @@ class LibraryScreen(BaseAppScreen):
         self._reset_library_note_editor_state()
         self._reset_library_notes_sync_transient_state()
         self._reset_library_ingest_transient_state()
+        # Always resets to the Everything scope (a plain rail-row press,
+        # unlike a browse-canvas "Export…" action, never carries a
+        # section-specific filter) -- see
+        # ``_reset_library_export_transient_state``'s docstring.
+        self._reset_library_export_transient_state()
         self._invalidate_library_workspace_depth_state()
         if (
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
@@ -4153,6 +4355,8 @@ class LibraryScreen(BaseAppScreen):
             await self._sync_collections_panel(refresh_snapshot=True)
             return
         self.refresh(recompose=True)
+        if self._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT:
+            self._start_library_export_counts_worker()
 
     @on(Button.Pressed, ".console-rail-section-toggle")
     def handle_library_rail_section_toggle(self, event: Button.Pressed) -> None:
@@ -5077,6 +5281,137 @@ class LibraryScreen(BaseAppScreen):
         clear_finished = getattr(registry, "clear_finished", None)
         if callable(clear_finished):
             clear_finished()
+        self.refresh(recompose=True)
+
+    # ----- Export canvas: section entry points --------------------------
+
+    @on(Button.Pressed, "#library-media-export")
+    async def handle_library_media_export(self, event: Button.Pressed) -> None:
+        """Open the export canvas scoped to the media list's current type filter.
+
+        Args:
+            event: Button press event emitted by the media canvas's
+                "Export…" action.
+        """
+        event.stop()
+        await self._open_library_export_canvas(
+            ExportScope(kind="media", media_type=self._library_media_type_filter)
+        )
+
+    @on(Button.Pressed, "#library-conversations-export")
+    async def handle_library_conversations_export(self, event: Button.Pressed) -> None:
+        """Open the export canvas scoped to Conversations.
+
+        Args:
+            event: Button press event emitted by the conversations
+                canvas's "Export…" action.
+        """
+        event.stop()
+        await self._open_library_export_canvas(ExportScope(kind="conversations"))
+
+    @on(Button.Pressed, "#library-notes-export")
+    async def handle_library_notes_export(self, event: Button.Pressed) -> None:
+        """Open the export canvas scoped to Notes.
+
+        Args:
+            event: Button press event emitted by the notes list canvas's
+                "Export…" action.
+        """
+        event.stop()
+        await self._open_library_export_canvas(ExportScope(kind="notes"))
+
+    # ----- Export canvas: form fields ------------------------------------
+
+    @on(Input.Changed, "#library-export-name")
+    def handle_library_export_name_changed(self, event: Input.Changed) -> None:
+        """Track the export name text as the user types it (state only)."""
+        event.stop()
+        self._library_export_form["name"] = event.value
+
+    @on(Input.Changed, "#library-export-description")
+    def handle_library_export_description_changed(self, event: Input.Changed) -> None:
+        """Track the export description text as the user types it (state only)."""
+        event.stop()
+        self._library_export_form["description"] = event.value
+
+    @on(Button.Pressed, "#library-export-quality")
+    def handle_library_export_quality_cycle(self, event: Button.Pressed) -> None:
+        """Cycle the media-quality control to its next option.
+
+        Mirrors ``handle_library_media_type_filter_pressed``'s cycle-
+        button convention -- see ``next_media_quality``'s docstring for
+        why this isn't a ``Select``.
+
+        Args:
+            event: Button press event emitted by the quality control.
+        """
+        event.stop()
+        self._library_export_form["quality"] = next_media_quality(
+            str(self._library_export_form.get("quality", DEFAULT_MEDIA_QUALITY))
+        )
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-export-destination")
+    def handle_library_export_choose_destination(self, event: Button.Pressed) -> None:
+        """Push a ``FileSave`` dialog to pick the export's destination path.
+
+        Mirrors ``_export_library_note``'s dialog flow exactly (the real
+        ``FileSave`` constructor only accepts ``location``/``title``/
+        ``default_file``): a sanitized default filename derived from the
+        export name field, callback via ``call_after_refresh`` so the
+        write-path runs after this handler returns.
+
+        Args:
+            event: Button press event emitted by the "Choose destination…"
+                action.
+        """
+        event.stop()
+        raw_name = str(self._library_export_form.get("name", "")).strip() or "chatbook"
+        safe_name = "".join(
+            char for char in raw_name if char.isalnum() or char in (" ", "-", "_")
+        ).rstrip() or "chatbook"
+        self.app.push_screen(
+            FileSave(
+                location=str(Path.home()),
+                title="Choose Export Destination",
+                default_file=f"{safe_name}.zip",
+            ),
+            callback=lambda path: self.call_after_refresh(
+                self._apply_library_export_destination, path
+            ),
+        )
+
+    def _apply_library_export_destination(self, selected_path: Path | None) -> None:
+        """Validate, ``.zip``-normalize, and apply a ``FileSave``-picked destination.
+
+        Runs the dialog-returned path through ``validate_path_simple``
+        (same base-directory-free validator ``_write_library_note_export_file``
+        uses for any user-chosen save path) BEFORE normalizing its suffix
+        to ``.zip`` -- and normalizes BEFORE checking whether it already
+        exists, so the overwrite line the form shows always names the
+        actual path that will be written, never the raw picked one (the
+        F4 design spec's explicit ordering: "normalized to .zip BEFORE any
+        overwrite confirmation").
+
+        Args:
+            selected_path: The chosen destination, or ``None`` if the
+                dialog was cancelled.
+        """
+        if not selected_path:
+            return
+        try:
+            validated_path = validate_path_simple(selected_path, require_exists=False)
+        except ValueError as exc:
+            logger.warning(
+                f"Rejected Library export destination {selected_path!r}: {exc}"
+            )
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(f"Rejected export destination: {exc}", severity="warning")
+            return
+        normalized_path = normalize_export_destination(validated_path)
+        self._library_export_form["destination"] = str(normalized_path)
+        self._library_export_form["destination_exists"] = normalized_path.exists()
         self.refresh(recompose=True)
 
     @on(Button.Pressed, ".library-notes-row")

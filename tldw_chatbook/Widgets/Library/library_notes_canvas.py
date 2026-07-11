@@ -128,6 +128,10 @@ class LibraryNotesCanvas(Vertical):
             "Import note", id="library-notes-import",
             classes="library-canvas-action", compact=True,
         )
+        yield Button(
+            "Export…", id="library-notes-export",
+            classes="library-canvas-action", compact=True,
+        )
         if list_state.status_copy:
             yield Static(list_state.status_copy, id="library-notes-status", markup=False)
         if not list_state.rows:

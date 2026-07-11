@@ -13,11 +13,28 @@ LIBRARY_ROW_BROWSE_SEARCH = "browse-search"
 LIBRARY_ROW_BROWSE_COLLECTIONS = "browse-collections"
 LIBRARY_ROW_CREATE_NOTE = "create-note"
 LIBRARY_ROW_INGEST_MEDIA = "ingest-import-media"
+LIBRARY_ROW_INGEST_EXPORT = "ingest-export"
+
+# Export packages local DB content directly (the chatbook creator reads
+# local DBs, never a server) -- when a server source is active, the row
+# renders disabled with this tooltip rather than offering a control that
+# would silently export nothing (or the wrong content). Mirrors the
+# scope-service gating pattern (F4 design spec, "Entry points").
+LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP = "Export packages local content only."
 
 
 @dataclass(frozen=True)
 class LibraryRailRow:
-    """One selectable row in the Library shell rail."""
+    """One selectable row in the Library shell rail.
+
+    Attributes:
+        disabled: Whether this row's rail button should render disabled
+            (unclickable). Only the Export row uses this today (server-
+            mode gating) -- every other row is always enabled.
+        disabled_tooltip: The tooltip shown while ``disabled`` is
+            ``True``, overriding the row's normal title-as-tooltip.
+            Ignored when ``disabled`` is ``False``.
+    """
 
     row_id: str
     section_id: str
@@ -28,6 +45,8 @@ class LibraryRailRow:
     count_known: bool = True
     count_display: str = ""
     count_emphasis: str = ""
+    disabled: bool = False
+    disabled_tooltip: str = ""
 
 
 @dataclass(frozen=True)
@@ -188,6 +207,11 @@ def build_library_shell_state(
         ),
     )
 
+    # Computed up front (not just in the header-line block below) since
+    # the Export row's server-mode gating also depends on it.
+    runtime_source = str(state.runtime_source or "local").strip().lower()
+    export_row_disabled = runtime_source == "server"
+
     ingest_rows = (
         LibraryRailRow(
             row_id=LIBRARY_ROW_INGEST_MEDIA,
@@ -198,16 +222,28 @@ def build_library_shell_state(
             count=None,
             count_known=True,
         ),
+        LibraryRailRow(
+            row_id=LIBRARY_ROW_INGEST_EXPORT,
+            section_id="ingest",
+            title="Export",
+            target_kind="canvas",
+            target_id="export",
+            count=None,
+            count_known=True,
+            disabled=export_row_disabled,
+            disabled_tooltip=(
+                LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP if export_row_disabled else ""
+            ),
+        ),
     )
 
     sections = (
         LibraryRailSectionState(section_id="browse", title="Browse", rows=browse_rows),
         LibraryRailSectionState(section_id="create", title="Create", rows=create_rows),
-        LibraryRailSectionState(section_id="ingest", title="Ingest", rows=ingest_rows),
+        LibraryRailSectionState(section_id="ingest", title="Import / Export", rows=ingest_rows),
     )
 
     # Build header line
-    runtime_source = str(state.runtime_source or "local").strip().lower()
     if runtime_source == "server":
         server_label = str(state.server_label or "unknown").strip()
         header_line = f"Library | Server: {server_label}"

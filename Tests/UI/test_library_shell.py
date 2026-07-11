@@ -5,6 +5,7 @@ import json
 import re
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -31,15 +32,20 @@ from tldw_chatbook.Library.library_ingest_state import (
     build_library_ingest_state,
 )
 from tldw_chatbook.Library.library_rag_state import LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY
+from tldw_chatbook.Library.library_export_scope import ExportScope
+from tldw_chatbook.Library.library_export_state import EMPTY_SCOPE_COPY
 from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP,
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
     LIBRARY_ROW_BROWSE_MEDIA,
     LIBRARY_ROW_BROWSE_NOTES,
     LIBRARY_ROW_BROWSE_SEARCH,
     LIBRARY_ROW_CREATE_NOTE,
+    LIBRARY_ROW_INGEST_EXPORT,
     LIBRARY_ROW_INGEST_MEDIA,
 )
 from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingService
+from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.Media.media_reading_scope_service import MediaReadingScopeService
 from tldw_chatbook.Study_Interop.local_quiz_service import LocalQuizService
 from tldw_chatbook.Study_Interop.local_study_service import LocalStudyService
@@ -8703,3 +8709,337 @@ async def test_library_shell_restored_notes_editor_with_deleted_note_falls_back_
 
         assert screen._library_notes_view == "list"
         assert notified  # _notify_library_note_missing_warning fired
+
+
+# --- Export canvas (F4 Task 2) -----------------------------------------------
+#
+# Real in-memory ``MediaDatabase``/``CharactersRAGDB`` handles (not fakes):
+# the counts worker's ``is_memory_db`` guard (mirrors
+# ``_fetch_library_conversation_by_id``'s) runs the count inline on the UI
+# thread for these, exercising the exact same code path a real file-backed
+# deployment would exercise on a genuine worker thread -- only the
+# thread-vs-inline dispatch differs, not the query/marshal/gate logic.
+
+
+@pytest.mark.asyncio
+async def test_library_shell_export_rail_row_opens_everything_scope_and_counts_land():
+    """Pressing the Export rail row opens the export canvas scoped to
+    Everything; the counts worker lands a real full-query result (never
+    the rendered/capped snapshot) within a bounded poll.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    media_db = MediaDatabase(":memory:", client_id="export-pilot-everything-media")
+    media_db.add_media_with_keywords(title="M1", content="c1", media_type="video")
+    app.media_db = media_db
+    chachanotes_db = CharactersRAGDB(":memory:", client_id="export-pilot-everything-ccn")
+    chachanotes_db.add_conversation({"title": "Conv"})
+    chachanotes_db.add_note("N1", "content")
+    app.chachanotes_db = chachanotes_db
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}").press()
+        await _wait_for_selector(screen, pilot, "#library-export-header")
+
+        assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
+        assert screen._library_export_scope == ExportScope(kind="everything")
+
+        for _ in range(150):
+            if screen._library_export_counts is not None:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Export counts never landed.")
+
+        screen.refresh(recompose=True)
+        await pilot.pause()
+
+        scope_line = str(screen.query_one("#library-export-scope-line").renderable)
+        assert scope_line == "Everything: 1 media · 1 conversations · 1 notes"
+        submit = screen.query_one("#library-export-submit", Button)
+        # Counts landed with a positive total, but no destination chosen yet.
+        assert submit.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_export_action_carries_type_filter_into_scope():
+    """The media canvas's "Export…" action opens the export canvas
+    pre-scoped to Media with the canvas's CURRENT type filter -- never
+    Everything, and never the filter's default."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    app.media_db = MediaDatabase(":memory:", client_id="export-pilot-media-scope-media")
+    app.chachanotes_db = CharactersRAGDB(":memory:", client_id="export-pilot-media-scope-ccn")
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_MEDIA}").press()
+        await _wait_for_selector(screen, pilot, "#library-media-type-filter")
+
+        # Cycle the type filter off "All" onto a concrete type before
+        # opening Export -- the scope must carry THIS filter, not the
+        # canvas's default.
+        screen.query_one("#library-media-type-filter").press()
+        await pilot.pause()
+        active_type = screen._library_media_type_filter
+        assert active_type != "All"
+
+        screen.query_one("#library-media-export").press()
+        await _wait_for_selector(screen, pilot, "#library-export-header")
+
+        assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
+        assert screen._library_export_scope == ExportScope(kind="media", media_type=active_type)
+
+
+@pytest.mark.asyncio
+async def test_library_shell_export_empty_scope_disables_export_and_shows_helper():
+    """An empty-everywhere scope disables Export with the exact helper copy."""
+    app = _build_test_app()
+    _seed_conversations(app, [])
+    app.media_db = MediaDatabase(":memory:", client_id="export-pilot-empty-media")
+    app.chachanotes_db = CharactersRAGDB(":memory:", client_id="export-pilot-empty-ccn")
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}").press()
+        await _wait_for_selector(screen, pilot, "#library-export-header")
+
+        for _ in range(150):
+            if screen._library_export_counts is not None:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Export counts never landed.")
+
+        screen.refresh(recompose=True)
+        await pilot.pause()
+
+        submit = screen.query_one("#library-export-submit", Button)
+        assert submit.disabled is True
+        empty_line = str(screen.query_one("#library-export-empty-line").renderable)
+        assert empty_line == EMPTY_SCOPE_COPY
+
+
+@pytest.mark.asyncio
+async def test_library_shell_export_choose_destination_pushes_file_save_dialog_with_sanitized_name():
+    """"Choose destination…" pushes a ``FileSave`` dialog pre-filled from the
+    export name field, mirroring ``_export_library_note``'s dialog flow."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    app.media_db = MediaDatabase(":memory:", client_id="export-pilot-fs-media")
+    app.chachanotes_db = CharactersRAGDB(":memory:", client_id="export-pilot-fs-ccn")
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}").press()
+        await _wait_for_selector(screen, pilot, "#library-export-destination")
+
+        expected_name = screen._library_export_form["name"]
+        screen.query_one("#library-export-destination").press()
+        for _ in range(150):
+            if isinstance(host.screen_stack[-1], FileSave):
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Choose destination… never pushed a FileSave dialog.")
+
+        dialog = host.screen_stack[-1]
+        assert dialog._default_file == f"{expected_name}.zip"
+
+        await host.pop_screen()
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_library_shell_export_destination_normalizes_missing_suffix_to_zip(tmp_path):
+    """A ``FileSave``-returned path with no ``.zip`` suffix (e.g. "foo") is
+    normalized to "foo.zip" -- both in the stored form field and the
+    rendered destination line -- BEFORE any overwrite check runs. Bypasses
+    the dialog UI itself (exercised separately above), mirroring
+    ``_write_library_note_export_file``'s direct-call pilot style for the
+    "pure part" of the write path.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    app.media_db = MediaDatabase(":memory:", client_id="export-pilot-norm-media")
+    app.chachanotes_db = CharactersRAGDB(":memory:", client_id="export-pilot-norm-ccn")
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}").press()
+        await _wait_for_selector(screen, pilot, "#library-export-destination")
+
+        screen._apply_library_export_destination(tmp_path / "foo")
+        await pilot.pause()
+
+        expected = str(tmp_path / "foo.zip")
+        assert screen._library_export_form["destination"] == expected
+        destination_line = str(screen.query_one("#library-export-destination-line").renderable)
+        assert destination_line == expected
+        # The freshly-normalized path does not exist yet -- no overwrite line.
+        assert not screen.query("#library-export-overwrite-line")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_export_destination_existing_file_shows_overwrite_line(tmp_path):
+    """When the ``.zip``-normalized destination already exists on disk, the
+    form shows an "Overwrites …" line naming the NORMALIZED file -- purely
+    informational (Export stays enabled, not blocked) per the design
+    spec's explicit "normalize before confirming overwrite" ordering."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    app.media_db = MediaDatabase(":memory:", client_id="export-pilot-ow-media")
+    app.chachanotes_db = CharactersRAGDB(":memory:", client_id="export-pilot-ow-ccn")
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}").press()
+        await _wait_for_selector(screen, pilot, "#library-export-destination")
+
+        existing = tmp_path / "already-there.zip"
+        existing.write_bytes(b"")
+        screen._apply_library_export_destination(existing)
+        await pilot.pause()
+
+        overwrite_line = str(screen.query_one("#library-export-overwrite-line").renderable)
+        assert overwrite_line == "Overwrites already-there.zip"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_export_row_disabled_with_tooltip_in_server_mode():
+    """A server-active runtime disables the Export rail row (tooltip
+    explains why) -- pressing it is a no-op, since a disabled Textual
+    Button never dispatches ``Pressed``."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    app.runtime_policy = SimpleNamespace(
+        state=RuntimeSourceState(
+            active_source="server", server_configured=True, active_server_id="srv-1"
+        ),
+        persist=lambda: None,
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        export_row = screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}", Button)
+        assert export_row.disabled is True
+        assert export_row.tooltip == LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP
+
+        export_row.press()
+        await pilot.pause()
+
+        assert screen._library_selected_row_id != LIBRARY_ROW_INGEST_EXPORT
+        assert not screen.query("#library-export-header")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_conversations_export_action_opens_conversations_scope():
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    app.media_db = MediaDatabase(":memory:", client_id="export-pilot-conv-media")
+    app.chachanotes_db = CharactersRAGDB(":memory:", client_id="export-pilot-conv-ccn")
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_CONVERSATIONS}").press()
+        await _wait_for_selector(screen, pilot, "#library-conversations-export")
+
+        screen.query_one("#library-conversations-export").press()
+        await _wait_for_selector(screen, pilot, "#library-export-header")
+
+        assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
+        assert screen._library_export_scope == ExportScope(kind="conversations")
+        # Conversations-only scope never touches media -- the quality
+        # control has nothing to control.
+        assert not screen.query("#library-export-quality")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_notes_export_action_opens_notes_scope():
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    app.media_db = MediaDatabase(":memory:", client_id="export-pilot-notes-media")
+    app.chachanotes_db = CharactersRAGDB(":memory:", client_id="export-pilot-notes-ccn")
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_NOTES}").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-export")
+
+        screen.query_one("#library-notes-export").press()
+        await _wait_for_selector(screen, pilot, "#library-export-header")
+
+        assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
+        assert screen._library_export_scope == ExportScope(kind="notes")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_export_counts_worker_uses_real_thread_for_file_backed_dbs(tmp_path):
+    """Both export DBs are real, FILE-backed (not ``:memory:``) here --
+    unlike every other export pilot above, this exercises the actual
+    ``@work(thread=True, exclusive=True, group="library_export_counts")``
+    worker-thread dispatch branch (``_start_library_export_counts_worker``'s
+    ``is_memory_db`` guard only takes the inline UI-thread path for
+    in-memory connections)."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    media_db = MediaDatabase(tmp_path / "export-thread.db", client_id="export-pilot-thread-media")
+    media_db.add_media_with_keywords(title="M1", content="c1", media_type="article")
+    app.media_db = media_db
+    chachanotes_db = CharactersRAGDB(
+        tmp_path / "export-thread-ccn.db", client_id="export-pilot-thread-ccn"
+    )
+    chachanotes_db.add_conversation({"title": "Conv"})
+    app.chachanotes_db = chachanotes_db
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        assert not bool(getattr(media_db, "is_memory_db", False))
+        assert not bool(getattr(chachanotes_db, "is_memory_db", False))
+
+        screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}").press()
+        await _wait_for_selector(screen, pilot, "#library-export-header")
+
+        for _ in range(150):
+            if screen._library_export_counts is not None:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Export counts never landed via the worker thread.")
+
+        screen.refresh(recompose=True)
+        await pilot.pause()
+
+        scope_line = str(screen.query_one("#library-export-scope-line").renderable)
+        assert scope_line == "Everything: 1 media · 1 conversations · 0 notes"

@@ -57,6 +57,12 @@ class LibraryMediaCanvas(Vertical):
             classes="library-canvas-action",
             compact=True,
         )
+        yield Button(
+            "Export…",
+            id="library-media-export",
+            classes="library-canvas-action",
+            compact=True,
+        )
 
         status_text = self.canvas.status_copy or self.canvas.empty_copy
         status = Static(
