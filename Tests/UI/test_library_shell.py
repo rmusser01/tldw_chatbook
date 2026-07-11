@@ -9012,6 +9012,42 @@ async def test_library_shell_export_row_disabled_with_tooltip_in_server_mode():
 
 
 @pytest.mark.asyncio
+async def test_library_shell_section_export_action_refuses_in_server_mode():
+    """The media canvas's "Export…" action bypasses the rail row's own
+    server-disabled gate, so it must re-check runtime mode itself (Qodo
+    review): in server mode it warns and never opens the export canvas --
+    export reads the LOCAL DBs, so running it would package the wrong
+    dataset while the user views server-scoped content."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    app.media_db = MediaDatabase(":memory:", client_id="export-pilot-server-media")
+    app.chachanotes_db = CharactersRAGDB(":memory:", client_id="export-pilot-server-ccn")
+    app.runtime_policy = SimpleNamespace(
+        state=RuntimeSourceState(
+            active_source="server", server_configured=True, active_server_id="srv-1"
+        ),
+        persist=lambda: None,
+    )
+    app.notify = Mock()
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        # Drive the section action directly (in server mode the browse
+        # canvas may not surface the media list the same way; the handler
+        # is the gate under test).
+        await screen._open_library_export_canvas(ExportScope(kind="media"))
+        await pilot.pause()
+
+        assert screen._library_selected_row_id != LIBRARY_ROW_INGEST_EXPORT
+        assert not screen.query("#library-export-header")
+        app.notify.assert_called_once()
+        assert app.notify.call_args.args[0] == LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP
+
+
+@pytest.mark.asyncio
 async def test_library_shell_conversations_export_action_opens_conversations_scope():
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())

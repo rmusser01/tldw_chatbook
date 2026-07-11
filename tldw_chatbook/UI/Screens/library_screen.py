@@ -109,6 +109,7 @@ from ...Library.library_rail_state import (
     serialize_library_rail_preferences,
 )
 from ...Library.library_shell_state import (
+    LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP,
     LIBRARY_ROW_BROWSE_COLLECTIONS,
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
     LIBRARY_ROW_BROWSE_MEDIA,
@@ -3048,6 +3049,15 @@ class LibraryScreen(BaseAppScreen):
             scope: The section-specific scope to open the form with (e.g.
                 ``ExportScope(kind="media", media_type=...)``).
         """
+        if self._library_export_is_server_mode():
+            # The section "Export..." actions bypass the rail row's own
+            # server-disabled gate, so re-check here (Qodo review): export
+            # reads the LOCAL DBs, so running it while the Library is in
+            # server runtime mode would package the wrong dataset.
+            self.app_instance.notify(
+                LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP, severity="warning"
+            )
+            return
         await self._flush_library_note_save()
         if self._library_note_autosave_state == "conflict":
             return
@@ -3055,6 +3065,21 @@ class LibraryScreen(BaseAppScreen):
         self._reset_library_export_transient_state(scope)
         self.refresh(recompose=True)
         self._start_library_export_counts_worker()
+
+    def _library_export_is_server_mode(self) -> bool:
+        """True when the Library is in server runtime mode.
+
+        Export packages LOCAL content only (it reads the local media /
+        ChaChaNotes DBs), so both the rail Export row and the section
+        "Export..." actions must refuse to run in server mode.
+        """
+        runtime_state = getattr(
+            getattr(self.app_instance, "runtime_policy", None), "state", None
+        )
+        active_source = str(
+            getattr(runtime_state, "active_source", "local") or "local"
+        ).lower()
+        return active_source == "server"
 
     def _resolve_library_export_chachanotes_db(self) -> Any:
         """Return the ChaChaNotes DB handle for export counts.
@@ -3239,8 +3264,20 @@ class LibraryScreen(BaseAppScreen):
         total = sum(counts.values()) if counts else 0
         if not destination or total <= 0:
             return
-        name = str(form.get("name", "")).strip() or "Chatbook"
-        description = str(form.get("description", ""))
+        if self._library_export_is_server_mode():
+            # Defense in depth: the rail row and section actions already
+            # gate on server mode, but re-check at submit in case the
+            # runtime source flipped while the form was open (Qodo review).
+            self.app_instance.notify(
+                LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP, severity="warning"
+            )
+            return
+        # Sanitize name/description at the UI boundary before they flow into
+        # the export payload, chatbook manifest, and Artifacts registry
+        # (Qodo review) -- bound length + strip unsafe content via the shared
+        # input_validation helpers, mirroring the media-field path.
+        name = self._safe_text(form.get("name", ""), "Chatbook", max_length=200)
+        description = self._safe_text(form.get("description", ""), "", max_length=2000)
         media_quality = str(form.get("quality", DEFAULT_MEDIA_QUALITY))
         self._library_export_running = True
         self._library_export_error = ""

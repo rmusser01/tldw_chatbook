@@ -4639,7 +4639,10 @@ UPDATE db_schema_version
             cursor = self.execute_query(query, (self.client_id,))
             return [row["id"] for row in cursor.fetchall()]
         except CharactersRAGDBError as e:
-            logger.error(f"Database error listing all conversation ids: {e}")
+            logger.error(
+                f"Database error listing all conversation ids "
+                f"(client_id={self.client_id!r}, scope_type='global'): {e}"
+            )
             raise
 
     def count_messages_for_conversation(
