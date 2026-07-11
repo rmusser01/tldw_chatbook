@@ -49,6 +49,13 @@ class LibraryConversationsCanvas(Vertical):
         Returns:
             ComposeResult for the conversations canvas.
         """
+        yield Button(
+            "Export…",
+            id="library-conversations-export",
+            classes="library-canvas-action",
+            compact=True,
+        )
+
         status_text = self.canvas.status_copy or self.canvas.empty_copy
         status = Static(
             status_text,

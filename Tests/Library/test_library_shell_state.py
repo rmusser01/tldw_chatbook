@@ -1,6 +1,8 @@
 import pytest
 
 from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP,
+    LIBRARY_ROW_INGEST_EXPORT,
     LibraryShellInput,
     build_library_shell_state,
 )
@@ -12,7 +14,7 @@ def test_shell_sections_rows_and_targets_are_fixed():
     ))
     assert shell.header_line == "Library | Local"
     assert [s.section_id for s in shell.sections] == ["browse", "create", "ingest"]
-    assert [s.title for s in shell.sections] == ["Browse", "Create", "Ingest"]
+    assert [s.title for s in shell.sections] == ["Browse", "Create", "Import / Export"]
     browse = shell.sections[0]
     assert [r.row_id for r in browse.rows] == [
         "browse-media", "browse-conversations", "browse-notes", "browse-collections",
@@ -39,8 +41,10 @@ def test_shell_sections_rows_and_targets_are_fixed():
         "canvas", "notes-create",
     )
     ingest = shell.sections[2]
-    assert [r.title for r in ingest.rows] == ["Import media"]
+    assert [r.title for r in ingest.rows] == ["Import media", "Export"]
     assert (ingest.rows[0].target_kind, ingest.rows[0].target_id) == ("canvas", "ingest-media")
+    assert (ingest.rows[1].target_kind, ingest.rows[1].target_id) == ("canvas", "export")
+    assert ingest.rows[1].disabled is False
     assert all(r.count is None for r in shell.sections[1].rows)
 
 
@@ -147,6 +151,40 @@ def test_ingest_import_media_selection_yields_ingest_media_canvas():
     )
     assert (shell.canvas_kind, shell.canvas_target) == ("ingest-media", "")
     assert shell.selected_row_id == "ingest-import-media"
+
+
+def test_ingest_export_selection_yields_export_canvas():
+    shell = build_library_shell_state(
+        LibraryShellInput(), selected_row_id=LIBRARY_ROW_INGEST_EXPORT
+    )
+    assert (shell.canvas_kind, shell.canvas_target) == ("export", "")
+    assert shell.selected_row_id == LIBRARY_ROW_INGEST_EXPORT
+
+
+def test_export_row_enabled_when_runtime_source_is_local():
+    shell = build_library_shell_state(LibraryShellInput(runtime_source="local"))
+    export_row = next(
+        r for section in shell.sections for r in section.rows if r.row_id == LIBRARY_ROW_INGEST_EXPORT
+    )
+    assert export_row.disabled is False
+    assert export_row.disabled_tooltip == ""
+
+
+def test_export_row_disabled_with_tooltip_when_runtime_source_is_server():
+    shell = build_library_shell_state(
+        LibraryShellInput(runtime_source="server", server_label="lab-box")
+    )
+    export_row = next(
+        r for section in shell.sections for r in section.rows if r.row_id == LIBRARY_ROW_INGEST_EXPORT
+    )
+    assert export_row.disabled is True
+    assert export_row.disabled_tooltip == LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP
+    # Every other row stays enabled -- the gate is Export-specific, not a
+    # blanket server-mode lockout of the whole rail.
+    other_rows = [
+        r for section in shell.sections for r in section.rows if r.row_id != LIBRARY_ROW_INGEST_EXPORT
+    ]
+    assert all(r.disabled is False for r in other_rows)
 
 
 def test_server_header_line():

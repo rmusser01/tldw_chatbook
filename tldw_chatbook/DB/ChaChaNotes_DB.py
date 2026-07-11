@@ -4605,6 +4605,46 @@ UPDATE db_schema_version
         rows = [dict(row) for row in cursor.fetchall()]
         return rows, total, 0.0
 
+    def get_all_conversation_ids(self) -> List[str]:
+        """Return every non-deleted, globally-scoped conversation id owned by this client (no page cap).
+
+        Mirrors the WHERE clause `search_conversations_page` builds for the
+        Library's conversations snapshot fetch: the Library screen calls
+        `ChatConversationService.list_conversations(mode="local", limit=..., offset=0)`
+        with no `scope_type`/`workspace_id`, which `_normalize_scope`
+        resolves to `scope_type = 'global'`; `search_conversations_page`
+        then also scopes to `client_id = self.client_id` (its default when
+        no explicit `client_id` is passed) and excludes soft-deleted rows
+        (`deleted = 0`). This method issues the same three-clause filter,
+        but returns the full id list instead of a `limit`/`offset` page --
+        the truncation-proof source for Library chatbook export
+        (`Library/library_export_scope.py`): the Library conversations
+        canvas only ever renders a capped snapshot
+        (`LIBRARY_SOURCE_PAGE_SIZES["conversations"]` rows), and resolving
+        an export from that rendered snapshot would silently drop everything
+        past the cap for a library larger than the page size.
+
+        Returns:
+            List[str]: Every matching conversation id, in ascending id order.
+
+        Raises:
+            CharactersRAGDBError: For database errors.
+        """
+        query = (
+            "SELECT id FROM conversations "
+            "WHERE scope_type = 'global' AND client_id = ? AND deleted = 0 "
+            "ORDER BY id ASC"
+        )
+        try:
+            cursor = self.execute_query(query, (self.client_id,))
+            return [row["id"] for row in cursor.fetchall()]
+        except CharactersRAGDBError as e:
+            logger.error(
+                f"Database error listing all conversation ids "
+                f"(client_id={self.client_id!r}, scope_type='global'): {e}"
+            )
+            raise
+
     def count_messages_for_conversation(
         self,
         conversation_id: str,
@@ -6655,6 +6695,34 @@ UPDATE db_schema_version
         cursor = self.execute_query(query)
         row = cursor.fetchone()
         return int(row["cnt"] if row else 0)
+
+    def get_all_note_ids(self) -> List[str]:
+        """Return every non-deleted note id (no page cap).
+
+        Mirrors ``list_notes``'/``count_notes``' visibility exactly:
+        ``deleted = 0`` only. Notes are not ``client_id``-scoped the way
+        conversations are -- ``_list_generic_items`` (which backs
+        ``list_notes``) never filters on ``client_id`` -- so this method
+        doesn't either. This is the truncation-proof source for Library
+        chatbook export (``Library/library_export_scope.py``): the Library
+        notes canvas only ever renders a capped snapshot
+        (``LIBRARY_SOURCE_PAGE_SIZES["notes"]`` rows), and resolving an
+        export from that rendered snapshot would silently drop everything
+        past the cap for a library larger than the page size.
+
+        Returns:
+            The full list of non-deleted note ids, in ascending id order.
+
+        Raises:
+            CharactersRAGDBError: For database errors.
+        """
+        query = "SELECT id FROM notes WHERE deleted = 0 ORDER BY id ASC"
+        try:
+            cursor = self.execute_query(query)
+            return [row["id"] for row in cursor.fetchall()]
+        except CharactersRAGDBError as e:
+            logger.error(f"Database error listing all note ids: {e}")
+            raise
 
     def update_note(self, note_id: str, update_data: Dict[str, Any], expected_version: int) -> Optional[bool]:
         if not update_data:

@@ -430,6 +430,58 @@ class TestConversationsAndMessages:
     #         assert msg_id is not None
 
 
+class TestGetAllConversationIds:
+    """``get_all_conversation_ids`` -- the truncation-proof id source for
+    Library chatbook export (see ``Library/library_export_scope.py``).
+
+    Mirrors the WHERE clause ``search_conversations_page`` builds for the
+    Library's conversations snapshot fetch when called with no
+    ``scope_type``/``workspace_id`` (``ChatConversationService.list_conversations``
+    -> ``scope_type='global'``): ``scope_type = 'global' AND client_id = ?
+    AND deleted = 0``, but with no page cap.
+    """
+
+    def test_returns_all_non_deleted_conversation_ids(self, db_instance: CharactersRAGDB):
+        conv_id_1 = db_instance.add_conversation({"title": "Conv 1"})
+        conv_id_2 = db_instance.add_conversation({"title": "Conv 2"})
+        conv_to_delete = db_instance.add_conversation({"title": "Conv to delete"})
+        deleted_record = db_instance.get_conversation_by_id(conv_to_delete)
+        db_instance.soft_delete_conversation(conv_to_delete, expected_version=deleted_record["version"])
+
+        ids = db_instance.get_all_conversation_ids()
+
+        assert set(ids) == {conv_id_1, conv_id_2}
+
+    def test_excludes_workspace_scoped_conversations(self, db_instance: CharactersRAGDB):
+        global_id = db_instance.add_conversation({"title": "Global conv"})
+        db_instance.add_conversation(
+            {"title": "Workspace conv", "scope_type": "workspace", "workspace_id": "ws-1"}
+        )
+
+        ids = db_instance.get_all_conversation_ids()
+
+        assert ids == [global_id]
+
+    def test_excludes_conversations_from_a_different_client_id(self, db_instance: CharactersRAGDB):
+        own_id = db_instance.add_conversation({"title": "Own conv"})
+        db_instance.add_conversation({"title": "Other client conv", "client_id": "some-other-client"})
+
+        ids = db_instance.get_all_conversation_ids()
+
+        assert ids == [own_id]
+
+    def test_returns_every_row_beyond_a_50_row_page_cap(self, db_instance: CharactersRAGDB):
+        """The Library conversations snapshot caps at 50 rows -- this DB method must not."""
+        seeded_ids = [db_instance.add_conversation({"title": f"Conv {i}"}) for i in range(55)]
+
+        ids = db_instance.get_all_conversation_ids()
+
+        assert set(ids) == set(seeded_ids)
+        assert len(ids) == 55
+
+    def test_empty_db_returns_empty_list(self, db_instance: CharactersRAGDB):
+        assert db_instance.get_all_conversation_ids() == []
+
 
 class TestNotesAndKeywords:
     def test_add_and_update_note(self, db_instance: CharactersRAGDB):
@@ -478,6 +530,40 @@ class TestNotesAndKeywords:
 
         # Test idempotency of unlinking
         assert db_instance.unlink_conversation_from_keyword(conv_id, kw_id) is False
+
+
+class TestGetAllNoteIds:
+    """``get_all_note_ids`` -- the truncation-proof id source for Library
+    chatbook export (see ``Library/library_export_scope.py``).
+
+    Mirrors ``list_notes``'/``count_notes``' visibility: ``deleted = 0``
+    only -- notes are not ``client_id``-scoped the way conversations are
+    (``_list_generic_items`` never filters on ``client_id``) -- but with no
+    page cap.
+    """
+
+    def test_returns_all_non_deleted_note_ids(self, db_instance: CharactersRAGDB):
+        note_id_1 = db_instance.add_note("Note 1", "Content 1")
+        note_id_2 = db_instance.add_note("Note 2", "Content 2")
+        note_to_delete = db_instance.add_note("Note to delete", "Content 3")
+        deleted_record = db_instance.get_note_by_id(note_to_delete)
+        db_instance.soft_delete_note(note_to_delete, expected_version=deleted_record["version"])
+
+        ids = db_instance.get_all_note_ids()
+
+        assert set(ids) == {note_id_1, note_id_2}
+
+    def test_returns_every_row_beyond_a_100_row_page_cap(self, db_instance: CharactersRAGDB):
+        """The Library notes snapshot caps at 100 rows -- this DB method must not."""
+        seeded_ids = [db_instance.add_note(f"Note {i}", f"Content {i}") for i in range(105)]
+
+        ids = db_instance.get_all_note_ids()
+
+        assert set(ids) == set(seeded_ids)
+        assert len(ids) == 105
+
+    def test_empty_db_returns_empty_list(self, db_instance: CharactersRAGDB):
+        assert db_instance.get_all_note_ids() == []
 
 
 class TestSyncLog:
