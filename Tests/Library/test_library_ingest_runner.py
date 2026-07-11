@@ -72,6 +72,9 @@ class _FakeIngestParsePool:
         self.auto_run = auto_run
         self.calls: list[dict[str, Any]] = []
         self.terminated = False
+        # Thread ident `terminate()` was invoked on -- the quit-deadlock
+        # pilots assert teardown runs OFF the app's event-loop thread.
+        self.terminate_thread_ident: Optional[int] = None
         self._threads: list[threading.Thread] = []
 
     def apply_async(
@@ -122,6 +125,7 @@ class _FakeIngestParsePool:
 
     def terminate(self) -> None:
         self.terminated = True
+        self.terminate_thread_ident = threading.get_ident()
 
     def join(self) -> None:
         for thread in self._threads:
@@ -586,6 +590,156 @@ async def test_shutdown_flag_stops_late_parse_completion_callbacks(tmp_path: Pat
         current = next(j for j in app.library_ingest_jobs.jobs() if j.job_id == job.job_id)
         assert current.state == IngestJobState.PARSING
         assert app._ingest_parse_pool is not None
+
+
+# --- F3 Task 4 review fixes: quit-deadlock guard + payload-sparing ----------
+#
+# The Task 4 review found a quit-time deadlock race: Textual's
+# `call_from_thread` blocks the calling thread on the marshaled call's
+# result, and CPython's `Pool._terminate_pool` does an unbounded
+# `result_handler.join()`. If a parse completed right as the user quit, the
+# pool's result-handler thread could park inside `call_from_thread` while
+# `on_unmount` (the loop thread) parked inside `pool.terminate()` waiting
+# for that same result-handler thread -- mutual deadlock, app hangs on
+# quit. The deadlock itself is race-timed, so these tests pin the two
+# OBSERVABLE contracts of the fix instead: (a) the pool-side callbacks
+# check `_ingest_shutdown` BEFORE marshaling (never entering
+# `call_from_thread` at all once the flag is up), and (b) quit-path
+# terminate/join runs on a detached daemon thread, never the caller's
+# (loop) thread, so the loop stays free to drain any in-flight marshaled
+# call.
+
+
+def test_pool_callbacks_short_circuit_without_marshaling_when_shutdown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """(Quit-deadlock guard, layer a) `_ingest_pool_callback`/
+    `_ingest_pool_error_callback` -- which run on the pool's result-handler
+    thread -- must return WITHOUT calling `call_from_thread` once
+    `_ingest_shutdown` is set. The pre-fix lambdas marshaled
+    unconditionally (the shutdown check only ran later, inside the
+    already-marshaled UI-thread body -- too late to prevent the
+    result-handler thread from blocking)."""
+    db = _make_db(tmp_path)
+    app = _IngestRunnerHarness(db)
+
+    marshaled: list[tuple] = []
+    monkeypatch.setattr(
+        app, "call_from_thread", lambda *args, **kwargs: marshaled.append(args)
+    )
+
+    app._ingest_shutdown = True
+    app._ingest_pool_callback("ingest-job-1", {"ok": True, "payload": {}})
+    app._ingest_pool_error_callback(RuntimeError("late pool failure"))
+    assert marshaled == []
+
+    # Positive control: with the flag down, both callbacks marshal.
+    app._ingest_shutdown = False
+    app._ingest_pool_callback("ingest-job-1", {"ok": True, "payload": {}})
+    app._ingest_pool_error_callback(RuntimeError("pool failure"))
+    assert len(marshaled) == 2
+
+
+def test_shutdown_terminates_pool_off_the_caller_thread(tmp_path: Path) -> None:
+    """(Quit-deadlock guard, layer b) `_shutdown_ingest_parse_pool` must
+    set the shutdown flag, detach the pool reference, and run
+    `terminate()`/`join()` on a DIFFERENT thread than the caller's (in
+    production the caller is `on_unmount`, i.e. the app's event-loop
+    thread -- exactly the thread that must never block on the pool's
+    result-handler join)."""
+    db = _make_db(tmp_path)
+    pool = _FakeIngestParsePool(auto_run=False)
+    app = _IngestRunnerHarness(db, pool_factory=lambda: pool)
+    app._ingest_parse_pool = pool
+
+    caller_ident = threading.get_ident()
+    teardown_thread = app._shutdown_ingest_parse_pool()
+
+    # Synchronous effects, guaranteed before the method returns: flag up,
+    # pool reference detached (nothing can submit to it anymore).
+    assert app._ingest_shutdown is True
+    assert app._ingest_parse_pool is None
+
+    assert teardown_thread is not None
+    assert teardown_thread.daemon is True
+    teardown_thread.join(timeout=_FAKE_POOL_JOIN_TIMEOUT)
+    assert not teardown_thread.is_alive()
+    assert pool.terminated is True
+    assert pool.terminate_thread_ident is not None
+    assert pool.terminate_thread_ident != caller_ident
+
+
+def test_shutdown_with_no_pool_still_sets_flag_and_returns_none(tmp_path: Path) -> None:
+    """`_shutdown_ingest_parse_pool` with no pool ever created: the flag
+    still goes up (late callbacks must no-op regardless), no thread is
+    spawned."""
+    db = _make_db(tmp_path)
+    app = _IngestRunnerHarness(db)
+
+    assert app._shutdown_ingest_parse_pool() is None
+    assert app._ingest_shutdown is True
+
+
+@pytest.mark.asyncio
+async def test_broken_pool_spares_payload_ready_job_and_writer_drains_it(
+    tmp_path: Path,
+) -> None:
+    """(Task 4 review fix) A job whose parse already COMPLETED (payload
+    sitting in `_ingest_parsed_payloads`, job still `PARSING` because the
+    writer hasn't claimed it yet) needs nothing further from the pool --
+    a pool-level failure must NOT fail it and throw the finished parse
+    away. Only jobs still genuinely mid-parse fail (retryable); the
+    handler wakes the writer so the surviving payload drains to DONE."""
+    db = _make_db(tmp_path)
+    source_a = _write_text_file(tmp_path, "note-a.txt", "Payload-ready body.")
+    source_b = _write_text_file(tmp_path, "note-b.txt", "Mid-parse body.")
+    pool = _FakeIngestParsePool(auto_run=False)
+    app = _IngestRunnerHarness(db, pool_factory=lambda: pool, worker_count=2)
+
+    async with app.run_test() as pilot:
+        job_a = app.submit_library_ingest_job(source_path=str(source_a))
+        job_b = app.submit_library_ingest_job(source_path=str(source_b))
+        await pilot.pause()
+
+        jobs_by_id = {j.job_id: j for j in app.library_ingest_jobs.jobs()}
+        assert jobs_by_id[job_a.job_id].state == IngestJobState.PARSING
+        assert jobs_by_id[job_b.job_id].state == IngestJobState.PARSING
+
+        # Make job A payload-ready WITHOUT routing through
+        # `_on_ingest_parse_complete` (which would wake the writer and let
+        # it claim A out of PARSING before the pool breaks): stash the
+        # payload directly -- exactly the state a real completion leaves
+        # behind in the window before the writer's claim lands.
+        payload_a = {
+            "media_type": "plaintext",
+            "file_type": "plaintext",
+            "title": "note-a",
+            "author": "Unknown",
+            "content": "Payload-ready body.",
+            "keywords": [],
+            "url": f"file://{source_a.absolute()}",
+            "analysis_content": "",
+            "chunks": None,
+            "chunk_options": None,
+            "metadata": {},
+            "file_path": str(source_a),
+        }
+        app._ingest_parsed_payloads[job_a.job_id] = payload_a
+
+        # The pool dies while B is still genuinely mid-parse.
+        pool.trigger_error(0, RuntimeError("simulated worker death"))
+
+        failed_b = await _wait_for_job_state(app, pilot, job_b.job_id, IngestJobState.FAILED)
+        assert failed_b.permanent is False
+
+        # A must survive: never failed, and the handler's writer wake
+        # drains its already-finished parse to DONE with a real media row.
+        done_a = await _wait_for_job_state(app, pilot, job_a.job_id, IngestJobState.DONE)
+        assert done_a.media_id is not None
+        assert db.get_media_by_id(done_a.media_id) is not None
+
+        assert app._ingest_parse_pool is None
+        await _wait_for_runner_idle(app, pilot)
 
 
 # --- Task 2 review fix regression tests -------------------------------------

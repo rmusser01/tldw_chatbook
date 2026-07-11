@@ -1227,6 +1227,18 @@ class LibraryIngestQueueMixin:
     inside the worker, where the real exception type is available). Either
     way, one job's failure is isolated so it never strands a later queued
     job or blocks the writer.
+
+    Shutdown (quit path) order, in ``_shutdown_ingest_parse_pool`` (called
+    from ``TldwCli.on_unmount``): (1) ``_ingest_shutdown = True`` + pool
+    reference detached, synchronously -- pool callbacks short-circuit on
+    the result-handler thread before ever marshaling; (2)
+    ``pool.terminate()`` + ``pool.join()`` on a detached daemon thread,
+    never the event-loop thread (deadlock rationale in that method's
+    docstring); (3) the writer thread is swept afterward by ``on_unmount``'s
+    generic worker cancellation, its in-flight DB write completing as
+    before. Steps 2 and 3 run concurrently -- safe because the two stages
+    share no resources (parse workers never touch ``media_db``; the writer
+    never touches the pool).
     """
 
     def submit_library_ingest_job(
@@ -1443,12 +1455,8 @@ class LibraryIngestQueueMixin:
                 pool.apply_async(
                     run_parse_job,
                     (source_path, options),
-                    callback=lambda result, job_id=job_id: self.call_from_thread(
-                        self._on_ingest_parse_complete, job_id, result
-                    ),
-                    error_callback=lambda exc: self.call_from_thread(
-                        self._handle_broken_ingest_parse_pool, exc
-                    ),
+                    callback=functools.partial(self._ingest_pool_callback, job_id),
+                    error_callback=self._ingest_pool_error_callback,
                 )
             except Exception as exc:
                 # The pool itself rejected the submission synchronously
@@ -1457,6 +1465,43 @@ class LibraryIngestQueueMixin:
                 # and can't be trusted to ever complete either.
                 self._handle_broken_ingest_parse_pool(exc)
                 return
+
+    def _ingest_pool_callback(self, job_id: str, result: Dict[str, Any]) -> None:
+        """``apply_async`` ``callback``: runs on the pool's result-handler thread.
+
+        Checks ``_ingest_shutdown`` BEFORE marshaling (quit-deadlock
+        guard, Task 4 review): Textual's ``call_from_thread`` blocks the
+        calling thread on the marshaled call's result and only guards
+        against the loop being ``None``, not against it shutting down --
+        and CPython's ``Pool._terminate_pool`` does an unbounded
+        ``result_handler.join()``, with ``_handle_results`` able to run
+        callbacks before it observes TERMINATE. So if a parse completed
+        right as the user quit, this thread could park inside
+        ``call_from_thread`` while the quit path parked waiting on THIS
+        thread inside ``pool.terminate()`` -- mutual deadlock, app hangs
+        on quit. Checking the flag here (on this thread, before any
+        marshaling) narrows that window; running terminate/join off the
+        loop thread entirely (``_shutdown_ingest_parse_pool``) closes it
+        -- with both layers, a callback that slips past this check parks
+        only until the still-free loop drains it (and the marshaled body
+        then no-ops via the same flag inside
+        ``_on_ingest_parse_complete``).
+
+        Args:
+            job_id: Bound at submission time via ``functools.partial`` in
+                ``_top_up_ingest_parse_pool``.
+            result: ``run_parse_job``'s structured return value.
+        """
+        if self._ingest_shutdown:
+            return
+        self.call_from_thread(self._on_ingest_parse_complete, job_id, result)
+
+    def _ingest_pool_error_callback(self, exc: BaseException) -> None:
+        """``apply_async`` ``error_callback``: same thread + shutdown
+        contract as ``_ingest_pool_callback`` (see its docstring)."""
+        if self._ingest_shutdown:
+            return
+        self.call_from_thread(self._handle_broken_ingest_parse_pool, exc)
 
     def _on_ingest_parse_complete(self, job_id: str, result: Dict[str, Any]) -> None:
         """Handle one pool completion (success or structured parse failure).
@@ -1493,20 +1538,28 @@ class LibraryIngestQueueMixin:
         self._top_up_ingest_parse_pool()
 
     def _handle_broken_ingest_parse_pool(self, exc: BaseException) -> None:
-        """Fail every in-flight ``PARSING`` job and drop the broken pool.
+        """Fail every still-mid-parse ``PARSING`` job and drop the broken pool.
 
         UI-thread only. Shared by the pool's ``error_callback`` (an async,
         pool-level failure marshaled via ``call_from_thread`` -- e.g. a
         worker process died) and a synchronous ``apply_async`` submission
         failure in ``_top_up_ingest_parse_pool`` (the pool was already
-        broken when we tried to use it). Either way, every job currently
-        ``PARSING`` was submitted to the SAME pool object and its callback
-        may never fire, so none of them can be trusted to complete --
-        failing all of them (retryable) and dropping the pool reference is
-        the only sound recovery (see the F3 design spec's "Worker-process
-        death" section). The pool is rebuilt lazily by
+        broken when we tried to use it). Either way, a job whose parse is
+        still genuinely in flight on the SAME pool object may never see
+        its callback fire, so it can't be trusted to complete -- failing
+        those (retryable) and dropping the pool reference is the only
+        sound recovery (see the F3 design spec's "Worker-process death"
+        section). The pool is rebuilt lazily by
         ``_create_ingest_parse_pool`` the next time ``_top_up_ingest_parse_pool``
         runs (i.e. on the next submission/retry).
+
+        Payload-ready jobs are SPARED (Task 4 review fix): a job whose
+        parse already completed sits ``PARSING`` with its payload in
+        ``_ingest_parsed_payloads`` until the writer claims it -- it needs
+        nothing further from the pool, so failing it here would throw a
+        finished parse away just because an unrelated worker died. Such
+        jobs are skipped (left ``PARSING`` for the writer), and the writer
+        is woken at the end so they drain even if it had already released.
 
         No-ops once ``self._ingest_shutdown`` is set, same as
         ``_on_ingest_parse_complete``.
@@ -1515,14 +1568,70 @@ class LibraryIngestQueueMixin:
             return
         logger.opt(exception=exc).error(f"Library ingest parse pool failed: {exc}")
         for job in self.library_ingest_jobs.jobs():
-            if job.state == IngestJobState.PARSING:
-                self._ingest_parsed_payloads.pop(job.job_id, None)
-                self.library_ingest_jobs.mark_failed(
-                    job.job_id,
-                    error="Library ingest parse pool failed unexpectedly; retry to resume.",
-                    permanent=False,
-                )
+            if job.state != IngestJobState.PARSING:
+                continue
+            if job.job_id in self._ingest_parsed_payloads:
+                # Parse already finished -- the payload is waiting for the
+                # writer; the broken pool can't hurt this job anymore.
+                continue
+            self.library_ingest_jobs.mark_failed(
+                job.job_id,
+                error="Library ingest parse pool failed unexpectedly; retry to resume.",
+                permanent=False,
+            )
         self._ingest_parse_pool = None
+        if self._ingest_parsed_payloads:
+            self._start_library_ingest_queue_if_idle()
+
+    def _shutdown_ingest_parse_pool(self) -> Optional[threading.Thread]:
+        """Quit-path teardown: flag up, pool detached, terminate off-loop.
+
+        Called from ``TldwCli.on_unmount`` (i.e. on the app's event-loop
+        thread). Synchronously: sets ``_ingest_shutdown = True`` FIRST (so
+        pool callbacks -- ``_ingest_pool_callback``/
+        ``_ingest_pool_error_callback``, running on the pool's
+        result-handler thread -- short-circuit before marshaling from this
+        point on) and drops the ``_ingest_parse_pool`` reference (nothing
+        can submit to it anymore). The actual ``pool.terminate()`` +
+        ``pool.join()`` then run on a detached daemon thread, NEVER on the
+        caller's (loop) thread: CPython's ``Pool._terminate_pool`` does an
+        unbounded ``result_handler.join()``, and if that result-handler
+        thread is at that moment parked inside a ``call_from_thread`` it
+        entered just before the flag went up, joining it from the loop
+        thread would deadlock (the loop can't drain the marshaled call it
+        is itself waiting behind). Off-loop, the loop stays free: the
+        in-flight marshaled call runs, no-ops via the flag, the
+        result-handler thread unblocks, and the join completes. The daemon
+        thread is deliberately not joined by the caller -- worst case it
+        outlives the app briefly and dies with the process.
+
+        Returns:
+            The teardown thread (so tests can bound-join it and assert
+            thread identity), or ``None`` when no pool was ever created --
+            the shutdown flag is still set in that case.
+        """
+        self._ingest_shutdown = True
+        pool = getattr(self, "_ingest_parse_pool", None)
+        self._ingest_parse_pool = None
+        if pool is None:
+            return None
+
+        def _terminate_pool() -> None:
+            try:
+                pool.terminate()
+                pool.join()
+            except Exception:
+                logger.opt(exception=True).error(
+                    "Error terminating the Library ingest parse pool."
+                )
+
+        thread = threading.Thread(
+            target=_terminate_pool,
+            name="library-ingest-pool-terminate",
+            daemon=True,
+        )
+        thread.start()
+        return thread
 
     # -- Writer (claim-or-release loop, narrowed to the write stage) -------
 
@@ -5601,31 +5710,35 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         self._ui_ready = False
         self._stop_ui_responsiveness_monitor()
 
-        # F3: shut down the Library ingest parse pool. Flip the shutdown
-        # flag FIRST -- before touching the pool -- so any pool callback
-        # that was already marshaling onto the UI thread when we got here
-        # (see LibraryIngestQueueMixin._on_ingest_parse_complete /
-        # _handle_broken_ingest_parse_pool) no-ops instead of touching a
-        # closing app. `terminate()` kills every in-flight parse worker
-        # process immediately -- no waiting on a possibly-long
-        # transcription/OCR job -- and `join()` blocks until they're
-        # actually gone, so no parse worker outlives the app process. The
-        # writer (the exclusive `library_ingest_queue` thread worker) is
-        # NOT specially joined here -- it is swept up by the generic worker
-        # cancellation below, same as every other worker (see
-        # Library/library_ingest_jobs.py's module docstring: quitting joins
-        # the writer's in-flight DB write; parses in flight are not waited
-        # for symmetrically).
-        self._ingest_shutdown = True
-        ingest_pool = getattr(self, "_ingest_parse_pool", None)
-        if ingest_pool is not None:
-            try:
-                ingest_pool.terminate()
-                ingest_pool.join()
-            except Exception as e:
-                self.loguru_logger.error(f"Error terminating Library ingest parse pool: {e}")
-            finally:
-                self._ingest_parse_pool = None
+        # F3: shut down the Library ingest parse pool. Final shutdown
+        # order, explicit (Task 4 review):
+        #   1. `_ingest_shutdown = True` + pool reference detached
+        #      (synchronous, inside `_shutdown_ingest_parse_pool`) -- pool
+        #      callbacks short-circuit on their own thread before
+        #      marshaling from this point on.
+        #   2. `pool.terminate()` + `pool.join()` on a detached daemon
+        #      thread, NEVER this (loop) thread -- terminating inline here
+        #      could deadlock against a result-handler thread parked inside
+        #      `call_from_thread` (see `_shutdown_ingest_parse_pool`'s
+        #      docstring). `terminate()` kills every in-flight parse worker
+        #      process immediately -- no waiting on a possibly-long
+        #      transcription/OCR job.
+        #   3. The writer (the exclusive `library_ingest_queue` thread
+        #      worker) is swept up by the generic worker cancellation
+        #      below, same as every other worker.
+        # The spec words the quit contract writer-then-pool; here pool
+        # teardown is *initiated* first but runs concurrently with the
+        # writer sweep, which is equivalent and safe because the two stages
+        # share no resources: parse workers never touch `media_db`, the
+        # writer never touches the pool, and any late parse completion
+        # no-ops via the flag from step 1. The writer's in-flight DB write
+        # still completes (see Library/library_ingest_jobs.py's module
+        # docstring: quitting joins the writer's in-flight DB write; parses
+        # in flight are not waited for symmetrically).
+        try:
+            self._shutdown_ingest_parse_pool()
+        except Exception as e:
+            self.loguru_logger.error(f"Error shutting down Library ingest parse pool: {e}")
 
         # Stop all background services and threads
         try:
