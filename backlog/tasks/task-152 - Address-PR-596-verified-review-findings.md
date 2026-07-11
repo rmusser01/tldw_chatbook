@@ -39,11 +39,11 @@ Correct all reproducible correctness data-loss concurrency runtime search and te
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-ADR required: no
+ADR required: yes
 
-ADR path: N/A
+ADR path: `backlog/decisions/013-media-search-plain-text-fts-boundary.md`
 
-Reason: Regression fixes implement existing pool/single-writer and fresh-screen state contracts; no new boundary, dependency, schema, or policy is introduced.
+Reason: ADR-013 records the narrow optional media-search contract that preserves raw `LIKE` text while supplying a separate safe FTS `MATCH` expression. The other changes implement existing contracts.
 
 Spec: `Docs/superpowers/specs/2026-07-11-pr-596-review-fixes-design.md`
 

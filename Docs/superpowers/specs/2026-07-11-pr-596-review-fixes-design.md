@@ -70,6 +70,8 @@ Run the focused ingestion, navigation, Library, Settings, Search/RAG, document-p
 
 ## ADR check
 
-ADR required: no  
-ADR path: N/A  
-Reason: these are regression fixes that implement the already approved pool/single-writer design and existing fresh-screen state seams. They do not introduce a new storage model, service contract, dependency, security policy, or runtime boundary.
+ADR required: yes
+
+ADR path: `backlog/decisions/013-media-search-plain-text-fts-boundary.md`
+
+Reason: most changes are direct regression fixes, but preserving raw media `LIKE` text while supplying a safe FTS `MATCH` expression adds a narrow optional cross-module search contract. ADR-013 records that boundary and why globally quoting the existing query was rejected.

@@ -12,9 +12,11 @@
 
 **Backlog:** `backlog/tasks/task-152 - Address-PR-596-verified-review-findings.md`
 
-**ADR required:** no  
-**ADR path:** N/A  
-**Reason:** Regression fixes implement existing pool/single-writer and fresh-screen state contracts; no new boundary, dependency, schema, or policy is introduced.
+**ADR required:** yes
+
+**ADR path:** `backlog/decisions/013-media-search-plain-text-fts-boundary.md`
+
+**Reason:** ADR-013 records the optional raw-text/FTS-expression parameter threaded through the local media search boundary; all other work remains direct regression repair.
 
 ---
 
@@ -164,6 +166,9 @@ Expected: all pass and no edit-loss path remains.
 **Files:**
 - Modify: `tldw_chatbook/Library/library_local_rag_search_service.py`
 - Modify: `Tests/Library/test_library_local_rag_search_service.py`
+- Modify: `tldw_chatbook/Media/local_media_reading_service.py`
+- Modify: `tldw_chatbook/DB/Client_Media_DB_v2.py`
+- Modify: relevant media DB/service tests
 - Modify: `tldw_chatbook/Local_Ingestion/Document_Processing_Lib.py`
 - Modify: `Tests/Local_Ingestion/test_ocr_backend_self_heal.py` or closest document-processing test
 
@@ -177,7 +182,7 @@ Run the exact tests. Expected: punctuation returns no result and automatic broke
 
 - [ ] **Step 3: Quote only raw FTS boundaries**
 
-Create a small pure helper that splits plain input on whitespace and emits double-quoted FTS phrases with embedded quotes doubled. Apply it only to seams that pass directly to SQLite FTS `MATCH`; do not quote service seams that already accept plain text.
+Create a small pure helper that splits plain input on whitespace and emits double-quoted FTS phrases with embedded quotes doubled. Conversations receive the safe expression at their raw FTS boundary. For media, follow ADR-013: keep `search_query` raw for `LIKE`, thread an optional `fts_match_query` through the local media-reading service, and use only that override for SQLite `MATCH`. Existing callers default to their current single-query behavior. Do not quote notes/service seams that already accept plain text.
 
 - [ ] **Step 4: Restore automatic native fallback**
 
