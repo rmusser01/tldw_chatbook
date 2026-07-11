@@ -367,14 +367,6 @@ SEARCH_NAV_WEB_SEARCH = "search-nav-web-search"
 SEARCH_NAV_EMBEDDINGS_CREATE = "search-nav-embeddings-create"
 SEARCH_NAV_EMBEDDINGS_MANAGE = "search-nav-embeddings-manage"
 
-CACHEABLE_SCREEN_ROUTES = {
-    TAB_CHAT,
-    TAB_LIBRARY,
-    TAB_MEDIA,
-    TAB_SEARCH,
-    TAB_SETTINGS,
-}
-
 DEFERRED_AUDIO_SERVICE_DELAY_SECONDS = 0.1
 DEFERRED_DB_SIZE_UPDATE_DELAY_SECONDS = 0.1
 DEFERRED_MEDIA_CLEANUP_DELAY_SECONDS = 5.0
@@ -2188,7 +2180,6 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         
         # Tab switching optimization
         self._initialized_tabs = set()  # Track which tabs have been initialized
-        self._screen_cache: dict[str, Any] = {}
         
         # Reduce logging in production
         if not os.environ.get("TLDW_DEBUG"):
@@ -2506,7 +2497,6 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             subview: The retired Notes tab's workspace subview. Accepted for
                 backward compatibility; no longer applied.
         """
-        self.invalidate_screen_cache()
         self.post_message(NavigateToScreen(TAB_LIBRARY, {LIBRARY_NAV_CONTEXT_MODE: "notes"}))
 
     def open_chat_with_handoff(
@@ -2731,20 +2721,9 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 # Home's ingest-jobs Running/Needs Attention rows one-hop
                 # back to the Library ingest canvas via the nav-context
                 # contract instead of a bare route (mirrors the
-                # subscriptions staging special-case above).
-                #
-                # Drop the cached Library screen first (mirrors
-                # ``open_notes_workspace``'s ``invalidate_screen_cache``):
-                # Library is a CACHEABLE route, so without this the deep
-                # link switches to the already-mounted-then-unmounted cached
-                # instance, which fails to repaint -- the app's screen stack
-                # advances to Library (logs confirm the switch) but the
-                # terminal keeps showing Home. Study (the flashcards deep
-                # link) never hit this because TAB_STUDY is not cacheable and
-                # always builds a fresh screen. Forcing a fresh Library
-                # screen restores the clean compose+mount+repaint that the
-                # ingest canvas landing depends on.
-                self.invalidate_screen_cache({TAB_LIBRARY})
+                # subscriptions staging special-case above). Navigation
+                # always composes a fresh Library screen, so the deep link
+                # lands on a cleanly mounted, repainted ingest canvas.
                 self.post_message(
                     NavigateToScreen("library", {LIBRARY_NAV_CONTEXT_INGEST: True})
                 )
@@ -3769,11 +3748,9 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 )
                 if callable(invalidate_for_server_switch):
                     invalidate_for_server_switch(previous_server_id, updated_state.active_server_id)
-                self.invalidate_screen_cache()
             else:
                 self.current_runtime_backend = normalized_backend
                 self.runtime_backend = normalized_backend
-                self.invalidate_screen_cache()
 
         resolved_backend = normalized_backend
         runtime_state = getattr(getattr(self, "runtime_policy", None), "state", None)
@@ -4262,40 +4239,21 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         """Normalize navigation aliases to a routed screen id and canonical current_tab value."""
         return resolve_screen_target(target)
 
-    def invalidate_screen_cache(self, routes: set[str] | None = None) -> None:
-        """Clear cached destination screens after context changes."""
-        cache = getattr(self, "_screen_cache", None)
-        if not cache:
-            return
-        if routes is None:
-            cache.clear()
-            logger.debug("Cleared all cached destination screens")
-            return
-        for route in routes:
-            cache.pop(route, None)
-        logger.debug(f"Cleared cached destination screens: {sorted(routes)}")
+    def _create_navigation_screen(self, screen_name: str, screen_class: type):
+        """Build a FRESH screen instance for every navigation.
 
-    def _get_or_create_navigation_screen(self, screen_name: str, screen_class: type):
-        """Return a cached screen for allowlisted routes, otherwise build a fresh screen."""
-        if screen_name not in CACHEABLE_SCREEN_ROUTES:
-            return screen_class(self)
-
-        cache = getattr(self, "_screen_cache", None)
-        if cache is None:
-            cache = self._screen_cache = {}
-
-        cached_screen = cache.get(screen_name)
-        if cached_screen is not None:
-            try:
-                if cached_screen is self.screen:
-                    return screen_class(self)
-            except Exception:
-                pass
-            return cached_screen
-
-        new_screen = screen_class(self)
-        cache[screen_name] = new_screen
-        return new_screen
+        Screens must never be cached and re-mounted: ``switch_screen``
+        unmounts the outgoing screen, and re-mounting a previously-unmounted
+        instance races its still-in-flight teardown under rapid tab
+        switching -- child message pumps end up permanently stopped while
+        the widgets stay attached (``mounted=True``), the compositor keeps
+        presenting a stale frame, and every subsequent click is hit-tested
+        into the dead tree and silently swallowed: a total, exception-free
+        UI freeze (root-caused 2026-07-11). UX continuity across visits is
+        the job of ``_screen_states`` (``save_state``/``restore_state``),
+        not instance reuse.
+        """
+        return screen_class(self)
 
     def _valid_startup_route_ids(self) -> set[str]:
         """Return route ids allowed in startup config during the shell migration."""
@@ -4355,7 +4313,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 logger.error(f"Error saving screen state: {e}")
         
         if screen_class:
-            new_screen = self._get_or_create_navigation_screen(screen_name, screen_class)
+            new_screen = self._create_navigation_screen(screen_name, screen_class)
             
             # Restore state if available
             if hasattr(self, '_screen_states') and screen_name in self._screen_states:

@@ -161,7 +161,6 @@ async def test_app_level_runtime_backend_change_refreshes_media_ingest_screen_wi
         runtime_backend="server",
         media_runtime_state=MediaRuntimeState(runtime_backend="server"),
         screen=None,
-        invalidate_screen_cache=Mock(),
     )
     screen = MediaIngestScreen(app_instance=app_like)
     screen.media_ingest_window = SimpleNamespace(

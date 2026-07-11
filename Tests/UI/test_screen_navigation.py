@@ -437,7 +437,18 @@ def test_legacy_tools_settings_route_uses_mcp_context():
 
 
 @pytest.mark.asyncio
-async def test_cacheable_screen_navigation_reuses_constructed_screen_instance(monkeypatch):
+async def test_screen_navigation_always_constructs_fresh_instances(monkeypatch):
+    """Regression lock for the rapid-tab-switch freeze (2026-07-11).
+
+    Navigation used to cache Screen INSTANCES for allowlisted routes and
+    re-mount them after ``switch_screen`` had already unmounted them. Under
+    rapid switching the re-mount interleaved with the still-in-flight
+    unmount, leaving zombie widgets (``mounted=True`` with stopped message
+    pumps), a compositor stuck on a stale frame, and an app that silently
+    swallowed every subsequent click -- a permanent, exception-free freeze.
+    Every navigation must therefore construct a FRESH screen instance; this
+    test fails if instance reuse ever returns.
+    """
     app = _build_test_app()
     constructed = {"chat": 0, "library": 0}
 
@@ -477,8 +488,57 @@ async def test_cacheable_screen_navigation_reuses_constructed_screen_instance(mo
         await app.handle_screen_navigation(NavigateToScreen("library"))
         await app.handle_screen_navigation(NavigateToScreen("chat"))
 
-    assert constructed == {"chat": 1, "library": 1}
-    assert switched_screens[0] is switched_screens[2]
+    assert constructed == {"chat": 2, "library": 1}
+    assert switched_screens[0] is not switched_screens[2]
+
+
+async def test_rapid_tab_switch_storm_leaves_no_zombie_widgets():
+    """Live-repro regression lock for the rapid-tab-switch freeze.
+
+    Storm real navigation across real screens with no settling pauses, then
+    assert the app is still responsive and the active screen's widget tree
+    contains no zombie widgets (attached but with a stopped message pump) --
+    the wedged state the instance cache used to produce, where the compositor
+    froze on a stale frame and dead pumps swallowed every click.
+    """
+    app = _build_test_app()
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        # Wait for the app's own initial navigation screen before storming --
+        # in production the nav bar only exists once that screen is mounted,
+        # so a pre-boot NavigateToScreen is unreachable by real input.
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ != "Screen":
+                break
+        assert type(app.screen).__name__ != "Screen", "app never mounted its initial screen"
+        routes = ("home", "library", "workflows", "schedules")
+        for _round in range(3):
+            for route in routes:
+                app.post_message(NavigateToScreen(route))
+                await pilot.pause(0)
+        # Let the queued switches drain, then prove the app still navigates.
+        app.post_message(NavigateToScreen("library"))
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ == "LibraryScreen" and app.screen.is_running:
+                break
+        assert type(app.screen).__name__ == "LibraryScreen"
+        assert app.screen.is_running
+        zombies = [
+            widget
+            for widget in app.screen.walk_children()
+            if not widget.is_running
+        ]
+        assert not zombies, f"zombie widgets on active screen: {zombies[:5]}"
+        # One more hop for responsiveness.
+        app.post_message(NavigateToScreen("home"))
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ == "HomeScreen":
+                break
+        assert type(app.screen).__name__ == "HomeScreen"
+        assert app.screen.is_running
 
 
 def _build_test_app(configured_default: str | None = None) -> TldwCli:
