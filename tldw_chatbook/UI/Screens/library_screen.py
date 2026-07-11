@@ -3445,18 +3445,25 @@ class LibraryScreen(BaseAppScreen):
         )
         if outcome["success"]:
             self._marshal_library_export_success(
-                run_id, outcome["path"], outcome["dependency_info"]
+                run_id,
+                outcome["path"],
+                outcome["dependency_info"],
+                bool(outcome["registry_recorded"]),
             )
         else:
             self._marshal_library_export_failure(run_id, outcome["message"])
 
     def _marshal_library_export_success(
-        self, run_id: int, path: str, dependency_info: Any
+        self, run_id: int, path: str, dependency_info: Any, registry_recorded: bool
     ) -> None:
         """Marshal a successful run onto the UI thread (called from the worker)."""
         try:
             self.app.call_from_thread(
-                self._apply_library_export_success, run_id, path, dependency_info
+                self._apply_library_export_success,
+                run_id,
+                path,
+                dependency_info,
+                registry_recorded,
             )
         except RuntimeError:
             pass
@@ -3471,7 +3478,7 @@ class LibraryScreen(BaseAppScreen):
             pass
 
     def _apply_library_export_success(
-        self, run_id: int, path: str, dependency_info: Any
+        self, run_id: int, path: str, dependency_info: Any, registry_recorded: bool
     ) -> None:
         """UI-thread completion: notify, clear running/error, update the form.
 
@@ -3481,9 +3488,22 @@ class LibraryScreen(BaseAppScreen):
         non-empty (``ChatbookCreator``'s own dependency_info contract; see
         ``chatbook_creator.py``'s docstring).
 
+        ``registry_recorded=False`` (the zip succeeded but the
+        ``create_chatbook`` registry step failed -- see
+        ``_run_library_export_via_service``) fires a SECOND, warning-
+        severity notification: without it the export silently never
+        appears under Artifacts/Home and the user has no way to know why.
+        It fires alongside the primary notification, BEFORE the staleness
+        guard, deliberately: both report persistent facts about what
+        actually happened on disk/in the registry, independent of which
+        canvas the user is now looking at -- and the warning matters MOST
+        for a superseded run, since a user who already navigated away
+        would otherwise never learn the artifact is missing from
+        Artifacts.
+
         ``run_id`` is compared against the live ``_library_export_run_id``
         BEFORE any state/DOM mutation: an export genuinely finished, so the
-        notification always fires, but a run the user has since navigated
+        notifications always fire, but a run the user has since navigated
         away from (see ``_library_export_run_id``'s docstring) must not
         stomp ``_library_export_running``/``_error``/``_status`` or the
         canvas DOM out from under whatever the user is now looking at.
@@ -3503,6 +3523,12 @@ class LibraryScreen(BaseAppScreen):
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
             notify(message, severity="information")
+            if not registry_recorded:
+                notify(
+                    "Export saved, but couldn't be registered — it won't "
+                    "appear under Artifacts.",
+                    severity="warning",
+                )
         if run_id != self._library_export_run_id:
             return
         self._library_export_running = False

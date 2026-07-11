@@ -9203,7 +9203,13 @@ class _FakeLibraryExportService:
     gated-fake convention used throughout this file).
     """
 
-    def __init__(self, *, export_result=None, gate: "threading.Event | None" = None):
+    def __init__(
+        self,
+        *,
+        export_result=None,
+        gate: "threading.Event | None" = None,
+        create_error: "Exception | None" = None,
+    ):
         self.export_calls: list[dict] = []
         self.create_calls: list[dict] = []
         self._export_result = (
@@ -9212,6 +9218,7 @@ class _FakeLibraryExportService:
             else {"success": True, "message": "", "path": "", "dependency_info": {}}
         )
         self._gate = gate
+        self._create_error = create_error
 
     async def export_chatbook(self, request_data):
         if self._gate is not None:
@@ -9225,6 +9232,8 @@ class _FakeLibraryExportService:
 
     async def create_chatbook(self, **kwargs):
         self.create_calls.append(kwargs)
+        if self._create_error is not None:
+            raise self._create_error
         return {"chatbook_id": 1, **kwargs}
 
 
@@ -9723,4 +9732,83 @@ async def test_library_shell_export_submit_missing_service_surfaces_error_and_re
         error_widget = screen.query_one("#library-export-error-line", Static)
         assert error_widget.display is True
         assert str(error_widget.renderable) == "Chatbook export service unavailable."
+        assert screen.query_one("#library-export-submit", Button).disabled is False
+
+
+@pytest.mark.asyncio
+async def test_library_shell_export_registry_failure_warns_it_wont_appear_in_artifacts(
+    tmp_path,
+):
+    """REVIEW FIX (F4 Task 3): a successful zip whose ``create_chatbook``
+    registry step fails is still an overall SUCCESS (the artifact exists
+    on disk -- zip-first semantics), but the user must be TOLD the
+    bookkeeping failed, or the export silently never appears under
+    Artifacts/Home with no explanation. Asserts BOTH notifications fire
+    in order -- the primary success info, then the registry-failure
+    warning -- and that the form still lands in the clean success state
+    (no error line: the export itself did not fail)."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    app.media_db = MediaDatabase(":memory:", client_id="export-regfail-media")
+    app.media_db.add_media_with_keywords(title="M1", content="c1", media_type="video")
+    app.chachanotes_db = CharactersRAGDB(":memory:", client_id="export-regfail-ccn")
+
+    service = _FakeLibraryExportService(
+        export_result={
+            "success": True,
+            "message": "ok",
+            "path": "",
+            "dependency_info": {},
+        },
+        create_error=RuntimeError("registry disk full"),
+    )
+    app.local_chatbook_service = service
+    notified = []
+    app.notify = lambda message, **kwargs: notified.append((message, kwargs))
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}").press()
+        await _wait_for_selector(screen, pilot, "#library-export-destination")
+        for _ in range(150):
+            if screen._library_export_counts is not None:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Export counts never landed.")
+        screen.refresh(recompose=True)
+        await pilot.pause()
+
+        screen._apply_library_export_destination(tmp_path / "out")
+        await pilot.pause()
+
+        screen.query_one("#library-export-submit", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        for _ in range(150):
+            if screen._library_export_running is False:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Export run never completed.")
+        await pilot.pause()
+
+        # The registry step was genuinely attempted (zip-first ordering)...
+        assert len(service.create_calls) == 1
+        # ...and BOTH notifications fired, in order: the primary success
+        # info, then the registry-failure warning.
+        assert len(notified) == 2
+        assert notified[0][0] == f"Exported chatbook to {tmp_path / 'out.zip'}"
+        assert notified[0][1].get("severity") == "information"
+        assert notified[1][0] == (
+            "Export saved, but couldn't be registered — it won't appear under Artifacts."
+        )
+        assert notified[1][1].get("severity") == "warning"
+        # Still an overall success: no error line, form back to clean state.
+        assert screen._library_export_error == ""
+        assert screen.query_one("#library-export-error-line", Static).display is False
         assert screen.query_one("#library-export-submit", Button).disabled is False
