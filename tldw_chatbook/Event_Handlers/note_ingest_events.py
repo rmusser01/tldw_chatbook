@@ -15,6 +15,7 @@ from textual.containers import VerticalScroll
 
 # Local Imports
 from ..DB.ChaChaNotes_DB import ConflictError as ChaChaConflictError, CharactersRAGDBError
+from ..UI.Screens.library_screen import LibraryScreen
 from ..Utils.note_importers import note_importer_registry, ParsedNote
 from ..Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
 from .ingest_utils import (
@@ -446,6 +447,23 @@ async def handle_ingest_notes_import_now_button_pressed(app: 'TldwCli', event: B
             except QueryError:
                 logger.error("Failed to find #chat-notes-collapsible widget for refresh after note import.")
 
+            # T167: the Library notes canvas composes fresh on every visit
+            # (so a later visit already sees the imported notes), but if
+            # Library is *already* the mounted/active screen while the
+            # import runs, nothing else pokes it to reload -- so its list
+            # would silently go stale until the user navigates away and
+            # back. Trigger its local-source snapshot refresh directly,
+            # guarded with isinstance since the active screen is usually
+            # NOT Library (e.g. the user is on the Ingest tab importing).
+            screen = getattr(app, "screen", None)
+            if isinstance(screen, LibraryScreen):
+                try:
+                    screen._refresh_local_source_snapshot()
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        "Failed to refresh Library notes snapshot after note import."
+                    )
+
     def on_import_failure_notes(error: Exception):
         import_type = "template" if import_as_templates else "note"
         logger.opt(exception=True).error(f"{import_type.capitalize()} import worker failed critically: {error}")
@@ -458,8 +476,29 @@ async def handle_ingest_notes_import_now_button_pressed(app: 'TldwCli', event: B
             logger.error("Failed to find #ingest-notes-import-status-area in on_import_failure_notes.")
         app.notify(f"{import_type.capitalize()} import CRITICALLY failed: {error}", severity="error", timeout=10)
 
+    async def _run_note_import_worker_and_dispatch() -> List[Dict[str, Any]]:
+        # T167: `on_import_success_notes`/`on_import_failure_notes` above
+        # were previously dead code -- nothing in this module or app.py's
+        # generic worker-state dispatch (`on_worker_state_changed` ->
+        # `WorkerHandlerRegistry`, whose only groups are "api_calls",
+        # "ollama_api", "model_download", "transformers_download") ever
+        # invoked them for the "file_operations" group this worker runs
+        # in, so the post-import status-area summary, the chat-notes
+        # sidebar refresh, and (now) the Library notes-canvas refresh
+        # never actually fired. Since this worker is a plain coroutine
+        # (no `thread=True`), it runs on the main event loop, so calling
+        # these UI-touching callbacks directly here -- rather than relying
+        # on that dead dispatch path -- is safe.
+        try:
+            results = await import_worker_notes()
+        except Exception as e:
+            on_import_failure_notes(e)
+            raise
+        on_import_success_notes(results)
+        return results
+
     app.run_worker(
-        import_worker_notes,
+        _run_note_import_worker_and_dispatch,
         name="note_import_worker",
         group="file_operations",
         description="Importing selected note files."

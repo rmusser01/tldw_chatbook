@@ -1964,10 +1964,14 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     }
 
     ALL_INGEST_VIEW_IDS = INGEST_VIEW_IDS
+    # T169: "notes-window" removed -- no widget composes that id anymore (the
+    # standalone Notes tab / Notes_Window.py it belonged to is gone, replaced
+    # by the Library workbench's Notes canvas), confirmed via
+    # `grep -rn 'id="notes-window"' tldw_chatbook/`.
     ALL_MAIN_WINDOW_IDS = [ # Assuming these are your main content window IDs
-        "chat-window", "conversations_characters_prompts-window", "notes-window",
+        "chat-window", "conversations_characters_prompts-window",
         "ingest-window", "tools_settings-window", "llm_management-window",
-        "media-window", "search-window", "logs-window", "stats-window", "evals-window", 
+        "media-window", "search-window", "logs-window", "stats-window", "evals-window",
         "coding-window", "stts-window", "study-window", "chatbooks-window", "customize-window"
     ]
 

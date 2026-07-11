@@ -48,7 +48,13 @@ CSS_MODULES = [
     "features/_tools-settings.tcss",
     "features/_ingest.tcss",
     "features/_ingest_tldw_api_tabs.tcss",
-    "features/_evaluation_v2.tcss",
+    # NOTE: "features/_evaluation_v2.tcss" was removed from the tree back in
+    # ac937dab ("f", Aug 2025) when the Evals dashboard was consolidated
+    # into _evaluation_unified.tcss below; this manifest entry was left
+    # dangling (build_css.py has warned "Missing module" on every build
+    # since). No Python source references "_evaluation_v2" (grepped
+    # tldw_chatbook/**/*.py) -- T169 dropped the stale entry rather than
+    # restoring a file nothing needs.
     "features/_evaluation_unified.tcss",
     "features/_metrics.tcss",
     "features/_embeddings.tcss",

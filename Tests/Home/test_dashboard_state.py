@@ -310,6 +310,52 @@ def test_dashboard_item_statuses_gate_matching_controls():
     assert "home-open-in-console" not in control_ids
 
 
+# --- T154: Home Pause has no wired action for Library ingest jobs -- suppress
+# it when the selected item is one (item_id starts "local:ingest:", the same
+# marker active_work_adapter._is_local_ingest_job_id uses), while a regular
+# (non-ingest) running item keeps its Pause control. ----
+
+
+def test_build_home_controls_suppresses_pause_for_selected_ingest_item():
+    ingest_item = HomeActiveWorkItem(
+        item_id="local:ingest:job-1",
+        title="Importing report.pdf",
+        source="Library",
+        status="parsing",
+        detail_route="library",
+    )
+    state = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        active_work_items=(ingest_item,),
+    )
+
+    controls = build_home_controls(state, selected_row_id=ingest_item.item_id, selected_item=ingest_item)
+
+    control_ids = {control.control_id for control in controls}
+    assert "home-pause" not in control_ids
+
+
+def test_build_home_controls_keeps_pause_for_selected_non_ingest_running_item():
+    running_item = HomeActiveWorkItem(
+        item_id="run-1",
+        title="Daily digest",
+        source="workflows",
+        status="running",
+        detail_route="workflows",
+    )
+    state = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        active_work_items=(running_item,),
+    )
+
+    controls = build_home_controls(state, selected_row_id=running_item.item_id, selected_item=running_item)
+
+    control_ids = {control.control_id for control in controls}
+    assert "home-pause" in control_ids
+
+
 # --- F3: Library ingest jobs' "parsing"/"writing" status literals map into
 # the shared Running category, same as any other subsystem's "running". ----
 
