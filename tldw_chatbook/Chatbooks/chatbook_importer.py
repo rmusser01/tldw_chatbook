@@ -812,25 +812,35 @@ class ChatbookImporter:
                         content = f.read()
                 
                 # Prepare media data for import
-                keywords = media_data.get('metadata', {}).get('media_keywords', '')
-                if isinstance(keywords, list):
-                    keywords = ', '.join(keywords)
-                
-                # Add media to database
+                keywords_raw = media_data.get('metadata', {}).get('media_keywords', '')
+                if isinstance(keywords_raw, str):
+                    keywords = [word.strip() for word in keywords_raw.split(',') if word.strip()]
+                else:
+                    keywords = [str(word).strip() for word in (keywords_raw or []) if str(word).strip()]
+
+                # Add media to database. NOTE: this call previously used
+                # three parameter names that do not exist on
+                # ``MediaDatabase.add_media_with_keywords`` (``media_keywords``
+                # instead of ``keywords``, ``summary`` instead of
+                # ``analysis_content``) -- both raised ``TypeError`` for
+                # every media import -- and treated its return value as a
+                # bare id when it is actually a
+                # ``(media_id, message, status)`` tuple, so even a fixed
+                # call would have miscounted every import as successful.
                 try:
-                    new_media_id = db.add_media_with_keywords(
+                    new_media_id, _add_message, _add_status = db.add_media_with_keywords(
                         url=url,
                         title=title,
                         media_type=media_data.get('media_type'),
                         content=content or media_data.get('content', ''),
-                        media_keywords=keywords,
+                        keywords=keywords,
                         prompt=media_data.get('metadata', {}).get('prompt'),
-                        summary=media_data.get('metadata', {}).get('summary'),
+                        analysis_content=media_data.get('metadata', {}).get('summary'),
                         transcription_model=media_data.get('metadata', {}).get('transcription_model'),
                         author=media_data.get('author'),
                         ingestion_date=media_data.get('metadata', {}).get('ingestion_date')
                     )
-                    
+
                     if new_media_id:
                         status.successful_items += 1
                         logger.info(f"Imported media: {title}")

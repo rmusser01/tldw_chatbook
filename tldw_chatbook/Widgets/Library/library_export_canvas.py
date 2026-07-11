@@ -112,20 +112,28 @@ class LibraryExportCanvas(VerticalScroll):
                 classes="library-export-quiet-line",
                 markup=False,
             )
-        if state.status_line:
-            yield Static(
-                state.status_line,
-                id="library-export-status-line",
-                classes="library-export-quiet-line",
-                markup=False,
-            )
-        if state.error_line:
-            yield Static(
-                state.error_line,
-                id="library-export-error-line",
-                classes="destination-purpose",
-                markup=False,
-            )
+        # Always composed (display-toggled, never conditionally yielded) --
+        # same reasoning as the empty-scope helper above: a running export's
+        # completion (success or failure) updates these two lines IN PLACE
+        # (never a recompose), so both must already be mounted for that
+        # targeted update to find them. See
+        # ``LibraryScreen._update_library_export_canvas_after_run``.
+        status_line = Static(
+            state.status_line,
+            id="library-export-status-line",
+            classes="library-export-quiet-line",
+            markup=False,
+        )
+        status_line.display = bool(state.status_line)
+        yield status_line
+        error_line = Static(
+            state.error_line,
+            id="library-export-error-line",
+            classes="destination-purpose",
+            markup=False,
+        )
+        error_line.display = bool(state.error_line)
+        yield error_line
         yield Button(
             EXPORT_BUTTON_COPY,
             id="library-export-submit",

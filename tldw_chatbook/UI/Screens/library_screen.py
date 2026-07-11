@@ -21,6 +21,7 @@ from textual.timer import Timer
 from textual.widgets import Button, Collapsible, Input, Static, TextArea
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
+from ...Chatbooks.chatbook_models import ContentType
 from ...config import get_cli_setting, save_setting_to_cli_config
 from ...Constants import (
     LIBRARY_MODE_CONVERSATIONS,
@@ -34,7 +35,11 @@ from ...DB.ChaChaNotes_DB import ConflictError
 from ...Library.library_collections_service import LibraryCollectionsServiceError
 from ...Library.library_collections_state import LibraryCollectionsPanelState
 from ...Library.library_conversations_state import build_library_conversations_state
-from ...Library.library_export_scope import ExportScope, count_export_scope
+from ...Library.library_export_scope import (
+    ExportScope,
+    count_export_scope,
+    resolve_export_selections,
+)
 from ...Library.library_export_state import (
     DEFAULT_MEDIA_QUALITY,
     LibraryExportFormState,
@@ -619,6 +624,29 @@ class LibraryScreen(BaseAppScreen):
         self._library_export_form: dict[str, Any] = self._default_library_export_form()
         self._library_export_running: bool = False
         self._library_export_error: str = ""
+        # Task 3: the running export's quiet status line ("Exporting…
+        # (N items)"); no backing field existed after Task 2 (its report
+        # flagged this as the natural next attr). Cleared alongside
+        # ``_library_export_error`` on every canvas reset and on run
+        # completion.
+        self._library_export_status: str = ""
+        # Task 3 review fix: a monotonic token identifying the CURRENT
+        # export attempt. Bumped both when a new export starts
+        # (``handle_library_export_submit``) and whenever the export
+        # canvas's transient state is reset out from under an in-flight
+        # run (``_reset_library_export_transient_state`` -- reachable via
+        # any rail-row switch or "Export…" section action while a worker
+        # is still executing on its own OS thread, which cannot be
+        # preempted mid-``asyncio.run`` by ``Worker.cancel()``). The
+        # worker captures the token at dispatch time and the completion
+        # handlers compare it back against the live value before mutating
+        # ``_library_export_running``/``_library_export_error``/
+        # ``_library_export_status`` or touching the DOM -- an orphaned
+        # run's late completion still notifies (the export genuinely
+        # happened) but can never stomp whatever the user is now looking
+        # at, mirroring ``_apply_library_export_counts``'s scope-mismatch
+        # staleness guard for the sibling counts worker.
+        self._library_export_run_id: int = 0
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -2961,6 +2989,15 @@ class LibraryScreen(BaseAppScreen):
         time (mirrors the ingest form's own from-scratch reset), never
         carrying a previous visit's edited name forward.
 
+        Also invalidates any export run still executing on its own OS
+        thread (bumps ``_library_export_run_id``) -- navigating away mid-
+        run resets ``running`` to ``False`` for THIS fresh visit, but the
+        abandoned worker keeps running regardless (it cannot be preempted
+        mid-``asyncio.run``); bumping the token here ensures that worker's
+        eventual completion is recognized as stale and cannot stomp
+        whatever the user is looking at by the time it lands. See
+        ``_library_export_run_id``'s docstring in ``__init__``.
+
         Args:
             scope: The scope to open the canvas with; defaults to
                 ``ExportScope(kind="everything")`` when omitted.
@@ -2970,6 +3007,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_export_form = self._default_library_export_form()
         self._library_export_running = False
         self._library_export_error = ""
+        self._library_export_status = ""
+        self._library_export_run_id += 1
 
     async def _open_library_export_canvas(self, scope: ExportScope) -> None:
         """Open the export canvas pre-scoped to a browse section's own filter.
@@ -3137,9 +3176,401 @@ class LibraryScreen(BaseAppScreen):
             destination=str(form.get("destination", "")),
             destination_exists=bool(form.get("destination_exists", False)),
             running=self._library_export_running,
-            status_line="",
+            status_line=self._library_export_status,
             error_line=self._library_export_error,
         )
+
+    # ----- Export canvas: execution (Task 3) ------------------------------
+
+    @on(Button.Pressed, "#library-export-submit")
+    def handle_library_export_submit(self, event: Button.Pressed) -> None:
+        """Validate and kick off the chatbook export worker.
+
+        Re-validates on the UI thread (destination chosen, scope non-empty,
+        not already running) rather than trusting the button's ``disabled``
+        state alone. A second press while an export is already running is a
+        guarded no-op here (``self._library_export_running``) -- on top of
+        the button itself being disabled while running and the worker's own
+        ``group="library_export"``/``exclusive=True`` single-flight, this is
+        belt-and-suspenders against a stale/racing ``Pressed`` event.
+
+        The transition INTO ``running`` is the one place this feature uses
+        a full recompose rather than a targeted update (see
+        ``_update_library_export_canvas_after_run``'s docstring for the
+        reverse transition's targeted-update discipline): the user's last
+        action was clicking this button, not typing, so nothing is
+        mid-keystroke -- unlike the counts-landing case Task 2 fixed, or
+        the run-completion case below, where the (long-running) wait window
+        gives the user time to resume typing in the still-editable name/
+        description fields.
+        """
+        event.stop()
+        if self._library_export_running:
+            return
+        form = self._library_export_form
+        destination = str(form.get("destination", "")).strip()
+        counts = self._library_export_counts
+        total = sum(counts.values()) if counts else 0
+        if not destination or total <= 0:
+            return
+        name = str(form.get("name", "")).strip() or "Chatbook"
+        description = str(form.get("description", ""))
+        media_quality = str(form.get("quality", DEFAULT_MEDIA_QUALITY))
+        self._library_export_running = True
+        self._library_export_error = ""
+        self._library_export_status = f"Exporting… ({total} items)"
+        self._library_export_run_id += 1
+        run_id = self._library_export_run_id
+        self.refresh(recompose=True)
+        self._start_library_export_worker(
+            run_id=run_id,
+            scope=self._library_export_scope,
+            name=name,
+            description=description,
+            media_quality=media_quality,
+            destination=destination,
+        )
+
+    def _start_library_export_worker(
+        self,
+        *,
+        run_id: int,
+        scope: ExportScope,
+        name: str,
+        description: str,
+        media_quality: str,
+        destination: str,
+    ) -> None:
+        """Resolve selections (memory-DB-safe), then dispatch the real export worker.
+
+        Mirrors ``_start_library_export_counts_worker``'s memory-vs-file-
+        backed DB branch for the id-resolution step specifically: a genuine
+        OS worker thread only ever sees a blank, unmigrated connection for
+        an in-memory-backed DB (``threading.local``), so when either DB is
+        memory-backed, ``resolve_export_selections`` -- a pure, synchronous
+        DB read with no ``asyncio`` involvement -- runs inline on the
+        calling (UI) thread first, exactly like the counts worker's own
+        inline fallback, and the resolved ids are handed to the worker.
+
+        Unlike the counts worker, the ``@work(thread=True)`` dispatch below
+        is never skipped: ``asyncio.run(service.export_chatbook(...))``
+        would raise ("cannot be called from a running event loop") if
+        invoked directly on the UI thread, which already owns Textual's
+        own running event loop. A file-backed deployment defers
+        ``resolve_export_selections`` into that same real thread instead
+        (``preresolved_selections=None``), avoiding a synchronous full-
+        library scan on the UI thread for the common (real, file-backed)
+        case.
+        """
+        media_db = getattr(self.app_instance, "media_db", None)
+        chachanotes_db = self._resolve_library_export_chachanotes_db()
+        preresolved_selections: dict[ContentType, list[str]] | None = None
+        if bool(getattr(media_db, "is_memory_db", False)) or bool(
+            getattr(chachanotes_db, "is_memory_db", False)
+        ):
+            try:
+                preresolved_selections = resolve_export_selections(
+                    scope, media_db, chachanotes_db
+                )
+            except Exception as exc:
+                logger.opt(exception=True).warning(
+                    f"Library export selection resolution failed for scope {scope!r}."
+                )
+                self._apply_library_export_failure(
+                    run_id, f"Failed to resolve export selections: {exc}"
+                )
+                return
+        self._run_library_export_worker(
+            run_id=run_id,
+            scope=scope,
+            name=name,
+            description=description,
+            media_quality=media_quality,
+            destination=destination,
+            media_db=media_db,
+            chachanotes_db=chachanotes_db,
+            preresolved_selections=preresolved_selections,
+        )
+
+    @staticmethod
+    def _build_library_export_payload(
+        *,
+        name: str,
+        description: str,
+        selections: Mapping[ContentType, list[str]],
+        destination: str,
+        media_quality: str,
+    ) -> dict[str, Any]:
+        """Build the ``local_chatbook_service.export_chatbook`` request payload.
+
+        ``include_media`` is spec-critical (F4 plan Global Constraints):
+        it MUST be ``True`` whenever ``ContentType.MEDIA`` is present in
+        ``selections`` -- ``ChatbookCreator`` silently skips all media
+        content otherwise, even when media ids ARE present in
+        ``content_selections``. Since ``resolve_export_selections`` omits
+        a ``ContentType`` key entirely when that source resolves zero ids
+        (see its docstring), keying off simple membership is automatically
+        correct for every scope, including an "everything" scope whose
+        library happens to have no media at all.
+        """
+        return {
+            "name": name,
+            "description": description,
+            "content_selections": dict(selections),
+            "output_path": destination,
+            "media_quality": media_quality,
+            "include_media": ContentType.MEDIA in selections,
+        }
+
+    @staticmethod
+    def _run_library_export_via_service(
+        service: Any,
+        payload: dict[str, Any],
+        *,
+        name: str,
+        description: str,
+    ) -> dict[str, Any]:
+        """Execute one export through ``service``, synchronously: zip first, registry only on success.
+
+        Runs both of ``service``'s async-signature/sync-body methods
+        through ``asyncio.run`` -- they never touch the app's own event
+        loop, so this is only ever safe to call from a genuine OS thread
+        (never the UI thread, which already owns a running loop). Exposed
+        as its own (non-``@work``) static method so tests can call it
+        directly with a fake ``service`` and assert call ordering /
+        the include_media invariant without booting a real thread.
+
+        ``create_chatbook`` (the registry record) is attempted ONLY when
+        ``export_chatbook`` reports ``success`` -- the F4 plan's Global
+        Constraints' "zip first, registry record only on success". A
+        registry-recording failure AFTER a successful zip does not flip
+        the overall outcome to failure (the artifact genuinely exists on
+        disk; only the bookkeeping failed) -- ``registry_recorded``
+        reports that separately for callers/tests that care.
+
+        Returns a plain dict: ``success``, ``message``, ``path``,
+        ``dependency_info``, ``registry_recorded``.
+        """
+        try:
+            export_result = asyncio.run(service.export_chatbook(payload))
+        except Exception as exc:
+            logger.opt(exception=True).warning("Library export service call failed.")
+            return {
+                "success": False,
+                "message": f"Export failed: {exc}",
+                "path": "",
+                "dependency_info": {},
+                "registry_recorded": False,
+            }
+
+        if not export_result.get("success"):
+            return {
+                "success": False,
+                "message": str(export_result.get("message") or "Export failed."),
+                "path": export_result.get("path") or payload.get("output_path", ""),
+                "dependency_info": export_result.get("dependency_info") or {},
+                "registry_recorded": False,
+            }
+
+        output_path = export_result.get("path") or payload.get("output_path", "")
+        dependency_info = export_result.get("dependency_info") or {}
+        registry_recorded = False
+        try:
+            asyncio.run(
+                service.create_chatbook(
+                    name=name,
+                    description=description,
+                    file_path=output_path,
+                    tags=["library-export"],
+                )
+            )
+            registry_recorded = True
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Library export succeeded but registry recording failed for {output_path!r}."
+            )
+
+        return {
+            "success": True,
+            "message": export_result.get("message") or "",
+            "path": output_path,
+            "dependency_info": dependency_info,
+            "registry_recorded": registry_recorded,
+        }
+
+    @work(thread=True, exclusive=True, group="library_export")
+    def _run_library_export_worker(
+        self,
+        *,
+        run_id: int,
+        scope: ExportScope,
+        name: str,
+        description: str,
+        media_quality: str,
+        destination: str,
+        media_db: Any,
+        chachanotes_db: Any,
+        preresolved_selections: dict[ContentType, list[str]] | None,
+    ) -> None:
+        if preresolved_selections is not None:
+            selections = preresolved_selections
+        else:
+            try:
+                selections = resolve_export_selections(scope, media_db, chachanotes_db)
+            except Exception as exc:
+                logger.opt(exception=True).warning(
+                    f"Library export selection resolution failed for scope {scope!r}."
+                )
+                self._marshal_library_export_failure(
+                    run_id, f"Failed to resolve export selections: {exc}"
+                )
+                return
+
+        service = getattr(self.app_instance, "local_chatbook_service", None)
+        if service is None:
+            self._marshal_library_export_failure(
+                run_id, "Chatbook export service unavailable."
+            )
+            return
+
+        payload = self._build_library_export_payload(
+            name=name,
+            description=description,
+            selections=selections,
+            destination=destination,
+            media_quality=media_quality,
+        )
+        outcome = self._run_library_export_via_service(
+            service, payload, name=name, description=description
+        )
+        if outcome["success"]:
+            self._marshal_library_export_success(
+                run_id, outcome["path"], outcome["dependency_info"]
+            )
+        else:
+            self._marshal_library_export_failure(run_id, outcome["message"])
+
+    def _marshal_library_export_success(
+        self, run_id: int, path: str, dependency_info: Any
+    ) -> None:
+        """Marshal a successful run onto the UI thread (called from the worker)."""
+        try:
+            self.app.call_from_thread(
+                self._apply_library_export_success, run_id, path, dependency_info
+            )
+        except RuntimeError:
+            pass
+
+    def _marshal_library_export_failure(self, run_id: int, message: str) -> None:
+        """Marshal a failed run onto the UI thread (called from the worker)."""
+        try:
+            self.app.call_from_thread(
+                self._apply_library_export_failure, run_id, message
+            )
+        except RuntimeError:
+            pass
+
+    def _apply_library_export_success(
+        self, run_id: int, path: str, dependency_info: Any
+    ) -> None:
+        """UI-thread completion: notify, clear running/error, update the form.
+
+        ``dependency_info.get("auto_included")`` -- the character ids
+        ``ChatbookCreator`` pulled in automatically as conversation
+        dependencies -- gets appended to the notification as a count when
+        non-empty (``ChatbookCreator``'s own dependency_info contract; see
+        ``chatbook_creator.py``'s docstring).
+
+        ``run_id`` is compared against the live ``_library_export_run_id``
+        BEFORE any state/DOM mutation: an export genuinely finished, so the
+        notification always fires, but a run the user has since navigated
+        away from (see ``_library_export_run_id``'s docstring) must not
+        stomp ``_library_export_running``/``_error``/``_status`` or the
+        canvas DOM out from under whatever the user is now looking at.
+        """
+        message = f"Exported chatbook to {path}"
+        auto_included = (
+            dependency_info.get("auto_included")
+            if isinstance(dependency_info, dict)
+            else None
+        )
+        if auto_included:
+            try:
+                count = len(auto_included)
+            except TypeError:
+                count = auto_included
+            message += f" ({count} characters auto-included)"
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(message, severity="information")
+        if run_id != self._library_export_run_id:
+            return
+        self._library_export_running = False
+        self._library_export_error = ""
+        self._library_export_status = ""
+        self._update_library_export_canvas_after_run()
+
+    def _apply_library_export_failure(self, run_id: int, message: str) -> None:
+        """UI-thread completion: render the escaped error, clear running, re-enable Export.
+
+        See ``_apply_library_export_success``'s docstring for the
+        ``run_id`` staleness guard -- a superseded run's failure is
+        dropped silently here (no error line to render it into, since the
+        canvas may now belong to a different scope/visit entirely) rather
+        than notified, since surfacing a failure banner for a run the user
+        has already navigated away from and possibly re-run successfully
+        would be actively misleading.
+        """
+        if run_id != self._library_export_run_id:
+            logger.info(
+                f"Library export run {run_id} failed after being superseded "
+                f"(current run {self._library_export_run_id}): {message}"
+            )
+            return
+        self._library_export_running = False
+        self._library_export_status = ""
+        self._library_export_error = escape_markup(str(message))
+        self._update_library_export_canvas_after_run()
+
+    def _update_library_export_canvas_after_run(self) -> None:
+        """Targeted DOM update once an export run finishes (success or failure).
+
+        Mirrors ``_apply_library_export_counts``'s targeted-update
+        discipline (Task 2's fix, commit 7793257e): the transition OUT of
+        ``running`` must not recompose. Unlike the Export-press transition
+        INTO ``running`` (a recompose is acceptable there -- see
+        ``handle_library_export_submit``'s docstring), the running window
+        itself can be long enough for the user to resume typing in the
+        name/description ``Input`` while waiting (nothing disables those
+        fields during ``running``) -- a recompose on completion would
+        destroy and rebuild that ``Input`` out from under them, silently
+        dropping keyboard focus. Only the status line, the error line, and
+        the Export button's disabled gate can change here; both lines are
+        unconditionally mounted by ``LibraryExportCanvas.compose`` (display-
+        toggled, never conditionally yielded) specifically so this in-place
+        update always finds them, mirroring the empty-scope helper's own
+        always-mounted precedent from Task 2's fix.
+        """
+        if not self.is_mounted or self._library_selected_row_id != LIBRARY_ROW_INGEST_EXPORT:
+            return
+        state = self._build_library_export_state()
+        try:
+            canvas = self.query_one("#library-export-canvas", LibraryExportCanvas)
+        except (NoMatches, QueryError):
+            return
+        canvas.state = state
+        try:
+            status_widget = self.query_one("#library-export-status-line", Static)
+            status_widget.update(state.status_line)
+            status_widget.display = bool(state.status_line)
+            error_widget = self.query_one("#library-export-error-line", Static)
+            error_widget.update(state.error_line)
+            error_widget.display = bool(state.error_line)
+            self.query_one("#library-export-submit", Button).disabled = (
+                not state.export_enabled
+            )
+        except (NoMatches, QueryError):
+            pass
 
     def _library_ingest_registry(self) -> Any:
         """Return the app's ingest job registry, or ``None`` when absent."""

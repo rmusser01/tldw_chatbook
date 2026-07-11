@@ -807,10 +807,19 @@ class ChatbookCreator:
                 # so we'll store the textual content and metadata
                 media_filename = f"media_{media_id}"
                 
-                # Save media metadata
+                # Save media metadata. ``media_item`` comes straight from
+                # ``MediaDatabase.get_media_by_id`` -- ``DATETIME``-typed
+                # columns (e.g. ``ingestion_date``) round-trip through
+                # sqlite3's registered converter as real ``datetime``
+                # objects (see ``DB/sqlite_datetime_fix.py``), which plain
+                # ``json.dump`` cannot serialize. ``default=str`` renders
+                # any such value as its ISO string instead of raising --
+                # this previously failed silently (caught by this method's
+                # own broad ``except Exception`` below), dropping every
+                # media item from the export with no surfaced error.
                 metadata_file = metadata_dir / f"{media_filename}.json"
                 with open(metadata_file, 'w', encoding='utf-8') as f:
-                    json.dump(media_data, f, indent=2, ensure_ascii=False)
+                    json.dump(media_data, f, indent=2, ensure_ascii=False, default=str)
                 
                 # If media has content (transcription, text, etc.), save it
                 if media_item.get('content'):

@@ -9184,3 +9184,543 @@ async def test_library_shell_export_counts_landing_at_zero_reveals_empty_helper_
         assert empty_line.display is True
         assert str(empty_line.renderable) == EMPTY_SCOPE_COPY
         assert screen.query_one("#library-export-submit", Button).disabled is True
+
+
+# --- Export canvas: execution worker (F4 Task 3) -----------------------------
+
+
+class _FakeLibraryExportService:
+    """A fake ``local_chatbook_service`` double: async-signature, records calls.
+
+    Mirrors ``LocalChatbookService``'s async-signature/sync-body contract
+    (methods run through ``asyncio.run`` inside the worker's real OS
+    thread) closely enough to exercise the worker end-to-end, without
+    touching any real DB, zip file, or on-disk registry. ``gate`` (when
+    given) blocks INSIDE the ``export_chatbook`` coroutine -- safe because
+    it runs on its own throwaway event loop on a genuine background thread,
+    never the UI thread -- so a test can hold the export "in flight" for as
+    long as it needs, bounded by ``_GATED_RELEASE_TIMEOUT_SECONDS`` (the
+    gated-fake convention used throughout this file).
+    """
+
+    def __init__(self, *, export_result=None, gate: "threading.Event | None" = None):
+        self.export_calls: list[dict] = []
+        self.create_calls: list[dict] = []
+        self._export_result = (
+            export_result
+            if export_result is not None
+            else {"success": True, "message": "", "path": "", "dependency_info": {}}
+        )
+        self._gate = gate
+
+    async def export_chatbook(self, request_data):
+        if self._gate is not None:
+            assert self._gate.wait(
+                timeout=_GATED_RELEASE_TIMEOUT_SECONDS
+            ), "export gate never released"
+        self.export_calls.append(dict(request_data))
+        result = dict(self._export_result)
+        result.setdefault("path", request_data.get("output_path"))
+        return result
+
+    async def create_chatbook(self, **kwargs):
+        self.create_calls.append(kwargs)
+        return {"chatbook_id": 1, **kwargs}
+
+
+@pytest.mark.asyncio
+async def test_library_shell_export_submit_single_flight_and_notifies_on_success(
+    monkeypatch, tmp_path
+):
+    """Pressing Export: (1) enters ``running`` via a recompose (button
+    disabled, quiet status line shown) -- acceptable per
+    ``handle_library_export_submit``'s docstring, since the user's last
+    action was clicking, not typing; (2) a second attempt -- both via the
+    now-disabled button AND a direct re-entrant handler call -- is a no-op
+    (single-flight: the button's own disabled gate PLUS the handler's own
+    ``running`` guard, on top of the worker's
+    ``group="library_export"``/``exclusive=True``); (3) the user can keep
+    typing in the name field while the export is in flight; (4) on
+    completion, a TARGETED update (not a recompose) clears ``running``,
+    notifies (with the auto-included-characters suffix), and preserves the
+    SAME ``Input`` instance + its typed text -- mirroring Task 2's own
+    counts-landing regression pilot for the reverse transition.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    app.media_db = MediaDatabase(":memory:", client_id="export-run-media")
+    app.media_db.add_media_with_keywords(title="M1", content="c1", media_type="video")
+    app.chachanotes_db = CharactersRAGDB(":memory:", client_id="export-run-ccn")
+    app.chachanotes_db.add_conversation({"title": "Conv"})
+
+    gate = threading.Event()
+    service = _FakeLibraryExportService(
+        export_result={
+            "success": True,
+            "message": "ok",
+            "path": "",
+            "dependency_info": {"auto_included": [1, 2, 3]},
+        },
+        gate=gate,
+    )
+    app.local_chatbook_service = service
+    notified = []
+    monkeypatch.setattr(
+        app, "notify", lambda message, **kwargs: notified.append((message, kwargs))
+    )
+
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}").press()
+        await _wait_for_selector(screen, pilot, "#library-export-destination")
+        for _ in range(150):
+            if screen._library_export_counts is not None:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Export counts never landed.")
+        screen.refresh(recompose=True)
+        await pilot.pause()
+
+        screen._apply_library_export_destination(tmp_path / "out")
+        await pilot.pause()
+
+        submit = screen.query_one("#library-export-submit", Button)
+        assert submit.disabled is False
+        submit.press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_export_running is True
+        submit_running = screen.query_one("#library-export-submit", Button)
+        assert submit_running.disabled is True
+        status_widget = screen.query_one("#library-export-status-line", Static)
+        assert status_widget.display is True
+        assert str(status_widget.renderable) == "Exporting… (2 items)"
+
+        # Second attempt #1: through the button itself -- Textual refuses
+        # to dispatch Pressed for a disabled Button, so this is a no-op.
+        submit_running.press()
+        await pilot.pause()
+        # Second attempt #2: a direct re-entrant handler call, bypassing
+        # the button entirely -- the handler's own ``running`` guard blocks
+        # it independently of the button's disabled state.
+        screen.handle_library_export_submit(Mock())
+        await pilot.pause()
+
+        name_input = screen.query_one("#library-export-name", Input)
+        name_input.focus()
+        await pilot.pause()
+        await pilot.press("!")
+        assert name_input.value.endswith("!")
+
+        gate.set()
+        for _ in range(150):
+            if screen._library_export_running is False:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Export run never completed after gate release.")
+        await pilot.pause()
+        await pilot.pause()
+
+        # Single-flight: exactly one export call landed despite two extra
+        # press attempts while running.
+        assert len(service.export_calls) == 1
+        assert service.export_calls[0]["include_media"] is True
+        assert service.export_calls[0]["output_path"] == str(tmp_path / "out.zip")
+        assert len(service.create_calls) == 1  # zip succeeded -> registry recorded
+
+        # Targeted update (not recompose): the SAME Input instance/typed
+        # text survived the running -> done transition.
+        assert screen.query_one("#library-export-name", Input) is name_input
+        assert name_input.value.endswith("!")
+        assert screen.query_one("#library-export-status-line", Static) is status_widget
+        assert status_widget.display is False
+        assert screen.query_one("#library-export-submit", Button) is submit_running
+        assert submit_running.disabled is False
+        assert screen._library_export_error == ""
+
+        assert len(notified) == 1
+        message, kwargs = notified[0]
+        # Exact match (not just a prefix check): pins the REAL exported
+        # path flowing all the way back into the notification, not a
+        # stale/wrong/empty value.
+        assert message == (
+            f"Exported chatbook to {tmp_path / 'out.zip'} (3 characters auto-included)"
+        )
+        assert kwargs.get("severity") == "information"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_export_submit_failure_shows_escaped_error_and_reenables_form(
+    tmp_path,
+):
+    """A failed export renders the (escaped) error message via a TARGETED
+    update, clears ``running``, and re-enables Export -- the destination
+    and counts are still valid, so the user can retry without re-picking
+    anything. The registry is never touched (zip-first, registry-only-on-
+    success). Also asserts, symmetrically with the success-path pilot
+    above, that the SAME ``Input``/``Button`` instances (and typed text)
+    survive the running -> failed transition -- a targeted-update
+    regression that broke ONLY the failure path (e.g. an accidental
+    ``refresh(recompose=True)`` inside ``_apply_library_export_failure``)
+    would otherwise go undetected."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    app.media_db = MediaDatabase(":memory:", client_id="export-fail-media")
+    app.media_db.add_media_with_keywords(title="M1", content="c1", media_type="video")
+    app.chachanotes_db = CharactersRAGDB(":memory:", client_id="export-fail-ccn")
+
+    gate = threading.Event()
+    service = _FakeLibraryExportService(
+        export_result={
+            "success": False,
+            "message": "Destination [bold]not[/bold] writable.",
+            "path": "",
+            "dependency_info": {},
+        },
+        gate=gate,
+    )
+    app.local_chatbook_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}").press()
+        await _wait_for_selector(screen, pilot, "#library-export-destination")
+        for _ in range(150):
+            if screen._library_export_counts is not None:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Export counts never landed.")
+        screen.refresh(recompose=True)
+        await pilot.pause()
+
+        screen._apply_library_export_destination(tmp_path / "out")
+        await pilot.pause()
+
+        submit = screen.query_one("#library-export-submit", Button)
+        submit.press()
+        await pilot.pause()
+        await pilot.pause()
+
+        # Re-query AFTER the press-triggered recompose (the acceptable
+        # recompose transition INTO ``running`` -- see
+        # ``handle_library_export_submit``'s docstring): ``submit`` above
+        # is now a stale, unmounted reference, so the identity check below
+        # must be against the post-recompose instance, not the pre-press
+        # one.
+        submit_running = screen.query_one("#library-export-submit", Button)
+        assert submit_running.disabled is True
+
+        name_input = screen.query_one("#library-export-name", Input)
+        name_input.focus()
+        await pilot.pause()
+        await pilot.press("?")
+        assert name_input.value.endswith("?")
+
+        gate.set()
+        for _ in range(150):
+            if screen._library_export_running is False:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Export run never completed.")
+        await pilot.pause()
+
+        assert len(service.create_calls) == 0  # registry skipped on failure
+
+        # Targeted update (not recompose): the SAME Input/Button instances
+        # and the typed text survived the running -> failed transition.
+        assert screen.query_one("#library-export-name", Input) is name_input
+        assert name_input.value.endswith("?")
+        submit_after = screen.query_one("#library-export-submit", Button)
+        assert submit_after is submit_running
+
+        error_widget = screen.query_one("#library-export-error-line", Static)
+        assert error_widget.display is True
+        assert (
+            str(error_widget.renderable)
+            == "Destination \\[bold]not\\[/bold] writable."
+        )
+        assert screen._library_export_error == "Destination \\[bold]not\\[/bold] writable."
+        status_widget = screen.query_one("#library-export-status-line", Static)
+        assert status_widget.display is False
+        assert submit_after.disabled is False
+        assert screen._library_export_running is False
+
+
+@pytest.mark.asyncio
+async def test_library_shell_export_orphaned_run_completion_cannot_corrupt_a_later_visit(
+    tmp_path,
+):
+    """REGRESSION (code review finding, F4 Task 3): a real OS worker thread
+    cannot be preempted mid-``asyncio.run`` by ``Worker.cancel()`` --
+    navigating away from the Export canvas while a run is in flight resets
+    ``_library_export_running`` for whatever the user does NEXT, but the
+    abandoned worker keeps running regardless. Before the ``run_id``
+    staleness guard, that orphaned worker's LATE completion would
+    unconditionally stomp ``_library_export_running``/``_error``/
+    ``_status`` (and the canvas DOM) out from under a completely different,
+    later visit to the Export canvas -- silently re-enabling/disabling the
+    button or showing a stray error for a run the user has long since
+    forgotten about. This pilot: starts an export, navigates away mid-run,
+    navigates BACK to a fresh Export visit, THEN releases the orphaned
+    run -- and asserts the fresh visit's state is completely undisturbed by
+    the orphaned run's completion (which still fires its notification --
+    the export genuinely happened -- but nothing else)."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    app.media_db = MediaDatabase(":memory:", client_id="export-orphan-media")
+    app.media_db.add_media_with_keywords(title="M1", content="c1", media_type="video")
+    app.chachanotes_db = CharactersRAGDB(":memory:", client_id="export-orphan-ccn")
+    app.chachanotes_db.add_conversation({"title": "Conv"})
+
+    gate = threading.Event()
+    service = _FakeLibraryExportService(
+        export_result={
+            "success": True,
+            "message": "ok",
+            "path": "",
+            "dependency_info": {},
+        },
+        gate=gate,
+    )
+    app.local_chatbook_service = service
+    notified = []
+    app.notify = lambda message, **kwargs: notified.append((message, kwargs))
+
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        # Visit 1: start an export, then navigate away while it's in flight.
+        screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}").press()
+        await _wait_for_selector(screen, pilot, "#library-export-destination")
+        for _ in range(150):
+            if screen._library_export_counts is not None:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Export counts never landed.")
+        screen.refresh(recompose=True)
+        await pilot.pause()
+
+        screen._apply_library_export_destination(tmp_path / "orphaned_dest")
+        await pilot.pause()
+
+        screen.query_one("#library-export-submit", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_export_running is True
+        orphaned_run_id = screen._library_export_run_id
+
+        screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_CONVERSATIONS}").press()
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
+        # The navigation reset ``running`` for THIS (non-Export) visit --
+        # the orphaned worker is still executing regardless.
+        assert screen._library_export_running is False
+        assert screen._library_export_run_id != orphaned_run_id
+
+        # Visit 2: back to a completely FRESH Export visit -- new scope/
+        # counts/form, not touching the destination the orphaned run is
+        # still writing to.
+        screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}").press()
+        await _wait_for_selector(screen, pilot, "#library-export-destination")
+        for _ in range(150):
+            if screen._library_export_counts is not None:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Export counts never landed on the fresh visit.")
+        screen.refresh(recompose=True)
+        await pilot.pause()
+
+        fresh_run_id = screen._library_export_run_id
+        assert fresh_run_id != orphaned_run_id
+        assert screen._library_export_running is False
+        assert screen._library_export_form["destination"] == ""
+        fresh_submit = screen.query_one("#library-export-submit", Button)
+        assert fresh_submit.disabled is True  # no destination chosen on this visit
+
+        # NOW let the orphaned run finish.
+        gate.set()
+        for _ in range(150):
+            if notified:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Orphaned export run's notification never landed.")
+        await pilot.pause()
+        await pilot.pause()
+
+        # The orphaned export genuinely completed -- still notified...
+        assert len(notified) == 1
+        assert notified[0][0] == f"Exported chatbook to {tmp_path / 'orphaned_dest.zip'}"
+        # ...but the CURRENT (fresh, second) visit is completely
+        # undisturbed: still not running, still no error/status, the
+        # SAME submit button instance, still correctly disabled (no
+        # destination on THIS visit).
+        assert screen._library_export_running is False
+        assert screen._library_export_error == ""
+        assert screen.query_one("#library-export-submit", Button) is fresh_submit
+        assert fresh_submit.disabled is True
+        assert screen.query_one("#library-export-status-line", Static).display is False
+        assert screen.query_one("#library-export-error-line", Static).display is False
+
+
+@pytest.mark.asyncio
+async def test_library_shell_export_stale_run_completion_never_clears_a_newer_runs_flags(
+    tmp_path,
+):
+    """REGRESSION (code review finding, F4 Task 3), narrower/deterministic
+    variant of the pilot above: directly proves the ``run_id`` staleness
+    guard, independent of any second real threaded worker's own timing.
+    Starts run R1 (gated), then bumps ``_library_export_run_id`` in place
+    (exactly what ``_reset_library_export_transient_state`` does when the
+    user navigates away and back) while manually marking a DIFFERENT
+    error/running state as though a newer run R2 now owns the canvas --
+    then releases R1 and asserts its completion did NOT overwrite R2's
+    state, even though it still fires its own notification.
+
+    RED-verified: temporarily neutering ``_apply_library_export_success``'s
+    ``if run_id != self._library_export_run_id: return`` guard (replacing
+    it with ``if False:``) made this test fail exactly on the
+    ``_library_export_running is True`` / ``_library_export_error ==
+    "unrelated newer error"`` assertions below (the stale R1 completion
+    flipped ``running`` back to ``False`` and clobbered the error text);
+    reverted, test passes.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    app.media_db = MediaDatabase(":memory:", client_id="export-stale-media")
+    app.media_db.add_media_with_keywords(title="M1", content="c1", media_type="video")
+    app.chachanotes_db = CharactersRAGDB(":memory:", client_id="export-stale-ccn")
+
+    gate = threading.Event()
+    service = _FakeLibraryExportService(
+        export_result={
+            "success": True,
+            "message": "ok",
+            "path": "",
+            "dependency_info": {},
+        },
+        gate=gate,
+    )
+    app.local_chatbook_service = service
+    notified = []
+    app.notify = lambda message, **kwargs: notified.append((message, kwargs))
+
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}").press()
+        await _wait_for_selector(screen, pilot, "#library-export-destination")
+        for _ in range(150):
+            if screen._library_export_counts is not None:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Export counts never landed.")
+        screen.refresh(recompose=True)
+        await pilot.pause()
+
+        screen._apply_library_export_destination(tmp_path / "stale_dest")
+        await pilot.pause()
+
+        screen.query_one("#library-export-submit", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_export_running is True
+
+        # Simulate a newer run superseding this one (what
+        # ``_reset_library_export_transient_state`` does on a real
+        # navigate-away-and-back) WITHOUT touching the still-gated worker
+        # thread itself, so this test's timing is fully deterministic.
+        screen._library_export_run_id += 1
+        screen._library_export_running = True  # pretend R2 is now running
+        screen._library_export_error = "unrelated newer error"
+
+        gate.set()
+        for _ in range(150):
+            if notified:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Stale export run's notification never landed.")
+        await pilot.pause()
+
+        # R1 genuinely finished -- still notified...
+        assert len(notified) == 1
+        # ...but R2's state (running=True, a different error string) must
+        # survive completely untouched.
+        assert screen._library_export_running is True
+        assert screen._library_export_error == "unrelated newer error"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_export_submit_missing_service_surfaces_error_and_reenables(
+    tmp_path,
+):
+    """``app_instance.local_chatbook_service`` missing entirely (``None``)
+    is a guarded failure inside the real worker thread, not a crash or a
+    silently-stuck ``running`` state -- the closest-to-production shape of
+    "the service wiring failed", covered nowhere else in this suite."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    app.media_db = MediaDatabase(":memory:", client_id="export-noservice-media")
+    app.media_db.add_media_with_keywords(title="M1", content="c1", media_type="video")
+    app.chachanotes_db = CharactersRAGDB(":memory:", client_id="export-noservice-ccn")
+    app.local_chatbook_service = None
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}").press()
+        await _wait_for_selector(screen, pilot, "#library-export-destination")
+        for _ in range(150):
+            if screen._library_export_counts is not None:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Export counts never landed.")
+        screen.refresh(recompose=True)
+        await pilot.pause()
+
+        screen._apply_library_export_destination(tmp_path / "out")
+        await pilot.pause()
+
+        screen.query_one("#library-export-submit", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        for _ in range(150):
+            if screen._library_export_running is False:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Export run never completed.")
+        await pilot.pause()
+
+        assert screen._library_export_error == "Chatbook export service unavailable."
+        error_widget = screen.query_one("#library-export-error-line", Static)
+        assert error_widget.display is True
+        assert str(error_widget.renderable) == "Chatbook export service unavailable."
+        assert screen.query_one("#library-export-submit", Button).disabled is False
