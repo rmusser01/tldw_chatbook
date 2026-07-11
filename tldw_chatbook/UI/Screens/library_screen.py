@@ -3575,10 +3575,18 @@ class LibraryScreen(BaseAppScreen):
            so only the actual detail remains; an unrecognized message
            shape (e.g. a different service implementation) is kept
            verbatim rather than guessed at.
-        3. The existing ``dependency_info.get("auto_included")`` count
-           suffix (the character ids ``ChatbookCreator`` pulled in
-           automatically as conversation dependencies), unchanged from
-           before task-158.
+        3. The ``dependency_info.get("auto_included")`` count suffix (the
+           character ids ``ChatbookCreator`` pulled in automatically as
+           conversation dependencies) -- BUT only when the creator detail
+           above does not already state it. ``create_chatbook`` already
+           puts an ``"Auto-included N character dependencies"`` clause
+           into its own message (that clause and ``auto_included`` derive
+           from the same ``self.auto_included_characters`` state), so
+           emitting the suffix on top of a detail that carries that clause
+           would restate the identical fact twice. The suffix therefore
+           only fires when the auto-included count would otherwise go
+           unstated (e.g. an empty creator message, or a creator message
+           whose only detail is a missing-dependency warning).
         """
         message = f"Exported chatbook to {escape_markup(str(path))}"
 
@@ -3594,7 +3602,9 @@ class LibraryScreen(BaseAppScreen):
             if isinstance(dependency_info, dict)
             else None
         )
-        if auto_included:
+        # De-dup: skip the suffix when the surfaced detail already states
+        # the auto-included count (see point 3 above).
+        if auto_included and "auto-included" not in detail.lower():
             try:
                 count = len(auto_included)
             except TypeError:

@@ -249,3 +249,28 @@ def test_success_message_omits_detail_segment_when_creator_message_is_empty():
     )
 
     assert message == "Exported chatbook to /tmp/out.zip (1 characters auto-included)"
+
+
+def test_success_message_does_not_duplicate_auto_included_count():
+    """task-158 review fix: for the REALISTIC state where characters were
+    auto-included, ``ChatbookCreator.create_chatbook`` already puts an
+    "Auto-included N character dependencies" clause into its own message
+    (both that clause and the dependency_info["auto_included"] list come
+    from the SAME ``self.auto_included_characters`` state). Appending the
+    separate "(N characters auto-included)" suffix on top of that restated
+    the identical fact twice. The auto-included count must appear exactly
+    ONCE in the notification."""
+    message = LibraryScreen._build_library_export_success_message(
+        "/tmp/out.zip",
+        {"auto_included": [1, 2, 3], "missing_dependencies": []},
+        # Exactly what create_chatbook returns for the auto-included state.
+        "Chatbook created successfully at /tmp/out.zip. Auto-included 3 "
+        "character dependencies",
+    )
+
+    assert message == (
+        "Exported chatbook to /tmp/out.zip: Auto-included 3 character dependencies"
+    )
+    # The count is stated once, not restated by a trailing suffix.
+    assert "characters auto-included)" not in message
+    assert message.count("Auto-included") == 1
