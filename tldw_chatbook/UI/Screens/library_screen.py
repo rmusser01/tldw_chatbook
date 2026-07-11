@@ -3033,8 +3033,8 @@ class LibraryScreen(BaseAppScreen):
 
         In-memory SQLite connections are thread-local -- only the thread
         that created/migrated the DB has a working connection (same guard
-        as ``_fetch_library_conversation_by_id``/
-        ``_count_library_create_rail_metric`` elsewhere on this screen).
+        as ``_fetch_library_conversation_by_id`` elsewhere on this
+        screen).
         When either DB is memory-backed (the test suite's fixtures, and
         any other future in-memory deployment), the count runs inline on
         the calling (UI) thread instead of a real worker thread -- a
@@ -3077,6 +3077,23 @@ class LibraryScreen(BaseAppScreen):
         row entirely, before the first counts worker finished) -- dropped
         rather than overwriting fresher (or absent) counts.
 
+        Updates the mounted canvas via targeted DOM surgery, NEVER a
+        recompose (mirrors ``handle_library_ingest_path_changed``'s
+        targeted-update discipline): the user may be mid-keystroke in the
+        name/description ``Input`` when the counts land -- on a large
+        library (this feature's whole point) that window is real -- and a
+        recompose would destroy and rebuild the ``Input``, silently
+        dropping keyboard focus (the typed text survives via the form
+        dict; focus does not). Only three widgets can change when counts
+        land, and all three are always-mounted on the export canvas: the
+        scope line's text, the empty-scope helper's text/visibility
+        (display-toggled rather than conditionally composed in
+        ``LibraryExportCanvas.compose`` for exactly this reason), and the
+        Export button's disabled gate. The media/quality rows CANNOT
+        change here: their visibility (``show_media_fields``) derives
+        purely from ``scope.kind``, which is pinned before the worker
+        ever starts -- never from counts.
+
         Args:
             scope: The scope the landed ``counts`` were computed for.
             counts: The landed counts (keys "media"/"conversations"/"notes").
@@ -3084,8 +3101,29 @@ class LibraryScreen(BaseAppScreen):
         if scope != self._library_export_scope:
             return
         self._library_export_counts = counts
-        if self.is_mounted and self._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT:
-            self.refresh(recompose=True)
+        if not self.is_mounted or self._library_selected_row_id != LIBRARY_ROW_INGEST_EXPORT:
+            return
+        state = self._build_library_export_state()
+        try:
+            canvas = self.query_one("#library-export-canvas", LibraryExportCanvas)
+        except (NoMatches, QueryError):
+            # Canvas not mounted (yet) -- the state fields above are set,
+            # so whatever composes it next renders the landed counts.
+            return
+        # Keep the canvas's own state snapshot in step with what the
+        # targeted updates below render, so any later widget-level
+        # recompose can never resurrect the stale "Counting…" state.
+        canvas.state = state
+        try:
+            self.query_one("#library-export-scope-line", Static).update(state.scope_line)
+            empty_line = self.query_one("#library-export-empty-line", Static)
+            empty_line.update(state.empty_scope_line)
+            empty_line.display = bool(state.empty_scope_line)
+            self.query_one("#library-export-submit", Button).disabled = (
+                not state.export_enabled
+            )
+        except (NoMatches, QueryError):
+            pass
 
     def _build_library_export_state(self) -> LibraryExportFormState:
         """Build the export canvas's full display state from screen fields."""
@@ -5355,11 +5393,22 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_export_choose_destination(self, event: Button.Pressed) -> None:
         """Push a ``FileSave`` dialog to pick the export's destination path.
 
-        Mirrors ``_export_library_note``'s dialog flow exactly (the real
-        ``FileSave`` constructor only accepts ``location``/``title``/
-        ``default_file``): a sanitized default filename derived from the
-        export name field, callback via ``call_after_refresh`` so the
-        write-path runs after this handler returns.
+        Mirrors ``_export_library_note``'s dialog flow: a sanitized
+        default filename derived from the export name field, callback via
+        ``call_after_refresh`` so the write-path runs after this handler
+        returns. ``FileSave`` DOES have overwrite handling of its own
+        (``can_overwrite: bool = True`` -- ``False`` blocks picking an
+        existing file outright), but its default imposes no friction, and
+        more importantly it can only ever judge the RAW picked path: the
+        creator coerces the suffix to ``.zip``, so the path that must be
+        confirmed for overwrite is the *normalized* one, which the dialog
+        never sees. The form therefore owns overwrite confirmation of the
+        normalized path (see ``_apply_library_export_destination``), and
+        the dialog is deliberately left at its permissive default rather
+        than ``can_overwrite=False`` (which would wrongly block picking
+        ``report.zip`` even though the user is knowingly replacing it,
+        while failing to block picking ``report`` when ``report.zip``
+        exists).
 
         Args:
             event: Button press event emitted by the "Choose destination…"

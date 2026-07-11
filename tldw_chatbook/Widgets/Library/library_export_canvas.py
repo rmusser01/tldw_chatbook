@@ -54,13 +54,21 @@ class LibraryExportCanvas(VerticalScroll):
             id="library-export-scope-line",
             markup=False,
         )
-        if state.empty_scope_line:
-            yield Static(
-                state.empty_scope_line,
-                id="library-export-empty-line",
-                classes="library-export-quiet-line",
-                markup=False,
-            )
+        # Always composed (display-toggled, never conditionally yielded):
+        # the empty-scope helper is the one widget whose presence can
+        # change when the counts worker lands, and counts landing must
+        # update this canvas IN PLACE -- a recompose would destroy a form
+        # Input mid-keystroke, dropping keyboard focus (the typed text
+        # survives via the screen's form dict; focus does not). See
+        # ``LibraryScreen._apply_library_export_counts``.
+        empty_line = Static(
+            state.empty_scope_line,
+            id="library-export-empty-line",
+            classes="library-export-quiet-line",
+            markup=False,
+        )
+        empty_line.display = bool(state.empty_scope_line)
+        yield empty_line
         yield Input(
             value=state.name,
             placeholder="Export name",

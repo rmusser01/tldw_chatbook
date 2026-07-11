@@ -9043,3 +9043,144 @@ async def test_library_shell_export_counts_worker_uses_real_thread_for_file_back
 
         scope_line = str(screen.query_one("#library-export-scope-line").renderable)
         assert scope_line == "Everything: 1 media · 1 conversations · 0 notes"
+
+
+class _GatedExportCountMediaDB:
+    """A media-id source whose count blocks until the test releases it.
+
+    ``is_memory_db = False`` deliberately routes
+    ``_start_library_export_counts_worker`` onto the real worker-thread
+    path, so the counts stay in-flight ("Counting…") for as long as the
+    gate is held -- the window in which a user can be mid-keystroke in
+    the form when the counts land. The wait is bounded (30.0s) so a
+    failing test can never wedge the worker thread past the suite's own
+    timeouts (the gated-fake convention used throughout this file).
+    """
+
+    is_memory_db = False
+
+    def __init__(self) -> None:
+        self.release = threading.Event()
+
+    def get_all_active_media_ids(self, media_type=None):
+        assert self.release.wait(timeout=30.0), "count gate never released"
+        return [1]
+
+
+class _StaticExportCountChaChaDB:
+    """A fixed-id ChaChaNotes source for the gated counts pilot."""
+
+    is_memory_db = False
+
+    def get_all_conversation_ids(self):
+        return ["c-1"]
+
+    def get_all_note_ids(self):
+        return []
+
+
+@pytest.mark.asyncio
+async def test_library_shell_export_counts_landing_preserves_input_focus_and_text():
+    """REGRESSION (F4 Task 2 review): counts landing must update the form
+    IN PLACE -- never recompose the canvas. A recompose destroys and
+    rebuilds the name/description ``Input`` mid-keystroke: the typed text
+    survives (via the form dict) but keyboard focus does not. Gate the
+    counts, focus the name field, type, release the gate, and assert the
+    SAME ``Input`` instance still holds focus and the typed text -- and
+    that the scope line/Export gate still landed their updates."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    media_db = _GatedExportCountMediaDB()
+    app.media_db = media_db
+    app.chachanotes_db = _StaticExportCountChaChaDB()
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}").press()
+        name_input = await _wait_for_selector(screen, pilot, "#library-export-name")
+
+        # The gate is held: counts are still in flight.
+        assert screen._library_export_counts is None
+        scope_line = screen.query_one("#library-export-scope-line", Static)
+        assert str(scope_line.renderable) == "Counting…"
+
+        name_input.focus()
+        await pilot.pause()
+        assert screen.focused is name_input
+        await pilot.press("h", "i")
+        assert name_input.value.endswith("hi")
+
+        media_db.release.set()
+        for _ in range(150):
+            if screen._library_export_counts is not None:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Export counts never landed after gate release.")
+        await pilot.pause()
+        await pilot.pause()
+
+        # The SAME widget instances survived the landing (no recompose)...
+        assert screen.query_one("#library-export-name", Input) is name_input
+        assert screen.focused is name_input
+        assert name_input.value.endswith("hi")
+        # ...and the targeted updates landed on them.
+        assert screen.query_one("#library-export-scope-line", Static) is scope_line
+        assert (
+            str(scope_line.renderable)
+            == "Everything: 1 media · 1 conversations · 0 notes"
+        )
+        # Positive total, but still no destination -- Export stays disabled.
+        assert screen.query_one("#library-export-submit", Button).disabled is True
+        # Non-empty scope: the (always-mounted) helper stays hidden.
+        assert screen.query_one("#library-export-empty-line", Static).display is False
+
+
+@pytest.mark.asyncio
+async def test_library_shell_export_counts_landing_at_zero_reveals_empty_helper_in_place():
+    """The empty-scope helper is display-toggled (not conditionally
+    composed): counts landing at zero must reveal it -- text and
+    visibility -- without a recompose."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+
+    class _EmptyGatedMediaDB(_GatedExportCountMediaDB):
+        def get_all_active_media_ids(self, media_type=None):
+            assert self.release.wait(timeout=30.0), "count gate never released"
+            return []
+
+    class _EmptyChaChaDB(_StaticExportCountChaChaDB):
+        def get_all_conversation_ids(self):
+            return []
+
+    media_db = _EmptyGatedMediaDB()
+    app.media_db = media_db
+    app.chachanotes_db = _EmptyChaChaDB()
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}").press()
+        await _wait_for_selector(screen, pilot, "#library-export-header")
+
+        empty_line = screen.query_one("#library-export-empty-line", Static)
+        assert empty_line.display is False  # still Counting…
+
+        media_db.release.set()
+        for _ in range(150):
+            if screen._library_export_counts is not None:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Export counts never landed after gate release.")
+        await pilot.pause()
+
+        assert screen.query_one("#library-export-empty-line", Static) is empty_line
+        assert empty_line.display is True
+        assert str(empty_line.renderable) == EMPTY_SCOPE_COPY
+        assert screen.query_one("#library-export-submit", Button).disabled is True
