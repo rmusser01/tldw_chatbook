@@ -37,6 +37,12 @@ LIBRARY_RAG_EMPTY_STATE_SELECTOR = "library-rag-empty-state"
 LIBRARY_RAG_USE_IN_CONSOLE_DISABLED_REASON = (
     "Run a query and select usable evidence before sending to Console."
 )
+# The "#library-rag-scope-summary" strip text. One source of truth shared by
+# the panel's compose path (library_search_rag_panel._scope_summary) and the
+# screen's incremental refresh path (LibraryScreen._library_rag_scope_summary)
+# so the two can't drift apart. Per-source counts are deliberately absent --
+# the scope toggle buttons directly below the strip already carry them (L6).
+LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY = "Scope: all local sources"
 LIBRARY_RAG_QUERY_MAX_LENGTH = 2_000
 LIBRARY_RAG_DISPLAY_MAX_LENGTH = 1_000
 LIBRARY_RAG_SNIPPET_MAX_LENGTH = 4_000

@@ -29,6 +29,7 @@ from tldw_chatbook.Library.library_ingest_state import (
     LibraryIngestFormState,
     build_library_ingest_state,
 )
+from tldw_chatbook.Library.library_rag_state import LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
     LIBRARY_ROW_BROWSE_MEDIA,
@@ -3262,6 +3263,61 @@ async def test_library_shell_scope_toggle_deselect_sends_only_selected_types():
         screen.query_one("#library-rag-run-query", Button).press()
         await pilot.pause()
         assert len(service.calls) == calls_before
+
+
+@pytest.mark.asyncio
+async def test_library_shell_search_scope_strip_refresh_path_uses_shared_copy():
+    """Both scope-strip builders read LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY.
+
+    The "#library-rag-scope-summary" text has two independent builders:
+    the panel's own compose() (pinned by the gate16 asserts) and the
+    screen's incremental refresh path (``_refresh_search_rag_panel_state_
+    widgets``, driven by Input.Changed on the query field), which was
+    previously a second hardcoded literal kept in sync only by comments.
+    This exercises the refresh path specifically: overwrite the strip with
+    a sentinel, type into the query input, and require the refresh to
+    rewrite it to the shared constant -- so re-inlining a drifting literal
+    at either site fails a test instead of drifting silently.
+    """
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        notes=[{"title": "Research Note", "id": "note-1"}],
+        media=_two_media_items(),
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-search").press()
+        await _wait_for_selector(screen, pilot, "#library-rag-scope-summary")
+
+        strip = screen.query_one("#library-rag-scope-summary", Static)
+        # Compose path (panel-side builder).
+        assert str(strip.renderable) == LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY
+
+        # Sentinel-overwrite, then drive the screen-side refresh path via
+        # a query edit (Input.Changed -> _refresh_search_rag_panel_state_widgets).
+        strip.update("SENTINEL-SCOPE-DRIFT-CHECK")
+        screen.query_one("#library-rag-query-input", Input).value = "policy"
+
+        for _ in range(150):
+            strips = list(screen.query("#library-rag-scope-summary"))
+            if strips and str(strips[0].renderable) != "SENTINEL-SCOPE-DRIFT-CHECK":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                "The refresh path never rewrote the scope strip. Visible "
+                f"text: {_visible_text(screen)}"
+            )
+
+        assert str(
+            screen.query_one("#library-rag-scope-summary", Static).renderable
+        ) == LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY
 
 
 @pytest.mark.asyncio

@@ -82,6 +82,7 @@ from ...Library.library_rag_service import (
 )
 from ...Library.library_rag_state import (
     LIBRARY_RAG_QUERY_MAX_LENGTH,
+    LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY,
     LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES,
     LIBRARY_SEARCH_HISTORY_ENTRY_MAX_CHARS,
     LIBRARY_SEARCH_HISTORY_LIMIT,
@@ -7159,11 +7160,7 @@ class LibraryScreen(BaseAppScreen):
 
     @staticmethod
     def _library_rag_scope_summary(panel_state: LibraryRagPanelState) -> str:
-        # UX wave L6: kept in lockstep with the panel's own
-        # ``_scope_summary`` (library_search_rag_panel.py) -- both build the
-        # same "#library-rag-scope-summary" text, one for initial compose
-        # and one for the incremental refresh path.
-        return "Scope: all local sources"
+        return LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY
 
     def _open_selected_conversation_handoff(self) -> None:
         workspace_state = self._library_workspace_depth_state()

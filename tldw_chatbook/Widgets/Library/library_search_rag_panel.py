@@ -10,6 +10,7 @@ from textual.widgets import Button, Collapsible, Input, Static
 from textual.widget import Widget
 
 from ...Library.library_rag_state import (
+    LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY,
     LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES,
     LibraryRagPanelState,
     LibraryRagQueryState,
@@ -116,13 +117,8 @@ class LibrarySearchRagPanel(VerticalScroll):
 
 
 def _scope_summary(state: LibraryRagPanelState) -> str:
-    """Return a compact source scope line for the main Search/RAG work lane.
-
-    UX wave L6: drops the per-source counts -- the toggle buttons directly
-    below (``library_rag_scope_toggle_children``) already carry each
-    source's count, so restating them here was redundant chrome.
-    """
-    return "Scope: all local sources"
+    """Return the source scope line for the main Search/RAG work lane."""
+    return LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY
 
 
 def _scope_toggle_label(option: LibraryRagSourceOption) -> str:
