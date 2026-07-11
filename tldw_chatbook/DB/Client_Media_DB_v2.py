@@ -1326,7 +1326,8 @@ class MediaDatabase:
         page: int = 1,
         results_per_page: int = 20,
         include_trash: bool = False,
-        include_deleted: bool = False
+        include_deleted: bool = False,
+        fts_match_query: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """
         Searches media items based on a variety of criteria, supporting text search,
@@ -1381,6 +1382,9 @@ class MediaDatabase:
                 (Media.is_trash = 1). Defaults to False.
             include_deleted (bool): If True, include items marked as soft-deleted
                 (Media.deleted = 1). Defaults to False.
+            fts_match_query (Optional[str]): Optional preformatted SQLite FTS
+                expression. When supplied, MATCH owns title/content filtering;
+                any author/type LIKE predicates continue to use ``search_query``.
 
         Returns:
             Tuple[List[Dict[str, Any]], int]: A tuple containing:
@@ -1509,6 +1513,9 @@ class MediaDatabase:
             # FTS on 'title', 'content'
             if any(f in sanitized_text_search_fields for f in ["title", "content"]):
                 fts_search_active = True
+                effective_fts_query = (
+                    fts_match_query if fts_match_query is not None else search_query
+                )
                 if not any("media_fts fts" in j_item for j_item in joins): # Ensure FTS join is added only once
                     joins.append("JOIN media_fts fts ON fts.rowid = m.id")
 
@@ -1517,23 +1524,30 @@ class MediaDatabase:
                 fts_query_parts = []
 
                 # For very short search terms (1-2 characters), add wildcards to improve matching
-                if len(search_query) <= 2 and not (search_query.startswith('"') and search_query.endswith('"')):
+                is_quoted_fts_query = (
+                    effective_fts_query.startswith('"')
+                    and effective_fts_query.endswith('"')
+                )
+                if len(effective_fts_query) <= 2 and not is_quoted_fts_query:
                     # Add suffix wildcard for better partial matching with short terms
-                    fts_query_parts.append(f"{search_query}*")
+                    fts_query_parts.append(f"{effective_fts_query}*")
 
                     # Note: SQLite FTS5 doesn't support prefix wildcards (*term)
                     # We'll handle "ends with" matching using LIKE conditions instead
 
                     # Add case-insensitive versions if needed
-                    if search_query.lower() != search_query:
-                        fts_query_parts.append(f"{search_query.lower()}*")
+                    if effective_fts_query.lower() != effective_fts_query:
+                        fts_query_parts.append(f"{effective_fts_query.lower()}*")
                 else:
                     # For longer terms, use the original query
-                    fts_query_parts.append(search_query)
+                    fts_query_parts.append(effective_fts_query)
 
                     # Add case-insensitive version if needed
-                    if not (search_query.startswith('"') and search_query.endswith('"')) and search_query.lower() != search_query:
-                        fts_query_parts.append(search_query.lower())
+                    if (
+                        not is_quoted_fts_query
+                        and effective_fts_query.lower() != effective_fts_query
+                    ):
+                        fts_query_parts.append(effective_fts_query.lower())
 
                 # Combine all FTS query parts with OR
                 combined_fts_query = " OR ".join(fts_query_parts)
@@ -1546,16 +1560,17 @@ class MediaDatabase:
 
                 # Add LIKE search for 'title' and 'content' to ensure partial matches work
                 title_content_like_parts = []
-                for field in ["title", "content"]:
-                    if field in sanitized_text_search_fields:
-                        # Contains matching (standard)
-                        title_content_like_parts.append(f"m.{field} LIKE ? COLLATE NOCASE")
-                        like_params.append(f"%{search_query}%")
-
-                        # For short search terms, also add "ends with" matching to catch cases like "ToDo" when searching for "Do"
-                        if len(search_query) <= 2 and not (search_query.startswith('"') and search_query.endswith('"')):
+                if fts_match_query is None:
+                    for field in ["title", "content"]:
+                        if field in sanitized_text_search_fields:
+                            # Contains matching (standard)
                             title_content_like_parts.append(f"m.{field} LIKE ? COLLATE NOCASE")
-                            like_params.append(f"%{search_query}")
+                            like_params.append(f"%{search_query}%")
+
+                            # For short search terms, also add "ends with" matching to catch cases like "ToDo" when searching for "Do"
+                            if len(search_query) <= 2 and not (search_query.startswith('"') and search_query.endswith('"')):
+                                title_content_like_parts.append(f"m.{field} LIKE ? COLLATE NOCASE")
+                                like_params.append(f"%{search_query}")
                 if title_content_like_parts:
                     like_conditions.append(f"({' OR '.join(title_content_like_parts)})")
 

@@ -94,6 +94,15 @@ class SpyReadItLaterDb:
         return ([{"id": media_id} for media_id in (media_ids_filter or [])], len(media_ids_filter or []))
 
 
+class OverrideRecordingDb:
+    def __init__(self):
+        self.search_calls = []
+
+    def search_media_db(self, **kwargs):
+        self.search_calls.append(kwargs)
+        return [], 0
+
+
 def test_local_service_search_media_uses_db_backed_saved_filter_spy():
     db = SpyReadItLaterDb()
     service = LocalMediaReadingService(db)
@@ -105,6 +114,28 @@ def test_local_service_search_media_uses_db_backed_saved_filter_spy():
     assert [item["id"] for item in payload["items"]] == [2]
     assert payload["items"][0]["is_read_it_later"] is True
     assert payload["items"][0]["saved_at"] == "2026-04-21T10:00:00Z"
+
+
+def test_local_service_forwards_distinct_fts_match_query():
+    db = OverrideRecordingDb()
+    service = LocalMediaReadingService(db)
+
+    service.search_media(
+        query="what caused the outage?",
+        fts_match_query='"what" "caused" "the" "outage?"',
+    )
+
+    assert db.search_calls[0]["search_query"] == "what caused the outage?"
+    assert db.search_calls[0]["fts_match_query"] == '"what" "caused" "the" "outage?"'
+
+
+def test_local_service_omits_absent_match_override_for_legacy_db_adapter():
+    db = SpyReadItLaterDb()
+
+    payload = LocalMediaReadingService(db).search_media(query="legacy query")
+
+    assert payload["items"] == []
+    assert db.search_calls[0]["search_query"] == "legacy query"
 
 
 def test_local_service_search_media_uses_db_backed_saved_filter(memory_db_factory):

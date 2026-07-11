@@ -30,6 +30,7 @@ from pathlib import Path
 import pytest
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+from tldw_chatbook.Local_Ingestion import Document_Processing_Lib as document_processing
 from tldw_chatbook.Local_Ingestion.ingest_parse_worker import (
     classify_parse_failure,
     run_parse_job,
@@ -42,6 +43,81 @@ from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_process_document_auto_falls_back_when_docling_import_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    def broken_docling(*args, **kwargs):
+        calls.append("docling")
+        raise ImportError("broken transitive Docling dependency")
+
+    def native_docx(*args, **kwargs):
+        calls.append("native")
+        return {
+            "content": "Native content",
+            "title": "sample.docx",
+            "author": "tester",
+            "metadata": {"processing_method": "python-docx"},
+            "extraction_successful": True,
+        }
+
+    monkeypatch.setattr(document_processing, "DOCLING_AVAILABLE", True)
+    monkeypatch.setattr(document_processing, "PYTHON_DOCX_AVAILABLE", True)
+    monkeypatch.setattr(document_processing, "process_with_docling", broken_docling)
+    monkeypatch.setattr(document_processing, "process_docx", native_docx)
+
+    result = document_processing.process_document("sample.docx", processing_method="auto")
+
+    assert result["extraction_successful"] is True
+    assert result["content"] == "Native content"
+    assert calls == ["docling", "native"]
+
+
+def test_process_document_explicit_docling_preserves_import_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    native_calls: list[str] = []
+
+    def broken_docling(*args, **kwargs):
+        raise ImportError("broken transitive Docling dependency")
+
+    def native_docx(*args, **kwargs):
+        native_calls.append("native")
+        return {"extraction_successful": True}
+
+    monkeypatch.setattr(document_processing, "DOCLING_AVAILABLE", True)
+    monkeypatch.setattr(document_processing, "PYTHON_DOCX_AVAILABLE", True)
+    monkeypatch.setattr(document_processing, "process_with_docling", broken_docling)
+    monkeypatch.setattr(document_processing, "process_docx", native_docx)
+
+    result = document_processing.process_document("sample.docx", processing_method="docling")
+
+    assert result["extraction_successful"] is False
+    assert result["metadata"]["error"] == "broken transitive Docling dependency"
+    assert native_calls == []
+
+
+def test_process_document_auto_does_not_retry_broken_docling_without_native_parser(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    docling_calls: list[str] = []
+
+    def broken_docling(*args, **kwargs):
+        docling_calls.append("docling")
+        raise ImportError("broken transitive Docling dependency")
+
+    monkeypatch.setattr(document_processing, "DOCLING_AVAILABLE", True)
+    monkeypatch.setattr(document_processing, "PYTHON_DOCX_AVAILABLE", False)
+    monkeypatch.setattr(document_processing, "process_with_docling", broken_docling)
+
+    result = document_processing.process_document("sample.docx", processing_method="auto")
+
+    assert result["extraction_successful"] is False
+    assert result["metadata"]["error"] == "No parser available for .docx"
+    assert docling_calls == ["docling"]
 
 
 # --- parse_local_file_for_ingest -------------------------------------------

@@ -110,6 +110,8 @@ class LocalMediaReadingService:
                 }
 
         results_per_page = max(limit + offset, limit)
+        fts_match_query = filters.get("fts_match_query")
+        fts_match_kwargs = {"fts_match_query": fts_match_query} if fts_match_query is not None else {}
         rows, total = db.search_media_db(
             search_query=query,
             search_fields=filters.get("fields"),
@@ -123,6 +125,7 @@ class LocalMediaReadingService:
             results_per_page=results_per_page,
             include_trash=bool(filters.get("include_trash", False)),
             include_deleted=bool(filters.get("include_deleted", False)),
+            **fts_match_kwargs,
         )
         items = self._enrich_rows_with_read_it_later_state(list(rows)[offset:offset + limit])
         return {

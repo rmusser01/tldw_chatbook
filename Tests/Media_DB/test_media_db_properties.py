@@ -234,6 +234,32 @@ class TestMediaItemProperties:
 
 
 class TestSearchProperties:
+    def test_match_override_supports_nonadjacent_terms_without_changing_legacy_search(
+        self,
+        db_instance: MediaDatabase,
+    ) -> None:
+        content = "Alpha appears near the start, with unrelated details before omega."
+        media_id, _, _ = db_instance.add_media_with_keywords(
+            title="Incident report",
+            content=content,
+            media_type="article",
+        )
+
+        legacy_results, legacy_total = db_instance.search_media_db(
+            search_query="alpha omega",
+            search_fields=["content"],
+        )
+        results, total = db_instance.search_media_db(
+            search_query="alpha omega",
+            search_fields=["content"],
+            fts_match_query='"alpha" "omega"',
+        )
+
+        assert legacy_results == []
+        assert legacy_total == 0
+        assert total == 1
+        assert results[0]["id"] == media_id
+
     @given(media_data=st_media_data())
     def test_search_finds_item_by_its_properties(self, db_instance: MediaDatabase, media_data: dict):
         unique_word = f"hypothesis_{uuid.uuid4().hex}"

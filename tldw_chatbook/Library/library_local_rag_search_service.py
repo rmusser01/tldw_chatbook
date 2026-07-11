@@ -28,6 +28,11 @@ _SEMANTIC_SOURCE_TYPE_MAP = {
 }
 
 
+def _plain_text_fts_query(query: str) -> str:
+    """Quote whitespace-delimited terms for safe SQLite FTS MATCH input."""
+    return " ".join('"' + term.replace('"', '""') + '"' for term in query.split())
+
+
 class LibraryLocalRagSearchService:
     """Keyword-first Library retrieval over the app's local source seams.
 
@@ -133,7 +138,13 @@ class LibraryLocalRagSearchService:
         if service is None:
             return False, []
         try:
-            payload = await service.search_media(mode="local", query=query, limit=top_k, offset=0)
+            payload = await service.search_media(
+                mode="local",
+                query=query,
+                limit=top_k,
+                offset=0,
+                fts_match_query=_plain_text_fts_query(query),
+            )
         except Exception:
             logger.opt(exception=True).warning("Library keyword search: media seam failed.")
             return True, []
@@ -149,15 +160,16 @@ class LibraryLocalRagSearchService:
         db = getattr(self._app, "chachanotes_db", None)
         if db is None:
             return False, []
+        fts_query = _plain_text_fts_query(query)
         try:
             if getattr(db, "is_memory_db", False):
                 # In-memory SQLite connections are thread-local and only the
                 # thread that created the database has the migrated schema;
                 # offloading to a worker thread would hit a blank connection.
-                raw_results = db.search_conversations_by_content(query, top_k)
+                raw_results = db.search_conversations_by_content(fts_query, top_k)
             else:
                 raw_results = await asyncio.to_thread(
-                    db.search_conversations_by_content, query, top_k
+                    db.search_conversations_by_content, fts_query, top_k
                 )
         except Exception:
             logger.opt(exception=True).warning("Library keyword search: conversations seam failed.")

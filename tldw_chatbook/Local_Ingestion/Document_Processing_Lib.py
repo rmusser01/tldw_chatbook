@@ -170,16 +170,27 @@ def process_document(
     
     try:
         # Determine processing method
+        requested_processing_method = processing_method
+        docling_available_for_request = DOCLING_AVAILABLE
         if processing_method == 'auto':
-            if DOCLING_AVAILABLE:
+            if docling_available_for_request:
                 processing_method = 'docling'
             else:
                 processing_method = 'native'
         
         # Extract content based on method
-        if processing_method == 'docling' and DOCLING_AVAILABLE:
-            result = process_with_docling(file_path, title_override, author_override, keywords, enable_ocr, ocr_language)
-        else:
+        if processing_method == 'docling':
+            if not docling_available_for_request:
+                raise ImportError("Docling processing requested, but Docling is unavailable")
+            try:
+                result = process_with_docling(file_path, title_override, author_override, keywords, enable_ocr, ocr_language)
+            except ImportError:
+                if requested_processing_method != 'auto':
+                    raise
+                docling_available_for_request = False
+                processing_method = 'native'
+
+        if processing_method != 'docling':
             # Use native libraries based on file type
             if file_ext == '.docx' and PYTHON_DOCX_AVAILABLE:
                 result = process_docx(file_path, title_override, author_override, keywords)
@@ -193,7 +204,7 @@ def process_document(
                 result = process_xlsx(file_path, title_override, author_override, keywords)
             else:
                 # Fallback to Docling if available
-                if DOCLING_AVAILABLE:
+                if docling_available_for_request:
                     result = process_with_docling(file_path, title_override, author_override, keywords, enable_ocr, ocr_language)
                 else:
                     return {

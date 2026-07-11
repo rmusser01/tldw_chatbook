@@ -7,12 +7,15 @@ from types import SimpleNamespace
 import pytest
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.Library.library_local_rag_search_service import LibraryLocalRagSearchService
 from tldw_chatbook.Library.library_rag_service import (
     LibraryRagSearchOutcome,
     LibraryRagSearchRequest,
     run_library_rag_search,
 )
+from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingService
+from tldw_chatbook.Media.media_reading_scope_service import MediaReadingScopeService
 
 
 class FakeNotesScopeService:
@@ -102,6 +105,82 @@ def conversations_db():
         yield db, conv_id
     finally:
         db.close_connection()
+
+
+@pytest.fixture
+def real_fts_app(tmp_path):
+    """Real media and conversation FTS seams seeded with punctuation-rich text."""
+    content = (
+        "The report asks what caused the outage and says the foo-bar gateway recovered. "
+        'The operator "said" hello now. Alpha appeared near the beginning, with many '
+        "unrelated details in between, before omega closed the report."
+    )
+    conversations = CharactersRAGDB(":memory:", client_id="plain-text-fts")
+    conversation_id = conversations.add_conversation({"title": "Punctuation incident"})
+    conversations.add_message(
+        {
+            "conversation_id": conversation_id,
+            "sender": "user",
+            "content": content,
+            "timestamp": "2026-01-01T00:00:00Z",
+        }
+    )
+
+    media_db = MediaDatabase(tmp_path / "library_plain_text_fts.db", client_id="plain-text-fts")
+    media_id, _media_uuid, _message = media_db.add_media_with_keywords(
+        title="Punctuation incident recording",
+        media_type="document",
+        content=content,
+    )
+    app = SimpleNamespace(
+        media_reading_scope_service=MediaReadingScopeService(
+            LocalMediaReadingService(media_db),
+            None,
+        ),
+        chachanotes_db=conversations,
+    )
+    try:
+        yield app, str(media_id), conversation_id
+    finally:
+        media_db.close_connection()
+        conversations.close_connection()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "query",
+    [
+        "what caused the outage?",
+        "foo-bar",
+        'operator "said',
+        'operator "said" now',
+        "alpha omega",
+    ],
+)
+async def test_public_keyword_search_treats_fts_queries_as_plain_text(real_fts_app, query):
+    app, media_id, conversation_id = real_fts_app
+
+    result = await LibraryLocalRagSearchService(app).search(
+        query,
+        ("media", "conversations"),
+        "search",
+        top_k=5,
+    )
+
+    rows_by_type = {row["provenance"]["source_type"]: row for row in result["results"]}
+    assert rows_by_type["media"]["source_id"] == media_id
+    assert rows_by_type["conversation"]["source_id"] == conversation_id
+
+
+@pytest.mark.asyncio
+async def test_notes_keyword_search_keeps_the_plain_query_unchanged():
+    notes_service = FakeNotesScopeService(rows=[])
+    app = SimpleNamespace(notes_scope_service=notes_service)
+    service = LibraryLocalRagSearchService(app)
+
+    await service.search('operator "said', ("notes",), "search", top_k=5)
+
+    assert notes_service.calls[0]["query"] == 'operator "said'
 
 
 # (a) search mode returns note+media+conversation rows with correct source_id/provenance.
