@@ -18,5 +18,7 @@ F3 dropped the ingest chain from ~5.5s to ~0.9s, but app boot still eagerly load
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 import tldw_chatbook.app no longer loads nltk/torch/transformers at boot,A subprocess regression test pins the absence,No feature regression from the deferral
+- [ ] #1 import tldw_chatbook.app no longer loads nltk/torch/transformers at boot
+- [ ] #2 A subprocess regression test pins the absence
+- [ ] #3 No feature regression from the deferral
 <!-- AC:END -->

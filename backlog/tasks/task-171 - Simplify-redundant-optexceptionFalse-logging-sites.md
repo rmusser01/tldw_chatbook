@@ -19,5 +19,6 @@ The repo-wide exc_info codemod (PR #592) left ~6 sites using logger.opt(exceptio
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 opt(exception=False) sites reduced to plain logger calls,No traceback-capturing behavior changed
+- [ ] #1 opt(exception=False) sites reduced to plain logger calls
+- [ ] #2 No traceback-capturing behavior changed
 <!-- AC:END -->

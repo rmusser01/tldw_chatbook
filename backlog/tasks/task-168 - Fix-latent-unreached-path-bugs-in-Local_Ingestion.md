@@ -19,5 +19,7 @@ Three pre-existing latent bugs on currently-unreached code paths, found during t
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 analyze_media_content reference resolved or removed,DocextOCRBackend.cleanup imports torch (or guards its absence),process_pdf checks error truthiness not membership
+- [ ] #1 analyze_media_content reference resolved or removed
+- [ ] #2 DocextOCRBackend.cleanup imports torch (or guards its absence)
+- [ ] #3 process_pdf checks error truthiness not membership
 <!-- AC:END -->

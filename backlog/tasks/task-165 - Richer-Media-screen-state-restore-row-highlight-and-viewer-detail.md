@@ -19,5 +19,6 @@ MediaScreen restore is scalar-only for the selected id: the list re-highlight an
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Restored Media screen re-highlights the previously selected row,A previously open media viewer re-fetches its detail on restore
+- [ ] #1 Restored Media screen re-highlights the previously selected row
+- [ ] #2 A previously open media viewer re-fetches its detail on restore
 <!-- AC:END -->

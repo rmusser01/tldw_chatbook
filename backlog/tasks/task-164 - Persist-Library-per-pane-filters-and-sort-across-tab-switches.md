@@ -19,5 +19,7 @@ PR #595 added cross-visit state persistence for Library/Media/Search selection a
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Notes sort/filter survives a tab switch away and back,Conversations query survives,Media type filter survives
+- [ ] #1 Notes sort/filter survives a tab switch away and back
+- [ ] #2 Conversations query survives
+- [ ] #3 Media type filter survives
 <!-- AC:END -->

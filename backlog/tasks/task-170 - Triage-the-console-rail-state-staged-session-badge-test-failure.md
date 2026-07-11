@@ -19,5 +19,6 @@ Tests/Chat/test_console_rail_state.py::test_console_context_rail_badge_ignores_e
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The badge test passes,The underlying staged-vs-session priority is correct or the test expectation is corrected
+- [ ] #1 The badge test passes
+- [ ] #2 The underlying staged-vs-session priority is correct or the test expectation is corrected
 <!-- AC:END -->

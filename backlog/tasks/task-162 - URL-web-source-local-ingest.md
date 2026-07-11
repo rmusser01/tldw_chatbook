@@ -18,5 +18,6 @@ Local ingest currently accepts file paths only. Add URL/web ingest (article extr
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 User can ingest a URL into the Library,Web extraction routes through the existing parse/persist pipeline
+- [ ] #1 User can ingest a URL into the Library
+- [ ] #2 Web extraction routes through the existing parse/persist pipeline
 <!-- AC:END -->

@@ -19,5 +19,7 @@ The F2 dead-code sweep pruned the notes-workbench selectors but left the pre-wor
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Orphaned legacy notes-window CSS removed (or its live user documented),ALL_MAIN_WINDOW_IDS no longer references a dead window id,build_css.py no longer warns about a missing _evaluation_v2.tcss module
+- [ ] #1 Orphaned legacy notes-window CSS removed (or its live user documented)
+- [ ] #2 ALL_MAIN_WINDOW_IDS no longer references a dead window id
+- [ ] #3 build_css.py no longer warns about a missing _evaluation_v2.tcss module
 <!-- AC:END -->

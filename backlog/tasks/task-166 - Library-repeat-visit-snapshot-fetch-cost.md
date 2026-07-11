@@ -19,5 +19,6 @@ Since screen instance caching was removed (freeze fix, PR #595), LibraryScreen.o
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Repeat Library visits within a short window avoid a redundant full snapshot fetch,No stale data shown beyond the memo window
+- [ ] #1 Repeat Library visits within a short window avoid a redundant full snapshot fetch
+- [ ] #2 No stale data shown beyond the memo window
 <!-- AC:END -->
