@@ -29,10 +29,12 @@ def _module_available(name: str) -> bool:
     """
     try:
         return importlib.util.find_spec(name) is not None
-    except (ImportError, ValueError, ModuleNotFoundError):
-        # A partially-broken package (e.g. a stale .pth entry) can make
-        # find_spec raise instead of returning None; treat that the same
-        # as "not available".
+    except Exception:
+        # A partially-broken package (e.g. a stale .pth entry) or a
+        # misbehaving custom import finder can make find_spec raise
+        # arbitrary exceptions instead of returning None; this probe runs
+        # at import time, so treat ANY failure as "not available" rather
+        # than letting it crash startup.
         return False
 
 

@@ -119,7 +119,14 @@ def _ensure_torch_import() -> None:
 
 def _ensure_qwen2audio_imports() -> None:
     """Import transformers' Qwen2Audio classes (and torch) on first actual
-    use, not just from importing this module."""
+    use, not just from importing this module.
+
+    Raises:
+        TranscriptionError: If the transformers/torch dependencies are not
+            installed. Both callers are actual transcription attempts, so a
+            clear failure here beats proceeding with ``None`` classes and
+            crashing later with an opaque ``TypeError``.
+    """
     global AutoProcessor, Qwen2AudioForConditionalGeneration
     _ensure_torch_import()
     if AutoProcessor is not None:
@@ -128,8 +135,11 @@ def _ensure_qwen2audio_imports() -> None:
         from transformers import AutoProcessor as _AutoProcessor, Qwen2AudioForConditionalGeneration as _Qwen2AudioForConditionalGeneration
         AutoProcessor = _AutoProcessor
         Qwen2AudioForConditionalGeneration = _Qwen2AudioForConditionalGeneration
-    except ImportError:
-        pass
+    except ImportError as e:
+        raise TranscriptionError(
+            "Qwen2Audio dependencies not installed. "
+            "Install with: pip install transformers torch"
+        ) from e
 
 try:
     import soundfile as sf
