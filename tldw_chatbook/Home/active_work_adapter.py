@@ -49,8 +49,17 @@ _HOME_RECENT_WORK_STATUSES = frozenset(
 )
 # Library ingest job states that mirror into Home's active-work feed.
 # DONE jobs stay out of active work in v1 -- see _local_ingest_job_items.
+# F3: RUNNING split into PARSING/WRITING -- both are still "active" and both
+# land in Home's Running feed (dashboard_state.py's RUNNING_STATUSES set is
+# the piece that actually buckets the "parsing"/"writing" status strings
+# into that feed's category; see its own comment).
 _HOME_INGEST_JOB_ACTIVE_STATES = frozenset(
-    {IngestJobState.QUEUED, IngestJobState.RUNNING, IngestJobState.FAILED}
+    {
+        IngestJobState.QUEUED,
+        IngestJobState.PARSING,
+        IngestJobState.WRITING,
+        IngestJobState.FAILED,
+    }
 )
 _HOME_RECENT_WORK_LIMIT = 8
 _MAX_CHATBOOK_ARTIFACT_PREVIEW_CHARS = 1000
@@ -557,7 +566,7 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         return items
 
     def _local_ingest_job_items(self) -> list[HomeActiveWorkItem]:
-        """Mirror running/queued/failed Library ingest jobs into active work.
+        """Mirror parsing/writing/queued/failed Library ingest jobs into active work.
 
         The registry (``tldw_chatbook.Library.library_ingest_jobs``) is an
         in-memory, UI-thread-only object owned by the app -- ``jobs()`` is a
@@ -580,8 +589,9 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         specifically so terminal jobs can be sorted/displayed by real time),
         ``LibraryIngestJob.started_at``/``finished_at``/``submitted_at``
         remain ``time.monotonic()`` floats with no fixed epoch -- and none
-        of QUEUED/RUNNING/FAILED (the three states this method emits) have
-        a wall-clock timestamp to report through ``updated_at``. Passing ""
+        of QUEUED/PARSING/WRITING/FAILED (the four states this method
+        emits) have a wall-clock timestamp to report through ``updated_at``.
+        Passing ""
         renders no age label (mirrors the L3a flashcards-due row), rather
         than a misleading -- or crashing -- age.
         """

@@ -4,6 +4,7 @@ Unified transcription service for tldw_chatbook.
 Supports multiple transcription backends including faster-whisper, Qwen2Audio, etc.
 """
 
+import importlib.util
 import os
 import subprocess
 import tempfile
@@ -78,16 +79,67 @@ else:
     if sys.platform != 'darwin':
         parakeet_from_pretrained = None
 
+# torch/transformers are heavy optional dependencies (torch alone pulls in
+# ~500 transitive modules). Probe availability cheaply via find_spec instead
+# of importing eagerly; the real `import torch`/`from transformers import
+# ...` is deferred to _ensure_torch_import()/_ensure_qwen2audio_imports(),
+# called only from the methods that actually need Qwen2Audio, NeMo
+# parakeet/canary (which are torch-based), or device info.
+torch = None
+AutoProcessor = None
+Qwen2AudioForConditionalGeneration = None
 try:
-    import torch
-    from transformers import AutoProcessor, Qwen2AudioForConditionalGeneration
-    QWEN2AUDIO_AVAILABLE = True
-except ImportError:
-    torch = None
-    AutoProcessor = None
-    Qwen2AudioForConditionalGeneration = None
+    QWEN2AUDIO_AVAILABLE = (
+        importlib.util.find_spec("torch") is not None
+        and importlib.util.find_spec("transformers") is not None
+    )
+except (ImportError, ValueError, ModuleNotFoundError):
     QWEN2AUDIO_AVAILABLE = False
+if not QWEN2AUDIO_AVAILABLE:
     logger.warning("Qwen2Audio not available. Install transformers and torch for Qwen2Audio support.")
+
+
+def _ensure_torch_import() -> None:
+    """Import torch on first actual use.
+
+    Used by device queries (get_device_info) and the torch-based transcribe
+    paths (Qwen2Audio, NeMo parakeet/canary). No-ops if torch isn't
+    installed, matching the previous eager-import fallback (torch stays
+    None).
+    """
+    global torch
+    if torch is not None:
+        return
+    try:
+        import torch as _torch
+        torch = _torch
+    except ImportError:
+        pass
+
+
+def _ensure_qwen2audio_imports() -> None:
+    """Import transformers' Qwen2Audio classes (and torch) on first actual
+    use, not just from importing this module.
+
+    Raises:
+        TranscriptionError: If the transformers/torch dependencies are not
+            installed. Both callers are actual transcription attempts, so a
+            clear failure here beats proceeding with ``None`` classes and
+            crashing later with an opaque ``TypeError``.
+    """
+    global AutoProcessor, Qwen2AudioForConditionalGeneration
+    _ensure_torch_import()
+    if AutoProcessor is not None:
+        return
+    try:
+        from transformers import AutoProcessor as _AutoProcessor, Qwen2AudioForConditionalGeneration as _Qwen2AudioForConditionalGeneration
+        AutoProcessor = _AutoProcessor
+        Qwen2AudioForConditionalGeneration = _Qwen2AudioForConditionalGeneration
+    except ImportError as e:
+        raise TranscriptionError(
+            "Qwen2Audio dependencies not installed. "
+            "Install with: pip install transformers torch"
+        ) from e
 
 try:
     import soundfile as sf
@@ -1053,7 +1105,8 @@ class TranscriptionService:
                 "Qwen2Audio dependencies not installed. "
                 "Install with: pip install transformers torch"
             )
-        
+        _ensure_qwen2audio_imports()
+
         logger.info("Starting Qwen2Audio transcription")
         transcribe_start = time.time()
         
@@ -1188,7 +1241,8 @@ class TranscriptionService:
                 "NeMo toolkit not installed. "
                 "Install with: pip install nemo-toolkit[asr]"
             )
-        
+        _ensure_torch_import()
+
         model = model or 'nvidia/parakeet-tdt-1.1b'
         logger.info(f"Starting Parakeet transcription with model: {model}")
         transcribe_start = time.time()
@@ -1329,7 +1383,8 @@ class TranscriptionService:
                 "NeMo toolkit not installed. "
                 "Install with: pip install nemo-toolkit[asr]"
             )
-        
+        _ensure_torch_import()
+
         # Import additional NeMo modules needed for Canary
         try:
             from nemo.collections.asr.models import EncDecMultiTaskModel
@@ -2612,7 +2667,8 @@ class TranscriptionService:
     ) -> Dict[str, Any]:
         """Transcribe audio buffer directly with Qwen2Audio."""
         logger.info("Using Qwen2Audio for direct buffer transcription")
-        
+        _ensure_qwen2audio_imports()
+
         if not NUMPY_AVAILABLE:
             raise TranscriptionError("NumPy is required for buffer transcription")
         
@@ -2830,7 +2886,8 @@ class TranscriptionService:
     def get_device_info(self) -> Dict[str, Any]:
         """Get information about available compute devices."""
         logger.debug("Getting compute device information...")
-        
+        _ensure_torch_import()
+
         info = {
             'cpu': True,
             'cuda': False,

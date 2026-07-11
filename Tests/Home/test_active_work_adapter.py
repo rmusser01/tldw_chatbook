@@ -1172,13 +1172,15 @@ def test_flashcards_due_provider_returning_noncoercible_object_degrades_to_zero(
 
 
 def test_local_notification_adapter_maps_ingest_jobs_to_active_work():
-    """Running/queued/failed ingest jobs mirror into active work; done jobs
-    are excluded (v1 -- see ``_local_ingest_job_items`` docstring)."""
+    """(F3 re-anchor) Parsing/writing/queued/failed ingest jobs mirror into
+    active work; done jobs are excluded (v1 -- see ``_local_ingest_job_items``
+    docstring). PARSING and WRITING (which replaced the old single RUNNING
+    state) must BOTH surface here."""
     jobs = (
         LibraryIngestJob(
             job_id="ingest-job-1",
             source_path="/tmp/reports/quarterly.txt",
-            state=IngestJobState.RUNNING,
+            state=IngestJobState.PARSING,
         ),
         LibraryIngestJob(
             job_id="ingest-job-2",
@@ -1197,6 +1199,11 @@ def test_local_notification_adapter_maps_ingest_jobs_to_active_work():
             state=IngestJobState.DONE,
             media_id=42,
         ),
+        LibraryIngestJob(
+            job_id="ingest-job-5",
+            source_path="/tmp/archive.zip",
+            state=IngestJobState.WRITING,
+        ),
     )
     adapter = LocalNotificationHomeActiveWorkAdapter(ingest_jobs_provider=lambda: jobs)
 
@@ -1210,15 +1217,16 @@ def test_local_notification_adapter_maps_ingest_jobs_to_active_work():
         "local:ingest:ingest-job-1",
         "local:ingest:ingest-job-2",
         "local:ingest:ingest-job-3",
+        "local:ingest:ingest-job-5",
     }
 
-    running = items["local:ingest:ingest-job-1"]
-    assert running.title == "quarterly.txt"
-    assert running.source == "Library"
-    assert running.status == "running"
-    assert running.detail_route == "library"
-    assert running.console_available is False
-    assert running.updated_at == ""
+    parsing = items["local:ingest:ingest-job-1"]
+    assert parsing.title == "quarterly.txt"
+    assert parsing.source == "Library"
+    assert parsing.status == "parsing"
+    assert parsing.detail_route == "library"
+    assert parsing.console_available is False
+    assert parsing.updated_at == ""
 
     queued = items["local:ingest:ingest-job-2"]
     assert queued.title == "todo.md"
@@ -1227,6 +1235,14 @@ def test_local_notification_adapter_maps_ingest_jobs_to_active_work():
     failed = items["local:ingest:ingest-job-3"]
     assert failed.title == "broken.pdf"
     assert failed.status == "failed"
+
+    writing = items["local:ingest:ingest-job-5"]
+    assert writing.title == "archive.zip"
+    assert writing.source == "Library"
+    assert writing.status == "writing"
+    assert writing.detail_route == "library"
+    assert writing.console_available is False
+    assert writing.updated_at == ""
 
 
 def test_local_notification_adapter_marks_permanent_failed_ingest_job_retry_unavailable():
@@ -1407,7 +1423,7 @@ def test_local_notification_adapter_escapes_markup_hostile_ingest_job_title():
     already escaped -- the raw basename flows straight into a Textual
     ``Button`` label in ``HomeRail.compose()`` (Button labels parse Rich
     markup), so an unescaped title crashes Home's mount with
-    ``MarkupError`` for as long as the job stays queued/running/failed.
+    ``MarkupError`` for as long as the job stays queued/parsing/writing/failed.
 
     Note: ``title`` is derived via ``Path(job.source_path).name``, and a
     literal ``/`` cannot appear inside a real file's basename (POSIX
@@ -1423,7 +1439,7 @@ def test_local_notification_adapter_escapes_markup_hostile_ingest_job_title():
         LibraryIngestJob(
             job_id="ingest-job-hostile",
             source_path='/tmp/a [b="c].txt',
-            state=IngestJobState.RUNNING,
+            state=IngestJobState.PARSING,
         ),
     )
     adapter = LocalNotificationHomeActiveWorkAdapter(ingest_jobs_provider=lambda: jobs)
@@ -1476,7 +1492,8 @@ def test_local_notification_adapter_excludes_superseded_ingest_job_after_retry()
 
     registry = LibraryIngestJobRegistry()
     job = registry.submit(source_path="/tmp/broken.pdf")
-    registry.mark_running(job.job_id)
+    registry.mark_parsing(job.job_id)
+    registry.mark_writing(job.job_id)
     registry.mark_failed(job.job_id, error="unsupported format")
     requeued = registry.requeue(job.job_id)
     assert requeued is not None
@@ -1501,7 +1518,8 @@ def test_local_notification_adapter_excludes_dismissed_ingest_job():
 
     registry = LibraryIngestJobRegistry()
     job = registry.submit(source_path="/tmp/broken.pdf")
-    registry.mark_running(job.job_id)
+    registry.mark_parsing(job.job_id)
+    registry.mark_writing(job.job_id)
     registry.mark_failed(job.job_id, error="unsupported format")
     dismissed = registry.dismiss(job.job_id)
     assert dismissed is not None

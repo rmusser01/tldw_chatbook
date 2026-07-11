@@ -7,6 +7,7 @@ allowing users to choose the best backend for their use case.
 """
 
 import abc
+import importlib.util
 import os
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple, Union
@@ -15,63 +16,41 @@ from enum import Enum
 from loguru import logger
 from tldw_chatbook.Utils.path_validation import validate_path
 
-# Import optional dependencies
-try:
-    from PIL import Image
-    PIL_AVAILABLE = True
-except ImportError:
-    PIL_AVAILABLE = False
-    Image = None
 
-try:
-    import pytesseract
-    TESSERACT_AVAILABLE = True
-except ImportError:
-    TESSERACT_AVAILABLE = False
+def _module_available(name: str) -> bool:
+    """Cheaply probe whether a top-level module is importable.
 
-try:
-    import easyocr
-    EASYOCR_AVAILABLE = True
-except ImportError:
-    EASYOCR_AVAILABLE = False
+    Uses ``importlib.util.find_spec`` instead of an actual import so that
+    unavailable (or, more importantly, *available but heavy*) optional OCR
+    backends can report their availability without paying the cost of
+    importing docling/torch/transformers/etc. Only pass top-level (non-dotted)
+    module names -- ``find_spec`` on a dotted name would import the parent
+    package to resolve the submodule's spec, defeating the purpose.
+    """
+    try:
+        return importlib.util.find_spec(name) is not None
+    except Exception:
+        # A partially-broken package (e.g. a stale .pth entry) or a
+        # misbehaving custom import finder can make find_spec raise
+        # arbitrary exceptions instead of returning None; this probe runs
+        # at import time, so treat ANY failure as "not available" rather
+        # than letting it crash startup.
+        return False
 
-try:
-    from docling.document_converter import DocumentConverter
-    from docling.datamodel.pipeline_options import PdfPipelineOptions
-    DOCLING_AVAILABLE = True
-except ImportError:
-    DOCLING_AVAILABLE = False
 
-try:
-    import paddle
-    from paddleocr import PaddleOCR
-    PADDLEOCR_AVAILABLE = True
-except ImportError:
-    PADDLEOCR_AVAILABLE = False
-
-try:
-    import docext
-    DOCEXT_AVAILABLE = True
-except ImportError:
-    DOCEXT_AVAILABLE = False
-
-try:
-    from gradio_client import Client, handle_file
-    GRADIO_CLIENT_AVAILABLE = True
-except ImportError:
-    GRADIO_CLIENT_AVAILABLE = False
-
-try:
-    from transformers import AutoTokenizer, AutoProcessor, AutoModelForImageTextToText
-    TRANSFORMERS_AVAILABLE = True
-except ImportError:
-    TRANSFORMERS_AVAILABLE = False
-
-try:
-    from openai import OpenAI
-    OPENAI_AVAILABLE = True
-except ImportError:
-    OPENAI_AVAILABLE = False
+# Availability flags: cheap probes only, no heavy imports happen here.
+# The actual `import` of each backend's dependency is deferred to the
+# functions that use it (initialize()/process_*()), so constructing the
+# OCRManager singleton below never pays for docling/torch/transformers.
+PIL_AVAILABLE = _module_available("PIL")
+TESSERACT_AVAILABLE = _module_available("pytesseract")
+EASYOCR_AVAILABLE = _module_available("easyocr")
+DOCLING_AVAILABLE = _module_available("docling")
+PADDLEOCR_AVAILABLE = _module_available("paddle") and _module_available("paddleocr")
+DOCEXT_AVAILABLE = _module_available("docext")
+GRADIO_CLIENT_AVAILABLE = _module_available("gradio_client")
+TRANSFORMERS_AVAILABLE = _module_available("transformers")
+OPENAI_AVAILABLE = _module_available("openai")
 
 
 class OCRBackendType(Enum):
@@ -113,13 +92,32 @@ class OCRBackend(abc.ABC):
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         """
         Initialize the OCR backend.
-        
+
         Args:
             config: Backend-specific configuration
         """
         self.config = config or {}
         self._initialized = False
-    
+        self._import_broken = False
+
+    def _mark_import_broken(self, error: BaseException) -> None:
+        """Permanently disable this backend after its lazy dependency import failed.
+
+        The find_spec-based availability probes cannot distinguish a MISSING
+        package from an installed-but-BROKEN one; a broken package only
+        reveals itself when the deferred import actually runs. Memoizing the
+        failure makes ``is_available()`` report False from then on, so the
+        manager demotes this backend once and never retries the import --
+        restoring the exclusion the old eager module-level try/except
+        imports produced at startup.
+        """
+        if not self._import_broken:
+            self._import_broken = True
+            logger.warning(
+                f"OCR backend '{type(self).__name__}' failed to import its "
+                f"dependencies and has been disabled: {error}"
+            )
+
     @abc.abstractmethod
     def is_available(self) -> bool:
         """Check if this backend is available and properly configured."""
@@ -181,11 +179,18 @@ class DoclingOCRBackend(OCRBackend):
     
     def is_available(self) -> bool:
         """Check if Docling is available."""
+        if self._import_broken:
+            return False
         return DOCLING_AVAILABLE
-    
+
     def initialize(self) -> None:
         """Initialize Docling converter."""
         if not self._initialized:
+            try:
+                from docling.document_converter import DocumentConverter
+            except Exception as import_err:
+                self._mark_import_broken(import_err)
+                raise
             try:
                 self.converter = DocumentConverter()
                 self._initialized = True
@@ -214,7 +219,12 @@ class DoclingOCRBackend(OCRBackend):
         """Process PDF with Docling OCR."""
         if not self._initialized:
             self.initialize()
-        
+
+        try:
+            from docling.datamodel.pipeline_options import PdfPipelineOptions
+        except Exception as import_err:
+            self._mark_import_broken(import_err)
+            raise
         try:
             # Validate path to prevent directory traversal
             base_dir = kwargs.get('base_directory', os.getcwd())
@@ -274,9 +284,17 @@ class TesseractOCRBackend(OCRBackend):
     
     def is_available(self) -> bool:
         """Check if Tesseract is available."""
+        if self._import_broken:
+            return False
         if not TESSERACT_AVAILABLE:
             return False
-        
+
+        try:
+            import pytesseract
+        except Exception as import_err:
+            self._mark_import_broken(import_err)
+            return False
+
         # Check if tesseract binary is available
         try:
             pytesseract.get_tesseract_version()
@@ -284,10 +302,15 @@ class TesseractOCRBackend(OCRBackend):
         except (pytesseract.TesseractNotFoundError, OSError, FileNotFoundError) as e:
             logger.debug(f"Tesseract not available: {e}")
             return False
-    
+
     def initialize(self) -> None:
         """Initialize Tesseract (check for language data)."""
         if not self._initialized:
+            try:
+                import pytesseract
+            except Exception as import_err:
+                self._mark_import_broken(import_err)
+                raise
             try:
                 # Get available languages
                 self.available_langs = pytesseract.get_languages()
@@ -325,11 +348,12 @@ class TesseractOCRBackend(OCRBackend):
                 "ar": "ara"
             }
             tesseract_lang = lang_map.get(language, language)
-            
+
             # Get OCR data
             import time
+            import pytesseract
             start_time = time.time()
-            
+
             # Get text with confidence scores
             data = pytesseract.image_to_data(
                 str(validated_path),
@@ -367,13 +391,14 @@ class TesseractOCRBackend(OCRBackend):
             
             # Get image size
             if PIL_AVAILABLE:
+                from PIL import Image
                 with Image.open(image_path) as img:
                     image_size = img.size
             else:
                 image_size = None
-            
+
             processing_time = time.time() - start_time
-            
+
             return OCRResult(
                 text=full_text,
                 confidence=avg_confidence,
@@ -428,11 +453,18 @@ class EasyOCRBackend(OCRBackend):
     
     def is_available(self) -> bool:
         """Check if EasyOCR is available."""
+        if self._import_broken:
+            return False
         return EASYOCR_AVAILABLE
-    
+
     def initialize(self) -> None:
         """Initialize EasyOCR reader."""
         if not self._initialized:
+            try:
+                import easyocr
+            except Exception as import_err:
+                self._mark_import_broken(import_err)
+                raise
             try:
                 # Default to English if no language specified
                 default_langs = self.config.get('languages', ['en'])
@@ -445,17 +477,22 @@ class EasyOCRBackend(OCRBackend):
             except Exception as e:
                 logger.error(f"Failed to initialize EasyOCR: {e}")
                 raise
-    
-    def process_image(self, 
-                     image_path: Union[str, Path], 
+
+    def process_image(self,
+                     image_path: Union[str, Path],
                      language: str = "en",
                      **kwargs) -> OCRResult:
         """Process image with EasyOCR."""
+        try:
+            import easyocr
+        except Exception as import_err:
+            self._mark_import_broken(import_err)
+            raise
         if not self._initialized or language not in self.reader.lang_list:
             # Reinitialize with requested language
             self.reader = easyocr.Reader([language], gpu=self.config.get('use_gpu', True))
             self._initialized = True
-        
+
         try:
             # Validate path to prevent directory traversal
             base_dir = kwargs.get('base_directory', os.getcwd())
@@ -492,13 +529,14 @@ class EasyOCRBackend(OCRBackend):
             
             # Get image size
             if PIL_AVAILABLE:
+                from PIL import Image
                 with Image.open(image_path) as img:
                     image_size = img.size
             else:
                 image_size = None
-            
+
             processing_time = time.time() - start_time
-            
+
             return OCRResult(
                 text=full_text,
                 confidence=avg_confidence,
@@ -535,11 +573,18 @@ class PaddleOCRBackend(OCRBackend):
     
     def is_available(self) -> bool:
         """Check if PaddleOCR is available."""
+        if self._import_broken:
+            return False
         return PADDLEOCR_AVAILABLE
-    
+
     def initialize(self) -> None:
         """Initialize PaddleOCR."""
         if not self._initialized:
+            try:
+                from paddleocr import PaddleOCR
+            except Exception as import_err:
+                self._mark_import_broken(import_err)
+                raise
             try:
                 self.ocr = PaddleOCR(
                     use_angle_cls=True,
@@ -551,12 +596,17 @@ class PaddleOCRBackend(OCRBackend):
             except Exception as e:
                 logger.error(f"Failed to initialize PaddleOCR: {e}")
                 raise
-    
-    def process_image(self, 
-                     image_path: Union[str, Path], 
+
+    def process_image(self,
+                     image_path: Union[str, Path],
                      language: str = "en",
                      **kwargs) -> OCRResult:
         """Process image with PaddleOCR."""
+        try:
+            from paddleocr import PaddleOCR
+        except Exception as import_err:
+            self._mark_import_broken(import_err)
+            raise
         if not self._initialized or self.ocr.lang != language:
             # Reinitialize with requested language
             self.ocr = PaddleOCR(
@@ -565,7 +615,7 @@ class PaddleOCRBackend(OCRBackend):
                 use_gpu=self.config.get('use_gpu', True)
             )
             self._initialized = True
-        
+
         try:
             # Validate path to prevent directory traversal
             base_dir = kwargs.get('base_directory', os.getcwd())
@@ -601,13 +651,14 @@ class PaddleOCRBackend(OCRBackend):
             
             # Get image size
             if PIL_AVAILABLE:
+                from PIL import Image
                 with Image.open(image_path) as img:
                     image_size = img.size
             else:
                 image_size = None
-            
+
             processing_time = time.time() - start_time
-            
+
             return OCRResult(
                 text=full_text,
                 confidence=avg_confidence,
@@ -659,6 +710,8 @@ class DocextOCRBackend(OCRBackend):
     
     def is_available(self) -> bool:
         """Check if docext backend is available based on mode."""
+        if self._import_broken:
+            return False
         if self.mode == 'api':
             return DOCEXT_AVAILABLE and GRADIO_CLIENT_AVAILABLE
         elif self.mode == 'model':
@@ -673,6 +726,11 @@ class DocextOCRBackend(OCRBackend):
             try:
                 if self.mode == 'api':
                     # Initialize Gradio client
+                    try:
+                        from gradio_client import Client
+                    except Exception as import_err:
+                        self._mark_import_broken(import_err)
+                        raise
                     # Note: Authentication is optional - only use if credentials are provided
                     auth = None
                     if self.username and self.password:
@@ -680,15 +738,20 @@ class DocextOCRBackend(OCRBackend):
                         logger.info("Using authentication for Docext API")
                     elif self.username or self.password:
                         logger.warning("Both username and password must be provided for authentication")
-                    
+
                     self.client = Client(self.api_url, auth=auth)
                     logger.info(f"Docext API client initialized at {self.api_url}")
-                    
+
                 elif self.mode == 'model':
                     # Initialize transformers model directly
                     if not TRANSFORMERS_AVAILABLE:
                         raise ImportError("transformers library not available for model mode")
-                    
+
+                    try:
+                        from transformers import AutoTokenizer, AutoProcessor, AutoModelForImageTextToText
+                    except Exception as import_err:
+                        self._mark_import_broken(import_err)
+                        raise
                     self.model = AutoModelForImageTextToText.from_pretrained(
                         self.model_name,
                         torch_dtype="auto",
@@ -699,12 +762,17 @@ class DocextOCRBackend(OCRBackend):
                     self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
                     self.processor = AutoProcessor.from_pretrained(self.model_name)
                     logger.info(f"Docext model loaded: {self.model_name}")
-                    
+
                 elif self.mode == 'openai':
                     # Initialize OpenAI-compatible client
                     if not OPENAI_AVAILABLE:
                         raise ImportError("openai library not available for OpenAI mode")
-                    
+
+                    try:
+                        from openai import OpenAI
+                    except Exception as import_err:
+                        self._mark_import_broken(import_err)
+                        raise
                     base_url = self.config.get('openai_base_url', 'http://localhost:8000/v1')
                     api_key = self.config.get('openai_api_key', '123')
                     self.client = OpenAI(api_key=api_key, base_url=base_url)
@@ -743,21 +811,27 @@ Prefer using ☐ and ☑ for check boxes."""
             
             if self.mode == 'api':
                 # Use Gradio API
+                try:
+                    from gradio_client import handle_file
+                except Exception as import_err:
+                    self._mark_import_broken(import_err)
+                    raise
                 result = self.client.predict(
                     images=[{"image": handle_file(str(image_path))}],
                     api_name="/process_markdown_streaming"
                 )
-                
+
                 # Extract text from result
                 if isinstance(result, list) and result:
                     text = result[0]
                 else:
                     text = str(result)
-                
+
             elif self.mode == 'model':
                 # Use transformers directly
+                from PIL import Image
                 prompt = kwargs.get('prompt', self._get_docext_prompt())
-                
+
                 image = Image.open(validated_path)
                 messages = [
                     {"role": "system", "content": "You are a helpful assistant."},
@@ -857,6 +931,7 @@ Prefer using ☐ and ☑ for check boxes."""
             image_size = None
             if PIL_AVAILABLE:
                 try:
+                    from PIL import Image
                     with Image.open(image_path) as img:
                         image_size = img.size
                 except (OSError, IOError, AttributeError) as e:
@@ -945,18 +1020,30 @@ Prefer using ☐ and ☑ for check boxes."""
 
 class OCRManager:
     """Manager class for handling multiple OCR backends."""
-    
+
+    # Default-selection priority, used both at registration and when
+    # re-resolving the default after a backend is demoted because its lazy
+    # dependency import failed at first use.
+    _DEFAULT_PRIORITY = (
+        OCRBackendType.DOCEXT.value,
+        OCRBackendType.DOCLING.value,
+        OCRBackendType.TESSERACT.value,
+        OCRBackendType.EASYOCR.value,
+        OCRBackendType.PADDLEOCR.value,
+    )
+
     def __init__(self, default_backend: Optional[str] = None):
         """
         Initialize OCR manager.
-        
+
         Args:
             default_backend: Default backend to use
         """
         self.backends: Dict[str, OCRBackend] = {}
         self.default_backend = default_backend
+        self._user_default = default_backend is not None
         self._register_backends()
-    
+
     def _register_backends(self):
         """Register available backends."""
         backend_classes = {
@@ -966,7 +1053,7 @@ class OCRManager:
             OCRBackendType.PADDLEOCR.value: PaddleOCRBackend,
             OCRBackendType.DOCEXT.value: DocextOCRBackend,
         }
-        
+
         for name, backend_class in backend_classes.items():
             try:
                 backend = backend_class()
@@ -975,45 +1062,83 @@ class OCRManager:
                     logger.info(f"Registered OCR backend: {name}")
             except Exception as e:
                 logger.debug(f"Failed to register {name} backend: {e}")
-        
+
         # Set default backend if not specified
         if not self.default_backend and self.backends:
-            # Priority order: docext, docling, tesseract, easyocr, paddleocr
-            priority = [OCRBackendType.DOCEXT.value, OCRBackendType.DOCLING.value, 
-                       OCRBackendType.TESSERACT.value, OCRBackendType.EASYOCR.value, 
-                       OCRBackendType.PADDLEOCR.value]
-            for backend in priority:
-                if backend in self.backends:
-                    self.default_backend = backend
-                    break
-    
+            self._resolve_default_backend()
+
+    def _resolve_default_backend(self) -> None:
+        """Pick the highest-priority registered backend as the default."""
+        for name in self._DEFAULT_PRIORITY:
+            if name in self.backends:
+                self.default_backend = name
+                return
+        self.default_backend = None
+
+    def _demote_broken_backend(self, backend: OCRBackend) -> bool:
+        """Drop a backend whose lazy dependency import failed at first use.
+
+        Mirrors the exclusion the old eager module-level imports produced at
+        startup: the backend leaves the registry permanently (its memoized
+        ``_import_broken`` flag keeps ``is_available()`` False, so it can
+        never re-register or retry the import), and -- unless the caller
+        pinned an explicit default at construction -- the default backend
+        re-resolves to the next available one by priority.
+
+        Returns:
+            True if the backend was found and removed, False otherwise.
+        """
+        name = next((n for n, b in self.backends.items() if b is backend), None)
+        if name is None:
+            return False
+        del self.backends[name]
+        logger.info(
+            f"OCR backend '{name}' removed from registry after import failure; "
+            f"remaining backends: {self.get_available_backends()}"
+        )
+        if self.default_backend == name and not self._user_default:
+            self._resolve_default_backend()
+        return True
+
     def get_available_backends(self) -> List[str]:
         """Get list of available backend names."""
-        return list(self.backends.keys())
-    
+        return [name for name, backend in self.backends.items()
+                if not backend._import_broken]
+
     def get_backend(self, name: Optional[str] = None) -> OCRBackend:
         """
         Get an OCR backend by name.
-        
+
         Args:
             name: Backend name, or None to use default
-            
+
         Returns:
             OCR backend instance
-            
+
         Raises:
             ValueError: If backend not found
         """
-        backend_name = name or self.default_backend
-        if not backend_name:
-            raise ValueError("No OCR backend available")
-        
-        if backend_name not in self.backends:
-            raise ValueError(f"OCR backend '{backend_name}' not available. "
-                           f"Available backends: {self.get_available_backends()}")
-        
-        return self.backends[backend_name]
-    
+        while True:
+            backend_name = name or self.default_backend
+            if not backend_name:
+                raise ValueError("No OCR backend available")
+
+            backend = self.backends.get(backend_name)
+            if backend is not None and backend._import_broken:
+                # Its lazy import failed earlier (possibly via a direct
+                # backend call that bypassed the manager): finish demoting
+                # it, then re-resolve when the caller wanted the default.
+                self._demote_broken_backend(backend)
+                if name is None:
+                    continue
+                backend = None
+
+            if backend is None:
+                raise ValueError(f"OCR backend '{backend_name}' not available. "
+                               f"Available backends: {self.get_available_backends()}")
+
+            return backend
+
     def process_image(self,
                      image_path: Union[str, Path],
                      language: str = "en",
@@ -1021,19 +1146,33 @@ class OCRManager:
                      **kwargs) -> OCRResult:
         """
         Process an image using specified or default backend.
-        
+
         Args:
             image_path: Path to image
             language: Language code
             backend: Backend name (optional)
             **kwargs: Backend-specific options
-            
+
         Returns:
             OCR result
         """
-        ocr_backend = self.get_backend(backend)
-        return ocr_backend.process_image(image_path, language, **kwargs)
-    
+        while True:
+            ocr_backend = self.get_backend(backend)
+            try:
+                return ocr_backend.process_image(image_path, language, **kwargs)
+            except Exception:
+                if ocr_backend._import_broken:
+                    # The deferred dependency import failed at first use:
+                    # demote the backend and, when the caller asked for the
+                    # default, retry with the next available backend so a
+                    # single broken install degrades once instead of failing
+                    # every call. Explicitly-named backends propagate the
+                    # error (no silent substitution).
+                    self._demote_broken_backend(ocr_backend)
+                    if backend is None:
+                        continue
+                raise
+
     def process_pdf(self,
                    pdf_path: Union[str, Path],
                    language: str = "en",
@@ -1041,18 +1180,28 @@ class OCRManager:
                    **kwargs) -> List[OCRResult]:
         """
         Process a PDF using specified or default backend.
-        
+
         Args:
             pdf_path: Path to PDF
             language: Language code
             backend: Backend name (optional)
             **kwargs: Backend-specific options
-            
+
         Returns:
             List of OCR results (one per page)
         """
-        ocr_backend = self.get_backend(backend)
-        return ocr_backend.process_pdf(pdf_path, language, **kwargs)
+        while True:
+            ocr_backend = self.get_backend(backend)
+            try:
+                return ocr_backend.process_pdf(pdf_path, language, **kwargs)
+            except Exception:
+                if ocr_backend._import_broken:
+                    # See process_image: demote on import failure, fall back
+                    # only for default-backend requests.
+                    self._demote_broken_backend(ocr_backend)
+                    if backend is None:
+                        continue
+                raise
 
 
 # Create a global OCR manager instance

@@ -19,8 +19,11 @@ import json
 import tempfile
 import hashlib
 from datetime import datetime
-from typing import Dict, Any, Optional, List, Union, Tuple
+from typing import Dict, Any, Optional, List, Union, Tuple, TYPE_CHECKING
 from pathlib import Path
+
+if TYPE_CHECKING:
+    from .OCR_Backends import OCRResult
 
 # Import External Libs
 # Optional numpy import
@@ -47,11 +50,15 @@ except ImportError:
 
 # Import Local
 from ..config import get_cli_setting, get_media_ingestion_defaults
-from ..LLM_Calls.Summarization_General_Lib import analyze
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from ..Utils.optional_deps import get_safe_import
-from .OCR_Backends import ocr_manager, OCRResult
 from loguru import logger
+# NOTE: `analyze` (LLM_Calls.Summarization_General_Lib) and `ocr_manager`
+# (.OCR_Backends) are intentionally NOT imported at module level -- both
+# pull in heavy transitive dependencies (nltk; docling/torch/transformers)
+# that should only load when OCR or LLM analysis is actually invoked, not
+# just from parsing an image. See the call sites below for the deferred
+# imports.
 
 # Constants
 SUPPORTED_IMAGE_FORMATS = {
@@ -243,26 +250,27 @@ def extract_text_from_image(
     ocr_backend: str = "auto",
     language: str = "en",
     preprocess: bool = True
-) -> Optional[OCRResult]:
+) -> Optional["OCRResult"]:
     """
     Extract text from an image using OCR.
-    
+
     Args:
         image_path: Path to the image
         ocr_backend: OCR backend to use ('auto', 'tesseract', 'easyocr', etc.)
         language: Language code for OCR
         preprocess: Whether to preprocess image before OCR
-        
+
     Returns:
         OCRResult or None if extraction fails
     """
     try:
+        from .OCR_Backends import ocr_manager
         # Preprocess image if requested
         if preprocess:
             processed_path = preprocess_image_for_ocr(image_path)
         else:
             processed_path = Path(image_path)
-        
+
         # Use OCR manager to extract text
         if ocr_backend == "auto":
             result = ocr_manager.process_image(processed_path, language=language)
@@ -456,10 +464,11 @@ def process_image(
         
         # Perform analysis if requested and we have text
         if perform_analysis and api_name and api_key and ocr_text:
+            from ..LLM_Calls.Summarization_General_Lib import analyze
             logger.info("Performing content analysis")
             try:
                 analysis_prompt = custom_prompt or f"Analyze this text extracted from an image: {ocr_text[:500]}..."
-                
+
                 analysis = analyze(
                     input_data=ocr_text,
                     custom_prompt_arg=analysis_prompt,

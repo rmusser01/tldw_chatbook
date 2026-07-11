@@ -1196,7 +1196,10 @@ async def test_pending_console_launch_does_not_create_home_live_work_controls():
 
 
 @pytest.mark.asyncio
-async def test_home_running_section_shows_running_library_ingest_job():
+async def test_home_running_section_shows_parsing_library_ingest_job():
+    """(F3 re-anchor) PARSING replaced the old single RUNNING ingest-job
+    state -- its "parsing" status string must still land in Home's Running
+    rail section."""
     app = _build_test_app()
     app._home_dashboard_test_input = HomeDashboardInput(
         model_ready=True,
@@ -1206,7 +1209,7 @@ async def test_home_running_section_shows_running_library_ingest_job():
                 item_id="local:ingest:ingest-job-1",
                 title="quarterly.txt",
                 source="Library",
-                status="running",
+                status="parsing",
                 detail_route="library",
                 console_available=False,
                 updated_at="",
@@ -1229,6 +1232,46 @@ async def test_home_running_section_shows_running_library_ingest_job():
         assert "Library" in str(row_button.label)
         assert not any(
             str(getattr(btn, "row_id", "")) == "local:ingest:ingest-job-1"
+            for btn in home.query_one("#home-rail-section-body-attention").query("Button")
+        )
+
+
+@pytest.mark.asyncio
+async def test_home_running_section_shows_writing_library_ingest_job():
+    """(F3) WRITING -- the other half of the old single RUNNING state --
+    must also land in Home's Running rail section."""
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        active_work_items=(
+            HomeActiveWorkItem(
+                item_id="local:ingest:ingest-job-2",
+                title="archive.zip",
+                source="Library",
+                status="writing",
+                detail_route="library",
+                console_available=False,
+                updated_at="",
+            ),
+        ),
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        running_body = home.query_one("#home-rail-section-body-running")
+        row_button = next(
+            btn for btn in home.query("Button")
+            if str(getattr(btn, "row_id", "")) == "local:ingest:ingest-job-2"
+        )
+        assert row_button in running_body.children
+        assert "archive.zip" in str(row_button.label)
+        assert "Library" in str(row_button.label)
+        assert not any(
+            str(getattr(btn, "row_id", "")) == "local:ingest:ingest-job-2"
             for btn in home.query_one("#home-rail-section-body-attention").query("Button")
         )
 
@@ -1297,7 +1340,8 @@ async def test_home_running_section_survives_markup_hostile_ingest_job_title():
     """
     app = _build_test_app()
     job = app.library_ingest_jobs.submit(source_path='/tmp/a [b="c].txt')
-    app.library_ingest_jobs.mark_running(job.job_id)
+    app.library_ingest_jobs.mark_parsing(job.job_id)
+    app.library_ingest_jobs.mark_writing(job.job_id)
     host = HomeHarness(app)
 
     async with host.run_test(size=HOME_TEST_SIZE) as pilot:

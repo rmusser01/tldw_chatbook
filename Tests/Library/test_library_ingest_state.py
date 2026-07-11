@@ -146,10 +146,10 @@ def test_queued_row_line_format():
     assert row.job_id == "ingest-job-1"
 
 
-def test_running_row_line_format_without_detected_type():
+def test_parsing_row_line_format_without_detected_type():
     jobs = (
         _job(
-            state=IngestJobState.RUNNING,
+            state=IngestJobState.PARSING,
             source_path="/tmp/report.txt",
             started_at=100.0,
         ),
@@ -157,13 +157,13 @@ def test_running_row_line_format_without_detected_type():
     state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
     row = state.queue_rows[0]
     assert row.glyph == "●"
-    assert row.line == "● running · report.txt"
+    assert row.line == "● parsing · report.txt"
 
 
-def test_running_row_line_format_with_detected_type():
+def test_parsing_row_line_format_with_detected_type():
     jobs = (
         _job(
-            state=IngestJobState.RUNNING,
+            state=IngestJobState.PARSING,
             source_path="/tmp/report.txt",
             started_at=100.0,
             detected_type="plaintext",
@@ -171,7 +171,35 @@ def test_running_row_line_format_with_detected_type():
     )
     state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
     row = state.queue_rows[0]
-    assert row.line == "● running · report.txt · plaintext"
+    assert row.line == "● parsing · report.txt · plaintext"
+
+
+def test_writing_row_line_format_without_detected_type():
+    jobs = (
+        _job(
+            state=IngestJobState.WRITING,
+            source_path="/tmp/report.txt",
+            started_at=100.0,
+        ),
+    )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
+    row = state.queue_rows[0]
+    assert row.glyph == "●"
+    assert row.line == "● writing · report.txt"
+
+
+def test_writing_row_line_format_with_detected_type():
+    jobs = (
+        _job(
+            state=IngestJobState.WRITING,
+            source_path="/tmp/report.txt",
+            started_at=100.0,
+            detected_type="plaintext",
+        ),
+    )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
+    row = state.queue_rows[0]
+    assert row.line == "● writing · report.txt · plaintext"
 
 
 def test_done_row_line_format_seconds_only():
@@ -350,18 +378,21 @@ def test_row_order_mirrors_input_order():
 
 
 def test_queue_counts_line_lists_only_nonzero_states_in_fixed_order():
-    """(L3b AB wave, A2) The counts line hides zero-count states entirely --
-    segments are just ``{n} {state}`` (no "job"/"jobs" noun), joined by
-    ` · `, always in queued -> running -> done -> failed order."""
+    """(L3b AB wave, A2; F3 re-anchor) The counts line hides zero-count
+    states entirely -- segments are just ``{n} {state}`` (no "job"/"jobs"
+    noun), joined by ` · `, always in parsing -> writing -> queued -> done
+    -> failed order (the in-flight/"hot" stages first, per the F3 design
+    spec's UI-impact example)."""
     jobs = (
         _job(job_id="ingest-job-1", state=IngestJobState.QUEUED),
-        _job(job_id="ingest-job-2", state=IngestJobState.RUNNING, started_at=1.0),
+        _job(job_id="ingest-job-2", state=IngestJobState.PARSING, started_at=1.0),
+        _job(job_id="ingest-job-6", state=IngestJobState.WRITING, started_at=1.0),
         _job(job_id="ingest-job-3", state=IngestJobState.DONE, started_at=1.0, finished_at=2.0, media_id=1),
         _job(job_id="ingest-job-4", state=IngestJobState.DONE, started_at=1.0, finished_at=2.0, media_id=2),
         _job(job_id="ingest-job-5", state=IngestJobState.FAILED, started_at=1.0, finished_at=2.0, error="x"),
     )
     state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
-    assert state.queue_counts_line == "1 queued · 1 running · 2 done · 1 failed"
+    assert state.queue_counts_line == "1 parsing · 1 writing · 1 queued · 2 done · 1 failed"
 
 
 def test_queue_counts_line_omits_zero_states():
@@ -395,7 +426,8 @@ def test_show_clear_finished_false_with_no_jobs():
 def test_show_clear_finished_false_with_only_active_jobs():
     jobs = (
         _job(job_id="ingest-job-1", state=IngestJobState.QUEUED),
-        _job(job_id="ingest-job-2", state=IngestJobState.RUNNING, started_at=1.0),
+        _job(job_id="ingest-job-2", state=IngestJobState.PARSING, started_at=1.0),
+        _job(job_id="ingest-job-3", state=IngestJobState.WRITING, started_at=1.0),
     )
     state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
     assert state.queue_show_clear_finished is False

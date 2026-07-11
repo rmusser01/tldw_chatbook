@@ -42,7 +42,7 @@ MIN_CHUNK_SIZE = 100
 MAX_CHUNK_SIZE = 5000
 
 # Queue row state glyphs (binding).
-_GLYPH_ACTIVE = "●"  # "●" -- queued or running
+_GLYPH_ACTIVE = "●"  # "●" -- queued, parsing, or writing
 _GLYPH_DONE = "✓"  # "✓"
 _GLYPH_FAILED = "✗"  # "✗"
 
@@ -171,8 +171,8 @@ class IngestQueueRow:
 
     Attributes:
         job_id: The registry-assigned job id (``"ingest-job-{n}"``).
-        glyph: The row's leading state glyph -- ``"●"`` for queued/running,
-            ``"✓"`` for done, ``"✗"`` for failed.
+        glyph: The row's leading state glyph -- ``"●"`` for
+            queued/parsing/writing, ``"✓"`` for done, ``"✗"`` for failed.
         line: The full rendered row text (binding formats -- see
             ``build_library_ingest_state``). Raw, unescaped: the widget
             layer is responsible for markup-escaping this before it reaches
@@ -240,10 +240,12 @@ class LibraryIngestCanvasState:
             already showing -- the db-unavailable/ingest-unavailable lines
             always take precedence so at most one gate line ever renders.
         queue_heading: The queue section heading (always ``"Queue"``).
-        queue_counts_line: A per-state job counts summary (L3b AB wave, A2)
-            -- empty when the queue itself is empty (``QUEUE_EMPTY_COPY``
-            covers that case instead); otherwise only non-zero states,
-            queued -> running -> done -> failed order.
+        queue_counts_line: A per-state job counts summary (L3b AB wave, A2;
+            F3 re-anchor) -- empty when the queue itself is empty
+            (``QUEUE_EMPTY_COPY`` covers that case instead); otherwise only
+            non-zero states, ``parsing -> writing -> queued -> done ->
+            failed`` order (the in-flight/"hot" stages first, per the F3
+            design spec's UI-impact example).
         queue_rows: Newest-first queue rows (mirrors the registry's own
             ``jobs()`` snapshot order -- callers pass that tuple straight
             through, unsorted).
@@ -307,10 +309,15 @@ def _format_elapsed(
 def _build_queue_row(job: LibraryIngestJob, *, now: float) -> IngestQueueRow:
     """Build one ``IngestQueueRow`` from a registry job snapshot.
 
-    Binding row-line formats (see the L3b plan):
+    Binding row-line formats (see the L3b plan; F3 splits the old single
+    ``running`` row into ``parsing``/``writing``):
 
-    - running: ``"● running · {basename}"``, plus
-      ``" · {detected_type}"`` appended when the seam has reported one.
+    - parsing: ``"● parsing · {basename}"``, plus ``" · {detected_type}"``
+      appended when the seam has reported one.
+    - writing: ``"● writing · {basename}"``, plus ``" · {detected_type}"``
+      appended when the seam has reported one (persisted across the
+      ``PARSING`` -> ``WRITING`` transition -- see
+      ``LibraryIngestJobRegistry.mark_writing``).
     - queued: ``"● queued · {basename}"``.
     - done: ``"✓ done · {basename} · {elapsed}"``.
     - failed: ``"✗ failed · {basename} · {short_error}"``, where
@@ -321,8 +328,20 @@ def _build_queue_row(job: LibraryIngestJob, *, now: float) -> IngestQueueRow:
       marker passes through whole.
     """
     basename = _basename(job.source_path)
-    if job.state == IngestJobState.RUNNING:
-        line = f"{_GLYPH_ACTIVE} running · {basename}"
+    if job.state == IngestJobState.PARSING:
+        line = f"{_GLYPH_ACTIVE} parsing · {basename}"
+        if job.detected_type:
+            line += f" · {job.detected_type}"
+        return IngestQueueRow(
+            job_id=job.job_id,
+            glyph=_GLYPH_ACTIVE,
+            line=line,
+            can_open=False,
+            can_retry=False,
+            media_id=job.media_id,
+        )
+    if job.state == IngestJobState.WRITING:
+        line = f"{_GLYPH_ACTIVE} writing · {basename}"
         if job.detected_type:
             line += f" · {job.detected_type}"
         return IngestQueueRow(
@@ -365,16 +384,33 @@ def _build_queue_row(job: LibraryIngestJob, *, now: float) -> IngestQueueRow:
     )
 
 
+# (F3 re-anchor) Fixed left-to-right order for the counts line -- the
+# in-flight/"hot" pipeline stages first (``parsing``, ``writing``), then the
+# backlog (``queued``), then the terminal outcomes (``done``, ``failed``).
+# Deliberately its own tuple rather than iterating ``IngestJobState``
+# directly: the enum's own declaration order (``QUEUED`` first, matching
+# ``LibraryIngestJob.state``'s default) is unrelated to -- and must stay free
+# to diverge from -- this display convention.
+_COUNTS_LINE_ORDER: tuple[IngestJobState, ...] = (
+    IngestJobState.PARSING,
+    IngestJobState.WRITING,
+    IngestJobState.QUEUED,
+    IngestJobState.DONE,
+    IngestJobState.FAILED,
+)
+
+
 def _queue_counts_line(jobs: Sequence[LibraryIngestJob]) -> str:
     """Build the per-state job counts summary line (L3b AB wave, A2).
 
     Empty when ``jobs`` is empty (the canvas shows ``QUEUE_EMPTY_COPY``
     instead in that case -- see ``build_library_ingest_state``). Otherwise
     lists only the non-zero ``IngestJobState`` values, always in
-    ``queued, running, done, failed`` order so the segment order never
-    shifts as jobs move between states -- only which segments are present
-    does. Each segment is ``"{n} {state}"`` (no "job"/"jobs" noun, unlike
-    ``count_noun`` elsewhere in this module -- e.g. ``"2 done · 1
+    ``_COUNTS_LINE_ORDER`` (``parsing, writing, queued, done, failed``, F3
+    re-anchor) so the segment order never shifts as jobs move between
+    states -- only which segments are present does. Each segment is
+    ``"{n} {state}"`` (no "job"/"jobs" noun, unlike ``count_noun`` elsewhere
+    in this module -- e.g. ``"2 parsing · 1 writing · 3 queued · 1 done · 1
     failed"``), joined by ``" · "``.
     """
     counts = {state.value: 0 for state in IngestJobState}
@@ -382,7 +418,7 @@ def _queue_counts_line(jobs: Sequence[LibraryIngestJob]) -> str:
         counts[job.state.value] += 1
     return " · ".join(
         f"{counts[state.value]} {state.value}"
-        for state in IngestJobState
+        for state in _COUNTS_LINE_ORDER
         if counts[state.value]
     )
 

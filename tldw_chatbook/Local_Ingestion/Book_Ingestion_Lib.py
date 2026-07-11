@@ -88,7 +88,10 @@ EBOOK_PROCESSING_AVAILABLE = EBOOKLIB_AVAILABLE and DEFUSEDXML_AVAILABLE
 
 #
 # Import Local
-from ..LLM_Calls.Summarization_General_Lib import analyze
+# NOTE: `analyze` (LLM_Calls.Summarization_General_Lib) is intentionally NOT
+# imported at module level -- it pulls in nltk (via Chunk_Lib) and should
+# only load when LLM analysis is actually invoked, not just from parsing an
+# ebook. See the analysis call sites below for the deferred imports.
 # Moved chunking imports to be lazy to avoid circular dependency
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from loguru import logger
@@ -946,6 +949,7 @@ def process_epub(
         # 3. Summarization / Analysis
         final_analysis = None # Renamed for consistency
         if perform_analysis and api_name and api_key and processed_chunks:
+            from ..LLM_Calls.Summarization_General_Lib import analyze
             logger.info(f"Summarization enabled for {len(processed_chunks)} chunks of EPUB '{final_title}'.")
             log_counter("epub_summarization_attempt", value=len(processed_chunks), labels={"file_path": file_path, "api_name": api_name})
             chunk_summaries = []
@@ -1409,6 +1413,7 @@ def _process_markup_or_plain_text(
         final_analysis = None
         # `processed_chunks` is guaranteed to be non-empty list here if markdown_content was valid.
         if perform_analysis and api_name and api_key:
+            from ..LLM_Calls.Summarization_General_Lib import analyze
             logger.info(f"Summarization enabled for {len(processed_chunks)} chunks of {file_type}.")
             log_counter(f"{file_type}_summarization_attempt", value=len(processed_chunks), labels={"file_path": file_path, "api_name": api_name})
             chunk_summaries = []
