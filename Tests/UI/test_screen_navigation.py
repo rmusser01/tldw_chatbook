@@ -492,6 +492,7 @@ async def test_screen_navigation_always_constructs_fresh_instances(monkeypatch):
     assert switched_screens[0] is not switched_screens[2]
 
 
+@pytest.mark.asyncio
 async def test_rapid_tab_switch_storm_leaves_no_zombie_widgets():
     """Live-repro regression lock for the rapid-tab-switch freeze.
 
