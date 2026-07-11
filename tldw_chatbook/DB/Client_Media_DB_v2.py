@@ -4616,6 +4616,48 @@ class MediaDatabase:
             # Wrap unexpected errors in DatabaseError
             raise DatabaseError(f"Unexpected error during pagination: {e}") from e
 
+    def get_all_active_media_ids(self, media_type: Optional[str] = None) -> List[int]:
+        """
+        Fetches every active media item id (no page cap), optionally filtered by type.
+
+        Filters for items where `deleted = 0` and `is_trash = 0`, exactly
+        matching `get_paginated_files`' visibility -- but returns the full
+        id list rather than a capped page. This is the truncation-proof
+        source for Library chatbook export (`Library/library_export_scope.py`):
+        the Library media canvas only ever renders a capped snapshot
+        (`LIBRARY_SOURCE_PAGE_SIZES["media"]` rows), and resolving an export
+        from that rendered snapshot would silently drop everything past the
+        cap for a library larger than the page size.
+
+        Args:
+            media_type (Optional[str]): If provided, restricts results to
+                                         active items with this exact `type`
+                                         value. `None` returns every active
+                                         type (unfiltered).
+
+        Returns:
+            List[int]: Every matching active media id, in ascending id order.
+
+        Raises:
+            DatabaseError: If a database query fails.
+        """
+        query = "SELECT id FROM Media WHERE deleted = 0 AND is_trash = 0"
+        params: List[Any] = []
+        if media_type is not None:
+            query += " AND type = ?"
+            params.append(media_type)
+        query += " ORDER BY id ASC"
+
+        try:
+            cursor = self.execute_query(query, tuple(params))
+            return [row["id"] for row in cursor.fetchall()]
+        except DatabaseError as e:
+            logging.error(f"Database error in get_all_active_media_ids for DB {self.db_path_str}: {e}", exc_info=True)
+            raise
+        except sqlite3.Error as e:
+            logging.error(f"SQLite error during get_all_active_media_ids query in {self.db_path_str}: {e}", exc_info=True)
+            raise DatabaseError(f"Failed get_all_active_media_ids query: {e}") from e
+
     def backup_database(self, backup_file_path: str) -> bool:
         """
         Creates a backup of the current database to the specified file path.

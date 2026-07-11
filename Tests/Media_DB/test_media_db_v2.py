@@ -626,6 +626,72 @@ class TestSyncLogManagement:
         with pytest.raises(ValueError):
             self.db.delete_sync_log_entries([1, "two", 3])
 
+
+@pytest.mark.integration
+class TestGetAllActiveMediaIds:
+    """``get_all_active_media_ids`` -- the truncation-proof id source for
+    Library chatbook export (see ``Library/library_export_scope.py``).
+
+    Mirrors ``get_paginated_files``'s ``WHERE deleted = 0 AND is_trash = 0``
+    visibility, but returns every matching id (no page cap).
+    """
+
+    def test_returns_only_active_non_deleted_non_trashed_ids(self, db_instance):
+        active_id, _, _ = db_instance.add_media_with_keywords(
+            title="Active", content="active content", media_type="article"
+        )
+        deleted_id, _, _ = db_instance.add_media_with_keywords(
+            title="Deleted", content="deleted content", media_type="article"
+        )
+        trashed_id, _, _ = db_instance.add_media_with_keywords(
+            title="Trashed", content="trashed content", media_type="article"
+        )
+        db_instance.soft_delete_media(deleted_id)
+        db_instance.mark_as_trash(trashed_id)
+
+        ids = db_instance.get_all_active_media_ids()
+
+        assert ids == [active_id]
+
+    def test_filters_by_type_when_given(self, db_instance):
+        video_id, _, _ = db_instance.add_media_with_keywords(
+            title="V1", content="video content", media_type="video"
+        )
+        db_instance.add_media_with_keywords(title="A1", content="article content", media_type="article")
+
+        ids = db_instance.get_all_active_media_ids(media_type="video")
+
+        assert ids == [video_id]
+
+    def test_no_media_type_returns_all_active_types(self, db_instance):
+        video_id, _, _ = db_instance.add_media_with_keywords(
+            title="V1", content="video content", media_type="video"
+        )
+        article_id, _, _ = db_instance.add_media_with_keywords(
+            title="A1", content="article content", media_type="article"
+        )
+
+        ids = db_instance.get_all_active_media_ids()
+
+        assert set(ids) == {video_id, article_id}
+
+    def test_returns_every_row_beyond_a_50_row_page_cap(self, db_instance):
+        """The Library media snapshot caps at 50 rows -- this DB method must not."""
+        seeded_ids = []
+        for i in range(55):
+            media_id, _, _ = db_instance.add_media_with_keywords(
+                title=f"Media {i}", content=f"content {i}", media_type="article"
+            )
+            seeded_ids.append(media_id)
+
+        ids = db_instance.get_all_active_media_ids()
+
+        assert set(ids) == set(seeded_ids)
+        assert len(ids) == 55
+
+    def test_empty_db_returns_empty_list(self, db_instance):
+        assert db_instance.get_all_active_media_ids() == []
+
 #
 # End of test_media_db_v2.py
 ########################################################################################################################
