@@ -4,12 +4,17 @@ Renders the app-level Library ingest job registry (``library_ingest_jobs.py``)
 plus a small local form echo into the immutable state
 ``LibraryIngestCanvas`` (the widget in ``Widgets/Library/library_ingest_canvas.py``)
 renders from. Textual-free (stdlib only) so it is unit-testable without
-booting the TUI, mirroring ``library_notes_sync_state.py``.
+booting the TUI, mirroring ``library_notes_sync_state.py``. The one non-
+stdlib data source -- ``get_supported_extensions()`` from the heavy
+``Local_Ingestion`` package (L4, fix batch F1b) -- is deliberately a
+function-scoped, memoized import inside ``_supported_types_line``, so
+merely importing this module stays light; see that helper's docstring.
 """
 from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import PurePath
 from typing import Sequence
 
@@ -18,7 +23,6 @@ from tldw_chatbook.Library.library_ingest_jobs import (
     IngestJobState,
     LibraryIngestJob,
 )
-from tldw_chatbook.Local_Ingestion.local_file_ingestion import get_supported_extensions
 
 # Exact copy values (binding -- see the L3b plan's Global Constraints).
 INGEST_HEADER_COPY = "Import media"
@@ -54,6 +58,7 @@ SUPPORTED_TYPES_PREFIX = "Supported: "
 _SUPPORTED_TYPES_ERROR_MARKER = " Supported types:"
 
 
+@lru_cache(maxsize=1)
 def _supported_types_line() -> str:
     """Build the ingest form's supported-extensions line.
 
@@ -64,11 +69,26 @@ def _supported_types_line() -> str:
     lesson: never hand-duplicate a value that already has a canonical
     source).
 
+    The import is deliberately function-scoped, and the result is memoized
+    (``lru_cache``): importing ``tldw_chatbook.Local_Ingestion`` pulls the
+    full heavy ingestion module graph (PDF/audio/video processing, config,
+    DB), which would break this module's importable-in-isolation contract
+    (see the module docstring) and slow every isolated unit test of the
+    Library state modules. In production the graph is already loaded (the
+    queue-runner in ``app.py`` imports it eagerly), so the deferred import
+    costs nothing there; the supported-extensions set is a hardcoded
+    constant of the ingest seam, so caching the first result forever is
+    safe.
+
     Returns:
         ``"Supported: "`` followed by every supported extension (upper-
         cased, dot stripped, comma-joined), in ``get_supported_extensions()``'s
         own media-type -> extension-list order.
     """
+    from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
+        get_supported_extensions,
+    )
+
     extensions = [
         ext.lstrip(".").upper()
         for exts in get_supported_extensions().values()
