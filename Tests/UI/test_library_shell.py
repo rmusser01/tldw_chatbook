@@ -8647,6 +8647,63 @@ async def test_library_shell_restored_media_viewer_fetches_detail_on_mount():
 
 
 @pytest.mark.asyncio
+async def test_library_shell_restored_export_canvas_rekicks_counts_worker_on_mount():
+    """REVIEW FIX (F4 Task 3): a cross-visit ``restore_state`` (or a tab
+    round-trip whose ``save_state`` persisted ``_library_selected_row_id ==
+    LIBRARY_ROW_INGEST_EXPORT``) lands a fresh instance ON the export
+    canvas with ``_library_export_counts is None`` -- so the scope line
+    renders "Counting…" and Export is disabled. The counts worker is only
+    kicked from the two LIVE entry points, never from a restore, so without
+    an ``on_mount`` re-kick the form stays stuck "Counting…" with Export
+    permanently disabled until the user clicks another rail row and back.
+    Same restored-placeholder class already handled for the media
+    viewer/notes editor (see
+    ``test_library_shell_restored_media_viewer_fetches_detail_on_mount``).
+
+    RED-verified: fails without the ``on_mount`` re-kick block (counts
+    never land -> the bounded poll below raises).
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    app.media_db = MediaDatabase(":memory:", client_id="export-restore-media")
+    app.media_db.add_media_with_keywords(title="M1", content="c1", media_type="video")
+    app.chachanotes_db = CharactersRAGDB(":memory:", client_id="export-restore-ccn")
+    app.chachanotes_db.add_conversation({"title": "Conv"})
+    app.chachanotes_db.add_note("N1", "content")
+
+    screen = LibraryScreen(app)
+    screen.restore_state({"library_selected_row_id": LIBRARY_ROW_INGEST_EXPORT})
+    # Precondition: the restore alone leaves counts unresolved -- the
+    # canvas would render "Counting…" forever without the on_mount kick.
+    assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
+    assert screen._library_export_counts is None
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_selector(screen, pilot, "#library-export-header")
+
+        for _ in range(150):
+            if screen._library_export_counts is not None:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                "Restored export canvas never re-kicked its counts worker."
+            )
+
+        screen.refresh(recompose=True)
+        await pilot.pause()
+
+        scope_line = str(screen.query_one("#library-export-scope-line").renderable)
+        assert scope_line == "Everything: 1 media · 1 conversations · 1 notes"
+        # Non-empty scope + counts landed: Export is no longer stuck
+        # disabled by a permanent "Counting…" (only the missing
+        # destination keeps it disabled now, which is correct).
+        assert screen.query_one("#library-export-empty-line", Static).display is False
+
+
+@pytest.mark.asyncio
 async def test_library_shell_restored_media_viewer_with_deleted_item_falls_back_to_list():
     """Stale-id safety: the media record backing a restored viewer selection
     was deleted while the user was elsewhere. The existing

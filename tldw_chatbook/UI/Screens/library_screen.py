@@ -708,6 +708,29 @@ class LibraryScreen(BaseAppScreen):
                 exclusive=True,
                 group="library_media_detail",
             )
+        if (
+            self._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
+            and self._library_export_counts is None
+        ):
+            # Same restored-placeholder class as the media viewer/notes
+            # editor above: a cross-visit ``restore_state`` (or a tab
+            # round-trip whose ``save_state`` persisted
+            # ``_library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT``)
+            # lands a fresh instance on the export canvas with
+            # ``_library_export_counts is None`` -> the scope line renders
+            # "Counting…" and Export stays disabled. But the counts worker
+            # is only kicked from the two LIVE entry points
+            # (``_select_library_rail_row`` and
+            # ``_open_library_export_canvas``), never from a restore --
+            # so without this re-kick the form would stay stuck
+            # "Counting…" with Export permanently disabled until the user
+            # clicked another rail row and back. Mirrors
+            # ``_select_library_rail_row``'s own post-recompose kick. The
+            # ``is None`` guard keeps this from redundantly re-running when
+            # counts already landed (they never survive a restore today --
+            # ``save_state`` doesn't persist them -- but the guard makes
+            # the intent explicit and is cheap insurance).
+            self._start_library_export_counts_worker()
 
     def on_unmount(self) -> None:
         """Unregister the ingest registry listener registered in ``on_mount``.
@@ -3507,8 +3530,17 @@ class LibraryScreen(BaseAppScreen):
         away from (see ``_library_export_run_id``'s docstring) must not
         stomp ``_library_export_running``/``_error``/``_status`` or the
         canvas DOM out from under whatever the user is now looking at.
+
+        The full destination path is ``escape_markup``'d before it reaches
+        the toast: Textual notifications render Rich console markup, so a
+        user-chosen path containing ``[...]`` (a real possibility on any
+        platform -- brackets are legal in filenames) would otherwise
+        mis-render or raise in the markup parser. Mirrors the note-export
+        convention (``_write_library_note_export_file``); the full path
+        (not just ``.name``) is kept because the user explicitly chose the
+        destination and seeing where the artifact landed is useful.
         """
-        message = f"Exported chatbook to {path}"
+        message = f"Exported chatbook to {escape_markup(str(path))}"
         auto_included = (
             dependency_info.get("auto_included")
             if isinstance(dependency_info, dict)
