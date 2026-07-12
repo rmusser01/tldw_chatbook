@@ -170,3 +170,29 @@ def test_meta_line_new_prompt_sentinel_overrides_modified_and_version():
 def test_meta_line_existing_prompt_unaffected_by_new_prompt_sentinel():
     state = build_prompt_editor_state(PROMPT_A)
     assert prompt_editor_meta_line(state, now=NOW) == "Modified 3m · v2"
+
+
+def test_meta_line_appends_unsaved_marker_when_dirty():
+    """U6 (Task 8c): a dirty editor's meta line gets a trailing unsaved
+    marker -- ``dirty`` is a plain pure-function input, not derived from
+    ``PromptEditorState`` itself."""
+    state = build_prompt_editor_state(PROMPT_A)
+    assert prompt_editor_meta_line(state, now=NOW, dirty=True) == (
+        "Modified 3m · v2 · • Unsaved changes"
+    )
+
+
+def test_meta_line_omits_unsaved_marker_when_not_dirty():
+    """``dirty`` defaults to ``False`` -- existing callers that never pass
+    it keep the exact same rendering as before this change."""
+    state = build_prompt_editor_state(PROMPT_A)
+    assert prompt_editor_meta_line(state, now=NOW, dirty=False) == "Modified 3m · v2"
+    assert prompt_editor_meta_line(state, now=NOW) == "Modified 3m · v2"
+
+
+def test_meta_line_new_prompt_sentinel_appends_unsaved_marker_when_dirty():
+    """The "New prompt" sentinel also gets the unsaved marker once the user
+    starts typing into a blank create-flow record (dirty becomes True)."""
+    state = build_prompt_editor_state({})
+    assert prompt_editor_meta_line(state, dirty=True) == "New prompt · • Unsaved changes"
+    assert prompt_editor_meta_line(state) == "New prompt"

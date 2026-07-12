@@ -989,6 +989,17 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     color: $ds-text-muted;
 }
 
+/* One-line dim hint under the System prompt/User prompt labels (Task 8c
+   U7): explains the two-part prompt model to a new user. Same muted tier
+   as .library-prompt-field-label above; the trailing margin separates it
+   from the TextArea beneath it. */
+.library-prompt-field-hint {
+    width: 100%;
+    height: auto;
+    color: $ds-text-muted;
+    margin: 0 0 1 0;
+}
+
 /* Bounded editors: same floor/ceiling as #library-note-body so System/User
    prompt stay compact instead of ballooning to fill the canvas. */
 #library-prompt-system,

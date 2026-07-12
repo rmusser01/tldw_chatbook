@@ -229,7 +229,9 @@ def build_prompt_editor_state(detail: Mapping[str, Any]) -> PromptEditorState:
     )
 
 
-def prompt_editor_meta_line(editor_state: PromptEditorState, *, now: datetime | None = None) -> str:
+def prompt_editor_meta_line(
+    editor_state: PromptEditorState, *, now: datetime | None = None, dirty: bool = False
+) -> str:
     """Render the prompt editor's muted meta line.
 
     Unlike the notes editor's ``meta_line`` (precomputed as part of
@@ -245,24 +247,38 @@ def prompt_editor_meta_line(editor_state: PromptEditorState, *, now: datetime | 
         editor_state: The prompt editor's current display state.
         now: Reference time for the relative-age part; defaults to the
             current UTC time.
+        dirty: Task 8c U6: whether the editor has unsaved in-progress
+            edits. A plain pure-function input (never derived from
+            ``editor_state`` itself, which only ever reflects the
+            last-saved record) -- callers thread the screen's own
+            ``_library_prompt_dirty`` flag through. Defaults to ``False``
+            so every pre-existing call site is unaffected.
 
     Returns:
         ``"New prompt"`` when ``editor_state.prompt_id`` is ``None`` (the
         Task 8b D1 create-flow sentinel: a blank, not-yet-saved record --
         see ``library_screen.py``'s ``_enter_library_prompt_create_editor``
         and the Duplicate action). Otherwise ``"Modified <age> · vN"``,
-        with either part omitted (and its separator) when unknown.
+        with either part omitted (and its separator) when unknown. Either
+        form gets a trailing ``"· • Unsaved changes"`` appended when
+        ``dirty`` is ``True`` -- the only visible cue today that explicit
+        Save/the nav-away dirty veto (``flush_pending_work``) has anything
+        to act on.
     """
     if editor_state.prompt_id is None:
-        return "New prompt"
-    reference_now = now if now is not None else datetime.now(timezone.utc)
-    parts: list[str] = []
-    if editor_state.modified:
-        age = format_console_relative_age(editor_state.modified, now=reference_now)
-        parts.append(f"Modified {age}")
-    if editor_state.version is not None:
-        parts.append(f"v{editor_state.version}")
-    return " · ".join(parts)
+        base = "New prompt"
+    else:
+        reference_now = now if now is not None else datetime.now(timezone.utc)
+        parts: list[str] = []
+        if editor_state.modified:
+            age = format_console_relative_age(editor_state.modified, now=reference_now)
+            parts.append(f"Modified {age}")
+        if editor_state.version is not None:
+            parts.append(f"v{editor_state.version}")
+        base = " · ".join(parts)
+    if not dirty:
+        return base
+    return f"{base} · • Unsaved changes" if base else "• Unsaved changes"
 
 
 def _is_name_conflict(exc: Exception | None, message_lower: str) -> bool:

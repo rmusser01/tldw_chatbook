@@ -24,6 +24,10 @@ from tldw_chatbook.Library.library_prompts_state import (
 _SORT_LABELS = {"newest": "Newest", "name": "Name"}
 _EMPTY_PROMPTS_COPY = "No prompts yet."
 _EMPTY_PROMPTS_FILTER_COPY = "No prompts match your filter."
+# Task 8c U7: one-line dim hints under the System/User prompt labels,
+# explaining the two-part prompt model to a new user.
+_SYSTEM_PROMPT_HINT = "Instructions the model always follows."
+_USER_PROMPT_HINT = "The message inserted into the composer."
 
 
 class LibraryPromptsListCanvas(Vertical):
@@ -56,6 +60,16 @@ class LibraryPromptsListCanvas(Vertical):
             line -- shown only while ``status`` is the name-in-use outcome,
             giving that status copy's "...or open the existing prompt" a
             real affordance. Never shown together with ``conflict``.
+        dirty: Editor mode only (Task 8c U6). Whether the open prompt has
+            unsaved in-progress edits -- threaded into the meta line's
+            trailing "Unsaved changes" marker via ``prompt_editor_meta_line``
+            on this initial compose. Per-keystroke updates never recompose
+            this widget at all (the screen updates ``#library-prompt-meta``
+            in place instead -- see
+            ``LibraryScreen._update_library_prompt_meta_static``); this
+            constructor argument only matters for the handful of flows that
+            already do a full recompose while dirty (initial load, Duplicate,
+            conflict entry/resolution).
         import_open: List-view only. When ``True``, renders the inline
             Import row (a path ``Input`` for a file OR folder, plus
             Import/Cancel actions) below the sort/Import… toolbar (Task 8c
@@ -81,6 +95,7 @@ class LibraryPromptsListCanvas(Vertical):
         import_open: bool = False,
         import_path: str = "",
         import_status: str = "",
+        dirty: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -95,6 +110,7 @@ class LibraryPromptsListCanvas(Vertical):
         self.import_open = import_open
         self.import_path = import_path
         self.import_status = import_status
+        self.dirty = dirty
         self.styles.width = "1fr"
         self.styles.min_width = 40
 
@@ -222,6 +238,15 @@ class LibraryPromptsListCanvas(Vertical):
         Field order (Task 8b U2): Name, Description, System prompt, User
         prompt, Keywords, Author -- Author is demoted from 2nd position to
         last, beside Keywords (ids unchanged; only compose order moved).
+
+        Task 8c: each of System prompt/User prompt now gets a one-line dim
+        hint Static right under its label (U7); the meta line's initial
+        render threads ``self.dirty`` through so a full recompose while
+        dirty (initial load, Duplicate, conflict entry/resolution) still
+        shows the unsaved marker (U6 -- per-keystroke dirty updates instead
+        patch ``#library-prompt-meta`` in place, never recomposing this
+        widget); Copy/Duplicate are relabeled "Copy text"/"Duplicate
+        prompt" (U8).
         """
         editor_state = self.editor_state
         if editor_state is None:
@@ -239,8 +264,14 @@ class LibraryPromptsListCanvas(Vertical):
         yield Static("Description", classes="library-prompt-field-label", markup=False)
         yield Input(value=editor_state.details, id="library-prompt-details")
         yield Static("System prompt", classes="library-prompt-field-label", markup=False)
+        yield Static(
+            _SYSTEM_PROMPT_HINT, classes="library-prompt-field-hint", markup=False
+        )
         yield TextArea(editor_state.system_prompt, id="library-prompt-system")
         yield Static("User prompt", classes="library-prompt-field-label", markup=False)
+        yield Static(
+            _USER_PROMPT_HINT, classes="library-prompt-field-hint", markup=False
+        )
         yield TextArea(editor_state.user_prompt, id="library-prompt-user")
         yield Input(
             value=editor_state.keywords_csv,
@@ -250,7 +281,7 @@ class LibraryPromptsListCanvas(Vertical):
         yield Static("Author", classes="library-prompt-field-label", markup=False)
         yield Input(value=editor_state.author, id="library-prompt-author")
         yield Static(
-            prompt_editor_meta_line(editor_state),
+            prompt_editor_meta_line(editor_state, dirty=self.dirty),
             id="library-prompt-meta",
             markup=False,
         )
@@ -315,13 +346,17 @@ class LibraryPromptsListCanvas(Vertical):
                     compact=True,
                 )
                 yield Button(
-                    "Copy",
+                    # Task 8c U8: "Copy text" (clipboard) vs "Duplicate
+                    # prompt" (clone as new prompt) below -- the two sat
+                    # adjacent with near-identical bare "Copy"/"Duplicate"
+                    # labels; ids are unchanged.
+                    "Copy text",
                     id="library-prompt-copy",
                     classes="library-canvas-action",
                     compact=True,
                 )
                 yield Button(
-                    "Duplicate",
+                    "Duplicate prompt",
                     id="library-prompt-duplicate",
                     classes="library-canvas-action",
                     compact=True,

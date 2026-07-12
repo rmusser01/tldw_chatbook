@@ -2971,6 +2971,7 @@ class LibraryScreen(BaseAppScreen):
                             mode="editor",
                             editor_state=self._library_prompt_conflict_snapshot,
                             conflict=True,
+                            dirty=self._library_prompt_dirty,
                             id="library-prompts-canvas",
                         )
                     elif self._library_prompt_detail is None:
@@ -2994,6 +2995,7 @@ class LibraryScreen(BaseAppScreen):
                                 self._library_prompt_status
                                 == LIBRARY_PROMPT_SAVE_STATUS_COPY["name-in-use"]
                             ),
+                            dirty=self._library_prompt_dirty,
                             id="library-prompts-canvas",
                         )
                 elif shell.canvas_kind == "prompts":
@@ -6408,10 +6410,24 @@ class LibraryScreen(BaseAppScreen):
         Ignored until ``_library_prompt_editor_armed`` is set (see that
         flag's docstring). Unlike the notes editor, this never arms an
         autosave timer -- the prompt editor is explicit-Save-only.
+
+        Task 8c U6: the dirty flag was previously invisible until the
+        ``flush_pending_work`` veto fired on nav-away. On the False->True
+        transition, this patches ``#library-prompt-meta`` in place (via
+        ``_update_library_prompt_meta_static``, the same targeted-Static
+        pattern ``save-status`` already uses) so the unsaved marker appears
+        immediately -- deliberately NOT a full ``self.refresh(recompose=True)``,
+        which would remount the Input/TextArea fields on every keystroke and
+        re-trigger their spurious mount-time ``Changed`` event. Guarded to
+        the transition only (not every subsequent keystroke) since the
+        flag/marker do not change again until Save or navigation.
         """
         if not self._library_prompt_editor_armed:
             return
+        was_dirty = self._library_prompt_dirty
         self._library_prompt_dirty = True
+        if not was_dirty:
+            self._update_library_prompt_meta_static()
 
     @on(Input.Changed, "#library-prompt-name")
     @on(Input.Changed, "#library-prompt-author")
@@ -6536,8 +6552,11 @@ class LibraryScreen(BaseAppScreen):
         Re-derives the meta line from ``_library_prompt_detail`` (the
         just-patched, post-save mirror) via the same pure
         ``prompt_editor_meta_line`` helper the editor's initial render
-        uses, so a successful save's version bump shows up without
-        remounting the ``Input``/``TextArea`` fields.
+        uses, so a successful save's version bump -- or (Task 8c U6) a
+        dirty-flag flip -- shows up without remounting the ``Input``/
+        ``TextArea`` fields (which would re-arm-race the editor and risk
+        the mount-time ``Changed`` event being mistaken for a fresh edit;
+        see ``_mark_library_prompt_dirty``, this method's other caller).
         """
         if not isinstance(self._library_prompt_detail, Mapping):
             return
@@ -6545,7 +6564,12 @@ class LibraryScreen(BaseAppScreen):
             meta_static = self.query_one("#library-prompt-meta", Static)
         except (NoMatches, QueryError):
             return
-        meta_static.update(prompt_editor_meta_line(build_prompt_editor_state(self._library_prompt_detail)))
+        meta_static.update(
+            prompt_editor_meta_line(
+                build_prompt_editor_state(self._library_prompt_detail),
+                dirty=self._library_prompt_dirty,
+            )
+        )
 
     @on(Button.Pressed, "#library-prompt-save")
     def handle_library_prompt_save(self, event: Button.Pressed) -> None:

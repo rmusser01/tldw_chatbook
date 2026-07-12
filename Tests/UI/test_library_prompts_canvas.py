@@ -561,6 +561,22 @@ def test_library_prompt_editor_field_css_blocks_match_notes_editor_parity():
         assert "color: $ds-text-muted;" in status_block
 
 
+def test_library_prompt_field_hint_css_block_matches_field_label_parity():
+    """U7 (Task 8c): ``.library-prompt-field-hint`` (the one-line dim hint
+    under the System/User prompt labels) must have a stylesheet rule, same
+    muted tier as its ``.library-prompt-field-label`` sibling -- instead of
+    silently falling back to unstyled defaults."""
+    agentic_terminal = AGENTIC_TERMINAL.read_text(encoding="utf-8")
+    bundled_stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+
+    for text in (agentic_terminal, bundled_stylesheet):
+        assert ".library-prompt-field-hint {" in text
+        hint_block = _css_block(text, ".library-prompt-field-hint {")
+        label_block = _css_block(text, ".library-prompt-field-label {")
+        assert "color: $ds-text-muted;" in hint_block
+        assert "color: $ds-text-muted;" in label_block
+
+
 def test_library_prompts_import_row_css_blocks_match_filter_status_parity():
     """Toolbar Import… row ids introduced by Task 5 (the path Input, its
     outcome Static) must have stylesheet rules matching their
@@ -1155,6 +1171,51 @@ async def test_library_prompt_save_success_updates_status_and_persists(tmp_path)
         assert persisted["version"] == 2
 
 
+@pytest.mark.asyncio
+async def test_library_prompt_editing_shows_unsaved_marker_and_save_clears_it(tmp_path):
+    """U6 (Task 8c): editing a field surfaces a visible unsaved-changes
+    marker on the meta line -- previously the dirty flag was invisible
+    until the ``flush_pending_work`` veto fired on nav-away. Saving clears
+    it. The meta ``Static`` instance itself must never change identity
+    across the edit (a full recompose would remount the Input/TextArea
+    fields, re-arm-race the editor, and silently re-trigger the mount-time
+    ``Changed`` event the arm-delay guards against)."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Mu", author="Original", details="d", user_prompt="x"
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+
+        meta_before = screen.query_one("#library-prompt-meta", Static)
+        assert "Unsaved" not in str(meta_before.renderable)
+
+        screen.query_one("#library-prompt-author", Input).value = "Changed"
+        await pilot.pause()
+
+        assert screen._library_prompt_dirty is True
+        meta_after_edit = screen.query_one("#library-prompt-meta", Static)
+        assert meta_after_edit is meta_before  # no recompose -- same widget instance
+        assert "• Unsaved changes" in str(meta_after_edit.renderable)
+
+        screen.query_one("#library-prompt-save", Button).press()
+        await pilot.pause()
+        status_text = await _wait_for_prompt_status(screen, pilot)
+        assert status_text == "Saved."
+
+        assert screen._library_prompt_dirty is False
+        meta_after_save = screen.query_one("#library-prompt-meta", Static)
+        assert meta_after_save is meta_before
+        assert "Unsaved" not in str(meta_after_save.renderable)
+
+
 # ---------------------------------------------------------------------------
 # Task 5: toolbar Import… + editor Export .md, end-to-end (real DB + service)
 # ---------------------------------------------------------------------------
@@ -1660,6 +1721,46 @@ async def test_prompts_canvas_editor_field_order_author_last_beside_keywords():
             < ids.index("library-prompt-keywords")
             < ids.index("library-prompt-author")
         )
+
+
+# ---------------------------------------------------------------------------
+# Task 8c: U7 (System/User field help) + U8 (Copy vs Duplicate relabel)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_prompts_canvas_editor_renders_system_and_user_field_hints():
+    """U7: a one-line dim hint renders under each of the System prompt/User
+    prompt labels, explaining the two-part prompt model to a new user."""
+    editor_state = PromptEditorState(
+        prompt_id=1, name="X", author="A", details="d", system_prompt="s", user_prompt="u",
+        keywords_csv="", version=1, created="", modified="2026-07-07T11:00:00+00:00",
+    )
+    app = _CanvasHost(None, mode="editor", editor_state=editor_state)
+    async with app.run_test() as pilot:
+        hints = [
+            str(getattr(s.renderable, "plain", s.renderable))
+            for s in pilot.app.query(".library-prompt-field-hint")
+        ]
+        assert "Instructions the model always follows." in hints
+        assert "The message inserted into the composer." in hints
+
+
+@pytest.mark.asyncio
+async def test_prompts_canvas_editor_copy_and_duplicate_relabeled():
+    """U8: #library-prompt-copy (clipboard) and #library-prompt-duplicate
+    (clone as new prompt) sit adjacent with near-identical labels today --
+    relabel to disambiguate. Ids are unchanged."""
+    editor_state = PromptEditorState(
+        prompt_id=1, name="X", author="A", details="d", system_prompt="s", user_prompt="u",
+        keywords_csv="", version=1, created="", modified="2026-07-07T11:00:00+00:00",
+    )
+    app = _CanvasHost(None, mode="editor", editor_state=editor_state)
+    async with app.run_test() as pilot:
+        copy_button = pilot.app.query_one("#library-prompt-copy", Button)
+        duplicate_button = pilot.app.query_one("#library-prompt-duplicate", Button)
+        assert str(copy_button.label) == "Copy text"
+        assert str(duplicate_button.label) == "Duplicate prompt"
 
 
 @pytest.mark.asyncio
