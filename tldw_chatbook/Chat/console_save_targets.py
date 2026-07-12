@@ -56,7 +56,9 @@ def derive_console_save_title(
     if available < 1:
         return f"{prefix}{date_suffix}"[:max_length]
     if len(normalized_title) > available:
-        normalized_title = f"{normalized_title[: max(1, available - 1)].rstrip()}…"
+        # available >= 1 here, so reserving one slot for the ellipsis keeps
+        # the truncated title within budget even at available == 1.
+        normalized_title = f"{normalized_title[: available - 1].rstrip()}…"
     return f"{prefix}{separator}{normalized_title}{date_suffix}"
 
 
@@ -65,7 +67,16 @@ def console_message_preview(
     *,
     max_length: int = CONSOLE_CHATBOOK_ARTIFACT_DESCRIPTION_MAX_CHARS,
 ) -> str:
-    """Return a single-line, bounded preview of a Console message."""
+    """Return a single-line, bounded preview of a Console message.
+
+    Args:
+        message_text: Raw message content; whitespace runs are collapsed.
+        max_length: Hard cap for the returned preview.
+
+    Returns:
+        The collapsed text, truncated with a trailing ``...`` when it
+        exceeds ``max_length``.
+    """
     preview = _collapse_whitespace(message_text)
     if len(preview) > max_length:
         preview = preview[: max(1, max_length - 3)].rstrip() + "..."

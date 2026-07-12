@@ -112,3 +112,19 @@ def test_console_chatbook_artifact_payload_truncates_oversized_content():
     metadata = payload["metadata"]
     assert len(metadata["content"]) == CONSOLE_CHATBOOK_ARTIFACT_CONTENT_MAX_CHARS
     assert metadata["content_truncated"] is True
+
+
+def test_derive_console_save_title_stays_within_budget_at_one_char_headroom():
+    """Regression (PR #606 review): available == 1 must not overflow max_length."""
+    prefix_and_date = derive_console_save_title(
+        "", now=datetime(2026, 7, 11, tzinfo=timezone.utc)
+    )
+    # Build a max_length that leaves exactly one character for the title.
+    max_length = len(prefix_and_date) + len(" — ") + 1
+    title = derive_console_save_title(
+        "An extremely long conversation title that must truncate",
+        now=datetime(2026, 7, 11, tzinfo=timezone.utc),
+        max_length=max_length,
+    )
+    assert len(title) <= max_length
+    assert title.endswith("(2026-07-11)")

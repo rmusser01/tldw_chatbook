@@ -633,8 +633,10 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         ``build_default_console_session_settings`` reads on the next boot);
         streaming lands on the canonical ``chat_defaults.streaming`` key (the
         legacy ``enable_streaming`` bridge only applies when the canonical key
-        is absent). ``None`` values are skipped rather than deleting existing
-        defaults.
+        is absent). ``chat_defaults.provider`` is written too — the default
+        provider itself resolves ONLY from that key, so omitting it would make
+        "Save as default" keep booting into the previous provider. ``None``
+        values are skipped rather than deleting existing defaults.
         """
         sections: dict[str, dict[str, object]] = {}
         provider_key = provider_config_key(draft.provider)
@@ -651,7 +653,10 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                 provider_values[field_name] = value
         if provider_key and provider_values:
             sections[f"api_settings.{provider_key}"] = provider_values
-        sections["chat_defaults"] = {"streaming": bool(draft.streaming)}
+        chat_defaults: dict[str, object] = {"streaming": bool(draft.streaming)}
+        if provider_key:
+            chat_defaults["provider"] = provider_key
+        sections["chat_defaults"] = chat_defaults
         return sections
 
     def _endpoint_persist_key(self, provider_key: str) -> str:
