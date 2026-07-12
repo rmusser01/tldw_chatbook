@@ -165,6 +165,7 @@ boot-time snapshots.
 
 ## Out of scope (named follow-ups)
 
-Version-history UI (restore exists service-side); bulk chatbook export of prompts (pending
-chatbook-format support); prompt collections; templated variables in prompt bodies; Skills
-`/skill` commands (next spec, plugs into this registry); MCP Hub (third spec).
+Version-history UI (task-196); bulk chatbook export of prompts (task-197); prompt collections
+(task-198); templated variables in prompt bodies (task-199); Skills redesign + `/skill` commands
+(task-200 — next spec, plugs into this registry via the fallback-resolver hook); MCP Hub
+redesign (task-201 — third spec).
