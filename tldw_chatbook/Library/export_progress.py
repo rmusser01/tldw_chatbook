@@ -41,7 +41,7 @@ class ExportProgressThrottle:
     def should_emit(self, phase: str, current: int, total: int, now: float) -> bool:
         if (
             phase != self._last_phase
-            or current >= total
+            or (total > 0 and current >= total)
             or self._last_emit is None
             or (now - self._last_emit) >= self._min_interval
         ):

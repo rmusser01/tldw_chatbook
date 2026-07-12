@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import tempfile
+import threading
 import zipfile
 import hashlib
 import html
@@ -106,12 +107,15 @@ class ChatbookCreator:
         self.missing_dependencies: Set[int] = set()
         self.auto_included_characters: Set[int] = set()
         self._selected_characters: Set[str] = set()  # Track explicitly selected characters
-        self._progress_callback: Optional[Callable[[ExportProgress], None]] = None
-        self._cancel_check: Optional[Callable[[], bool]] = None
+        # Progress/cancel hooks are stored per-thread so a single ChatbookCreator
+        # instance reused across exports (e.g. ChatbookCreationWindow keeps one)
+        # can never have one export's callbacks overwrite another's if two ever
+        # run concurrently on different threads.
+        self._thread_local = threading.local()
         logger.info("ChatbookCreator.__init__: Initialization complete")
 
     def _emit_progress(self, phase: str, current: int, total: int) -> None:
-        cb = self._progress_callback
+        cb = getattr(self._thread_local, "progress_callback", None)
         if cb is None:
             return
         try:
@@ -120,7 +124,8 @@ class ChatbookCreator:
             logger.opt(exception=True).debug("ChatbookCreator: progress_callback raised; ignored")
 
     def _check_cancel(self) -> None:
-        if self._cancel_check is not None and self._cancel_check():
+        cancel_check = getattr(self._thread_local, "cancel_check", None)
+        if cancel_check is not None and cancel_check():
             raise ChatbookExportCancelled()
 
     def _cleanup_paths(self, *paths: Optional[Path]) -> None:
@@ -177,8 +182,8 @@ class ChatbookCreator:
         logger.info(f"ChatbookCreator.create_chatbook: Options - include_media={include_media}, media_quality={media_quality}, include_embeddings={include_embeddings}, auto_include_dependencies={auto_include_dependencies}")
         logger.info(f"ChatbookCreator.create_chatbook: Content selections - {[(t.value, len(ids)) for t, ids in content_selections.items()]}")
 
-        self._progress_callback = progress_callback
-        self._cancel_check = cancel_check
+        self._thread_local.progress_callback = progress_callback
+        self._thread_local.cancel_check = cancel_check
         work_dir: Optional[Path] = None
         partial_path: Optional[Path] = None
         try:
@@ -299,10 +304,9 @@ class ChatbookCreator:
             manifest.total_size_bytes = output_path.stat().st_size
             logger.info(f"ChatbookCreator.create_chatbook: Archive size: {manifest.total_size_bytes} bytes")
             
-            # Cleanup temp directory
-            logger.info(f"ChatbookCreator.create_chatbook: Cleaning up temporary directory {work_dir}")
-            shutil.rmtree(work_dir)
-            
+            # (temp work_dir + any leftover .partial are cleaned up in the
+            # `finally` below, on every exit path — success, cancel, error.)
+
             # Prepare dependency info
             dependency_info = {
                 "missing_dependencies": list(self.missing_dependencies),
@@ -321,7 +325,6 @@ class ChatbookCreator:
             
         except ChatbookExportCancelled:
             logger.info("ChatbookCreator.create_chatbook: cancelled by request")
-            self._cleanup_paths(work_dir, partial_path)
             return False, "Export cancelled", {
                 "cancelled": True,
                 "missing_dependencies": list(self.missing_dependencies),
@@ -329,15 +332,18 @@ class ChatbookCreator:
             }
         except Exception as e:
             logger.opt(exception=True).error("ChatbookCreator.create_chatbook: Error creating chatbook")
-            self._cleanup_paths(work_dir, partial_path)
             dependency_info = {
                 "missing_dependencies": list(self.missing_dependencies),
                 "auto_included": list(self.auto_included_characters)
             }
             return False, f"Error creating chatbook: {str(e)}", dependency_info
         finally:
-            self._progress_callback = None
-            self._cancel_check = None
+            # Single cleanup point for every exit path (success/cancel/error):
+            # remove the temp work_dir and any leftover .partial archive, and
+            # clear this thread's hooks so a reused instance never leaks them.
+            self._cleanup_paths(work_dir, partial_path)
+            self._thread_local.progress_callback = None
+            self._thread_local.cancel_check = None
 
     def _collect_conversations(
         self,
