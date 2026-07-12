@@ -159,6 +159,61 @@ MODEL_PROFILE_INPUT_PLACEHOLDERS = {
 }
 PROVIDER_MANUAL_SELECT_VALUE = "__manual__"
 PROVIDER_MANUAL_SELECT_LABEL = "Manual / custom provider"
+# task-180: single source of human display names for provider keys rendered in
+# Settings. Labels are display-only; the underlying config/readiness keys are
+# unchanged so existing config files keep working.
+PROVIDER_DISPLAY_NAMES = {
+    "anthropic": "Anthropic",
+    "aphrodite": "Aphrodite Engine",
+    "cohere": "Cohere",
+    "custom": "Custom OpenAI-compatible",
+    "custom_2": "Custom OpenAI-compatible #2",
+    "deepseek": "DeepSeek",
+    "google": "Google Gemini",
+    "groq": "Groq",
+    "huggingface": "Hugging Face",
+    "koboldcpp": "KoboldCpp",
+    "llama_cpp": "llama.cpp",
+    "local_llamacpp": "llama.cpp (legacy alias)",
+    "local_llamafile": "Llamafile",
+    "local_llm": "Local LLM (legacy generic)",
+    "local_mlx_lm": "MLX-LM (Apple silicon)",
+    "local_ollama": "Ollama (legacy alias)",
+    "local_vllm": "vLLM (legacy alias)",
+    "mistral": "Mistral AI (legacy alias)",
+    "mistralai": "Mistral AI",
+    "moonshot": "Moonshot AI",
+    "ollama": "Ollama",
+    "oobabooga": "Text Generation WebUI (Oobabooga)",
+    "openai": "OpenAI",
+    "openrouter": "OpenRouter",
+    "tabbyapi": "TabbyAPI",
+    "vllm": "vLLM",
+    "zai": "Z.ai",
+}
+PROVIDER_GROUP_CLOUD = "Cloud"
+PROVIDER_GROUP_LOCAL = "Local"
+PROVIDER_GROUP_CUSTOM = "Custom & legacy aliases"
+PROVIDER_GROUP_ORDER = (
+    PROVIDER_GROUP_CLOUD,
+    PROVIDER_GROUP_LOCAL,
+    PROVIDER_GROUP_CUSTOM,
+)
+# task-180: legacy/alias and custom keys stay selectable for config
+# compatibility but sort last, so new users pick the canonical entry
+# (llama_cpp over local_llamacpp, ollama over local_ollama, mistralai over
+# mistral, vllm over local_vllm).
+PROVIDER_CUSTOM_GROUP_KEYS = frozenset(
+    {
+        "custom",
+        "custom_2",
+        "local_llamacpp",
+        "local_llm",
+        "local_ollama",
+        "local_vllm",
+        "mistral",
+    }
+)
 MODEL_DISCOVERY_IDLE_COPY = "Discover models from configured endpoint"
 MODEL_DISCOVERY_EMPTY_COPY = (
     "No discovered models yet. Use Discover models after endpoint is configured."
@@ -302,15 +357,14 @@ GUIDED_SETTINGS_MUTATION_CATEGORIES = frozenset(
         SettingsCategoryId.STORAGE,
     }
 )
+# task-181: keep these rows in user language; they render on the Overview
+# card, so avoid internal architecture/ownership phrasing.
 SETTINGS_OVERVIEW_BOUNDARY_ROWS = (
-    ("Settings role", "Settings owns persisted defaults and validation"),
-    ("Console boundary", "Console owns live chat/run state"),
-    ("MCP boundary", "MCP owns server and tool management"),
-    ("ACP boundary", "ACP owns runtime/session setup"),
-    (
-        "Sync/workspace boundary",
-        "Sync and workspace handoff defaults are read-only until source contracts exist",
-    ),
+    ("Settings", "edits saved defaults; changes apply after you save"),
+    ("Console", "live chat and run controls stay on the Console screen"),
+    ("MCP", "tool servers are managed on the MCP screen"),
+    ("ACP", "agent runtime and sessions are managed on the ACP screen"),
+    ("Sync & workspaces", "status shown here is read-only"),
 )
 SETTINGS_SERVER_SYNC_WORKSPACE_SOURCE_CONTRACTS = (
     (
@@ -987,8 +1041,8 @@ class SettingsScreen(BaseAppScreen):
                 runtime_owner="owning destinations",
                 boundary_copy="; ".join(value for _, value in SETTINGS_OVERVIEW_BOUNDARY_ROWS),
                 recovery_copy=(
-                    "Open the owning category or destination before changing runtime behavior; "
-                    "sync and workspace handoff defaults stay read-only until source contracts exist."
+                    "Open the matching Settings category or destination to change behavior; "
+                    "sync and workspace status here is read-only."
                 ),
                 read_only_reason="Overview summarizes status and ownership only.",
             ),
@@ -3858,15 +3912,44 @@ class SettingsScreen(BaseAppScreen):
 
     def _provider_display_name(self, provider: str) -> str:
         provider_key = provider_config_key(provider)
+        display_name = PROVIDER_DISPLAY_NAMES.get(provider_key)
+        if display_name:
+            return display_name
         for entry in self._provider_catalog_entries():
             if entry.readiness_key == provider_key:
                 return entry.display_name
         return provider
 
+    @staticmethod
+    def _provider_catalog_group(entry: ConsoleProviderCatalogEntry) -> str:
+        if entry.readiness_key in PROVIDER_CUSTOM_GROUP_KEYS:
+            return PROVIDER_GROUP_CUSTOM
+        if entry.requires_api_key:
+            return PROVIDER_GROUP_CLOUD
+        return PROVIDER_GROUP_LOCAL
+
+    def _grouped_provider_catalog_entries(self) -> tuple[ConsoleProviderCatalogEntry, ...]:
+        group_rank = {group: rank for rank, group in enumerate(PROVIDER_GROUP_ORDER)}
+        return tuple(
+            sorted(
+                self._provider_catalog_entries(),
+                key=lambda entry: (
+                    group_rank[self._provider_catalog_group(entry)],
+                    self._provider_display_name(entry.readiness_key).lower(),
+                ),
+            )
+        )
+
     def _provider_select_options(self) -> list[tuple[str, str]]:
+        # task-180: options are grouped by ordering (Cloud, then Local, then
+        # Custom & legacy aliases) and labelled with human display names only;
+        # raw config keys never render as labels. Textual's Select cannot show
+        # disabled separator rows, so grouping is conveyed by ordering plus
+        # "(legacy alias)" labels. Quick-find comes from the Select overlay's
+        # built-in type-to-search (enabled by default).
         options = [
-            (f"{entry.display_name} ({entry.readiness_key})", entry.readiness_key)
-            for entry in self._provider_catalog_entries()
+            (self._provider_display_name(entry.readiness_key), entry.readiness_key)
+            for entry in self._grouped_provider_catalog_entries()
         ]
         options.append((PROVIDER_MANUAL_SELECT_LABEL, PROVIDER_MANUAL_SELECT_VALUE))
         return options
@@ -3947,8 +4030,18 @@ class SettingsScreen(BaseAppScreen):
             self._syncing_provider_manual = False
 
     def _provider_catalog_summary(self) -> str:
-        catalog = ", ".join(entry.readiness_key for entry in self._provider_catalog_entries())
-        return f"Provider catalog: {catalog}"
+        # task-180: show grouped display names, never a raw config-key dump.
+        grouped: dict[str, list[str]] = {}
+        for entry in self._grouped_provider_catalog_entries():
+            grouped.setdefault(self._provider_catalog_group(entry), []).append(
+                self._provider_display_name(entry.readiness_key)
+            )
+        parts = [
+            f"{group}: {', '.join(grouped[group])}"
+            for group in PROVIDER_GROUP_ORDER
+            if grouped.get(group)
+        ]
+        return "Provider catalog | " + " | ".join(parts)
 
     def _provider_catalog_key_policy(self) -> str:
         entries = self._provider_catalog_entries()
@@ -4477,7 +4570,13 @@ class SettingsScreen(BaseAppScreen):
                 logger.exception("Provider discovered model cache clear failed")
         self._reset_provider_model_discovery_state("Discovered model cache cleared.")
 
-    def _run_provider_readiness_test(self) -> str:
+    def _provider_readiness_test_report(self) -> tuple[str, str, bool]:
+        """Run the local provider readiness test.
+
+        Returns:
+            Tuple of (detail line for the results row, toast summary stating
+            the pass/fail outcome with its reason, whether the test passed).
+        """
         try:
             provider = self._provider_widget_value()
             model = self.query_one("#settings-model-value", Input).value.strip()
@@ -4507,9 +4606,30 @@ class SettingsScreen(BaseAppScreen):
             findings.append("api_key=not required")
         findings.append(self._provider_endpoint_summary(provider))
 
-        status = "ready" if readiness.ready and model else "blocked"
-        findings.append(f"status={status}")
-        return redact_secret_text(" | ".join(findings))
+        passed = bool(readiness.ready and model)
+        findings.append(f"status={'ready' if passed else 'blocked'}")
+
+        # task-185: the toast must state the outcome, not just "finished".
+        display_name = self._provider_display_name(provider) if provider else "Provider"
+        if passed:
+            summary = f"Provider test passed: {display_name} is ready; model {model}."
+        elif not readiness.ready:
+            summary = f"Provider test failed: {readiness.user_message}"
+            if not model:
+                summary += " Also set a default model."
+        else:
+            summary = (
+                f"Provider test failed: {display_name} is ready but no default model is set."
+            )
+        return (
+            redact_secret_text(" | ".join(findings)),
+            redact_secret_text(summary),
+            passed,
+        )
+
+    def _run_provider_readiness_test(self) -> str:
+        detail, _summary, _passed = self._provider_readiness_test_report()
+        return detail
 
     def _update_provider_test_result(self) -> None:
         try:
@@ -5007,39 +5127,11 @@ class SettingsScreen(BaseAppScreen):
         yield empty_state
 
     def _render_overview_detail(self) -> ComposeResult:
+        # task-181: lead with user-relevant readiness/storage/privacy; Manual
+        # sync and the ownership summary sit at the bottom of the card.
         yield Static("Overview", classes="destination-section settings-column-title")
         with Vertical(id="settings-overview-card", classes="settings-focus-card"):
             yield self._render_category_state_banner(SettingsCategoryId.OVERVIEW)
-            yield Static("Manual Sync v2", classes="destination-section")
-            yield Static(
-                "Preview pending Notes/Chat changes before any server mutation.",
-                classes="settings-help-copy",
-            )
-            for label, value in self.manual_sync_rows:
-                yield self._detail_row(label, value)
-            with Horizontal(classes="settings-action-row"):
-                yield Button(
-                    "Preview manual sync",
-                    id="settings-manual-sync-preview",
-                    tooltip="Show pending Notes/Chat changes without mutating the server.",
-                )
-                yield Button(
-                    "Run manual sync",
-                    id="settings-manual-sync-run",
-                    tooltip="Apply the previewed Notes/Chat changes to the server.",
-                )
-            yield Static("Configuration ownership", classes="destination-section")
-            for label, value in self._overview_ownership_rows():
-                yield self._detail_row(label, value)
-            yield Static("Server, sync, workspace, and handoff", classes="destination-section")
-            for label, value in self.server_sync_workspace_handoff_rows:
-                yield self._detail_row(label, value)
-            with Horizontal(classes="settings-action-row"):
-                yield Button(
-                    "Switch Source / Server",
-                    id="settings-switch-runtime-source",
-                    tooltip="Choose local-only or bind a tldw server as the runtime source.",
-                )
             yield Static("Provider readiness", classes="destination-section")
             yield self._detail_row(
                 "Provider readiness",
@@ -5067,6 +5159,36 @@ class SettingsScreen(BaseAppScreen):
                 "Diagnostics",
                 "validate config before saving raw TOML changes",
             )
+            yield Static("Server, sync, workspace, and handoff", classes="destination-section")
+            for label, value in self.server_sync_workspace_handoff_rows:
+                yield self._detail_row(label, value)
+            with Horizontal(classes="settings-action-row"):
+                yield Button(
+                    "Switch Source / Server",
+                    id="settings-switch-runtime-source",
+                    tooltip="Choose local-only or bind a tldw server as the runtime source.",
+                )
+            yield Static("Manual sync", classes="destination-section")
+            yield Static(
+                "Preview pending Notes/Chat changes before anything is sent to a server.",
+                classes="settings-help-copy",
+            )
+            for label, value in self.manual_sync_rows:
+                yield self._detail_row(label, value)
+            with Horizontal(classes="settings-action-row"):
+                yield Button(
+                    "Preview manual sync",
+                    id="settings-manual-sync-preview",
+                    tooltip="Show pending Notes/Chat changes without mutating the server.",
+                )
+                yield Button(
+                    "Run manual sync",
+                    id="settings-manual-sync-run",
+                    tooltip="Apply the previewed Notes/Chat changes to the server.",
+                )
+            yield Static("Where changes happen", classes="destination-section")
+            for label, value in self._overview_ownership_rows():
+                yield self._detail_row(label, value)
 
     def _render_provider_detail(self) -> ComposeResult:
         resolved = self._resolve_provider_model_for_settings()
@@ -5353,7 +5475,8 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-status-row",
             )
             yield Static(
-                "Choose a catalog provider, or use Manual / custom provider for aliases.",
+                "Choose a catalog provider (type in the open list to jump to one), "
+                "or use Manual / custom provider for other keys.",
                 id="settings-provider-manual-entry-policy",
                 classes="settings-status-row",
             )
@@ -6420,10 +6543,12 @@ class SettingsScreen(BaseAppScreen):
                 value,
                 identifier="settings-boundary-note" if label == "Boundary" else None,
             )
-        yield Static("Mutation replay: disabled", id="settings-sync-mutation-disabled")
+        # task-181: keep this in user language and consistent with the
+        # "Writes allowed" row above; saves are local-config only.
         yield Static(
-            "Writes remain blocked until explicit review, conflict, rollback, and audit gates are implemented.",
-            id="settings-sync-write-gates",
+            "Saves apply to your local config file. Nothing is sent to a server "
+            "unless you run Manual sync yourself.",
+            id="settings-local-scope-note",
         )
         if summary.category is SettingsCategoryId.OVERVIEW:
             yield Button(
@@ -8167,9 +8292,13 @@ class SettingsScreen(BaseAppScreen):
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
         if self._active_category_id() is SettingsCategoryId.PROVIDERS_MODELS:
-            self._provider_test_result = self._run_provider_readiness_test()
+            detail, summary, passed = self._provider_readiness_test_report()
+            self._provider_test_result = detail
             self._update_provider_test_result()
-            self.app.notify("Provider test finished.", severity="information")
+            self.app.notify(
+                summary,
+                severity="information" if passed else "warning",
+            )
             return
         if self._active_category_id() is SettingsCategoryId.DIAGNOSTICS:
             self._diagnostics_validation_result = "Config validation: running"

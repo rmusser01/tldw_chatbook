@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
@@ -21,6 +21,41 @@ from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_
 
 MAX_CONSOLE_DRAFT_LENGTH = 100_000
 CONSOLE_CONTINUE_INSTRUCTION = "Continue and extend the selected message."
+
+
+def describe_stream_failure(exc: BaseException) -> str:
+    """Return user-facing copy classifying a provider stream failure.
+
+    ``str(exc)`` alone can be empty (observed live as ``"Provider stream
+    failed: "`` rendering ``"[failed]"``), so the failure class is always
+    included in user terms: timeout vs connection vs HTTP status.
+
+    Args:
+        exc: The exception raised by the provider stream.
+
+    Returns:
+        A short, user-readable failure description that is never empty.
+    """
+    detail = str(exc).strip()
+    response = getattr(exc, "response", None)
+    status_code = getattr(response, "status_code", None) or getattr(exc, "status_code", None)
+    exc_name = type(exc).__name__
+    lowered_name = exc_name.lower()
+
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)) or "timeout" in lowered_name:
+        summary = "request timed out waiting for the provider"
+    elif isinstance(exc, ConnectionRefusedError) or "connectrefused" in lowered_name.replace("_", ""):
+        summary = "connection refused - is the provider server running?"
+    elif isinstance(exc, ConnectionError) or "connect" in lowered_name:
+        summary = "could not connect to the provider"
+    elif status_code is not None:
+        summary = f"provider returned HTTP {status_code}"
+    else:
+        summary = f"{exc_name} error"
+
+    if detail and detail.lower() != summary.lower():
+        return f"{summary} ({detail})"
+    return summary
 
 
 class ConsoleProviderGatewayProtocol(Protocol):
@@ -91,6 +126,10 @@ class ConsoleChatController:
         self.streaming = streaming
         self.run_state = ConsoleRunState()
         self.run_state_history: list[ConsoleRunStatus] = [self.run_state.status]
+        #: Optional owner hook invoked once a submit is accepted (user message
+        #: persisted, run about to start) so the composer can clear immediately
+        #: instead of holding the sent text for the whole run.
+        self.on_submission_accepted: Callable[[], None] | None = None
         self._active_assistant_message_id: str | None = None
         self._active_stream_task: asyncio.Task | None = None
         self._stop_requested = False
@@ -123,6 +162,7 @@ class ConsoleChatController:
             content=clean_draft,
             persist=self.store.persistence is not None,
         )
+        self._notify_submission_accepted()
         provider_messages = self._provider_messages_for_session(session.id)
         assistant = self.store.append_message(
             session.id,
@@ -417,7 +457,8 @@ class ConsoleChatController:
                 if chunk:
                     chunks.append(chunk)
         except Exception as exc:
-            visible_copy = f"Provider stream failed: {exc}"
+            visible_copy = f"Provider stream failed: {describe_stream_failure(exc)}"
+            self._append_failure_system_row(session_id, visible_copy)
             self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
             return ConsoleSubmitResult(True, True, visible_copy)
 
@@ -502,6 +543,31 @@ class ConsoleChatController:
             should_clear_draft=False,
             visible_copy=visible_copy,
         )
+
+    def _notify_submission_accepted(self) -> None:
+        """Invoke the owner accepted-hook without letting UI errors kill the run."""
+        callback = self.on_submission_accepted
+        if callback is None:
+            return
+        try:
+            callback()
+        except Exception:
+            # The hook is a UI convenience (composer clearing); a failure there
+            # must never abort an already-accepted provider run.
+            pass
+
+    def _append_failure_system_row(self, session_id: str, visible_copy: str) -> None:
+        """Append a transcript-only system row describing a provider failure."""
+        try:
+            self.store.append_message(
+                session_id,
+                role=ConsoleMessageRole.SYSTEM,
+                content=visible_copy,
+            )
+        except KeyError:
+            # Session vanished mid-failure (e.g. closed); the run-state copy
+            # still carries the failure for the control surfaces.
+            pass
 
     async def _stream_assistant_response(
         self,
@@ -591,22 +657,25 @@ class ConsoleChatController:
                 return ConsoleSubmitResult(True, True, stopped.content)
             raise
         except Exception as exc:
-            visible_copy = f"Provider stream failed: {exc}"
-            if not prepare_retry or retry_prepared:
-                try:
-                    self.store.append_stream_chunk(assistant_message_id, f"\n{visible_copy}")
-                except (KeyError, ValueError):
-                    pass
+            # Provider failures are surfaced as run status plus a transcript
+            # system row; they must never be written into assistant message
+            # content, which is persisted and replayed as model context.
+            visible_copy = f"Provider stream failed: {describe_stream_failure(exc)}"
             try:
-                failed = (
+                if not prepare_retry or retry_prepared:
                     self.store.mark_message_failed(assistant_message_id)
-                    if not prepare_retry or retry_prepared
-                    else self.store.get_message(assistant_message_id)
-                )
+                else:
+                    self.store.get_message(assistant_message_id)
             except KeyError:
                 return self._session_closed_result()
+            try:
+                session_id = self.store.session_id_for_message(assistant_message_id)
+            except KeyError:
+                session_id = None
+            if session_id is not None:
+                self._append_failure_system_row(session_id, visible_copy)
             self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
-            return ConsoleSubmitResult(True, True, failed.content)
+            return ConsoleSubmitResult(True, True, visible_copy)
         finally:
             if self._active_stream_task is asyncio.current_task():
                 self._active_assistant_message_id = None

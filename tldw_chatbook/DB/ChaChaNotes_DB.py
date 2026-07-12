@@ -63,6 +63,12 @@ from .sql_validation import validate_table_name, validate_column_name
 DEFAULT_RUNTIME_BACKEND = "local"
 DEFAULT_DISCOVERY_OWNER = "general_chat"
 
+# Sentinel scope for conversation listing that spans every persisted scope
+# ('global' and all workspaces). This is a QUERY-only scope: conversations are
+# still stored as 'global' or 'workspace'. Used by the Library Browse ▸
+# Conversations snapshot so Console workspace chats are listed and counted.
+CONVERSATION_SCOPE_ALL = "all"
+
 # --- Custom Exceptions ---
 class CharactersRAGDBError(Exception):
     """Base exception for CharactersRAGDB related errors."""
@@ -4537,9 +4543,19 @@ UPDATE db_schema_version
         offset: int = 0,
         **_: Any,
     ) -> Tuple[List[Dict[str, Any]], int, float]:
-        normalized_scope, normalized_workspace_id = self._normalize_scope(scope_type, workspace_id)
-        clauses: List[str] = ["scope_type = ?"]
-        params: List[Any] = [normalized_scope]
+        clauses: List[str] = []
+        params: List[Any] = []
+        if str(scope_type or "").strip().lower() == CONVERSATION_SCOPE_ALL:
+            # "all" spans global- and workspace-scoped conversations in one
+            # page/count (the Library Browse ▸ Conversations snapshot seam);
+            # a workspace_id would silently contradict that, so reject it.
+            if self._normalize_nullable_text(workspace_id) is not None:
+                raise InputError("workspace_id must be omitted when scope_type is 'all'.")
+            normalized_workspace_id = None
+        else:
+            normalized_scope, normalized_workspace_id = self._normalize_scope(scope_type, workspace_id)
+            clauses.append("scope_type = ?")
+            params.append(normalized_scope)
 
         effective_client_id = self.client_id if client_id is None else client_id
         if effective_client_id is not None:
@@ -4606,16 +4622,17 @@ UPDATE db_schema_version
         return rows, total, 0.0
 
     def get_all_conversation_ids(self) -> List[str]:
-        """Return every non-deleted, globally-scoped conversation id owned by this client (no page cap).
+        """Return every non-deleted conversation id owned by this client (no page cap).
 
         Mirrors the WHERE clause `search_conversations_page` builds for the
         Library's conversations snapshot fetch: the Library screen calls
-        `ChatConversationService.list_conversations(mode="local", limit=..., offset=0)`
-        with no `scope_type`/`workspace_id`, which `_normalize_scope`
-        resolves to `scope_type = 'global'`; `search_conversations_page`
-        then also scopes to `client_id = self.client_id` (its default when
-        no explicit `client_id` is passed) and excludes soft-deleted rows
-        (`deleted = 0`). This method issues the same three-clause filter,
+        `ChatConversationService.list_conversations(mode="local", scope_type="all",
+        limit=..., offset=0)`, which spans both 'global' and 'workspace'
+        scoped conversations (Console chats persisted inside a workspace
+        session are workspace-scoped); `search_conversations_page` then
+        also scopes to `client_id = self.client_id` (its default when no
+        explicit `client_id` is passed) and excludes soft-deleted rows
+        (`deleted = 0`). This method issues the same client/deleted filter,
         but returns the full id list instead of a `limit`/`offset` page --
         the truncation-proof source for Library chatbook export
         (`Library/library_export_scope.py`): the Library conversations
@@ -4632,7 +4649,7 @@ UPDATE db_schema_version
         """
         query = (
             "SELECT id FROM conversations "
-            "WHERE scope_type = 'global' AND client_id = ? AND deleted = 0 "
+            "WHERE client_id = ? AND deleted = 0 "
             "ORDER BY id ASC"
         )
         try:
@@ -4641,7 +4658,7 @@ UPDATE db_schema_version
         except CharactersRAGDBError as e:
             logger.error(
                 f"Database error listing all conversation ids "
-                f"(client_id={self.client_id!r}, scope_type='global'): {e}"
+                f"(client_id={self.client_id!r}, scope_type='all'): {e}"
             )
             raise
 

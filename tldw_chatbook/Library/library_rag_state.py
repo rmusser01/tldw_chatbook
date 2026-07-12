@@ -74,6 +74,14 @@ LIBRARY_SEARCH_HISTORY_ENTRY_MAX_CHARS = 200
 # `blocked_is_no_scope` below can key off them directly.
 _EMPTY_QUERY_DISABLED_REASON = "Enter a question or search query."
 _NO_SCOPE_DISABLED_REASON = "Select at least one Library source."
+# The whole no-sources presentation (L3a quiet-gate principle): ONE muted
+# line plus the single "Open Import media" action -- never the old
+# Unavailable/Why/Next/Recovery/Owner dump plus checklist, whose internal
+# jargon ("Owner: Library source index") regressed the 2026-07 core-loop UAT.
+LIBRARY_RAG_NO_SOURCES_GATE_COPY = (
+    "No Library sources yet — import media or create notes, then search."
+)
+_NO_SOURCES_NEXT_ACTION = "Import media or create notes, then search."
 LIBRARY_RAG_SEARCHING_LABEL = "Searching…"
 _OPEN_SOURCE_TYPE_MAP = {
     "note": "notes", "notes": "notes",
@@ -345,22 +353,9 @@ class LibraryRagScopeState:
         status = "ready"
         if total_count == 0:
             status = "blocked"
-            recovery_copy = "\n".join(
-                (
-                    _recovery_copy(
-                        status_label="No sources",
-                        unavailable_what="Library Search/RAG",
-                        why="No Library sources are available for retrieval",
-                        next_action="Add or import Library sources before querying",
-                        recovery_action="Library Import media",
-                        owner="Library source index",
-                    ),
-                    "Recovery checklist",
-                    "1. Import Library sources.",
-                    "2. Run Search/RAG.",
-                    "3. Select evidence, then Use in Console.",
-                )
-            )
+            # A single quiet gate line (plus the scope region's one
+            # "Open Import media" action) is the entire no-sources state.
+            recovery_copy = LIBRARY_RAG_NO_SOURCES_GATE_COPY
         elif not any(option.selected for option in options):
             status = "blocked"
             recovery_copy = _recovery_copy(
@@ -1030,6 +1025,8 @@ def _result_id(source_id: str, chunk_id: str, title: str) -> str:
 
 
 def _blocked_next_action(recovery_copy: str) -> str:
+    if recovery_copy == LIBRARY_RAG_NO_SOURCES_GATE_COPY:
+        return _NO_SOURCES_NEXT_ACTION
     for line in recovery_copy.splitlines():
         if line.startswith("Next: "):
             return line.removeprefix("Next: ")

@@ -6,6 +6,7 @@ import pytest
 
 from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_EMPTY_STATE_SELECTOR,
+    LIBRARY_RAG_NO_SOURCES_GATE_COPY,
     LIBRARY_RAG_SERVICE_ERROR_SELECTOR,
     LibraryRagPanelState,
     LibraryRagQueryState,
@@ -52,8 +53,11 @@ def test_scope_state_exposes_library_source_scope_and_empty_recovery() -> None:
 
     assert empty_scope.has_available_sources is False
     assert empty_scope.status == "blocked"
-    assert "Owner: Library source index." in empty_scope.recovery_copy
-    assert "Next: Add or import Library sources before querying." in empty_scope.recovery_copy
+    # (task-185) The no-sources state is ONE quiet gate line -- never the
+    # retired Unavailable/Why/Next/Recovery/Owner dump or its checklist.
+    assert empty_scope.recovery_copy == LIBRARY_RAG_NO_SOURCES_GATE_COPY
+    assert "Owner:" not in empty_scope.recovery_copy
+    assert "Recovery checklist" not in empty_scope.recovery_copy
 
 
 def test_query_state_blocks_empty_query_and_runtime_blockers() -> None:
@@ -302,7 +306,10 @@ def test_panel_state_tracks_retrieval_status_and_console_action_readiness() -> N
     assert blocked.use_in_console_action.disabled_reason == (
         "Run a query and select usable evidence before sending to Console."
     )
-    assert "Owner: Library source index." in blocked.recovery_copy
+    # (task-185) The panel's no-sources recovery copy is the single quiet
+    # gate line, and the inspector's next action stays user-facing.
+    assert blocked.recovery_copy == LIBRARY_RAG_NO_SOURCES_GATE_COPY
+    assert blocked.next_action == "Import media or create notes, then search."
 
     result = LibraryRagResultRow.from_result(
         {

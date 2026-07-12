@@ -7,7 +7,7 @@ import inspect
 import re
 import time
 from collections.abc import Mapping, Sequence
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -75,6 +75,7 @@ from ...Library.library_notes_state import (
     next_notes_sort_mode,
     note_template_keywords,
     notes_autosave_status_text,
+    patch_note_records_after_save,
     resolve_note_template_placeholders,
     sort_notes_records,
 )
@@ -1605,6 +1606,11 @@ class LibraryScreen(BaseAppScreen):
             self._run_library_service_call(
                 list_conversations,
                 mode="local",
+                # "all" spans global- and workspace-scoped conversations:
+                # Console chats persisted inside a workspace session are
+                # workspace-scoped and would be invisible (and uncounted)
+                # under the service's default 'global' scope.
+                scope_type="all",
                 limit=LIBRARY_SOURCE_PAGE_SIZES["conversations"],
                 offset=0,
                 isolate_in_worker=True,
@@ -4288,6 +4294,28 @@ class LibraryScreen(BaseAppScreen):
                     self._library_note_detail["keywords"] = result["keywords"]
                 elif keywords is not None:
                     self._library_note_detail["keywords"] = keywords
+            # Patch the cached notes-list snapshot too (title + a fresh
+            # last_modified), not just the detail mirror: the list view is
+            # rendered from these records on the next Back-to-list, and
+            # without this it kept showing the pre-save title, stale
+            # relative age, and stale Newest ordering until a full
+            # snapshot refetch landed (2026-07 UAT finding).
+            saved_stamp = datetime.now(timezone.utc).isoformat()
+            self._local_source_records["notes"] = patch_note_records_after_save(
+                self._local_source_records.get("notes", ()),
+                note_id,
+                title=title,
+                modified_at=saved_stamp,
+            )
+            if self._library_notes_filter_records is not None:
+                self._library_notes_filter_records = list(
+                    patch_note_records_after_save(
+                        self._library_notes_filter_records,
+                        note_id,
+                        title=title,
+                        modified_at=saved_stamp,
+                    )
+                )
             self._library_note_dirty = False
             self._library_note_autosave_state = "saved"
             self._update_library_note_meta_static(content=raw_content)
@@ -5192,6 +5220,36 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         media_id = str(getattr(event.button, "media_id", "") or "")
+        self._open_library_media_viewer(media_id)
+
+    @on(Button.Pressed, "#library-media-open-viewer")
+    def handle_library_media_open_viewer(self, event: Button.Pressed) -> None:
+        """Open the browse summary's selected media item in the in-Library viewer.
+
+        The browse canvas preview's primary action. Stays entirely inside
+        Library (unlike the full viewer's "Open in Media manager" escape
+        hatch, which navigates to the legacy Media screen) -- hence the
+        "Open in viewer" label (2026-07 UAT relabel).
+
+        Args:
+            event: Button press event emitted by the "Open in viewer" action.
+        """
+        event.stop()
+        self._open_library_media_viewer(self._selected_media_id)
+
+    def _open_library_media_viewer(self, media_id: str) -> None:
+        """Switch the media canvas to the in-canvas viewer for ``media_id``.
+
+        Shared by media-row presses and the browse summary's "Open in
+        viewer" action: resets per-item viewer state, kicks the async
+        detail fetch, and recomposes into the viewer's loading line.
+
+        Args:
+            media_id: The media item to open; an empty id still switches to
+                the viewer without kicking a fetch (mirrors the previous
+                row-press behavior for a row missing its ``media_id``).
+        """
+        media_id = str(media_id or "")
         if media_id:
             self._selected_media_id = media_id
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
@@ -5725,12 +5783,12 @@ class LibraryScreen(BaseAppScreen):
         blank-path quiet line (L3b AB wave, A4), via targeted DOM surgery
         (mirroring ``update_library_collection_name_input``) rather than a
         full canvas recompose, so typing never disturbs the Input's cursor
-        position. The quiet line is conditionally yielded by
-        ``LibraryIngestCanvas.compose`` (mirrors ``unavailable_line``) --
-        unlike the Start button's ``disabled`` flag, which is always a
-        mounted widget whose attribute can just be flipped, a
-        newly-appearing/disappearing quiet line has to be mounted/removed
-        here since there is no recompose to do it for us.
+        position. The quiet line ``Static`` is always mounted by
+        ``LibraryIngestCanvas.compose`` with a fixed one-row height, so
+        this handler only updates its text in place -- never mounts or
+        removes it -- keeping the Start button's position stable across
+        gate-state changes (2026-07 UAT: mount/remove shifted the button
+        ~2 rows on every valid/blank transition).
 
         Args:
             event: Input change event emitted by the path field.
@@ -5746,22 +5804,8 @@ class LibraryScreen(BaseAppScreen):
         try:
             quiet_line = self.query_one("#library-ingest-start-quiet-line", Static)
         except (NoMatches, QueryError):
-            quiet_line = None
-        if new_state.start_quiet_line:
-            if quiet_line is None:
-                container = start_button.parent
-                if container is not None:
-                    await container.mount(
-                        Static(
-                            new_state.start_quiet_line,
-                            id="library-ingest-start-quiet-line",
-                            classes="library-ingest-quiet-line",
-                            markup=False,
-                        ),
-                        before=start_button,
-                    )
-        elif quiet_line is not None:
-            await quiet_line.remove()
+            return
+        quiet_line.update(new_state.start_quiet_line)
 
     @on(Input.Changed, "#library-ingest-title")
     def handle_library_ingest_title_changed(self, event: Input.Changed) -> None:
@@ -5877,7 +5921,35 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_ingest_start(self, event: Button.Pressed) -> None:
         """Validate the form and submit a new Library ingest job.
 
-        An invalid/missing path is a quiet warning notice, matching every
+        Args:
+            event: Button press event emitted by the "Start ingest" action.
+        """
+        event.stop()
+        self._submit_library_ingest_form()
+
+    @on(Input.Submitted, "#library-ingest-path")
+    def handle_library_ingest_path_submitted(self, event: Input.Submitted) -> None:
+        """Submit the ingest form when Enter is pressed in the path field.
+
+        Mirrors the Start ingest button exactly, but only when the Start
+        gate is open (``start_enabled``) -- Enter on a blank path (or with
+        the registry/DB unavailable) stays quiet instead of nagging, since
+        the always-visible gate line already explains the blocker
+        (2026-07 UAT: Enter in a valid path field previously did nothing).
+
+        Args:
+            event: Input submission event emitted by the path field.
+        """
+        event.stop()
+        if not self._build_library_ingest_state().start_enabled:
+            return
+        self._submit_library_ingest_form()
+
+    def _submit_library_ingest_form(self) -> None:
+        """Validate the ingest form and submit a new Library ingest job.
+
+        Shared by the Start ingest button and Enter in the path field. An
+        invalid/missing path is a quiet warning notice, matching every
         other Library form failure path in this screen; a missing
         ``submit_library_ingest_job`` seam (registry absent) gets the same
         treatment. On success, the path AND title fields clear (L3b AB
@@ -5885,11 +5957,7 @@ class LibraryScreen(BaseAppScreen):
         the next file in a batch -- while author/keywords/advanced options
         persist, since those are batch metadata a user submitting several
         files in a row shouldn't have to retype for every submission.
-
-        Args:
-            event: Button press event emitted by the "Start ingest" action.
         """
-        event.stop()
         form = self._library_ingest_form
         raw_path = form.path.strip()
         if not raw_path:
@@ -6240,6 +6308,13 @@ class LibraryScreen(BaseAppScreen):
         discards unsaved text; an unsaved edit surviving the flush aborts the
         navigation.
 
+        Also kicks the full local-source snapshot refetch (the same
+        exclusive worker the delete/create flows already use) so the list's
+        relative ages, ordering, and the rail's Notes badge reflect any
+        edit saved during this editor visit from the DB's own truth -- the
+        immediate recompose below renders the save-time in-memory patch
+        (see ``_save_library_note``), and the refetch then confirms it.
+
         Args:
             event: Button press event emitted by the "‹ Back to list" action.
         """
@@ -6248,6 +6323,7 @@ class LibraryScreen(BaseAppScreen):
         if self._library_note_dirty:
             return
         self._reset_library_note_editor_state()
+        self._refresh_local_source_snapshot()
         self.refresh(recompose=True)
 
     @on(Button.Pressed, "#library-note-delete")
@@ -7384,7 +7460,12 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-media-open")
     def handle_library_media_open(self, event: Button.Pressed) -> None:
-        """Hand off the selected media item to the Media screen.
+        """Hand off to the legacy Media manager screen.
+
+        Only the full in-Library viewer's action row carries this button
+        now -- it genuinely navigates away from Library, so its "Open in
+        Media manager" label is honest. The browse summary's in-Library
+        action is ``#library-media-open-viewer`` ("Open in viewer") instead.
 
         Args:
             event: Button press event emitted by the "Open in Media manager" action.

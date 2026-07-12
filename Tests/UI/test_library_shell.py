@@ -1546,9 +1546,15 @@ async def test_library_shell_browse_media_renders_canvas_with_rows_and_preview()
 
         preview = str(screen.query_one("#library-media-preview-lines").renderable)
         assert "Product Demo Video" in preview
-        # UX wave M2: names the real destination -- "Open in Media" read
-        # like a no-op from a screen already showing media.
-        assert str(screen.query_one("#library-media-open", Button).label) == "Open in Media manager"
+        # (task-186) The summary's primary action opens the IN-LIBRARY
+        # viewer (nav stays on Library), so its label says so -- the
+        # "Open in Media manager" escape hatch lives on the full viewer's
+        # own action row, the only place that genuinely navigates away.
+        assert (
+            str(screen.query_one("#library-media-open-viewer", Button).label)
+            == "Open in viewer"
+        )
+        assert not screen.query("#library-media-open")
 
 
 @pytest.mark.asyncio
@@ -1897,7 +1903,10 @@ async def _media_detail_never_loads(self, media_id: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_library_shell_media_open_posts_navigate_to_screen():
+async def test_library_shell_media_summary_open_in_viewer_stays_in_library():
+    """(task-186) The browse summary's "Open in viewer" action opens the
+    IN-LIBRARY media viewer for the selected item -- it never posts a
+    NavigateToScreen to the legacy Media screen, matching its label."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
     seen = []
@@ -1908,13 +1917,16 @@ async def test_library_shell_media_open_posts_navigate_to_screen():
         await _wait_for_library_shell(screen, pilot)
 
         screen.query_one("#library-row-browse-media").press()
-        await _wait_for_selector(screen, pilot, "#library-media-open")
+        open_button = await _wait_for_selector(
+            screen, pilot, "#library-media-open-viewer"
+        )
+        assert str(open_button.label) == "Open in viewer"
 
-        screen.query_one("#library-media-open").press()
-        await pilot.pause()
-        await pilot.pause()
+        screen.query_one("#library-media-open-viewer").press()
+        await _wait_for_selector(screen, pilot, "#library-media-use-in-chat")
 
-    assert seen[-1] == "media"
+        assert screen._library_media_view == "viewer"
+        assert "media" not in seen
 
 
 @pytest.mark.asyncio
@@ -4666,6 +4678,74 @@ async def test_library_shell_notes_row_opens_notes_list_canvas():
 
 
 @pytest.mark.asyncio
+async def test_library_shell_notes_list_toolbar_is_one_horizontal_row():
+    """(task-184) sort/Sync/Import note/Export… share a single horizontal
+    ds-toolbar row -- the previous bare stacked Buttons rendered as an
+    overlapped vertical pile eating into the first list row (2026-07 UAT
+    capture notes-list-toolbar-stack-markup-eaten)."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+
+        toolbar = screen.query_one("#library-notes-sort").parent
+        assert toolbar is not None and toolbar.has_class("ds-toolbar")
+        selectors = (
+            "#library-notes-sort",
+            "#library-notes-sync-open",
+            "#library-notes-import",
+            "#library-notes-export",
+        )
+        for selector in selectors:
+            assert screen.query_one(selector).parent is toolbar
+        # All four occupy the same single row (real app CSS is loaded by
+        # this harness): no vertical stacking, no overlap with each other
+        # or the first list row below.
+        rows = {screen.query_one(selector).region.y for selector in selectors}
+        assert len(rows) == 1
+        toolbar_y = rows.pop()
+        first_row_y = screen.query_one("#library-notes-row-0").region.y
+        assert first_row_y > toolbar_y
+
+
+@pytest.mark.asyncio
+async def test_library_shell_notes_list_renders_bracketed_titles_verbatim():
+    """(task-184) A note titled "[draft] Q3 plan [wip]" renders its bracket
+    segments verbatim in the list row instead of having them consumed as
+    Rich markup -- and a title with a closing-tag shape must not crash the
+    list at mount (the search-history Button-label lesson)."""
+    app = _build_test_app()
+    notes = [
+        {"id": "n-1", "title": "[draft] Q3 plan [wip]", "content": "body",
+         "last_modified": "2026-07-07T11:57:00+00:00", "version": 1},
+        {"id": "n-2", "title": "[/wip] closing tag title", "content": "body",
+         "last_modified": "2026-07-06T12:00:00+00:00", "version": 1},
+    ]
+    _seed_conversations(app, _two_conversations(), notes=notes)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-row-1")
+
+        # Button parses its label as markup at construction: with the
+        # escape in place, the resulting Text's plain form (str(label)) is
+        # the verbatim title -- pre-fix it was " Q3 plan " with both
+        # bracket segments consumed as tags.
+        first = str(screen.query_one("#library-notes-row-0", Button).label)
+        second = str(screen.query_one("#library-notes-row-1", Button).label)
+        assert first.splitlines()[0] == "[draft] Q3 plan [wip]"
+        assert second.splitlines()[0] == "[/wip] closing tag title"
+
+
+@pytest.mark.asyncio
 async def test_library_shell_notes_sort_button_cycles():
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
@@ -5142,6 +5222,89 @@ async def test_library_shell_note_save_patches_detail_title_and_content_for_late
             "A later recompose reverted the saved edit -- the detail mirror "
             "wasn't patched with the saved title/content."
         )
+
+
+class _TouchingNotesScopeService(StaticLibraryNotesScopeService):
+    """``save_note`` also bumps the stored ``last_modified``, mirroring the
+    real ChaChaNotes DB (whose save trigger refreshes it) -- so the
+    post-Back snapshot refetch below agrees with the screen's own
+    save-time in-memory patch instead of racing it."""
+
+    async def save_note(self, **kwargs):
+        result = await super().save_note(**kwargs)
+        note_id = kwargs.get("note_id")
+        if result and note_id:
+            from datetime import datetime, timezone
+
+            stamp = datetime.now(timezone.utc).isoformat()
+            self.notes = tuple(
+                {**note, "last_modified": stamp}
+                if str(note.get("id")) == str(note_id)
+                else note
+                for note in self.notes
+            )
+        return result
+
+
+@pytest.mark.asyncio
+async def test_library_shell_note_save_then_back_refreshes_list_title_age_and_order():
+    """(task-184) After an in-canvas edit persists, returning to the list
+    (without leaving the Notes canvas) shows the saved title with a fresh
+    "now" relative age at the top of Newest ordering -- no app restart.
+    Back also re-kicks the local-source snapshot refetch so the DB's own
+    truth confirms the in-memory patch."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    app.notes_scope_service = _TouchingNotesScopeService(_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        # Open the OLDER note (row 1, "Reading list") so the Newest-order
+        # flip to row 0 after the edit is observable.
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-row-1")
+        row = screen.query_one("#library-notes-row-1", Button)
+        assert str(row.label).splitlines()[0] == "Reading list"
+        row.press()
+        await _wait_for_selector(screen, pilot, "#library-note-title")
+        await pilot.pause()
+        await pilot.pause()
+
+        screen.query_one("#library-note-title", Input).value = "Reading list (edited)"
+        screen.query_one("#library-note-body", TextArea).text = "bravo, edited"
+        await pilot.pause()
+        screen.query_one("#library-note-save").press()
+        for _ in range(150):
+            if screen._library_note_autosave_state == "saved":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Save never completed.")
+
+        list_calls_before = len(app.notes_scope_service.calls)
+        screen.query_one("#library-note-back").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+
+        first_label = str(screen.query_one("#library-notes-row-0", Button).label)
+        assert first_label.splitlines()[0] == "Reading list (edited)"
+        assert first_label.splitlines()[1] == "now"
+
+        # Back re-kicked the authoritative snapshot refetch.
+        for _ in range(150):
+            if len(app.notes_scope_service.calls) > list_calls_before:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Back never re-fetched the notes snapshot.")
+
+        # And the refetched truth keeps the same row state (no revert).
+        await pilot.pause()
+        await pilot.pause()
+        first_label = str(screen.query_one("#library-notes-row-0", Button).label)
+        assert first_label.splitlines()[0] == "Reading list (edited)"
 
 
 @pytest.mark.asyncio
@@ -8005,6 +8168,43 @@ async def test_library_shell_ingest_canvas_happy_path_open_in_library(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_library_shell_ingest_path_enter_submits_valid_form(tmp_path):
+    """(task-186) Enter in the path field with a valid path starts the
+    ingest exactly like the Start button. Enter on a blank path stays
+    quiet (the gate line already explains the blocker) and submits
+    nothing."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="l3b-ingest-canvas")
+    source = tmp_path / "tides.txt"
+    source.write_text("Tides are driven by the moon's gravity.", encoding="utf-8")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+
+        path_input = screen.query_one("#library-ingest-path", Input)
+        path_input.focus()
+        await pilot.pause()
+
+        # Blank path: Enter is a quiet no-op, nothing submitted.
+        await pilot.press("enter")
+        await pilot.pause()
+        assert harness.library_ingest_jobs.jobs() == ()
+
+        path_input.value = str(source)
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        jobs = harness.library_ingest_jobs.jobs()
+        assert len(jobs) == 1
+        assert jobs[0].source_path.endswith("tides.txt")
+        # Same post-submit behavior as the Start button: the path clears.
+        assert screen.query_one("#library-ingest-path", Input).value == ""
+
+
+@pytest.mark.asyncio
 async def test_library_shell_ingest_canvas_invalid_path_notifies_and_submits_nothing(tmp_path):
     """(b) An invalid path (rejected by validate_path_simple) is a quiet
     warning notice -- no job is ever submitted."""
@@ -8359,13 +8559,14 @@ async def test_library_shell_ingest_canvas_clear_finished_empties_done_and_faile
 
 @pytest.mark.asyncio
 async def test_library_shell_ingest_canvas_quiet_line_toggles_live_while_typing(tmp_path):
-    """(A4, live-QA repro) ``handle_library_ingest_path_changed`` deliberately
-    avoids a full canvas recompose while typing (to preserve the Input's
-    cursor position) -- it must still keep the quiet line in sync via the
-    same kind of targeted, no-recompose update it already does for the
-    Start button's ``disabled`` flag. Before the fix, the quiet line stayed
-    stuck showing (from the initial mount) even after a path was typed and
-    Start had already gone enabled."""
+    """(A4 live-QA repro + task-185 stable-button fix)
+    ``handle_library_ingest_path_changed`` deliberately avoids a full canvas
+    recompose while typing (to preserve the Input's cursor position) -- it
+    must still keep the quiet line's TEXT in sync via the same kind of
+    targeted, no-recompose update it already does for the Start button's
+    ``disabled`` flag. The quiet-line ``Static`` itself now stays mounted
+    through every gate transition (empty text when a path is typed) so the
+    Start button never shifts vertically (2026-07 UAT finding)."""
     db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="l3b-ingest-canvas")
     harness = _LibraryIngestCanvasHarness(db)
 
@@ -8374,21 +8575,26 @@ async def test_library_shell_ingest_canvas_quiet_line_toggles_live_while_typing(
         await _wait_for_library_shell(screen, pilot)
         await _open_library_ingest_canvas(screen, pilot)
 
-        assert screen.query_one("#library-ingest-start-quiet-line", Static)
+        quiet_line = screen.query_one("#library-ingest-start-quiet-line", Static)
+        assert str(quiet_line.renderable) == "Enter a file path to start."
         assert screen.query_one("#library-ingest-start", Button).disabled is True
 
         screen.query_one("#library-ingest-path", Input).value = str(tmp_path / "a.txt")
         await pilot.pause()
 
-        assert not list(screen.query("#library-ingest-start-quiet-line"))
+        # Still mounted (reserving its row so Start doesn't move) -- only
+        # the text clears once the gate opens.
+        assert screen.query_one("#library-ingest-start-quiet-line", Static) is quiet_line
+        assert str(quiet_line.renderable) == ""
         assert screen.query_one("#library-ingest-start", Button).disabled is False
 
-        # Clearing the path back out must bring the quiet line back too --
-        # the same targeted update in reverse.
+        # Clearing the path back out must bring the quiet copy back too --
+        # the same targeted update in reverse, on the same widget.
         screen.query_one("#library-ingest-path", Input).value = ""
         await pilot.pause()
 
-        assert screen.query_one("#library-ingest-start-quiet-line", Static)
+        assert screen.query_one("#library-ingest-start-quiet-line", Static) is quiet_line
+        assert str(quiet_line.renderable) == "Enter a file path to start."
         assert screen.query_one("#library-ingest-start", Button).disabled is True
 
 
@@ -8572,7 +8778,10 @@ async def test_library_ingest_canvas_start_quiet_line_renders_when_path_blank():
 
 
 @pytest.mark.asyncio
-async def test_library_ingest_canvas_start_quiet_line_absent_when_path_typed():
+async def test_library_ingest_canvas_start_quiet_line_empty_but_mounted_when_path_typed():
+    """(task-185) With a path typed the gate copy clears, but the Static
+    stays mounted with a fixed one-row height so the Start button below it
+    keeps a stable position across gate-state changes."""
     state = build_library_ingest_state(
         (), form=LibraryIngestFormState(path="/tmp/a.txt")
     )
@@ -8580,7 +8789,10 @@ async def test_library_ingest_canvas_start_quiet_line_absent_when_path_typed():
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         await pilot.pause()
-        assert not list(host.query("#library-ingest-start-quiet-line"))
+        line = host.query_one("#library-ingest-start-quiet-line", Static)
+        assert str(line.renderable) == ""
+        assert line.styles.height is not None
+        assert line.styles.height.value == 1
 
 
 @pytest.mark.asyncio

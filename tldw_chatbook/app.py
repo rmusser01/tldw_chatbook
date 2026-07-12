@@ -5603,7 +5603,9 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             self.watch(chat_select, "value", self.update_chat_provider_reactive, init=False)
             self.loguru_logger.debug(f"Bound chat provider Select ({chat_select.id})")
         except QueryError:
-            self.loguru_logger.error(
+            # Legacy selector is absent in the master-shell UI; this lookup is expected to
+            # fail on every modern boot, so log at DEBUG rather than ERROR.
+            self.loguru_logger.debug(
                 f"_post_mount_setup: Failed to find chat provider select: #{TAB_CHAT}-api-provider")
         except Exception as e:
             self.loguru_logger.opt(exception=True).error(f"_post_mount_setup: Error binding chat provider select: {e}")

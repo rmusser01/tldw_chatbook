@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-12 02:48'
+updated_date: '2026-07-12 03:05'
 labels:
   - ux
   - enhancement
@@ -26,3 +27,9 @@ Upgrade opportunities from core-loop UAT 2026-07-11: a user running llama.cpp lo
 - [ ] #3 Home surfaces a start-a-conversation action when the provider is ready and reflects existing content counts
 - [ ] #4 Save-as dialog either hides unwired destinations or ships them
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Superseded before any work started: split into task-188 (local-server auto-detect + /v1/models picker), task-190 (Home real-state canvas), and the Save-as destination wiring implemented directly on the core-loop UAT remediation branch (PR #604). Readiness re-probe upgrade is the chosen fix approach for task-177; provider grouping and conversation-model unification were already tracked as tasks 180 and 179.
+<!-- SECTION:NOTES:END -->

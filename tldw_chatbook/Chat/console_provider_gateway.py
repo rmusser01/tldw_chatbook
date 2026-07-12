@@ -33,6 +33,16 @@ from tldw_chatbook.Utils.input_validation import validate_url
 
 
 DEFAULT_LLAMACPP_BASE_URL = "http://127.0.0.1:9099"
+PROBE_TIMEOUT_SECONDS = 5.0
+"""Per-request timeout for readiness probes (``/health``, ``/v1/models``)."""
+GENERATION_CONNECT_TIMEOUT_SECONDS = 10.0
+"""Connect timeout for the owned HTTP client used for generation calls."""
+GENERATION_READ_TIMEOUT_SECONDS = 300.0
+"""Read/write/pool timeout for generation calls.
+
+Large local models routinely need 60-180s for a non-streamed completion, so
+the owned client must not cap reads at the old 30s ceiling.
+"""
 INVALID_LLAMACPP_BASE_URL_COPY = (
     "Provider blocked: invalid llama.cpp base URL. "
     "Use an http(s) URL such as http://127.0.0.1:9099."
@@ -269,7 +279,11 @@ class ConsoleProviderGateway:
     """Resolve Console providers and stream chat responses.
 
     Args:
-        http_client: Optional HTTP client for llama.cpp probes and calls.
+        http_client: Optional HTTP client for llama.cpp probes and calls. When
+            omitted, an owned client is created with a generous read timeout
+            (``GENERATION_READ_TIMEOUT_SECONDS``) so slow local generations do
+            not fail mid-request; probes always pass a short per-request
+            timeout (``PROBE_TIMEOUT_SECONDS``).
         config_provider: Callable returning the current app configuration.
         environ: Optional environment mapping for provider readiness checks.
         chat_api_call_fn: Optional replacement for ``chat_api_call`` in tests.
@@ -286,7 +300,14 @@ class ConsoleProviderGateway:
         safe_error_copy: Callable[[str, BaseException], str] | None = None,
     ) -> None:
         self._owns_http_client = http_client is None
-        self.http_client = http_client or httpx.AsyncClient(timeout=30.0)
+        self.http_client = http_client or httpx.AsyncClient(
+            timeout=httpx.Timeout(
+                connect=GENERATION_CONNECT_TIMEOUT_SECONDS,
+                read=GENERATION_READ_TIMEOUT_SECONDS,
+                write=GENERATION_READ_TIMEOUT_SECONDS,
+                pool=GENERATION_READ_TIMEOUT_SECONDS,
+            )
+        )
         self._config_provider = config_provider or (lambda: {})
         self._environ = environ
         self._chat_api_call_fn = chat_api_call_fn
@@ -347,7 +368,10 @@ class ConsoleProviderGateway:
             )
 
         try:
-            response = await self.http_client.get(f"{base_url.rstrip('/')}/v1/models")
+            response = await self.http_client.get(
+                f"{base_url.rstrip('/')}/v1/models",
+                timeout=PROBE_TIMEOUT_SECONDS,
+            )
         except httpx.HTTPError:
             return ConsoleProviderResolution(
                 provider="llama_cpp",
@@ -835,7 +859,10 @@ class ConsoleProviderGateway:
 
     async def _is_reachable(self, base_url: str) -> bool:
         try:
-            await self.http_client.get(f"{base_url.rstrip('/')}/health")
+            await self.http_client.get(
+                f"{base_url.rstrip('/')}/health",
+                timeout=PROBE_TIMEOUT_SECONDS,
+            )
         except httpx.HTTPError:
             return False
         return True

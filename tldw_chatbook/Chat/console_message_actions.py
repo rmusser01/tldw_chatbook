@@ -68,8 +68,14 @@ class ConsoleMessageActionService:
     )
     _FAILED_RETRY_ACTIONS: tuple[tuple[str, str], ...] = (("retry", "Try"),)
 
-    def __init__(self, *, available_save_destinations: set[str] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        available_save_destinations: set[str] | None = None,
+        unavailable_save_reasons: dict[str, str] | None = None,
+    ) -> None:
         self.available_save_destinations = set(available_save_destinations or ())
+        self.unavailable_save_reasons = dict(unavailable_save_reasons or {})
 
     @classmethod
     def _base_actions_with(cls, inserted: tuple[tuple[str, str], ...]) -> list[tuple[str, str]]:
@@ -122,17 +128,22 @@ class ConsoleMessageActionService:
         return labels
 
     def save_as_destinations(self, message: ConsoleChatMessage) -> list[ConsoleSaveDestination]:
-        """Return Save as destinations, including explicit WIP/unavailable entries."""
+        """Return Save as destinations, including explicit unavailable entries."""
         _ = message
         labels = ("Chatbook", "Note", "Media", "Prompt")
-        return [
-            ConsoleSaveDestination(
-                label=label,
-                available=label in self.available_save_destinations,
-                reason="" if label in self.available_save_destinations else f"WIP: save as {label} is not wired yet.",
+        destinations: list[ConsoleSaveDestination] = []
+        for label in labels:
+            available = label in self.available_save_destinations
+            reason = ""
+            if not available:
+                reason = (
+                    self.unavailable_save_reasons.get(label)
+                    or f"Save as {label} is not available in this session."
+                )
+            destinations.append(
+                ConsoleSaveDestination(label=label, available=available, reason=reason)
             )
-            for label in labels
-        ]
+        return destinations
 
     def dispatch(self, action_id: str, message: ConsoleChatMessage) -> ConsoleActionResult:
         """Dispatch a pure action result without touching UI or persistence."""

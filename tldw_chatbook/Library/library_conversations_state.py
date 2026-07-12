@@ -9,7 +9,7 @@ from typing import Any, Mapping, Sequence
 from tldw_chatbook.Workspaces.conversation_browser_state import format_console_relative_age
 
 LIBRARY_CONVERSATIONS_EMPTY_COPY = (
-    "No saved conversations yet. Save a Console chat and it appears here."
+    "No conversations yet. Chat in Console and it appears here."
 )
 
 _ID_KEYS = ("id", "conversation_id", "uuid")

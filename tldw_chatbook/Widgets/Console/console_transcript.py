@@ -23,6 +23,7 @@ from tldw_chatbook.Chat.console_onboarding_state import (
 
 
 CONSOLE_TRANSCRIPT_RULE = "─" * 200
+CONSOLE_GENERATING_PLACEHOLDER = "Generating…"
 EMPTY_TRANSCRIPT_PROVIDER_ACTION_LABEL = "Choose model"
 EMPTY_TRANSCRIPT_PROVIDER_ACTION_TOOLTIP = (
     "Choose the provider and model for this Console session."
@@ -68,9 +69,19 @@ def _message_body(message: ConsoleChatMessage) -> str:
         content = message.variants.current.content
     else:
         content = message.content
+    if message.status == "streaming" and not content.strip():
+        # Between send-accepted and the first streamed token the assistant row
+        # has no content; show a visible generating state instead of an empty
+        # row (local models can take 30-90s to first token).
+        return CONSOLE_GENERATING_PLACEHOLDER
     if message.status in {"streaming", "stopped", "failed"}:
         return f"{content} [{message.status}]".strip()
     return content
+
+
+def _is_generating_placeholder_body(message: ConsoleChatMessage, body: str) -> bool:
+    """Return True when the rendered body is the pre-first-token placeholder."""
+    return message.status == "streaming" and body == CONSOLE_GENERATING_PLACEHOLDER
 
 
 def _message_render_text(message: ConsoleChatMessage, *, selected: bool) -> Content:
@@ -91,9 +102,12 @@ def _message_render_text(message: ConsoleChatMessage, *, selected: bool) -> Cont
     """
     role_label = _message_role_label(message)
     body = _message_body(message)
+    body_part: tuple[str, str] | str = body
+    if _is_generating_placeholder_body(message, body):
+        body_part = (body, "dim")
     if not selected and "\n" not in body and len(body) <= 120:
-        return Content.assemble((role_label, "dim"), "  ", body)
-    return Content.assemble((role_label, "dim"), "\n", body)
+        return Content.assemble((role_label, "dim"), "  ", body_part)
+    return Content.assemble((role_label, "dim"), "\n", body_part)
 
 
 @dataclass(frozen=True)

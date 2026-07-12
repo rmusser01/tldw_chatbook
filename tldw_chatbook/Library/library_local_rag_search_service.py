@@ -8,6 +8,7 @@ from typing import Any
 
 from loguru import logger
 
+from tldw_chatbook.Library.library_notes_sync_state import count_noun
 from tldw_chatbook.Library.library_rag_service import LibraryRagSearchOutcome
 from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_QUERY_MAX_LENGTH,
@@ -279,12 +280,15 @@ def _media_row(item: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _conversation_row(item: Mapping[str, Any]) -> dict[str, Any]:
-    message_count = item.get("message_count") or 0
+    try:
+        message_count = int(item.get("message_count") or 0)
+    except (TypeError, ValueError):
+        message_count = 0
     return {
         "source_id": str(item.get("id", "")),
         "chunk_id": "",
         "title": item.get("title") or "",
-        "snippet": f"Matched conversation · {message_count} messages",
+        "snippet": f"Matched conversation · {count_noun(message_count, 'message')}",
         # C1: keyword-mode rows show no score, uniformly with notes/media --
         # `relevance_score`/`best_rank` are an FTS ranking artifact, not a
         # retrieval similarity score, so surfacing it here was misleading.

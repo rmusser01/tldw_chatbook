@@ -1770,6 +1770,8 @@ local_mlx_lm = ["None"]
     streaming = false
 
     # --- Local Providers ---
+    # Local providers default to streaming = true so slow generations render
+    # incrementally instead of timing out on one long blocking completion.
     [api_settings.llama_cpp] # Matches key in [providers]
     api_key_env_var = "LLAMA_CPP_API_KEY" # If you set one on the server
     # api_key = ""
@@ -1783,7 +1785,7 @@ local_mlx_lm = ["None"]
     timeout = 300
     retries = 1
     retry_delay = 2
-    streaming = false
+    streaming = true
     system_prompt = "You are a helpful AI assistant"
 
     [api_settings.oobabooga] # Matches key in [providers]
@@ -1798,7 +1800,7 @@ local_mlx_lm = ["None"]
     timeout = 300
     retries = 1
     retry_delay = 2
-    streaming = false
+    streaming = true
     system_prompt = "You are a helpful AI assistant"
 
     [api_settings.koboldcpp] # Matches key in [providers]
@@ -1813,7 +1815,7 @@ local_mlx_lm = ["None"]
     timeout = 300
     retries = 1
     retry_delay = 2
-    streaming = false # Kobold streaming is non-standard, handle carefully
+    streaming = true # Kobold streaming is non-standard, handle carefully
     system_prompt = "You are a helpful AI assistant"
 
     [api_settings.ollama]
@@ -1828,7 +1830,7 @@ local_mlx_lm = ["None"]
     timeout = 300 # Longer timeout for local models
     retries = 1
     retry_delay = 2
-    streaming = false
+    streaming = true
     system_prompt = "You are a helpful AI assistant"
 
     [api_settings.vllm] # Matches key in [providers]
@@ -1843,7 +1845,7 @@ local_mlx_lm = ["None"]
     timeout = 300
     retries = 1
     retry_delay = 2
-    streaming = false
+    streaming = true
     system_prompt = "You are a helpful AI assistant"
 
     [api_settings.aphrodite] # Matches key in [providers]
@@ -1858,7 +1860,7 @@ local_mlx_lm = ["None"]
     timeout = 300
     retries = 1
     retry_delay = 2
-    streaming = false
+    streaming = true
     system_prompt = "You are a helpful AI assistant"
 
     [api_settings.tabbyapi] # Matches key in [providers]
@@ -1873,7 +1875,7 @@ local_mlx_lm = ["None"]
     timeout = 120
     retries = 2
     retry_delay = 3
-    streaming = false
+    streaming = true
     system_prompt = "You are a helpful AI assistant"
 
     [api_settings.custom] # Matches key in [providers]
@@ -1917,7 +1919,7 @@ local_mlx_lm = ["None"]
     timeout = 120
     retries = 2
     retry_delay = 5
-    streaming = false
+    streaming = true
     system_prompt = "You are a helpful AI assistant"
 
     [api_settings.local_llamafile] # Matches key in [providers]
@@ -1931,7 +1933,7 @@ local_mlx_lm = ["None"]
     timeout = 120
     retries = 2
     retry_delay = 5
-    streaming = false
+    streaming = true
     system_prompt = "You are a helpful AI assistant"
 
     [api_settings.local_llamacpp] # Matches key in [providers]
@@ -1946,7 +1948,7 @@ local_mlx_lm = ["None"]
     timeout = 120
     retries = 2
     retry_delay = 5
-    streaming = false
+    streaming = true
     system_prompt = "You are a helpful AI assistant"
 
     [api_settings.local_vllm] # Matches key in [providers]
@@ -1961,7 +1963,7 @@ local_mlx_lm = ["None"]
     timeout = 120
     retries = 2
     retry_delay = 5
-    streaming = false
+    streaming = true
     system_prompt = "You are a helpful AI assistant"
 
     [api_settings.local_ollama] # Matches key in [providers]
@@ -1976,7 +1978,7 @@ local_mlx_lm = ["None"]
     timeout = 120
     retries = 2
     retry_delay = 5
-    streaming = false
+    streaming = true
     system_prompt = "You are a helpful AI assistant"
 
     [api_settings.local_onnx] # Matches key in [providers]
@@ -1990,7 +1992,7 @@ local_mlx_lm = ["None"]
     timeout = 120
     retries = 2
     retry_delay = 5
-    streaming = false
+    streaming = true
     system_prompt = "You are a helpful AI assistant"
 
     [api_settings.local_transformers] # Matches key in [providers]
@@ -2004,7 +2006,7 @@ local_mlx_lm = ["None"]
     timeout = 120
     retries = 2
     retry_delay = 5
-    streaming = false
+    streaming = true
     system_prompt = "You are a helpful AI assistant"
 
     [api_settings.local_mlx_lm] # Matches key in [providers]
@@ -2018,7 +2020,7 @@ local_mlx_lm = ["None"]
     timeout = 120
     retries = 2
     retry_delay = 5
-    streaming = false
+    streaming = true
     system_prompt = "You are a helpful AI assistant"
     # ... etc ...
 

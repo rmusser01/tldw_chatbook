@@ -23,15 +23,24 @@ from tldw_chatbook.Workspaces.display_state import (
 )
 
 
+# One vocabulary for persisted-but-not-archived chats across surfaces:
+# "saved chat". Rows reach this map with either a workspace-membership role
+# ("workspace-thread"/"workspace") or a persisted conversation state
+# ("in-progress" is the default state normalize_conversation_row assigns) --
+# all of them mean the same thing to the user: a chat that is saved locally
+# and not currently open in a tab. Library Browse ▸ Conversations lists the
+# same records, so these labels must not contradict its copy.
 _STATUS_LABELS = {
-    "workspace-thread": "workspace",
-    "workspace": "workspace",
+    "workspace-thread": "saved",
+    "workspace": "saved",
+    "in-progress": "saved",
     "active": "active",
     "open": "open",
 }
 _STATUS_DETAIL_LABELS = {
-    "workspace-thread": "saved workspace",
-    "workspace": "saved workspace",
+    "workspace-thread": "saved chat",
+    "workspace": "saved chat",
+    "in-progress": "saved chat",
     "active": "active session",
     "open": "open session",
 }

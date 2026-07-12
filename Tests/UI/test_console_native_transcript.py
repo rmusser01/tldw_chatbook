@@ -68,7 +68,7 @@ def save_as_modal_destinations() -> list[ConsoleSaveDestination]:
         ConsoleSaveDestination(
             label="Note",
             available=False,
-            reason="WIP: save as Note is not wired yet.",
+            reason="Notes service is not ready in this session.",
         ),
     ]
 
@@ -485,7 +485,7 @@ async def test_console_transcript_escape_collapses_selected_action_row():
 
 
 @pytest.mark.asyncio
-async def test_save_as_modal_lists_available_and_wip_destinations():
+async def test_save_as_modal_lists_available_and_unavailable_destinations():
     app = SaveAsModalHarness()
 
     async with app.run_test(size=(100, 30)) as pilot:
@@ -494,8 +494,9 @@ async def test_save_as_modal_lists_available_and_wip_destinations():
         text = _visible_text(app.screen)
 
     assert "Chatbook" in text
-    assert "Note" in text
-    assert "WIP: save as Note is not wired yet." in text
+    assert "Note (unavailable)" in text
+    assert "Notes service is not ready in this session." in text
+    assert "WIP" not in text
 
 
 @pytest.mark.asyncio
@@ -506,7 +507,7 @@ async def test_save_as_modal_available_destination_is_clickable_control():
             ConsoleSaveDestination(
                 label="Note",
                 available=False,
-                reason="WIP: save as Note is not wired yet.",
+                reason="Notes service is not ready in this session.",
             ),
         ]
     )
@@ -517,7 +518,7 @@ async def test_save_as_modal_available_destination_is_clickable_control():
         text = _visible_text(app.screen)
 
         assert destination_button.disabled is False
-        assert "Note [WIP]" in text
+        assert "Note (unavailable)" in text
         assert not app.screen.query("#console-save-as-destination-note")
 
         await pilot.click("#console-save-as-destination-chatbook")
@@ -583,3 +584,40 @@ async def test_console_tab_reaches_major_console_screen_regions():
     assert "console-native-transcript" in seen_focus_ids
     assert "console-native-composer" in seen_focus_ids
     assert "console-inspector-rail-open" in seen_focus_ids
+
+
+def test_console_streaming_assistant_row_shows_generating_placeholder_until_first_token():
+    """Between send-accepted and first token the assistant row must not be empty."""
+    from tldw_chatbook.Widgets.Console.console_transcript import (
+        CONSOLE_GENERATING_PLACEHOLDER,
+        _message_body,
+        _message_render_text,
+    )
+
+    pending = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        id="m-generating",
+        status="streaming",
+    )
+    assert _message_body(pending) == CONSOLE_GENERATING_PLACEHOLDER
+    rendered = _message_render_text(pending, selected=False)
+    assert CONSOLE_GENERATING_PLACEHOLDER in rendered.plain
+
+    # First streamed token replaces the placeholder immediately.
+    started = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Once",
+        id="m-generating",
+        status="streaming",
+    )
+    assert _message_body(started) == "Once [streaming]"
+
+    # Other terminal statuses keep their existing suffix rendering.
+    failed = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        id="m-failed",
+        status="failed",
+    )
+    assert _message_body(failed) == "[failed]"

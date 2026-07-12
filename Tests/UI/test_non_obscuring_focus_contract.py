@@ -855,7 +855,11 @@ def test_settings_compact_input_focus_preserves_single_row_content():
     assert "outline: solid" not in block
     assert "background: $ds-input-focus-bg;" in block
     assert "color: $ds-text-primary;" in block
-    assert "text-style: bold underline;" in block
+    # Underline was dropped deliberately (2026-07-11 UAT): underlined
+    # placeholders read as snake_case tokens. Bold + background still
+    # satisfies the non-obscuring focus contract (no border/outline rows).
+    assert "text-style: bold;" in block
+    assert "underline" not in block
 
 
 def test_settings_compact_select_uses_non_clipping_row_contract():

@@ -101,6 +101,16 @@ class EmptyHeartbeatStreamingGateway(StreamingGateway):
         yield ""
 
 
+def _last_failed_assistant(store, session_id=None):
+    """Return the newest failed assistant message (skips failure system rows)."""
+    messages = store.messages_for_session(session_id or store.active_session_id)
+    return next(
+        message
+        for message in reversed(messages)
+        if message.role is ConsoleMessageRole.ASSISTANT and message.status == "failed"
+    )
+
+
 class FakePersistence:
     def __init__(self):
         self.created_conversations = []
@@ -687,13 +697,28 @@ async def test_submit_draft_marks_assistant_failed_when_stream_errors():
     messages = store.messages_for_session(store.active_session_id)
     assert result.accepted is True
     assert result.should_clear_draft is True
-    assert messages[-1].content.startswith("partial")
-    assert "Provider stream failed: llama.cpp stream failed" in messages[-1].content
-    assert messages[-1].status == "failed"
+    assistant = messages[1]
+    assert assistant.role is ConsoleMessageRole.ASSISTANT
+    # The provider error must never be written into assistant content (it is
+    # persisted and replayed to the model as conversation context).
+    assert assistant.content == "partial"
+    assert "Provider stream failed" not in assistant.content
+    assert assistant.status == "failed"
+    # The failure instead renders as a transcript-only system row.
+    system_row = messages[-1]
+    assert system_row.role is ConsoleMessageRole.SYSTEM
+    assert system_row.content.startswith("Provider stream failed:")
+    assert "llama.cpp stream failed" in system_row.content
     assert controller.run_state.status is ConsoleRunStatus.FAILED
     assert "stream failed" in controller.run_state.visible_copy
-    assert persistence.updated_messages[-1]["message_id"] == messages[-1].persisted_message_id
-    assert "Provider stream failed: llama.cpp stream failed" in persistence.updated_messages[-1]["content"]
+    assert result.visible_copy == system_row.content
+    assert persistence.updated_messages[-1]["message_id"] == assistant.persisted_message_id
+    assert persistence.updated_messages[-1]["content"] == "partial"
+    persisted_contents = [
+        str(entry.get("content", ""))
+        for entry in [*persistence.created_messages, *persistence.updated_messages]
+    ]
+    assert not any("Provider stream failed" in content for content in persisted_contents)
 
 
 @pytest.mark.asyncio
@@ -703,7 +728,7 @@ async def test_retry_failed_message_streams_replacement_from_original_turn():
     failing = FailingStreamingGateway()
     controller = ConsoleChatController(store=store, provider_gateway=failing)
     await controller.submit_draft("hello")
-    failed_id = store.messages_for_session(store.active_session_id)[-1].id
+    failed_id = _last_failed_assistant(store).id
 
     controller.provider_gateway = StreamingGateway()
     result = await controller.retry_message(failed_id)
@@ -721,7 +746,7 @@ async def test_retry_rejects_failed_message_from_inactive_session():
     controller = ConsoleChatController(store=store, provider_gateway=FailingStreamingGateway())
     await controller.submit_draft("hello")
     first_session_id = store.active_session_id
-    failed_id = store.messages_for_session(first_session_id)[-1].id
+    failed_id = _last_failed_assistant(store, first_session_id).id
     store.create_session(title="Chat 2")
 
     controller.provider_gateway = StreamingGateway()
@@ -739,7 +764,7 @@ async def test_retry_failed_message_records_retrying_then_streaming_transition()
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=FailingStreamingGateway())
     await controller.submit_draft("hello")
-    failed_id = store.messages_for_session(store.active_session_id)[-1].id
+    failed_id = _last_failed_assistant(store).id
 
     observed = []
 
@@ -796,7 +821,7 @@ async def test_retry_keeps_failed_content_if_replacement_fails_before_first_chun
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=FailingStreamingGateway())
     await controller.submit_draft("hello")
-    failed = store.messages_for_session(store.active_session_id)[-1]
+    failed = _last_failed_assistant(store)
 
     controller.provider_gateway = FailingBeforeChunkGateway()
     result = await controller.retry_message(failed.id)
@@ -829,7 +854,7 @@ async def test_retry_keeps_failed_content_if_replacement_stream_is_empty():
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=FailingStreamingGateway())
     await controller.submit_draft("hello")
-    failed = store.messages_for_session(store.active_session_id)[-1]
+    failed = _last_failed_assistant(store)
 
     controller.provider_gateway = EmptyStreamingGateway()
     result = await controller.retry_message(failed.id)
@@ -846,7 +871,7 @@ async def test_retry_ignores_empty_heartbeat_before_empty_replacement_stream_end
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=FailingStreamingGateway())
     await controller.submit_draft("hello")
-    failed = store.messages_for_session(store.active_session_id)[-1]
+    failed = _last_failed_assistant(store)
 
     controller.provider_gateway = EmptyHeartbeatStreamingGateway()
     result = await controller.retry_message(failed.id)
@@ -1021,3 +1046,98 @@ async def test_submit_draft_does_not_retitle_after_first_send():
     await controller.submit_draft("second message must not retitle")
 
     assert controller.store.sessions()[0].title == first_title
+
+
+def test_describe_stream_failure_classifies_common_errors():
+    from tldw_chatbook.Chat.console_chat_controller import describe_stream_failure
+
+    assert "timed out" in describe_stream_failure(asyncio.TimeoutError())
+    assert "timed out" in describe_stream_failure(TimeoutError())
+    assert "connection refused" in describe_stream_failure(ConnectionRefusedError())
+    assert "could not connect" in describe_stream_failure(ConnectionError("boom"))
+
+    class FakeHTTPStatusError(Exception):
+        def __init__(self):
+            super().__init__("")
+            self.response = SimpleNamespace(status_code=502)
+
+    assert "HTTP 502" in describe_stream_failure(FakeHTTPStatusError())
+    # str(exc) alone was empty in the live failure ("[failed]"); the class
+    # name must always be present so the copy is never blank.
+    empty_detail = describe_stream_failure(RuntimeError())
+    assert empty_detail == "RuntimeError error"
+    with_detail = describe_stream_failure(RuntimeError("llama.cpp stream failed"))
+    assert with_detail == "RuntimeError error (llama.cpp stream failed)"
+
+
+@pytest.mark.asyncio
+async def test_submit_draft_invokes_accepted_hook_after_acceptance_only():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    accepted_calls = []
+    controller.on_submission_accepted = lambda: accepted_calls.append(True)
+
+    result = await controller.submit_draft("hello")
+
+    assert result.accepted is True
+    assert accepted_calls == [True]
+
+
+@pytest.mark.asyncio
+async def test_submit_draft_does_not_invoke_accepted_hook_when_blocked():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=BlockedGateway())
+    accepted_calls = []
+    controller.on_submission_accepted = lambda: accepted_calls.append(True)
+
+    result = await controller.submit_draft("hello")
+
+    assert result.accepted is False
+    assert accepted_calls == []
+
+
+@pytest.mark.asyncio
+async def test_submit_draft_accepted_hook_failure_does_not_break_run():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+
+    def broken_hook():
+        raise RuntimeError("composer vanished")
+
+    controller.on_submission_accepted = broken_hook
+
+    result = await controller.submit_draft("hello")
+
+    assert result.accepted is True
+    assert controller.run_state.status is ConsoleRunStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_regenerate_failure_adds_system_row_without_touching_variants():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    await controller.submit_draft("hello")
+    messages = store.messages_for_session(store.active_session_id)
+    assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
+
+    controller.provider_gateway = FailingStreamingGateway()
+
+    class FailingBeforeAnyChunkGateway(StreamingGateway):
+        async def stream_chat(self, resolution, messages):
+            if getattr(resolution, "never_yield", False):
+                yield ""
+            raise RuntimeError("regen exploded")
+
+    controller.provider_gateway = FailingBeforeAnyChunkGateway()
+    result = await controller.regenerate_message(assistant.id)
+
+    assert result.accepted is True
+    assert "Provider stream failed:" in result.visible_copy
+    assert "regen exploded" in result.visible_copy
+    refreshed = store.get_message(assistant.id)
+    assert refreshed.content == "hello"
+    assert "Provider stream failed" not in refreshed.content
+    system_row = store.messages_for_session(store.active_session_id)[-1]
+    assert system_row.role is ConsoleMessageRole.SYSTEM
+    assert "regen exploded" in system_row.content
+    assert controller.run_state.status is ConsoleRunStatus.FAILED

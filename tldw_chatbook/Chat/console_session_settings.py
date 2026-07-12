@@ -160,6 +160,10 @@ class ConsoleSessionSettings:
     streaming: bool = True
     persona_label: str = "General"
     character_label: str = ""
+    #: Provenance of this snapshot: ``"derived"`` for config-derived defaults
+    #: (refreshable when config changes while the session is unused) vs
+    #: ``"user"`` for explicit user selections (never auto-replaced).
+    source: str = "derived"
 
 
 @dataclass(frozen=True)
@@ -213,6 +217,21 @@ def _summary_row_value(row: str) -> str:
     return value.strip() if separator else text
 
 
+CONSOLE_MODEL_SECTION_MODEL_MAX_CHARS = 24
+
+
+def _truncate_model_section_value(value: str, limit: int = CONSOLE_MODEL_SECTION_MODEL_MAX_CHARS) -> str:
+    """Truncate a rail model label so the provider/model line stays on one row.
+
+    Long local model names (e.g. ``Qwen3.6-27B-UD-Q4_K_XL.gguf``) word-wrap in
+    the narrow left rail; with the rail line clipped to one row the whole model
+    token silently disappeared, leaving ``"llama_cpp / "`` on screen.
+    """
+    if len(value) <= limit:
+        return value
+    return value[: max(1, limit - 1)].rstrip() + "…"
+
+
 def build_console_model_section_lines(
     summary: ConsoleSettingsSummaryState,
 ) -> tuple[str, str]:
@@ -226,6 +245,7 @@ def build_console_model_section_lines(
     """
     provider = _summary_row_value(summary.provider_row) or "not selected"
     model = _summary_row_value(summary.model_row) or "no model"
+    model = _truncate_model_section_value(model)
     sampling = _summary_row_value(summary.sampling_row).partition(",")[0].strip()
     context = _summary_row_value(summary.context_row).partition(";")[0].strip()
     transport = str(summary.transport_row or "").strip()

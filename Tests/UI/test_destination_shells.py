@@ -1318,6 +1318,9 @@ async def test_library_destination_lists_local_source_snapshot_from_services():
         "mode": "local",
         "limit": library_page_sizes.get("conversations"),
         "offset": 0,
+        # Library lists conversations across scopes so Console workspace
+        # chats appear alongside global ones (task-179).
+        "scope_type": "all",
     }
 
 
@@ -3051,7 +3054,11 @@ async def test_settings_destination_uses_three_column_workbench_contract():
         assert "Storage" in text
         assert "Privacy" in text
         assert "Console paste collapse" in text
-        assert "Mutation replay: disabled" in text
+        assert (
+            "Saves apply to your local config file. Nothing is sent to a server "
+            "unless you run Manual sync yourself." in text
+        )
+        assert "Mutation replay: disabled" not in text
         assert "runtime MCP, ACP, and tool control stay in their own destinations" in text
         assert "Column 1:" not in text
         assert "Column 2:" not in text

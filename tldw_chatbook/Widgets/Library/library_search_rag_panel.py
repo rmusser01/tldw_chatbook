@@ -168,14 +168,21 @@ def library_rag_scope_shows_recovery(scope: LibraryRagScopeState) -> bool:
 
 
 def library_rag_scope_recovery_children(state: LibraryRagPanelState) -> list[Widget]:
-    """Return the scope region's recovery Static + Import media button, or none.
+    """Return the scope region's no-sources gate line + Import media button, or none.
 
-    Shared by `compose()` and the screen's incremental refresh.
+    Shared by `compose()` and the screen's incremental refresh. The gate
+    copy is `LIBRARY_RAG_NO_SOURCES_GATE_COPY` -- one quiet muted line, not
+    the retired Unavailable/Why/Next/Recovery/Owner dump -- rendered with
+    the same quiet-line styling as the query gate lines.
     """
     if not library_rag_scope_shows_recovery(state.scope):
         return []
     return [
-        Static(state.scope.recovery_copy, id="library-rag-scope-recovery"),
+        Static(
+            state.scope.recovery_copy,
+            id="library-rag-scope-recovery",
+            classes="library-rag-quiet-line",
+        ),
         Button(
             "Open Import media",
             id="library-rag-open-import-export",
@@ -202,49 +209,53 @@ def library_rag_query_shows_full_recovery(query_state: LibraryRagQueryState) -> 
 
 
 def library_rag_query_status_children(state: LibraryRagPanelState) -> list[Widget]:
-    """Return the query region's conditional status widgets (A1/A2).
+    """Return the query region's status widgets (A1/A2).
 
-    Shared by `compose()` and the screen's incremental refresh. At most one
-    of a single muted quiet line (empty-query / no-scope gates) or the full
-    callout + recovery-copy block (real failures) renders; the ready and
-    searching states render neither -- an enabled (or "Searching…") Run
-    button plus the input IS the rest of the state.
+    Shared by `compose()` and the screen's incremental refresh. The quiet
+    gate line is ALWAYS returned -- with empty text in the ready/searching
+    states, and a fixed one-row height so the Run button below it never
+    shifts vertically when a gate's copy appears or disappears (2026-07
+    UAT: the button jumped ~2 rows on valid input, breaking muscle
+    memory). The no-scope gate stays quiet-but-empty when the Library has
+    no sources at all: the scope region's single no-sources gate line +
+    "Open Import media" action own that state, so a second "Select at
+    least one source." line would just re-stack guidance. Real failures
+    (unsafe query, missing dependencies/index, no provider) additionally
+    render the callout + recovery-copy block.
 
     Args:
         state: Current Library Search/RAG panel display state.
 
     Returns:
-        Zero, one, or two widgets to render between the query Input and the
-        Run button.
+        The quiet-line `Static` (always), plus the callout + recovery
+        widgets for full-recovery failures.
     """
     query_state = state.query_state
+    quiet_text = ""
     if query_state.blocked_is_empty_query:
-        return [
-            Static(
-                "Enter a question or search query.",
-                id="library-rag-query-quiet-line",
-                classes="library-rag-quiet-line",
-            )
-        ]
-    if query_state.blocked_is_no_scope:
-        return [
-            Static(
-                "Select at least one source.",
-                id="library-rag-query-quiet-line",
-                classes="library-rag-quiet-line",
-            )
-        ]
+        quiet_text = "Enter a question or search query."
+    elif query_state.blocked_is_no_scope and state.scope.has_available_sources:
+        quiet_text = "Select at least one source."
+    quiet_line = Static(
+        quiet_text,
+        id="library-rag-query-quiet-line",
+        classes="library-rag-quiet-line",
+    )
+    quiet_line.styles.height = 1
+    children: list[Widget] = [quiet_line]
     if library_rag_query_shows_full_recovery(query_state):
         reason = query_state.run_action.disabled_reason
-        return [
-            Static(
-                f"Blocked | {reason}",
-                id="library-rag-query-blocked-callout",
-                classes="library-rag-callout is-blocked",
-            ),
-            Static(query_state.recovery_copy, id="library-rag-query-recovery"),
-        ]
-    return []
+        children.extend(
+            (
+                Static(
+                    f"Blocked | {reason}",
+                    id="library-rag-query-blocked-callout",
+                    classes="library-rag-callout is-blocked",
+                ),
+                Static(query_state.recovery_copy, id="library-rag-query-recovery"),
+            )
+        )
+    return children
 
 
 def _mode_toggle_label(state: LibraryRagPanelState) -> str:
@@ -372,6 +383,13 @@ def library_rag_results_body_children(state: LibraryRagPanelState) -> list[Widge
         ]
     if state.recovery_copy and state.recovery_selector:
         return [Static(state.recovery_copy, id=state.recovery_selector)]
+    if not state.scope.has_available_sources:
+        # No Library sources at all: the scope region's single quiet gate
+        # line + "Open Import media" action are the entire guidance for
+        # this state -- repeating "No evidence yet"/"Add or import
+        # sources…" here would re-stack the layered dump the quiet-gate
+        # principle retired (2026-07 UAT).
+        return []
     return [
         Static(
             "No evidence yet. Run Search/RAG to populate results.",

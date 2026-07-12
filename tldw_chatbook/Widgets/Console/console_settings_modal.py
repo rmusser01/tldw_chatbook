@@ -11,13 +11,14 @@ from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.css.query import NoMatches, QueryError
 from textual.screen import ModalScreen
-from textual.widgets import Button, Checkbox, Input, Select, Static
+from textual.widgets import Button, Input, Select, Static
 
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.console_provider_endpoints import (
     first_configured_endpoint,
     normalize_generic_endpoint_for_compare,
 )
+from tldw_chatbook.config import save_settings_to_cli_config
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
@@ -38,13 +39,54 @@ MODAL_BODY_MIN_HEIGHT = 0
 MODAL_CONTROL_HEIGHT = 3
 MODAL_LABEL_WIDTH = 16
 MODEL_CUSTOM_BUTTON_WIDTH = 18
+STREAMING_TOGGLE_WIDTH = 12
 PROVIDER_CHOICE_INPUT_MAX_LENGTH = 64
+# (label, input id, accepted-values placeholder) - placeholders mirror the
+# Settings screen's enumerated hints for these provider-specific fields.
 PROVIDER_CHOICE_INPUTS = (
-    ("Reasoning effort", "console-settings-reasoning-effort"),
-    ("Reasoning summary", "console-settings-reasoning-summary"),
-    ("Verbosity", "console-settings-verbosity"),
-    ("Thinking effort", "console-settings-thinking-effort"),
+    (
+        "Reasoning effort",
+        "console-settings-reasoning-effort",
+        "none, minimal, low, medium, high, xhigh",
+    ),
+    (
+        "Reasoning summary",
+        "console-settings-reasoning-summary",
+        "auto, concise, detailed, none",
+    ),
+    ("Verbosity", "console-settings-verbosity", "low, medium, high"),
+    (
+        "Thinking effort",
+        "console-settings-thinking-effort",
+        "off, low, medium, high, xhigh, max",
+    ),
 )
+STREAMING_ON_LABEL = "On"
+STREAMING_OFF_LABEL = "Off"
+CONSOLE_SETTINGS_SCOPE_COPY = (
+    "Save applies to this session only. "
+    "Save as default also writes provider + streaming defaults to config."
+)
+CONSOLE_SETTINGS_SAVE_DEFAULT_FAILED_COPY = (
+    "Could not write defaults to the config file; session values still apply."
+)
+# Draft fields persisted under [api_settings.<provider>] by Save as default.
+PROVIDER_DEFAULT_PERSIST_FIELDS = (
+    "temperature",
+    "top_p",
+    "min_p",
+    "top_k",
+    "max_tokens",
+    "seed",
+    "presence_penalty",
+    "frequency_penalty",
+    "reasoning_effort",
+    "reasoning_summary",
+    "verbosity",
+    "thinking_effort",
+    "thinking_budget_tokens",
+)
+_ENDPOINT_PERSIST_KEYS = ("api_base_url", "api_base", "base_url", "api_url")
 
 
 def _settings_screen_region(widget: Any) -> Any:
@@ -146,6 +188,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         self._context_estimate = context_estimate
         self._can_save = can_save
         self._focus_model = focus_model
+        self._streaming_draft = bool(settings.streaming)
         self._active_provider = settings.provider
         self._provider_model_drafts: dict[str, str | None] = {}
         self._set_provider_model_draft(settings.provider, settings.model)
@@ -180,13 +223,29 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                 markup=False,
             )
             yield Static(
+                CONSOLE_SETTINGS_SCOPE_COPY,
+                id="console-settings-scope",
+                classes="console-settings-modal-row",
+                markup=False,
+            )
+            yield Static(
                 "",
                 id="console-settings-error",
                 classes="console-settings-error console-settings-error-summary",
                 markup=False,
             )
 
-            with ScrollableContainer(id="console-settings-body", classes="console-settings-body"):
+            body = ScrollableContainer(
+                id="console-settings-body",
+                classes="console-settings-body",
+            )
+            # The global `*:focus` outline peeks through the 1-row section
+            # margins as stray "|" fragments when this scroll container takes
+            # focus (it was the first focusable widget on open). Keyboard
+            # scrolling still works through its bindings while a child input
+            # is focused, so the container stays out of the focus chain.
+            body.can_focus = False
+            with body:
                 with Vertical(
                     id="console-settings-provider-model-section",
                     classes=self._provider_model_section_classes(),
@@ -309,11 +368,15 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                         )
                     with Horizontal(classes="console-settings-modal-row"):
                         yield self._modal_label("Streaming")
-                        yield Checkbox(
-                            value=self._settings.streaming,
+                        streaming_toggle = Button(
+                            self._streaming_toggle_label(),
                             id="console-settings-streaming",
-                            classes="console-settings-control",
                         )
+                        streaming_toggle.tooltip = "Toggle streaming on or off for this session"
+                        streaming_toggle.styles.width = STREAMING_TOGGLE_WIDTH
+                        streaming_toggle.styles.min_width = STREAMING_TOGGLE_WIDTH
+                        streaming_toggle.styles.max_width = STREAMING_TOGGLE_WIDTH
+                        yield streaming_toggle
 
                 with Vertical(classes="console-settings-modal-section"):
                     yield Static("Provider-specific", classes="destination-section")
@@ -321,6 +384,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                         yield self._modal_label("Reasoning")
                         yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.reasoning_effort),
+                            placeholder=self._choice_placeholder("console-settings-reasoning-effort"),
                             id="console-settings-reasoning-effort",
                             classes="console-settings-control",
                         )
@@ -328,6 +392,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                         yield self._modal_label("Summary")
                         yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.reasoning_summary),
+                            placeholder=self._choice_placeholder("console-settings-reasoning-summary"),
                             id="console-settings-reasoning-summary",
                             classes="console-settings-control",
                         )
@@ -335,6 +400,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                         yield self._modal_label("Verbosity")
                         yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.verbosity),
+                            placeholder=self._choice_placeholder("console-settings-verbosity"),
                             id="console-settings-verbosity",
                             classes="console-settings-control",
                         )
@@ -342,6 +408,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                         yield self._modal_label("Thinking")
                         yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.thinking_effort),
+                            placeholder=self._choice_placeholder("console-settings-thinking-effort"),
                             id="console-settings-thinking-effort",
                             classes="console-settings-control",
                         )
@@ -400,6 +467,22 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                 classes="console-settings-modal-row console-settings-modal-actions",
             ):
                 yield Button("Cancel", id="console-settings-cancel")
+                save_default = Button(
+                    "Save as default",
+                    id="console-settings-save-default",
+                    disabled=not self._can_save,
+                )
+                save_default.tooltip = (
+                    "Apply to this session and write these values to your config "
+                    "defaults (provider settings + streaming)."
+                )
+                # Match the 1-row Cancel/Save action styling (their sizes come
+                # from id-scoped app CSS this button's id does not inherit).
+                save_default.styles.height = 1
+                save_default.styles.min_height = 1
+                save_default.styles.width = 17
+                save_default.styles.min_width = 17
+                yield save_default
                 yield Button("Save", id="console-settings-save", variant="primary", disabled=not self._can_save)
 
     def on_mount(self) -> None:
@@ -504,6 +587,31 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
     @on(Button.Pressed, "#console-settings-save")
     def _save(self, event: Button.Pressed) -> None:
         event.stop()
+        draft = self._validated_draft_or_show_errors()
+        if draft is None:
+            return
+        self.dismiss(draft)
+
+    @on(Button.Pressed, "#console-settings-save-default")
+    def _save_as_default(self, event: Button.Pressed) -> None:
+        """Apply the draft to the session and write it through to config defaults."""
+        event.stop()
+        draft = self._validated_draft_or_show_errors()
+        if draft is None:
+            return
+        try:
+            saved = save_settings_to_cli_config(self._default_persist_sections(draft))
+        except Exception:
+            saved = False
+        if not saved:
+            self.query_one("#console-settings-error", Static).update(
+                CONSOLE_SETTINGS_SAVE_DEFAULT_FAILED_COPY
+            )
+            return
+        self.dismiss(draft)
+
+    def _validated_draft_or_show_errors(self) -> ConsoleSessionSettings | None:
+        """Build the draft, surfacing validation errors in the modal when invalid."""
         draft = self._build_draft()
         errors = [
             *self._required_sampling_errors(),
@@ -512,8 +620,70 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         ]
         if errors:
             self.query_one("#console-settings-error", Static).update("\n".join(errors))
-            return
-        self.dismiss(draft)
+            return None
+        return draft
+
+    def _default_persist_sections(
+        self,
+        draft: ConsoleSessionSettings,
+    ) -> dict[str, dict[str, object]]:
+        """Build config sections written through by Save as default.
+
+        Provider-scoped values land in ``[api_settings.<provider>]`` (the source
+        ``build_default_console_session_settings`` reads on the next boot);
+        streaming lands on the canonical ``chat_defaults.streaming`` key (the
+        legacy ``enable_streaming`` bridge only applies when the canonical key
+        is absent). ``chat_defaults.provider`` is written too — the default
+        provider itself resolves ONLY from that key, so omitting it would make
+        "Save as default" keep booting into the previous provider. ``None``
+        values are skipped rather than deleting existing defaults.
+        """
+        sections: dict[str, dict[str, object]] = {}
+        provider_key = provider_config_key(draft.provider)
+        provider_values: dict[str, object] = {}
+        model = normalize_console_model_value(draft.model)
+        if model:
+            provider_values["model"] = model
+        base_url = (draft.base_url or "").strip()
+        if base_url and self._provider_uses_base_url(draft.provider):
+            provider_values[self._endpoint_persist_key(provider_key)] = base_url
+        for field_name in PROVIDER_DEFAULT_PERSIST_FIELDS:
+            value = getattr(draft, field_name)
+            if value is not None:
+                provider_values[field_name] = value
+        if provider_key and provider_values:
+            sections[f"api_settings.{provider_key}"] = provider_values
+        chat_defaults: dict[str, object] = {"streaming": bool(draft.streaming)}
+        if provider_key:
+            chat_defaults["provider"] = provider_key
+        sections["chat_defaults"] = chat_defaults
+        return sections
+
+    def _endpoint_persist_key(self, provider_key: str) -> str:
+        """Return the endpoint config key to write, preferring the configured one."""
+        provider_settings = self._provider_settings(provider_key)
+        for key in _ENDPOINT_PERSIST_KEYS:
+            value = provider_settings.get(key)
+            if isinstance(value, str) and value.strip():
+                return key
+        return "api_url"
+
+    @on(Button.Pressed, "#console-settings-streaming")
+    def _toggle_streaming(self, event: Button.Pressed) -> None:
+        """Cycle the streaming draft between on and off."""
+        event.stop()
+        self._streaming_draft = not self._streaming_draft
+        event.button.label = self._streaming_toggle_label()
+
+    def _streaming_toggle_label(self) -> str:
+        return STREAMING_ON_LABEL if self._streaming_draft else STREAMING_OFF_LABEL
+
+    def _choice_placeholder(self, input_id: str) -> str:
+        """Return the accepted-values placeholder for an enumerated choice input."""
+        for _label, choice_input_id, placeholder in PROVIDER_CHOICE_INPUTS:
+            if choice_input_id == input_id:
+                return placeholder
+        return ""
 
     @on(Select.Changed, "#console-settings-provider")
     def _provider_changed(self, event: Select.Changed) -> None:
@@ -574,7 +744,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             verbosity=self._parse_optional_choice_input("console-settings-verbosity"),
             thinking_effort=self._parse_optional_choice_input("console-settings-thinking-effort"),
             thinking_budget_tokens=self._parse_optional_int_input("console-settings-thinking-budget-tokens"),
-            streaming=self.query_one("#console-settings-streaming", Checkbox).value,
+            streaming=self._streaming_draft,
             persona_label=self._settings.persona_label,
             character_label=self._settings.character_label,
         )
@@ -922,7 +1092,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
 
     def _provider_choice_input_errors(self) -> list[str]:
         errors: list[str] = []
-        for label, input_id in PROVIDER_CHOICE_INPUTS:
+        for label, input_id, _placeholder in PROVIDER_CHOICE_INPUTS:
             raw_value = self.query_one(f"#{input_id}", Input).value.strip()
             if raw_value and not validate_text_input(
                 raw_value,

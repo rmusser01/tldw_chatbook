@@ -3,9 +3,10 @@ id: TASK-185
 title: >-
   Search/RAG polish batch: quiet no-sources gate, provider-test outcome toast,
   pluralization, moving-Run fix
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-12 02:48'
+updated_date: '2026-07-12 05:33'
 labels:
   - ux
   - library
@@ -28,3 +29,9 @@ Core-loop UAT 2026-07-11 findings across Search and adjacent surfaces: (1) the n
 - [ ] #4 Primary action buttons keep a stable position across gate-state changes
 - [ ] #5 Keyword search matches simple plural/singular variants or documents the limitation inline
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Quiet no-sources gate, outcome-bearing provider test toast, pluralization, and stable Run/Start-ingest button positions all fixed and live-verified on PR #604. Remaining AC: keyword-search plural/singular matching (or an inline limitation note) — untouched; live network reachability probe split to task-191.
+<!-- SECTION:NOTES:END -->

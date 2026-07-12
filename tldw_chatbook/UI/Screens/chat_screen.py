@@ -7,6 +7,7 @@ import inspect
 import os
 from pathlib import Path
 import re
+from types import SimpleNamespace
 from typing import Any, Dict, Iterable, Optional, TYPE_CHECKING
 import uuid
 
@@ -87,6 +88,10 @@ from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.chat_models import ChatSessionData
 from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
 from ...Chat.console_message_actions import ConsoleActionResult, ConsoleMessageActionService
+from ...Chat.console_save_targets import (
+    console_chatbook_artifact_payload,
+    derive_console_save_title,
+)
 from ...Chat.console_live_work import (
     ConsoleLiveWorkLaunch,
     ConsoleLiveWorkSourceReadinessState,
@@ -111,6 +116,7 @@ from ...config import (
     coerce_int_setting,
     delete_settings_from_cli_config,
     get_cli_providers_and_models,
+    load_settings,
     save_setting_to_cli_config,
 )
 from ...Library.library_rag_service import (
@@ -206,7 +212,7 @@ CONSOLE_FRAME_BORDER = ("solid", CONSOLE_FRAME_COLOR)
 CONSOLE_QUIET_FRAME_BORDER = ("none", CONSOLE_FRAME_COLOR)
 CONSOLE_START_HERE_COPY = ""
 CONSOLE_ACTION_HINTS_COPY = ""
-CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL = "Configure API+API Key"
+CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL = "Set up provider"
 CONSOLE_PROVIDER_ACTION_ARROW = " ---------------------->"
 NATIVE_CONSOLE_STATE_VERSION = "1.0"
 CONSOLE_FOCUS_REGISTRY = WorkbenchFocusRegistry(
@@ -571,7 +577,7 @@ class ChatScreen(BaseAppScreen):
         controller = self._ensure_console_chat_controller()
         modal = ConsoleSettingsModal(
             settings=settings,
-            app_config=getattr(self.app_instance, "app_config", {}) or {},
+            app_config=self._provider_readiness_app_config(),
             providers_models=await self._providers_models_for_console_settings(
                 settings.provider,
                 current_model=settings.model,
@@ -584,7 +590,9 @@ class ChatScreen(BaseAppScreen):
         def _apply_modal_result(result: ConsoleSessionSettings | None) -> None:
             if not isinstance(result, ConsoleSessionSettings):
                 return
-            self._replace_active_console_session_settings(result)
+            # Modal results are explicit user selections; mark them so stale
+            # default refresh never overrides them.
+            self._replace_active_console_session_settings(replace(result, source="user"))
             self.run_worker(self._sync_native_console_chat_ui(), exclusive=True)
 
         self.app.push_screen(modal, callback=_apply_modal_result)
@@ -858,7 +866,8 @@ class ChatScreen(BaseAppScreen):
         if result == CONSOLE_POPOVER_OPEN_FULL_SETTINGS:
             self.run_worker(self._open_console_settings(), exclusive=False)
             return
-        self._replace_active_console_session_settings(result)
+        # Popover results are explicit user selections; protect from refresh.
+        self._replace_active_console_session_settings(replace(result, source="user"))
 
     def action_focus_console_composer_home(self) -> None:
         """Return keyboard focus to the Console composer (Escape, non-priority).
@@ -1076,13 +1085,59 @@ class ChatScreen(BaseAppScreen):
         self.ui_state = UIState()
         self._load_sidebar_state()
 
+    # Sections `load_settings()` always injects into a disk-loaded config but
+    # which Console test fakes never carry. Used to tell a real boot snapshot
+    # (safe to refresh from disk) apart from an injected test config (must be
+    # honored verbatim; reading the developer's real config would break
+    # hermetic tests). NOTE: verified against real `load_settings()` output on
+    # a virgin template config - do not add keys (e.g. `splash_screen`) that
+    # only `load_cli_config_and_ensure_existence()` emits, or the live app
+    # never takes the fresh branch.
+    _CONSOLE_LIVE_CONFIG_MARKER_SECTIONS = ("general", "logging")
+
+    # Readiness labels that stale-default session refresh may recover from:
+    # credential/endpoint gaps a Settings save can fix. Provider-identity
+    # blockers (Unknown/Pending WIP providers) are deliberate choices and are
+    # never auto-replaced.
+    _CONSOLE_REFRESHABLE_BLOCKED_LABELS = frozenset(
+        {"Missing key", "Not ready", "Invalid URL", "Endpoint not saved"}
+    )
+
     def _provider_readiness_app_config(self) -> Any:
-        """Return app config for provider-readiness checks."""
+        """Return the freshest app config for provider-readiness checks.
+
+        ``app.app_config`` is a boot-time snapshot: Settings saves invalidate
+        the config module cache but never refresh the snapshot, so readiness
+        built from it stays blocked until restart (core-loop UAT 2026-07,
+        task-177). When the snapshot looks disk-loaded, re-source it from
+        ``load_settings()`` - cheap (cached) except right after a save, which
+        is exactly when the fresh read matters.
+        """
         try:
             app_config = getattr(self.app, "app_config")
         except (AttributeError, NoActiveAppError):
-            return getattr(self.app_instance, "app_config", {}) or {}
-        return app_config or {}
+            app_config = getattr(self.app_instance, "app_config", {}) or {}
+        app_config = app_config or {}
+        if not self._console_config_snapshot_is_disk_loaded(app_config):
+            return app_config
+        try:
+            fresh = load_settings()
+        except Exception:
+            logger.debug("Console readiness refresh via load_settings() failed; using snapshot")
+            return app_config
+        if isinstance(fresh, Mapping) and fresh:
+            return fresh
+        return app_config
+
+    @classmethod
+    def _console_config_snapshot_is_disk_loaded(cls, app_config: Any) -> bool:
+        """Return True when a config snapshot came from ``load_settings()``."""
+        if not isinstance(app_config, Mapping):
+            return False
+        return all(
+            section in app_config
+            for section in cls._CONSOLE_LIVE_CONFIG_MARKER_SECTIONS
+        )
 
     def _ensure_chat_window(self) -> ChatWindowEnhanced:
         if self.chat_window is None:
@@ -1192,11 +1247,73 @@ class ChatScreen(BaseAppScreen):
             control labels and run-inspector readiness.
         """
         effective = resolve_effective_provider_model(
-            self.app_instance,
+            self._console_resolution_view(),
             console_provider=self._console_control_provider,
             console_model=self._console_control_model,
         )
         return effective.provider, effective.model
+
+    def _console_resolution_view(self) -> Any:
+        """Return resolution inputs backed by the freshest config.
+
+        ``resolve_effective_provider_model`` reads ``app_config`` chat defaults
+        and the app-level provider/model reactives. Both are boot-time
+        snapshots: after a Settings save the reactives still echo the template
+        defaults (e.g. ``OpenAI``/``gpt-4o``) and would keep winning over the
+        freshly saved ``chat_defaults`` (task-177 live regression). This view
+        substitutes the fresh config and suppresses reactive values that are
+        mere echoes of the boot defaults when the fresh defaults changed;
+        genuinely user-chosen reactive values (which differ from the boot
+        defaults) still win.
+        """
+        fresh_config = self._provider_readiness_app_config()
+        boot_config = getattr(self.app_instance, "app_config", {}) or {}
+        reactive_provider = getattr(self.app_instance, "chat_api_provider_value", None)
+        reactive_model = (
+            getattr(self.app_instance, "chat_api_model_value", None)
+            or getattr(self.app_instance, "chat_model_value", None)
+        )
+        if fresh_config is not boot_config:
+            boot_defaults = (
+                boot_config.get("chat_defaults", {})
+                if isinstance(boot_config, Mapping)
+                else {}
+            )
+            fresh_defaults = (
+                fresh_config.get("chat_defaults", {})
+                if isinstance(fresh_config, Mapping)
+                else {}
+            )
+            if not isinstance(boot_defaults, Mapping):
+                boot_defaults = {}
+            if not isinstance(fresh_defaults, Mapping):
+                fresh_defaults = {}
+            boot_provider = provider_config_key(str(boot_defaults.get("provider") or ""))
+            fresh_provider = provider_config_key(str(fresh_defaults.get("provider") or ""))
+            reactive_provider_key = provider_config_key(str(reactive_provider or ""))
+            if (
+                reactive_provider_key
+                and reactive_provider_key == boot_provider
+                and fresh_provider
+                and fresh_provider != boot_provider
+            ):
+                reactive_provider = None
+            boot_model = str(boot_defaults.get("model") or "").strip()
+            fresh_model = str(fresh_defaults.get("model") or "").strip()
+            reactive_model_text = str(reactive_model or "").strip()
+            if (
+                reactive_model_text
+                and reactive_model_text == boot_model
+                and fresh_model
+                and fresh_model != boot_model
+            ):
+                reactive_model = None
+        return SimpleNamespace(
+            app_config=fresh_config,
+            chat_api_provider_value=reactive_provider,
+            chat_api_model_value=reactive_model,
+            chat_model_value=None,
+        )
 
     @staticmethod
     def _normalize_llamacpp_base_url(api_url: str | None) -> str:
@@ -1302,7 +1419,7 @@ class ChatScreen(BaseAppScreen):
         """Build the default settings snapshot for a new native Console session."""
         provider, model = self._effective_console_provider_model()
         settings = build_default_console_session_settings(
-            getattr(self.app_instance, "app_config", {}) or {},
+            self._provider_readiness_app_config(),
             str(provider).strip() if _has_selected_text(provider) else None,
             str(model).strip() if _has_selected_text(model) else None,
         )
@@ -1325,7 +1442,56 @@ class ChatScreen(BaseAppScreen):
             settings = self._default_console_session_settings()
             store.replace_session_settings(session.id, settings)
             return settings
-        return session.settings
+        return self._maybe_refresh_stale_default_console_settings(store, session)
+
+    def _maybe_refresh_stale_default_console_settings(
+        self,
+        store: ConsoleChatStore,
+        session: ConsoleChatSession,
+    ) -> ConsoleSessionSettings:
+        """Re-derive default-sourced settings for blocked, never-used sessions.
+
+        First-run sessions snapshot template defaults (e.g. OpenAI without a
+        key) and that snapshot survives navigation via screen-state restore.
+        When the user then configures a working provider in Settings, an empty
+        session the user never explicitly configured must converge on the new
+        defaults instead of keeping the setup card blocked until restart
+        (task-177 live regression). Explicit selections (``source == "user"``),
+        sessions with any messages, and already-sendable settings are never
+        touched; stale defaults are only replaced when the re-derived defaults
+        are actually send-capable.
+        """
+        settings = session.settings
+        if settings is None:
+            settings = self._default_console_session_settings()
+            store.replace_session_settings(session.id, settings)
+            return settings
+        if getattr(settings, "source", "derived") == "user":
+            return settings
+        try:
+            if store.messages_for_session(session.id):
+                return settings
+        except KeyError:
+            return settings
+        app_config = self._provider_readiness_app_config()
+        current_readiness = build_console_settings_readiness(settings, app_config=app_config)
+        if current_readiness.native_send_supported:
+            return settings
+        if current_readiness.label not in self._CONSOLE_REFRESHABLE_BLOCKED_LABELS:
+            # Unknown/WIP providers are a provider *choice* problem, not a
+            # config-fixable credential/endpoint gap; never override choice.
+            return settings
+        fresh_defaults = self._default_console_session_settings()
+        if fresh_defaults == settings:
+            return settings
+        fresh_readiness = build_console_settings_readiness(
+            fresh_defaults,
+            app_config=app_config,
+        )
+        if not fresh_readiness.native_send_supported:
+            return settings
+        store.replace_session_settings(session.id, fresh_defaults)
+        return fresh_defaults
 
     def _replace_active_console_session_settings(
         self,
@@ -1483,7 +1649,7 @@ class ChatScreen(BaseAppScreen):
 
     def _build_console_provider_selection(self) -> ConsoleProviderSelection:
         """Return the effective native Console provider selection for sends."""
-        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        app_config = self._provider_readiness_app_config()
         selection_settings = self._ensure_active_console_session_settings()
         _legacy_provider, legacy_model = self._effective_console_provider_model()
         provider = provider_config_key(selection_settings.provider) or "llama_cpp"
@@ -1580,7 +1746,7 @@ class ChatScreen(BaseAppScreen):
             )
         readiness = build_console_settings_readiness(
             effective_settings,
-            app_config=getattr(self.app_instance, "app_config", {}) or {},
+            app_config=self._provider_readiness_app_config(),
         )
         model_warning = self._console_model_capability_warning(
             effective_settings.provider,
@@ -1623,7 +1789,9 @@ class ChatScreen(BaseAppScreen):
                 factory()
                 if callable(factory)
                 else ConsoleProviderGateway(
-                    config_provider=lambda: getattr(self.app_instance, "app_config", {}) or {},
+                    # Fresh-config source: the gateway re-resolves readiness at
+                    # send time and must see Settings saves made after boot.
+                    config_provider=self._provider_readiness_app_config,
                 )
             )
         return self._console_provider_gateway
@@ -1654,6 +1822,9 @@ class ChatScreen(BaseAppScreen):
                 thinking_budget_tokens=selection.thinking_budget_tokens,
                 streaming=selection.streaming,
             )
+        self._console_chat_controller.on_submission_accepted = (
+            self._on_console_submission_accepted
+        )
         self._sync_console_chat_core_state()
         return self._console_chat_controller
 
@@ -4920,8 +5091,10 @@ class ChatScreen(BaseAppScreen):
                     left_rail_header.styles.min_height = 1
                     left_rail_header.styles.max_height = 1
                     with left_rail_header:
+                        # Titled distinctly from the "Context" (staged sources)
+                        # rail section below so no two rail titles collide.
                         rail_label = Static(
-                            "Context",
+                            "Session & Context",
                             id="console-context-rail-title",
                             classes="console-rail-title",
                         )
@@ -4933,7 +5106,7 @@ class ChatScreen(BaseAppScreen):
                             classes="console-rail-collapse-button",
                             compact=True,
                         )
-                        collapse_button.tooltip = "Collapse Context rail"
+                        collapse_button.tooltip = "Collapse Session & Context rail"
                         collapse_button.styles.width = 3
                         collapse_button.styles.min_width = 3
                         collapse_button.styles.max_width = 3
@@ -5032,6 +5205,11 @@ class ChatScreen(BaseAppScreen):
                                 classes="console-model-section-line",
                                 markup=False,
                             )
+                            # The rail line is clipped to one row; without
+                            # nowrap a long model token word-wraps onto the
+                            # hidden second row and vanishes ("llama_cpp / ").
+                            line1.styles.text_wrap = "nowrap"
+                            line1.styles.text_overflow = "ellipsis"
                             yield line1
                             line2 = Static(
                                 model_line2,
@@ -5039,6 +5217,8 @@ class ChatScreen(BaseAppScreen):
                                 classes="console-model-section-line",
                                 markup=False,
                             )
+                            line2.styles.text_wrap = "nowrap"
+                            line2.styles.text_overflow = "ellipsis"
                             yield line2
                             configure = Button(
                                 "Configure",
@@ -6146,12 +6326,27 @@ class ChatScreen(BaseAppScreen):
             composer = None
         if result.should_clear_draft and composer is not None:
             composer.clear_draft()
-        if result.accepted:
+        if result.accepted and controller.run_state.status is ConsoleRunStatus.COMPLETED:
             # Retry/continue/regenerate paths intentionally don't record the flag here —
             # they require an existing message, so ``has_messages`` already keeps the
             # card hidden and the flag was set by the originating submit.
+            # Failed/stopped first sends must NOT set the one-time flag: the
+            # setup card should return until a send completes with content.
             self._record_console_first_send()
         await self._sync_native_console_chat_ui()
+
+    def _on_console_submission_accepted(self) -> None:
+        """Clear the composer as soon as a submit is accepted, not at run end.
+
+        Keeping the sent text in the composer for the whole run reads as
+        "not sent" during long local-model generations; blocked submits never
+        reach this hook, so their draft is preserved for correction.
+        """
+        try:
+            composer = self.query_one("#console-native-composer", ConsoleComposerBar)
+        except QueryError:
+            return
+        composer.clear_draft()
 
     def _console_send_blocked_reason(self) -> str:
         """Return a user-facing reason if Console send cannot safely run."""
@@ -6344,11 +6539,15 @@ class ChatScreen(BaseAppScreen):
             destinations = self._console_save_as_destinations(message)
 
             def _apply_save_as(destination: str | None) -> None:
-                if destination == "Note":
-                    self.run_worker(
-                        self._save_console_message_as_note(message_id),
-                        exclusive=True,
-                    )
+                savers = {
+                    "Note": self._save_console_message_as_note,
+                    "Media": self._save_console_message_as_media,
+                    "Prompt": self._save_console_message_as_prompt,
+                    "Chatbook": self._save_console_message_as_chatbook,
+                }
+                saver = savers.get(destination or "")
+                if saver is not None:
+                    self.run_worker(saver(message_id), exclusive=True)
 
             await self.app.push_screen(
                 ConsoleSaveAsModal(
@@ -6447,14 +6646,48 @@ class ChatScreen(BaseAppScreen):
 
     def _console_save_as_destinations(self, message: Any) -> list[Any]:
         """Return Save-as destinations available in the current app runtime."""
-        _ = message
         available_destinations: set[str] = set()
+        unavailable_reasons: dict[str, str] = {}
+
         notes_scope_service = getattr(self.app_instance, "notes_scope_service", None)
         if callable(getattr(notes_scope_service, "save_note", None)):
             available_destinations.add("Note")
+        else:
+            unavailable_reasons["Note"] = "Notes service is not ready in this session."
+
+        media_db = getattr(self.app_instance, "media_db", None)
+        if callable(getattr(media_db, "add_media_with_keywords", None)):
+            available_destinations.add("Media")
+        else:
+            unavailable_reasons["Media"] = "Media library is not ready in this session."
+
+        prompts_db = getattr(self.app_instance, "prompts_db", None)
+        if callable(getattr(prompts_db, "add_prompt", None)):
+            available_destinations.add("Prompt")
+        else:
+            unavailable_reasons["Prompt"] = "Prompts service is not ready in this session."
+
+        chatbook_service = getattr(self.app_instance, "local_chatbook_service", None)
+        if not callable(getattr(chatbook_service, "create_chatbook", None)):
+            unavailable_reasons["Chatbook"] = (
+                "Chatbook artifacts service is not ready in this session."
+            )
+        elif not ConsoleMessageActionService._is_assistant_message(message):
+            unavailable_reasons["Chatbook"] = (
+                "Only assistant responses can be saved as Chatbook artifacts."
+            )
+        else:
+            available_destinations.add("Chatbook")
+
         return ConsoleMessageActionService(
             available_save_destinations=available_destinations,
+            unavailable_save_reasons=unavailable_reasons,
         ).save_as_destinations(message)
+
+    def _console_save_source_title(self) -> str:
+        """Return the active Console conversation title for save-as derivations."""
+        session = self._active_native_console_session()
+        return str(getattr(session, "title", "") or "").strip()
 
     async def _save_console_message_as_note(self, message_id: str) -> None:
         """Persist one selected Console message as a local Note."""
@@ -6476,23 +6709,25 @@ class ChatScreen(BaseAppScreen):
             )
             return
 
-        content = (
-            message.variants.current.content
-            if message.variants is not None
-            else message.content
-        )
-        result = save_note(
-            scope=ScopeType.LOCAL_NOTE.value,
-            title="Console message",
-            content=content,
-            note_id=None,
-            version=None,
-            user_id=getattr(self.app_instance, "current_user", None) or "default_user",
-            workspace_id=None,
-            keywords=["console"],
-        )
-        if inspect.isawaitable(result):
-            result = await result
+        content = self._console_message_content(message)
+        title = derive_console_save_title(self._console_save_source_title())
+        try:
+            result = save_note(
+                scope=ScopeType.LOCAL_NOTE.value,
+                title=title,
+                content=content,
+                note_id=None,
+                version=None,
+                user_id=getattr(self.app_instance, "current_user", None) or "default_user",
+                workspace_id=None,
+                keywords=["console"],
+            )
+            if inspect.isawaitable(result):
+                result = await result
+        except Exception as exc:
+            logger.opt(exception=True).warning("Console save-as Note failed.")
+            self.app_instance.notify(f"Save as Note failed: {exc}", severity="error")
+            return
         if not result:
             self.app_instance.notify("Save as Note failed.", severity="error")
             return
@@ -6504,6 +6739,199 @@ class ChatScreen(BaseAppScreen):
             target_content=content,
         )
         self.app_instance.notify("Saved message as Note.", severity="information")
+
+    async def _save_console_message_as_media(self, message_id: str) -> None:
+        """Persist one selected Console message as a Library media item."""
+        media_db = getattr(self.app_instance, "media_db", None)
+        add_media = getattr(media_db, "add_media_with_keywords", None)
+        if not callable(add_media):
+            self.app_instance.notify(
+                "Save as Media is unavailable: Media library is not ready.",
+                severity="warning",
+            )
+            return
+
+        try:
+            message = self._ensure_console_chat_store().get_message(message_id)
+        except KeyError:
+            self.app_instance.notify(
+                "Console message action target no longer exists.",
+                severity="warning",
+            )
+            return
+
+        content = self._console_message_content(message)
+        title = derive_console_save_title(
+            self._console_save_source_title(),
+            role_label=self._console_message_role_label(message),
+        )
+        try:
+            media_id, _media_uuid, save_message = add_media(
+                title=title,
+                media_type="plaintext",
+                content=content,
+                keywords=["console"],
+            )
+        except Exception as exc:
+            logger.opt(exception=True).warning("Console save-as Media failed.")
+            self.app_instance.notify(f"Save as Media failed: {exc}", severity="error")
+            return
+        if media_id is None:
+            self.app_instance.notify(
+                f"Save as Media failed: {save_message or 'no media record was created.'}",
+                severity="error",
+            )
+            return
+        self._last_console_action = ConsoleActionResult(
+            action_id="save-as-media",
+            status="completed",
+            visible_copy="Saved message as Media.",
+            target_message_id=message_id,
+            target_content=content,
+        )
+        self.app_instance.notify(
+            "Saved message as Media. It appears under Library ▸ Media.",
+            severity="information",
+        )
+
+    async def _save_console_message_as_prompt(self, message_id: str) -> None:
+        """Persist one selected Console message as a prompt in the Prompts library."""
+        prompts_db = getattr(self.app_instance, "prompts_db", None)
+        add_prompt = getattr(prompts_db, "add_prompt", None)
+        if not callable(add_prompt):
+            self.app_instance.notify(
+                "Save as Prompt is unavailable: Prompts service is not ready.",
+                severity="warning",
+            )
+            return
+
+        try:
+            message = self._ensure_console_chat_store().get_message(message_id)
+        except KeyError:
+            self.app_instance.notify(
+                "Console message action target no longer exists.",
+                severity="warning",
+            )
+            return
+
+        from tldw_chatbook.DB.Prompts_DB import ConflictError
+
+        content = self._console_message_content(message)
+        conversation_title = self._console_save_source_title()
+        base_name = derive_console_save_title(conversation_title)
+        details = (
+            f"Saved from Console conversation: {conversation_title}."
+            if conversation_title
+            else "Saved from a Console conversation."
+        )
+        prompt_id = None
+        saved_name = base_name
+        try:
+            for attempt in range(1, 10):
+                saved_name = base_name if attempt == 1 else f"{base_name} ({attempt})"
+                try:
+                    prompt_id, _prompt_uuid, save_message = add_prompt(
+                        name=saved_name,
+                        author="Console",
+                        details=details,
+                        system_prompt=content,
+                        keywords=["console"],
+                        overwrite=False,
+                    )
+                except ConflictError:
+                    continue
+                if prompt_id is not None and "soft-deleted" in str(save_message or ""):
+                    # Name collides with a soft-deleted prompt: nothing was
+                    # saved, so keep probing suffixed names.
+                    prompt_id = None
+                    continue
+                break
+        except Exception as exc:
+            logger.opt(exception=True).warning("Console save-as Prompt failed.")
+            self.app_instance.notify(f"Save as Prompt failed: {exc}", severity="error")
+            return
+        if prompt_id is None:
+            self.app_instance.notify(
+                "Save as Prompt failed: a prompt with this name already exists.",
+                severity="error",
+            )
+            return
+        self._last_console_action = ConsoleActionResult(
+            action_id="save-as-prompt",
+            status="completed",
+            visible_copy="Saved message as Prompt.",
+            target_message_id=message_id,
+            target_content=content,
+        )
+        self.app_instance.notify(
+            f"Saved message as Prompt '{saved_name}' in the local Prompts library.",
+            severity="information",
+        )
+
+    async def _save_console_message_as_chatbook(self, message_id: str) -> None:
+        """Register one selected assistant message as a Chatbook artifact."""
+        chatbook_service = getattr(self.app_instance, "local_chatbook_service", None)
+        create_chatbook = getattr(chatbook_service, "create_chatbook", None)
+        if not callable(create_chatbook):
+            self.app_instance.notify(
+                "Save as Chatbook is unavailable: Chatbook artifacts service is not ready.",
+                severity="warning",
+            )
+            return
+
+        try:
+            message = self._ensure_console_chat_store().get_message(message_id)
+        except KeyError:
+            self.app_instance.notify(
+                "Console message action target no longer exists.",
+                severity="warning",
+            )
+            return
+
+        if not ConsoleMessageActionService._is_assistant_message(message):
+            self.app_instance.notify(
+                "Only assistant responses can be saved as Chatbook artifacts.",
+                severity="warning",
+            )
+            return
+
+        content = self._console_message_content(message)
+        provider: str | None = None
+        model: str | None = None
+        try:
+            provider, model, _settings = self._active_console_provider_model_display()
+        except Exception:
+            logger.opt(exception=True).debug(
+                "Console save-as Chatbook could not resolve provider/model context."
+            )
+        payload = console_chatbook_artifact_payload(
+            title=derive_console_save_title(self._console_save_source_title()),
+            message_text=content,
+            message_role=self._console_message_role_label(message),
+            conversation_id=self._current_console_conversation_id(),
+            message_id=message_id,
+            provider=provider,
+            model=model,
+        )
+        try:
+            result = create_chatbook(**payload)
+            if inspect.isawaitable(result):
+                await result
+        except Exception as exc:
+            logger.opt(exception=True).warning("Console save-as Chatbook failed.")
+            self.app_instance.notify(f"Save as Chatbook failed: {exc}", severity="error")
+            return
+        self._last_console_action = ConsoleActionResult(
+            action_id="save-as-chatbook",
+            status="completed",
+            visible_copy="Saved message as Chatbook artifact.",
+            target_message_id=message_id,
+            target_content=content,
+        )
+        self.app_instance.notify(
+            "Saved message as a Chatbook artifact. It appears under Artifacts.",
+            severity="information",
+        )
 
     async def _open_console_message_edit_modal(self, *, message_id: str, content: str) -> None:
         """Open the dedicated transcript edit modal for one Console message."""

@@ -3,7 +3,7 @@ id: TASK-181
 title: >-
   Settings copy pass: remove dev-roadmap leaks and the Writes-allowed
   contradiction
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-12 02:47'
 labels:
@@ -21,7 +21,13 @@ Core-loop UAT 2026-07-11: the Scope Inspector shows 'Writes allowed: Yes' direct
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 No panel simultaneously claims writes are allowed and blocked
-- [ ] #2 Internal roadmap/ownership prose is removed or moved behind an expert view
-- [ ] #3 Overview leads with user-relevant readiness rather than a blocked power feature
+- [x] #1 No panel simultaneously claims writes are allowed and blocked
+- [x] #2 Internal roadmap/ownership prose is removed or moved behind an expert view
+- [x] #3 Overview leads with user-relevant readiness rather than a blocked power feature
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Fixed on branch claude/uat-core-loop-2026-07 (PR #606, commits 6fd4a60f..88c0475b) with focused tests; re-verified live against llama.cpp on a fresh profile (remediation captures in Docs/superpowers/qa/core-loop-uat-2026-07).
+<!-- SECTION:NOTES:END -->

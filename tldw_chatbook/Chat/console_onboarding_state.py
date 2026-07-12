@@ -13,12 +13,13 @@ CONSOLE_QUIET_EMPTY_COPY = "No messages yet."
 CONSOLE_SETUP_STEP_GLYPHS = {"done": "✓", "active": "●", "pending": "○"}
 
 _STEP_ONE_LABELS = {
-    "Missing key": "Add an API key",
+    "Missing key": "Connect a provider (API key or local server)",
     "Invalid URL": "Save the provider endpoint",
     "Endpoint not saved": "Save the provider endpoint",
     "Unknown": "Choose a supported provider",
     "Pending": "Choose a send-capable provider",
 }
+CONSOLE_SETUP_STEP_THREE_DETAIL = "Composer unlocks after setup"
 _TRUE_STRINGS = {"true", "yes", "1", "on"}
 
 
@@ -114,14 +115,21 @@ def build_console_setup_card_state(
         ),
         detail=f"{provider_name} ready" if provider_done else "",
     )
+    # Step two only counts as done once the provider is actually ready AND a
+    # model is set: template defaults (e.g. gpt-4o) must not pre-check the
+    # step on a virgin profile where the provider is still blocked.
     step_two = ConsoleSetupStep(
-        state="done" if has_model else ("active" if provider_done else "pending"),
+        state=(
+            "done"
+            if provider_done and has_model
+            else ("active" if provider_done else "pending")
+        ),
         label="Pick a model",
     )
     step_three = ConsoleSetupStep(
         state="pending",
         label="Send your first message",
-        detail="Type below, Enter to send",
+        detail=CONSOLE_SETUP_STEP_THREE_DETAIL,
     )
     return ConsoleSetupCardState(
         mode="card",

@@ -50,7 +50,11 @@ class BaseAppScreen(Screen):
         with Container(id="screen-content"):
             yield from self.compose_content()
 
-        yield Footer()
+        # The app-level Ctrl+P "Palette Menu" binding is show=True, so it
+        # already renders in the footer's binding list; the Footer's built-in
+        # right-corner command-palette pill would duplicate it (UAT 2026-07:
+        # "^p Palette Menu" shown twice).
+        yield Footer(show_command_palette=False)
     
     def compose_content(self) -> ComposeResult:
         """Override in subclasses to provide screen-specific content."""

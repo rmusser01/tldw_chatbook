@@ -39,6 +39,74 @@ def test_code_scroll_splash_effect_renders_without_missing_escape_constant() -> 
     assert "tldw" in frame
 
 
+def test_game_of_life_splash_effect_renders_without_missing_escape_constant() -> None:
+    """The game_of_life splash card should render a frame without a NameError.
+
+    Regression: game_of_life.py used ESCAPED_OPEN_BRACKET without importing it,
+    crashing every animation frame ("name 'ESCAPED_OPEN_BRACKET' is not defined").
+    Grid dimensions equal to the display height force the title overlay onto grid
+    rows so both escape call sites are exercised.
+    """
+    from tldw_chatbook.Utils.Splash_Screens.gaming.game_of_life import GameOfLifeEffect
+
+    effect = GameOfLifeEffect(
+        parent_widget=object(),
+        title="GoL",
+        width=10,
+        height=10,
+        display_width=20,
+        display_height=10,
+        update_interval=0.0,
+    )
+
+    frame = effect.update()
+
+    assert isinstance(frame, str)
+    assert len(frame.splitlines()) == 10
+
+
+@pytest.mark.parametrize(
+    ("module_name", "class_name", "effect_kwargs"),
+    [
+        ("tldw_chatbook.Utils.Splash_Screens.gaming.tetris_block", "TetrisBlockEffect", {}),
+        ("tldw_chatbook.Utils.Splash_Screens.gaming.maze_generator", "MazeGeneratorEffect", {}),
+        ("tldw_chatbook.Utils.Splash_Screens.classic.pixel_dissolve", "PixelDissolveEffect", {}),
+        ("tldw_chatbook.Utils.Splash_Screens.environmental.morphing_shape", "MorphingShapeEffect", {}),
+        ("tldw_chatbook.Utils.Splash_Screens.environmental.dna_helix", "DNAHelixEffect", {}),
+        ("tldw_chatbook.Utils.Splash_Screens.environmental.wave_ripple", "WaveRippleEffect", {}),
+        ("tldw_chatbook.Utils.Splash_Screens.environmental.fireworks", "FireworksEffect", {}),
+        ("tldw_chatbook.Utils.Splash_Screens.environmental.ascii_kaleidoscope", "ASCIIKaleidoscopeEffect", {}),
+        ("tldw_chatbook.Utils.Splash_Screens.environmental.particle_swarm", "ParticleSwarmEffect", {}),
+        ("tldw_chatbook.Utils.Splash_Screens.tech.mining", "MiningEffect", {"content": "tldw chatbook"}),
+        ("tldw_chatbook.Utils.Splash_Screens.tech.circuit_board", "CircuitBoardEffect", {}),
+        ("tldw_chatbook.Utils.Splash_Screens.tech.digital_rain", "DigitalRainEffect", {}),
+    ],
+)
+def test_sibling_splash_effects_render_without_missing_escape_constant(
+    module_name: str, class_name: str, effect_kwargs: dict
+) -> None:
+    """Sibling splash effects must have ESCAPED_OPEN_BRACKET bound and render frames.
+
+    Regression: these effects used ESCAPED_OPEN_BRACKET in their render paths
+    without importing it from base_effect (same bug class as game_of_life),
+    crashing whichever animation frame first reached an escape call site. The
+    module-level assertion makes that NameError class impossible even for
+    effects whose escape path only fires once time-based content appears; the
+    frame advances exercise the escape sites for effects that render styled
+    cells immediately.
+    """
+    module = importlib.import_module(module_name)
+
+    assert getattr(module, "ESCAPED_OPEN_BRACKET", None) == r"\["
+
+    effect = getattr(module, class_name)(parent_widget=object(), **effect_kwargs)
+    frame = None
+    for _ in range(3):
+        frame = effect.update()
+
+    assert isinstance(frame, str)
+
+
 def test_random_splash_selection_skips_missing_active_card_definitions(monkeypatch: pytest.MonkeyPatch) -> None:
     """Default active cards can outpace implemented card definitions."""
     from tldw_chatbook.Widgets import splash_screen
