@@ -19,5 +19,6 @@ Core-loop UAT 2026-07-11: after saving a ready provider in Settings (toast confi
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Saving provider settings and navigating to Console shows the ready state without restarting the app,Setup-card readiness is derived from fresh config (or re-probed on Console entry)
+- [ ] #1 Saving provider settings and navigating to Console shows the ready state without restarting the app
+- [ ] #2 Setup-card readiness is derived from fresh config (or re-probed on Console entry)
 <!-- AC:END -->
