@@ -1392,6 +1392,21 @@ class LibraryIngestQueueMixin:
         cpu_count = os.cpu_count() or 2
         return min(3, max(1, cpu_count - 1))
 
+    def _ingest_heavy_lane_max_workers(self) -> int:
+        """Resolve the heavy-lane (audio/video transcription) cap from config.
+
+        UI-thread only. Reads ``library.ingest_heavy_lane_max_workers`` via the
+        dotted 1-arg ``get_cli_setting`` form (same reason as
+        ``_ingest_parse_worker_count``). Defaults to 1; a missing, invalid, or
+        non-positive value clamps to 1 so heavy work is never permanently
+        starved.
+        """
+        try:
+            configured = int(get_cli_setting("library.ingest_heavy_lane_max_workers"))
+        except (TypeError, ValueError):
+            configured = 0
+        return configured if configured > 0 else 1
+
     def _create_ingest_parse_pool(self):
         """Create the Library ingest parse pool.
 
