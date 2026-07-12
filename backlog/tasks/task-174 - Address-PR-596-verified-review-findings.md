@@ -1,11 +1,11 @@
 ---
 id: TASK-174
 title: Address PR 596 verified review findings
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-11 22:08'
-updated_date: '2026-07-11 22:16'
+updated_date: '2026-07-12 00:57'
 labels:
   - pr-review
   - library
@@ -23,17 +23,17 @@ Correct all reproducible correctness data-loss concurrency runtime search and te
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Abrupt parse-worker death fails only jobs owned by that pool generation and allows retry.
-- [ ] #2 Spawned parse workers do not preload the application or heavy ML stack before parsing.
-- [ ] #3 Ingest shutdown finishes only an already-claimed write and does not drain ready payloads.
-- [ ] #4 Library note navigation never discards edits after a failed save.
-- [ ] #5 App navigation vetoes when pending-work flush raises.
-- [ ] #6 Settings drafts survive fresh-screen navigation.
-- [ ] #7 Plain Library search queries with punctuation return matching FTS results.
-- [ ] #8 Auto document parsing falls back to the native parser when deferred Docling import is broken.
-- [ ] #9 Tests never write the user CLI config.
-- [ ] #10 Retired Notes mode-chip assertions are removed.
-- [ ] #11 All review threads are resolved and focused verification passes.
+- [x] #1 Abrupt parse-worker death fails only jobs owned by that pool generation and allows retry.
+- [x] #2 Spawned parse workers do not preload the application or heavy ML stack before parsing.
+- [x] #3 Ingest shutdown finishes only an already-claimed write and does not drain ready payloads.
+- [x] #4 Library note navigation never discards edits after a failed save.
+- [x] #5 App navigation vetoes when pending-work flush raises.
+- [x] #6 Settings drafts survive fresh-screen navigation.
+- [x] #7 Plain Library search queries with punctuation return matching FTS results.
+- [x] #8 Auto document parsing falls back to the native parser when deferred Docling import is broken.
+- [x] #9 Tests never write the user CLI config.
+- [x] #10 Retired Notes mode-chip assertions are removed.
+- [x] #11 All review threads are resolved and focused verification passes.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -56,3 +56,13 @@ Detailed plan: `Docs/superpowers/plans/2026-07-11-pr-596-review-fixes.md`
 5. Isolate test config writes and remove the retired Notes CSS contract.
 6. Run focused and broad verification, then complete task and PR hygiene.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+- Contained parse-pool failures with generation ownership, worker-sentinel monitoring, stale-callback guards, targeted teardown, and shutdown claim refusal; added spawn-lightweight CLI entry points so child processes do not preload the application or ML stack.
+- Made app and Library navigation fail closed around pending note saves, preserved Settings drafts across fresh screens, separated raw media search text from safe FTS expressions per ADR-013, and restored request-scoped native parsing fallback when automatic Docling loading fails.
+- Isolated config writes before collection imports, retired the obsolete Notes mode-chip contract, and hardened two fast export tests to wait for terminal evidence instead of the initial idle state.
+- Verified 341 focused affected tests and an independent 149-test cross-subsystem gate, plus compileall and diff checks. A 1,694-case broad run passed 1,693 cases and exposed only the export-test timing race fixed above; both affected cases then passed. All three PR review threads were answered and resolved, and an independent holistic review reported no findings.
+- Modified the ingest runner and tests, supported launchers, navigation/Settings state, Library/media search, document parsing fallback, test isolation/contracts, README/packaging metadata, ADR-013, and the PR review plan/spec.
+<!-- SECTION:NOTES:END -->
