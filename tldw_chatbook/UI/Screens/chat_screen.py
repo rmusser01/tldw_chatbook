@@ -7,6 +7,7 @@ import inspect
 import os
 from pathlib import Path
 import re
+from types import SimpleNamespace
 from typing import Any, Dict, Iterable, Optional, TYPE_CHECKING
 import uuid
 
@@ -589,7 +590,9 @@ class ChatScreen(BaseAppScreen):
         def _apply_modal_result(result: ConsoleSessionSettings | None) -> None:
             if not isinstance(result, ConsoleSessionSettings):
                 return
-            self._replace_active_console_session_settings(result)
+            # Modal results are explicit user selections; mark them so stale
+            # default refresh never overrides them.
+            self._replace_active_console_session_settings(replace(result, source="user"))
             self.run_worker(self._sync_native_console_chat_ui(), exclusive=True)
 
         self.app.push_screen(modal, callback=_apply_modal_result)
@@ -863,7 +866,8 @@ class ChatScreen(BaseAppScreen):
         if result == CONSOLE_POPOVER_OPEN_FULL_SETTINGS:
             self.run_worker(self._open_console_settings(), exclusive=False)
             return
-        self._replace_active_console_session_settings(result)
+        # Popover results are explicit user selections; protect from refresh.
+        self._replace_active_console_session_settings(replace(result, source="user"))
 
     def action_focus_console_composer_home(self) -> None:
         """Return keyboard focus to the Console composer (Escape, non-priority).
@@ -1085,8 +1089,19 @@ class ChatScreen(BaseAppScreen):
     # which Console test fakes never carry. Used to tell a real boot snapshot
     # (safe to refresh from disk) apart from an injected test config (must be
     # honored verbatim; reading the developer's real config would break
-    # hermetic tests).
-    _CONSOLE_LIVE_CONFIG_MARKER_SECTIONS = ("general", "logging", "splash_screen")
+    # hermetic tests). NOTE: verified against real `load_settings()` output on
+    # a virgin template config - do not add keys (e.g. `splash_screen`) that
+    # only `load_cli_config_and_ensure_existence()` emits, or the live app
+    # never takes the fresh branch.
+    _CONSOLE_LIVE_CONFIG_MARKER_SECTIONS = ("general", "logging")
+
+    # Readiness labels that stale-default session refresh may recover from:
+    # credential/endpoint gaps a Settings save can fix. Provider-identity
+    # blockers (Unknown/Pending WIP providers) are deliberate choices and are
+    # never auto-replaced.
+    _CONSOLE_REFRESHABLE_BLOCKED_LABELS = frozenset(
+        {"Missing key", "Not ready", "Invalid URL", "Endpoint not saved"}
+    )
 
     def _provider_readiness_app_config(self) -> Any:
         """Return the freshest app config for provider-readiness checks.
@@ -1232,11 +1247,73 @@ class ChatScreen(BaseAppScreen):
             control labels and run-inspector readiness.
         """
         effective = resolve_effective_provider_model(
-            self.app_instance,
+            self._console_resolution_view(),
             console_provider=self._console_control_provider,
             console_model=self._console_control_model,
         )
         return effective.provider, effective.model
+
+    def _console_resolution_view(self) -> Any:
+        """Return resolution inputs backed by the freshest config.
+
+        ``resolve_effective_provider_model`` reads ``app_config`` chat defaults
+        and the app-level provider/model reactives. Both are boot-time
+        snapshots: after a Settings save the reactives still echo the template
+        defaults (e.g. ``OpenAI``/``gpt-4o``) and would keep winning over the
+        freshly saved ``chat_defaults`` (task-177 live regression). This view
+        substitutes the fresh config and suppresses reactive values that are
+        mere echoes of the boot defaults when the fresh defaults changed;
+        genuinely user-chosen reactive values (which differ from the boot
+        defaults) still win.
+        """
+        fresh_config = self._provider_readiness_app_config()
+        boot_config = getattr(self.app_instance, "app_config", {}) or {}
+        reactive_provider = getattr(self.app_instance, "chat_api_provider_value", None)
+        reactive_model = (
+            getattr(self.app_instance, "chat_api_model_value", None)
+            or getattr(self.app_instance, "chat_model_value", None)
+        )
+        if fresh_config is not boot_config:
+            boot_defaults = (
+                boot_config.get("chat_defaults", {})
+                if isinstance(boot_config, Mapping)
+                else {}
+            )
+            fresh_defaults = (
+                fresh_config.get("chat_defaults", {})
+                if isinstance(fresh_config, Mapping)
+                else {}
+            )
+            if not isinstance(boot_defaults, Mapping):
+                boot_defaults = {}
+            if not isinstance(fresh_defaults, Mapping):
+                fresh_defaults = {}
+            boot_provider = provider_config_key(str(boot_defaults.get("provider") or ""))
+            fresh_provider = provider_config_key(str(fresh_defaults.get("provider") or ""))
+            reactive_provider_key = provider_config_key(str(reactive_provider or ""))
+            if (
+                reactive_provider_key
+                and reactive_provider_key == boot_provider
+                and fresh_provider
+                and fresh_provider != boot_provider
+            ):
+                reactive_provider = None
+            boot_model = str(boot_defaults.get("model") or "").strip()
+            fresh_model = str(fresh_defaults.get("model") or "").strip()
+            reactive_model_text = str(reactive_model or "").strip()
+            if (
+                reactive_model_text
+                and reactive_model_text == boot_model
+                and fresh_model
+                and fresh_model != boot_model
+            ):
+                reactive_model = None
+        return SimpleNamespace(
+            app_config=fresh_config,
+            chat_api_provider_value=reactive_provider,
+            chat_api_model_value=reactive_model,
+            chat_model_value=None,
+        )
 
     @staticmethod
     def _normalize_llamacpp_base_url(api_url: str | None) -> str:
@@ -1365,7 +1442,56 @@ class ChatScreen(BaseAppScreen):
             settings = self._default_console_session_settings()
             store.replace_session_settings(session.id, settings)
             return settings
-        return session.settings
+        return self._maybe_refresh_stale_default_console_settings(store, session)
+
+    def _maybe_refresh_stale_default_console_settings(
+        self,
+        store: ConsoleChatStore,
+        session: ConsoleChatSession,
+    ) -> ConsoleSessionSettings:
+        """Re-derive default-sourced settings for blocked, never-used sessions.
+
+        First-run sessions snapshot template defaults (e.g. OpenAI without a
+        key) and that snapshot survives navigation via screen-state restore.
+        When the user then configures a working provider in Settings, an empty
+        session the user never explicitly configured must converge on the new
+        defaults instead of keeping the setup card blocked until restart
+        (task-177 live regression). Explicit selections (``source == "user"``),
+        sessions with any messages, and already-sendable settings are never
+        touched; stale defaults are only replaced when the re-derived defaults
+        are actually send-capable.
+        """
+        settings = session.settings
+        if settings is None:
+            settings = self._default_console_session_settings()
+            store.replace_session_settings(session.id, settings)
+            return settings
+        if getattr(settings, "source", "derived") == "user":
+            return settings
+        try:
+            if store.messages_for_session(session.id):
+                return settings
+        except KeyError:
+            return settings
+        app_config = self._provider_readiness_app_config()
+        current_readiness = build_console_settings_readiness(settings, app_config=app_config)
+        if current_readiness.native_send_supported:
+            return settings
+        if current_readiness.label not in self._CONSOLE_REFRESHABLE_BLOCKED_LABELS:
+            # Unknown/WIP providers are a provider *choice* problem, not a
+            # config-fixable credential/endpoint gap; never override choice.
+            return settings
+        fresh_defaults = self._default_console_session_settings()
+        if fresh_defaults == settings:
+            return settings
+        fresh_readiness = build_console_settings_readiness(
+            fresh_defaults,
+            app_config=app_config,
+        )
+        if not fresh_readiness.native_send_supported:
+            return settings
+        store.replace_session_settings(session.id, fresh_defaults)
+        return fresh_defaults
 
     def _replace_active_console_session_settings(
         self,
@@ -1523,7 +1649,7 @@ class ChatScreen(BaseAppScreen):
 
     def _build_console_provider_selection(self) -> ConsoleProviderSelection:
         """Return the effective native Console provider selection for sends."""
-        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        app_config = self._provider_readiness_app_config()
         selection_settings = self._ensure_active_console_session_settings()
         _legacy_provider, legacy_model = self._effective_console_provider_model()
         provider = provider_config_key(selection_settings.provider) or "llama_cpp"

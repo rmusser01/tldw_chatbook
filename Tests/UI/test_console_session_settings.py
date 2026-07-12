@@ -3715,3 +3715,241 @@ async def test_console_settings_modal_body_scroll_container_is_not_focusable() -
         body = app.screen.query_one("#console-settings-body", ScrollableContainer)
         assert body.can_focus is False
         assert app.focused is not body
+
+
+# --- task-177 live regression: REAL journey (boot -> Settings save -> Console) ---
+
+
+def _build_live_config_test_app():
+    """Real TldwCli booted against the REAL (test-sandboxed) config file.
+
+    Unlike ``_build_test_app`` this does NOT stub ``load_settings`` /
+    ``get_cli_setting``: ``app.app_config`` is the genuine template config from
+    the sandbox ``TLDW_CONFIG_PATH``, so the disk-loaded snapshot path (and the
+    stale-snapshot bug it guards against) is exercised end to end.
+    """
+    import tempfile
+    from contextlib import ExitStack
+    from unittest.mock import MagicMock, patch
+
+    from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+
+    user_data_dir = Path(tempfile.mkdtemp(prefix="tldw-chatbook-live-config-test-"))
+
+    def fake_runtime_policy(app):
+        context = SimpleNamespace(
+            state=RuntimeSourceState(active_source="local", server_configured=True),
+            persist=lambda: None,
+        )
+        app.runtime_policy = context
+        app.current_runtime_source = "local"
+        app.current_runtime_backend = "local"
+        return context
+
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch("tldw_chatbook.app.get_chachanotes_db_lazy", return_value=None)
+        )
+        stack.enter_context(
+            patch(
+                "tldw_chatbook.app.ServerNotesWorkspaceService.from_config",
+                return_value=MagicMock(),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "tldw_chatbook.app.ServerCharacterPersonaService.from_config",
+                return_value=MagicMock(),
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                TldwCli,
+                "_init_notes_service",
+                lambda self, _user: setattr(self, "notes_service", None),
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                TldwCli,
+                "_init_prompts_service",
+                lambda self: setattr(self, "prompts_service_initialized", False),
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                TldwCli,
+                "_init_providers_models",
+                lambda self: setattr(self, "providers_models", {}),
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                TldwCli,
+                "_init_media_db",
+                lambda self: (
+                    setattr(self, "media_db", None),
+                    setattr(self, "_media_types_for_ui", ["All Media"]),
+                ),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "tldw_chatbook.app.load_runtime_policy_for_app",
+                side_effect=fake_runtime_policy,
+            )
+        )
+        for db_path_getter in (
+            "get_notifications_db_path",
+            "get_subscriptions_db_path",
+            "get_research_db_path",
+            "get_writing_db_path",
+        ):
+            stack.enter_context(
+                patch(f"tldw_chatbook.app.{db_path_getter}", return_value=":memory:")
+            )
+        stack.enter_context(
+            patch("tldw_chatbook.app.get_user_data_dir", return_value=user_data_dir)
+        )
+        stack.enter_context(
+            patch(
+                "tldw_chatbook.app.get_workspaces_db_path",
+                return_value=user_data_dir / "workspaces.sqlite",
+            )
+        )
+        return TldwCli()
+
+
+async def _wait_for_screen(app, pilot, screen_type_name: str, *, attempts: int = 250):
+    for _ in range(attempts):
+        if type(app.screen).__name__ == screen_type_name:
+            return app.screen
+        await pilot.pause(0.02)
+    raise AssertionError(
+        f"Never reached {screen_type_name}; current screen: {type(app.screen).__name__}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_real_journey_settings_save_unblocks_console_without_restart(
+    monkeypatch,
+) -> None:
+    """Live-UAT regression: boot -> blocked Console -> Settings save -> Console.
+
+    Mirrors the exact live failure: the Settings adapter saves
+    chat_defaults.provider/model + the llama.cpp endpoint (config caches reload),
+    the user clicks the Console nav tab (fresh ChatScreen composes, prior screen
+    state restores), and the setup card must NOT still be blocking.
+    """
+    from tldw_chatbook import config as config_module
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+    from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+    from tldw_chatbook.Widgets.Console import ConsoleSetupModal
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("TLDW_CONSOLE_LLAMA_CPP_BASE_URL", raising=False)
+    # Prime the sandbox template config and keep the boot fast/deterministic.
+    config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    assert config_module.save_setting_to_cli_config("splash_screen", "enabled", False)
+    config_module.load_settings(force_reload=True)
+
+    app = _build_live_config_test_app()
+    # Sanity: the boot snapshot must look disk-loaded (markers present) so the
+    # fresh-config branch is the one under test.
+    assert ChatScreen._console_config_snapshot_is_disk_loaded(app.app_config)
+
+    async with app.run_test(size=(180, 50)) as pilot:
+        # 1) First-run landing: Console blocked on the template OpenAI default.
+        app.post_message(NavigateToScreen("chat"))
+        console = await _wait_for_screen(app, pilot, "ChatScreen")
+        await _wait_for_selector(console, pilot, "#console-setup-modal")
+        assert console._build_console_setup_card_state().mode == "card"
+
+        # 2) Leave Console (screen state, including session settings, is saved).
+        app.post_message(NavigateToScreen("home"))
+        await _wait_for_screen(app, pilot, "HomeScreen")
+
+        # 3) The real Settings save path (same three values as the live run).
+        adapter = SettingsConfigAdapter()
+        assert adapter.save_values(
+            "chat_defaults",
+            {"provider": "llama_cpp", "model": "Qwen3-Coder-Test.gguf"},
+        )
+        assert adapter.save_values(
+            "api_settings.llama_cpp",
+            {"api_url": "http://127.0.0.1:9099"},
+        )
+
+        # 4) Back to Console: a fresh ChatScreen composes and restores state.
+        app.post_message(NavigateToScreen("chat"))
+        console = await _wait_for_screen(app, pilot, "ChatScreen")
+        await _wait_for_selector(console, pilot, "#console-setup-modal")
+
+        card_state = console._build_console_setup_card_state()
+        assert card_state.mode != "card", (
+            "Setup card still blocking after a provider save; "
+            f"steps={[(step.state, step.label) for step in card_state.steps]}"
+        )
+        settings, readiness = console._active_console_settings_readiness()
+        assert settings.provider == "llama_cpp"
+        assert readiness.native_send_supported is True
+
+        # The blocking modal must clear once guidance syncs.
+        for _ in range(100):
+            modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
+            if not modal.is_blocking:
+                break
+            await pilot.pause(0.02)
+        assert not console.query_one("#console-setup-modal", ConsoleSetupModal).is_blocking
+
+
+def test_console_resolution_view_suppresses_boot_echo_reactives(monkeypatch) -> None:
+    """Post-save, reactives echoing the boot template defaults must not win."""
+    from tldw_chatbook.Chat.provider_readiness import provider_config_key
+
+    app = _build_test_app()
+    app.app_config = _disk_loaded_snapshot(
+        chat_defaults={"provider": "OpenAI", "model": "gpt-4o"}
+    )
+    app.chat_api_provider_value = "OpenAI"
+    app.chat_api_model_value = "gpt-4o"
+    console = ChatScreen(app)
+    fresh = _disk_loaded_snapshot(
+        chat_defaults={"provider": "llama_cpp", "model": "Qwen3-Test.gguf"},
+        api_settings={"llama_cpp": {"api_url": "http://127.0.0.1:9099"}},
+    )
+    monkeypatch.setattr(chat_screen_module, "load_settings", lambda: fresh)
+
+    provider, model = console._effective_console_provider_model()
+    assert provider_config_key(str(provider)) == "llama_cpp"
+    assert str(model) == "Qwen3-Test.gguf"
+
+    # A reactive value the user actually changed (differs from the boot echo)
+    # still wins over fresh chat_defaults.
+    app.chat_api_provider_value = "Anthropic"
+    provider_after_user_pick, _model = console._effective_console_provider_model()
+    assert provider_config_key(str(provider_after_user_pick)) == "anthropic"
+
+
+def test_console_stale_default_refresh_respects_user_marked_settings() -> None:
+    """Blocked derived defaults refresh; explicit user selections never do."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "local-model"}
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:9099", "model": "local-model"},
+        "openai": {"api_key": ""},
+    }
+    console = ChatScreen(app)
+    store = console._ensure_console_chat_store()
+    session = store.ensure_session()
+
+    user_choice = ConsoleSessionSettings(provider="openai", model="gpt-4o", source="user")
+    store.replace_session_settings(session.id, user_choice)
+    assert console._ensure_active_console_session_settings() == user_choice
+
+    stale_derived = ConsoleSessionSettings(provider="openai", model="gpt-4o")
+    store.replace_session_settings(session.id, stale_derived)
+    refreshed = console._ensure_active_console_session_settings()
+    assert refreshed.provider == "llama_cpp"
+    assert refreshed.source == "derived"

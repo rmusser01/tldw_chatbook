@@ -160,6 +160,10 @@ class ConsoleSessionSettings:
     streaming: bool = True
     persona_label: str = "General"
     character_label: str = ""
+    #: Provenance of this snapshot: ``"derived"`` for config-derived defaults
+    #: (refreshable when config changes while the session is unused) vs
+    #: ``"user"`` for explicit user selections (never auto-replaced).
+    source: str = "derived"
 
 
 @dataclass(frozen=True)
