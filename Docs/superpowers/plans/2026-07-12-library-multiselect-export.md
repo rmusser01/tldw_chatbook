@@ -607,10 +607,15 @@ In `library_media_canvas.py compose()`, replace the existing `Export…` button 
                             classes="library-canvas-action", compact=True)
         export_btn.display = not select_mode
         yield export_btn
+        rendered_count = len(self.canvas.rows)   # NOT self.canvas.count (that is the
+                                                 # pre-filter total; only rendered rows
+                                                 # are selectable). Conversations state
+                                                 # has no `.count` field, so len(rows) is
+                                                 # also the portable idiom for the siblings.
         select_btn = Button("Done" if select_mode else "Select",
                             id="library-media-select-toggle",
                             classes="library-canvas-action", compact=True)
-        select_btn.disabled = self.canvas.count == 0
+        select_btn.disabled = rendered_count == 0
         yield select_btn
         if select_mode:
             action_row = Horizontal(classes="ds-toolbar")
@@ -618,7 +623,7 @@ In `library_media_canvas.py compose()`, replace the existing `Export…` button 
             with action_row:
                 yield Static(f"{self.canvas.selected_count} selected",
                              id="library-media-selected-count", markup=False)
-                yield Button(f"Select all {self.canvas.count} shown",
+                yield Button(f"Select all {rendered_count} shown",
                              id="library-media-select-all",
                              classes="library-canvas-action", compact=True)
                 yield Button("Clear", id="library-media-select-clear",
