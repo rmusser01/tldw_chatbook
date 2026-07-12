@@ -48,7 +48,7 @@ from tldw_chatbook.Prompt_Management.prompt_scope_service import (
 )
 from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
-from tldw_chatbook.Third_Party.textual_fspicker import FileSave
+from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, FileSave
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library.library_prompts_canvas import LibraryPromptsListCanvas
@@ -62,6 +62,7 @@ from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
     LibraryHarness,
     _active_library_screen,
+    _fake_import_dialog_result,
     _wait_for_library_shell,
     _wait_for_selector,
 )
@@ -214,6 +215,20 @@ async def test_prompts_canvas_import_row_renders_when_open():
         assert pilot.app.query_one("#library-prompts-import-cancel", Button)
         status = pilot.app.query_one("#library-prompts-import-status", Static)
         assert str(status.renderable) == "2 imported · 1 skipped (duplicate name)"
+
+
+@pytest.mark.asyncio
+async def test_prompts_canvas_import_row_browse_button_shares_toolbar_with_run_cancel():
+    """Task 8b D4: Browse… reuses ``.library-canvas-action`` and shares the
+    same fixed-width-only ``ds-toolbar`` as Import/Cancel (no per-id CSS
+    block needed -- see the canvas family's render-safe-shape docstring)."""
+    app = _CanvasHost(_three_row_state(), import_open=True)
+    async with app.run_test() as pilot:
+        browse_button = pilot.app.query_one("#library-prompts-import-browse", Button)
+        run_button = pilot.app.query_one("#library-prompts-import-run", Button)
+        assert browse_button.parent is run_button.parent
+        assert browse_button.parent.has_class("ds-toolbar")
+        assert browse_button.has_class("library-canvas-action")
 
 
 @pytest.mark.asyncio
@@ -1666,3 +1681,89 @@ async def test_library_prompt_duplicate_prefills_blank_editor_and_saves_distinct
         assert original["name"] == "Original"
 
 
+# ---------------------------------------------------------------------------
+# Task 8b, Group 3: D3 (Open existing) + D4 (import Browse…)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_open_existing_button_shows_only_in_name_in_use_state_and_opens_it(
+    tmp_path,
+):
+    """D3: the "Open existing" button appears ONLY in the name-in-use
+    state, and pressing it loads the colliding prompt into the editor."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    alpha_id, _uuid, _msg = db.add_prompt(name="Alpha", author="A", details="d-alpha", user_prompt="x")
+    beta_id, _uuid, _msg = db.add_prompt(name="Beta", author="B", details="d-beta", user_prompt="y")
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, beta_id)
+
+        assert len(screen.query("#library-prompt-open-existing")) == 0
+
+        screen.query_one("#library-prompt-name", Input).value = "Alpha"
+        await pilot.pause()
+        screen.query_one("#library-prompt-save", Button).press()
+        await pilot.pause()
+
+        status_text = await _wait_for_prompt_status(screen, pilot)
+        assert status_text == "Name already in use — pick another or open the existing prompt."
+
+        for _ in range(150):
+            if len(screen.query("#library-prompt-open-existing")) > 0:
+                break
+            await pilot.pause(0.02)
+        open_existing = screen.query_one("#library-prompt-open-existing", Button)
+
+        open_existing.press()
+        await pilot.pause()
+        for _ in range(150):
+            if screen._selected_prompt_id == alpha_id:
+                break
+            await pilot.pause(0.02)
+        assert screen._selected_prompt_id == alpha_id
+
+        for _ in range(150):
+            if screen.query_one("#library-prompt-name", Input).value == "Alpha":
+                break
+            await pilot.pause(0.02)
+        assert screen.query_one("#library-prompt-name", Input).value == "Alpha"
+        assert screen.query_one("#library-prompt-details", Input).value == "d-alpha"
+        assert len(screen.query("#library-prompt-open-existing")) == 0
+
+
+@pytest.mark.asyncio
+async def test_library_prompts_import_browse_button_fills_path_input(tmp_path):
+    """D4: Browse… (beside the import path Input) opens the same FileOpen
+    dialog the media-ingest form's Browse action uses; on pick, it fills
+    the path Input."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    picked_file = tmp_path / "prompts.json"
+    picked_file.write_text("[]", encoding="utf-8")
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompts_list(screen, pilot)
+
+        screen.query_one("#library-prompts-import", Button).press()
+        await pilot.pause()
+        assert screen.query_one("#library-prompts-import-browse", Button)
+
+        push_calls = _fake_import_dialog_result(screen, picked_file)
+        screen.query_one("#library-prompts-import-browse", Button).press()
+        await pilot.pause()
+
+        assert push_calls and isinstance(push_calls[0], FileOpen)
+        assert screen.query_one("#library-prompts-import-path", Input).value == str(picked_file)

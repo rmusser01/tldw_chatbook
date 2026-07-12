@@ -2978,6 +2978,15 @@ class LibraryScreen(BaseAppScreen):
                             mode="editor",
                             editor_state=build_prompt_editor_state(self._library_prompt_detail),
                             status=self._library_prompt_status,
+                            # Task 8b D3: only the name-in-use status backs
+                            # a real "Open existing" affordance -- reusing
+                            # the same canonical copy this compares against
+                            # (not a separate boolean flag) keeps the two
+                            # in lockstep by construction.
+                            show_open_existing=(
+                                self._library_prompt_status
+                                == LIBRARY_PROMPT_SAVE_STATUS_COPY["name-in-use"]
+                            ),
                             id="library-prompts-canvas",
                         )
                 elif shell.canvas_kind == "prompts":
@@ -5981,6 +5990,33 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompts_import_status = ""
         self.refresh(recompose=True)
 
+    @on(Button.Pressed, "#library-prompts-import-browse")
+    def handle_library_prompts_import_browse(self, event: Button.Pressed) -> None:
+        """Push a ``FileOpen`` dialog to pick a local file for prompt import
+        (Task 8b D4).
+
+        Mirrors ``handle_library_ingest_browse``'s dialog flow exactly. The
+        shared ``FileOpen`` dialog (``Third_Party/textual_fspicker``) has no
+        directory-selection mode, so this only covers the file case --
+        importing a folder still requires typing its path into the Import
+        row's path ``Input`` by hand.
+
+        Args:
+            event: Button press event emitted by the "Browse…" action.
+        """
+        event.stop()
+
+        async def browse_callback(selected_path: Path | None) -> None:
+            if selected_path is None:
+                return
+            self._library_prompts_import_path = str(selected_path)
+            self.refresh(recompose=True)
+
+        self.app.push_screen(
+            FileOpen(title="Import Prompts (file)"),
+            browse_callback,
+        )
+
     @on(Input.Changed, "#library-prompts-import-path")
     def handle_library_prompts_import_path_changed(self, event: Input.Changed) -> None:
         """Track the Import row's path text as the user types it (state only).
@@ -6428,6 +6464,57 @@ class LibraryScreen(BaseAppScreen):
             return
         status_static.update(text)
 
+    async def _sync_library_prompt_open_existing_button(self, *, show: bool) -> None:
+        """Targeted mount/removal of ``#library-prompt-open-existing`` (Task
+        8b D3), no recompose.
+
+        ``_update_library_prompt_status_static`` (its sibling, called
+        alongside this everywhere a save outcome is classified) never
+        recomposes the editor either -- doing so here would rebuild the
+        fields from the stale ``_library_prompt_detail`` mapping (the
+        just-rejected name-in-use edit was never written there), silently
+        discarding the user's in-progress text. Mirrors
+        ``_refresh_collections_panel_action_state_widgets``'s targeted
+        mount/remove pattern instead.
+
+        Args:
+            show: Whether the button should be present.
+        """
+        existing = list(self.query("#library-prompt-open-existing"))
+        if show and not existing:
+            try:
+                status_static = self.query_one("#library-prompt-save-status", Static)
+            except (NoMatches, QueryError):
+                return
+            parent = status_static.parent
+            if parent is None:
+                return
+            await parent.mount(
+                Button(
+                    "Open existing",
+                    id="library-prompt-open-existing",
+                    classes="library-canvas-action",
+                    compact=True,
+                ),
+                after=status_static,
+            )
+        elif not show and existing:
+            for button in existing:
+                await button.remove()
+
+    async def _apply_library_prompt_save_outcome(self, outcome: str) -> None:
+        """Set the save-status text for a classified outcome AND sync the
+        D3 Open-existing affordance to match it, together (no recompose --
+        see ``_sync_library_prompt_open_existing_button``'s docstring).
+
+        Args:
+            outcome: A ``classify_prompt_save_error`` return value.
+        """
+        self._update_library_prompt_status_static(
+            LIBRARY_PROMPT_SAVE_STATUS_COPY.get(outcome, LIBRARY_PROMPT_SAVE_STATUS_COPY["error"])
+        )
+        await self._sync_library_prompt_open_existing_button(show=outcome == "name-in-use")
+
     def _update_library_prompt_meta_static(self) -> None:
         """Targeted update of ``#library-prompt-meta``, no recompose.
 
@@ -6541,9 +6628,7 @@ class LibraryScreen(BaseAppScreen):
                     outcome = classify_prompt_save_error(
                         None, f"Prompt '{name}' already exists.", None
                     )
-                self._update_library_prompt_status_static(
-                    LIBRARY_PROMPT_SAVE_STATUS_COPY.get(outcome, "")
-                )
+                await self._apply_library_prompt_save_outcome(outcome)
                 return
 
         if not is_create:
@@ -6615,9 +6700,7 @@ class LibraryScreen(BaseAppScreen):
                     keywords_text=raw_keywords_text,
                 )
                 return
-            self._update_library_prompt_status_static(
-                LIBRARY_PROMPT_SAVE_STATUS_COPY.get(outcome, LIBRARY_PROMPT_SAVE_STATUS_COPY["error"])
-            )
+            await self._apply_library_prompt_save_outcome(outcome)
             return
 
         if prompt_id != self._selected_prompt_id or self._library_prompts_view != "editor":
@@ -6626,9 +6709,7 @@ class LibraryScreen(BaseAppScreen):
         result_id = result.get("local_id") if isinstance(result, Mapping) else (1 if result else None)
         outcome = classify_prompt_save_error(result_id, "", None)
         if outcome != "ok":
-            self._update_library_prompt_status_static(
-                LIBRARY_PROMPT_SAVE_STATUS_COPY.get(outcome, LIBRARY_PROMPT_SAVE_STATUS_COPY["error"])
-            )
+            await self._apply_library_prompt_save_outcome(outcome)
             return
 
         new_id = result_id if is_create else prompt_id
@@ -6681,7 +6762,12 @@ class LibraryScreen(BaseAppScreen):
         # spurious mount-time ``Changed`` event for a non-empty initial
         # value would immediately re-mark the just-saved prompt dirty.
         self._update_library_prompt_meta_static()
-        self._update_library_prompt_status_static(LIBRARY_PROMPT_SAVE_STATUS_COPY["ok"])
+        # A prior attempt within this same editor session may have left the
+        # D3 Open-existing button mounted (e.g. a name-in-use retry that
+        # then succeeded with a different name) -- clear it alongside the
+        # "Saved." status, same combined helper the failure branches above
+        # use.
+        await self._apply_library_prompt_save_outcome("ok")
         # The broader local-source snapshot (rail badge / list ordering) is
         # deliberately NOT refreshed here -- it would recompose the whole
         # canvas (see the comment above) while this editor is still open
@@ -7025,6 +7111,78 @@ class LibraryScreen(BaseAppScreen):
         self._refresh_local_source_snapshot()
         if self.is_mounted:
             self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-prompt-open-existing")
+    def handle_library_prompt_open_existing(self, event: Button.Pressed) -> None:
+        """Discard the current unsaved edit and open the prompt whose name
+        collided with it (Task 8b D3).
+
+        Only rendered while the status line shows the name-in-use outcome
+        (see ``compose_content``'s ``show_open_existing`` flag). Unlike
+        every other "leave the editor" action, this deliberately does NOT
+        go through ``_flush_library_prompt_save``'s dirty veto: a
+        name-in-use status implies the very edit that triggered it IS the
+        (still-unsaved) dirty state, so vetoing here would make the button
+        permanently inert. This mirrors the conflict banner's Reload
+        action, which also discards the local edit unconditionally.
+
+        Args:
+            event: Button press event emitted by the "Open existing" action.
+        """
+        event.stop()
+        if self._library_prompts_view != "editor":
+            return
+        self.run_worker(
+            self._open_library_prompt_colliding_with_current_name(),
+            exclusive=True,
+            group="library_prompt_open_existing",
+        )
+
+    async def _open_library_prompt_colliding_with_current_name(self) -> None:
+        """Resolve the editor's live Name field to its colliding prompt and
+        open it, replacing the current unsaved edit.
+
+        Args:
+            None.
+        """
+        fields = self._read_library_prompt_editor_fields()
+        if fields is None:
+            return
+        name = self._sanitize_media_field(fields[0], max_length=300)
+        if not name:
+            return
+        service = getattr(self.app_instance, "prompt_scope_service", None)
+        get_prompt = getattr(service, "get_prompt", None)
+        if not callable(get_prompt):
+            return
+        try:
+            candidate = await self._run_library_service_call(
+                get_prompt,
+                mode="local",
+                prompt_identifier=name,
+                include_deleted=False,
+                isolate_in_worker=True,
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Failed to resolve the colliding Library prompt named {name!r}."
+            )
+            return
+        if self._library_prompts_view != "editor":
+            return
+        candidate_id = candidate.get("local_id") if isinstance(candidate, Mapping) else None
+        if candidate_id is None:
+            return
+        self._reset_library_prompt_editor_state()
+        self._selected_prompt_id = candidate_id
+        self._library_prompts_view = "editor"
+        if self.is_mounted:
+            self.refresh(recompose=True)
+        self.run_worker(
+            self._refresh_library_prompt_detail(candidate_id),
+            exclusive=True,
+            group="library_prompt_detail",
+        )
 
     async def _resolve_library_prompt_conflict(self, *, overwrite: bool) -> None:
         """Resolve a shown save conflict via the Overwrite or Reload action.

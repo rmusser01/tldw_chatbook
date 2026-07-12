@@ -51,6 +51,11 @@ class LibraryPromptsListCanvas(Vertical):
             ``"Saved."`` or a name-conflict explanation), or ``""`` when
             idle. Not shown while ``conflict`` is set -- the conflict
             banner communicates the outcome instead.
+        show_open_existing: Editor mode only. When ``True``, renders the
+            "Open existing" action (Task 8b D3) directly under the status
+            line -- shown only while ``status`` is the name-in-use outcome,
+            giving that status copy's "...or open the existing prompt" a
+            real affordance. Never shown together with ``conflict``.
         import_open: List-view only. When ``True``, renders the inline
             Import row (a path ``Input`` for a file OR folder, plus
             Import/Cancel actions) below the sort/Import…/Export…
@@ -72,6 +77,7 @@ class LibraryPromptsListCanvas(Vertical):
         editor_state: PromptEditorState | None = None,
         conflict: bool = False,
         status: str = "",
+        show_open_existing: bool = False,
         import_open: bool = False,
         import_path: str = "",
         import_status: str = "",
@@ -85,6 +91,7 @@ class LibraryPromptsListCanvas(Vertical):
         self.editor_state = editor_state
         self.conflict = conflict
         self.status = status
+        self.show_open_existing = show_open_existing
         self.import_open = import_open
         self.import_path = import_path
         self.import_status = import_status
@@ -178,6 +185,15 @@ class LibraryPromptsListCanvas(Vertical):
         toolbar = Horizontal(classes="ds-toolbar")
         toolbar.styles.height = "auto"
         with toolbar:
+            # Task 8b D4: Browse… picks a FILE via the same FileOpen dialog
+            # the media-ingest form's Browse action uses -- that dialog has
+            # no directory-selection mode, so a folder import still has to
+            # be typed by hand into the path Input above; this only covers
+            # the file case (see handle_library_prompts_import_browse).
+            yield Button(
+                "Browse…", id="library-prompts-import-browse",
+                classes="library-canvas-action", compact=True,
+            )
             yield Button(
                 "Import", id="library-prompts-import-run",
                 classes="library-canvas-action", compact=True,
@@ -251,6 +267,17 @@ class LibraryPromptsListCanvas(Vertical):
                 id="library-prompt-save-status",
                 markup=False,
             )
+            if self.show_open_existing:
+                # Task 8b D3: makes the status copy's "...or open the
+                # existing prompt" a real affordance -- only shown in the
+                # name-in-use state (never alongside the conflict banner
+                # above, which has its own Overwrite/Reload actions).
+                yield Button(
+                    "Open existing",
+                    id="library-prompt-open-existing",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
         toolbar = Horizontal(classes="ds-toolbar")
         toolbar.styles.height = "auto"
         with toolbar:
