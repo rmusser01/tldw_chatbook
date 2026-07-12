@@ -22,5 +22,9 @@ Core-loop UAT 2026-07-11 findings across Search and adjacent surfaces: (1) the n
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 No-sources state shows one quiet gate line plus a single recovery action,Provider test reports success or failure with a reason,Result counts pluralize correctly,Primary action buttons keep a stable position across gate-state changes,Keyword search matches simple plural/singular variants or documents the limitation inline
+- [ ] #1 No-sources state shows one quiet gate line plus a single recovery action
+- [ ] #2 Provider test reports success or failure with a reason
+- [ ] #3 Result counts pluralize correctly
+- [ ] #4 Primary action buttons keep a stable position across gate-state changes
+- [ ] #5 Keyword search matches simple plural/singular variants or documents the limitation inline
 <!-- AC:END -->
