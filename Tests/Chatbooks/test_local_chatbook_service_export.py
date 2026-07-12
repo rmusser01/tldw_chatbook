@@ -1,5 +1,5 @@
 import asyncio
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from tldw_chatbook.Chatbooks.local_chatbook_service import LocalChatbookService
 
