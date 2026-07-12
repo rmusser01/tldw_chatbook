@@ -34,7 +34,6 @@ from ...Constants import (
     LIBRARY_NAV_CONTEXT_NOTES_CREATE,
 )
 from ...DB.ChaChaNotes_DB import ConflictError
-from ...DB.Prompts_DB import ConflictError as PromptConflictError
 from ...Library.export_progress import (
     ExportProgressThrottle,
     format_export_progress_line,
@@ -218,8 +217,10 @@ LIBRARY_NOTE_CONTENT_MAX_CHARS = 2_000_000
 LIBRARY_PROMPT_TEXT_MAX_CHARS = LIBRARY_NOTE_CONTENT_MAX_CHARS
 # Exact outcome copy for the prompt editor's #library-prompt-save-status
 # line, keyed by `classify_prompt_save_error`'s return value. "conflict" is
-# deliberately absent -- that outcome renders the conflict banner instead
-# (see `_save_library_prompt`), never this status line.
+# deliberately absent -- both the pre-write staleness check AND a
+# ConflictError raised by the write itself (a race the pre-check cannot
+# see) route into the conflict banner instead (see `_save_library_prompt`),
+# never this status line.
 LIBRARY_PROMPT_SAVE_STATUS_COPY = {
     "ok": "Saved.",
     "name-in-use": "Name already in use — pick another or open the existing prompt.",
@@ -6240,6 +6241,23 @@ class LibraryScreen(BaseAppScreen):
             if prompt_id != self._selected_prompt_id or self._library_prompts_view != "editor":
                 return
             outcome = classify_prompt_save_error(None, str(exc), exc)
+            if outcome == "conflict":
+                # A genuine race the pre-checks above could not see (e.g. a
+                # second app instance or an external writer landing between
+                # this save's pre-read and its real write) -- route into
+                # the SAME conflict banner the pre-check staleness path
+                # uses above, seeded from the same live (raw, unsanitized)
+                # field values, rather than falling through to the generic
+                # error status line.
+                self._enter_library_prompt_conflict(
+                    name=raw_name,
+                    author=raw_author,
+                    details=raw_details,
+                    system_prompt=raw_system,
+                    user_prompt=raw_user,
+                    keywords_text=raw_keywords_text,
+                )
+                return
             self._update_library_prompt_status_static(
                 LIBRARY_PROMPT_SAVE_STATUS_COPY.get(outcome, LIBRARY_PROMPT_SAVE_STATUS_COPY["error"])
             )

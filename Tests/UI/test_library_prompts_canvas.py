@@ -28,7 +28,7 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, Input, TextArea
 
-from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
+from tldw_chatbook.DB.Prompts_DB import ConflictError, PromptsDatabase
 from tldw_chatbook.Library.library_prompts_state import (
     PromptListRow,
     PromptsListState,
@@ -600,6 +600,88 @@ async def test_library_prompt_save_stale_version_shows_conflict_bar(tmp_path):
 
         assert screen.query_one("#library-prompt-conflict-overwrite", Button)
         assert screen.query_one("#library-prompt-conflict-reload", Button)
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_save_write_time_conflict_shows_conflict_bar(tmp_path):
+    """A ``ConflictError`` raised by the actual write itself -- a race the
+    pre-checks cannot see (a second app instance / external writer landing
+    between this save's pre-read and its real write) -- must route into
+    the SAME conflict banner as the pre-check staleness path, not the
+    generic "Couldn't save this prompt." status line.
+
+    The pre-checks (name lookup, version pre-read) are left alone here --
+    only the real write call (``service.save_prompt``) is monkeypatched to
+    raise a real ``tldw_chatbook.DB.Prompts_DB.ConflictError`` on its next
+    invocation, so this exercises the exception path inside
+    ``_save_library_prompt``'s own write attempt, not the earlier
+    version-mismatch pre-check.
+    """
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Kappa", author="Original", details="d1", user_prompt="x"
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    original_save_prompt = service.save_prompt
+    calls = {"count": 0}
+
+    async def _raise_once_then_delegate(**kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise ConflictError("Prompt was modified by another writer.")
+        return await original_save_prompt(**kwargs)
+
+    service.save_prompt = _raise_once_then_delegate
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        assert screen._library_prompt_version == 1
+
+        screen.query_one("#library-prompt-author", Input).value = "Race Author"
+        await pilot.pause()
+        screen.query_one("#library-prompt-save", Button).press()
+        await pilot.pause()
+        for _ in range(150):
+            if len(screen.query("#library-prompt-conflict-overwrite")) > 0:
+                break
+            await pilot.pause(0.02)
+
+        assert calls["count"] == 1
+        assert screen.query_one("#library-prompt-conflict-overwrite", Button)
+        assert screen.query_one("#library-prompt-conflict-reload", Button)
+        status_widgets = screen.query("#library-prompt-save-status")
+        if len(status_widgets) > 0:
+            assert str(status_widgets.first().renderable) != (
+                "Couldn't save this prompt. Try again."
+            )
+
+        # The stashed snapshot the banner's Overwrite/Reload actions read
+        # from must carry this entry path's live-edit fields too, exactly
+        # like the pre-check path's snapshot.
+        snapshot = screen._library_prompt_conflict_snapshot
+        assert snapshot is not None
+        assert snapshot.prompt_id == prompt_id
+        assert snapshot.author == "Race Author"
+
+        # Overwrite should succeed once the monkeypatch's single-raise
+        # budget is spent (the second call delegates to the real write).
+        screen.query_one("#library-prompt-conflict-overwrite", Button).press()
+        await pilot.pause()
+        for _ in range(150):
+            if len(screen.query("#library-prompt-conflict-overwrite")) == 0:
+                break
+            await pilot.pause(0.02)
+
+        assert calls["count"] == 2
+        assert len(screen.query("#library-prompt-conflict-overwrite")) == 0
+        persisted = db.fetch_prompt_details(prompt_id)
+        assert persisted["author"] == "Race Author"
 
 
 @pytest.mark.asyncio
