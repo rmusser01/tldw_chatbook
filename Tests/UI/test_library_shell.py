@@ -40,6 +40,7 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
     LIBRARY_ROW_BROWSE_MEDIA,
     LIBRARY_ROW_BROWSE_NOTES,
+    LIBRARY_ROW_BROWSE_PROMPTS,
     LIBRARY_ROW_BROWSE_SEARCH,
     LIBRARY_ROW_CREATE_NOTE,
     LIBRARY_ROW_INGEST_EXPORT,
@@ -56,6 +57,7 @@ from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, FileSave
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library.library_ingest_canvas import LibraryIngestCanvas
+from tldw_chatbook.Widgets.Library.library_rail import LIBRARY_RAIL_ROW_PREFIX
 from Tests.UI.test_destination_shells import (
     StaticLibraryConversationScopeService,
     StaticLibraryMediaScopeService,
@@ -4494,6 +4496,59 @@ async def test_library_shell_notes_rail_badge_degrades_without_count_seam():
         await _wait_for_library_shell(screen, pilot)
         rail_label = str(screen.query_one("#library-row-browse-notes").label)
         assert "(2+)" in rail_label
+
+
+class _FakePromptScopeService:
+    """Minimal prompt-scope fake exposing only the ``count_prompts`` seam
+    under test -- same spirit as ``_FakeStudyScopeService``/
+    ``_FakeQuizScopeService`` below for study/quiz counts, mirroring the
+    real ``PromptScopeService.count_prompts(mode="local")`` shape without
+    going through the local/server routing."""
+
+    def __init__(self, *, count):
+        self._count = count
+        self.count_calls = []
+
+    async def count_prompts(self, *, mode="local", **kwargs):
+        self.count_calls.append({"mode": mode, **kwargs})
+        return self._count
+
+
+@pytest.mark.asyncio
+async def test_library_shell_prompts_rail_row_shows_exact_count():
+    """The Browse rail renders a ``Prompts (2)`` row -- id
+    ``LIBRARY_ROW_BROWSE_PROMPTS`` -- once ``count_prompts`` is wired into
+    the Library screen's local-source snapshot fetch (Task 1). Row
+    selection is inert-but-selectable for now (the prompts canvas itself
+    lands in a later task): clicking it must not error and must fall
+    through to the existing placeholder-empty canvas path."""
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesListScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.prompt_scope_service = _FakePromptScopeService(count=2)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        # Literal DOM id pinned on purpose (mirrors the notes badge test's
+        # literal "#library-row-browse-notes" query): the rendered id is
+        # the rail-row contract downstream tasks target, so a drift in
+        # either the prefix or the row-id constant must fail loudly here.
+        button = screen.query_one("#library-row-browse-prompts", Button)
+        assert button.id == f"{LIBRARY_RAIL_ROW_PREFIX}{LIBRARY_ROW_BROWSE_PROMPTS}"
+        assert button.row_id == LIBRARY_ROW_BROWSE_PROMPTS
+        rail_label = str(button.label)
+        assert "Prompts (2)" in rail_label
+
+        button.press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
+        assert screen.query_one("#library-canvas-landing")
+    assert app.prompt_scope_service.count_calls
 
 
 class _FakeStudyScopeService:

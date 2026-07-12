@@ -9,6 +9,10 @@ LIBRARY_CANVAS_LANDING_COPY = "Search, pick a content type, or ingest something 
 LIBRARY_ROW_BROWSE_CONVERSATIONS = "browse-conversations"
 LIBRARY_ROW_BROWSE_MEDIA = "browse-media"
 LIBRARY_ROW_BROWSE_NOTES = "browse-notes"
+# Value follows the sibling "browse-*" convention: the rail widget renders
+# the row's DOM id as LIBRARY_RAIL_ROW_PREFIX ("library-row-") + row_id,
+# i.e. "#library-row-browse-prompts" -- the id the task brief names.
+LIBRARY_ROW_BROWSE_PROMPTS = "browse-prompts"
 LIBRARY_ROW_BROWSE_SEARCH = "browse-search"
 LIBRARY_ROW_BROWSE_COLLECTIONS = "browse-collections"
 LIBRARY_ROW_CREATE_NOTE = "create-note"
@@ -68,6 +72,8 @@ class LibraryShellInput:
     conversations_known: bool = True
     notes_count: int | None = None
     notes_known: bool = True
+    prompts_count: int | None = None
+    prompts_known: bool = True
     collections_count: int | None = None
     collections_known: bool = True
     runtime_source: str = "local"
@@ -133,6 +139,19 @@ def build_library_shell_state(
             target_id="notes",
             count=state.notes_count,
             count_known=state.notes_known,
+        ),
+        LibraryRailRow(
+            # Row click lands on the existing placeholder-empty canvas for
+            # now (no "prompts" branch in the screen's canvas dispatch
+            # yet) -- the dedicated prompts list canvas lands in a later
+            # task; this row is inert-but-selectable until then.
+            row_id=LIBRARY_ROW_BROWSE_PROMPTS,
+            section_id="browse",
+            title="Prompts",
+            target_kind="canvas",
+            target_id="prompts",
+            count=state.prompts_count,
+            count_known=state.prompts_known,
         ),
         LibraryRailRow(
             row_id=LIBRARY_ROW_BROWSE_COLLECTIONS,

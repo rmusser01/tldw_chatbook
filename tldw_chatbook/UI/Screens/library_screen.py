@@ -504,6 +504,12 @@ class LibraryScreen(BaseAppScreen):
             "notes": (),
             "media": (),
             "conversations": (),
+            # Task 1 (count seam + rail row): unlike the three sources
+            # above, "prompts" carries ``(count, page_records)`` rather
+            # than a bare records tuple -- there is no prompts canvas yet
+            # to page through, only the Browse rail badge's exact count
+            # (a later task wires the real list canvas and page records).
+            "prompts": (None, ()),
         }
         self._local_source_counts: dict[str, int] = {
             "notes": 0,
@@ -1517,6 +1523,35 @@ class LibraryScreen(BaseAppScreen):
             return None
         return result if isinstance(result, int) else None
 
+    async def _prompts_count_or_none(self, count_prompts: Any, **kwargs: Any) -> int | None:
+        """Fetch the exact local prompts total, degrading quietly on failure.
+
+        Runs inside the same ``asyncio.gather`` as the notes/media/
+        conversations fetch (see ``_list_local_source_snapshot``). Mirrors
+        ``_notes_true_count_or_none``: the count seam is optional (guarded
+        by ``callable(count_prompts)`` at the call site), so when it is
+        missing this method is never invoked, and when it *is* present but
+        raises, the failure is swallowed and ``None`` is returned -- there
+        is no paginated prompts fetch to fall back to yet (Task 1 has no
+        prompts canvas), so a failed count simply renders the Prompts rail
+        row with no badge at all rather than surfacing an error or failing
+        the whole snapshot fetch.
+
+        Args:
+            count_prompts: The bound ``count_prompts`` callable to invoke.
+            **kwargs: Forwarded to ``count_prompts`` (``mode``).
+
+        Returns:
+            The exact prompts count, or ``None`` if the call failed or
+            returned something other than an ``int``.
+        """
+        try:
+            result = await self._run_library_service_call(count_prompts, isolate_in_worker=True, **kwargs)
+        except Exception:
+            logger.opt(exception=True).warning("Failed to fetch local prompts count; Prompts row will show no count.")
+            return None
+        return result if isinstance(result, int) else None
+
     async def _study_count_or_none(self, count_callable: Any, label: str, **kwargs: Any) -> int | None:
         """Fetch a decorative Create-rail count, degrading quietly on failure.
 
@@ -1573,6 +1608,7 @@ class LibraryScreen(BaseAppScreen):
         conversation_service = getattr(self.app_instance, "chat_conversation_scope_service", None)
         study_service = getattr(self.app_instance, "study_scope_service", None)
         quiz_service = getattr(self.app_instance, "study_quiz_scope_service", None)
+        prompt_service = getattr(self.app_instance, "prompt_scope_service", None)
         list_notes = getattr(notes_service, "list_notes", None)
         list_media = getattr(media_service, "list_media_items", None)
         list_conversations = getattr(conversation_service, "list_conversations", None)
@@ -1581,12 +1617,17 @@ class LibraryScreen(BaseAppScreen):
         count_decks = getattr(study_service, "count_decks", None)
         count_due_flashcards = getattr(study_service, "count_due_flashcards", None)
         count_quizzes = getattr(quiz_service, "count_quizzes", None)
+        count_prompts = getattr(prompt_service, "count_prompts", None)
+        count_prompts_available = callable(count_prompts)
         notes_user_id = getattr(self.app_instance, "notes_user_id", None) or "default_user"
 
         empty_records: dict[str, tuple[Mapping[str, Any], ...]] = {
             "notes": (),
             "media": (),
             "conversations": (),
+            # See ``__init__``'s ``_local_source_records`` default: this key
+            # carries ``(count, page_records)``, not a bare records tuple.
+            "prompts": (None, ()),
         }
         empty_counts = {"notes": 0, "media": 0, "conversations": 0}
         empty_total_known = {"notes": True, "media": True, "conversations": True}
@@ -1657,6 +1698,10 @@ class LibraryScreen(BaseAppScreen):
             )
         if callable(count_quizzes):
             optional_calls.append(("quizzes", self._study_count_or_none(count_quizzes, "quizzes")))
+        if count_prompts_available:
+            optional_calls.append(
+                ("prompts_count", self._prompts_count_or_none(count_prompts, mode="local"))
+            )
         gathered_calls.extend(call for _, call in optional_calls)
 
         try:
@@ -1697,6 +1742,7 @@ class LibraryScreen(BaseAppScreen):
         optional_values = dict(zip((key for key, _ in optional_calls), optional_results))
 
         notes_true_count = optional_values.get("notes_true_count")
+        prompts_count = optional_values.get("prompts_count")
         study_counts: dict[str, int | None] = {
             "study_decks": optional_values.get("study_decks"),
             "flashcards_due": optional_values.get("flashcards_due"),
@@ -1718,6 +1764,10 @@ class LibraryScreen(BaseAppScreen):
                 "notes": notes,
                 "media": media,
                 "conversations": conversations,
+                # Placeholder page records (Task 1 has no prompts canvas to
+                # page through yet) alongside the exact count -- see the
+                # ``__init__``/``empty_records`` comments above.
+                "prompts": (prompts_count, ()),
             },
             {
                 "notes": notes_count,
@@ -2789,6 +2839,12 @@ class LibraryScreen(BaseAppScreen):
         counts = self._local_source_counts
         known = self._local_source_total_known
         counts_known_yet = self._library_loaded or bool(self._library_lookup_error)
+        prompts_entry = self._local_source_records.get("prompts")
+        prompts_count = (
+            prompts_entry[0]
+            if isinstance(prompts_entry, tuple) and len(prompts_entry) == 2
+            else None
+        )
         return LibraryShellInput(
             media_count=counts.get("media") if counts_known_yet else None,
             media_known=known.get("media", True),
@@ -2796,6 +2852,13 @@ class LibraryScreen(BaseAppScreen):
             conversations_known=known.get("conversations", True),
             notes_count=counts.get("notes") if counts_known_yet else None,
             notes_known=known.get("notes", True),
+            # Unlike notes/media/conversations, "prompts" has no sample-cap
+            # fallback yet (no paginated fetch backs it in Task 1) -- the
+            # count is either the exact seam result or ``None`` (uncounted
+            # row), never a "+"-suffixed estimate, so ``prompts_known``
+            # stays ``True``.
+            prompts_count=prompts_count if counts_known_yet else None,
+            prompts_known=True,
             collections_count=collections_count,
             runtime_source=active_source,
             server_label=str(server_label) if server_label else None,
