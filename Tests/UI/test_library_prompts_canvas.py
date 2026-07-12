@@ -902,6 +902,158 @@ async def test_library_prompt_save_write_time_conflict_shows_conflict_bar(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_library_shell_create_prompt_write_time_conflict_recovers_on_reload(tmp_path):
+    """Task 8b Fix wave 1: the CREATE flow (``_selected_prompt_id`` is
+    ``None``) must recover from a genuine write-time ``ConflictError`` the
+    same way the update flow does above -- NOT silently no-op both
+    Overwrite and Reload just because ``prompt_id`` happens to be the
+    create-flow's ``None`` sentinel.
+
+    Regression for the finding: ``_resolve_library_prompt_conflict``'s
+    ``if not prompt_id or ...: return`` guard treated a create's ``None``
+    prompt_id as "nothing to resolve" and returned immediately for BOTH
+    buttons, so ``_library_prompt_dirty`` was never cleared either --
+    ``flush_pending_work`` (and therefore Back/rail-row/prompt-row/app-tab
+    navigation) then vetoed forever, trapping the user in the editor with
+    no in-app recovery.
+    """
+    db, service = _real_prompt_scope_service(tmp_path)
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    original_save_prompt = service.save_prompt
+    calls = {"count": 0}
+
+    async def _raise_once_then_delegate(**kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise ConflictError("Prompt 'Brand New' already exists.")
+        return await original_save_prompt(**kwargs)
+
+    service.save_prompt = _raise_once_then_delegate
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one(f"#library-row-{LIBRARY_ROW_CREATE_PROMPT}").press()
+        await _wait_for_selector(screen, pilot, "#library-prompt-name")
+
+        screen.query_one("#library-prompt-name", Input).value = "Brand New"
+        await pilot.pause()
+        screen.query_one("#library-prompt-user", TextArea).text = "Hello {name}"
+        await pilot.pause()
+        screen.query_one("#library-prompt-save", Button).press()
+        await pilot.pause()
+        for _ in range(150):
+            if len(screen.query("#library-prompt-conflict-overwrite")) > 0:
+                break
+            await pilot.pause(0.02)
+
+        assert calls["count"] == 1
+        assert screen._selected_prompt_id is None
+        assert screen.query_one("#library-prompt-conflict-overwrite", Button)
+        assert screen.query_one("#library-prompt-conflict-reload", Button)
+        # The trap the finding describes: dirty stuck true, so every other
+        # exit is vetoed too -- assert it up front so a regression here is
+        # unambiguous, not just inferred from the buttons doing nothing.
+        assert screen._library_prompt_dirty is True
+
+        screen.query_one("#library-prompt-conflict-reload", Button).press()
+        await pilot.pause()
+        for _ in range(150):
+            if len(screen.query("#library-prompt-conflict-overwrite")) == 0:
+                break
+            await pilot.pause(0.02)
+
+        # Reload must land on a usable, blank create state -- not a
+        # permanently stuck banner -- and must clear the dirty flag so
+        # navigation is no longer vetoed.
+        assert len(screen.query("#library-prompt-conflict-overwrite")) == 0
+        assert screen._library_prompt_conflict_snapshot is None
+        assert screen._library_prompt_dirty is False
+        assert screen.query_one("#library-prompt-name", Input).value == ""
+        assert screen.query_one("#library-prompt-user", TextArea).text == ""
+
+        allowed = await screen.flush_pending_work()
+        assert allowed is True
+
+        # The colliding name was never actually persisted under this
+        # editor session -- only one prompt (the pre-existing "Brand New"
+        # implied by the monkeypatched race) may exist, and this session's
+        # own record was correctly abandoned rather than double-written.
+        assert calls["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_library_shell_create_prompt_write_time_conflict_overwrite_retries_create(tmp_path):
+    """Task 8b Fix wave 1: Overwrite on a CREATE-flow conflict retries the
+    create with the kept text (rather than the update path's "re-save
+    against a fresh version", which a not-yet-persisted record has none
+    of) -- once the monkeypatch's single-raise budget is spent, the retry
+    delegates to the real write and the prompt is actually persisted.
+    """
+    db, service = _real_prompt_scope_service(tmp_path)
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    original_save_prompt = service.save_prompt
+    calls = {"count": 0}
+
+    async def _raise_once_then_delegate(**kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise ConflictError("Prompt 'Brand New' already exists.")
+        return await original_save_prompt(**kwargs)
+
+    service.save_prompt = _raise_once_then_delegate
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one(f"#library-row-{LIBRARY_ROW_CREATE_PROMPT}").press()
+        await _wait_for_selector(screen, pilot, "#library-prompt-name")
+
+        screen.query_one("#library-prompt-name", Input).value = "Brand New"
+        await pilot.pause()
+        screen.query_one("#library-prompt-user", TextArea).text = "Hello {name}"
+        await pilot.pause()
+        screen.query_one("#library-prompt-save", Button).press()
+        await pilot.pause()
+        for _ in range(150):
+            if len(screen.query("#library-prompt-conflict-overwrite")) > 0:
+                break
+            await pilot.pause(0.02)
+
+        assert calls["count"] == 1
+        assert screen._selected_prompt_id is None
+
+        screen.query_one("#library-prompt-conflict-overwrite", Button).press()
+        await pilot.pause()
+        for _ in range(150):
+            if len(screen.query("#library-prompt-conflict-overwrite")) == 0:
+                break
+            await pilot.pause(0.02)
+
+        assert calls["count"] == 2
+        assert len(screen.query("#library-prompt-conflict-overwrite")) == 0
+        assert screen._library_prompt_dirty is False
+        assert screen._selected_prompt_id is not None
+        persisted = db.fetch_prompt_details(screen._selected_prompt_id)
+        assert persisted is not None
+        assert persisted["name"] == "Brand New"
+        assert persisted["user_prompt"] == "Hello {name}"
+
+        allowed = await screen.flush_pending_work()
+        assert allowed is True
+
+
+@pytest.mark.asyncio
 async def test_library_prompt_flush_pending_work_vetoes_dirty_editor(tmp_path):
     db, service = _real_prompt_scope_service(tmp_path)
     prompt_id, _uuid, _msg = db.add_prompt(name="Zeta", author="A", details="d", user_prompt="x")
@@ -1736,6 +1888,63 @@ async def test_library_prompt_open_existing_button_shows_only_in_name_in_use_sta
         assert screen.query_one("#library-prompt-name", Input).value == "Alpha"
         assert screen.query_one("#library-prompt-details", Input).value == "d-alpha"
         assert len(screen.query("#library-prompt-open-existing")) == 0
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_open_existing_resolves_offending_name_not_drifted_field(
+    tmp_path,
+):
+    """Task 8b Fix wave 1 (Minor): once the name-in-use status is showing,
+    "Open existing" stays mounted even if the user keeps typing in the
+    Name field without re-saving -- it must still resolve against the
+    name that actually collided ("Alpha"), not whatever text is currently
+    sitting in the (drifted, never re-saved) Name field."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    alpha_id, _uuid, _msg = db.add_prompt(name="Alpha", author="A", details="d-alpha", user_prompt="x")
+    beta_id, _uuid, _msg = db.add_prompt(name="Beta", author="B", details="d-beta", user_prompt="y")
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, beta_id)
+
+        screen.query_one("#library-prompt-name", Input).value = "Alpha"
+        await pilot.pause()
+        screen.query_one("#library-prompt-save", Button).press()
+        await pilot.pause()
+        await _wait_for_prompt_status(screen, pilot)
+        for _ in range(150):
+            if len(screen.query("#library-prompt-open-existing")) > 0:
+                break
+            await pilot.pause(0.02)
+        assert screen._library_prompt_name_in_use == "Alpha"
+
+        # Drift: the user keeps editing the Name field to something that
+        # collides with NEITHER prompt, without pressing Save again -- the
+        # status/button never clear (nothing re-checks on plain typing).
+        screen.query_one("#library-prompt-name", Input).value = "Not A Real Prompt"
+        await pilot.pause()
+        assert len(screen.query("#library-prompt-open-existing")) > 0
+
+        screen.query_one("#library-prompt-open-existing", Button).press()
+        await pilot.pause()
+        for _ in range(150):
+            if screen._selected_prompt_id == alpha_id:
+                break
+            await pilot.pause(0.02)
+
+        # Resolves to the prompt that ACTUALLY collided ("Alpha"), not a
+        # failed/empty lookup for the drifted "Not A Real Prompt" text.
+        assert screen._selected_prompt_id == alpha_id
+        for _ in range(150):
+            if screen.query_one("#library-prompt-name", Input).value == "Alpha":
+                break
+            await pilot.pause(0.02)
+        assert screen.query_one("#library-prompt-name", Input).value == "Alpha"
 
 
 @pytest.mark.asyncio

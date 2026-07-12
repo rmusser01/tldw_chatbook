@@ -657,6 +657,13 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompt_dirty: bool = False
         self._library_prompt_status: str = ""
         self._library_prompt_conflict_snapshot: PromptEditorState | None = None
+        # Task 8b Fix wave 1 (Minor): the exact name that triggered the
+        # current "name-in-use" status, captured at the moment that status
+        # is set -- NOT re-derived from the live Name field at "Open
+        # existing" time, which can have drifted (the user can keep typing
+        # after a failed Save without re-saving) from the name that
+        # actually collided. See ``_open_library_prompt_colliding_with_current_name``.
+        self._library_prompt_name_in_use: str = ""
         # Toolbar Import… state (Task 5): a path Input (file OR folder)
         # inlined below the sort/Import…/Export… toolbar, worker-executed
         # on Run/Enter. See ``_run_library_prompts_import``.
@@ -6502,14 +6509,22 @@ class LibraryScreen(BaseAppScreen):
             for button in existing:
                 await button.remove()
 
-    async def _apply_library_prompt_save_outcome(self, outcome: str) -> None:
+    async def _apply_library_prompt_save_outcome(self, outcome: str, *, name: str = "") -> None:
         """Set the save-status text for a classified outcome AND sync the
         D3 Open-existing affordance to match it, together (no recompose --
         see ``_sync_library_prompt_open_existing_button``'s docstring).
 
         Args:
             outcome: A ``classify_prompt_save_error`` return value.
+            name: The attempted name that produced this outcome. Only
+                meaningful (and only stashed) when ``outcome ==
+                "name-in-use"`` -- captured here, at the moment the status
+                is set, rather than re-derived later from the live Name
+                field by ``_open_library_prompt_colliding_with_current_name``,
+                which can have drifted if the user keeps typing after a
+                failed Save without re-saving (Task 8b Fix wave 1 Minor).
         """
+        self._library_prompt_name_in_use = name if outcome == "name-in-use" else ""
         self._update_library_prompt_status_static(
             LIBRARY_PROMPT_SAVE_STATUS_COPY.get(outcome, LIBRARY_PROMPT_SAVE_STATUS_COPY["error"])
         )
@@ -6628,7 +6643,7 @@ class LibraryScreen(BaseAppScreen):
                     outcome = classify_prompt_save_error(
                         None, f"Prompt '{name}' already exists.", None
                     )
-                await self._apply_library_prompt_save_outcome(outcome)
+                await self._apply_library_prompt_save_outcome(outcome, name=name)
                 return
 
         if not is_create:
@@ -6700,7 +6715,7 @@ class LibraryScreen(BaseAppScreen):
                     keywords_text=raw_keywords_text,
                 )
                 return
-            await self._apply_library_prompt_save_outcome(outcome)
+            await self._apply_library_prompt_save_outcome(outcome, name=name)
             return
 
         if prompt_id != self._selected_prompt_id or self._library_prompts_view != "editor":
@@ -7139,16 +7154,32 @@ class LibraryScreen(BaseAppScreen):
         )
 
     async def _open_library_prompt_colliding_with_current_name(self) -> None:
-        """Resolve the editor's live Name field to its colliding prompt and
-        open it, replacing the current unsaved edit.
+        """Resolve the name that triggered the name-in-use status to its
+        colliding prompt and open it, replacing the current unsaved edit.
+
+        Task 8b Fix wave 1 (Minor): resolves against
+        ``_library_prompt_name_in_use`` -- the exact name captured when the
+        status was set (see ``_apply_library_prompt_save_outcome`` and
+        ``_return_to_library_prompt_create_draft``) -- rather than
+        re-reading the editor's live Name field. The two can drift: this
+        button (``show_open_existing``) stays mounted for as long as the
+        status line reads name-in-use, but nothing clears that status if
+        the user keeps typing in the Name field without re-saving, so a
+        live re-read could resolve (or fail to resolve) against a name the
+        user has since changed their mind about, not the one that actually
+        collided. Falls back to the live field only if the captured name
+        is unset, for robustness against any future caller that reaches
+        this without going through the two capture points above.
 
         Args:
             None.
         """
-        fields = self._read_library_prompt_editor_fields()
-        if fields is None:
-            return
-        name = self._sanitize_media_field(fields[0], max_length=300)
+        name = self._library_prompt_name_in_use
+        if not name:
+            fields = self._read_library_prompt_editor_fields()
+            if fields is None:
+                return
+            name = self._sanitize_media_field(fields[0], max_length=300)
         if not name:
             return
         service = getattr(self.app_instance, "prompt_scope_service", None)
@@ -7200,11 +7231,33 @@ class LibraryScreen(BaseAppScreen):
         Either path falls back to the list view when the re-fetch
         discovers the prompt was deleted elsewhere entirely.
 
+        Task 8b Fix wave 1: ``prompt_id is None`` here is the CREATE-flow
+        sentinel (``_enter_library_prompt_create_editor``), not a "nothing
+        to resolve" state -- a create's own write can raise a genuine
+        ``ConflictError`` too (``_save_library_prompt``'s create-path
+        write, racing another writer for the same name), which routes
+        into this same conflict banner. That case has no existing row of
+        its own to re-fetch a version from or overwrite, so it is
+        delegated to ``_resolve_library_prompt_create_conflict`` instead
+        of falling through this method's update-path body (which assumes
+        a real, previously-persisted ``prompt_id`` throughout). Previously
+        this method's guard (``if not prompt_id: return``) treated the
+        create sentinel as a no-op for BOTH buttons, which also never
+        cleared ``_library_prompt_dirty`` -- permanently trapping the user
+        behind the conflict banner (``_flush_library_prompt_save`` vetoes
+        Back/rail-row/prompt-row/app-tab navigation while dirty).
+
         Args:
             overwrite: ``True`` for Overwrite, ``False`` for Reload.
         """
+        snapshot = self._library_prompt_conflict_snapshot
+        if snapshot is None:
+            return
         prompt_id = self._selected_prompt_id
-        if not prompt_id or self._library_prompt_conflict_snapshot is None:
+        if prompt_id is None:
+            await self._resolve_library_prompt_create_conflict(
+                overwrite=overwrite, snapshot=snapshot
+            )
             return
         service = getattr(self.app_instance, "prompt_scope_service", None)
         get_prompt = getattr(service, "get_prompt", None)
@@ -7318,6 +7371,180 @@ class LibraryScreen(BaseAppScreen):
         # the Input/TextArea fields -- disarm first (mirroring every other
         # recompose in this editor) so their spurious mount-time `Changed`
         # is not mistaken for a fresh edit.
+        self._library_prompt_editor_armed = False
+        if self.is_mounted:
+            self.refresh(recompose=True)
+            self.call_after_refresh(self._arm_library_prompt_editor)
+
+    async def _resolve_library_prompt_create_conflict(
+        self, *, overwrite: bool, snapshot: PromptEditorState
+    ) -> None:
+        """Resolve a save conflict raised by the CREATE flow's own write.
+
+        Unlike ``_resolve_library_prompt_conflict``'s update-path handling
+        (which re-fetches ITS row's fresh version to overwrite against, or
+        to reload from), a create has no existing row of its own -- the
+        ``ConflictError`` here means some OTHER prompt now holds the name
+        the user typed (a genuine race ``_save_library_prompt``'s
+        pre-check could not see; see that method's create-path ``except``
+        branch). So there is nothing to re-fetch; recovery is built
+        entirely from ``snapshot``, the conflict banner's kept text:
+
+        * ``overwrite=True``: retries the create with the kept text,
+          unchanged. A repeat "conflict" outcome re-shows this same
+          banner (never a silent no-op); any other outcome (e.g.
+          "name-in-use", "soft-deleted-name", or a generic error) returns
+          to a plain, editable create draft with the kept text still in
+          the fields and an honest status line -- the failed attempt
+          remains open for the user to fix and re-save, exactly like a
+          fresh create's own first-attempt failure.
+        * ``overwrite=False``: abandons the kept text and returns to a
+          fresh, blank create editor (mirrors
+          ``_enter_library_prompt_create_editor``) -- the closest analog
+          to Reload for a record that was never actually saved to reload
+          FROM.
+
+        Both paths clear ``_library_prompt_dirty``/the conflict snapshot,
+        so ``_flush_library_prompt_save`` stops vetoing Back/rail-row/
+        prompt-row/app-tab navigation -- the trap the finding described.
+
+        Args:
+            overwrite: ``True`` for Overwrite, ``False`` for Reload.
+            snapshot: The conflict banner's kept editor state (the
+                create attempt's live field values at Save time).
+        """
+        if not overwrite:
+            self._enter_library_prompt_create_editor()
+            if self.is_mounted:
+                self.refresh(recompose=True)
+                self.call_after_refresh(self._arm_library_prompt_editor)
+            return
+
+        service = getattr(self.app_instance, "prompt_scope_service", None)
+        save_prompt = getattr(service, "save_prompt", None)
+        if not callable(save_prompt):
+            return
+
+        name = self._sanitize_media_field(snapshot.name, max_length=300)
+        author = self._sanitize_media_field(snapshot.author, max_length=200)
+        details = self._sanitize_note_content(snapshot.details, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS)
+        system_prompt = self._sanitize_note_content(
+            snapshot.system_prompt, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS
+        )
+        user_prompt = self._sanitize_note_content(
+            snapshot.user_prompt, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS
+        )
+        keywords = self._library_note_keywords_from_input(snapshot.keywords_csv)
+
+        try:
+            result = await self._run_library_service_call(
+                save_prompt,
+                mode="local",
+                prompt_identifier=None,
+                name=name,
+                author=author,
+                details=details,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                keywords=keywords,
+                isolate_in_worker=True,
+            )
+        except Exception as exc:
+            logger.opt(exception=True).warning(
+                "Library prompt create-retry failed after a save conflict."
+            )
+            if self._library_prompt_conflict_snapshot is not snapshot:
+                return  # The user navigated away while the retry was in flight.
+            outcome = classify_prompt_save_error(None, str(exc), exc)
+            if outcome == "conflict":
+                # Still colliding -- keep the banner up (same kept text)
+                # rather than a silent no-op for the button just pressed.
+                self._enter_library_prompt_conflict(
+                    name=snapshot.name,
+                    author=snapshot.author,
+                    details=snapshot.details,
+                    system_prompt=snapshot.system_prompt,
+                    user_prompt=snapshot.user_prompt,
+                    keywords_text=snapshot.keywords_csv,
+                )
+                return
+            self._return_to_library_prompt_create_draft(snapshot, outcome)
+            return
+
+        if self._library_prompt_conflict_snapshot is not snapshot:
+            return  # The user navigated away while the retry was in flight.
+
+        result_id = result.get("local_id") if isinstance(result, Mapping) else (1 if result else None)
+        outcome = classify_prompt_save_error(result_id, "", None)
+        if outcome != "ok":
+            self._return_to_library_prompt_create_draft(snapshot, outcome)
+            return
+
+        new_id = result_id
+        version = result.get("version") if isinstance(result, Mapping) else None
+        self._library_prompt_version = version if version is not None else 1
+        patched_detail: dict[str, Any] = {
+            "id": new_id,
+            "name": name,
+            "author": author,
+            "details": details,
+            "system_prompt": system_prompt,
+            "user_prompt": user_prompt,
+            "version": self._library_prompt_version,
+        }
+        if isinstance(result, Mapping) and "keywords" in result:
+            patched_detail["keywords"] = result["keywords"]
+        elif keywords is not None:
+            patched_detail["keywords"] = keywords
+        self._library_prompt_detail = patched_detail
+        self._library_prompt_original_name = name
+        self._selected_prompt_id = new_id
+        self._library_prompt_conflict_snapshot = None
+        self._library_prompt_dirty = False
+        self._library_prompt_status = LIBRARY_PROMPT_SAVE_STATUS_COPY["ok"]
+        self._library_prompt_editor_armed = False
+        # Mirrors `_save_library_prompt`'s own create-success branch: a
+        # brand-new prompt changes the list's membership/count, so the
+        # Prompts rail badge/list must pick up the new row now.
+        self._refresh_local_source_snapshot()
+        if self.is_mounted:
+            self.refresh(recompose=True)
+            self.call_after_refresh(self._arm_library_prompt_editor)
+
+    def _return_to_library_prompt_create_draft(self, snapshot: PromptEditorState, outcome: str) -> None:
+        """Return from the create-conflict banner to a plain, editable draft.
+
+        Reached when an Overwrite retry (``_resolve_library_prompt_create_conflict``)
+        fails with anything other than a repeat "conflict" -- keeps the
+        user's kept text visible and editable (never silently discarded)
+        with an honest status line, instead of leaving the conflict
+        banner's buttons a dead end.
+
+        Args:
+            snapshot: The conflict banner's kept editor state.
+            outcome: A ``classify_prompt_save_error`` return value (never
+                ``"ok"`` -- callers only reach this on a failed retry).
+        """
+        self._library_prompt_detail = {
+            "name": snapshot.name,
+            "author": snapshot.author,
+            "details": snapshot.details,
+            "system_prompt": snapshot.system_prompt,
+            "user_prompt": snapshot.user_prompt,
+            "keywords": snapshot.keywords_csv,
+        }
+        self._library_prompt_original_name = ""
+        self._library_prompt_version = None
+        self._library_prompt_conflict_snapshot = None
+        self._library_prompt_dirty = True
+        self._library_prompt_status = LIBRARY_PROMPT_SAVE_STATUS_COPY.get(
+            outcome, LIBRARY_PROMPT_SAVE_STATUS_COPY["error"]
+        )
+        # Task 8b Fix wave 1 (Minor): captured here too, same as
+        # `_apply_library_prompt_save_outcome`, so "Open existing" (if this
+        # outcome is "name-in-use") resolves against the name that actually
+        # collided rather than whatever the Name field holds later.
+        self._library_prompt_name_in_use = snapshot.name if outcome == "name-in-use" else ""
         self._library_prompt_editor_armed = False
         if self.is_mounted:
             self.refresh(recompose=True)
