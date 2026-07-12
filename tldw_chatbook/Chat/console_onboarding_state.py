@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlparse
 
+from tldw_chatbook.Chat.console_provider_endpoints import safe_endpoint_display
 from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsReadiness
+from tldw_chatbook.Chat.provider_catalog import provider_display_name
 
 CONSOLE_SETUP_CARD_TITLE = "Get started"
 CONSOLE_READY_EMPTY_COPY = "Ready — type a message to begin."
@@ -43,6 +46,87 @@ class ConsoleSetupCardState:
     mode: str
     steps: tuple[ConsoleSetupStep, ...] = ()
     body_copy: str = ""
+
+
+@dataclass(frozen=True)
+class ConsoleDetectedServerAction:
+    """Secondary setup-card affordance for an auto-detected local server."""
+
+    label: str
+    tooltip: str
+    provider_key: str
+    base_url: str
+    model_id: str | None = None
+
+
+def _detected_server_host_display(base_url: str) -> str:
+    """Return a compact credential-free ``host:port`` label for card copy.
+
+    Args:
+        base_url: Detected server base URL.
+
+    Returns:
+        The endpoint display with any http(s) scheme prefix removed.
+    """
+    display = safe_endpoint_display(base_url)
+    for prefix in ("http://", "https://"):
+        if display.startswith(prefix):
+            return display[len(prefix):]
+    return display
+
+
+def build_console_detected_server_action(
+    server: Any,
+    *,
+    card_mode: str,
+) -> ConsoleDetectedServerAction | None:
+    """Build the detected-local-server card affordance, if one applies.
+
+    Args:
+        server: Discovery result with ``provider_key``, ``base_url``, and
+            ``model_ids`` attributes (``DiscoveredLocalServer``), or ``None``.
+        card_mode: Current ``ConsoleSetupCardState.mode``; the affordance only
+            exists while the blocking ``card`` is showing.
+
+    Returns:
+        The action (label, tooltip, and the values to persist) or ``None``
+        when no detected server should be offered.
+    """
+    if server is None or card_mode != "card":
+        return None
+    provider_key = str(getattr(server, "provider_key", "") or "").strip()
+    base_url = str(getattr(server, "base_url", "") or "").strip()
+    if not provider_key or not base_url:
+        return None
+    try:
+        hostname = (urlparse(base_url).hostname or "").lower()
+    except ValueError:
+        return None
+    if hostname not in {"127.0.0.1", "localhost"}:
+        # The card only ever offers loopback servers; anything else means the
+        # discovery filter was bypassed and the offer is dropped, not shown.
+        return None
+    host_display = _detected_server_host_display(base_url)
+    if not host_display or host_display == "invalid endpoint":
+        return None
+    display_name = provider_display_name(provider_key)
+    model_ids = tuple(
+        model_id
+        for model_id in (getattr(server, "model_ids", ()) or ())
+        if isinstance(model_id, str) and model_id.strip()
+    )
+    model_id = model_ids[0].strip() if model_ids else None
+    if model_id:
+        tooltip = f"Sets provider to {display_name} at {host_display} and model to {model_id}."
+    else:
+        tooltip = f"Sets provider to {display_name} at {host_display}. Pick a model next."
+    return ConsoleDetectedServerAction(
+        label=f"Use detected {display_name} ({host_display})",
+        tooltip=tooltip,
+        provider_key=provider_key,
+        base_url=base_url,
+        model_id=model_id,
+    )
 
 
 def coerce_console_first_send_completed(raw: Any) -> bool:

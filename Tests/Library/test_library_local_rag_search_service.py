@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import sqlite3
 from types import SimpleNamespace
 
 import pytest
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+from tldw_chatbook.Library.library_fts_query import build_fts_match_query, expand_keyword_term
 from tldw_chatbook.Library.library_local_rag_search_service import LibraryLocalRagSearchService
 from tldw_chatbook.Library.library_rag_service import (
     LibraryRagSearchOutcome,
@@ -16,6 +18,8 @@ from tldw_chatbook.Library.library_rag_service import (
 )
 from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingService
 from tldw_chatbook.Media.media_reading_scope_service import MediaReadingScopeService
+from tldw_chatbook.Notes.Notes_Library import NotesInteropService
+from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
 
 
 class FakeNotesScopeService:
@@ -36,8 +40,17 @@ class FakeNotesScopeService:
         user_id=None,
         workspace_id=None,
         workspace_notes=None,
+        fts_match_query=None,
     ):
-        self.calls.append({"scope": scope, "query": query, "limit": limit, "user_id": user_id})
+        self.calls.append(
+            {
+                "scope": scope,
+                "query": query,
+                "limit": limit,
+                "user_id": user_id,
+                "fts_match_query": fts_match_query,
+            }
+        )
         if self.error is not None:
             raise self.error
         return self.rows
@@ -180,7 +193,12 @@ async def test_notes_keyword_search_keeps_the_plain_query_unchanged():
 
     await service.search('operator "said', ("notes",), "search", top_k=5)
 
-    assert notes_service.calls[0]["query"] == 'operator "said'
+    call = notes_service.calls[0]
+    assert call["query"] == 'operator "said'
+    # (task-185) The seam also receives the pre-built widened MATCH string:
+    # alphabetic terms become OR-groups; the quote-bearing term stays a
+    # doubled-quote-escaped literal, never bare FTS5 syntax.
+    assert call["fts_match_query"] == '("operator" OR "operators") AND """said"'
 
 
 @pytest.mark.asyncio
@@ -550,3 +568,158 @@ def test_conversation_row_secondary_line_pluralizes_message_count():
     assert many["snippet"] == "Matched conversation · 8 messages"
     assert missing["snippet"] == "Matched conversation · 0 messages"
     assert malformed["snippet"] == "Matched conversation · 0 messages"
+
+
+# --- task-185: keyword search plural/singular variant widening ------------
+# FTS5 unicode61 has no stemming, so "feedback loop" never matched a note
+# containing "feedback loops." (live UAT). `build_fts_match_query` widens each
+# alphabetic term (length >= 3) into an OR-group of naive variants while
+# keeping every user token a quoted FTS5 string literal.
+
+
+def test_expand_keyword_term_singular_gains_plural():
+    assert expand_keyword_term("loop") == ("loop", "loops")
+    assert expand_keyword_term("feedback") == ("feedback", "feedbacks")
+
+
+def test_expand_keyword_term_plural_loses_trailing_s():
+    assert expand_keyword_term("loops") == ("loops", "loop")
+
+
+def test_expand_keyword_term_ies_and_y_swap_both_directions():
+    assert expand_keyword_term("stories") == ("stories", "story")
+    assert "stories" in expand_keyword_term("story")
+
+
+def test_expand_keyword_term_es_endings_both_directions():
+    assert "box" in expand_keyword_term("boxes")
+    assert "boxes" in expand_keyword_term("box")
+
+
+def test_expand_keyword_term_short_numeric_and_nonalpha_terms_pass_through():
+    assert expand_keyword_term("ab") == ("ab",)
+    assert expand_keyword_term("42") == ("42",)
+    assert expand_keyword_term("foo-bar") == ("foo-bar",)
+    assert expand_keyword_term('say"s') == ('say"s',)
+
+
+def test_build_fts_match_query_is_an_and_of_or_groups():
+    assert (
+        build_fts_match_query("feedback loop")
+        == '("feedback" OR "feedbacks") AND ("loop" OR "loops")'
+    )
+
+
+def test_build_fts_match_query_quotes_short_and_nonalpha_terms_verbatim():
+    assert build_fts_match_query("at foo-bar 42") == '"at" AND "foo-bar" AND "42"'
+
+
+@pytest.mark.parametrize(
+    "hostile",
+    [
+        'operator "said',
+        "NEAR(a b)",
+        "loop) OR (x",
+        '" OR 1=1 --',
+        "content:loop",
+        "*wildcard ^caret",
+        "a AND b OR c NOT d",
+        "[bracket {brace",
+    ],
+)
+def test_build_fts_match_query_output_is_safe_against_a_real_fts5_table(hostile):
+    """FTS5-hostile input must never raise an FTS5 query-syntax error."""
+    conn = sqlite3.connect(":memory:")
+    try:
+        conn.execute("CREATE VIRTUAL TABLE probe USING fts5(content)")
+        conn.execute("INSERT INTO probe(content) VALUES ('feedback loops everywhere')")
+        match = build_fts_match_query(hostile)
+        conn.execute("SELECT content FROM probe WHERE probe MATCH ?", (match,)).fetchall()
+    finally:
+        conn.close()
+
+
+def test_build_fts_match_query_keeps_user_supplied_or_literal_not_an_operator():
+    conn = sqlite3.connect(":memory:")
+    try:
+        conn.execute("CREATE VIRTUAL TABLE probe USING fts5(content)")
+        conn.execute("INSERT INTO probe(content) VALUES ('feedback loops everywhere')")
+        match = build_fts_match_query("feedback OR missingterm")
+        rows = conn.execute(
+            "SELECT content FROM probe WHERE probe MATCH ?", (match,)
+        ).fetchall()
+    finally:
+        conn.close()
+    # If "OR" leaked through as an operator this would match on "feedback"
+    # alone; as a quoted literal the query demands the token "or" and the
+    # absent "missingterm", so nothing matches.
+    assert rows == []
+
+
+@pytest.fixture
+def real_notes_app(tmp_path):
+    """Real notes seam (NotesScopeService -> NotesInteropService -> FTS DB).
+
+    File-backed on purpose: NotesInteropService re-opens the DB by path per
+    user, so an in-memory DB would hand it a blank schema.
+    """
+    notes_db = CharactersRAGDB(tmp_path / "library_notes_fts.db", client_id="notes-fts")
+    interop = NotesInteropService(
+        base_db_directory=tmp_path / "notes_user_dbs",
+        api_client_id="library-notes-fts-test",
+        global_db_to_use=notes_db,
+    )
+    plural_id = interop.add_note(
+        "library-user", "Retro learnings", "We keep creating feedback loops."
+    )
+    singular_id = interop.add_note(
+        "library-user", "Draft idea", "Sketch one feedback loop for onboarding."
+    )
+    app = SimpleNamespace(
+        notes_scope_service=NotesScopeService(
+            local_notes_service=interop,
+            server_service=None,
+        ),
+        notes_user_id="library-user",
+    )
+    try:
+        yield app, plural_id, singular_id
+    finally:
+        for db in interop._db_instances.values():
+            db.close_connection()
+        notes_db.close_connection()
+
+
+# End-to-end UAT reproduction: a note containing "feedback loops." must be hit
+# by the query "feedback loop" (and the singular note by the plural query).
+@pytest.mark.asyncio
+@pytest.mark.parametrize("query", ["feedback loop", "feedback loops"])
+async def test_notes_keyword_search_matches_plural_and_singular_variants(real_notes_app, query):
+    app, plural_id, singular_id = real_notes_app
+
+    result = await LibraryLocalRagSearchService(app).search(query, ("notes",), "search", top_k=5)
+
+    note_ids = {row["source_id"] for row in result["results"]}
+    assert {plural_id, singular_id} <= note_ids
+
+
+# The media and conversations seams get the same widening: a plural query hits
+# singular content ("reports" -> "report") and vice versa ("unrelated detail"
+# -> "unrelated details") in the shared punctuation-rich fixture text.
+@pytest.mark.asyncio
+@pytest.mark.parametrize("query", ["reports", "unrelated detail"])
+async def test_media_and_conversation_keyword_search_match_plural_singular_variants(
+    real_fts_app, query
+):
+    app, media_id, conversation_id = real_fts_app
+
+    result = await LibraryLocalRagSearchService(app).search(
+        query,
+        ("media", "conversations"),
+        "search",
+        top_k=5,
+    )
+
+    rows_by_type = {row["provenance"]["source_type"]: row for row in result["results"]}
+    assert rows_by_type["media"]["source_id"] == media_id
+    assert rows_by_type["conversation"]["source_id"] == conversation_id

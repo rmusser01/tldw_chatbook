@@ -1,9 +1,15 @@
 from tldw_chatbook.Home.dashboard_state import (
     HOME_FLASHCARDS_DUE_ROW_ID,
+    HOME_RESUME_LATEST_CONTROL_ID,
+    HOME_START_CONVERSATION_CONTROL_ID,
     RUNNING_RUN_STATUS,
     HomeActiveWorkItem,
+    HomeContentSnapshot,
     HomeDashboardInput,
+    apply_home_content_snapshot,
+    build_home_content_counts_line,
     build_home_controls,
+    build_home_resume_control,
     build_home_triage_state,
     categorize_run_status,
     choose_home_selected_item,
@@ -1203,3 +1209,206 @@ def test_canvas_status_detail_truncated_to_140_chars_with_ellipsis():
     assert len(detail_line) == 140
     assert detail_line.endswith("…")
     assert detail_line[:-1] == "x" * 139
+
+
+# --- T190: Home reflects real state (start conversation, counts, resume) ---
+
+
+def test_next_best_action_start_conversation_when_console_ready():
+    state = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        console_ready=True,
+    )
+
+    action = choose_next_best_action(state)
+
+    assert action.action_id == "start_console"
+    assert action.label == "Start a conversation"
+    assert action.target_route == "chat"
+
+
+def test_next_best_action_keeps_start_in_console_without_fresh_readiness():
+    state = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        console_ready=False,
+    )
+
+    action = choose_next_best_action(state)
+
+    assert action.action_id == "start_console"
+    assert action.label == "Start in Console"
+
+
+def test_apply_home_content_snapshot_flips_library_content_on_positive_counts():
+    state = HomeDashboardInput(model_ready=True, has_library_content=False)
+    snapshot = HomeContentSnapshot(
+        console_ready=True,
+        conversation_count=5,
+        note_count=0,
+        media_count=None,
+        resume_kind="conversation",
+        resume_id="conv-1",
+        resume_title="Daily notes chat",
+    )
+
+    merged = apply_home_content_snapshot(state, snapshot)
+
+    assert merged.console_ready is True
+    assert merged.conversation_count == 5
+    assert merged.note_count == 0
+    assert merged.media_count is None
+    assert merged.resume_kind == "conversation"
+    assert merged.resume_id == "conv-1"
+    assert merged.has_library_content is True
+
+
+def test_apply_home_content_snapshot_zero_counts_keep_empty_profile():
+    state = HomeDashboardInput(model_ready=True, has_library_content=False)
+    snapshot = HomeContentSnapshot(
+        console_ready=True,
+        conversation_count=0,
+        note_count=0,
+        media_count=0,
+    )
+
+    merged = apply_home_content_snapshot(state, snapshot)
+
+    assert merged.has_library_content is False
+    assert merged.console_ready is True
+
+
+def test_content_counts_line_includes_only_known_positive_counts():
+    state = HomeDashboardInput(
+        conversation_count=5,
+        note_count=3,
+        media_count=0,
+    )
+
+    line = build_home_content_counts_line(state)
+
+    assert line == "Conversations: 5 · Notes: 3"
+
+
+def test_content_counts_line_blank_for_unknown_or_empty_profile():
+    assert build_home_content_counts_line(HomeDashboardInput()) == ""
+    assert (
+        build_home_content_counts_line(
+            HomeDashboardInput(conversation_count=0, note_count=0, media_count=0)
+        )
+        == ""
+    )
+
+
+def test_resume_control_note_routes_to_library_and_escapes_title():
+    state = HomeDashboardInput(
+        resume_kind="note",
+        resume_id="note-7",
+        resume_title='weird [b="c] note',
+    )
+
+    control = build_home_resume_control(state)
+
+    assert control is not None
+    assert control.control_id == HOME_RESUME_LATEST_CONTROL_ID
+    assert control.target_route == "library"
+    assert control.target_id == "note-7"
+    # User title is markup-escaped exactly once before any Button label.
+    assert control.label == 'Resume note: weird \\[b="c] note'
+
+
+def test_resume_control_conversation_routes_to_chat():
+    state = HomeDashboardInput(
+        resume_kind="conversation",
+        resume_id="conv-9",
+        resume_title="Daily standup chat",
+    )
+
+    control = build_home_resume_control(state)
+
+    assert control is not None
+    assert control.target_route == "chat"
+    assert control.target_id == "conv-9"
+    assert control.label == "Resume conversation: Daily standup chat"
+
+
+def test_resume_control_absent_without_candidate():
+    assert build_home_resume_control(HomeDashboardInput()) is None
+    assert (
+        build_home_resume_control(
+            HomeDashboardInput(resume_kind="note", resume_id="")
+        )
+        is None
+    )
+    assert (
+        build_home_resume_control(
+            HomeDashboardInput(resume_kind="mystery", resume_id="x-1")
+        )
+        is None
+    )
+
+
+def test_triage_idle_canvas_ready_with_content_start_primary_and_counts_line():
+    state = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        console_ready=True,
+        conversation_count=5,
+        note_count=3,
+        media_count=0,
+        resume_kind="conversation",
+        resume_id="conv-9",
+        resume_title="Daily standup chat",
+    )
+
+    triage = build_home_triage_state(state)
+
+    canvas = triage.canvas
+    assert canvas.title == "Start a conversation"
+    assert "Conversations: 5 · Notes: 3" in canvas.lines
+    control_ids = [control.control_id for control in canvas.actions]
+    assert HOME_RESUME_LATEST_CONTROL_ID in control_ids
+    # The next-action button IS the start control here -- no duplicate
+    # home-start-conversation button beside it.
+    assert HOME_START_CONVERSATION_CONTROL_ID not in control_ids
+    assert canvas.primary_control_id == "home-primary-action"
+    assert canvas.next_action_is_canvas is True
+
+
+def test_triage_idle_canvas_ready_empty_offers_start_control_with_import_card():
+    state = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=False,
+        console_ready=True,
+    )
+
+    triage = build_home_triage_state(state)
+
+    canvas = triage.canvas
+    # The import suggestion card is preserved as the next action...
+    assert canvas.title == "Import Library sources"
+    assert canvas.next_action.action_id == "import_sources"
+    # ...with the ready-provider start control beside it, carrying primary.
+    control_ids = [control.control_id for control in canvas.actions]
+    assert control_ids == [HOME_START_CONVERSATION_CONTROL_ID]
+    assert canvas.primary_control_id == HOME_START_CONVERSATION_CONTROL_ID
+    # No counts-of-zeros clutter on an empty profile.
+    assert canvas.lines == ("Library content makes Console and RAG more useful.",)
+
+
+def test_triage_idle_canvas_not_ready_empty_keeps_import_card_only():
+    state = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=False,
+        console_ready=False,
+    )
+
+    triage = build_home_triage_state(state)
+
+    canvas = triage.canvas
+    assert canvas.title == "Import Library sources"
+    assert canvas.actions == ()
+    assert canvas.primary_control_id == ""
+    assert canvas.lines == ("Library content makes Console and RAG more useful.",)
+    assert canvas.next_action_is_canvas is True

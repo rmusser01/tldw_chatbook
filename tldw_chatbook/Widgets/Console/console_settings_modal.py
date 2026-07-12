@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Awaitable, Callable, Mapping
 
 from textual import events
 from textual import on
@@ -18,6 +18,13 @@ from tldw_chatbook.Chat.console_provider_endpoints import (
     first_configured_endpoint,
     normalize_generic_endpoint_for_compare,
 )
+from tldw_chatbook.Chat.local_server_discovery import (
+    normalize_probe_base_url,
+    LocalModelProbeResult,
+    endpoint_display,
+    probe_models_endpoint,
+)
+from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.config import save_settings_to_cli_config
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
@@ -32,6 +39,8 @@ from tldw_chatbook.Chat.console_session_settings import (
     validate_console_session_settings,
 )
 from tldw_chatbook.Utils.input_validation import validate_text_input
+from tldw_chatbook.Utils.input_validation import validate_url
+from rich.markup import escape as escape_markup
 
 
 MODEL_INPUT_PLACEHOLDER = "Enter model id"
@@ -39,6 +48,13 @@ MODAL_BODY_MIN_HEIGHT = 0
 MODAL_CONTROL_HEIGHT = 3
 MODAL_LABEL_WIDTH = 16
 MODEL_CUSTOM_BUTTON_WIDTH = 18
+MODEL_DISCOVER_BUTTON_ID = "console-settings-model-discover"
+MODEL_DISCOVER_STATUS_ID = "console-settings-model-discover-status"
+MODEL_DISCOVER_BUTTON_LABEL = "Discover models"
+MODEL_DISCOVER_BUTTON_WIDTH = 19
+MODEL_DISCOVER_MISSING_URL_COPY = "Enter a base URL to discover models."
+MODEL_DISCOVER_INVALID_URL_COPY = "Enter a valid http(s) endpoint URL to discover models."
+ModelProber = Callable[[str, str], Awaitable[LocalModelProbeResult]]
 STREAMING_TOGGLE_WIDTH = 12
 PROVIDER_CHOICE_INPUT_MAX_LENGTH = 64
 # (label, input id, accepted-values placeholder) - placeholders mirror the
@@ -100,6 +116,20 @@ def _settings_screen_region(widget: Any) -> Any:
         exposes one; otherwise the mounted widget region used by this project.
     """
     return getattr(widget, "screen_region", None) or widget.region
+
+
+async def _default_model_prober(base_url: str, provider_key: str) -> LocalModelProbeResult:
+    """Probe a models endpoint with the shared discovery helper.
+
+    Args:
+        base_url: Endpoint root taken from the current base-URL draft.
+        provider_key: Normalized provider config key (enables the Ollama
+            ``/api/tags`` fallback).
+
+    Returns:
+        The probe result, including honest failure copy on error.
+    """
+    return await probe_models_endpoint(base_url, provider_key=provider_key)
 
 
 class ConsoleSettingsInput(Input):
@@ -180,6 +210,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         context_estimate: ConsoleSettingsContextEstimate,
         can_save: bool,
         focus_model: bool = False,
+        model_prober: ModelProber | None = None,
     ) -> None:
         super().__init__()
         self._settings = settings
@@ -188,6 +219,8 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         self._context_estimate = context_estimate
         self._can_save = can_save
         self._focus_model = focus_model
+        self._model_prober: ModelProber = model_prober or _default_model_prober
+        self._discovered_model_ids: dict[str, tuple[str, ...]] = {}
         self._streaming_draft = bool(settings.streaming)
         self._active_provider = settings.provider
         self._provider_model_drafts: dict[str, str | None] = {}
@@ -297,6 +330,22 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                         model_custom.styles.max_width = MODEL_CUSTOM_BUTTON_WIDTH
                         model_custom.display = has_model_options
                         yield model_custom
+                        supports_discovery = self._provider_supports_model_discovery(
+                            self._settings.provider
+                        )
+                        model_discover = Button(
+                            MODEL_DISCOVER_BUTTON_LABEL,
+                            id=MODEL_DISCOVER_BUTTON_ID,
+                            disabled=not supports_discovery,
+                        )
+                        model_discover.tooltip = (
+                            "List models served at the Base URL (/v1/models)"
+                        )
+                        model_discover.styles.width = MODEL_DISCOVER_BUTTON_WIDTH
+                        model_discover.styles.min_width = MODEL_DISCOVER_BUTTON_WIDTH
+                        model_discover.styles.max_width = MODEL_DISCOVER_BUTTON_WIDTH
+                        model_discover.display = supports_discovery
+                        yield model_discover
                     with Horizontal(classes="console-settings-modal-row"):
                         yield self._modal_label("Base URL")
                         base_url_input = ConsoleSettingsInput(
@@ -307,6 +356,14 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                         )
                         base_url_input.display = uses_base_url
                         yield base_url_input
+                    discover_status = Static(
+                        "",
+                        id=MODEL_DISCOVER_STATUS_ID,
+                        classes="console-settings-modal-row",
+                        markup=False,
+                    )
+                    discover_status.display = False
+                    yield discover_status
 
                 with Vertical(classes="console-settings-modal-section"):
                     yield Static("Sampling", classes="destination-section")
@@ -695,6 +752,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         self._active_provider = provider
         self._sync_model_controls(provider, model)
         self._sync_base_url_control(provider, base_url)
+        self._sync_model_discover_controls(provider)
         self._sync_readiness_display()
 
     @on(Select.Changed, "#console-settings-model-select")
@@ -709,6 +767,107 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
     def _model_custom_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         self._toggle_manual_model_input()
+
+    @staticmethod
+    def _provider_supports_model_discovery(provider: str) -> bool:
+        """Return whether the provider serves an OpenAI-compatible model list."""
+        return provider_config_key(provider) in URL_BASED_PROVIDER_KEYS
+
+    @on(Button.Pressed, f"#{MODEL_DISCOVER_BUTTON_ID}")
+    def _model_discover_pressed(self, event: Button.Pressed) -> None:
+        """Probe the current base-URL draft for its served model list."""
+        event.stop()
+        provider = str(self.query_one("#console-settings-provider", Select).value or "")
+        if not self._provider_supports_model_discovery(provider):
+            return
+        base_url = self._current_base_url_value(provider) or ""
+        if not base_url:
+            self._set_model_discover_status(MODEL_DISCOVER_MISSING_URL_COPY)
+            return
+        normalized_probe_url = normalize_probe_base_url(base_url)
+        # PR #608 review: user-entered endpoint must pass the shared
+        # input_validation boundary before any network use.
+        if normalized_probe_url is None or not validate_url(normalized_probe_url):
+            self._set_model_discover_status(MODEL_DISCOVER_INVALID_URL_COPY)
+            return
+        event.button.disabled = True
+        self._set_model_discover_status(f"Contacting {endpoint_display(base_url)}…")
+        self.run_worker(
+            self._run_model_discovery(provider, base_url),
+            exclusive=True,
+            group="console-settings-model-discovery",
+        )
+
+    async def _run_model_discovery(self, provider: str, base_url: str) -> None:
+        """Run the model probe off the draft URL and apply the outcome.
+
+        Args:
+            provider: Provider draft value at press time.
+            base_url: Base-URL draft at press time.
+        """
+        try:
+            result = await self._model_prober(base_url, provider_config_key(provider))
+        except Exception:
+            result = LocalModelProbeResult(
+                ok=False,
+                base_url=base_url,
+                detail=f"No models endpoint at {endpoint_display(base_url)}.",
+            )
+        self._apply_model_discovery_result(provider, result)
+
+    def _apply_model_discovery_result(
+        self,
+        provider: str,
+        result: LocalModelProbeResult,
+    ) -> None:
+        """Surface a probe outcome: model Select on success, honest copy otherwise.
+
+        Args:
+            provider: Provider the probe was started for; results for a
+                provider the user has since switched away from are dropped.
+            result: Probe outcome from the discovery module.
+        """
+        try:
+            discover = self.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
+        except (NoMatches, QueryError):
+            return
+        discover.disabled = not self._provider_supports_model_discovery(self._active_provider)
+        if provider != self._active_provider:
+            self._set_model_discover_status("")
+            return
+        display = endpoint_display(result.base_url)
+        if not result.ok:
+            self._set_model_discover_status(result.detail or f"No models endpoint at {display}.")
+            return
+        if not result.model_ids:
+            self._set_model_discover_status(f"No models reported at {display}.")
+            return
+        self._discovered_model_ids[provider] = tuple(result.model_ids)
+        self._sync_model_controls(provider, self._current_model_value())
+        count = len(result.model_ids)
+        noun = "model" if count == 1 else "models"
+        self._set_model_discover_status(f"Found {count} {noun} at {display}.")
+        self._sync_readiness_display()
+
+    def _set_model_discover_status(self, text: str) -> None:
+        """Update the inline discovery status line, hiding it when blank."""
+        try:
+            status = self.query_one(f"#{MODEL_DISCOVER_STATUS_ID}", Static)
+        except (NoMatches, QueryError):
+            return
+        status.update(text)
+        status.display = bool(text.strip())
+
+    def _sync_model_discover_controls(self, provider: str) -> None:
+        """Show the discovery affordance only for URL-based providers."""
+        supports_discovery = self._provider_supports_model_discovery(provider)
+        try:
+            discover = self.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
+        except (NoMatches, QueryError):
+            return
+        discover.display = supports_discovery
+        discover.disabled = not supports_discovery
+        self._set_model_discover_status("")
 
     def _sync_readiness_display(self) -> None:
         draft = self._build_draft()
@@ -823,16 +982,36 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         model_input.focus()
 
     def _provider_select_options(self) -> list[tuple[str, str]]:
-        options = [(option.label, option.value) for option in build_console_provider_options(self._providers_models)]
+        """Return provider options labeled with shared catalog display names.
+
+        Option values stay raw provider config keys (task-191); only the
+        rendered labels change, and the ``(WIP)`` marker from the underlying
+        option builder is preserved.
+        """
+        options: list[tuple[str, str]] = []
+        for option in build_console_provider_options(self._providers_models):
+            label = provider_display_name(option.value)
+            if option.label.endswith(" (WIP)"):
+                label = f"{label} (WIP)"
+            options.append((label, option.value))
         if self._settings.provider and self._settings.provider not in {value for _, value in options}:
-            options.append((self._settings.provider, self._settings.provider))
-        return options or [(self._settings.provider, self._settings.provider)]
+            options.append((provider_display_name(self._settings.provider), self._settings.provider))
+        return options or [(provider_display_name(self._settings.provider), self._settings.provider)]
 
     def _model_select_options(self, provider: str, current_model: str | None) -> list[tuple[str, str]]:
-        return [
+        options = [
             (option.label, option.value)
             for option in build_console_model_options(provider, self._providers_models, current_model)
         ]
+        option_values = {value for _, value in options}
+        for model_id in self._discovered_model_ids.get(provider, ()):
+            normalized = normalize_console_model_value(model_id)
+            if normalized and normalized not in option_values:
+                option_values.add(normalized)
+                # Server-supplied text: escape so Rich-markup-like ids cannot
+                # style or spoof the option label (PR #608 review).
+                options.append((escape_markup(normalized), normalized))
+        return options
 
     def _configured_model_select_options(self, provider: str) -> list[tuple[str, str]]:
         return [

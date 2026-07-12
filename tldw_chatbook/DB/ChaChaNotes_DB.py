@@ -6858,11 +6858,25 @@ UPDATE db_schema_version
             logger.opt(exception=True).error(f"Database error soft-deleting note ID {note_id} (expected v{expected_version}): {e}")
             raise
 
-    def search_notes(self, search_term: str, limit: int = 10) -> List[Dict[str, Any]]:
-        """Searches notes_fts (title and content). Corrected JOIN condition."""
+    def search_notes(
+        self,
+        search_term: str,
+        limit: int = 10,
+        fts_match_query: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Searches notes_fts (title and content). Corrected JOIN condition.
+
+        Args:
+            search_term: Plain user search text, matched as a literal phrase.
+            limit: Maximum number of notes to return.
+            fts_match_query: Optional caller-built FTS5 MATCH expression (must
+                already be injection-safe, e.g. Library keyword search's
+                quoted plural/singular-widened query). When provided it
+                replaces the default whole-phrase quoting of `search_term`.
+        """
         # FTS5 requires wrapping terms with special characters in double quotes
         # to be treated as a literal phrase.
-        safe_search_term = f'"{search_term}"'
+        safe_search_term = fts_match_query if fts_match_query else f'"{search_term}"'
 
         query = """
                 SELECT main.*

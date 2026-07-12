@@ -81,8 +81,13 @@ from ...Chat.console_display_state import (
 )
 from ...Chat.console_onboarding_state import (
     ConsoleSetupCardState,
+    build_console_detected_server_action,
     build_console_setup_card_state,
     coerce_console_first_send_completed,
+)
+from ...Chat.local_server_discovery import (
+    DiscoveredLocalServer,
+    discover_local_servers,
 )
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.chat_models import ChatSessionData
@@ -118,6 +123,7 @@ from ...config import (
     get_cli_providers_and_models,
     load_settings,
     save_setting_to_cli_config,
+    save_settings_to_cli_config,
 )
 from ...Library.library_rag_service import (
     LibraryRagSearchRequest,
@@ -165,6 +171,9 @@ from ...Widgets.Console import (
 from ...Widgets.Console.console_model_popover import (
     CONSOLE_POPOVER_OPEN_FULL_SETTINGS,
     ConsoleModelPopover,
+)
+from ...Widgets.Console.console_setup_modal import (
+    CONSOLE_SETUP_MODAL_DETECTED_WORKBENCH_ACTION,
 )
 from ...Widgets.Console.console_rail_section import (
     CONSOLE_RAIL_SECTION_TOGGLE_PREFIX,
@@ -636,6 +645,8 @@ class ChatScreen(BaseAppScreen):
             await self.action_show_workbench_help()
         elif action_id == "provider-recovery":
             await self._open_console_provider_recovery()
+        elif action_id == CONSOLE_SETUP_MODAL_DETECTED_WORKBENCH_ACTION:
+            self._apply_detected_local_server()
 
     async def action_show_workbench_help(self) -> None:
         """Open contextual help for visible Console Workbench actions."""
@@ -1082,6 +1093,8 @@ class ChatScreen(BaseAppScreen):
         self._last_console_rail_state: ConsoleRailState | None = None
         self._console_guidance_dismissed = False
         self._console_first_send_completed_cached: bool | None = None
+        self._console_detected_local_server: DiscoveredLocalServer | None = None
+        self._console_local_discovery_started = False
         self.ui_state = UIState()
         self._load_sidebar_state()
 
@@ -4753,10 +4766,99 @@ class ChatScreen(BaseAppScreen):
             action_label=action_label,
             action_tooltip=action_tooltip,
         )
+        modal.sync_detected_server_action(
+            build_console_detected_server_action(
+                self._console_detected_local_server,
+                card_mode=card_state.mode,
+            )
+        )
         blocking = modal.is_blocking
         self._apply_console_setup_block(blocking)
         if blocking:
+            self._maybe_start_console_local_discovery()
             self.call_after_refresh(modal.focus_primary_action)
+
+    def _maybe_start_console_local_discovery(self) -> None:
+        """Start the one-shot local-server discovery worker while blocked.
+
+        Discovery runs at most once per screen, in its own exclusive worker
+        group so it can never cancel (or be duplicated alongside) the Console
+        UI sync workers. Results only ever add a secondary card affordance;
+        a quiet network stays quiet.
+        """
+        if self._console_local_discovery_started:
+            return
+        self._console_local_discovery_started = True
+        self.run_worker(
+            self._discover_local_servers_for_setup_card(),
+            exclusive=True,
+            group="console-local-server-discovery",
+        )
+
+    async def _discover_local_servers_for_setup_card(self) -> None:
+        """Probe localhost servers and surface the first hit on the card.
+
+        Uses the ``console_local_server_discovery`` app attribute as a test
+        seam when present; otherwise probes via
+        ``local_server_discovery.discover_local_servers`` (localhost-only,
+        short timeout).
+        """
+        discover = getattr(self.app_instance, "console_local_server_discovery", None)
+        if not callable(discover):
+            discover = discover_local_servers
+        try:
+            servers = tuple(await discover(self._provider_readiness_app_config()) or ())
+        except Exception:
+            logger.debug("Console local-server discovery failed", exc_info=True)
+            return
+        if not servers:
+            return
+        self._console_detected_local_server = servers[0]
+        self._sync_console_transcript_guidance()
+
+    def _apply_detected_local_server(self) -> None:
+        """Adopt the detected local server as the Console provider.
+
+        Persists ``chat_defaults.provider``/``model`` and the provider's
+        ``api_settings`` endpoint via ``save_settings_to_cli_config``, then
+        applies the same selection to the active session as an explicit user
+        choice (mirroring the settings-modal apply path) and re-evaluates the
+        setup card from the fresh on-disk config (task-177 mechanics; no
+        boot-time snapshots).
+        """
+        server = self._console_detected_local_server
+        if server is None:
+            return
+        model_id = server.model_ids[0] if server.model_ids else None
+        provider_values: dict[str, object] = {"api_url": server.base_url}
+        chat_defaults: dict[str, object] = {"provider": server.provider_key}
+        if model_id:
+            provider_values["model"] = model_id
+            chat_defaults["model"] = model_id
+        try:
+            saved = save_settings_to_cli_config(
+                {
+                    f"api_settings.{server.provider_key}": provider_values,
+                    "chat_defaults": chat_defaults,
+                }
+            )
+        except Exception:
+            saved = False
+        if not saved:
+            logger.warning(
+                "Could not persist detected local server defaults to config; "
+                "applying to this session only"
+            )
+        settings = build_default_console_session_settings(
+            self._provider_readiness_app_config(),
+            server.provider_key,
+            model_id,
+        )
+        if provider_config_key(settings.provider) in {"llama_cpp", "local_llamacpp"}:
+            settings = replace(settings, base_url=None)
+        self._replace_active_console_session_settings(replace(settings, source="user"))
+        self._sync_console_transcript_guidance()
+        self.run_worker(self._sync_native_console_chat_ui(), exclusive=True)
 
     def _console_setup_modal_blocking(self) -> bool:
         """Return True when the first-run setup modal is covering the workbench."""

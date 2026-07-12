@@ -41,8 +41,8 @@ BROKEN_TEXT_PATTERNS = (
 )
 CORE_FIRST_USE_ROUTES = (
     (TAB_HOME, TAB_HOME, "HomeScreen", ("Home", "Set up Console model")),
-    (TAB_CHAT, TAB_CHAT, "ChatScreen", ("Console", "Live work sources")),
-    (TAB_LIBRARY, TAB_LIBRARY, "LibraryScreen", ("Library", "Search/RAG")),
+    (TAB_CHAT, TAB_CHAT, "ChatScreen", ("Console", "Transcript / Event Stream")),
+    (TAB_LIBRARY, TAB_LIBRARY, "LibraryScreen", ("Library", "Search / RAG")),
     (TAB_SKILLS, TAB_SKILLS, "SkillsScreen", ("Skills", "Agent Skills")),
     (TAB_MCP, TAB_MCP, "MCPScreen", ("MCP", "Unified MCP")),
     (TAB_SETTINGS, TAB_SETTINGS, "SettingsScreen", ("Settings", "Providers & Models")),

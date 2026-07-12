@@ -5,7 +5,11 @@ import pytest
 from textual.app import App
 
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
-from tldw_chatbook.Constants import LIBRARY_NAV_CONTEXT_INGEST, TAB_LIBRARY
+from tldw_chatbook.Constants import (
+    LIBRARY_NAV_CONTEXT_INGEST,
+    LIBRARY_NAV_CONTEXT_NOTE_ID,
+    TAB_LIBRARY,
+)
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Home.active_work_adapter import (
     HomeConsoleLaunch,
@@ -1696,3 +1700,260 @@ async def test_home_recent_only_item_selection_gets_open_details_control():
         # lived in recent_work_items (never active/failed/running/paused).
         await pilot.click("#home-open-details")
         await pilot.pause(HOME_MOUNT_PAUSE)
+
+
+# --- T190: Home reflects real state (start conversation, counts, resume) ---
+
+
+@pytest.mark.asyncio
+async def test_home_ready_idle_canvas_primary_start_conversation_routes_to_console():
+    """AC1+AC2: with the provider verifiably ready over real content, the
+    idle canvas leads with a primary "Start a conversation" control that
+    routes to Console, above a compact real-content counts line."""
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        console_ready=True,
+        conversation_count=5,
+        note_count=3,
+        media_count=0,
+        resume_kind="conversation",
+        resume_id="conv-9",
+        resume_title="Daily standup chat",
+    )
+    seen = []
+    host = HomeHarness(app, seen)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        canvas_title = str(home.query_one("#home-canvas-title").renderable)
+        canvas_lines = str(home.query_one("#home-canvas-lines").renderable)
+        assert "Start a conversation" in canvas_title
+        assert "Conversations: 5 · Notes: 3" in canvas_lines
+        assert "Media" not in canvas_lines
+
+        primary = home.query_one("#home-primary-action")
+        assert "Start a conversation" in str(primary.label)
+        assert primary.has_class("console-action-primary")
+
+        await pilot.click("#home-primary-action")
+        await pilot.pause(HOME_MOUNT_PAUSE)
+
+    assert seen[-1] == "chat"
+
+
+@pytest.mark.asyncio
+async def test_home_resume_latest_note_routes_to_library_notes_editor():
+    """AC3: the newest-note resume row one-clicks into the Library notes
+    editor via the existing note_id navigation-context deep link."""
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        console_ready=True,
+        note_count=2,
+        resume_kind="note",
+        resume_id="note-7",
+        resume_title="Research summary",
+    )
+    seen = []
+    host = HomeHarness(app, seen)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        resume_button = home.query_one("#home-resume-latest")
+        assert "Research summary" in str(resume_button.label)
+
+        await pilot.click("#home-resume-latest")
+        await pilot.pause(HOME_MOUNT_PAUSE)
+
+    assert seen[-1] == TAB_LIBRARY
+    assert host.seen_contexts[-1] == {LIBRARY_NAV_CONTEXT_NOTE_ID: "note-7"}
+
+
+@pytest.mark.asyncio
+async def test_home_resume_latest_conversation_routes_to_console():
+    """AC3: the newest-conversation resume row one-clicks into Console."""
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        console_ready=True,
+        conversation_count=5,
+        resume_kind="conversation",
+        resume_id="conv-9",
+        resume_title="Daily standup chat",
+    )
+    seen = []
+    host = HomeHarness(app, seen)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        resume_button = home.query_one("#home-resume-latest")
+        assert "Daily standup chat" in str(resume_button.label)
+
+        await pilot.click("#home-resume-latest")
+        await pilot.pause(HOME_MOUNT_PAUSE)
+
+    assert seen[-1] == "chat"
+
+
+@pytest.mark.asyncio
+async def test_home_ready_empty_profile_offers_start_conversation_beside_import_card():
+    """AC4: provider ready but no content -> the import suggestion card is
+    kept, with a primary Start-a-conversation control beside it."""
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=False,
+        console_ready=True,
+    )
+    seen = []
+    host = HomeHarness(app, seen)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        canvas_title = str(home.query_one("#home-canvas-title").renderable)
+        assert "Import Library sources" in canvas_title
+        assert "Import Library sources" in str(
+            home.query_one("#home-primary-action").label
+        )
+
+        start_button = home.query_one("#home-start-conversation")
+        assert "Start a conversation" in str(start_button.label)
+        assert start_button.has_class("console-action-primary")
+
+        await pilot.click("#home-start-conversation")
+        await pilot.pause(HOME_MOUNT_PAUSE)
+
+    assert seen[-1] == "chat"
+
+
+@pytest.mark.asyncio
+async def test_home_not_ready_empty_profile_keeps_import_card_only():
+    """AC4: no content AND provider not ready -> the import card exactly as
+    today, with none of the new elements (no zero-count clutter)."""
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=False,
+        console_ready=False,
+        conversation_count=0,
+        note_count=0,
+        media_count=0,
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        canvas_title = str(home.query_one("#home-canvas-title").renderable)
+        canvas_lines = str(home.query_one("#home-canvas-lines").renderable)
+        assert "Import Library sources" in canvas_title
+        assert "Conversations" not in canvas_lines
+        assert "Notes" not in canvas_lines
+        assert len(home.query("#home-start-conversation")) == 0
+        assert len(home.query("#home-resume-latest")) == 0
+
+
+@pytest.mark.asyncio
+async def test_home_resume_control_survives_markup_hostile_title():
+    """Hard repo rule: user titles are escaped before Button labels. A
+    markup-hostile note title must neither crash Home's mount nor render as
+    Rich markup."""
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        console_ready=True,
+        resume_kind="note",
+        resume_id="note-1",
+        resume_title='a [b="c] note',
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        # Reaching this line is the core assertion: an unescaped hostile
+        # title would raise MarkupError during compose/mount.
+        home = _active_home_screen(host)
+
+        resume_button = home.query_one("#home-resume-latest")
+        assert 'a [b="c] note' in str(resume_button.label)
+
+
+@pytest.mark.asyncio
+async def test_home_content_snapshot_uses_library_rail_seams():
+    """AC2 seam contract: counts and the resume candidate come from the SAME
+    scope-service seams the Library rail uses -- count_notes, and the
+    conversation snapshot with scope_type='all' (workspace-scoped Console
+    chats must be counted). Exercises the real snapshot builder against
+    recording fakes mounted on the app seam attributes."""
+    app = _build_test_app()
+    recorded_conversation_kwargs = {}
+
+    class FakeNotesScopeService:
+        async def count_notes(self, *, scope, user_id):
+            assert scope == "local_note"
+            return 3
+
+        async def list_notes(self, *, scope, limit, user_id):
+            assert scope == "local_note"
+            return [
+                {
+                    "id": "note-1",
+                    "title": "Research summary",
+                    "last_modified": "2026-07-10T10:00:00Z",
+                }
+            ]
+
+    class FakeConversationScopeService:
+        async def list_conversations(self, **kwargs):
+            recorded_conversation_kwargs.update(kwargs)
+            return {
+                "items": [
+                    {
+                        "id": "conv-9",
+                        "title": "Daily standup chat",
+                        "last_modified": "2026-07-11T09:00:00Z",
+                    }
+                ],
+                "pagination": {"limit": 1, "offset": 0, "total": 5, "has_more": True},
+            }
+
+    class FakeMediaScopeService:
+        async def list_media_items(self, **kwargs):
+            return {
+                "items": [],
+                "pagination": {"page": 1, "results_per_page": 1, "total_items": 2},
+            }
+
+    app.notes_scope_service = FakeNotesScopeService()
+    app.chat_conversation_scope_service = FakeConversationScopeService()
+    app.media_reading_scope_service = FakeMediaScopeService()
+
+    screen = HomeScreen(app)
+    snapshot = await screen._build_home_content_snapshot()
+
+    assert recorded_conversation_kwargs["scope_type"] == "all"
+    assert recorded_conversation_kwargs["mode"] == "local"
+    assert snapshot.note_count == 3
+    assert snapshot.conversation_count == 5
+    assert snapshot.media_count == 2
+    # The conversation is newer than the note -> it wins the resume slot.
+    assert snapshot.resume_kind == "conversation"
+    assert snapshot.resume_id == "conv-9"
+    assert snapshot.resume_title == "Daily standup chat"
+    # Hermetic test config (no disk-load markers) -> readiness is honored
+    # verbatim and reports not-ready rather than reading the real config.
+    assert snapshot.console_ready is False

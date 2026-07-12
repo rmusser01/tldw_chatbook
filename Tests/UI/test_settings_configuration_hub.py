@@ -6,10 +6,19 @@ from collections import UserDict
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from textual.containers import VerticalScroll
 from textual.events import Key
-from textual.widgets import Button, Input, Select, SelectionList, Static, TextArea
+from textual.widgets import (
+    Button,
+    Collapsible,
+    Input,
+    Select,
+    SelectionList,
+    Static,
+    TextArea,
+)
 
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
@@ -32,6 +41,10 @@ from tldw_chatbook.UI.Screens.settings_config_models import (
     SettingsCategoryId,
     SettingsDraft,
     SettingsValidationResult,
+)
+from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+    SettingsEndpointProbeOutcome,
+    probe_settings_endpoint,
 )
 from tldw_chatbook.ACP_Interop.runtime_session import ACPRuntimeSessionState
 from tldw_chatbook.Chat.console_chat_models import ConsoleWorkspaceContext
@@ -1887,6 +1900,304 @@ async def test_settings_provider_model_defaults_appear_before_reference_copy():
         assert str(title.renderable) == "Selected model defaults"
         assert widgets.index(title) < widgets.index(catalog)
         assert widgets.index(temperature) < widgets.index(catalog)
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_connect_block_precedes_collapsed_generation_defaults():
+    """task-189: Connect (provider/model/endpoint/credentials/test) leads the
+    category; sampling lives in a collapsed Generation defaults disclosure."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        card = screen.query_one("#settings-providers-models-card")
+        widgets = list(card.query("*"))
+        disclosure = card.query_one("#settings-generation-defaults", Collapsible)
+        disclosure_index = widgets.index(disclosure)
+        connect_index = widgets.index(card.query_one("#settings-provider-connect-title"))
+
+        assert disclosure.collapsed is True
+        assert str(disclosure.title) == "Generation defaults"
+
+        for selector in (
+            "#settings-provider-value",
+            "#settings-model-value",
+            "#settings-provider-endpoint-value",
+            "#settings-provider-credential-status",
+            "#settings-provider-api-key",
+            "#settings-provider-api-key-clear",
+            "#settings-provider-credential-env-var",
+            "#settings-provider-readiness",
+            "#settings-test-provider",
+        ):
+            index = widgets.index(card.query_one(selector))
+            assert connect_index < index < disclosure_index, selector
+
+        for selector in (
+            "#settings-selected-model-defaults-title",
+            "#settings-model-profile-temperature",
+            "#settings-model-profile-reasoning-effort",
+            "#settings-model-profile-streaming",
+            "#settings-provider-generation-support",
+        ):
+            field = card.query_one(selector)
+            assert disclosure in field.ancestors, selector
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_unavailable_fields_render_single_summary_line():
+    """task-189: gated fields collapse to one summary line instead of per-row
+    'Unavailable for <provider>' placeholders."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "qwen"}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+
+        summary = screen.query_one("#settings-provider-generation-support", Static)
+        assert (
+            str(summary.renderable)
+            == "Reasoning/Thinking controls: unavailable for llama.cpp."
+        )
+        assert not summary.has_class("settings-gated-profile-hidden")
+        for row_id in (
+            "#settings-model-profile-reasoning-effort-row",
+            "#settings-model-profile-reasoning-summary-row",
+            "#settings-model-profile-verbosity-row",
+            "#settings-model-profile-thinking-effort-row",
+            "#settings-model-profile-thinking-budget-tokens-row",
+        ):
+            assert screen.query_one(row_id).has_class("settings-gated-profile-hidden"), row_id
+        assert "Unavailable for" not in _visible_text(screen)
+
+        # Dynamic provider sync must be idempotent and re-show supported rows.
+        screen._sync_provider_model_profile_widgets("openai", "gpt-4.1")
+        await pilot.pause()
+
+        assert str(summary.renderable) == "Thinking controls: unavailable for OpenAI."
+        assert not screen.query_one("#settings-model-profile-reasoning-effort-row").has_class(
+            "settings-gated-profile-hidden"
+        )
+        assert screen.query_one("#settings-model-profile-thinking-effort-row").has_class(
+            "settings-gated-profile-hidden"
+        )
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_test_toast_folds_in_reachable_endpoint_probe(monkeypatch):
+    """task-191: URL-based providers get a live probe folded into the toast."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "Ollama", "model": "llama3"}
+    app.app_config["api_settings"] = {"ollama": {"api_url": "http://127.0.0.1:11434"}}
+    probe_calls = []
+
+    async def fake_probe(base_url, **kwargs):
+        probe_calls.append(base_url)
+        return SettingsEndpointProbeOutcome(
+            reachable=True,
+            summary="reachable (3 models)",
+            model_count=3,
+        )
+
+    monkeypatch.setattr(settings_screen_module, "probe_settings_endpoint", fake_probe)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        toasts = []
+        host.notify = lambda message, **kwargs: toasts.append((message, kwargs))
+
+        screen.action_settings_test_category(allow_text_entry_focus=True)
+
+        deadline = time.monotonic() + 4.0
+        while time.monotonic() < deadline and not toasts:
+            await pilot.pause(0.01)
+
+        assert probe_calls == ["http://127.0.0.1:11434"]
+        message, kwargs = toasts[-1]
+        assert message == (
+            "Provider test passed: Ollama is ready; model llama3; "
+            "endpoint reachable (3 models)."
+        )
+        assert kwargs.get("severity") == "information"
+        assert "endpoint reachable (3 models)" in screen._provider_test_result
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_test_toast_reports_unreachable_endpoint(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "Ollama", "model": "llama3"}
+    app.app_config["api_settings"] = {"ollama": {"api_url": "http://127.0.0.1:11434"}}
+
+    async def fake_probe(base_url, **kwargs):
+        return SettingsEndpointProbeOutcome(
+            reachable=False,
+            summary="unreachable: connection refused",
+        )
+
+    monkeypatch.setattr(settings_screen_module, "probe_settings_endpoint", fake_probe)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        toasts = []
+        host.notify = lambda message, **kwargs: toasts.append((message, kwargs))
+
+        screen.action_settings_test_category(allow_text_entry_focus=True)
+
+        deadline = time.monotonic() + 4.0
+        while time.monotonic() < deadline and not toasts:
+            await pilot.pause(0.01)
+
+        message, kwargs = toasts[-1]
+        assert message == (
+            "Provider test passed: Ollama is ready; model llama3; "
+            "endpoint unreachable: connection refused."
+        )
+        assert kwargs.get("severity") == "warning"
+        assert "endpoint unreachable: connection refused" in screen._provider_test_result
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_test_skips_probe_for_cloud_providers(monkeypatch):
+    """task-191: key-based cloud providers keep the local-only Test toast."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-a-real-key")
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    probe_calls = []
+
+    async def fake_probe(base_url, **kwargs):
+        probe_calls.append(base_url)
+        return SettingsEndpointProbeOutcome(reachable=True, summary="reachable")
+
+    monkeypatch.setattr(settings_screen_module, "probe_settings_endpoint", fake_probe)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        toasts = []
+        host.notify = lambda message, **kwargs: toasts.append((message, kwargs))
+
+        screen.action_settings_test_category(allow_text_entry_focus=True)
+        await pilot.pause()
+
+        assert probe_calls == []
+        message, kwargs = toasts[-1]
+        assert message == "Provider test passed: OpenAI is ready; model gpt-4.1."
+        assert kwargs.get("severity") == "information"
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_test_failure_skips_endpoint_probe(monkeypatch):
+    """task-191: a failed readiness check keeps the failure toast, no probe."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "Ollama", "model": ""}
+    app.app_config["api_settings"] = {"ollama": {"api_url": "http://127.0.0.1:11434"}}
+    probe_calls = []
+
+    async def fake_probe(base_url, **kwargs):
+        probe_calls.append(base_url)
+        return SettingsEndpointProbeOutcome(reachable=True, summary="reachable")
+
+    monkeypatch.setattr(settings_screen_module, "probe_settings_endpoint", fake_probe)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        toasts = []
+        host.notify = lambda message, **kwargs: toasts.append((message, kwargs))
+
+        screen.action_settings_test_category(allow_text_entry_focus=True)
+        await pilot.pause()
+
+        assert probe_calls == []
+        message, kwargs = toasts[-1]
+        assert message.startswith("Provider test failed:")
+        assert kwargs.get("severity") == "warning"
+
+
+@pytest.mark.asyncio
+async def test_probe_settings_endpoint_counts_models_and_normalizes_path():
+    seen_urls = []
+
+    def handler(request):
+        seen_urls.append(str(request.url))
+        return httpx.Response(
+            200,
+            json={"data": [{"id": "a"}, {"id": "b"}, {"id": "c"}]},
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        outcome = await probe_settings_endpoint(
+            "http://127.0.0.1:9099/v1",
+            http_client=client,
+        )
+    finally:
+        await client.aclose()
+
+    assert seen_urls == ["http://127.0.0.1:9099/v1/models"]
+    assert outcome.reachable is True
+    assert outcome.summary == "reachable (3 models)"
+    assert outcome.model_count == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failure", "expected_summary"),
+    (
+        (httpx.ConnectError("All connection attempts failed"), "unreachable: connection refused"),
+        (httpx.ConnectTimeout("timed out"), "unreachable: timeout"),
+        (httpx.ReadTimeout("timed out"), "unreachable: timeout"),
+        (httpx.RemoteProtocolError("bad response"), "unreachable: connection error"),
+    ),
+)
+async def test_probe_settings_endpoint_maps_transport_failures(failure, expected_summary):
+    def handler(request):
+        raise failure
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        outcome = await probe_settings_endpoint(
+            "http://127.0.0.1:9099",
+            http_client=client,
+        )
+    finally:
+        await client.aclose()
+
+    assert outcome.reachable is False
+    assert outcome.summary == expected_summary
+
+
+@pytest.mark.asyncio
+async def test_probe_settings_endpoint_reports_http_status_and_invalid_url():
+    def handler(request):
+        return httpx.Response(404)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        outcome = await probe_settings_endpoint(
+            "http://127.0.0.1:9099",
+            http_client=client,
+        )
+    finally:
+        await client.aclose()
+
+    assert outcome.reachable is False
+    assert outcome.summary == "unreachable: HTTP 404"
+
+    invalid = await probe_settings_endpoint("")
+    assert invalid.reachable is False
+    assert invalid.summary == "unreachable: invalid endpoint URL"
 
 
 @pytest.mark.asyncio
@@ -3789,9 +4100,16 @@ async def test_settings_provider_category_saves_openai_generation_profile(monkey
             screen.query_one(selector, Input).value = value
 
         text = _visible_text(screen)
-        assert "Thinking unavailable for OpenAI" in text
+        # task-189: gated groups collapse to one summary line; dead rows hide.
+        assert "Thinking controls: unavailable for OpenAI." in text
         assert screen.query_one("#settings-model-profile-thinking-effort", Input).disabled is True
         assert screen.query_one("#settings-model-profile-thinking-budget-tokens", Input).disabled is True
+        assert screen.query_one("#settings-model-profile-thinking-effort-row").has_class(
+            "settings-gated-profile-hidden"
+        )
+        assert not screen.query_one("#settings-model-profile-reasoning-effort-row").has_class(
+            "settings-gated-profile-hidden"
+        )
 
         await pilot.click("#settings-save-category")
 
@@ -3875,10 +4193,17 @@ async def test_settings_provider_category_saves_anthropic_thinking_profile(monke
             screen.query_one(selector, Input).value = value
 
         text = _visible_text(screen)
-        assert "Reasoning unavailable for Anthropic" in text
+        # task-189: gated groups collapse to one summary line; dead rows hide.
+        assert "Reasoning controls: unavailable for Anthropic." in text
         assert screen.query_one("#settings-model-profile-reasoning-effort", Input).disabled is True
         assert screen.query_one("#settings-model-profile-reasoning-summary", Input).disabled is True
         assert screen.query_one("#settings-model-profile-verbosity", Input).disabled is True
+        assert screen.query_one("#settings-model-profile-reasoning-effort-row").has_class(
+            "settings-gated-profile-hidden"
+        )
+        assert not screen.query_one("#settings-model-profile-thinking-effort-row").has_class(
+            "settings-gated-profile-hidden"
+        )
 
         await pilot.click("#settings-save-category")
 

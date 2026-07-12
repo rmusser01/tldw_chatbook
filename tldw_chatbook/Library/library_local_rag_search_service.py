@@ -8,6 +8,7 @@ from typing import Any
 
 from loguru import logger
 
+from tldw_chatbook.Library.library_fts_query import build_fts_match_query
 from tldw_chatbook.Library.library_notes_sync_state import count_noun
 from tldw_chatbook.Library.library_rag_service import LibraryRagSearchOutcome
 from tldw_chatbook.Library.library_rag_state import (
@@ -31,11 +32,6 @@ _SEMANTIC_SOURCE_TYPE_MAP = {
     "conversation": "conversations", "conversations": "conversations",
     "chat": "conversations",
 }
-
-
-def _plain_text_fts_query(query: str) -> str:
-    """Quote whitespace-delimited terms for safe SQLite FTS MATCH input."""
-    return " ".join('"' + term.replace('"', '""') + '"' for term in query.split())
 
 
 def _validated_query(query: str) -> str:
@@ -160,6 +156,10 @@ class LibraryLocalRagSearchService:
                 query=query,
                 limit=top_k,
                 user_id=user_id,
+                # Pre-built MATCH string (plural/singular widened) so the
+                # notes seam is not limited to its exact-phrase fallback --
+                # FTS5 unicode61 has no stemming (task-185 UAT).
+                fts_match_query=build_fts_match_query(query),
             )
         except Exception:
             logger.opt(exception=True).warning("Library keyword search: notes seam failed.")
@@ -181,7 +181,7 @@ class LibraryLocalRagSearchService:
                 query=query,
                 limit=top_k,
                 offset=0,
-                fts_match_query=_plain_text_fts_query(query),
+                fts_match_query=build_fts_match_query(query),
             )
         except Exception:
             logger.opt(exception=True).warning("Library keyword search: media seam failed.")
@@ -198,7 +198,7 @@ class LibraryLocalRagSearchService:
         db = getattr(self._app, "chachanotes_db", None)
         if db is None:
             return False, []
-        fts_query = _plain_text_fts_query(query)
+        fts_query = build_fts_match_query(query)
         try:
             if getattr(db, "is_memory_db", False):
                 # In-memory SQLite connections are thread-local and only the
