@@ -183,6 +183,40 @@ async def test_notes_keyword_search_keeps_the_plain_query_unchanged():
     assert notes_service.calls[0]["query"] == 'operator "said'
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "query",
+    [
+        "<script>alert('unsafe')</script>",
+        "control\x00character",
+        "x" * 2_001,
+    ],
+)
+async def test_public_search_rejects_unsafe_query_before_source_calls(query):
+    notes_service = FakeNotesScopeService(rows=[])
+    service = LibraryLocalRagSearchService(
+        SimpleNamespace(notes_scope_service=notes_service)
+    )
+
+    with pytest.raises(ValueError, match="safe Library search query"):
+        await service.search(query, ("notes",), "search", top_k=5)
+
+    assert notes_service.calls == []
+
+
+@pytest.mark.asyncio
+async def test_public_search_rejects_unsafe_query_before_semantic_service_call():
+    rag_service = FakeRagService()
+    service = LibraryLocalRagSearchService(
+        SimpleNamespace(_rag_service=rag_service)
+    )
+
+    with pytest.raises(ValueError, match="safe Library search query"):
+        await service.search("<script>unsafe</script>", ("notes",), "rag", top_k=5)
+
+    assert rag_service.calls == []
+
+
 # (a) search mode returns note+media+conversation rows with correct source_id/provenance.
 @pytest.mark.asyncio
 async def test_search_mode_returns_rows_from_all_three_sources(conversations_db):
