@@ -1312,13 +1312,17 @@ class LibraryIngestQueueMixin:
         try:
             store = LibraryIngestJobsDB(get_library_ingest_jobs_db_path())
             self._library_ingest_jobs_store = store
-            self.library_ingest_jobs.attach_store(store)
+            # Load + plan BEFORE attaching the store: if a corrupt DB makes
+            # all_jobs()/plan_restore() throw, the registry stays pure in-memory
+            # (store never attached) instead of a live-but-empty store whose
+            # new low-seq submits could clobber surviving rows.
             plan = plan_restore(
                 store.all_jobs(),
                 max_persisted=_MAX_PERSISTED_INGEST_JOBS,
                 now_iso=datetime.now(timezone.utc).isoformat(),
             )
             self.library_ingest_jobs.restore(plan.jobs, plan.next_id)
+            self.library_ingest_jobs.attach_store(store)
             for job in plan.upsert:
                 store.upsert_job(job)
             for job_id in plan.delete_ids:

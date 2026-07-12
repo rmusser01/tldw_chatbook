@@ -28,6 +28,10 @@ class LibraryIngestJobsDB(BaseDB):
             self._conn = sqlite3.connect(self.db_path_str, check_same_thread=False)
             self._conn.row_factory = sqlite3.Row
             self._conn.execute("PRAGMA journal_mode=WAL")
+            # NORMAL is safe under WAL and avoids an fsync per commit -- writes
+            # are per-mutation on the UI thread (a bulk drop = many small
+            # commits), so FULL's per-commit fsync would add avoidable latency.
+            self._conn.execute("PRAGMA synchronous=NORMAL")
         return self._conn
 
     def close(self) -> None:
