@@ -151,6 +151,12 @@ class MediaWindow(Container):
         self.app_instance = app_instance
         self.runtime_state = getattr(app_instance, "media_runtime_state", None)
         self.media_types = self._get_media_types()
+        # Set by ``apply_restored_view_state`` when a cross-visit restore
+        # carries a ``selected_media_id`` -- consumed (and cleared) by the
+        # very next search completion in ``_apply_pending_restored_selection``
+        # regardless of outcome, so an ordinary in-session search can never
+        # misfire against a stale restore target.
+        self._pending_restored_selection_id: Optional[str] = None
         
     def _get_media_types(self) -> List[str]:
         """Get media types from the app instance."""
@@ -1679,15 +1685,22 @@ class MediaWindow(Container):
         type/search/keyword/selection gets re-applied instead of landing back
         on the untouched "pick a type" empty state every time.
 
-        Deliberately does not attempt to restore the viewer panel's detail
-        content or its active tab: unlike Library's separate list/viewer
-        canvas modes, this window always shows the list and viewer side by
-        side, and re-populating the viewer requires the same scoped
-        media-detail fetch a live row click triggers -- not wired here to
-        keep this restore path cheap and side-effect-free before the first
-        paint. A stale ``selected_media_id`` (the record was deleted while
-        the user was elsewhere) degrades gracefully: the re-run search below
-        simply will not return it, so nothing in the list matches it.
+        A restored ``selected_media_id`` also re-populates the viewer panel
+        and highlights the matching list row -- not just the list search.
+        The re-run search below is kicked as a worker exactly like any
+        other search (``_perform_search``); once its results land,
+        ``update_search_results`` resolves the restored id against them via
+        ``_apply_pending_restored_selection`` and, if it is still present,
+        fires the SAME scoped media-detail fetch a live row click triggers
+        (``handle_media_item_selected``) fire-and-forget, plus sets
+        ``list_panel.selected_id`` to highlight the row. Nothing here is
+        awaited synchronously, so this restore path stays as cheap and
+        side-effect-free before the first paint as it always was. A stale
+        ``selected_media_id`` (the record was deleted while the user was
+        elsewhere) degrades gracefully: the re-run search simply will not
+        return it, so nothing matches -- no highlight, no detail fetch, no
+        crash, and the viewer stays in its untouched empty state rather
+        than a permanent loading placeholder.
 
         Args:
             restore: The dict ``MediaScreen`` stashed from a previous visit's
@@ -1706,6 +1719,7 @@ class MediaWindow(Container):
 
         self.active_media_type = type_slug
         self.selected_media_id = selected_media_id
+        self._pending_restored_selection_id = selected_media_id
         if self.runtime_state is not None:
             self.runtime_state.active_media_type = type_slug
             self.runtime_state.search_term = search_term
@@ -1733,8 +1747,66 @@ class MediaWindow(Container):
             if self.runtime_state is not None:
                 self.runtime_state.browse_items = list(results)
             self.list_panel.load_items(results, page, total_pages)
+            self._apply_pending_restored_selection(results)
         except Exception as e:
             logger.opt(exception=True).error(f"Error updating search results: {e}")
+
+    def _apply_pending_restored_selection(self, results: List[Dict[str, Any]]) -> None:
+        """Resolve a cross-visit restored selection against freshly loaded results.
+
+        ``apply_restored_view_state`` stashes the restored
+        ``selected_media_id`` in ``_pending_restored_selection_id`` before
+        kicking the re-run search; every search completion (restore-driven
+        or an ordinary in-session search) funnels through
+        ``update_search_results``, which is the single natural point to
+        resolve it once real results are in hand. Consumed -- cleared --
+        here regardless of outcome, so a later unrelated search (pagination,
+        a type/filter change) can never misfire against a stale target.
+        """
+        pending_id = self._pending_restored_selection_id
+        if not pending_id:
+            return
+        self._pending_restored_selection_id = None
+
+        record = next(
+            (
+                item for item in results
+                if isinstance(item, dict)
+                and item.get("id") is not None
+                and str(item.get("id")) == pending_id
+            ),
+            None,
+        )
+        if record is None:
+            # Stale id: the record was deleted/moved while the user was
+            # away. The re-run search above simply does not return it, so
+            # there is nothing to highlight or fetch -- no crash, no
+            # permanent loading placeholder. A live click could never
+            # target a row that isn't actually in the list either, so this
+            # is the same degrade the list-only restore already relied on.
+            return
+
+        # Defer past the list panel's own async DOM refresh (scheduled by
+        # ``load_items`` above, via its ``watch_items`` -> ``call_later``)
+        # so the highlight lands on a row that actually exists in the tree
+        # yet -- ``call_after_refresh`` is used the same way elsewhere in
+        # this file (see ``on_mount``) to wait for a mount/refresh cascade
+        # to settle before touching the result.
+        self.call_after_refresh(self._select_restored_media_row, pending_id, dict(record))
+
+    def _select_restored_media_row(self, record_id: str, record: Dict[str, Any]) -> None:
+        """Highlight a restored row and kick its detail fetch, mirroring a live click.
+
+        Fire-and-forget, exactly like ``MediaListPanel.handle_item_selection``
+        (the row-click handler) never awaits its own
+        ``MediaItemSelectedEvent`` dispatch -- ``handle_media_item_selected``
+        already tolerates a failed/partial detail fetch on its own (see its
+        try/except around the scoped detail call), so nothing further is
+        needed here for that case.
+        """
+        if hasattr(self.list_panel, "selected_id"):
+            self.list_panel.selected_id = record_id
+        self.run_worker(self.handle_media_item_selected(MediaItemSelectedEvent(record_id, record)))
     
     def watch_media_active_view(self, old_view: Optional[str], new_view: Optional[str]) -> None:
         """React to media_active_view changes from app.py button handlers."""

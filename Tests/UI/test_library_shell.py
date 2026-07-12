@@ -4,6 +4,7 @@ import asyncio
 import json
 import re
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -3588,6 +3589,250 @@ async def test_library_shell_shows_lookup_error_in_canvas(monkeypatch):
         error_static = active_screen.query_one("#library-canvas-error")
         assert "unavailable" in str(error_static.renderable).lower()
         assert not active_screen.query("#library-canvas-loading")
+
+
+# --- 166: app-scoped snapshot cache for instant repeat visits --------------
+
+
+@pytest.mark.asyncio
+async def test_library_shell_repeat_visit_renders_cached_snapshot_before_refresh_resolves(
+    monkeypatch,
+):
+    """Navigation composes a FRESH ``LibraryScreen`` instance per visit (the
+    PR #595 freeze fix), so a per-instance memo cannot survive a tab
+    round-trip. Without an app-scoped cache, a returning visit re-shows the
+    loading placeholder until a brand-new DB snapshot fetch resolves.
+
+    Gates the SECOND mount's ``_list_local_source_snapshot`` call only (the
+    first is left unblocked so it can populate the cache), then asserts the
+    cached snapshot renders at the second mount's first paint -- strictly
+    before the gate is ever released, i.e. before that mount's own
+    background refresh could possibly have completed.
+
+    Args:
+        monkeypatch: pytest fixture used to gate the SECOND mount's
+            ``_list_local_source_snapshot`` so the cached-apply window can be
+            observed before the fresh fetch resolves.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    calls = {"count": 0}
+    gate = threading.Event()
+    original_list_snapshot = LibraryScreen._list_local_source_snapshot
+
+    async def _gated_list_snapshot(self):
+        calls["count"] += 1
+        if calls["count"] > 1:
+            # Widen the window past the second mount's first paint without
+            # actually hanging the suite -- see the gated-fake convention
+            # note above (`_GATED_RELEASE_TIMEOUT_SECONDS`).
+            await asyncio.to_thread(gate.wait, _GATED_RELEASE_TIMEOUT_SECONDS)
+        return await original_list_snapshot(self)
+
+    monkeypatch.setattr(
+        LibraryScreen, "_list_local_source_snapshot", _gated_list_snapshot
+    )
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        first_screen = _active_library_screen(host)
+        await _wait_for_library_shell(first_screen, pilot)
+
+        assert getattr(app, "_library_source_snapshot_cache", None) is not None
+        assert getattr(app, "_library_source_snapshot_cache_stamp", None) is not None
+
+        await host.pop_screen()
+        await pilot.pause()
+
+        second_screen = LibraryScreen(app)
+        await host.push_screen(second_screen)
+
+        try:
+            # `_wait_for_library_shell` only waits on `_library_loaded` and
+            # the rail's presence -- both flip synchronously off the cached
+            # apply (including the recompose it forces), independent of
+            # the still-gated second fetch below. If the cache path
+            # regresses, this times out and raises (the RED failure)
+            # instead of silently passing.
+            await _wait_for_library_shell(second_screen, pilot)
+
+            visible = _visible_text(second_screen)
+            assert "Conversations (2)" in visible
+        finally:
+            # Release regardless of pass/fail so a failure here can't wedge
+            # the executor thread pool at interpreter shutdown.
+            gate.set()
+
+        # Let the gated reconcile fetch resolve before the harness tears
+        # down so its worker doesn't race teardown.
+        await pilot.pause()
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_library_shell_expired_cache_does_not_apply_stale_snapshot(monkeypatch):
+    """The instant-apply is bounded to ``LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS``:
+    once the cached snapshot is older than that, a repeat visit must NOT
+    render stale content -- it falls back to today's loading-then-refresh
+    behavior instead.
+
+    Args:
+        monkeypatch: pytest fixture used to gate the second mount's snapshot
+            fetch so the (absence of an) instant-apply can be observed.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        first_screen = _active_library_screen(host)
+        await _wait_for_library_shell(first_screen, pilot)
+
+        assert getattr(app, "_library_source_snapshot_cache", None) is not None
+        app._library_source_snapshot_cache_stamp = (
+            time.monotonic()
+            - library_screen_module.LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS
+            - 1.0
+        )
+
+        await host.pop_screen()
+        await pilot.pause()
+
+        # `_never_loads` freezes the second mount's own refresh
+        # deterministically, mirroring the pre-load pilots above -- if the
+        # (expired) cache were wrongly applied, this would be the only
+        # source of content, making a false positive here impossible.
+        monkeypatch.setattr(
+            LibraryScreen, "_refresh_local_source_snapshot", _never_loads
+        )
+
+        second_screen = LibraryScreen(app)
+        second_screen.apply_navigation_context({"mode": "conversations"})
+        await host.push_screen(second_screen)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert second_screen._library_loaded is False
+        assert second_screen.query_one("#library-canvas-loading")
+        assert not second_screen.query("#library-conversations-canvas")
+        visible = _visible_text(second_screen)
+        assert "Conversations (2)" not in visible
+
+
+def _error_source_snapshot():
+    """A service-unavailable snapshot tuple, matching the shape
+    ``_list_local_source_snapshot`` returns when the local source services
+    are not callable (see its ``LIBRARY_SERVICE_UNAVAILABLE_COPY`` branch).
+    """
+    return (
+        {"notes": (), "media": (), "conversations": ()},
+        {"notes": 0, "media": 0, "conversations": 0},
+        {"notes": True, "media": True, "conversations": True},
+        library_screen_module.LIBRARY_SERVICE_UNAVAILABLE_COPY,
+        None,
+        {"study_decks": None, "flashcards_due": None, "quizzes": None},
+    )
+
+
+@pytest.mark.asyncio
+async def test_library_shell_snapshot_cache_is_isolated_from_live_record_mutation():
+    """The app-scoped snapshot cache must hold COPIES, not the live records
+    dict (Qodo review). ``_apply_local_source_snapshot`` aliases
+    ``self._local_source_records = records``, and later in-place key
+    reassignments (a media edit does ``self._local_source_records["media"]
+    = ...``) would otherwise mutate the cached dict too -- corrupting the
+    next visit's instant-apply. Mutating the live records after a snapshot is
+    cached must leave the cache untouched.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        cached = getattr(app, "_library_source_snapshot_cache", None)
+        assert cached is not None, "a successful snapshot should have been cached"
+        cached_records = cached[0]
+        # The cached dict must not be the same object the live view holds.
+        assert cached_records is not screen._local_source_records
+
+        sentinel = ({"id": "sentinel-mutation"},)
+        screen._local_source_records["media"] = sentinel
+
+        # The cache still holds the pre-mutation records.
+        assert app._library_source_snapshot_cache[0]["media"] is not sentinel
+
+
+@pytest.mark.asyncio
+async def test_library_shell_error_snapshot_is_not_cached_for_instant_apply(monkeypatch):
+    """A failed/service-unavailable snapshot must NOT seed the app cache: it
+    still applies to the current view (the error banner shows now, unchanged),
+    but a return visit within TTL must do a normal fresh fetch instead of
+    instant-applying the stale error -- no "services unavailable" flash on
+    re-entry.
+
+    Args:
+        monkeypatch: pytest fixture used to swap ``_list_local_source_snapshot``
+            for a gated fake that returns an error snapshot on first mount.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    calls = {"count": 0}
+    gate = threading.Event()
+
+    async def _gated_error_snapshot(self):
+        calls["count"] += 1
+        if calls["count"] > 1:
+            # Hold the second mount's fetch open so we can observe its
+            # pre-fetch first paint (bounded per the gated-fake convention).
+            await asyncio.to_thread(gate.wait, _GATED_RELEASE_TIMEOUT_SECONDS)
+        return _error_source_snapshot()
+
+    monkeypatch.setattr(
+        LibraryScreen, "_list_local_source_snapshot", _gated_error_snapshot
+    )
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        first_screen = _active_library_screen(host)
+        # Wait for the first (unblocked) error refresh to land.
+        for _ in range(120):
+            if first_screen._library_lookup_error:
+                break
+            await pilot.pause(0.02)
+        assert first_screen._library_lookup_error
+
+        # The crux: a failed snapshot must never become the instant-apply
+        # seed. Without the `lookup_error is None` guard this holds the error
+        # tuple instead of staying unset -> the RED failure.
+        assert getattr(app, "_library_source_snapshot_cache", None) is None
+        assert getattr(app, "_library_source_snapshot_cache_stamp", None) is None
+
+        await host.pop_screen()
+        await pilot.pause()
+
+        second_screen = LibraryScreen(app)
+        second_screen.apply_navigation_context({"mode": "conversations"})
+        await host.push_screen(second_screen)
+        await pilot.pause()
+        await pilot.pause()
+
+        try:
+            # No cached error to instant-apply -> the second mount shows the
+            # normal loading placeholder while its own (gated) fresh fetch is
+            # still in flight, NOT the "services unavailable" error banner.
+            assert second_screen._library_loaded is False
+            assert second_screen.query_one("#library-canvas-loading")
+            assert not second_screen.query("#library-canvas-error")
+        finally:
+            gate.set()
+
+        await pilot.pause()
+        await pilot.pause()
 
 
 @pytest.mark.asyncio
@@ -8723,6 +8968,196 @@ def test_library_shell_restore_state_tolerates_garbage_values():
     # ``reconcile_saved_screen_state`` failed to catch) must be a no-op,
     # not a crash.
     screen.restore_state(None)
+
+
+# --- T164: per-pane filter/sort persistence (PR #595 follow-up) ------------
+#
+# ``save_state``/``restore_state`` already carried selection/view + RAG
+# state; these four attrs -- media type cycle, notes sort, notes substring
+# filter, conversations query -- are VIEW state of the exact same kind (they
+# change what the canvas builders render, not what gets fetched) but were
+# left out of PR #595's contract. See ``LibraryScreen.save_state``.
+
+
+def test_library_shell_restore_state_sets_per_pane_filter_attrs_on_fresh_unmounted_instance():
+    """Mirrors ``test_library_shell_restore_state_sets_attrs_on_fresh_unmounted_instance``
+    for the four per-pane filter/sort attrs: round-trip through the real
+    ``save_state``/``restore_state`` methods on a freshly-constructed,
+    not-yet-mounted instance -- exactly how the app calls them.
+    """
+    app = _build_test_app()
+    original = LibraryScreen(app)
+    original._library_media_type_filter = "audio"
+    original._library_notes_sort = "oldest"
+    original._library_notes_filter = "retro"
+    original._library_notes_filter_records = ["must never be persisted"]
+    original._library_conversation_query = "quarterly"
+    state = original.save_state()
+
+    # The recomputed filter-records cache is a derived/bulk snapshot like
+    # ``_local_source_records`` -- it must never leak into the persisted
+    # dict (see ``save_state``'s docstring).
+    assert "library_notes_filter_records" not in state
+
+    restored = LibraryScreen(app)
+    restored.restore_state(state)
+
+    assert restored._library_media_type_filter == "audio"
+    assert restored._library_notes_sort == "oldest"
+    assert restored._library_notes_filter == "retro"
+    assert restored._library_conversation_query == "quarterly"
+    # Never restored -- the notes canvas recomputes it fresh from
+    # ``_library_notes_filter`` on mount.
+    assert restored._library_notes_filter_records is None
+
+
+def test_library_shell_restore_state_defaults_per_pane_filters_on_garbage_values():
+    """Same tolerate-garbage contract as
+    ``test_library_shell_restore_state_tolerates_garbage_values``, for the
+    four per-pane filter/sort attrs: a saved-state dict from a different
+    build/shape must never crash restore, and must fall back to each
+    attr's normal default.
+    """
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+
+    screen.restore_state(
+        {
+            "library_media_type_filter": 42,
+            "library_notes_sort": ["oldest"],
+            "library_notes_filter": None,
+            "library_conversation_query": None,
+        }
+    )
+
+    assert screen._library_media_type_filter == "All"
+    assert screen._library_notes_sort == "newest"
+    assert screen._library_notes_filter == ""
+    assert screen._library_conversation_query == ""
+
+
+def test_library_shell_restore_state_resanitizes_conversation_query():
+    """The conversations query is user text -- restore must re-run it
+    through ``_safe_text`` (control-character stripping, tag removal,
+    length capping) rather than trusting the saved-state dict verbatim. A
+    saved-state dict is not statically typed, so this is defense, not a
+    real double-sanitization of trusted input (the live submit handler,
+    ``handle_library_conversations_filter_submitted``, already sanitizes
+    once on entry).
+    """
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+
+    screen.restore_state({"library_conversation_query": "<b>hi</b> " + "x" * 300})
+
+    assert "<" not in screen._library_conversation_query
+    assert ">" not in screen._library_conversation_query
+    assert len(screen._library_conversation_query) <= 200
+
+
+@pytest.mark.asyncio
+async def test_library_shell_restored_media_type_filter_renders_on_first_paint():
+    """The media canvas builder reads ``_library_media_type_filter`` at
+    MOUNT time (``_build_library_media_state``'s ``active_type=``) -- a
+    restored non-default type must already narrow the canvas on first
+    paint, not just sit unused on the screen instance. Cycle the live
+    filter off "All" first to get a real, non-default saved value (not a
+    hand-typed one), mirroring ``test_library_shell_media_type_filter_narrows_list``.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-type-filter")
+        screen.query_one("#library-media-type-filter", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        active_type = screen._library_media_type_filter
+        assert active_type != "All"
+        state = screen.save_state()
+
+    assert state["library_media_type_filter"] == active_type
+
+    restored = LibraryScreen(app)
+    restored.restore_state(state)
+    host2 = LibraryHarness(app, screen=restored)
+
+    async with host2.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen2 = _active_library_screen(host2)
+        await _wait_for_selector(screen2, pilot, "#library-media-type-filter")
+
+        assert screen2._library_media_type_filter == active_type
+        filter_button = screen2.query_one("#library-media-type-filter", Button)
+        assert str(filter_button.label) == f"type: {active_type} ▸"
+        rows = list(screen2.query(".library-media-row"))
+        assert len(rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_library_shell_restored_notes_sort_and_filter_render_on_first_paint():
+    """The notes canvas builder reads ``_library_notes_sort``/
+    ``_library_notes_filter`` at MOUNT time (the notes branch of
+    ``compose_content``'s ``sort_mode=``/``filter_value=``) -- restored
+    values must already be reflected on first paint.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, [], notes=_two_notes())
+
+    screen = LibraryScreen(app)
+    screen.restore_state(
+        {
+            "library_selected_row_id": LIBRARY_ROW_BROWSE_NOTES,
+            "library_notes_sort": "oldest",
+            "library_notes_filter": "retro",
+        }
+    )
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        active_screen = _active_library_screen(host)
+        await _wait_for_selector(active_screen, pilot, "#library-notes-sort")
+
+        sort_button = active_screen.query_one("#library-notes-sort")
+        assert "Oldest" in str(sort_button.label)
+        filter_box = active_screen.query_one("#library-notes-filter", Input)
+        assert filter_box.value == "retro"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_restored_conversation_query_renders_on_first_paint():
+    """The conversations canvas builder reads ``_library_conversation_query``
+    at MOUNT time (``_build_library_conversations_state``'s ``query=``) --
+    a restored query must already narrow the canvas on first paint.
+    Restoring directly (rather than clicking the rail row) is deliberate:
+    the LIVE rail-row press for this pane always resets the query on entry
+    (``handle_library_rail_row``'s canvas-target branch) -- that is
+    existing, unrelated in-session behavior, not what a cross-visit
+    restore goes through.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+
+    screen = LibraryScreen(app)
+    screen.restore_state(
+        {
+            "library_selected_row_id": LIBRARY_ROW_BROWSE_CONVERSATIONS,
+            "library_conversation_query": "quarterly",
+        }
+    )
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        active_screen = _active_library_screen(host)
+        await _wait_for_selector(active_screen, pilot, "#library-conversations-status")
+
+        status = str(active_screen.query_one("#library-conversations-status").renderable)
+        assert "quarterly" in status
+        filter_box = active_screen.query_one("#library-conversations-filter", Input)
+        assert filter_box.value == "quarterly"
 
 
 @pytest.mark.asyncio

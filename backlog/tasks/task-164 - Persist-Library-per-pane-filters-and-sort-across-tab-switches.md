@@ -1,9 +1,10 @@
 ---
 id: TASK-164
 title: Persist Library per-pane filters and sort across tab switches
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-11 22:02'
+updated_date: '2026-07-12 02:36'
 labels:
   - follow-up
   - library
@@ -19,7 +20,13 @@ PR #595 added cross-visit state persistence for Library/Media/Search selection a
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Notes sort/filter survives a tab switch away and back
-- [ ] #2 Conversations query survives
-- [ ] #3 Media type filter survives
+- [x] #1 Notes sort/filter survives a tab switch away and back
+- [x] #2 Conversations query survives
+- [x] #3 Media type filter survives
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Fixed in the persistence batch (branch claude/followups-persistence). See Docs/superpowers/plans/2026-07-11-followups-persistence.md.
+<!-- SECTION:NOTES:END -->

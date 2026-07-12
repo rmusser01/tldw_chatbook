@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import re
+import time
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
@@ -177,6 +178,15 @@ LIBRARY_INSPECTOR_EMPTY_NEXT_ACTION_COPY = (
     "Library remains a hub; Notes, Media, Search/RAG, and Study own deeper work."
 )
 LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS = 5.0
+# Navigation composes a FRESH LibraryScreen instance per visit (PR #595
+# freeze fix), so a per-instance memo is useless -- the previous visit's
+# snapshot is cached on the APP instance instead (see `on_mount` and
+# `_refresh_local_source_snapshot`) so a repeat visit within this window
+# renders instantly instead of showing the loading placeholder again. The
+# cached snapshot is always applied THEN immediately reconciled with a
+# fresh background fetch, so staleness is bounded to a single refresh
+# cycle regardless of this TTL's length.
+LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS = 5.0
 LIBRARY_NOTES_AUTOSAVE_SECONDS = 2.0
 LIBRARY_NOTE_CONTENT_MAX_CHARS = 2_000_000
 LIBRARY_COLLECTION_SYNC_CONFLICT_LIMIT = 200
@@ -650,11 +660,56 @@ class LibraryScreen(BaseAppScreen):
         self._library_export_run_id: int = 0
 
     def on_mount(self) -> None:
+        """Populate the Library on entry, rendering instantly from cache.
+
+        Arms the snapshot-timeout failsafe, then (166) if the app-scoped
+        snapshot cache holds a recent result (within
+        ``LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS``) applies it synchronously so a
+        returning visit paints immediately instead of showing the loading
+        placeholder, and unconditionally kicks
+        ``_refresh_local_source_snapshot`` to reconcile against the DB. Also
+        seeds the ingest registry listener and runs any deferred deep-link
+        loads (collections / note editor / media viewer) that
+        ``apply_navigation_context`` could not run before mount.
+        """
         super().on_mount()
         self.set_timer(
             LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS,
             self._apply_source_snapshot_timeout,
         )
+        cached_snapshot = getattr(
+            self.app_instance, "_library_source_snapshot_cache", None
+        )
+        cached_stamp = getattr(
+            self.app_instance, "_library_source_snapshot_cache_stamp", None
+        )
+        if (
+            cached_snapshot is not None
+            and cached_stamp is not None
+            and time.monotonic() - cached_stamp < LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS
+        ):
+            # Instant-then-reconcile: paint the previous visit's snapshot
+            # synchronously (this screen instance is brand new, so nothing
+            # else has populated `_local_source_records` yet) so a
+            # returning visit never shows the loading placeholder, then
+            # still kick the real refresh below -- its completion re-applies
+            # fresh data and refreshes the cache, so this can't drift more
+            # than one refresh cycle stale.
+            self._apply_local_source_snapshot(*cached_snapshot)
+            # `_apply_local_source_snapshot`'s own `self.is_mounted`-guarded
+            # `refresh(recompose=True)` is a no-op here: Textual only flips
+            # `_is_mounted` True in the `finally` clause AFTER the Mount
+            # event finishes dispatching (see
+            # `MessagePump._pre_process`) -- i.e. strictly after this very
+            # `on_mount` call returns -- so without an explicit recompose
+            # here the cached attrs above would be set correctly but the
+            # already-composed (stale, pre-cache) DOM would never actually
+            # repaint. `Widget.refresh(recompose=True)` itself has no such
+            # guard (it just schedules `_check_recompose` via
+            # `call_next`), so calling it directly is safe mid-mount and is
+            # what actually makes the cached snapshot visible at first
+            # paint.
+            self.refresh(recompose=True)
         self._refresh_local_source_snapshot()
         registry = self._library_ingest_registry()
         if registry is not None:
@@ -775,6 +830,17 @@ class LibraryScreen(BaseAppScreen):
         ``_apply_library_rag_search_outcome``) are safe to carry verbatim
         because their rows are frozen dataclasses -- copies are taken below
         only to avoid aliasing a live mutable set with the stashed dict.
+
+        The four per-pane filter/sort values below (media type cycle, notes
+        sort mode, notes substring filter, conversations query) are VIEW
+        state exactly like the selection ids above -- they change what the
+        canvas builders render, not what data is fetched -- so they belong
+        here too (PR #595 shipped the selection/RAG half of this contract
+        but left these out). ``_library_notes_filter_records`` (the
+        substring filter's recomputed result cache) is deliberately NOT
+        persisted -- it is a derived/bulk snapshot like
+        ``_local_source_records``, and restore leaves it ``None`` so the
+        canvas recomputes it fresh from ``_library_notes_filter`` on mount.
         """
         state = super().save_state()
         state["library_selected_row_id"] = self._library_selected_row_id
@@ -790,6 +856,12 @@ class LibraryScreen(BaseAppScreen):
         state["library_rag_selected_result_id"] = self._library_rag_selected_result_id
         state["library_rag_retrieval_status"] = self._library_rag_retrieval_status
         state["library_rag_recovery_state"] = self._library_rag_recovery_state
+        state["library_media_type_filter"] = self._library_media_type_filter
+        state["library_notes_sort"] = self._library_notes_sort
+        state["library_notes_filter"] = self._library_notes_filter
+        state["library_conversation_query"] = getattr(
+            self, "_library_conversation_query", ""
+        )
         return state
 
     def restore_state(self, state: dict[str, Any]) -> None:
@@ -811,6 +883,20 @@ class LibraryScreen(BaseAppScreen):
         (should never happen, but a saved-state dict is not statically typed)
         degrades to the list view below rather than rendering a permanent
         loading placeholder.
+
+        The four per-pane filter/sort values restored below are read by the
+        canvas builders at mount time (``_build_library_media_state``,
+        the notes canvas branch of ``compose_content``,
+        ``_build_library_conversations_state``) -- setting them here, before
+        ``switch_screen`` mounts this instance, is all that is needed for
+        the first paint to already reflect them; no on_mount re-kick is
+        required (unlike a fetched detail). The conversations query is
+        user text re-sanitized through ``_safe_text`` here too -- it was
+        already sanitized once when the user submitted it
+        (``handle_library_conversations_filter_submitted``), but a saved-
+        state dict is not statically typed, so this is defense against a
+        corrupted/foreign dict rather than a real double-sanitization of
+        trusted input.
         """
         super().restore_state(state)
         if not isinstance(state, dict):
@@ -855,6 +941,23 @@ class LibraryScreen(BaseAppScreen):
         recovery_state = state.get("library_rag_recovery_state")
         self._library_rag_recovery_state = (
             recovery_state if isinstance(recovery_state, DestinationRecoveryState) else None
+        )
+
+        media_type_filter = state.get("library_media_type_filter")
+        self._library_media_type_filter = (
+            media_type_filter if isinstance(media_type_filter, str) and media_type_filter else "All"
+        )
+        notes_sort = state.get("library_notes_sort")
+        self._library_notes_sort = (
+            notes_sort if isinstance(notes_sort, str) and notes_sort else "newest"
+        )
+        notes_filter = state.get("library_notes_filter")
+        self._library_notes_filter = notes_filter if isinstance(notes_filter, str) else ""
+        conversation_query = state.get("library_conversation_query")
+        self._library_conversation_query = self._safe_text(
+            conversation_query if isinstance(conversation_query, str) else "",
+            "",
+            max_length=200,
         )
 
     async def flush_pending_work(self) -> bool:
@@ -1049,6 +1152,39 @@ class LibraryScreen(BaseAppScreen):
             recovery_state,
             study_counts,
         ) = await self._list_local_source_snapshot()
+        # Refresh the app-scoped instant-repeat-visit cache (see `on_mount`)
+        # with this fresh snapshot before applying it, so any other
+        # LibraryScreen instance mounted from here on -- including a
+        # concurrent one, since screens are recomposed per visit -- reads
+        # this fetch's result rather than stale/no data.
+        #
+        # Only a SUCCESSFUL snapshot (``lookup_error is None``) is cached: an
+        # error/service-unavailable result still applies to the current view
+        # as usual below (unchanged), but must not become the next visit's
+        # instant-apply seed -- otherwise a return visit within TTL would
+        # flash the "services unavailable" banner for one frame before the
+        # reconcile corrects it. Skipping the write leaves the previous good
+        # snapshot (or nothing) in place, so the next visit does a normal
+        # fresh fetch instead.
+        if lookup_error is None:
+            # Cache SHALLOW COPIES of the mutable containers, not the live
+            # objects (Qodo review): ``_apply_local_source_snapshot`` below
+            # aliases ``self._local_source_records = records``, and later
+            # in-place key reassignments (e.g. ``self._local_source_records
+            # ["media"] = ...`` after a media edit) would otherwise mutate
+            # the cached dict too, so a return visit's instant-apply would
+            # render a snapshot whose records no longer match its cached
+            # counts/totals. The record tuples themselves are immutable, so a
+            # one-level dict copy is enough to isolate the cache.
+            self.app_instance._library_source_snapshot_cache = (
+                dict(records),
+                dict(counts) if isinstance(counts, dict) else counts,
+                dict(total_known) if isinstance(total_known, dict) else total_known,
+                lookup_error,
+                recovery_state,
+                dict(study_counts) if isinstance(study_counts, dict) else study_counts,
+            )
+            self.app_instance._library_source_snapshot_cache_stamp = time.monotonic()
         self._apply_local_source_snapshot(
             records, counts, total_known, lookup_error, recovery_state, study_counts
         )
