@@ -74,6 +74,7 @@ from ...Library.library_media_viewer_state import (
 )
 from ...Library.library_notes_state import (
     LibraryNoteEditorState,
+    LibraryNotesListState,
     build_library_note_editor_state,
     build_library_notes_list_state,
     build_note_export_content,
@@ -577,6 +578,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_content_query: str = ""
         self._library_media_content_match_index: int = 0
         self._library_notes_view: str = "list"
+        self._library_notes_select_mode: bool = False
+        self._library_notes_row_selection = RowSelection("notes")
         self._library_notes_sort: str = "newest"
         self._library_notes_filter: str = ""
         self._library_notes_filter_records: list | None = None
@@ -2693,17 +2696,8 @@ class LibraryScreen(BaseAppScreen):
                         id="library-notes-canvas",
                     )
                 elif shell.canvas_kind == "notes":
-                    source_records = (
-                        self._library_notes_filter_records
-                        if self._library_notes_filter_records is not None
-                        else self._local_source_records.get("notes", ())
-                    )
-                    notes_list_state = build_library_notes_list_state(
-                        sort_notes_records(source_records, self._library_notes_sort),
-                        filter_note=self._library_notes_filter,
-                    )
                     yield LibraryNotesCanvas(
-                        notes_list_state,
+                        self._build_library_notes_state(),
                         sort_mode=self._library_notes_sort,
                         filter_value=self._library_notes_filter,
                         id="library-notes-canvas",
@@ -2863,6 +2857,23 @@ class LibraryScreen(BaseAppScreen):
         )
         if self._library_media_select_mode:
             self._library_media_row_selection.reconcile(r.media_id for r in state.rows)
+        return state
+
+    def _build_library_notes_state(self) -> LibraryNotesListState:
+        """Build the notes canvas's list-view display state from local records."""
+        source_records = (
+            self._library_notes_filter_records
+            if self._library_notes_filter_records is not None
+            else self._local_source_records.get("notes", ())
+        )
+        state = build_library_notes_list_state(
+            sort_notes_records(source_records, self._library_notes_sort),
+            filter_note=self._library_notes_filter,
+            select_mode=self._library_notes_select_mode,
+            selected_ids=self._library_notes_row_selection.ids,
+        )
+        if self._library_notes_select_mode:
+            self._library_notes_row_selection.reconcile(r.note_id for r in state.rows)
         return state
 
     async def _refresh_library_media_detail(self, media_id: str) -> None:
@@ -5482,6 +5493,8 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         self._library_notes_sort = next_notes_sort_mode(self._library_notes_sort)
+        self._library_notes_select_mode = False
+        self._library_notes_row_selection.clear()
         self.refresh(recompose=True)
 
     @on(Input.Submitted, "#library-notes-filter")
@@ -5496,6 +5509,8 @@ class LibraryScreen(BaseAppScreen):
         if submitted == self._library_notes_filter:
             return
         self._library_notes_filter = submitted
+        self._library_notes_select_mode = False
+        self._library_notes_row_selection.clear()
         if not submitted:
             self._library_notes_filter_records = None
             self.refresh(recompose=True)
@@ -6457,17 +6472,21 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, ".library-notes-row")
     async def handle_library_notes_row(self, event: Button.Pressed) -> None:
-        """Select a note row and open the in-canvas Library note editor.
+        """Select mode: toggle the row's checkbox. Normal mode: open the editor.
 
-        Switches the notes canvas from its list view to the editor, clears
-        any stale detail, and kicks the async detail fetch
-        (``_refresh_library_note_detail``); ``compose_content`` renders a
-        loading line until that worker stores the fetched detail and
-        recomposes. Mirrors ``handle_library_media_row``.
+        Flushes any dirty edit from a previously-open note first (awaited,
+        regardless of select mode) so switching notes -- or entering select
+        mode -- never silently discards unsaved text; an unsaved edit
+        surviving the flush aborts either path.
 
-        Flushes any dirty edit from a previously-open note first (awaited)
-        so switching notes never silently discards unsaved text; an
-        unsaved edit surviving the flush aborts the switch.
+        In select mode, a row press toggles that row's id in
+        ``_library_notes_row_selection`` and recomposes the screen -- it
+        never opens the in-canvas Library note editor while in select mode.
+        Outside select mode, behavior is unchanged: switches the notes
+        canvas from its list view to the editor, clears any stale detail,
+        and kicks the async detail fetch (``_refresh_library_note_detail``);
+        ``compose_content`` renders a loading line until that worker stores
+        the fetched detail and recomposes. Mirrors ``handle_library_media_row``.
 
         Args:
             event: Button press event emitted by a note row button.
@@ -6477,6 +6496,10 @@ class LibraryScreen(BaseAppScreen):
         if self._library_note_dirty:
             return
         note_id = str(getattr(event.button, "note_id", "") or "")
+        if self._library_notes_select_mode:
+            self._library_notes_row_selection.toggle(note_id)
+            self.refresh(recompose=True)
+            return
         if note_id:
             self._selected_note_id = note_id
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
@@ -6500,6 +6523,47 @@ class LibraryScreen(BaseAppScreen):
                 group="library_note_detail",
             )
         self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-notes-select-toggle")
+    async def handle_library_notes_select_toggle(self, event: Button.Pressed) -> None:
+        """Enter/exit notes select mode; clears the selection set (both on enter and exit).
+
+        Flushes any dirty edit first (awaited) so entering select mode
+        never strands a dirty note edit mid-save -- select mode is only
+        reachable from the notes list view, but the flush stays
+        unconditional here to mirror ``handle_library_notes_row``'s
+        always-flush-first behavior.
+
+        Args:
+            event: Button press event emitted by the notes canvas's
+                Select/Done toggle.
+        """
+        event.stop()
+        await self._flush_library_note_save()
+        self._library_notes_select_mode = not self._library_notes_select_mode
+        self._library_notes_row_selection.clear()
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-notes-select-all")
+    def handle_library_notes_select_all(self, event: Button.Pressed) -> None:
+        """Select every note row currently rendered by the canvas."""
+        event.stop()
+        rows = self._build_library_notes_state().rows
+        self._library_notes_row_selection.select_all(r.note_id for r in rows)
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-notes-select-clear")
+    def handle_library_notes_select_clear(self, event: Button.Pressed) -> None:
+        """Clear the current notes selection without leaving select mode."""
+        event.stop()
+        self._library_notes_row_selection.clear()
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-notes-export-selected")
+    async def handle_library_notes_export_selected(self, event: Button.Pressed) -> None:
+        """Open the export canvas scoped to the currently selected note ids."""
+        event.stop()
+        await self._open_library_export_canvas(self._library_notes_row_selection.export_scope())
 
     @on(Button.Pressed, "#library-note-back")
     async def handle_library_note_back(self, event: Button.Pressed) -> None:
