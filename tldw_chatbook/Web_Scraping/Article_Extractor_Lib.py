@@ -1146,18 +1146,31 @@ def collect_bookmarks(file_path: str) -> Dict[str, Union[str, List[str]]]:
 
 
 def parse_csv_urls(file_path: str) -> Dict[str, Union[str, List[str]]]:
-    """
-    Parse URLs from a CSV file. The CSV should have at minimum a 'url' column,
-    and optionally a 'title' or 'name' column.
+    """Parse URLs from a CSV file.
 
-    :param file_path: Path to the CSV file
-    :return: Dictionary with titles/names as keys and URLs as values
+    The CSV should have at minimum a 'url' column, and optionally a 'title' or
+    'name' column.
+
+    Args:
+        file_path: Path to the CSV file.
+
+    Returns:
+        Dictionary with titles/names as keys and URLs (or lists of URLs for
+        duplicate keys) as values. Returns an empty dict if pandas is
+        unavailable or the file cannot be parsed.
     """
     if not PANDAS_AVAILABLE:
         logging.error("Pandas not available for CSV parsing. Install with: pip install tldw_chatbook[websearch]")
         return {}
 
-    import pandas as pd
+    try:
+        import pandas as pd
+    except ImportError:
+        # find_spec("pandas") can succeed on a broken/partial install where the
+        # real import still fails; match the previous module-scope try/except by
+        # returning {} rather than propagating ImportError.
+        logging.error("Pandas not importable for CSV parsing. Install with: pip install tldw_chatbook[websearch]")
+        return {}
 
     try:
         # Read CSV file

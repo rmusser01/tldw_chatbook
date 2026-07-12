@@ -133,7 +133,19 @@ MAX_DOCUMENT_SIZE_BYTES = MAX_DOCUMENT_SIZE_MB * 1024 * 1024  # In bytes
 _nltk_data_ready = False
 
 
-def ensure_nltk_data():
+def ensure_nltk_data() -> None:
+    """Ensure NLTK's ``punkt`` tokenizer data is present, lazily and once.
+
+    Idempotent: the first successful check flips the module-level
+    ``_nltk_data_ready`` flag so repeat calls are no-ops. Triggers the lazy
+    ``nltk`` import via :func:`_ensure_nltk` and, if the ``punkt`` resource is
+    missing, downloads it. A no-op when NLTK isn't installed. Moved off module
+    scope so importing this module (and the app) no longer pays the import or a
+    network download at boot.
+
+    Returns:
+        None.
+    """
     global _nltk_data_ready
     if _nltk_data_ready:
         return

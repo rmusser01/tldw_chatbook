@@ -153,6 +153,9 @@ def test_app_import_does_not_load_torch_or_transformers(tmp_path: Path) -> None:
     This is the core fix for task 163: EmbeddingFactory's torch/transformers
     resolution is now lazy (Embeddings_Lib._ensure_torch()/_ensure_transformers()),
     so neither module should be loaded until an embedding is actually built.
+
+    Args:
+        tmp_path: pytest fixture; isolated dir for the subprocess's HOME/XDG.
     """
     payload = _measure_app_import(tmp_path)
     loaded_eliminated = [m for m in payload["loaded_heavy"] if m in ELIMINATED_MODULES]
@@ -169,6 +172,9 @@ def test_app_import_stays_well_under_pre_fix_baseline(tmp_path: Path) -> None:
     accidentally reintroducing the whole torch/transformers/nltk stack at
     boot. Original pre-fix baseline: ~4.8s-5.7s / 6,518-6,519 modules;
     post-fix: ~1.5s-2s / ~3,291 modules.
+
+    Args:
+        tmp_path: pytest fixture; isolated dir for the subprocess's HOME/XDG.
     """
     payload = _measure_app_import(tmp_path)
     assert payload["elapsed"] < MAX_IMPORT_SECONDS, (
@@ -189,6 +195,9 @@ def test_app_import_does_not_load_full_heavy_dependency_set(tmp_path: Path) -> N
     lazy via `_ensure_nltk()` -- nltk transitively pulls scipy/sklearn/pandas,
     so deferring nltk removes all four). numpy is intentionally excluded from
     HEAVY_MODULES (legit chromadb/pymupdf dependency).
+
+    Args:
+        tmp_path: pytest fixture; isolated dir for the subprocess's HOME/XDG.
     """
     payload = _measure_app_import(tmp_path)
     assert payload["loaded_heavy"] == [], (

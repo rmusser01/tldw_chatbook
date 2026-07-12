@@ -498,6 +498,16 @@ class ChromaDBManager:
         return self.situate_context(api_name_for_context, doc_content, chunk_content)
 
     def situate_context(self, api_name_for_context: str, doc_content: str, chunk_content: str) -> str:
+        """Generate a short situating context for a chunk within its document.
+
+        Args:
+            api_name_for_context: Provider/LLM name used to produce the context.
+            doc_content: Full document text the chunk was drawn from.
+            chunk_content: The chunk to situate.
+
+        Returns:
+            The generated situating-context string (empty on failure).
+        """
         from tldw_chatbook.LLM_Calls.Summarization_General_Lib import analyze
 
         prompt = self.situate_context_prompt_template.format(doc_content=doc_content, chunk_content=chunk_content)
