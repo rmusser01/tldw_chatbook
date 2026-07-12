@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+
+from rich.markup import escape as escape_markup
 
 from tldw_chatbook.Constants import TAB_LLM, TAB_SETTINGS, TAB_STUDY, get_tab_display_label
 from tldw_chatbook.UI.Navigation.shell_destinations import (
@@ -92,6 +94,17 @@ SERVER_EVENT_STATE_UNAVAILABLE = "unavailable"
 
 HOME_FLASHCARDS_DUE_ROW_ID = "home-flashcards-due"
 HOME_FLASHCARDS_DUE_STATUS_CATEGORY = "due"
+
+# T190: idle-canvas controls for a ready Console over real content.
+# ``home-start-conversation`` routes to Console; ``home-resume-latest``
+# resumes the newest note (Library notes editor deep-link) or conversation
+# (Console). Both are dispatched by HomeScreen directly (screen-level
+# navigation, mirroring the model-setup recovery card) rather than through
+# HOME_CONTROL_METHODS' app-instance hooks.
+HOME_START_CONVERSATION_CONTROL_ID = "home-start-conversation"
+HOME_RESUME_LATEST_CONTROL_ID = "home-resume-latest"
+HOME_RESUME_KIND_NOTE = "note"
+HOME_RESUME_KIND_CONVERSATION = "conversation"
 
 # Prefix for a Library ingest job's HomeActiveWorkItem.item_id
 # ("local:ingest:<job_id>"). Shared by the adapter that builds these items
@@ -182,6 +195,79 @@ class HomeDashboardInput:
     active_work_items: tuple[HomeActiveWorkItem, ...] = ()
     recent_work_items: tuple[HomeActiveWorkItem, ...] = ()
     flashcards_due_count: int = 0
+    # T190: Console provider readiness from FRESH config (the readiness
+    # seams Console itself uses -- build_console_settings_readiness over
+    # load_settings(), never a boot snapshot). Distinct from ``model_ready``,
+    # which only reflects the boot-time ``providers_models`` map.
+    console_ready: bool = False
+    # T190: real content counts from the same seams the Library rail uses.
+    # ``None`` means "unknown/unavailable" (seam missing or failed) and is
+    # rendered as nothing -- only known positive counts appear on canvas.
+    conversation_count: int | None = None
+    note_count: int | None = None
+    media_count: int | None = None
+    # T190: the most recent note-or-conversation resume candidate.
+    # ``resume_title`` carries the RAW (pre-truncated) user title; it is
+    # markup-escaped exactly once, in ``build_home_resume_control``, before
+    # reaching a Button label.
+    resume_kind: str = ""
+    resume_id: str = ""
+    resume_title: str = ""
+
+
+@dataclass(frozen=True)
+class HomeContentSnapshot:
+    """T190: cached Home content/readiness snapshot built off the compose path.
+
+    Mirrors the new ``HomeDashboardInput`` content fields one-to-one so the
+    screen worker can cache one immutable value and merge it into every
+    dashboard build via ``apply_home_content_snapshot``.
+    """
+
+    console_ready: bool = False
+    conversation_count: int | None = None
+    note_count: int | None = None
+    media_count: int | None = None
+    resume_kind: str = ""
+    resume_id: str = ""
+    resume_title: str = ""
+
+
+def apply_home_content_snapshot(
+    state: HomeDashboardInput,
+    snapshot: HomeContentSnapshot,
+) -> HomeDashboardInput:
+    """Merge a content snapshot into adapter-provided dashboard input.
+
+    Args:
+        state: The adapter-built dashboard input.
+        snapshot: The cached content/readiness snapshot.
+
+    Returns:
+        ``state`` with the snapshot fields applied; ``has_library_content``
+        additionally flips to ``True`` when any known count is positive, so
+        the next-best-action engine stops suggesting "Import Library
+        sources" over a profile that demonstrably has content.
+    """
+    counts = (
+        snapshot.conversation_count,
+        snapshot.note_count,
+        snapshot.media_count,
+    )
+    has_content = state.has_library_content or any(
+        isinstance(count, int) and count > 0 for count in counts
+    )
+    return replace(
+        state,
+        console_ready=snapshot.console_ready,
+        conversation_count=snapshot.conversation_count,
+        note_count=snapshot.note_count,
+        media_count=snapshot.media_count,
+        resume_kind=snapshot.resume_kind,
+        resume_id=snapshot.resume_id,
+        resume_title=snapshot.resume_title,
+        has_library_content=has_content,
+    )
 
 
 @dataclass(frozen=True)
@@ -291,6 +377,16 @@ def choose_next_best_action(
             "Search your Library",
             "library",
             "Search/RAG is ready over saved content.",
+        )
+    if state.console_ready:
+        # T190: with the provider verifiably ready (fresh-config readiness,
+        # not the boot snapshot), the terminal suggestion reads as the
+        # user's actual next step rather than a destination name.
+        return HomeAction(
+            "start_console",
+            "Start a conversation",
+            "chat",
+            "Console is ready for a task.",
         )
     return HomeAction("start_console", "Start in Console", "chat", "Console is ready for a task.")
 
@@ -524,6 +620,105 @@ def build_home_controls(
                 "study",
                 "flashcards_due",
                 None,
+            )
+        )
+    return tuple(controls)
+
+
+def build_home_content_counts_line(state: HomeDashboardInput) -> str:
+    """Build the compact real-content counts line for the idle canvas.
+
+    Only known, positive counts are included -- an unknown (``None``) or
+    zero count renders nothing, so an empty profile never grows a
+    zero-clutter counts row (T190 AC4).
+
+    Args:
+        state: Adapter-provided dashboard input.
+
+    Returns:
+        e.g. ``"Conversations: 5 · Notes: 3"``, or ``""`` when no known
+        positive counts exist.
+    """
+    parts = [
+        f"{label}: {count}"
+        for label, count in (
+            ("Conversations", state.conversation_count),
+            ("Notes", state.note_count),
+            ("Media", state.media_count),
+        )
+        if isinstance(count, int) and count > 0
+    ]
+    return " · ".join(parts)
+
+
+def build_home_resume_control(state: HomeDashboardInput) -> HomeControl | None:
+    """Build the one-click resume control for the newest note/conversation.
+
+    The raw user title is markup-escaped HERE, exactly once, because the
+    control label flows straight into a Textual Button label (which parses
+    Rich markup) -- same hazard class as ``_ingest_job_title`` in the
+    active-work adapter.
+
+    Args:
+        state: Adapter-provided dashboard input.
+
+    Returns:
+        The ``home-resume-latest`` control, or ``None`` when no resume
+        candidate exists. Note candidates target the Library notes editor
+        deep-link (``target_route="library"`` + note id); conversation
+        candidates target Console (``target_route="chat"``).
+    """
+    if not state.resume_id:
+        return None
+    if state.resume_kind == HOME_RESUME_KIND_NOTE:
+        kind_label = "note"
+        target_route = "library"
+        fallback_title = "Latest note"
+    elif state.resume_kind == HOME_RESUME_KIND_CONVERSATION:
+        kind_label = "conversation"
+        target_route = "chat"
+        fallback_title = "Latest conversation"
+    else:
+        return None
+    title = state.resume_title.strip() or fallback_title
+    return HomeControl(
+        HOME_RESUME_LATEST_CONTROL_ID,
+        f"Resume {kind_label}: {escape_markup(title)}",
+        target_route,
+        "resume_latest",
+        state.resume_id,
+    )
+
+
+def _home_idle_canvas_controls(
+    state: HomeDashboardInput,
+    next_action: HomeAction,
+) -> tuple[HomeControl, ...]:
+    """Build the T190 idle-canvas controls (resume row + start conversation).
+
+    ``home-start-conversation`` is only added when the next-best action is
+    not already the start-console suggestion -- when it is, the canvas's own
+    ``home-primary-action`` button IS the "Start a conversation" control and
+    a second identical button would just duplicate it.
+
+    Args:
+        state: Adapter-provided dashboard input.
+        next_action: The already-chosen next best action for this canvas.
+
+    Returns:
+        Controls to prepend to the no-selection canvas's actions.
+    """
+    controls: list[HomeControl] = []
+    resume_control = build_home_resume_control(state)
+    if resume_control is not None:
+        controls.append(resume_control)
+    if state.console_ready and next_action.action_id != "start_console":
+        controls.append(
+            HomeControl(
+                HOME_START_CONVERSATION_CONTROL_ID,
+                "Start a conversation",
+                "chat",
+                "start_conversation",
             )
         )
     return tuple(controls)
@@ -1045,13 +1240,42 @@ def build_home_triage_state(
         # Count-only inputs (no item list) still expose their controls so
         # approvals/retries remain reachable without a selectable row.
         controls = build_home_controls(state)
+        # T190: the idle canvas mirrors real state -- resume-latest row and
+        # (when the provider is verifiably ready) a Start-a-conversation
+        # control, plus a compact real-content counts line. All three
+        # degrade to nothing on an empty/unknown profile, keeping the
+        # import-suggestion card exactly as before.
+        idle_controls = _home_idle_canvas_controls(state, next_action)
+        canvas_actions = idle_controls + controls
+        lines = [next_action.reason]
+        counts_line = build_home_content_counts_line(state)
+        if counts_line:
+            lines.append(counts_line)
+        primary_control_id = _canvas_primary_control_id(
+            UNKNOWN_RUN_STATUS, canvas_actions
+        )
+        if not primary_control_id and state.console_ready:
+            # Primary emphasis lands on whichever button actually starts a
+            # conversation: the dedicated idle control when present,
+            # otherwise the canvas's own next-action button (which IS the
+            # start-console suggestion in the ready+content case).
+            if any(
+                control.control_id == HOME_START_CONVERSATION_CONTROL_ID
+                for control in canvas_actions
+            ):
+                primary_control_id = HOME_START_CONVERSATION_CONTROL_ID
+            elif next_action.action_id == "start_console":
+                primary_control_id = "home-primary-action"
         canvas = HomeCanvasState(
             title=next_action.label,
-            lines=(next_action.reason,),
-            actions=controls,
+            lines=tuple(lines),
+            actions=canvas_actions,
             next_action=next_action,
+            # Only count-driven work controls push the next action out of
+            # the canvas toolbar into the below-toolbar callout; the T190
+            # idle controls keep it inline (single coherent idle card).
             next_action_is_canvas=not controls,
-            primary_control_id=_canvas_primary_control_id(UNKNOWN_RUN_STATUS, controls),
+            primary_control_id=primary_control_id,
         )
         selected_id = ""
 
