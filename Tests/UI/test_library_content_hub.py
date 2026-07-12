@@ -374,9 +374,54 @@ async def test_library_conversations_empty_state_is_honest_and_blocks_actions() 
         await _wait_for_selector(screen, pilot, "#library-conversations-status")
 
         status = str(screen.query_one("#library-conversations-status").renderable)
-        assert status == "No saved conversations yet. Save a Console chat and it appears here."
+        assert status == "No conversations yet. Chat in Console and it appears here."
         assert not screen.query(".library-conversation-row")
         assert screen.query_one("#library-conversation-preview").display is False
+
+
+@pytest.mark.asyncio
+async def test_library_conversations_snapshot_requests_all_scopes() -> None:
+    """The Library conversations snapshot must span workspace-scoped rows.
+
+    Console chats persisted inside a workspace session are stored with
+    ``scope_type='workspace'``; the service's default scope is 'global',
+    which made Library Browse ▸ Conversations show "(0)" while the Console
+    rail listed the same chats. The screen must explicitly request
+    ``scope_type='all'``.
+    """
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    conversation_service = StaticLibraryConversationScopeService(
+        [
+            {
+                "title": "Console workspace chat",
+                "conversation_id": "chat-ws-1",
+                "message_count": 4,
+                "workspace_id": "ws-chats",
+                "updated_at": "2026-07-01T10:00:00Z",
+            }
+        ]
+    )
+    app.chat_conversation_scope_service = conversation_service
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+
+        assert conversation_service.calls, "Library never fetched conversations"
+        for call in conversation_service.calls:
+            assert call.get("scope_type") == "all"
+
+        screen.query_one("#library-row-browse-conversations", Button).press()
+        await _wait_for_library_conversation_selection(
+            screen,
+            pilot,
+            "chat-ws-1",
+            "Console workspace chat",
+        )
+        assert "Console workspace chat" in _visible_text(screen)
 
 
 @pytest.mark.asyncio

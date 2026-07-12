@@ -299,6 +299,34 @@ def test_list_conversations_normalizes_pagination_and_enforces_global_defaults()
     assert workspace_call[2]["workspace_id"] == "ws-99"
     assert workspace_call[2]["include_deleted"] is True
 
+
+def test_list_conversations_scope_all_passes_through_without_workspace_filter():
+    """The Library snapshot's ``scope_type='all'`` must reach the DB unnarrowed."""
+    db = FakeDB(
+        conversations_page_rows=[
+            {
+                "id": "conv-ws",
+                "title": "Console chat",
+                "scope_type": "workspace",
+                "workspace_id": "ws-chats",
+                "version": 1,
+            },
+        ],
+    )
+    service = ChatConversationService(db)
+
+    service.list_conversations(scope_type="all", limit=50, offset=0)
+
+    search_call = [call for call in db.calls if call[0] == "search_conversations_page"][-1]
+    assert search_call[2]["scope_type"] == "all"
+    assert search_call[2]["workspace_id"] is None
+
+    # An explicit workspace_id always wins over the 'all' sentinel.
+    service.list_conversations(scope_type="all", workspace_id="ws-chats")
+    narrowed_call = [call for call in db.calls if call[0] == "search_conversations_page"][-1]
+    assert narrowed_call[2]["scope_type"] == "workspace"
+    assert narrowed_call[2]["workspace_id"] == "ws-chats"
+
     deleted_only_result = service.list_conversations(deleted_only=True)
     assert deleted_only_result["pagination"]["limit"] == 50
     deleted_only_call = [call for call in db.calls if call[0] == "search_conversations_page"][-1]

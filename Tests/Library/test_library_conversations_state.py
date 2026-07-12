@@ -79,6 +79,14 @@ def test_query_with_no_matches_returns_empty_copy_and_zero_status_copy():
     assert state.preview_lines == ()
 
 
+def test_empty_copy_matches_console_vocabulary():
+    """Console chats appear in Library without an explicit save step, and the
+    copy must not promise otherwise (task-179 vocabulary alignment)."""
+    assert LIBRARY_CONVERSATIONS_EMPTY_COPY == (
+        "No conversations yet. Chat in Console and it appears here."
+    )
+
+
 def test_no_records_yields_default_empty_copy_and_no_status_copy():
     state = build_library_conversations_state([], now=NOW)
 

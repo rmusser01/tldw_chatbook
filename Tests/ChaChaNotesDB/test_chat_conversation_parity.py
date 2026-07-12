@@ -229,6 +229,26 @@ class TestConversationParity:
         assert workspace_total == 1
         assert [row["id"] for row in workspace_rows] == [workspace_id]
 
+    def test_search_conversations_page_scope_all_spans_global_and_workspace_rows(
+        self,
+        db_instance: CharactersRAGDB,
+    ):
+        """`scope_type='all'` is the Library Browse ▸ Conversations query scope:
+        one page/count spanning global history and every workspace (task-179)."""
+        global_id = db_instance.add_conversation({"title": "Global History"})
+        workspace_id = db_instance.add_conversation(
+            {
+                "title": "Workspace History",
+                "scope_type": "workspace",
+                "workspace_id": "ws-123",
+            }
+        )
+
+        rows, total, _ = db_instance.search_conversations_page(None, scope_type="all")
+
+        assert total == 2
+        assert {row["id"] for row in rows} == {global_id, workspace_id}
+
     def test_list_all_active_conversations_defaults_to_global_history_only(self, db_instance: CharactersRAGDB):
         global_id = db_instance.add_conversation({"title": "Listable Global"})
         workspace_id = db_instance.add_conversation(

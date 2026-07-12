@@ -1606,6 +1606,11 @@ class LibraryScreen(BaseAppScreen):
             self._run_library_service_call(
                 list_conversations,
                 mode="local",
+                # "all" spans global- and workspace-scoped conversations:
+                # Console chats persisted inside a workspace session are
+                # workspace-scoped and would be invisible (and uncounted)
+                # under the service's default 'global' scope.
+                scope_type="all",
                 limit=LIBRARY_SOURCE_PAGE_SIZES["conversations"],
                 offset=0,
                 isolate_in_worker=True,

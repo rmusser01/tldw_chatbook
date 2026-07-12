@@ -119,7 +119,7 @@ def _section_state(
         workspace_id="ws-a",
         collapsed=collapsed,
         query=query,
-        selected_summary="Conversation 2 - saved workspace",
+        selected_summary="Conversation 2 - saved chat",
         rows=conversation_rows,
         workspace_total_count=rows,
         result_total_count=None,
@@ -260,6 +260,31 @@ def _base_grouped_workspace_state(
         acp_handoff_detail=state.acp_handoff_detail,
         acp_handoff_audit=state.acp_handoff_audit,
     )
+
+
+def test_console_conversation_status_labels_use_saved_chat_vocabulary() -> None:
+    """Persisted-but-not-archived chats read "saved chat" everywhere.
+
+    Membership roles ("workspace-thread"/"workspace") and the default
+    persisted conversation state ("in-progress") all describe the same
+    user-visible thing: a chat saved locally that is not open in a tab.
+    Library Browse ▸ Conversations lists the same records, so these labels
+    must not contradict its copy (task-179 vocabulary alignment).
+    """
+    detail = ConsoleWorkspaceContextTray._conversation_detail_status
+    status = ConsoleWorkspaceContextTray._conversation_status
+
+    assert detail("workspace-thread") == "saved chat"
+    assert detail("workspace") == "saved chat"
+    assert detail("in-progress") == "saved chat"
+    assert detail("active") == "active session"
+    assert detail("open") == "open session"
+
+    assert status("workspace-thread") == "saved"
+    assert status("workspace") == "saved"
+    assert status("in-progress") == "saved"
+    assert status("active") == "active"
+    assert status("open") == "open"
 
 
 def test_console_workspace_conversation_section_state_defaults() -> None:
@@ -569,7 +594,7 @@ async def test_console_workspace_conversations_render_bounded_expanded_section()
         await pilot.pause()
 
         assert _static_plain(console, "#console-workspace-conversations-title") == "Conversations (8)"
-        assert _static_plain(console, "#console-workspace-selected-conversation") == "Conversation 2 - saved workspace"
+        assert _static_plain(console, "#console-workspace-selected-conversation") == "Conversation 2 - saved chat"
         assert len(console.query("#console-workspace-conversation-search")) == 1
         assert len(console.query("#console-workspace-conversation-search-clear")) == 1
         assert len(console.query("#console-new-workspace-conversation")) == 1
@@ -594,7 +619,7 @@ async def test_console_workspace_conversations_collapsed_shows_selected_summary_
         await pilot.pause()
 
         assert _static_plain(console, "#console-workspace-conversations-title") == "Conversations (8)"
-        assert _static_plain(console, "#console-workspace-selected-conversation") == "Conversation 2 - saved workspace"
+        assert _static_plain(console, "#console-workspace-selected-conversation") == "Conversation 2 - saved chat"
         assert len(console.query("#console-workspace-conversation-search")) == 0
         assert len(console.query("#console-workspace-conversations")) == 0
         assert len(console.query("#console-new-workspace-conversation")) == 0
@@ -625,7 +650,7 @@ async def test_console_workspace_legacy_conversation_toggle_collapses_and_expand
         assert _static_plain(
             console,
             "#console-workspace-selected-conversation",
-        ) == "Conversation 2 - saved workspace"
+        ) == "Conversation 2 - saved chat"
         assert app.app_config["console"]["conversation_section"]["ws-a"][
             "collapsed"
         ] is True

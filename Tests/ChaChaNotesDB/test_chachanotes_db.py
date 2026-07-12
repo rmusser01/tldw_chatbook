@@ -435,10 +435,10 @@ class TestGetAllConversationIds:
     Library chatbook export (see ``Library/library_export_scope.py``).
 
     Mirrors the WHERE clause ``search_conversations_page`` builds for the
-    Library's conversations snapshot fetch when called with no
-    ``scope_type``/``workspace_id`` (``ChatConversationService.list_conversations``
-    -> ``scope_type='global'``): ``scope_type = 'global' AND client_id = ?
-    AND deleted = 0``, but with no page cap.
+    Library's conversations snapshot fetch (``ChatConversationService.
+    list_conversations`` with ``scope_type='all'``, spanning global- and
+    workspace-scoped rows): ``client_id = ? AND deleted = 0``, but with no
+    page cap.
     """
 
     def test_returns_all_non_deleted_conversation_ids(self, db_instance: CharactersRAGDB):
@@ -452,15 +452,17 @@ class TestGetAllConversationIds:
 
         assert set(ids) == {conv_id_1, conv_id_2}
 
-    def test_excludes_workspace_scoped_conversations(self, db_instance: CharactersRAGDB):
+    def test_includes_workspace_scoped_conversations(self, db_instance: CharactersRAGDB):
+        """Console chats persisted inside a workspace session are workspace-scoped
+        and must be exportable, matching the Library's all-scope listing (task-179)."""
         global_id = db_instance.add_conversation({"title": "Global conv"})
-        db_instance.add_conversation(
+        workspace_id = db_instance.add_conversation(
             {"title": "Workspace conv", "scope_type": "workspace", "workspace_id": "ws-1"}
         )
 
         ids = db_instance.get_all_conversation_ids()
 
-        assert ids == [global_id]
+        assert set(ids) == {global_id, workspace_id}
 
     def test_excludes_conversations_from_a_different_client_id(self, db_instance: CharactersRAGDB):
         own_id = db_instance.add_conversation({"title": "Own conv"})
