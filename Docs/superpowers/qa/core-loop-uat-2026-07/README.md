@@ -135,3 +135,39 @@ Schedules/Workflows/MCP/ACP/Skills (out of scope per user).
   selected-message accent border (non-obscuring-focus contract), collection-scoped search/server
   sync/conflict review surface deferrals, rail-badge refresh timing, Settings save_state stub,
   backlog tasks 152-171 and TASK-88/97/70.5/70.6/119.
+
+## Remediation (2026-07-11, same branch)
+
+All findings above were fixed on this branch (commits 6fd4a60f..88c0475b) and re-verified LIVE on a
+fresh profile (HOME-D) against the same llama.cpp server, walking the identical journey that failed:
+
+- `remediation-first-send-succeeds-on-defaults-*.png` — **the P0 is dead**: virgin profile →
+  Settings → first send answers (`Assistant: VERIFIED`) on pure out-of-box defaults (template now
+  streams for local providers; gateway generation timeout 300s, probes 5s).
+- `remediation-console-unlocked-no-restart-*.png` — saving in Settings unlocks Console in the SAME
+  session (three stacked root causes fixed: wrong config-freshness marker, boot-echo reactives
+  overriding fresh chat_defaults, screen-state restore re-injecting the stale blocked session;
+  regression-proofed by a real-journey test using the actual adapter + navigation path).
+- `remediation-setup-card-honest-steps-*.png` — "Set up provider" button, step 2 unchecked on
+  virgin profiles, local-server framing, "Composer unlocks after setup".
+- `remediation-provider-test-outcome-toast-*.png` — "Provider test passed: llama.cpp is ready;
+  model …" (failure variant carries the reason); humanized grouped provider catalog + display-name
+  dropdown with type-to-search visible in the same capture.
+- `remediation-composer-clears-on-send-*.png` — composer clears at submission-accept; empty
+  streaming rows render a Generating… placeholder (covered by transcript test); provider failures
+  are transcript-only system rows with classified copy, never assistant content; failed first
+  sends no longer set `first_send_completed`.
+- `remediation-save-as-four-destinations-*.png` — Save as… offers Chatbook / Note / Media / Prompt,
+  all wired (registry chatbook artifact, media_db plaintext item, Prompts DB with conflict retry,
+  contextual titles "Console message — <conversation> (date)"); WIP copy gone.
+- `remediation-console-chat-visible-in-library-*.png` — a Console chat appears in Library ▸
+  Conversations immediately (`Conversations (1)`, Open in Console): the listing now spans scopes
+  (`scope_type="all"`), and "saved workspace"/"in progress" unified to "saved chat".
+- Library/notes/search/ingest fixes (escaped titles, single-row toolbar, fresh ages, quiet
+  no-sources gate, stable primary buttons, Enter-submits-ingest, honest media open labels) and the
+  13-splash-effect NameError + boot log noise all landed with focused tests.
+
+Verification: broad sweep 2298 passed / 70 skipped; the single remaining failure
+(`test_console_workspace_context_syncs_active_conversation_marker`) was proven pre-existing by
+running it at the branch base (75e6987c). Deferred (tracked): keyword-search stemming note
+(task-185), Settings live network probe + Console modal display-name parity (task-191).

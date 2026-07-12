@@ -1,7 +1,7 @@
 ---
 id: TASK-177
 title: Propagate provider readiness to Console in-session after Settings save
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-12 02:47'
 labels:
@@ -19,6 +19,12 @@ Core-loop UAT 2026-07-11: after saving a ready provider in Settings (toast confi
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Saving provider settings and navigating to Console shows the ready state without restarting the app
-- [ ] #2 Setup-card readiness is derived from fresh config (or re-probed on Console entry)
+- [x] #1 Saving provider settings and navigating to Console shows the ready state without restarting the app
+- [x] #2 Setup-card readiness is derived from fresh config (or re-probed on Console entry)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Fixed on branch claude/uat-core-loop-2026-07 (PR #606, commits 6fd4a60f..88c0475b) with focused tests; re-verified live against llama.cpp on a fresh profile (remediation captures in Docs/superpowers/qa/core-loop-uat-2026-07).
+<!-- SECTION:NOTES:END -->
