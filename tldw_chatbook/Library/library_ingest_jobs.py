@@ -852,7 +852,9 @@ def plan_restore(rows: list[dict], *, max_persisted: int, now_iso: str) -> Resto
         rows: Persisted job rows, seq-ascending (oldest first) -- the same
             order ``LibraryIngestJobRegistry._jobs`` maintains internally.
         max_persisted: The maximum number of rows to keep; anything beyond
-            this, oldest-by-seq first, is pruned.
+            this, oldest-by-seq first, is pruned. A non-positive cap
+            (``<= 0``) is treated as "keep everything" -- a misconfigured
+            cap must never wipe all history.
         now_iso: The wall-clock timestamp (``datetime.now(timezone.utc).
             isoformat()``) to stamp onto jobs normalized as interrupted.
 
@@ -863,9 +865,9 @@ def plan_restore(rows: list[dict], *, max_persisted: int, now_iso: str) -> Resto
         accepted v1 limits on parse/write loss on quit) with the error
         ``"Interrupted by app restart"``, ``permanent=False`` (so they
         remain retryable), and ``finished_at_wall=now_iso``. ``retry_count``
-        is preserved, not reset. When ``len(rows) > max_persisted``, the
-        oldest-by-seq rows beyond the cap are dropped from ``jobs`` and
-        their ids returned in ``delete_ids``.
+        is preserved, not reset. When ``max_persisted >= 1`` and
+        ``len(rows) > max_persisted``, the oldest-by-seq rows beyond the cap
+        are dropped from ``jobs`` and their ids returned in ``delete_ids``.
     """
     jobs = [_job_from_row(r) for r in rows]  # rows are seq-ascending
     normalized_ids: set[str] = set()
@@ -878,7 +880,13 @@ def plan_restore(rows: list[dict], *, max_persisted: int, now_iso: str) -> Resto
             )
             normalized_ids.add(job.job_id)
     delete_ids: list[str] = []
-    if len(jobs) > max_persisted:
+    # Guard the cap: only prune for a positive cap that is actually exceeded.
+    # A non-positive cap keeps everything (never wipe all history on a
+    # misconfig) -- and it also sidesteps Python's ``-0 == 0`` footgun, where
+    # ``jobs[:-max_persisted]``/``jobs[-max_persisted:]`` with ``max_persisted
+    # == 0`` would slice ``[:0]``/``[0:]`` (prune nothing) and a NEGATIVE cap
+    # would slice with a positive index and silently delete the oldest rows.
+    if max_persisted >= 1 and len(jobs) > max_persisted:
         pruned = jobs[:-max_persisted]
         delete_ids = [j.job_id for j in pruned]
         jobs = jobs[-max_persisted:]

@@ -844,3 +844,43 @@ def test_plan_restore_prune_cap_drops_oldest():
     assert [j.job_id for j in plan.jobs] == ["ingest-job-3", "ingest-job-4", "ingest-job-5"]
     assert plan.delete_ids == ["ingest-job-1", "ingest-job-2"]
     assert plan.next_id == 6
+
+
+def _done_rows(n):
+    return [
+        {"seq": i, "job_id": f"ingest-job-{i}", "source_path": "/p", "title": "", "author": "",
+         "keywords": "[]", "perform_analysis": 0, "chunk_enabled": 0, "chunk_size": 0,
+         "state": "done", "retry_count": 0, "detected_type": "", "error": "",
+         "finished_at_wall": "", "media_id": None, "superseded": 0, "dismissed": 0, "permanent": 0}
+        for i in range(1, n + 1)
+    ]
+
+
+def test_plan_restore_zero_cap_keeps_all_history():
+    # A non-positive cap must NEVER wipe all history (a `0` misconfig is the
+    # safe-keep case, not a delete-everything case).
+    from tldw_chatbook.Library.library_ingest_jobs import plan_restore
+    plan = plan_restore(_done_rows(2), max_persisted=0, now_iso="2026-07-12T09:00:00+00:00")
+    assert [j.job_id for j in plan.jobs] == ["ingest-job-1", "ingest-job-2"]
+    assert plan.delete_ids == []
+    assert plan.next_id == 3
+
+
+def test_plan_restore_negative_cap_keeps_all_history():
+    # The genuine footgun: with the unguarded `len(jobs) > max_persisted`
+    # block, a negative cap slices with a positive `-max_persisted` and
+    # deletes the oldest rows. The `>= 1` guard must keep everything instead.
+    from tldw_chatbook.Library.library_ingest_jobs import plan_restore
+    plan = plan_restore(_done_rows(2), max_persisted=-1, now_iso="2026-07-12T09:00:00+00:00")
+    assert [j.job_id for j in plan.jobs] == ["ingest-job-1", "ingest-job-2"]
+    assert plan.delete_ids == []
+    assert plan.next_id == 3
+
+
+def test_plan_restore_cap_one_prunes_to_newest():
+    # The `>= 1` branch still prunes normally for a positive cap.
+    from tldw_chatbook.Library.library_ingest_jobs import plan_restore
+    plan = plan_restore(_done_rows(2), max_persisted=1, now_iso="2026-07-12T09:00:00+00:00")
+    assert [j.job_id for j in plan.jobs] == ["ingest-job-2"]
+    assert plan.delete_ids == ["ingest-job-1"]
+    assert plan.next_id == 3
