@@ -34,6 +34,14 @@ from ...Sync_Interop.sync_readiness import DEFAULT_SYNC_ELIGIBILITY_REGISTRY, bu
 from ...Sync_Interop.manual_sync_control import ManualSyncPreview, ManualSyncRunResult
 from ...Workspaces.display_state import LIBRARY_WORKSPACE_VISIBILITY_COPY
 from ...Widgets.destination_workbench import DestinationModeStrip
+from ...Chat.provider_catalog import (
+    PROVIDER_CUSTOM_GROUP_KEYS,
+    PROVIDER_DISPLAY_NAMES,
+    PROVIDER_GROUP_CLOUD,
+    PROVIDER_GROUP_CUSTOM,
+    PROVIDER_GROUP_LOCAL,
+    PROVIDER_GROUP_ORDER,
+)
 from ...config import (
     BASE_DATA_DIR_CLI,
     DEFAULT_CONFIG_FROM_TOML,
@@ -159,61 +167,9 @@ MODEL_PROFILE_INPUT_PLACEHOLDERS = {
 }
 PROVIDER_MANUAL_SELECT_VALUE = "__manual__"
 PROVIDER_MANUAL_SELECT_LABEL = "Manual / custom provider"
-# task-180: single source of human display names for provider keys rendered in
-# Settings. Labels are display-only; the underlying config/readiness keys are
-# unchanged so existing config files keep working.
-PROVIDER_DISPLAY_NAMES = {
-    "anthropic": "Anthropic",
-    "aphrodite": "Aphrodite Engine",
-    "cohere": "Cohere",
-    "custom": "Custom OpenAI-compatible",
-    "custom_2": "Custom OpenAI-compatible #2",
-    "deepseek": "DeepSeek",
-    "google": "Google Gemini",
-    "groq": "Groq",
-    "huggingface": "Hugging Face",
-    "koboldcpp": "KoboldCpp",
-    "llama_cpp": "llama.cpp",
-    "local_llamacpp": "llama.cpp (legacy alias)",
-    "local_llamafile": "Llamafile",
-    "local_llm": "Local LLM (legacy generic)",
-    "local_mlx_lm": "MLX-LM (Apple silicon)",
-    "local_ollama": "Ollama (legacy alias)",
-    "local_vllm": "vLLM (legacy alias)",
-    "mistral": "Mistral AI (legacy alias)",
-    "mistralai": "Mistral AI",
-    "moonshot": "Moonshot AI",
-    "ollama": "Ollama",
-    "oobabooga": "Text Generation WebUI (Oobabooga)",
-    "openai": "OpenAI",
-    "openrouter": "OpenRouter",
-    "tabbyapi": "TabbyAPI",
-    "vllm": "vLLM",
-    "zai": "Z.ai",
-}
-PROVIDER_GROUP_CLOUD = "Cloud"
-PROVIDER_GROUP_LOCAL = "Local"
-PROVIDER_GROUP_CUSTOM = "Custom & legacy aliases"
-PROVIDER_GROUP_ORDER = (
-    PROVIDER_GROUP_CLOUD,
-    PROVIDER_GROUP_LOCAL,
-    PROVIDER_GROUP_CUSTOM,
-)
-# task-180: legacy/alias and custom keys stay selectable for config
-# compatibility but sort last, so new users pick the canonical entry
-# (llama_cpp over local_llamacpp, ollama over local_ollama, mistralai over
-# mistral, vllm over local_vllm).
-PROVIDER_CUSTOM_GROUP_KEYS = frozenset(
-    {
-        "custom",
-        "custom_2",
-        "local_llamacpp",
-        "local_llm",
-        "local_ollama",
-        "local_vllm",
-        "mistral",
-    }
-)
+# task-180/191: provider display names + grouping now come from the shared
+# catalog module (imported at the top) so Settings and Console match.
+
 MODEL_DISCOVERY_IDLE_COPY = "Discover models from configured endpoint"
 MODEL_DISCOVERY_EMPTY_COPY = (
     "No discovered models yet. Use Discover models after endpoint is configured."
