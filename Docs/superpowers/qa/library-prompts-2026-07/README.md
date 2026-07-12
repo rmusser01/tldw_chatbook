@@ -53,3 +53,29 @@ module-level `search_prompts` wrapper duplication; empty-Keywords "leave untouch
 two `_apply_mode("prompts")` direct-call personas tests; `CCPPromptEditorWidget` dead pocket
 noted for a future CCP-legacy sweep. `prompt_ingest_events.py` was NOT deleted — the spec's
 "confirmed dead" was wrong; it is live legacy Ingest▸Prompts wiring.
+
+## sr-UX/HCI polish wave (Task 8b, commits 3f4b8bb3..21179d75)
+
+A design review of the shipped screens surfaced eight findings (four defects, four upgrades),
+all user-approved and implemented before Phase 2. New captures:
+
+- `polish-new-prompt-rail-entry-2026-07-12.png` — **D1**: the Create rail now has **New prompt**
+  (the C in CRUD was previously unreachable from the UI — you could only import or save-from-Console).
+- `polish-blank-editor-reordered-fields-2026-07-12.png` — the blank create editor: fields reordered
+  to Name · **Description** (was "Details", **U4**) · System · User · Keywords · **Author last**
+  (**U2**, demoted from 2nd position in a single-author library); meta reads **New prompt**; the
+  action row gains **Duplicate** (**U3**). Save creates via the scope service; a create-time race
+  conflict is now recoverable (fix wave — was a nav-trap).
+- `polish-list-purpose-secondary-2026-07-12.png` — **U1/D2**: list rows now show the prompt's
+  PURPOSE ("Friendly release notes", "Explains feedback loop concepts") instead of `author · age`,
+  and the filter matches name+description — no longer advertising keyword-matching it structurally
+  could not deliver (list rows carry no keywords; a batched-join seam is the backlog path to
+  restoring keyword filter + chips).
+- `polish-import-browse-button-2026-07-12.png` — **D4**: the import row leads with **Browse…**
+  (FileOpen), removing the type-an-absolute-path friction. (Also fixed, not shown: **D3** the
+  name-conflict status now backs a real **Open existing** button resolving the captured offending
+  name.)
+
+Not folded in (backlogged): U5 (name the skipped files on import), keyword-in-list filtering +
+chips (needs the batched seam), and a discard-without-save path for the editor (pre-existing
+Task-4 explicit-save veto model).
