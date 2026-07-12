@@ -67,7 +67,7 @@ class LibraryIngestCanvas(VerticalScroll):
             )
         yield Input(
             value=state.form.path,
-            placeholder="Path to a local file…",
+            placeholder="Path to a local file or a URL…",
             id="library-ingest-path",
             classes="library-ingest-field",
         )
