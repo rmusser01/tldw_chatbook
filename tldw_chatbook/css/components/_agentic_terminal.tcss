@@ -2890,7 +2890,8 @@ Button.settings-category-button.settings-secondary-search-match {
     border: none;
     background: $ds-input-focus-bg;
     color: $ds-text-primary;
-    text-style: bold underline;
+    /* No underline: it made placeholder copy read as a link (task-185). */
+    text-style: bold;
     outline: none;
 }
 
