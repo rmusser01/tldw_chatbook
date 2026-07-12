@@ -508,10 +508,15 @@ class LibraryIngestJobRegistry:
         point on, and every further ``mark_parsing``/``mark_writing``/
         ``mark_done``/``mark_failed``/``requeue``/``dismiss`` call against
         its ``job_id`` becomes a safe no-op. A brand-new job with a
-        brand-new ``job_id`` and fresh timestamps is appended, copying only the form fields
+        brand-new ``job_id`` and fresh timestamps is appended, copying the form fields
         (``source_path``/``title``/``author``/``keywords``/
-        ``perform_analysis``/``chunk_enabled``/``chunk_size``) -- so the
-        canvas queue shows exactly ONE row per retried file, not two.
+        ``perform_analysis``/``chunk_enabled``/``chunk_size``) plus the
+        ``detected_type`` classification -- a pure function of
+        ``source_path`` (task 160): the dispatcher no longer re-derives the
+        type at dispatch, so carrying it forward is what keeps a retried
+        audio/video job bound by the heavy-lane cap. Runtime fields
+        (``media_id``/``error``/``started_at``/``finished_at``/...) reset --
+        so the canvas queue shows exactly ONE row per retried file, not two.
 
         Args:
             job_id: The failed job to requeue.
@@ -541,6 +546,7 @@ class LibraryIngestJobRegistry:
             perform_analysis=source.perform_analysis,
             chunk_enabled=source.chunk_enabled,
             chunk_size=source.chunk_size,
+            detected_type=source.detected_type,
             state=IngestJobState.QUEUED,
             submitted_at=time.monotonic(),
         )

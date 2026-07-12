@@ -341,8 +341,11 @@ def test_requeue_failed_job_appends_fresh_queued_copy() -> None:
     assert requeued.perform_analysis is True
     assert requeued.chunk_enabled is True
     assert requeued.chunk_size == 750
+    # detected_type is a pure function of source_path (task 160), so it is
+    # carried forward too -- the dispatcher no longer re-derives it, and a
+    # retried audio/video job must stay bound by the heavy-lane cap.
+    assert requeued.detected_type == "plaintext"
     # Fresh state -- not a copy of the failed job's runtime fields.
-    assert requeued.detected_type == ""
     assert requeued.media_id is None
     assert requeued.error == ""
     assert requeued.started_at is None
@@ -353,6 +356,22 @@ def test_requeue_failed_job_appends_fresh_queued_copy() -> None:
     # supersedes the failed original, so it no longer appears in jobs().
     jobs_by_id = {j.job_id: j for j in registry.jobs()}
     assert failed.job_id not in jobs_by_id
+
+
+def test_requeue_preserves_detected_type_for_the_heavy_lane_cap() -> None:
+    """(task 160) ``detected_type`` is a pure function of ``source_path``, so a
+    requeued (retried) job must carry it forward -- the dispatcher no longer
+    re-derives the type at dispatch, so a lost ``detected_type`` would let a
+    retried audio/video job bypass the heavy-lane cap."""
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/a.mp3", detected_type="audio")
+    registry.mark_parsing(job.job_id, detected_type="audio")
+    failed = registry.mark_failed(job.job_id, error="boom", permanent=False)
+
+    requeued = registry.requeue(failed.job_id)
+
+    assert requeued is not None
+    assert requeued.detected_type == "audio"
 
 
 def test_jobs_returns_newest_first_immutable_snapshot() -> None:

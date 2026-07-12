@@ -796,6 +796,56 @@ async def test_heavy_lane_caps_transcriptions_while_documents_fill_pool(
 
 
 @pytest.mark.asyncio
+async def test_retried_transcription_still_obeys_the_heavy_lane_cap(
+    tmp_path: Path,
+) -> None:
+    """(task 160) The heavy-lane cap must hold on the retry path too. A
+    requeued audio job carries its ``detected_type`` forward, so retrying a
+    failed transcription while another transcription is already PARSING must
+    leave the retry QUEUED -- not dispatch a second concurrent transcription
+    (which the dropped-``detected_type`` bug allowed via the Home Retry
+    control)."""
+    db = _make_db(tmp_path)
+    pool = _FakeIngestParsePool(auto_run=False)
+    app = _IngestRunnerHarness(db, pool_factory=lambda: pool, worker_count=3, heavy_lane=1)
+
+    async with app.run_test() as pilot:
+        a1_path = tmp_path / "a1.mp3"
+        a1_path.write_text("x", encoding="utf-8")
+        a2_path = tmp_path / "a2.mp3"
+        a2_path.write_text("x", encoding="utf-8")
+        a1 = app.submit_library_ingest_job(source_path=str(a1_path))
+        a2 = app.submit_library_ingest_job(source_path=str(a2_path))
+        await pilot.pause()
+
+        # Only one transcription parses at a time: a1 PARSING, a2 blocked.
+        assert len(pool.calls) == 1
+        states = {j.job_id: j.state for j in app.library_ingest_jobs.jobs()}
+        assert states[a1.job_id] == IngestJobState.PARSING
+        assert states[a2.job_id] == IngestJobState.QUEUED
+
+        # Fail a1 (per-job structured failure, like the retry tests) -> its
+        # heavy slot frees and a2 is admitted to PARSING.
+        pool.trigger_success(
+            0, {"ok": False, "error": "boom", "permanent": False}
+        )
+        await _wait_for_job_state(app, pilot, a2.job_id, IngestJobState.PARSING)
+        await _wait_for_job_state(app, pilot, a1.job_id, IngestJobState.FAILED)
+        assert len(pool.calls) == 2
+
+        # Retry a1 while a2 is still PARSING: the heavy lane is full, so the
+        # requeued a1 must stay QUEUED (its detected_type='audio' is skipped),
+        # NOT be dispatched as a second concurrent transcription.
+        requeued = app.retry_library_ingest_job(a1.job_id)
+        assert requeued is not None
+        await pilot.pause()
+        assert len(pool.calls) == 2
+        states_after = {j.job_id: j.state for j in app.library_ingest_jobs.jobs()}
+        assert states_after[requeued.job_id] == IngestJobState.QUEUED
+        assert states_after[a2.job_id] == IngestJobState.PARSING
+
+
+@pytest.mark.asyncio
 async def test_shutdown_flag_stops_late_parse_completion_callbacks(tmp_path: Path) -> None:
     """(F3 pilot) Once ``_ingest_shutdown`` is set, a parse completion (or
     pool-level error) that lands afterward -- e.g. already in flight when
