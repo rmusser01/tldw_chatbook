@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Input, Markdown, Static, TextArea
@@ -112,26 +113,32 @@ class LibraryNotesCanvas(Vertical):
             id="library-notes-filter",
             value=self.filter_value,
         )
-        yield Button(
-            f"sort: {_SORT_LABELS.get(self.sort_mode, 'Newest')} ▸",
-            id="library-notes-sort", classes="library-canvas-action", compact=True,
-        )
-        # A separate toolbar row (stacked, not a Horizontal) under the sort
-        # button -- mixing a 1fr sibling with fixed-width action buttons in
-        # a Horizontal is the known non-rendering failure mode for this
-        # canvas, so every row here is bare, full-width-flowing Buttons.
-        yield Button(
-            "Sync", id="library-notes-sync-open",
-            classes="library-canvas-action", compact=True,
-        )
-        yield Button(
-            "Import note", id="library-notes-import",
-            classes="library-canvas-action", compact=True,
-        )
-        yield Button(
-            "Export…", id="library-notes-export",
-            classes="library-canvas-action", compact=True,
-        )
+        # One horizontal ds-toolbar row for sort/Sync/Import note/Export…
+        # (2026-07 UAT: the previous bare stacked Buttons rendered as an
+        # overlapped vertical pile eating into the first list row). Safe
+        # here because every child is a fixed-width compact Button -- the
+        # known non-rendering failure mode for this canvas family is only
+        # a Horizontal mixing a 1fr sibling with fixed-width children,
+        # exactly the ds-toolbar shape `_compose_editor` already proves out.
+        toolbar = Horizontal(classes="ds-toolbar")
+        toolbar.styles.height = "auto"
+        with toolbar:
+            yield Button(
+                f"sort: {_SORT_LABELS.get(self.sort_mode, 'Newest')} ▸",
+                id="library-notes-sort", classes="library-canvas-action", compact=True,
+            )
+            yield Button(
+                "Sync", id="library-notes-sync-open",
+                classes="library-canvas-action", compact=True,
+            )
+            yield Button(
+                "Import note", id="library-notes-import",
+                classes="library-canvas-action", compact=True,
+            )
+            yield Button(
+                "Export…", id="library-notes-export",
+                classes="library-canvas-action", compact=True,
+            )
         if list_state.status_copy:
             yield Static(list_state.status_copy, id="library-notes-status", markup=False)
         if not list_state.rows:
@@ -139,8 +146,14 @@ class LibraryNotesCanvas(Vertical):
             return
         with Vertical(id="library-notes-list"):
             for index, row in enumerate(list_state.rows):
+                # Button labels are parsed as Rich markup: escape the
+                # user-supplied title so "[draft] Q3 plan [wip]" renders
+                # verbatim instead of eating bracketed segments as tags
+                # (or crashing on an unmatched closing tag) -- the same
+                # fix class as the escaped search-history Button labels.
+                title = escape_markup(row.title)
                 button = Button(
-                    f"{row.title}\n{row.age_label}" if row.age_label else row.title,
+                    f"{title}\n{row.age_label}" if row.age_label else title,
                     id=f"library-notes-row-{index}",
                     classes="library-notes-row", compact=True,
                 )

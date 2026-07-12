@@ -136,13 +136,21 @@ class LibraryIngestCanvas(VerticalScroll):
                 classes="library-ingest-field",
                 disabled=not state.form.chunk,
             )
-        if state.start_quiet_line:
-            yield Static(
-                state.start_quiet_line,
-                id="library-ingest-start-quiet-line",
-                classes="library-ingest-quiet-line",
-                markup=False,
-            )
+        # Always mounted, even with empty text, so the Start button never
+        # shifts vertically when the gate line's copy appears/disappears
+        # (2026-07 UAT: the button jumped ~2 rows on every gate change,
+        # breaking muscle memory). The fixed inline height reserves the
+        # line's row when the text is empty (an auto-height empty Static
+        # would collapse to 0); the screen's path-changed handler updates
+        # the text in place instead of mounting/removing the widget.
+        start_quiet_line = Static(
+            state.start_quiet_line,
+            id="library-ingest-start-quiet-line",
+            classes="library-ingest-quiet-line",
+            markup=False,
+        )
+        start_quiet_line.styles.height = 1
+        yield start_quiet_line
         yield Button(
             "Start ingest",
             id="library-ingest-start",

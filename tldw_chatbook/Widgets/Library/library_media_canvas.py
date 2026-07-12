@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Static
@@ -86,7 +87,8 @@ class LibraryMediaCanvas(Vertical):
                     compact=True,
                 )
                 button.media_id = row.media_id
-                button.tooltip = row.title
+                # Tooltips are rendered as markup too -- escape user titles.
+                button.tooltip = escape_markup(row.title)
                 button.set_class(row.selected, "library-media-row-selected")
                 button.styles.height = 2
                 button.styles.min_height = 2
@@ -105,9 +107,14 @@ class LibraryMediaCanvas(Vertical):
             toolbar = Horizontal(classes="ds-toolbar")
             toolbar.styles.height = "auto"
             with toolbar:
+                # Opens the selected item in the IN-LIBRARY media viewer
+                # (nav stays on Library), so the label must not promise the
+                # legacy Media manager -- that escape hatch lives on the
+                # full viewer's own action row (`#library-media-open`,
+                # `LibraryMediaViewer`), which genuinely navigates there.
                 yield Button(
-                    "Open in Media manager",
-                    id="library-media-open",
+                    "Open in viewer",
+                    id="library-media-open-viewer",
                     classes="library-canvas-action",
                     compact=True,
                 )

@@ -144,6 +144,42 @@ def build_library_notes_list_state(
     )
 
 
+def patch_note_records_after_save(
+    records: Sequence[Mapping[str, Any]] | None,
+    note_id: str,
+    *,
+    title: str,
+    modified_at: str,
+) -> tuple[Mapping[str, Any], ...]:
+    """Return ``records`` with the just-saved note's list fields refreshed.
+
+    A successful in-canvas note save persists to the DB but the notes LIST
+    is rendered from the screen's cached source-record snapshot -- without
+    this patch the list keeps showing the pre-save title, stale relative
+    age, and stale Newest ordering until the next full snapshot refetch.
+
+    Args:
+        records: The cached note records (any Mapping shape), or ``None``.
+        note_id: The saved note's id.
+        title: The saved title to reflect in the list row.
+        modified_at: ISO-8601 timestamp of the save, written to the
+            record's ``last_modified`` (the first key ``_updated_raw``
+            consults for both the age label and Newest/Oldest sorting).
+
+    Returns:
+        A new tuple with the matching record replaced by a patched copy;
+        non-matching (and non-mapping) entries pass through unchanged.
+    """
+    target_id = _text(note_id)
+    patched: list[Mapping[str, Any]] = []
+    for record in records or ():
+        if isinstance(record, Mapping) and _text(record.get("id")) == target_id:
+            patched.append({**record, "title": title, "last_modified": modified_at})
+        else:
+            patched.append(record)
+    return tuple(patched)
+
+
 def next_notes_sort_mode(mode: str) -> str:
     """Cycle to the next notes sort mode in ``NOTES_SORT_MODES`` order.
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from typing import Any
 
+from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Vertical
@@ -50,16 +51,23 @@ def library_dim_label_text(label: str, value: str) -> Text:
 def _visible_row_title(title: str) -> str:
     """Return a rail-safe visible title that does not clip in narrow panes.
 
+    The result is markup-escaped (after truncating) because every caller
+    interpolates it into a ``Button`` label, which Textual parses as Rich
+    markup: an unescaped user title like ``[draft] Q3 plan [wip]`` would
+    render with its bracketed segments consumed as (or crashing on) markup
+    tags -- the same bug class as the search-history Button-label lesson.
+
     Args:
-        title: Full row title.
+        title: Full row title (may contain user-supplied text).
 
     Returns:
-        The title, truncated with an ellipsis when longer than the rail budget.
+        The escaped title, truncated with an ellipsis when longer than the
+        rail budget.
     """
     readable = str(title).strip()
-    if len(readable) <= _MAX_LIBRARY_ROW_TITLE:
-        return readable
-    return f"{readable[: _MAX_LIBRARY_ROW_TITLE - 3].rstrip()}..."
+    if len(readable) > _MAX_LIBRARY_ROW_TITLE:
+        readable = f"{readable[: _MAX_LIBRARY_ROW_TITLE - 3].rstrip()}..."
+    return escape_markup(readable)
 
 
 class LibraryRail(Vertical):

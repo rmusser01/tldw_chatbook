@@ -303,12 +303,33 @@ async def test_library_search_rag_empty_sources_has_mode_local_blocked_status() 
         await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
 
         visible_text = _visible_text(screen)
-        assert "No sources." in visible_text
-        assert "Recovery checklist" in visible_text
-        assert "1. Import Library sources." in visible_text
-        assert "2. Run Search/RAG." in visible_text
-        assert "3. Select evidence, then Use in Console." in visible_text
+        # (task-185) The no-sources state is ONE quiet gate line plus the
+        # single Open Import media action -- the old 8-line recovery dump,
+        # its checklist, the "Select at least one source." query line, and
+        # the Evidence empty-state hints must not stack on top of it.
+        gate_line = screen.query_one("#library-rag-scope-recovery", Static)
+        assert (
+            str(gate_line.renderable)
+            == "No Library sources yet — import media or create notes, then search."
+        )
+        assert "No Library sources yet" in visible_text
+        assert "Recovery checklist" not in visible_text
+        assert "Owner: Library source index." not in visible_text
+        assert "Unavailable: Library Search/RAG." not in visible_text
+        assert "1. Import Library sources." not in visible_text
+        assert "Select at least one source." not in visible_text
         assert "Why: Enter a question or search query." not in visible_text
+        assert "No evidence yet. Run Search/RAG to populate results." not in visible_text
+        assert (
+            "Add or import sources, run a query, then select evidence for Console."
+            not in visible_text
+        )
+        assert not screen.query("#library-rag-results-empty")
+        assert not screen.query("#library-rag-evidence-empty-guidance")
+        # The quiet-line slot stays mounted (empty) so the Run button's
+        # position is stable, but it carries no second guidance layer.
+        quiet_line = screen.query_one("#library-rag-query-quiet-line", Static)
+        assert str(quiet_line.renderable) == ""
         recovery_button = screen.query_one("#library-rag-open-import-export", Button)
         assert str(recovery_button.label) == "Open Import media"
         assert recovery_button.tooltip == "Open Library Import media to add sources."
@@ -339,6 +360,11 @@ async def test_library_search_rag_query_updates_action_and_survives_recompose() 
         assert run_button.disabled is False
         assert str(run_button.tooltip) == ""
         assert len(screen.query("#library-rag-query-recovery")) == 0
+        # (task-185) The gate helper's one-row slot stays mounted (empty)
+        # once the query is valid, so the Run button never shifts when the
+        # "Enter a question or search query." line clears.
+        quiet_line = screen.query_one("#library-rag-query-quiet-line", Static)
+        assert str(quiet_line.renderable) == ""
 
         screen.refresh(recompose=True)
         await _wait_for_selector(screen, pilot, "#library-search-rag-panel")

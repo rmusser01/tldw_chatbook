@@ -245,8 +245,9 @@ async def test_search_mode_returns_rows_from_all_three_sources(conversations_db)
     assert by_type["media"]["source_id"] == "7"
     assert by_type["conversation"]["source_id"] == conv_id
     # The fixture's one conversation has exactly one message, and it's the
-    # one that matched the FTS query -- so message_count == 1.
-    assert by_type["conversation"]["snippet"] == "Matched conversation · 1 messages"
+    # one that matched the FTS query -- so message_count == 1, and the
+    # secondary line pluralizes correctly ("1 message", never "1 messages").
+    assert by_type["conversation"]["snippet"] == "Matched conversation · 1 message"
     assert notes_service.calls[0]["user_id"] == "tester"
     assert notes_service.calls[0]["scope"] == "local_note"
     # C1: keyword-mode rows uniformly show no score. The conversation row is
@@ -533,3 +534,19 @@ async def test_rag_mode_delegates_and_maps_results():
     assert row["source_id"] == "note-1"
     assert row["snippet"] == "Rotate the credential immediately."
     assert row["provenance"]["source_type"] == "note"
+
+
+# (task-185) The keyword-search conversation row's secondary line pluralizes
+# its message count instead of the fixed "N messages" template.
+def test_conversation_row_secondary_line_pluralizes_message_count():
+    from tldw_chatbook.Library.library_local_rag_search_service import _conversation_row
+
+    one = _conversation_row({"id": "c-1", "title": "Sync", "message_count": 1})
+    many = _conversation_row({"id": "c-2", "title": "Sync", "message_count": 8})
+    missing = _conversation_row({"id": "c-3", "title": "Sync"})
+    malformed = _conversation_row({"id": "c-4", "title": "Sync", "message_count": "n/a"})
+
+    assert one["snippet"] == "Matched conversation · 1 message"
+    assert many["snippet"] == "Matched conversation · 8 messages"
+    assert missing["snippet"] == "Matched conversation · 0 messages"
+    assert malformed["snippet"] == "Matched conversation · 0 messages"

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Input, Static
@@ -84,7 +85,8 @@ class LibraryConversationsCanvas(Vertical):
                     compact=True,
                 )
                 button.conversation_id = row.conversation_id
-                button.tooltip = row.title
+                # Tooltips are rendered as markup too -- escape user titles.
+                button.tooltip = escape_markup(row.title)
                 button.set_class(row.selected, "library-conversation-row-selected")
                 button.styles.height = 2
                 button.styles.min_height = 2

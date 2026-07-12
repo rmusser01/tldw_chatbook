@@ -10,6 +10,7 @@ from tldw_chatbook.Library.library_notes_state import (
     build_note_export_content,
     next_notes_sort_mode,
     notes_autosave_status_text,
+    patch_note_records_after_save,
     sort_notes_records,
 )
 
@@ -227,3 +228,48 @@ def test_build_note_template_rows_project_and_research_resolve_dateful_titles():
 
     assert rows_by_key["project"].resolved_title == "Project Plan - 2026-07-08"
     assert rows_by_key["research"].resolved_title == "Research Notes - 2026-07-08"
+
+
+# (task-184) patch_note_records_after_save: the in-memory list refresh
+# applied by a successful in-canvas save, so Back-to-list shows the new
+# title, a fresh relative age, and correct Newest ordering immediately.
+
+
+def test_patch_note_records_after_save_updates_title_and_last_modified():
+    saved_stamp = "2026-07-07T12:00:00+00:00"
+    patched = patch_note_records_after_save(
+        [NOTE_A, NOTE_B], "n-2", title="Reading list (edited)", modified_at=saved_stamp
+    )
+
+    assert patched[0] == NOTE_A
+    assert patched[1]["title"] == "Reading list (edited)"
+    assert patched[1]["last_modified"] == saved_stamp
+    # Other fields pass through untouched.
+    assert patched[1]["content"] == "bravo body"
+    assert patched[1]["version"] == 1
+    # The original record is never mutated in place.
+    assert NOTE_B["title"] == "Reading list"
+
+
+def test_patch_note_records_after_save_resorts_to_front_with_fresh_age():
+    saved_stamp = NOW.isoformat()
+    patched = patch_note_records_after_save(
+        [NOTE_A, NOTE_B], "n-2", title="Reading list (edited)", modified_at=saved_stamp
+    )
+
+    ordered = sort_notes_records(list(patched), "newest")
+    state = build_library_notes_list_state(ordered, now=NOW)
+
+    assert state.rows[0].note_id == "n-2"
+    assert state.rows[0].title == "Reading list (edited)"
+    assert state.rows[0].age_label == "now"
+
+
+def test_patch_note_records_after_save_leaves_unknown_ids_and_shapes_alone():
+    records = [NOTE_A, "not-a-mapping"]
+    patched = patch_note_records_after_save(
+        records, "missing-id", title="X", modified_at="2026-07-07T12:00:00+00:00"
+    )
+
+    assert patched == (NOTE_A, "not-a-mapping")
+    assert patch_note_records_after_save(None, "n-1", title="X", modified_at="s") == ()
