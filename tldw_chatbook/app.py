@@ -119,7 +119,7 @@ from tldw_chatbook.Library.library_ingest_jobs import (
     LibraryIngestJobRegistry,
 )
 from tldw_chatbook.Library.library_local_rag_search_service import LibraryLocalRagSearchService
-from tldw_chatbook.Local_Ingestion import detect_file_type, FileIngestionError
+from tldw_chatbook.Local_Ingestion import FileIngestionError
 from tldw_chatbook.Local_Ingestion.ingest_parse_worker import classify_parse_failure, run_parse_job
 from tldw_chatbook.Local_Ingestion.local_file_ingestion import classify_ingest_source, persist_parsed_media
 from tldw_chatbook.Home.active_work_adapter import (
