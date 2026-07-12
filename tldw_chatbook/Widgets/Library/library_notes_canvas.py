@@ -113,9 +113,14 @@ class LibraryNotesCanvas(Vertical):
             id="library-notes-filter",
             value=self.filter_value,
         )
-        # One horizontal ds-toolbar row for sort/Sync/Import note/Export…
-        # (2026-07 UAT: the previous bare stacked Buttons rendered as an
-        # overlapped vertical pile eating into the first list row). Safe
+        select_mode = list_state.select_mode
+        # Gate/label off the RENDERED rows, not any total-count field -- only
+        # rendered rows are selectable, matching the media/conversations
+        # canvases' ``len(rows)`` convention.
+        rendered_count = len(list_state.rows)
+        # One horizontal ds-toolbar row for sort/Sync/Import note/Export…/
+        # Select (2026-07 UAT: the previous bare stacked Buttons rendered as
+        # an overlapped vertical pile eating into the first list row). Safe
         # here because every child is a fixed-width compact Button -- the
         # known non-rendering failure mode for this canvas family is only
         # a Horizontal mixing a 1fr sibling with fixed-width children,
@@ -135,10 +140,35 @@ class LibraryNotesCanvas(Vertical):
                 "Import note", id="library-notes-import",
                 classes="library-canvas-action", compact=True,
             )
-            yield Button(
+            export_btn = Button(
                 "Export…", id="library-notes-export",
                 classes="library-canvas-action", compact=True,
             )
+            export_btn.display = not select_mode
+            yield export_btn
+            select_btn = Button(
+                "Done" if select_mode else "Select",
+                id="library-notes-select-toggle",
+                classes="library-canvas-action", compact=True,
+            )
+            select_btn.disabled = rendered_count == 0
+            yield select_btn
+        if select_mode:
+            action_row = Horizontal(classes="ds-toolbar")
+            action_row.styles.height = "auto"
+            with action_row:
+                yield Static(f"{list_state.selected_count} selected",
+                             id="library-notes-selected-count", markup=False)
+                yield Button(f"Select all {rendered_count} shown",
+                             id="library-notes-select-all",
+                             classes="library-canvas-action", compact=True)
+                yield Button("Clear", id="library-notes-select-clear",
+                             classes="library-canvas-action", compact=True)
+                export_selected = Button("Export selected",
+                                         id="library-notes-export-selected",
+                                         classes="library-canvas-action", compact=True)
+                export_selected.disabled = list_state.selected_count == 0
+                yield export_selected
         if list_state.status_copy:
             yield Static(list_state.status_copy, id="library-notes-status", markup=False)
         if not list_state.rows:
@@ -152,8 +182,18 @@ class LibraryNotesCanvas(Vertical):
                 # (or crashing on an unmatched closing tag) -- the same
                 # fix class as the escaped search-history Button labels.
                 title = escape_markup(row.title)
+                if select_mode:
+                    # Notes rows had no marker at all before select mode
+                    # existed -- normal mode keeps that markerless label
+                    # (no ``▸``, unlike the media/conversations rows). The 2-col
+                    # glyph shifts line 1, so indent the age line by 2 to keep it
+                    # aligned under the title rather than under the checkbox.
+                    glyph = "☑ " if row.checked else "☐ "
+                    label = f"{glyph}{title}\n  {row.age_label}" if row.age_label else f"{glyph}{title}"
+                else:
+                    label = f"{title}\n{row.age_label}" if row.age_label else title
                 button = Button(
-                    f"{title}\n{row.age_label}" if row.age_label else title,
+                    label,
                     id=f"library-notes-row-{index}",
                     classes="library-notes-row", compact=True,
                 )

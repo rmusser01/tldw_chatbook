@@ -74,6 +74,7 @@ from ...Library.library_media_viewer_state import (
 )
 from ...Library.library_notes_state import (
     LibraryNoteEditorState,
+    LibraryNotesListState,
     build_library_note_editor_state,
     build_library_notes_list_state,
     build_note_export_content,
@@ -128,6 +129,7 @@ from ...Library.library_shell_state import (
     LibraryShellInput,
     build_library_shell_state,
 )
+from ...Library.row_selection import RowSelection
 from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
 from ...runtime_policy.types import PolicyDeniedError, RuntimeSourceState
 from ...Sync_Interop.sync_promotion_state import build_sync_promotion_state
@@ -561,8 +563,12 @@ class LibraryScreen(BaseAppScreen):
         self._selected_conversation_id = ""
         self._library_selected_row_id: str = ""
         self._library_conversation_query: str = ""
+        self._library_conversations_select_mode: bool = False
+        self._library_conversations_row_selection = RowSelection("conversations")
         self._library_media_type_filter: str = "All"
         self._selected_media_id: str = ""
+        self._library_media_select_mode: bool = False
+        self._library_media_row_selection = RowSelection("media")
         self._library_media_view: str = "list"
         self._library_media_detail: Mapping[str, Any] | None = None
         self._library_media_editing: bool = False
@@ -572,6 +578,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_content_query: str = ""
         self._library_media_content_match_index: int = 0
         self._library_notes_view: str = "list"
+        self._library_notes_select_mode: bool = False
+        self._library_notes_row_selection = RowSelection("notes")
         self._library_notes_sort: str = "newest"
         self._library_notes_filter: str = ""
         self._library_notes_filter_records: list | None = None
@@ -2688,17 +2696,8 @@ class LibraryScreen(BaseAppScreen):
                         id="library-notes-canvas",
                     )
                 elif shell.canvas_kind == "notes":
-                    source_records = (
-                        self._library_notes_filter_records
-                        if self._library_notes_filter_records is not None
-                        else self._local_source_records.get("notes", ())
-                    )
-                    notes_list_state = build_library_notes_list_state(
-                        sort_notes_records(source_records, self._library_notes_sort),
-                        filter_note=self._library_notes_filter,
-                    )
                     yield LibraryNotesCanvas(
-                        notes_list_state,
+                        self._build_library_notes_state(),
                         sort_mode=self._library_notes_sort,
                         filter_value=self._library_notes_filter,
                         id="library-notes-canvas",
@@ -2834,19 +2833,48 @@ class LibraryScreen(BaseAppScreen):
 
     def _build_library_conversations_state(self):
         """Build the conversations canvas display state from local records."""
-        return build_library_conversations_state(
+        state = build_library_conversations_state(
             self._conversation_records(),
             query=self._library_conversation_query,
             selected_id=self._selected_conversation_id,
+            select_mode=self._library_conversations_select_mode,
+            selected_ids=self._library_conversations_row_selection.ids,
         )
+        if self._library_conversations_select_mode:
+            self._library_conversations_row_selection.reconcile(
+                r.conversation_id for r in state.rows
+            )
+        return state
 
     def _build_library_media_state(self) -> LibraryMediaCanvasState:
         """Build the media canvas display state from local records."""
-        return build_library_media_state(
+        state = build_library_media_state(
             self._local_source_records.get("media", ()),
             active_type=self._library_media_type_filter,
             selected_id=self._selected_media_id,
+            select_mode=self._library_media_select_mode,
+            selected_ids=self._library_media_row_selection.ids,
         )
+        if self._library_media_select_mode:
+            self._library_media_row_selection.reconcile(r.media_id for r in state.rows)
+        return state
+
+    def _build_library_notes_state(self) -> LibraryNotesListState:
+        """Build the notes canvas's list-view display state from local records."""
+        source_records = (
+            self._library_notes_filter_records
+            if self._library_notes_filter_records is not None
+            else self._local_source_records.get("notes", ())
+        )
+        state = build_library_notes_list_state(
+            sort_notes_records(source_records, self._library_notes_sort),
+            filter_note=self._library_notes_filter,
+            select_mode=self._library_notes_select_mode,
+            selected_ids=self._library_notes_row_selection.ids,
+        )
+        if self._library_notes_select_mode:
+            self._library_notes_row_selection.reconcile(r.note_id for r in state.rows)
+        return state
 
     async def _refresh_library_media_detail(self, media_id: str) -> None:
         """Fetch and store the full detail for a selected Library media item.
@@ -5270,17 +5298,66 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, ".library-conversation-row")
     def handle_library_conversation_row(self, event: Button.Pressed) -> None:
-        """Select a conversation row in the Library conversations canvas.
+        """Select mode: toggle the row's checkbox. Normal mode: select the row.
+
+        In select mode, a row press toggles that row's id in
+        ``_library_conversations_row_selection`` and recomposes the screen --
+        it never sets the normal-mode selection/detail while in select mode.
+        Outside select mode, behavior is unchanged: selects the conversation
+        and switches the Library rail to the conversations browse row.
 
         Args:
             event: Button press event emitted by a conversation row button.
         """
         event.stop()
         conversation_id = str(getattr(event.button, "conversation_id", "") or "")
+        if self._library_conversations_select_mode:
+            self._library_conversations_row_selection.toggle(conversation_id)
+            self.refresh(recompose=True)
+            return
         if conversation_id:
             self._selected_conversation_id = conversation_id
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_CONVERSATIONS
         self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-conversations-select-toggle")
+    def handle_library_conversations_select_toggle(self, event: Button.Pressed) -> None:
+        """Enter/exit conversations select mode; clears the selection set (both on enter and exit)."""
+        event.stop()
+        self._library_conversations_select_mode = not self._library_conversations_select_mode
+        self._library_conversations_row_selection.clear()
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-conversations-select-all")
+    def handle_library_conversations_select_all(self, event: Button.Pressed) -> None:
+        """Select every conversation row currently rendered by the canvas."""
+        event.stop()
+        rows = self._build_library_conversations_state().rows
+        self._library_conversations_row_selection.select_all(
+            r.conversation_id for r in rows
+        )
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-conversations-select-clear")
+    def handle_library_conversations_select_clear(self, event: Button.Pressed) -> None:
+        """Clear the current conversations selection without leaving select mode."""
+        event.stop()
+        self._library_conversations_row_selection.clear()
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-conversations-export-selected")
+    async def handle_library_conversations_export_selected(self, event: Button.Pressed) -> None:
+        """Open the export canvas scoped to the currently selected conversation ids."""
+        event.stop()
+        # Defensive: an empty selection would resolve to a whole-source export
+        # (empty ids == whole source). The button is disabled at 0 selected, so
+        # this is normally unreachable -- guard anyway so a future activation
+        # path can't silently export everything.
+        if not self._library_conversations_row_selection.count:
+            return
+        await self._open_library_export_canvas(
+            self._library_conversations_row_selection.export_scope()
+        )
 
     @on(Button.Pressed, "#library-media-type-filter")
     def handle_library_media_type_filter_pressed(self, event: Button.Pressed) -> None:
@@ -5306,14 +5383,20 @@ class LibraryScreen(BaseAppScreen):
             current_index = 0
         next_index = (current_index + 1) % len(type_options)
         self._library_media_type_filter = type_options[next_index]
+        self._library_media_select_mode = False
+        self._library_media_row_selection.clear()
         self.refresh(recompose=True)
 
     @on(Button.Pressed, ".library-media-row")
     def handle_library_media_row(self, event: Button.Pressed) -> None:
-        """Select a media row and open the full Library media viewer.
+        """Select mode: toggle the row's checkbox. Normal mode: open the viewer.
 
-        Switches the media canvas from its list view to the in-canvas
-        viewer, clears any stale detail, and kicks the async detail fetch
+        In select mode, a row press toggles that row's id in
+        ``_library_media_row_selection`` and recomposes the screen -- it
+        never opens the full Library media viewer while in select mode.
+        Outside select mode, behavior is unchanged: switches the media
+        canvas from its list view to the in-canvas viewer, clears any
+        stale detail, and kicks the async detail fetch
         (``_refresh_library_media_detail``); the viewer renders a loading
         line until that worker stores the fetched detail and recomposes.
 
@@ -5322,7 +5405,44 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         media_id = str(getattr(event.button, "media_id", "") or "")
+        if self._library_media_select_mode:
+            self._library_media_row_selection.toggle(media_id)
+            self.refresh(recompose=True)
+            return
         self._open_library_media_viewer(media_id)
+
+    @on(Button.Pressed, "#library-media-select-toggle")
+    def handle_library_media_select_toggle(self, event: Button.Pressed) -> None:
+        """Enter/exit media select mode; clears the selection set (both on enter and exit)."""
+        event.stop()
+        self._library_media_select_mode = not self._library_media_select_mode
+        self._library_media_row_selection.clear()
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-media-select-all")
+    def handle_library_media_select_all(self, event: Button.Pressed) -> None:
+        """Select every media row currently rendered by the canvas."""
+        event.stop()
+        rows = self._build_library_media_state().rows
+        self._library_media_row_selection.select_all(r.media_id for r in rows)
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-media-select-clear")
+    def handle_library_media_select_clear(self, event: Button.Pressed) -> None:
+        """Clear the current media selection without leaving select mode."""
+        event.stop()
+        self._library_media_row_selection.clear()
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-media-export-selected")
+    async def handle_library_media_export_selected(self, event: Button.Pressed) -> None:
+        """Open the export canvas scoped to the currently selected media ids."""
+        event.stop()
+        # Defensive: an empty selection would resolve to a whole-source export
+        # (empty ids == whole source); the button is disabled at 0 selected.
+        if not self._library_media_row_selection.count:
+            return
+        await self._open_library_export_canvas(self._library_media_row_selection.export_scope())
 
     @on(Button.Pressed, "#library-media-open-viewer")
     def handle_library_media_open_viewer(self, event: Button.Pressed) -> None:
@@ -5383,6 +5503,8 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         self._library_notes_sort = next_notes_sort_mode(self._library_notes_sort)
+        self._library_notes_select_mode = False
+        self._library_notes_row_selection.clear()
         self.refresh(recompose=True)
 
     @on(Input.Submitted, "#library-notes-filter")
@@ -5397,6 +5519,8 @@ class LibraryScreen(BaseAppScreen):
         if submitted == self._library_notes_filter:
             return
         self._library_notes_filter = submitted
+        self._library_notes_select_mode = False
+        self._library_notes_row_selection.clear()
         if not submitted:
             self._library_notes_filter_records = None
             self.refresh(recompose=True)
@@ -6358,17 +6482,21 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, ".library-notes-row")
     async def handle_library_notes_row(self, event: Button.Pressed) -> None:
-        """Select a note row and open the in-canvas Library note editor.
+        """Select mode: toggle the row's checkbox. Normal mode: open the editor.
 
-        Switches the notes canvas from its list view to the editor, clears
-        any stale detail, and kicks the async detail fetch
-        (``_refresh_library_note_detail``); ``compose_content`` renders a
-        loading line until that worker stores the fetched detail and
-        recomposes. Mirrors ``handle_library_media_row``.
+        Flushes any dirty edit from a previously-open note first (awaited,
+        regardless of select mode) so switching notes -- or entering select
+        mode -- never silently discards unsaved text; an unsaved edit
+        surviving the flush aborts either path.
 
-        Flushes any dirty edit from a previously-open note first (awaited)
-        so switching notes never silently discards unsaved text; an
-        unsaved edit surviving the flush aborts the switch.
+        In select mode, a row press toggles that row's id in
+        ``_library_notes_row_selection`` and recomposes the screen -- it
+        never opens the in-canvas Library note editor while in select mode.
+        Outside select mode, behavior is unchanged: switches the notes
+        canvas from its list view to the editor, clears any stale detail,
+        and kicks the async detail fetch (``_refresh_library_note_detail``);
+        ``compose_content`` renders a loading line until that worker stores
+        the fetched detail and recomposes. Mirrors ``handle_library_media_row``.
 
         Args:
             event: Button press event emitted by a note row button.
@@ -6378,6 +6506,10 @@ class LibraryScreen(BaseAppScreen):
         if self._library_note_dirty:
             return
         note_id = str(getattr(event.button, "note_id", "") or "")
+        if self._library_notes_select_mode:
+            self._library_notes_row_selection.toggle(note_id)
+            self.refresh(recompose=True)
+            return
         if note_id:
             self._selected_note_id = note_id
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
@@ -6401,6 +6533,51 @@ class LibraryScreen(BaseAppScreen):
                 group="library_note_detail",
             )
         self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-notes-select-toggle")
+    async def handle_library_notes_select_toggle(self, event: Button.Pressed) -> None:
+        """Enter/exit notes select mode; clears the selection set (both on enter and exit).
+
+        Flushes any dirty edit first (awaited) so entering select mode
+        never strands a dirty note edit mid-save -- select mode is only
+        reachable from the notes list view, but the flush stays
+        unconditional here to mirror ``handle_library_notes_row``'s
+        always-flush-first behavior.
+
+        Args:
+            event: Button press event emitted by the notes canvas's
+                Select/Done toggle.
+        """
+        event.stop()
+        await self._flush_library_note_save()
+        self._library_notes_select_mode = not self._library_notes_select_mode
+        self._library_notes_row_selection.clear()
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-notes-select-all")
+    def handle_library_notes_select_all(self, event: Button.Pressed) -> None:
+        """Select every note row currently rendered by the canvas."""
+        event.stop()
+        rows = self._build_library_notes_state().rows
+        self._library_notes_row_selection.select_all(r.note_id for r in rows)
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-notes-select-clear")
+    def handle_library_notes_select_clear(self, event: Button.Pressed) -> None:
+        """Clear the current notes selection without leaving select mode."""
+        event.stop()
+        self._library_notes_row_selection.clear()
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-notes-export-selected")
+    async def handle_library_notes_export_selected(self, event: Button.Pressed) -> None:
+        """Open the export canvas scoped to the currently selected note ids."""
+        event.stop()
+        # Defensive: an empty selection would resolve to a whole-source export
+        # (empty ids == whole source); the button is disabled at 0 selected.
+        if not self._library_notes_row_selection.count:
+            return
+        await self._open_library_export_canvas(self._library_notes_row_selection.export_scope())
 
     @on(Button.Pressed, "#library-note-back")
     async def handle_library_note_back(self, event: Button.Pressed) -> None:
@@ -7648,6 +7825,8 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         self._library_conversation_query = self._safe_text(event.value, max_length=200)
+        self._library_conversations_select_mode = False
+        self._library_conversations_row_selection.clear()
         self.refresh(recompose=True)
         self.call_after_refresh(self._focus_library_conversations_filter)
 

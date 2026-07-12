@@ -29,11 +29,13 @@ class LibraryNotesListRow:
         age_label: Relative-age label (e.g. ``"3m"``, ``"1d"``) derived
             from the note's most recent modified/created timestamp, or
             ``""`` when no timestamp is available.
+        checked: Whether this row is checked in multi-select mode.
     """
 
     note_id: str
     title: str
     age_label: str
+    checked: bool = False
 
 
 @dataclass(frozen=True)
@@ -47,12 +49,16 @@ class LibraryNotesListState:
             results"``), or ``""`` when no filter is active.
         empty_copy: Empty-state copy shown when ``rows`` is empty, or
             ``""`` when there are rows to render.
+        select_mode: Whether multi-select mode is active.
+        selected_count: Number of rendered rows currently checked.
     """
 
     rows: tuple[LibraryNotesListRow, ...]
     header_copy: str
     status_copy: str
     empty_copy: str
+    select_mode: bool = False
+    selected_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -94,12 +100,16 @@ def _updated_raw(record: Mapping[str, Any]) -> str:
     return ""
 
 
-def _row(record: Mapping[str, Any], *, now: datetime) -> LibraryNotesListRow:
+def _row(
+    record: Mapping[str, Any], *, now: datetime, selected_ids: frozenset[str]
+) -> LibraryNotesListRow:
     raw = _updated_raw(record)
+    note_id = _text(record.get("id"))
     return LibraryNotesListRow(
-        note_id=_text(record.get("id")),
+        note_id=note_id,
         title=_text(record.get("title")) or "Untitled",
         age_label=format_console_relative_age(raw, now=now) if raw else "",
+        checked=note_id in selected_ids,
     )
 
 
@@ -108,6 +118,8 @@ def build_library_notes_list_state(
     *,
     filter_note: str = "",
     now: datetime | None = None,
+    select_mode: bool = False,
+    selected_ids: frozenset[str] = frozenset(),
 ) -> LibraryNotesListState:
     """Build the Library notes canvas's list-view display state.
 
@@ -122,13 +134,15 @@ def build_library_notes_list_state(
             result-count status copy; ``""`` when no filter is active.
         now: Reference time for relative-age labels; defaults to the
             current UTC time.
+        select_mode: Whether multi-select mode is active.
+        selected_ids: The currently checked note ids.
 
     Returns:
         The list view's display state.
     """
     reference_now = now if now is not None else datetime.now(timezone.utc)
     rows = tuple(
-        _row(record, now=reference_now)
+        _row(record, now=reference_now, selected_ids=selected_ids)
         for record in (records or ())
         if isinstance(record, Mapping) and _text(record.get("id"))
     )
@@ -136,11 +150,14 @@ def build_library_notes_list_state(
     if filter_note:
         noun = "result" if len(rows) == 1 else "results"
         status_copy = f"filter: {filter_note} · {len(rows)} {noun}"
+    selected_count = sum(1 for r in rows if r.checked)
     return LibraryNotesListState(
         rows=rows,
         header_copy=f"Notes ({len(rows)})",
         status_copy=status_copy,
         empty_copy="" if rows else _EMPTY_NOTES_COPY,
+        select_mode=select_mode,
+        selected_count=selected_count,
     )
 
 
