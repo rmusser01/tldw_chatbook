@@ -21,5 +21,8 @@ Core-loop UAT 2026-07-11: the Settings provider dropdown is a raw key-sorted dum
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every provider option has a human display name distinct from its config key,Options are grouped Cloud vs Local (or equivalent),Redundant llama.cpp/Ollama/Mistral variants are merged or explained inline,Dropdown supports type-to-filter or an equivalent quick-find
+- [ ] #1 Every provider option has a human display name distinct from its config key
+- [ ] #2 Options are grouped Cloud vs Local (or equivalent)
+- [ ] #3 Redundant llama.cpp/Ollama/Mistral variants are merged or explained inline
+- [ ] #4 Dropdown supports type-to-filter or an equivalent quick-find
 <!-- AC:END -->
