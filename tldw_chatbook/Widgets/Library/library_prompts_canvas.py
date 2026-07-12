@@ -13,9 +13,13 @@ from typing import Any
 from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, Static, TextArea
 
-from tldw_chatbook.Library.library_prompts_state import PromptsListState
+from tldw_chatbook.Library.library_prompts_state import (
+    PromptEditorState,
+    PromptsListState,
+    prompt_editor_meta_line,
+)
 
 _SORT_LABELS = {"newest": "Newest", "name": "Name"}
 _EMPTY_PROMPTS_COPY = "No prompts yet."
@@ -23,16 +27,30 @@ _EMPTY_PROMPTS_FILTER_COPY = "No prompts match your filter."
 
 
 class LibraryPromptsListCanvas(Vertical):
-    """Render the Library prompts canvas's list view.
+    """Render the Library prompts canvas: the list view, or the prompt editor.
 
     Attributes:
         state: List-view display state (rows, count, sort). ``None``
             renders nothing (mirrors ``LibraryNotesCanvas``'s guard for a
-            not-yet-available list state).
+            not-yet-available list state). Only used when ``mode == "list"``.
         sort_mode: Current prompts sort mode key (``"newest"``/``"name"``),
             used to label the sort control.
         filter_value: Current prompts filter text, prefilled into the
             filter ``Input``.
+        mode: ``"list"`` renders the prompts list; ``"editor"`` renders the
+            in-canvas prompt editor for ``editor_state``.
+        editor_state: The prompt to render in editor mode. Required when
+            ``mode == "editor"``.
+        conflict: When ``True`` (editor mode only), renders the save
+            conflict banner -- a quiet explanatory line plus Overwrite/
+            Reload actions -- in place of the normal action row. Mirrors
+            ``LibraryNotesCanvas.conflict``. ``editor_state`` must already
+            reflect the user's kept text (never the stale server detail)
+            when this is set.
+        status: Save-outcome status text shown below the meta line (e.g.
+            ``"Saved."`` or a name-conflict explanation), or ``""`` when
+            idle. Not shown while ``conflict`` is set -- the conflict
+            banner communicates the outcome instead.
     """
 
     def __init__(
@@ -41,16 +59,30 @@ class LibraryPromptsListCanvas(Vertical):
         *,
         sort_mode: str = "newest",
         filter_value: str = "",
+        mode: str = "list",
+        editor_state: PromptEditorState | None = None,
+        conflict: bool = False,
+        status: str = "",
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.state = state
         self.sort_mode = sort_mode
         self.filter_value = filter_value
+        self.mode = mode
+        self.editor_state = editor_state
+        self.conflict = conflict
+        self.status = status
         self.styles.width = "1fr"
         self.styles.min_width = 40
 
     def compose(self) -> ComposeResult:
+        if self.mode == "editor":
+            yield from self._compose_editor()
+            return
+        yield from self._compose_list()
+
+    def _compose_list(self) -> ComposeResult:
         state = self.state
         if state is None:
             return
@@ -107,3 +139,104 @@ class LibraryPromptsListCanvas(Vertical):
                 )
                 button.prompt_id = row.prompt_id
                 yield button
+
+    def _compose_editor(self) -> ComposeResult:
+        """Render the prompt editor: Back, six fields, meta, actions.
+
+        Structural template copy of ``LibraryNotesCanvas._compose_editor``:
+        stacked full-width widgets plus a single plain ``ds-toolbar`` action
+        row. Unlike the notes editor there is no autosave/Preview toggle
+        here (prompts use an explicit Save button only), and no inline
+        delete-confirmation state -- Delete is a single, confirm-free
+        action (styled the same danger tier as the notes delete button).
+        """
+        editor_state = self.editor_state
+        if editor_state is None:
+            return
+        yield Button(
+            "‹ Back to list",
+            id="library-prompt-back",
+            classes="library-canvas-action",
+            compact=True,
+        )
+        yield Static("Name", classes="library-prompt-field-label", markup=False)
+        yield Input(value=editor_state.name, id="library-prompt-name")
+        yield Static("Author", classes="library-prompt-field-label", markup=False)
+        yield Input(value=editor_state.author, id="library-prompt-author")
+        yield Static("Details", classes="library-prompt-field-label", markup=False)
+        yield Input(value=editor_state.details, id="library-prompt-details")
+        yield Static("System prompt", classes="library-prompt-field-label", markup=False)
+        yield TextArea(editor_state.system_prompt, id="library-prompt-system")
+        yield Static("User prompt", classes="library-prompt-field-label", markup=False)
+        yield TextArea(editor_state.user_prompt, id="library-prompt-user")
+        yield Input(
+            value=editor_state.keywords_csv,
+            placeholder="Keywords (comma-separated)",
+            id="library-prompt-keywords",
+        )
+        yield Static(
+            prompt_editor_meta_line(editor_state),
+            id="library-prompt-meta",
+            markup=False,
+        )
+        if self.conflict:
+            yield Static(
+                "This prompt changed elsewhere — Overwrite saves your text; "
+                "Reload discards it.",
+                id="library-prompt-conflict-copy",
+                classes="destination-purpose",
+                markup=False,
+            )
+        else:
+            yield Static(
+                self.status,
+                id="library-prompt-save-status",
+                markup=False,
+            )
+        toolbar = Horizontal(classes="ds-toolbar")
+        toolbar.styles.height = "auto"
+        with toolbar:
+            if self.conflict:
+                yield Button(
+                    "Overwrite",
+                    id="library-prompt-conflict-overwrite",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                yield Button(
+                    "Reload",
+                    id="library-prompt-conflict-reload",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+            else:
+                yield Button(
+                    "Save",
+                    id="library-prompt-save",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                yield Button(
+                    "Use in Console",
+                    id="library-prompt-insert-console",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                yield Button(
+                    "Export…",
+                    id="library-prompt-export",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                yield Button(
+                    "Copy",
+                    id="library-prompt-copy",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                yield Button(
+                    "Delete",
+                    id="library-prompt-delete",
+                    classes="library-canvas-action library-media-action-danger",
+                    compact=True,
+                )

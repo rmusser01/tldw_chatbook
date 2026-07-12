@@ -26,14 +26,19 @@ from typing import Any
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Input
+from textual.widgets import Button, Input, TextArea
 
+from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 from tldw_chatbook.Library.library_prompts_state import (
     PromptListRow,
     PromptsListState,
     build_prompts_list_state,
 )
 from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_PROMPTS
+from tldw_chatbook.Prompt_Management.prompt_scope_service import (
+    LocalPromptService as ScopeLocalPromptService,
+    PromptScopeService,
+)
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library.library_prompts_canvas import LibraryPromptsListCanvas
 
@@ -235,19 +240,13 @@ def test_handle_library_prompts_filter_submitted_sets_filter():
     assert calls == [True]
 
 
-def test_handle_library_prompt_row_records_selected_id():
-    calls = []
-    fake = SimpleNamespace(
-        _selected_prompt_id=None,
-        _library_selected_row_id="",
-        refresh=lambda recompose=False: calls.append(recompose),
-    )
-    button = SimpleNamespace(prompt_id=42)
-    event = SimpleNamespace(button=button, stop=lambda: None)
-    LibraryScreen.handle_library_prompt_row(fake, event)
-    assert fake._selected_prompt_id == 42
-    assert fake._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
-    assert calls == [True]
+## ``test_handle_library_prompt_row_records_selected_id`` (the old
+## recording-only, no-editor behavior) was superseded by Task 4, which
+## upgrades this handler to open the in-canvas editor -- see the
+## ``handle_library_prompt_row`` end-to-end coverage in the "Task 4" section
+## at the bottom of this file, which exercises the real handler (row press
+## -> editor opens -> fields populated) through a mounted screen instead of
+## a bare ``SimpleNamespace`` stand-in.
 
 
 # ---------------------------------------------------------------------------
@@ -395,3 +394,301 @@ def test_library_prompts_header_filter_empty_have_css_blocks():
         notes_empty_block = _css_block(text, "#library-notes-empty {")
         assert "color: $ds-text-muted;" in empty_block
         assert "color: $ds-text-muted;" in notes_empty_block
+
+
+def test_library_prompt_editor_field_css_blocks_match_notes_editor_parity():
+    """Editor field ids introduced by Task 4 (name/author/details/keywords
+    Inputs, system/user TextAreas, meta line, conflict/status Statics) must
+    have stylesheet rules matching their ``#library-note-*`` siblings."""
+    agentic_terminal = AGENTIC_TERMINAL.read_text(encoding="utf-8")
+    bundled_stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+
+    for text in (agentic_terminal, bundled_stylesheet):
+        assert "#library-prompt-name," in text
+        assert "#library-prompt-keywords {" in text
+        input_block = _css_block(text, "#library-prompt-keywords {")
+        note_input_block = _css_block(text, "#library-note-keywords {")
+        for pinned in ("height: 3;", "border: tall $ds-grid-line;", "background: $ds-surface-raised;"):
+            assert pinned in input_block
+            assert pinned in note_input_block
+
+        assert "#library-prompt-name:focus," in text
+        assert "#library-prompt-keywords:focus {" in text
+        focus_block = _css_block(text, "#library-prompt-keywords:focus {")
+        for pinned in ("border: tall $ds-input-focus-accent;", "outline: none;"):
+            assert pinned in focus_block
+
+        assert ".library-prompt-field-label {" in text
+        label_block = _css_block(text, ".library-prompt-field-label {")
+        assert "color: $ds-text-muted;" in label_block
+
+        assert "#library-prompt-system," in text
+        assert "#library-prompt-user {" in text
+        textarea_block = _css_block(text, "#library-prompt-user {")
+        assert "min-height: 6;" in textarea_block
+        assert "max-height: 14;" in textarea_block
+
+        assert "#library-prompt-meta {" in text
+        meta_block = _css_block(text, "#library-prompt-meta {")
+        assert "color: $ds-text-muted;" in meta_block
+
+        assert "#library-prompt-conflict-copy," in text
+        assert "#library-prompt-save-status {" in text
+        status_block = _css_block(text, "#library-prompt-save-status {")
+        assert "color: $ds-text-muted;" in status_block
+
+
+# ---------------------------------------------------------------------------
+# Task 4: editor canvas, explicit Save, conflict outcomes, delete
+#
+# Uses a REAL ``PromptsDatabase`` + ``PromptScopeService`` (mirroring
+# ``Tests/Library/test_library_prompts_seam.py``'s Task 1 precedent)
+# rather than a hand-rolled fake -- the conflict/name-collision scenarios
+# below depend on the real DB's actual exception/return-value shapes
+# (``Prompts.name`` is globally UNIQUE regardless of soft-delete state;
+# ``update_prompt_by_id`` has no caller-supplied expected-version
+# parameter, so the screen's own pre-check, exercised here, is what
+# actually detects staleness -- see ``_save_library_prompt``'s docstring).
+# ---------------------------------------------------------------------------
+
+
+def _real_prompt_scope_service(tmp_path):
+    db = PromptsDatabase(tmp_path / "prompts.db", client_id="test-client")
+    service = PromptScopeService(local_service=ScopeLocalPromptService(db), server_service=None)
+    return db, service
+
+
+def _wire_empty_non_prompt_services(app) -> None:
+    app.notes_scope_service = StaticLibraryNotesListScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+
+
+async def _open_prompt_editor(screen, pilot, prompt_id: int) -> None:
+    """Open the rail's Prompts row, then a specific prompt's row."""
+    screen.query_one("#library-row-browse-prompts").press()
+    await pilot.pause()
+    await pilot.pause()
+    screen.query_one(f"#library-prompt-row-{prompt_id}", Button).press()
+    await pilot.pause()
+    for _ in range(150):
+        if screen._library_prompt_detail is not None:
+            break
+        await pilot.pause(0.02)
+    await pilot.pause()
+
+
+async def _wait_for_prompt_status(screen, pilot, *, attempts=150) -> str:
+    status_text = ""
+    for _ in range(attempts):
+        status_text = str(screen.query_one("#library-prompt-save-status").renderable)
+        if status_text:
+            return status_text
+        await pilot.pause(0.02)
+    return status_text
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_row_opens_editor_with_six_fields_populated(tmp_path):
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Summarize",
+        author="Alice",
+        details="A summarizer",
+        system_prompt="You are concise.",
+        user_prompt="Summarize: {text}",
+        keywords=["writing", "summary"],
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+
+        assert screen._library_prompts_view == "editor"
+        assert screen.query_one("#library-prompt-name", Input).value == "Summarize"
+        assert screen.query_one("#library-prompt-author", Input).value == "Alice"
+        assert screen.query_one("#library-prompt-details", Input).value == "A summarizer"
+        assert screen.query_one("#library-prompt-system", TextArea).text == "You are concise."
+        assert screen.query_one("#library-prompt-user", TextArea).text == "Summarize: {text}"
+        assert screen.query_one("#library-prompt-keywords", Input).value == "summary, writing"
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_save_name_already_in_use_shows_status_copy(tmp_path):
+    db, service = _real_prompt_scope_service(tmp_path)
+    db.add_prompt(name="Alpha", author="A", details="d", user_prompt="x")
+    beta_id, _uuid, _msg = db.add_prompt(name="Beta", author="B", details="d", user_prompt="y")
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, beta_id)
+
+        screen.query_one("#library-prompt-name", Input).value = "Alpha"
+        await pilot.pause()
+        screen.query_one("#library-prompt-save", Button).press()
+        await pilot.pause()
+
+        status_text = await _wait_for_prompt_status(screen, pilot)
+        assert status_text == "Name already in use — pick another or open the existing prompt."
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_save_onto_soft_deleted_name_shows_status_copy(tmp_path):
+    db, service = _real_prompt_scope_service(tmp_path)
+    db.add_prompt(name="Gamma", author="A", details="d", user_prompt="x")
+    db.soft_delete_prompt("Gamma")
+    delta_id, _uuid, _msg = db.add_prompt(name="Delta", author="B", details="d", user_prompt="y")
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, delta_id)
+
+        screen.query_one("#library-prompt-name", Input).value = "Gamma"
+        await pilot.pause()
+        screen.query_one("#library-prompt-save", Button).press()
+        await pilot.pause()
+
+        status_text = await _wait_for_prompt_status(screen, pilot)
+        assert status_text == "A deleted prompt holds this name — restore it or choose another."
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_save_stale_version_shows_conflict_bar(tmp_path):
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Epsilon", author="A", details="d1", user_prompt="x"
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        assert screen._library_prompt_version == 1
+
+        # A second, real service call bumps the version behind the open
+        # editor's back -- simulating another writer, exactly like the
+        # brief's "bump version through a second service call" scenario.
+        await service.save_prompt(
+            mode="local", prompt_identifier=prompt_id, details="changed elsewhere"
+        )
+
+        screen.query_one("#library-prompt-save", Button).press()
+        await pilot.pause()
+        for _ in range(150):
+            if len(screen.query("#library-prompt-conflict-overwrite")) > 0:
+                break
+            await pilot.pause(0.02)
+
+        assert screen.query_one("#library-prompt-conflict-overwrite", Button)
+        assert screen.query_one("#library-prompt-conflict-reload", Button)
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_flush_pending_work_vetoes_dirty_editor(tmp_path):
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(name="Zeta", author="A", details="d", user_prompt="x")
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+
+        screen.query_one("#library-prompt-author", Input).value = "Changed mid switch"
+        await pilot.pause()
+        assert screen._library_prompt_dirty is True
+
+        allowed = await screen.flush_pending_work()
+
+        assert allowed is False
+        assert screen._library_prompt_dirty is True
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_delete_returns_to_list_and_decrements_count(tmp_path):
+    db, service = _real_prompt_scope_service(tmp_path)
+    eta_id, _uuid, _msg = db.add_prompt(name="Eta", author="A", details="d", user_prompt="x")
+    db.add_prompt(name="Theta", author="B", details="d", user_prompt="y")
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, eta_id)
+
+        screen.query_one("#library-prompt-delete", Button).press()
+        await pilot.pause()
+        for _ in range(150):
+            if screen._library_prompts_view == "list":
+                break
+            await pilot.pause(0.02)
+        await pilot.pause()
+
+        assert screen._library_prompts_view == "list"
+        rail_label = ""
+        for _ in range(150):
+            rail_label = str(screen.query_one("#library-row-browse-prompts").label)
+            if "(1)" in rail_label:
+                break
+            await pilot.pause(0.02)
+        assert "(1)" in rail_label
+        assert len(screen.query(f"#library-prompt-row-{eta_id}")) == 0
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_save_success_updates_status_and_persists(tmp_path):
+    """Happy-path Save: not one of the brief's six numbered scenarios, but
+    foundational coverage the others all rest on (a broken success path
+    would make every other Save-outcome test meaningless)."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Iota", author="Original", details="d", user_prompt="x"
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+
+        screen.query_one("#library-prompt-author", Input).value = "Updated Author"
+        await pilot.pause()
+        screen.query_one("#library-prompt-save", Button).press()
+        await pilot.pause()
+
+        status_text = await _wait_for_prompt_status(screen, pilot)
+        assert status_text == "Saved."
+        assert screen._library_prompt_dirty is False
+        assert screen._library_prompt_version == 2
+
+        persisted = db.fetch_prompt_details(prompt_id)
+        assert persisted["author"] == "Updated Author"
+        assert persisted["version"] == 2

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 
 from tldw_chatbook.DB.Prompts_DB import ConflictError
@@ -210,6 +210,37 @@ def build_prompt_editor_state(detail: Mapping[str, Any]) -> PromptEditorState:
         created=_text(detail.get("created_at")),
         modified=_timestamp_raw(detail),
     )
+
+
+def prompt_editor_meta_line(editor_state: PromptEditorState, *, now: datetime | None = None) -> str:
+    """Render the prompt editor's muted meta line.
+
+    Unlike the notes editor's ``meta_line`` (precomputed as part of
+    ``LibraryNoteEditorState`` by ``build_library_note_editor_state``),
+    ``PromptEditorState`` carries only raw ``modified``/``version`` fields
+    -- shared here (rather than duplicated) so both the editor canvas's
+    initial render and the screen's post-save targeted Static update agree
+    on the exact same text. The Prompts table has no ``created_at`` column
+    at all, so this renders only ``Modified <age>`` (never a "Created"
+    part, and never a fake one) plus ``vN``.
+
+    Args:
+        editor_state: The prompt editor's current display state.
+        now: Reference time for the relative-age part; defaults to the
+            current UTC time.
+
+    Returns:
+        ``"Modified <age> · vN"``, with either part omitted (and its
+        separator) when unknown.
+    """
+    reference_now = now if now is not None else datetime.now(timezone.utc)
+    parts: list[str] = []
+    if editor_state.modified:
+        age = format_console_relative_age(editor_state.modified, now=reference_now)
+        parts.append(f"Modified {age}")
+    if editor_state.version is not None:
+        parts.append(f"v{editor_state.version}")
+    return " · ".join(parts)
 
 
 def _is_name_conflict(exc: Exception | None, message_lower: str) -> bool:

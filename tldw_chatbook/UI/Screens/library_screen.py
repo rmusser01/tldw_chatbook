@@ -34,6 +34,7 @@ from ...Constants import (
     LIBRARY_NAV_CONTEXT_NOTES_CREATE,
 )
 from ...DB.ChaChaNotes_DB import ConflictError
+from ...DB.Prompts_DB import ConflictError as PromptConflictError
 from ...Library.export_progress import (
     ExportProgressThrottle,
     format_export_progress_line,
@@ -97,7 +98,13 @@ from ...Library.library_notes_sync_state import (
     sync_conflict_label,
     sync_status_line,
 )
-from ...Library.library_prompts_state import build_prompts_list_state
+from ...Library.library_prompts_state import (
+    PromptEditorState,
+    build_prompt_editor_state,
+    build_prompts_list_state,
+    classify_prompt_save_error,
+    prompt_editor_meta_line,
+)
 from ...Library.library_rag_service import (
     LibraryRagSearchOutcome,
     LibraryRagSearchRequest,
@@ -205,6 +212,20 @@ LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS = 5.0
 LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS = 5.0
 LIBRARY_NOTES_AUTOSAVE_SECONDS = 2.0
 LIBRARY_NOTE_CONTENT_MAX_CHARS = 2_000_000
+# Prompt editor body fields (details/system/user) have no dedicated cap of
+# their own -- reuses the note body's generous ceiling rather than inventing
+# a second magic number for the same "large text field" concern.
+LIBRARY_PROMPT_TEXT_MAX_CHARS = LIBRARY_NOTE_CONTENT_MAX_CHARS
+# Exact outcome copy for the prompt editor's #library-prompt-save-status
+# line, keyed by `classify_prompt_save_error`'s return value. "conflict" is
+# deliberately absent -- that outcome renders the conflict banner instead
+# (see `_save_library_prompt`), never this status line.
+LIBRARY_PROMPT_SAVE_STATUS_COPY = {
+    "ok": "Saved.",
+    "name-in-use": "Name already in use — pick another or open the existing prompt.",
+    "soft-deleted-name": "A deleted prompt holds this name — restore it or choose another.",
+    "error": "Couldn't save this prompt. Try again.",
+}
 LIBRARY_COLLECTION_SYNC_CONFLICT_LIMIT = 200
 LIBRARY_HANDOFF_LABEL_PREFIX = "Console/RAG handoff: "
 LIBRARY_WORKSPACE_SOURCE_COLUMN_WIDTH = 30
@@ -602,6 +623,20 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompts_sort: str = "newest"
         self._library_prompts_filter: str = ""
         self._selected_prompt_id: int | None = None
+        self._library_prompts_view: str = "list"
+        self._library_prompt_detail: Mapping[str, Any] | None = None
+        self._library_prompt_original_name: str = ""
+        self._library_prompt_version: int | None = None
+        self._library_prompt_dirty: bool = False
+        self._library_prompt_status: str = ""
+        self._library_prompt_conflict_snapshot: PromptEditorState | None = None
+        # Guards against the spurious ``Input.Changed``/``TextArea.Changed``
+        # Textual fires when a widget mounts with a non-empty initial value
+        # -- without this, opening a prompt would immediately mark it dirty
+        # even though the user never typed anything. Re-armed via
+        # ``call_after_refresh`` after every prompt-editor (re)compose,
+        # mirroring ``_library_note_editor_armed``.
+        self._library_prompt_editor_armed: bool = False
         self._library_note_detail: Mapping[str, Any] | None = None
         self._selected_note_id: str = ""
         self._library_note_version: int | None = None
@@ -1030,7 +1065,8 @@ class LibraryScreen(BaseAppScreen):
             edits is not discarded. True once nothing dirty remains.
         """
         await self._flush_library_note_save()
-        return not self._library_note_dirty
+        prompt_flush_allowed = await self._flush_library_prompt_save()
+        return not self._library_note_dirty and prompt_flush_allowed
 
     def apply_navigation_context(self, context: Mapping[str, Any]) -> None:
         """Apply route context supplied by shell navigation.
@@ -2875,6 +2911,32 @@ class LibraryScreen(BaseAppScreen):
                         mode="create",
                         id="library-notes-canvas",
                     )
+                elif shell.canvas_kind == "prompts" and self._library_prompts_view == "editor":
+                    if self._library_prompt_conflict_snapshot is not None:
+                        # A save just lost the app-level staleness check (see
+                        # `_save_library_prompt`): recompose from the user's
+                        # own kept text (never the stale `_library_prompt_detail`)
+                        # with the Overwrite/Reload actions surfaced.
+                        yield LibraryPromptsListCanvas(
+                            mode="editor",
+                            editor_state=self._library_prompt_conflict_snapshot,
+                            conflict=True,
+                            id="library-prompts-canvas",
+                        )
+                    elif self._library_prompt_detail is None:
+                        yield Static(
+                            "Loading prompt…",
+                            id="library-prompt-loading",
+                            classes="destination-purpose",
+                            markup=False,
+                        )
+                    else:
+                        yield LibraryPromptsListCanvas(
+                            mode="editor",
+                            editor_state=build_prompt_editor_state(self._library_prompt_detail),
+                            status=self._library_prompt_status,
+                            id="library-prompts-canvas",
+                        )
                 elif shell.canvas_kind == "prompts":
                     yield LibraryPromptsListCanvas(
                         self._build_library_prompts_state(),
@@ -5447,10 +5509,14 @@ class LibraryScreen(BaseAppScreen):
 
         A dirty note edit is flushed first (awaited) so leaving via the rail
         never silently discards unsaved text; any unsaved edit surviving the
-        flush aborts the row switch entirely.
+        flush aborts the row switch entirely. A dirty prompt edit is vetoed
+        the same way (see ``_flush_library_prompt_save`` -- explicit-Save-
+        only, so there is nothing to flush, only to veto on).
         """
         await self._flush_library_note_save()
         if self._library_note_dirty:
+            return
+        if not await self._flush_library_prompt_save():
             return
         self._library_selected_row_id = row_id
         # A rail-row press is always a fresh entry into a content type, so
@@ -5468,6 +5534,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_filter = ""
         self._library_notes_filter_records = None
         self._reset_library_note_editor_state()
+        self._reset_library_prompt_editor_state()
         self._reset_library_notes_sync_transient_state()
         self._reset_library_ingest_transient_state()
         # Always resets to the Everything scope (a plain rail-row press,
@@ -5826,23 +5893,748 @@ class LibraryScreen(BaseAppScreen):
         self.refresh(recompose=True)
 
     @on(Button.Pressed, ".library-prompt-row")
-    def handle_library_prompt_row(self, event: Button.Pressed) -> None:
-        """Select a prompt row in the Library prompts canvas.
+    async def handle_library_prompt_row(self, event: Button.Pressed) -> None:
+        """Select a prompt row and open the in-canvas Library prompt editor.
 
-        Recording-only for now (mirrors ``handle_library_conversation_row``'s
-        select-and-recompose shape): the in-canvas prompt editor lands in a
-        later task, so this stores the selection for that task to pick up
-        rather than navigating anywhere.
+        Switches the prompts canvas from its list view to the editor,
+        clears any stale detail, and kicks the async detail fetch
+        (``_refresh_library_prompt_detail``); ``compose_content`` renders a
+        loading line until that worker stores the fetched detail and
+        recomposes. Mirrors ``handle_library_notes_row``.
+
+        Vetoed while a previously-open prompt is dirty (see
+        ``_flush_library_prompt_save``): the prompt editor is
+        explicit-Save-only (no autosave), so switching rows while dirty
+        would otherwise silently discard the in-progress edit.
 
         Args:
             event: Button press event emitted by a prompt row button.
         """
         event.stop()
+        if not await self._flush_library_prompt_save():
+            return
         prompt_id = getattr(event.button, "prompt_id", None)
+        self._reset_library_prompt_editor_state()
         if isinstance(prompt_id, int):
             self._selected_prompt_id = prompt_id
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_PROMPTS
+        self._library_prompts_view = "editor"
+        if isinstance(prompt_id, int):
+            # Exclusive in its own group so rapidly switching rows cancels
+            # the previous in-flight detail fetch instead of letting a
+            # slower older fetch finish and overwrite the newer selection's
+            # editor.
+            self.run_worker(
+                self._refresh_library_prompt_detail(prompt_id),
+                exclusive=True,
+                group="library_prompt_detail",
+            )
         self.refresh(recompose=True)
+
+    async def _refresh_library_prompt_detail(self, prompt_id: int) -> None:
+        """Fetch and store the full detail for a selected Library prompt.
+
+        Mirrors ``_refresh_library_note_detail``: offloads the (possibly
+        blocking) ``get_prompt`` service call via ``_run_library_service_call``
+        and recomposes once the fetched detail (or a cleared state) has
+        been stored.
+
+        Unlike notes' ``get_note_detail`` (which never carries keywords, so
+        the editor separately enriches via ``_fetch_library_note_keywords``),
+        the local backend's ``get_prompt`` seam is backed by
+        ``PromptsDatabase.fetch_prompt_details``, which already joins
+        keywords into the returned mapping -- no second enrichment call is
+        needed here.
+
+        Args:
+            prompt_id: The Library prompt id to fetch full detail for.
+        """
+        service = getattr(self.app_instance, "prompt_scope_service", None)
+        get_prompt = getattr(service, "get_prompt", None)
+        if not callable(get_prompt):
+            self._library_prompt_detail = None
+            self._library_prompt_version = None
+            if self.is_mounted:
+                self.refresh(recompose=True)
+            return
+        try:
+            detail = await self._run_library_service_call(
+                get_prompt,
+                mode="local",
+                prompt_identifier=prompt_id,
+                include_deleted=True,
+                isolate_in_worker=True,
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Failed to load Library prompt detail for {prompt_id!r}."
+            )
+            detail = None
+        # Discard out-of-order results: the same stale-race guard as
+        # ``_refresh_library_note_detail``.
+        if prompt_id != self._selected_prompt_id or self._library_prompts_view != "editor":
+            return
+        if not isinstance(detail, Mapping):
+            logger.info(
+                f"Library prompt {prompt_id!r} is no longer available; returning to list."
+            )
+            self._reset_library_prompt_editor_state()
+            self._refresh_local_source_snapshot()
+            if self.is_mounted:
+                self.refresh(recompose=True)
+            return
+        self._library_prompt_detail = dict(detail)
+        editor_state = build_prompt_editor_state(self._library_prompt_detail)
+        self._library_prompt_original_name = editor_state.name
+        self._library_prompt_version = editor_state.version
+        self._library_prompt_dirty = False
+        self._library_prompt_status = ""
+        self._library_prompt_conflict_snapshot = None
+        self._library_prompt_editor_armed = False
+        if self.is_mounted:
+            self.refresh(recompose=True)
+            self.call_after_refresh(self._arm_library_prompt_editor)
+
+    def _arm_library_prompt_editor(self) -> None:
+        """Enable dirty-tracking once the prompt editor's mount-time
+        ``Input.Changed``/``TextArea.Changed`` (fired for the non-empty
+        initial values) has already been delivered, so it is never mistaken
+        for a real edit.
+        """
+        self._library_prompt_editor_armed = True
+
+    def _reset_library_prompt_editor_state(self) -> None:
+        """Clear all in-canvas Library prompt editor/save state.
+
+        Shared by prompt-row selection, Back, delete, and rail-row
+        selection so every exit from the editor leaves save/conflict
+        tracking clean for the next prompt.
+        """
+        self._library_prompts_view = "list"
+        self._library_prompt_detail = None
+        self._library_prompt_original_name = ""
+        self._library_prompt_version = None
+        self._library_prompt_dirty = False
+        self._library_prompt_status = ""
+        self._library_prompt_conflict_snapshot = None
+        self._library_prompt_editor_armed = False
+
+    def _mark_library_prompt_dirty(self) -> None:
+        """Record an in-progress prompt edit.
+
+        Ignored until ``_library_prompt_editor_armed`` is set (see that
+        flag's docstring). Unlike the notes editor, this never arms an
+        autosave timer -- the prompt editor is explicit-Save-only.
+        """
+        if not self._library_prompt_editor_armed:
+            return
+        self._library_prompt_dirty = True
+
+    @on(Input.Changed, "#library-prompt-name")
+    @on(Input.Changed, "#library-prompt-author")
+    @on(Input.Changed, "#library-prompt-details")
+    @on(Input.Changed, "#library-prompt-keywords")
+    def handle_library_prompt_input_changed(self, event: Input.Changed) -> None:
+        """Mark the open prompt dirty on a field edit.
+
+        Args:
+            event: Input change event emitted by one of the editor's
+                single-line fields.
+        """
+        self._mark_library_prompt_dirty()
+
+    @on(TextArea.Changed, "#library-prompt-system")
+    @on(TextArea.Changed, "#library-prompt-user")
+    def handle_library_prompt_textarea_changed(self, event: TextArea.Changed) -> None:
+        """Mark the open prompt dirty on a System/User prompt edit.
+
+        Args:
+            event: Text change event emitted by one of the editor's
+                ``TextArea`` fields.
+        """
+        self._mark_library_prompt_dirty()
+
+    def _read_library_prompt_editor_fields(
+        self,
+    ) -> tuple[str, str, str, str, str, str] | None:
+        """Read the prompt editor's current (possibly unsaved) field values.
+
+        Returns:
+            ``(name, author, details, system_prompt, user_prompt,
+            keywords_text)`` read from the live widgets, or ``None`` if the
+            editor isn't mounted.
+        """
+        try:
+            name = self.query_one("#library-prompt-name", Input).value
+            author = self.query_one("#library-prompt-author", Input).value
+            details = self.query_one("#library-prompt-details", Input).value
+            keywords_text = self.query_one("#library-prompt-keywords", Input).value
+            system_prompt = self.query_one("#library-prompt-system", TextArea).text
+            user_prompt = self.query_one("#library-prompt-user", TextArea).text
+        except (NoMatches, QueryError):
+            return None
+        return name, author, details, system_prompt, user_prompt, keywords_text
+
+    def _update_library_prompt_status_static(self, text: str) -> None:
+        """Targeted update of ``#library-prompt-save-status``, no recompose.
+
+        Args:
+            text: The status copy to show (``""`` clears it).
+        """
+        self._library_prompt_status = text
+        try:
+            status_static = self.query_one("#library-prompt-save-status", Static)
+        except (NoMatches, QueryError):
+            return
+        status_static.update(text)
+
+    def _update_library_prompt_meta_static(self) -> None:
+        """Targeted update of ``#library-prompt-meta``, no recompose.
+
+        Re-derives the meta line from ``_library_prompt_detail`` (the
+        just-patched, post-save mirror) via the same pure
+        ``prompt_editor_meta_line`` helper the editor's initial render
+        uses, so a successful save's version bump shows up without
+        remounting the ``Input``/``TextArea`` fields.
+        """
+        if not isinstance(self._library_prompt_detail, Mapping):
+            return
+        try:
+            meta_static = self.query_one("#library-prompt-meta", Static)
+        except (NoMatches, QueryError):
+            return
+        meta_static.update(prompt_editor_meta_line(build_prompt_editor_state(self._library_prompt_detail)))
+
+    @on(Button.Pressed, "#library-prompt-save")
+    def handle_library_prompt_save(self, event: Button.Pressed) -> None:
+        """Explicitly save the open prompt, bypassing no debounce (there is
+        none -- the prompt editor never autosaves).
+
+        Args:
+            event: Button press event emitted by the editor's "Save" action.
+        """
+        event.stop()
+        self.run_worker(
+            self._save_library_prompt(),
+            exclusive=True,
+            group="library_prompt_save",
+        )
+
+    async def _save_library_prompt(self) -> None:
+        """Save the open Library prompt's current editor text.
+
+        The prompts DB's update seam (``update_prompt_by_id``, reached via
+        ``PromptScopeService.save_prompt``) has no caller-supplied
+        expected-version parameter of its own -- it always re-derives the
+        version to bump from a fresh read inside its own transaction, so it
+        cannot detect "this editor's cached version is stale" by itself.
+        This method does that staleness check itself, via a fresh
+        ``get_prompt`` read, BEFORE attempting the real write.
+
+        Likewise, a rename to another prompt's name needs to distinguish
+        "that name belongs to an active prompt" (name-in-use) from "that
+        name belongs to a soft-deleted prompt" (soft-deleted-name) --
+        outcomes the real ``update_prompt_by_id`` cannot cleanly
+        distinguish either (both ultimately surface as the same
+        ``ConflictError``/wrapped-``DatabaseError`` shape once the actual
+        write is attempted, since ``Prompts.name`` is globally unique
+        regardless of soft-delete state). So a rename is pre-checked by a
+        name lookup too, before ever attempting the write.
+
+        Every branch re-checks that the prompt this save was *for* is still
+        selected (and the editor still showing) before mutating shared
+        state, mirroring ``_save_library_note``'s stale-result guard.
+        """
+        if self._library_prompts_view != "editor" or not self._selected_prompt_id:
+            return
+        prompt_id = self._selected_prompt_id
+        fields = self._read_library_prompt_editor_fields()
+        if fields is None:
+            return
+        raw_name, raw_author, raw_details, raw_system, raw_user, raw_keywords_text = fields
+
+        name = self._sanitize_media_field(raw_name, max_length=300)
+        author = self._sanitize_media_field(raw_author, max_length=200)
+        details = self._sanitize_note_content(raw_details, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS)
+        system_prompt = self._sanitize_note_content(raw_system, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS)
+        user_prompt = self._sanitize_note_content(raw_user, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS)
+        keywords = self._library_note_keywords_from_input(raw_keywords_text)
+
+        service = getattr(self.app_instance, "prompt_scope_service", None)
+        get_prompt = getattr(service, "get_prompt", None)
+        save_prompt = getattr(service, "save_prompt", None)
+        if not callable(get_prompt) or not callable(save_prompt):
+            return
+
+        if name and name != self._library_prompt_original_name:
+            try:
+                candidate = await self._run_library_service_call(
+                    get_prompt,
+                    mode="local",
+                    prompt_identifier=name,
+                    include_deleted=True,
+                    isolate_in_worker=True,
+                )
+            except Exception:
+                candidate = None
+            if prompt_id != self._selected_prompt_id or self._library_prompts_view != "editor":
+                return
+            candidate_id = candidate.get("local_id") if isinstance(candidate, Mapping) else None
+            if candidate_id is not None and candidate_id != prompt_id:
+                if candidate.get("deleted"):
+                    outcome = classify_prompt_save_error(
+                        None, f"Prompt '{name}' exists but is soft-deleted.", None
+                    )
+                else:
+                    outcome = classify_prompt_save_error(
+                        None, f"Prompt '{name}' already exists.", None
+                    )
+                self._update_library_prompt_status_static(
+                    LIBRARY_PROMPT_SAVE_STATUS_COPY.get(outcome, "")
+                )
+                return
+
+        try:
+            fresh = await self._run_library_service_call(
+                get_prompt,
+                mode="local",
+                prompt_identifier=prompt_id,
+                include_deleted=True,
+                isolate_in_worker=True,
+            )
+        except Exception:
+            fresh = None
+        if prompt_id != self._selected_prompt_id or self._library_prompts_view != "editor":
+            return
+        fresh_version = fresh.get("version") if isinstance(fresh, Mapping) else None
+        if (
+            fresh_version is not None
+            and self._library_prompt_version is not None
+            and fresh_version != self._library_prompt_version
+        ):
+            self._enter_library_prompt_conflict(
+                name=raw_name,
+                author=raw_author,
+                details=raw_details,
+                system_prompt=raw_system,
+                user_prompt=raw_user,
+                keywords_text=raw_keywords_text,
+            )
+            return
+
+        try:
+            result = await self._run_library_service_call(
+                save_prompt,
+                mode="local",
+                prompt_identifier=prompt_id,
+                name=name,
+                author=author,
+                details=details,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                keywords=keywords,
+                isolate_in_worker=True,
+            )
+        except Exception as exc:
+            logger.opt(exception=True).warning(f"Library prompt save failed for {prompt_id!r}.")
+            if prompt_id != self._selected_prompt_id or self._library_prompts_view != "editor":
+                return
+            outcome = classify_prompt_save_error(None, str(exc), exc)
+            self._update_library_prompt_status_static(
+                LIBRARY_PROMPT_SAVE_STATUS_COPY.get(outcome, LIBRARY_PROMPT_SAVE_STATUS_COPY["error"])
+            )
+            return
+
+        if prompt_id != self._selected_prompt_id or self._library_prompts_view != "editor":
+            return
+
+        result_id = result.get("local_id") if isinstance(result, Mapping) else (1 if result else None)
+        outcome = classify_prompt_save_error(result_id, "", None)
+        if outcome != "ok":
+            self._update_library_prompt_status_static(
+                LIBRARY_PROMPT_SAVE_STATUS_COPY.get(outcome, LIBRARY_PROMPT_SAVE_STATUS_COPY["error"])
+            )
+            return
+
+        version = result.get("version") if isinstance(result, Mapping) else None
+        self._library_prompt_version = (
+            version if version is not None else (self._library_prompt_version or 0) + 1
+        )
+        patched_detail: dict[str, Any] = (
+            dict(self._library_prompt_detail)
+            if isinstance(self._library_prompt_detail, Mapping)
+            else {}
+        )
+        patched_detail["id"] = prompt_id
+        patched_detail["name"] = name
+        patched_detail["author"] = author
+        patched_detail["details"] = details
+        patched_detail["system_prompt"] = system_prompt
+        patched_detail["user_prompt"] = user_prompt
+        patched_detail["version"] = self._library_prompt_version
+        if isinstance(result, Mapping):
+            if "keywords" in result:
+                patched_detail["keywords"] = result["keywords"]
+            if result.get("last_modified"):
+                patched_detail["last_modified"] = result["last_modified"]
+        elif keywords is not None:
+            patched_detail["keywords"] = keywords
+        self._library_prompt_detail = patched_detail
+        self._library_prompt_original_name = name
+        self._library_prompt_dirty = False
+        # Targeted updates only (no recompose): the fields already hold the
+        # user's just-saved text, so nothing there needs to change -- only
+        # the meta line's version and the status line need to reflect the
+        # save. Mirrors ``_save_library_note``'s discipline (it "never
+        # recomposes, so the TextArea/Input widget instances stay identical
+        # across a save"): recomposing here would remount fresh Input/
+        # TextArea widgets while the editor is still armed, and Textual's
+        # spurious mount-time ``Changed`` event for a non-empty initial
+        # value would immediately re-mark the just-saved prompt dirty.
+        self._update_library_prompt_meta_static()
+        self._update_library_prompt_status_static(LIBRARY_PROMPT_SAVE_STATUS_COPY["ok"])
+        # The broader local-source snapshot (rail badge / list ordering) is
+        # deliberately NOT refreshed here -- it would recompose the whole
+        # canvas (see the comment above) while this editor is still open
+        # and armed. It refreshes when the editor is actually left instead
+        # (``handle_library_prompt_back``, delete), the same point notes'
+        # save flow defers its own snapshot patch to.
+
+    def _enter_library_prompt_conflict(
+        self,
+        *,
+        name: str,
+        author: str,
+        details: str,
+        system_prompt: str,
+        user_prompt: str,
+        keywords_text: str,
+    ) -> None:
+        """Recompose into the save-conflict banner, seeded from live text.
+
+        Args:
+            name: The editor's live Name field value at Save time.
+            author: The editor's live Author field value at Save time.
+            details: The editor's live Details field value at Save time.
+            system_prompt: The editor's live System prompt field value.
+            user_prompt: The editor's live User prompt field value.
+            keywords_text: The editor's live Keywords field value.
+        """
+        self._library_prompt_conflict_snapshot = PromptEditorState(
+            prompt_id=self._selected_prompt_id,
+            name=name,
+            author=author,
+            details=details,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            keywords_csv=keywords_text,
+            version=self._library_prompt_version,
+            created="",
+            modified=(
+                self._library_prompt_detail.get("last_modified", "")
+                if isinstance(self._library_prompt_detail, Mapping)
+                else ""
+            ),
+        )
+        self._library_prompt_status = ""
+        self._library_prompt_editor_armed = False
+        if self.is_mounted:
+            self.refresh(recompose=True)
+            self.call_after_refresh(self._arm_library_prompt_editor)
+
+    async def _flush_library_prompt_save(self) -> bool:
+        """Veto leaving the prompt editor while an edit is unsaved.
+
+        Unlike the notes editor (autosave debounced on every keystroke),
+        the prompt editor is explicit-Save-only: there is no pending
+        background save to wait for or silently trigger here. This simply
+        reports whether it is safe to proceed -- ``False`` whenever
+        ``_library_prompt_dirty`` is set, so the caller (``flush_pending_work``,
+        prompt-row selection, Back, rail-row selection) aborts the
+        navigation/switch and leaves the user's edit in place for them to
+        explicitly Save or abandon, mirroring the veto shape
+        ``_flush_library_note_save`` gives ``flush_pending_work`` on a
+        genuine save failure.
+
+        Returns:
+            ``True`` when there is nothing unsaved (safe to proceed);
+            ``False`` when a dirty edit must be resolved first.
+        """
+        return not self._library_prompt_dirty
+
+    @on(Button.Pressed, "#library-prompt-back")
+    async def handle_library_prompt_back(self, event: Button.Pressed) -> None:
+        """Return the Library prompts canvas from the editor to its list view.
+
+        Vetoed while dirty (see ``_flush_library_prompt_save``) so Back
+        never silently discards an unsaved edit.
+
+        Also kicks the full local-source snapshot refetch (the notes Back
+        handler's same pattern): any save made during this editor visit
+        only patched ``_library_prompt_detail`` in place (see
+        ``_save_library_prompt``, which deliberately skips a broader
+        snapshot refresh while the editor is still open), so the list's
+        ordering/rail badge are only guaranteed fresh once this refetch
+        lands -- safe to fire now since the editor is no longer mounted to
+        be spuriously re-dirtied by the recompose it eventually triggers.
+
+        Args:
+            event: Button press event emitted by the "‹ Back to list" action.
+        """
+        event.stop()
+        if not await self._flush_library_prompt_save():
+            return
+        self._reset_library_prompt_editor_state()
+        self._refresh_local_source_snapshot()
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-prompt-delete")
+    def handle_library_prompt_delete(self, event: Button.Pressed) -> None:
+        """Soft-delete the open prompt and return to the list view.
+
+        Confirm-free by design (a single press deletes) -- unlike the
+        notes editor's Delete/Cancel inline confirmation, matching the
+        brief's "dim button, single press acceptable" delete affordance
+        while still sharing the same danger-tier styling class.
+
+        Args:
+            event: Button press event emitted by the editor's "Delete" action.
+        """
+        event.stop()
+        if self._library_prompts_view != "editor" or not self._selected_prompt_id:
+            return
+        self.run_worker(
+            self._delete_library_prompt(self._selected_prompt_id),
+            exclusive=True,
+            group="library_prompt_delete",
+        )
+
+    async def _delete_library_prompt(self, prompt_id: int) -> None:
+        """Delete the selected Library prompt, then return to the list view.
+
+        Calls ``delete_prompt`` through the offloaded service seam. On
+        success, reruns the full local-source snapshot (the same seam the
+        notes delete flow uses) so the list view and the rail's Prompts
+        count both reflect the deletion, then resets the editor state and
+        returns to the list view.
+
+        Args:
+            prompt_id: The Library prompt id to delete.
+        """
+        service = getattr(self.app_instance, "prompt_scope_service", None)
+        delete_prompt = getattr(service, "delete_prompt", None)
+        if not callable(delete_prompt):
+            self._update_library_prompt_status_static("Prompt deletion is unavailable.")
+            return
+        try:
+            deleted = await self._run_library_service_call(
+                delete_prompt,
+                mode="local",
+                prompt_identifier=prompt_id,
+                isolate_in_worker=True,
+            )
+        except Exception:
+            logger.opt(exception=True).warning(f"Failed to delete Library prompt {prompt_id!r}.")
+            if prompt_id != self._selected_prompt_id or self._library_prompts_view != "editor":
+                return
+            self._update_library_prompt_status_static("Could not delete this prompt.")
+            return
+
+        # Discard a stale result: the user has since switched to a different
+        # prompt (or left the editor) while this delete was in flight.
+        if prompt_id != self._selected_prompt_id or self._library_prompts_view != "editor":
+            return
+
+        if not deleted:
+            # Targeted status update only (no recompose) -- same discipline
+            # as `_save_library_prompt`'s outcome branches: the fields are
+            # unchanged, so remounting them here would spuriously re-dirty
+            # the (armed, still-open) editor via Textual's mount-time
+            # `Changed` event for a non-empty initial value.
+            self._update_library_prompt_status_static(
+                "This prompt changed elsewhere — refresh and try again."
+            )
+            return
+
+        self._reset_library_prompt_editor_state()
+        self._library_prompts_filter = ""
+        # Reuses the same full local-source reload the notes delete flow
+        # uses (already its own exclusive worker via @work) so the list
+        # view and the rail's Prompts count both drop the deleted prompt --
+        # fire-and-forget, not awaited (see `_save_library_prompt`'s
+        # matching comment for why).
+        self._refresh_local_source_snapshot()
+        if self.is_mounted:
+            self.refresh(recompose=True)
+
+    async def _resolve_library_prompt_conflict(self, *, overwrite: bool) -> None:
+        """Resolve a shown save conflict via the Overwrite or Reload action.
+
+        Both paths silently re-fetch the prompt's current server-side
+        detail first (no "Loading…" placeholder -- the conflict UI stays
+        put while this happens). Mirrors ``_resolve_library_note_conflict``.
+
+        * ``overwrite=True``: take only the fresh ``version`` from that
+          detail and re-save the user's *live* (kept) text with that
+          version.
+        * ``overwrite=False``: discard the local edits and recompose the
+          editor from the freshly fetched detail.
+
+        Either path falls back to the list view when the re-fetch
+        discovers the prompt was deleted elsewhere entirely.
+
+        Args:
+            overwrite: ``True`` for Overwrite, ``False`` for Reload.
+        """
+        prompt_id = self._selected_prompt_id
+        if not prompt_id or self._library_prompt_conflict_snapshot is None:
+            return
+        service = getattr(self.app_instance, "prompt_scope_service", None)
+        get_prompt = getattr(service, "get_prompt", None)
+        if not callable(get_prompt):
+            return
+        try:
+            detail = await self._run_library_service_call(
+                get_prompt,
+                mode="local",
+                prompt_identifier=prompt_id,
+                include_deleted=True,
+                isolate_in_worker=True,
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Failed to reload Library prompt {prompt_id!r} after a save conflict."
+            )
+            return
+        if prompt_id != self._selected_prompt_id:
+            return  # The user navigated away while the re-fetch was in flight.
+
+        if not isinstance(detail, Mapping):
+            logger.info(
+                f"Library prompt {prompt_id!r} is no longer available; returning to list."
+            )
+            self._reset_library_prompt_editor_state()
+            self._refresh_local_source_snapshot()
+            if self.is_mounted:
+                self.refresh(recompose=True)
+            return
+
+        if not overwrite:
+            self._library_prompt_detail = dict(detail)
+            editor_state = build_prompt_editor_state(self._library_prompt_detail)
+            self._library_prompt_original_name = editor_state.name
+            self._library_prompt_version = editor_state.version
+            self._library_prompt_conflict_snapshot = None
+            self._library_prompt_dirty = False
+            self._library_prompt_status = ""
+            self._library_prompt_editor_armed = False
+            if self.is_mounted:
+                self.refresh(recompose=True)
+                self.call_after_refresh(self._arm_library_prompt_editor)
+            return
+
+        fresh_version = build_prompt_editor_state(detail).version
+        if fresh_version is None:
+            return
+        snapshot = self._library_prompt_conflict_snapshot
+        name = self._sanitize_media_field(snapshot.name, max_length=300)
+        author = self._sanitize_media_field(snapshot.author, max_length=200)
+        details = self._sanitize_note_content(snapshot.details, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS)
+        system_prompt = self._sanitize_note_content(
+            snapshot.system_prompt, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS
+        )
+        user_prompt = self._sanitize_note_content(
+            snapshot.user_prompt, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS
+        )
+        keywords = self._library_note_keywords_from_input(snapshot.keywords_csv)
+
+        save_prompt = getattr(service, "save_prompt", None)
+        if not callable(save_prompt):
+            return
+        try:
+            result = await self._run_library_service_call(
+                save_prompt,
+                mode="local",
+                prompt_identifier=prompt_id,
+                name=name,
+                author=author,
+                details=details,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                keywords=keywords,
+                isolate_in_worker=True,
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Failed to overwrite Library prompt {prompt_id!r} after a save conflict."
+            )
+            return
+        if prompt_id != self._selected_prompt_id:
+            return
+
+        version = result.get("version") if isinstance(result, Mapping) else None
+        self._library_prompt_version = version if version is not None else fresh_version + 1
+        patched_detail: dict[str, Any] = (
+            dict(self._library_prompt_detail)
+            if isinstance(self._library_prompt_detail, Mapping)
+            else {}
+        )
+        patched_detail["id"] = prompt_id
+        patched_detail["name"] = name
+        patched_detail["author"] = author
+        patched_detail["details"] = details
+        patched_detail["system_prompt"] = system_prompt
+        patched_detail["user_prompt"] = user_prompt
+        patched_detail["version"] = self._library_prompt_version
+        if isinstance(result, Mapping) and "keywords" in result:
+            patched_detail["keywords"] = result["keywords"]
+        elif keywords is not None:
+            patched_detail["keywords"] = keywords
+        self._library_prompt_detail = patched_detail
+        self._library_prompt_original_name = name
+        self._library_prompt_conflict_snapshot = None
+        self._library_prompt_dirty = False
+        self._library_prompt_status = LIBRARY_PROMPT_SAVE_STATUS_COPY["ok"]
+        # This recompose swaps the conflict banner's Overwrite/Reload
+        # actions back for the normal action row (a real mode change,
+        # unlike the plain Save success path above), so it also remounts
+        # the Input/TextArea fields -- disarm first (mirroring every other
+        # recompose in this editor) so their spurious mount-time `Changed`
+        # is not mistaken for a fresh edit.
+        self._library_prompt_editor_armed = False
+        if self.is_mounted:
+            self.refresh(recompose=True)
+            self.call_after_refresh(self._arm_library_prompt_editor)
+
+    @on(Button.Pressed, "#library-prompt-conflict-overwrite")
+    def handle_library_prompt_conflict_overwrite(self, event: Button.Pressed) -> None:
+        """Resolve a shown save conflict by re-saving the kept local edits.
+
+        Args:
+            event: Button press event emitted by the conflict UI's
+                "Overwrite" action.
+        """
+        event.stop()
+        self.run_worker(
+            self._resolve_library_prompt_conflict(overwrite=True),
+            exclusive=True,
+            group="library_prompt_save",
+        )
+
+    @on(Button.Pressed, "#library-prompt-conflict-reload")
+    def handle_library_prompt_conflict_reload(self, event: Button.Pressed) -> None:
+        """Resolve a shown save conflict by discarding local edits.
+
+        Args:
+            event: Button press event emitted by the conflict UI's
+                "Reload" action.
+        """
+        event.stop()
+        self.run_worker(
+            self._resolve_library_prompt_conflict(overwrite=False),
+            exclusive=True,
+            group="library_prompt_save",
+        )
 
     _LIBRARY_NOTE_IMPORT_TITLE_MAX_CHARS = 300
 
