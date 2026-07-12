@@ -5344,7 +5344,7 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-media-select-toggle")
     def handle_library_media_select_toggle(self, event: Button.Pressed) -> None:
-        """Enter/exit media select mode; entering starts from an empty set."""
+        """Enter/exit media select mode; clears the selection set (both on enter and exit)."""
         event.stop()
         self._library_media_select_mode = not self._library_media_select_mode
         self._library_media_row_selection.clear()
