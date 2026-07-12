@@ -128,17 +128,27 @@ class ChatbookCreator:
         if cancel_check is not None and cancel_check():
             raise ChatbookExportCancelled()
 
-    def _cleanup_paths(self, *paths: Optional[Path]) -> None:
-        for p in paths:
-            if not p:
-                continue
+    def _cleanup_run(self, work_dir: Optional[Path], partial_path: Optional[Path]) -> None:
+        """Remove this run's temp artifacts on any exit path.
+
+        ``work_dir`` is a temp directory we created (safe to rmtree).
+        ``partial_path`` is a sibling of the user-chosen destination and is only
+        ever a *file* we wrote, so it is unlinked as a file and NEVER rmtree'd —
+        a directory unexpectedly sitting at ``<dest>.partial`` must not be
+        recursively deleted.
+        """
+        if work_dir is not None:
             try:
-                if p.is_dir():
-                    shutil.rmtree(p, ignore_errors=True)
-                elif p.exists():
-                    p.unlink()
-            except Exception:
-                logger.opt(exception=True).debug(f"ChatbookCreator: cleanup failed for {p}")
+                if work_dir.is_dir():
+                    shutil.rmtree(work_dir, ignore_errors=True)
+            except OSError:
+                logger.opt(exception=True).debug(f"ChatbookCreator: could not remove work_dir {work_dir}")
+        if partial_path is not None:
+            try:
+                if partial_path.is_file():
+                    partial_path.unlink()
+            except OSError:
+                logger.opt(exception=True).debug(f"ChatbookCreator: could not remove partial {partial_path}")
 
     def create_chatbook(
         self,
@@ -300,9 +310,14 @@ class ChatbookCreator:
             logger.info(f"ChatbookCreator.create_chatbook: Creating ZIP archive at {output_path}")
             self._create_zip_archive(work_dir, output_path, partial_path)
             
-            # Calculate final size
-            manifest.total_size_bytes = output_path.stat().st_size
-            logger.info(f"ChatbookCreator.create_chatbook: Archive size: {manifest.total_size_bytes} bytes")
+            # Best-effort size calc: the archive is already finalized on disk
+            # (os.replace done inside _create_zip_archive), so a stat() failure
+            # here must NOT flip a successful export into a reported failure.
+            try:
+                manifest.total_size_bytes = output_path.stat().st_size
+                logger.info(f"ChatbookCreator.create_chatbook: Archive size: {manifest.total_size_bytes} bytes")
+            except OSError:
+                logger.opt(exception=True).debug("ChatbookCreator.create_chatbook: could not stat finalized archive")
             
             # (temp work_dir + any leftover .partial are cleaned up in the
             # `finally` below, on every exit path — success, cancel, error.)
@@ -341,7 +356,7 @@ class ChatbookCreator:
             # Single cleanup point for every exit path (success/cancel/error):
             # remove the temp work_dir and any leftover .partial archive, and
             # clear this thread's hooks so a reused instance never leaks them.
-            self._cleanup_paths(work_dir, partial_path)
+            self._cleanup_run(work_dir, partial_path)
             self._thread_local.progress_callback = None
             self._thread_local.cancel_check = None
 

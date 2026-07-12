@@ -6,7 +6,7 @@ import json
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Optional
 
 from tldw_chatbook.tldw_api.prompt_chatbook_schemas import ChatbookImportRequest
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_json
@@ -245,7 +245,13 @@ class LocalChatbookService:
             self._save_registry(registry)
         return True
 
-    async def export_chatbook(self, request_data: Any, *, progress_callback=None, cancel_check=None) -> dict[str, Any]:
+    async def export_chatbook(
+        self,
+        request_data: Any,
+        *,
+        progress_callback: Optional[Callable[[Any], None]] = None,
+        cancel_check: Optional[Callable[[], bool]] = None,
+    ) -> dict[str, Any]:
         payload = self._as_dict(request_data)
         output_path = payload.pop("output_path", None)
         if output_path is None:

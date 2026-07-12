@@ -219,6 +219,51 @@ class TestChatbookCreator:
 
     @patch('tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB')
     @patch('tldw_chatbook.Chatbooks.chatbook_creator.PromptsDatabase')
+    def test_stat_failure_after_finalize_still_reports_success(self, mock_prompts_db, mock_chacha_db, chatbook_creator, tmp_path):
+        """A stat() failure AFTER the archive is os.replace'd into place must not
+        flip a genuinely-successful export into a reported failure."""
+        import zipfile
+        mock_chacha_db.return_value = MagicMock()
+        mock_prompts_db.return_value = MagicMock()
+        output_path = tmp_path / "cb.zip"
+        real_stat = Path.stat
+
+        def flaky_stat(self, *args, **kwargs):
+            if self == output_path:
+                raise OSError("simulated stat failure after finalize")
+            return real_stat(self, *args, **kwargs)
+
+        with patch.object(Path, "stat", flaky_stat):
+            success, _msg, _dep = chatbook_creator.create_chatbook(
+                name="S", description="", content_selections={ContentType.CONVERSATION: []},
+                output_path=output_path,
+            )
+        assert success is True
+        assert output_path.exists() and zipfile.is_zipfile(output_path)
+
+    @patch('tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB')
+    @patch('tldw_chatbook.Chatbooks.chatbook_creator.PromptsDatabase')
+    def test_cleanup_does_not_rmtree_directory_at_partial_path(self, mock_prompts_db, mock_chacha_db, chatbook_creator, tmp_path):
+        """If a directory unexpectedly sits at <dest>.partial, failure cleanup must
+        NOT recursively delete it — only the .partial FILE we create is removed."""
+        mock_chacha_db.return_value = MagicMock()
+        mock_prompts_db.return_value = MagicMock()
+        output_path = tmp_path / "cb.zip"
+        partial_dir = output_path.with_name(output_path.name + ".partial")
+        partial_dir.mkdir()
+        (partial_dir / "sentinel.txt").write_text("keep me", encoding="utf-8")
+        success, _msg, _dep = chatbook_creator.create_chatbook(
+            name="C", description="", content_selections={ContentType.CONVERSATION: []},
+            output_path=output_path,
+        )
+        # The zip write fails (partial path is a directory) → failure, but the
+        # pre-existing directory and its contents must survive untouched.
+        assert success is False
+        assert partial_dir.is_dir()
+        assert (partial_dir / "sentinel.txt").read_text(encoding="utf-8") == "keep me"
+
+    @patch('tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB')
+    @patch('tldw_chatbook.Chatbooks.chatbook_creator.PromptsDatabase')
     def test_create_chatbook_with_sample_data(self, mock_prompts_db, mock_chacha_db, chatbook_creator, temp_db_paths, tmp_path):
         """Test creating a chatbook with sample data."""
         # Setup mocks
