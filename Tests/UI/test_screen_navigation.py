@@ -323,6 +323,19 @@ def test_open_notes_workspace_routes_to_library_notes_list():
     assert message.screen_context == {"mode": "notes"}
 
 
+def test_prompts_route_resolves_to_library_screen():
+    """The Personas "prompts" mode chip is retired (Task 7): prompt
+    management now lives entirely inside Library. The legacy "prompts"
+    route id must resolve to ``LibraryScreen`` instead of ``PersonasScreen``,
+    mirroring the "notes" compatibility alias above.
+    """
+    from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_target
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    _screen_name, _canonical_tab, screen_class = resolve_screen_target("prompts")
+    assert screen_class is LibraryScreen
+
+
 def test_all_master_shell_primary_routes_resolve_before_nav_exposure():
     app = _build_test_app()
     expected_routes = {
@@ -1183,6 +1196,40 @@ async def test_library_screen_round_trip_restores_rag_query_and_rail_selection()
         assert restored_screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
         query_input = restored_screen.query_one("#library-rag-query-input", Input)
         assert query_input.value == "roadmap notes"
+
+
+@pytest.mark.asyncio
+async def test_prompts_route_lands_on_library_with_prompts_row_selected():
+    """``NavigateToScreen("prompts")`` must land on Library with the prompts
+    rail row selected. The Personas "prompts" mode chip is retired (Task 7)
+    and the legacy route now re-points into Library, mirroring how
+    ``open_notes_workspace`` re-points "notes" via a
+    ``LIBRARY_NAV_CONTEXT_MODE`` nav-context selection -- except "prompts"
+    has no dedicated re-entry action to carry that context (the retired
+    Personas mode chip had no equivalent workspace to return to), so the
+    bare alias route itself must supply it.
+    """
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_PROMPTS
+
+    app = _build_test_app()
+
+    async with app.run_test(size=(170, 48)) as pilot:
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ != "Screen":
+                break
+
+        app.post_message(NavigateToScreen("prompts"))
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if (
+                type(app.screen).__name__ == "LibraryScreen"
+                and app.screen.query("#library-row-browse-prompts")
+            ):
+                break
+
+        assert type(app.screen).__name__ == "LibraryScreen"
+        assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
 
 
 @pytest.mark.asyncio

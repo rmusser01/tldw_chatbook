@@ -16,6 +16,9 @@ RETIRED_MODULES = (
     "tldw_chatbook.navigation",
     "tldw_chatbook.navigation.screen_registry",
     "tldw_chatbook.UI.Conv_Char_Window",
+    # The Personas "prompts" mode chip is retired (Task 7): prompt handling
+    # moved entirely into Library, so CCPPromptHandler is dead code.
+    "tldw_chatbook.UI.CCP_Modules.ccp_prompt_handler",
 )
 
 RETIRED_FILES = (
@@ -25,6 +28,7 @@ RETIRED_FILES = (
     "tldw_chatbook/navigation/screen_registry.py",
     "tldw_chatbook/UI/Conv_Char_Window.py",
     "tldw_chatbook/UI/Conv_Char_Window.py.backup",
+    "tldw_chatbook/UI/CCP_Modules/ccp_prompt_handler.py",
 )
 
 CCP_HANDLER_FILES = (
@@ -32,7 +36,6 @@ CCP_HANDLER_FILES = (
     "tldw_chatbook/UI/CCP_Modules/ccp_conversation_handler.py",
     "tldw_chatbook/UI/CCP_Modules/ccp_dictionary_handler.py",
     "tldw_chatbook/UI/CCP_Modules/ccp_message_manager.py",
-    "tldw_chatbook/UI/CCP_Modules/ccp_prompt_handler.py",
 )
 
 

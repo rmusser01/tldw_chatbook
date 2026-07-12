@@ -107,6 +107,11 @@ _SCREEN_ALIASES = {
     # route id still resolve to a real screen (Library) instead of erroring
     # or silently falling back to Chat.
     "notes": "library",
+    # The Personas "prompts" mode chip is retired (Task 7): prompt
+    # management now lives entirely inside Library. Existing startup
+    # configs / callers using the legacy "prompts" route id resolve to
+    # Library instead of Personas.
+    "prompts": "library",
 }
 
 

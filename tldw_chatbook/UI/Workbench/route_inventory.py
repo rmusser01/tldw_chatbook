@@ -32,7 +32,9 @@ WORKBENCH_ROUTE_OWNERS: dict[str, str] = {
     "ccp": "personas",
     "conversations_characters_prompts": "personas",
     "characters": "personas",
-    "prompts": "personas",
+    # The Personas "prompts" mode chip is retired (Task 7): the legacy
+    # "prompts" route re-points to Library, like "notes" below.
+    "prompts": "library",
     "media": "library",
     "notes": "library",
     "search": "library",

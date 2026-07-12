@@ -4479,6 +4479,17 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         """Normalize navigation aliases to a routed screen id and canonical current_tab value."""
         return resolve_screen_target(target)
 
+    # Legacy alias routes that need a default Library nav-context applied
+    # when navigated to directly (bare ``NavigateToScreen(route)``, no
+    # explicit context supplied). Mirrors how ``open_notes_workspace`` builds
+    # ``{LIBRARY_NAV_CONTEXT_MODE: "notes"}`` for the retired standalone
+    # Notes tab -- except "prompts" (the retired Personas "prompts" mode
+    # chip, Task 7) has no dedicated re-entry action to carry that context,
+    # so the bare alias route itself must supply it here.
+    _LEGACY_ROUTE_LIBRARY_NAV_CONTEXT: dict[str, dict[str, str]] = {
+        "prompts": {LIBRARY_NAV_CONTEXT_MODE: "prompts"},
+    }
+
     def _create_navigation_screen(self, screen_name: str, screen_class: type):
         """Build a FRESH screen instance for every navigation.
 
@@ -4514,7 +4525,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             destination.destination_id
             for destination in SHELL_DESTINATION_ORDER
         }
-        legacy_aliases = {"conversation", "llm", "subscription", "subscriptions", "tools_settings", "notes"}
+        legacy_aliases = {"conversation", "llm", "subscription", "subscriptions", "tools_settings", "notes", "prompts"}
         return set(ALL_TABS) | shell_routes | legacy_aliases
 
     def _normalize_initial_tab_from_config(self, configured_route: str | None) -> str:
@@ -4617,6 +4628,10 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                         logger.error(f"Error restoring screen state: {e}")
 
             navigation_context = getattr(message, "screen_context", {}) or {}
+            if not navigation_context:
+                navigation_context = self._LEGACY_ROUTE_LIBRARY_NAV_CONTEXT.get(
+                    requested_screen, {}
+                )
             if navigation_context and hasattr(new_screen, "apply_navigation_context"):
                 try:
                     result = new_screen.apply_navigation_context(navigation_context)

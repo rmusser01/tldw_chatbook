@@ -346,21 +346,23 @@ class TestWorkbenchShell:
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             assert "Personas: 1" in str(status.renderable)
-            await pilot.click("#personas-mode-prompts")
+            # "prompts" is retired from the Personas mode strip (Task 7):
+            # "dictionaries" is the next still-unwired placeholder mode.
+            await pilot.click("#personas-mode-dictionaries")
             await pilot.pause()
-            assert "Mode: Prompts" in str(status.renderable)
+            assert "Mode: Dictionaries" in str(status.renderable)
 
     async def test_placeholder_modes_show_placeholder_panel(self, mock_app_instance, stub_characters):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
-            await pilot.click("#personas-mode-prompts")
+            await pilot.click("#personas-mode-dictionaries")
             await pilot.pause()
-            assert screen.state.active_mode == "prompts"
+            assert screen.state.active_mode == "dictionaries"
             placeholder = screen.query_one("#personas-mode-placeholder", Static)
             assert placeholder.display is True
             assert "not available yet" in str(placeholder.renderable)
-            assert "is-active" in screen.query_one("#personas-mode-prompts", Button).classes
+            assert "is-active" in screen.query_one("#personas-mode-dictionaries", Button).classes
 
 
 class TestCharacterSelectionAndEdit:
@@ -3853,9 +3855,11 @@ class TestKeyboardInteraction:
             await pilot.pause()
             assert screen.state.active_mode == "personas"
             # ]/[ cycle through the strip order from the active mode.
+            # "prompts" is retired from the strip (Task 7), so "dictionaries"
+            # is next after "personas".
             await pilot.press("right_square_bracket")
             await pilot.pause()
-            assert screen.state.active_mode == "prompts"
+            assert screen.state.active_mode == "dictionaries"
             await pilot.press("left_square_bracket")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()

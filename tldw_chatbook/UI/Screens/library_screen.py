@@ -359,19 +359,22 @@ def _active_library_sync_scope(app_instance: Any) -> dict[str, str | None]:
 # callers emit/support today (L3b Task 8 audit): ``conversations`` (Personas'
 # conversations controller), ``search`` and ``collections`` (both directly
 # tested contracts of ``apply_navigation_context``, though no live emitter
-# currently sends them). ``notes`` is handled as its own dedicated branch in
-# ``_apply_navigation_context_state`` below (``open_notes_workspace``'s
-# route), not through this table. ``media`` has no navigation-context entry
-# point at all (the retired mode-strip machinery never had a "media" mode
-# either). Any other mode value -- including the retired
-# ``study``/``flashcards``/``quizzes`` mode values (those rows are now
-# "handoff" rows, not nav-context targets) and the retired
+# currently sends them), and ``prompts`` (the retired Personas "prompts" mode
+# chip's legacy route alias -- see ``screen_registry``'s ``_SCREEN_ALIASES``
+# and ``shell_destinations``, Task 7). ``notes`` is handled as its own
+# dedicated branch in ``_apply_navigation_context_state`` below
+# (``open_notes_workspace``'s route), not through this table. ``media`` has
+# no navigation-context entry point at all (the retired mode-strip machinery
+# never had a "media" mode either). Any other mode value -- including the
+# retired ``study``/``flashcards``/``quizzes`` mode values (those rows are
+# now "handoff" rows, not nav-context targets) and the retired
 # ``sources``/``workspaces``/``import-export`` values -- degrades quietly,
 # unchanged from before this table existed.
 LIBRARY_NAV_MODE_TO_ROW_ID = {
     "conversations": LIBRARY_ROW_BROWSE_CONVERSATIONS,
     "collections": LIBRARY_ROW_BROWSE_COLLECTIONS,
     "search": LIBRARY_ROW_BROWSE_SEARCH,
+    "prompts": LIBRARY_ROW_BROWSE_PROMPTS,
 }
 
 
