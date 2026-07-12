@@ -21,5 +21,7 @@ Core-loop UAT 2026-07-11: the Scope Inspector shows 'Writes allowed: Yes' direct
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 No panel simultaneously claims writes are allowed and blocked,Internal roadmap/ownership prose is removed or moved behind an expert view,Overview leads with user-relevant readiness rather than a blocked power feature
+- [ ] #1 No panel simultaneously claims writes are allowed and blocked
+- [ ] #2 Internal roadmap/ownership prose is removed or moved behind an expert view
+- [ ] #3 Overview leads with user-relevant readiness rather than a blocked power feature
 <!-- AC:END -->
