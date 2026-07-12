@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+HOME_PRIMARY_ACTION_ID = "home-primary-action"
+"""Widget/control id of the Home canvas primary action button."""
+
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 
@@ -1265,7 +1268,7 @@ def build_home_triage_state(
             ):
                 primary_control_id = HOME_START_CONVERSATION_CONTROL_ID
             elif next_action.action_id == "start_console":
-                primary_control_id = "home-primary-action"
+                primary_control_id = HOME_PRIMARY_ACTION_ID
         canvas = HomeCanvasState(
             title=next_action.label,
             lines=tuple(lines),

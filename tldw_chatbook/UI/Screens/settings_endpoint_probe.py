@@ -23,6 +23,7 @@ from dataclasses import dataclass
 import httpx
 
 from tldw_chatbook.Chat.local_server_discovery import normalize_probe_base_url
+from tldw_chatbook.Utils.input_validation import validate_url
 
 
 SETTINGS_ENDPOINT_PROBE_TIMEOUT_SECONDS = 2.5
@@ -102,7 +103,9 @@ async def probe_settings_endpoint(
         The probe outcome with a toast-ready ``summary`` fragment.
     """
     normalized = normalize_probe_base_url(base_url)
-    if normalized is None:
+    # PR #608 review: user-entered endpoints must pass the shared
+    # input_validation boundary before any network use.
+    if normalized is None or not validate_url(normalized):
         return SettingsEndpointProbeOutcome(
             reachable=False,
             summary="unreachable: invalid endpoint URL",

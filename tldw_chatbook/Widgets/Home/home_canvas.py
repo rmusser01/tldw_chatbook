@@ -9,7 +9,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Static
 
-from tldw_chatbook.Home.dashboard_state import HomeCanvasState
+from tldw_chatbook.Home.dashboard_state import HOME_PRIMARY_ACTION_ID, HomeCanvasState
 
 
 class HomeCanvas(Vertical):
@@ -78,11 +78,11 @@ class HomeCanvas(Vertical):
                 if self.canvas.next_action_is_canvas:
                     yield self.action_button_factory(
                         self.canvas.next_action.label,
-                        "home-primary-action",
+                        HOME_PRIMARY_ACTION_ID,
                         # T190: the ready-idle canvas makes the next-action
                         # button itself the primary "Start a conversation"
                         # control, so it must honor primary emphasis too.
-                        self.canvas.primary_control_id == "home-primary-action",
+                        self.canvas.primary_control_id == HOME_PRIMARY_ACTION_ID,
                     )
         if not self.canvas.next_action_is_canvas:
             yield Static(
@@ -93,6 +93,6 @@ class HomeCanvas(Vertical):
             )
             yield self.action_button_factory(
                 self.canvas.next_action.label,
-                "home-primary-action",
-                self.canvas.primary_control_id == "home-primary-action",
+                HOME_PRIMARY_ACTION_ID,
+                self.canvas.primary_control_id == HOME_PRIMARY_ACTION_ID,
             )

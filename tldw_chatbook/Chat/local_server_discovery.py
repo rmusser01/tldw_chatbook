@@ -193,7 +193,29 @@ def build_local_server_candidates(
     return tuple(ordered)
 
 
-def _model_ids_from_payload(payload: object) -> tuple[str, ...]:
+# PR #608 review: bound and sanitize server-supplied model ids at this single
+# boundary so downstream Select labels/config writes never carry control
+# characters or unbounded text.
+MODEL_ID_MAX_CHARS = 120
+MODEL_IDS_MAX_COUNT = 100
+
+
+def _sanitize_model_id(raw: str) -> str:
+    """Return a display/config-safe model id.
+
+    Args:
+        raw: Server-supplied model id string.
+
+    Returns:
+        Whitespace-collapsed id with control characters removed, capped at
+        ``MODEL_ID_MAX_CHARS``; empty when nothing printable remains.
+    """
+    cleaned = "".join(ch for ch in raw if ch.isprintable())
+    cleaned = " ".join(cleaned.split())
+    return cleaned[:MODEL_ID_MAX_CHARS]
+
+
+def _model_ids_from_payload(payload: object) -> tuple[str, ...] | None:
     """Extract model id strings from a models-endpoint JSON payload.
 
     Accepts the OpenAI ``{"data": [{"id": ...}]}`` shape, the Ollama
@@ -203,21 +225,29 @@ def _model_ids_from_payload(payload: object) -> tuple[str, ...]:
         payload: Decoded JSON payload of any shape.
 
     Returns:
-        Ordered unique model ids; empty when nothing recognizable is present.
+        Ordered unique sanitized model ids (possibly empty) when the payload
+        carries a recognizable models container, or ``None`` when it does not
+        look like a models endpoint at all — a JSON page from some unrelated
+        local service must not count as a detected LLM server (PR #608 review).
     """
     entries: object = payload
     if isinstance(payload, Mapping):
         data = payload.get("data")
         entries = data if isinstance(data, list) else payload.get("models")
     if not isinstance(entries, list):
-        return ()
+        return None
     model_ids: list[str] = []
     for entry in entries:
         model_id: object = entry
         if isinstance(entry, Mapping):
             model_id = entry.get("id") or entry.get("name") or entry.get("model")
-        if isinstance(model_id, str) and model_id.strip() and model_id.strip() not in model_ids:
-            model_ids.append(model_id.strip())
+        if not isinstance(model_id, str):
+            continue
+        sanitized = _sanitize_model_id(model_id)
+        if sanitized and sanitized not in model_ids:
+            model_ids.append(sanitized)
+        if len(model_ids) >= MODEL_IDS_MAX_COUNT:
+            break
     return tuple(model_ids)
 
 
@@ -236,8 +266,11 @@ async def _get_models_payload(
         display: Safe base-endpoint label used in failure copy.
 
     Returns:
-        ``(model_ids, "")`` on a 2xx response (ids possibly empty), or
-        ``(None, detail)`` with short failure copy otherwise.
+        ``(model_ids, "")`` on a 2xx response whose payload is a recognizable
+        models listing (ids possibly empty), or ``(None, detail)`` with short
+        failure copy otherwise. Non-JSON or unrecognizable payloads are
+        failures — a random local web server answering 200 on a default port
+        must not register as a detected LLM server (PR #608 review).
     """
     try:
         response = await http_client.get(url, timeout=timeout)
@@ -252,8 +285,11 @@ async def _get_models_payload(
     try:
         payload = response.json()
     except Exception:
-        return (), ""
-    return _model_ids_from_payload(payload), ""
+        return None, f"No models endpoint at {display} (not a JSON API)."
+    model_ids = _model_ids_from_payload(payload)
+    if model_ids is None:
+        return None, f"No models endpoint at {display} (unrecognized API payload)."
+    return model_ids, ""
 
 
 async def probe_models_endpoint(

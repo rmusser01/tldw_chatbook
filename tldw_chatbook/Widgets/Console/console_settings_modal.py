@@ -19,6 +19,7 @@ from tldw_chatbook.Chat.console_provider_endpoints import (
     normalize_generic_endpoint_for_compare,
 )
 from tldw_chatbook.Chat.local_server_discovery import (
+    normalize_probe_base_url,
     LocalModelProbeResult,
     endpoint_display,
     probe_models_endpoint,
@@ -38,6 +39,8 @@ from tldw_chatbook.Chat.console_session_settings import (
     validate_console_session_settings,
 )
 from tldw_chatbook.Utils.input_validation import validate_text_input
+from tldw_chatbook.Utils.input_validation import validate_url
+from rich.markup import escape as escape_markup
 
 
 MODEL_INPUT_PLACEHOLDER = "Enter model id"
@@ -50,6 +53,7 @@ MODEL_DISCOVER_STATUS_ID = "console-settings-model-discover-status"
 MODEL_DISCOVER_BUTTON_LABEL = "Discover models"
 MODEL_DISCOVER_BUTTON_WIDTH = 19
 MODEL_DISCOVER_MISSING_URL_COPY = "Enter a base URL to discover models."
+MODEL_DISCOVER_INVALID_URL_COPY = "Enter a valid http(s) endpoint URL to discover models."
 ModelProber = Callable[[str, str], Awaitable[LocalModelProbeResult]]
 STREAMING_TOGGLE_WIDTH = 12
 PROVIDER_CHOICE_INPUT_MAX_LENGTH = 64
@@ -780,6 +784,12 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         if not base_url:
             self._set_model_discover_status(MODEL_DISCOVER_MISSING_URL_COPY)
             return
+        normalized_probe_url = normalize_probe_base_url(base_url)
+        # PR #608 review: user-entered endpoint must pass the shared
+        # input_validation boundary before any network use.
+        if normalized_probe_url is None or not validate_url(normalized_probe_url):
+            self._set_model_discover_status(MODEL_DISCOVER_INVALID_URL_COPY)
+            return
         event.button.disabled = True
         self._set_model_discover_status(f"Contacting {endpoint_display(base_url)}…")
         self.run_worker(
@@ -998,7 +1008,9 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             normalized = normalize_console_model_value(model_id)
             if normalized and normalized not in option_values:
                 option_values.add(normalized)
-                options.append((normalized, normalized))
+                # Server-supplied text: escape so Rich-markup-like ids cannot
+                # style or spoof the option label (PR #608 review).
+                options.append((escape_markup(normalized), normalized))
         return options
 
     def _configured_model_select_options(self, provider: str) -> list[tuple[str, str]]:

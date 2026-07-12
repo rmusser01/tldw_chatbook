@@ -20,6 +20,7 @@ from tldw_chatbook.Chat.console_session_settings import (
 from tldw_chatbook.config import get_cli_setting, load_settings, save_setting_to_cli_config
 from tldw_chatbook.Constants import LIBRARY_NAV_CONTEXT_NOTE_ID, TAB_CHAT, TAB_LIBRARY
 from tldw_chatbook.Home.dashboard_state import (
+    HOME_PRIMARY_ACTION_ID,
     HOME_RESUME_KIND_CONVERSATION,
     HOME_RESUME_KIND_NOTE,
     HOME_RESUME_LATEST_CONTROL_ID,
@@ -157,6 +158,10 @@ def _home_record_timestamp(record: Mapping[str, Any] | None) -> datetime:
         raw = record.get(key)
         if raw in (None, ""):
             continue
+        if isinstance(raw, datetime):
+            # DB layers may hand back datetimes directly; no str round-trip
+            # (PR #608 review).
+            return raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
         text = str(raw).strip().replace("Z", "+00:00")
         try:
             parsed = datetime.fromisoformat(text)
@@ -497,10 +502,10 @@ class HomeScreen(BaseAppScreen):
                 primary_control_id`` / ``_canvas_primary_control_id``).
         """
         classes = "home-canvas-action console-action-primary" if primary else "home-canvas-action"
-        if control_id == "home-primary-action":
+        if control_id == HOME_PRIMARY_ACTION_ID:
             return HomeActionButton(
                 label,
-                id="home-primary-action",
+                id=HOME_PRIMARY_ACTION_ID,
                 classes=classes,
                 fallback_press=self._activate_home_primary_action,
             )
@@ -637,7 +642,7 @@ class HomeScreen(BaseAppScreen):
             self._set_home_rail_section(section_id, not currently_open)
             return
 
-        if button_id == "home-primary-action":
+        if button_id == HOME_PRIMARY_ACTION_ID:
             self._activate_home_primary_action()
             return
 

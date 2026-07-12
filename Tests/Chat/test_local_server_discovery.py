@@ -280,3 +280,49 @@ async def test_probe_rejects_unusable_url_without_network() -> None:
 
     assert result.ok is False
     assert result.detail
+
+
+@pytest.mark.asyncio
+async def test_probe_non_json_response_is_not_a_detected_server() -> None:
+    """PR #608 review: an HTML page on a default port must not probe ok."""
+    client = _client(
+        lambda request: httpx.Response(200, text="<html><body>hello</body></html>")
+    )
+    result = await probe_models_endpoint(
+        "http://127.0.0.1:8080", provider_key="llama_cpp", http_client=client
+    )
+    assert result.ok is False
+    assert "No models endpoint" in result.detail
+
+
+@pytest.mark.asyncio
+async def test_probe_unrecognized_json_payload_is_not_a_detected_server() -> None:
+    """A JSON API without a models container must not register as an LLM server."""
+    client = _client(
+        lambda request: httpx.Response(200, json={"status": "ok", "service": "printer"})
+    )
+    result = await probe_models_endpoint(
+        "http://127.0.0.1:8080", provider_key="llama_cpp", http_client=client
+    )
+    assert result.ok is False
+    assert "No models endpoint" in result.detail
+
+
+@pytest.mark.asyncio
+async def test_probe_sanitizes_hostile_model_ids() -> None:
+    """Control characters are stripped and ids are bounded at the boundary."""
+    hostile = "bad\x1b[31mid\x00" + "x" * 500
+    client = _client(
+        lambda request: httpx.Response(
+            200, json={"data": [{"id": hostile}, {"id": "good-model"}]}
+        )
+    )
+    result = await probe_models_endpoint(
+        "http://127.0.0.1:8080", provider_key="llama_cpp", http_client=client
+    )
+    assert result.ok is True
+    assert "good-model" in result.model_ids
+    for model_id in result.model_ids:
+        assert len(model_id) <= 120
+        assert all(ch.isprintable() for ch in model_id)
+        assert "\x1b" not in model_id

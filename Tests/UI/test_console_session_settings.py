@@ -4136,3 +4136,41 @@ async def test_console_settings_modal_discover_button_only_for_url_based_provide
         await pilot.pause()
         assert discover.display is True
         assert discover.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_discover_rejects_invalid_endpoint_url() -> None:
+    """PR #608 review: user-entered endpoint must pass shared URL validation
+    before any network probe; the prober must never be called."""
+    from tldw_chatbook.Widgets.Console.console_settings_modal import (
+        MODEL_DISCOVER_INVALID_URL_COPY,
+    )
+
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model=None,
+        base_url="http://[not-a-valid-url",
+    )
+    prober = _RecordingProber(
+        LocalModelProbeResult(ok=True, base_url="", model_ids=("x",))
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": []},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+                model_prober=prober,
+            )
+        )
+        await pilot.pause()
+
+        discover = app.screen.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
+        discover.press()
+        await _wait_for_discover_status(app, pilot, MODEL_DISCOVER_INVALID_URL_COPY)
+
+    assert prober.calls == []
