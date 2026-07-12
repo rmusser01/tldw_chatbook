@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-07-11
-Related Task: [TASK-152 - Address PR 596 verified review findings](../tasks/task-152%20-%20Address-PR-596-verified-review-findings.md)
+Related Task: [TASK-174 - Address PR 596 verified review findings](../tasks/task-174%20-%20Address-PR-596-verified-review-findings.md)
 Supersedes: N/A
 
 ## Decision

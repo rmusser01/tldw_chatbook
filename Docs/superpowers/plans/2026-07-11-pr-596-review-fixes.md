@@ -10,7 +10,7 @@
 
 **Spec:** `Docs/superpowers/specs/2026-07-11-pr-596-review-fixes-design.md`
 
-**Backlog:** `backlog/tasks/task-152 - Address-PR-596-verified-review-findings.md`
+**Backlog:** `backlog/tasks/task-174 - Address-PR-596-verified-review-findings.md`
 
 **ADR required:** yes
 
@@ -225,10 +225,10 @@ Expected: 6 passed without writing outside pytest temp directories.
 ### Task 6: Final verification and PR closeout
 
 **Files:**
-- Modify: `backlog/tasks/task-152 - Address-PR-596-verified-review-findings.md`
+- Modify: `backlog/tasks/task-174 - Address-PR-596-verified-review-findings.md`
 
 - [ ] Run focused combined suites for Library, Home, Local Ingestion, navigation, Settings, Prompts DB, and affected UI contracts.
 - [ ] Run `python -m compileall -q tldw_chatbook` and `git diff --check`.
 - [ ] Review the complete diff for regressions and unnecessary scope.
-- [ ] Add concise Implementation Notes, check all TASK-152 acceptance criteria, and mark it Done only after every gate passes.
+- [ ] Add concise Implementation Notes, check all TASK-174 acceptance criteria, and mark it Done only after every gate passes.
 - [ ] Commit the complete repair, rebase/fetch-check against `origin/dev`, push the commit to `dev`, and recheck PR #596 review threads and GitHub Actions.
