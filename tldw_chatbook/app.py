@@ -2364,8 +2364,6 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     parsed_notes_for_preview: List[Dict[str, Any]] = []
     last_note_import_dir: Optional[Path] = None
     # Add attributes to hold the handlers (optional, but can be useful)
-    character_import_success_handler: Optional[Callable] = None
-    character_import_failure_handler: Optional[Callable] = None
     note_import_success_handler: Optional[Callable] = None
     note_import_failure_handler: Optional[Callable] = None
 
