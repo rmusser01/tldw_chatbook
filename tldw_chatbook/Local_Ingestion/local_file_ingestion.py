@@ -251,18 +251,24 @@ def parse_local_file_for_ingest(file_path: Union[str, Path], options: Dict[str, 
             see identical error text regardless of whether the failure
             originated during parsing or persistence).
     """
-    file_path = Path(file_path)
-
-    # Validate file exists
-    if not file_path.exists():
-        raise FileNotFoundError(f"File not found: {file_path}")
-
-    # Detect file type
-    try:
-        file_type = detect_file_type(file_path)
-    except FileIngestionError as e:
-        logger.error(f"Unsupported file type: {file_path} - {e}")
-        raise
+    raw_source = str(file_path)
+    is_url = _is_http_url(raw_source)
+    if is_url:
+        # URL source: skip the file-path machinery entirely.
+        file_type = classify_ingest_source(raw_source)   # "article" | "audio" | "video"
+        source_url = raw_source                            # article branch overrides w/ canonical
+        # keep file_path as the raw URL string so the audio/video branches'
+        # `str(file_path)` passes the URL straight to the URL-accepting processor.
+    else:
+        file_path = Path(file_path)
+        if not file_path.exists():
+            raise FileNotFoundError(f"File not found: {file_path}")
+        try:
+            file_type = detect_file_type(file_path)
+        except FileIngestionError as e:
+            logger.error(f"Unsupported file type: {file_path} - {e}")
+            raise
+        source_url = f"file://{file_path.absolute()}"
 
     title = options.get('title')
     author = options.get('author')
@@ -277,7 +283,7 @@ def parse_local_file_for_ingest(file_path: Union[str, Path], options: Dict[str, 
 
     # Set default values
     if title is None:
-        title = file_path.stem
+        title = raw_source if is_url else file_path.stem
     if keywords is None:
         keywords = []
     if chunk_options is None:
@@ -527,7 +533,12 @@ def parse_local_file_for_ingest(file_path: Union[str, Path], options: Dict[str, 
                 'chunks': [],  # Chunking will be handled by the database
                 'analysis': ''
             }
-        
+
+        elif file_type == 'article':
+            from .web_article_ingestion import extract_article_for_ingest
+            result = extract_article_for_ingest(raw_source, options)
+            source_url = result.get('url', source_url)     # canonical post-redirect URL
+
         # Check if processing was successful. NOTE: some processors (e.g.
         # ``process_pdf``) always initialize an ``'error'`` key (defaulting
         # to ``None``) in their result dict, so ``'error' in result`` is
@@ -559,7 +570,7 @@ def parse_local_file_for_ingest(file_path: Union[str, Path], options: Dict[str, 
         if metadata:
             media_metadata.update(metadata)
         media_metadata['ingestion_method'] = 'local_file'
-        media_metadata['file_path'] = str(file_path)
+        media_metadata['file_path'] = raw_source if is_url else str(file_path)
         media_metadata['file_type'] = file_type
 
         return {
@@ -569,14 +580,17 @@ def parse_local_file_for_ingest(file_path: Union[str, Path], options: Dict[str, 
             'author': extracted_author,
             'content': content,
             'keywords': all_keywords,
-            'url': f"file://{file_path.absolute()}",
+            'url': source_url,
             'analysis_content': analysis,
             'chunks': chunks if chunks else None,
             'chunk_options': chunk_options if chunk_options else None,
             'metadata': media_metadata,
-            'file_path': str(file_path),
+            'file_path': raw_source if is_url else str(file_path),
         }
 
+    except PermanentIngestError:
+        # keep the permanent classification intact for classify_parse_failure
+        raise
     except Exception as e:
         logger.error(f"Error parsing {file_type} file {file_path}: {e}")
         raise FileIngestionError(f"Failed to ingest {file_type} file: {str(e)}")
