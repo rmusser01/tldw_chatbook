@@ -245,7 +245,7 @@ class LocalChatbookService:
             self._save_registry(registry)
         return True
 
-    async def export_chatbook(self, request_data: Any) -> dict[str, Any]:
+    async def export_chatbook(self, request_data: Any, *, progress_callback=None, cancel_check=None) -> dict[str, Any]:
         payload = self._as_dict(request_data)
         output_path = payload.pop("output_path", None)
         if output_path is None:
@@ -263,13 +263,17 @@ class LocalChatbookService:
             include_embeddings=bool(payload.get("include_embeddings", False)),
             tags=payload.get("tags") or [],
             categories=payload.get("categories") or [],
+            progress_callback=progress_callback,
+            cancel_check=cancel_check,
         )
+        cancelled = bool(dependency_info.get("cancelled", False)) if isinstance(dependency_info, dict) else False
         return {
             "success": success,
             "message": message,
             "path": str(output_path),
             "dependency_info": dependency_info,
             "name": payload.get("name") or Path(output_path).stem,
+            "cancelled": cancelled,
         }
 
     async def import_chatbook(self, chatbook_file_path: str | Path, request_data: Any) -> dict[str, Any]:
