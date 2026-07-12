@@ -31,6 +31,7 @@ class LibraryConversationRow:
     title: str
     secondary: str
     selected: bool = False
+    checked: bool = False
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,8 @@ class LibraryConversationsCanvasState:
     selected_id: str
     preview_lines: tuple[str, ...]
     query: str
+    select_mode: bool = False
+    selected_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -120,6 +123,8 @@ def build_library_conversations_state(
     selected_id: str = "",
     now: datetime | None = None,
     limit: int = 75,
+    select_mode: bool = False,
+    selected_ids: frozenset[str] = frozenset(),
 ) -> LibraryConversationsCanvasState:
     """Build the Library Browse ▸ Conversations canvas display state.
 
@@ -179,9 +184,11 @@ def build_library_conversations_state(
                 format_console_relative_age(entry.updated_raw, now=reference_now),
             ),
             selected=entry.conversation_id == resolved_selected_id,
+            checked=entry.conversation_id in selected_ids,
         )
         for entry in limited_entries
     )
+    selected_count = sum(1 for r in rows if r.checked)
 
     if normalized_query:
         # match_count is from the filtered-but-unlimited entries list, not the limited rows
@@ -224,4 +231,6 @@ def build_library_conversations_state(
         selected_id=resolved_selected_id,
         preview_lines=preview_lines,
         query=normalized_query,
+        select_mode=select_mode,
+        selected_count=selected_count,
     )
