@@ -6,32 +6,41 @@ export -> import reproduces a prompt's fields unchanged. The first test
 below (adjusted only to use the parser's real output keys) is the brief's
 stated acceptance criterion.
 
-Two "known limitation" characterization tests at the bottom pin ACTUAL
-(not idealized) parser behavior discovered while writing this exporter:
 ``parse_markdown_prompts_from_content``'s generic per-section regex (used
 for AUTHOR/SYSTEM/USER/KEYWORDS, unlike the TITLE block's own separate
-regex which handles ``details`` correctly) has two independent pre-existing
-bugs --
+regex which handles ``details`` correctly) USED to have two independent
+pre-existing bugs, both now fixed directly on the parser (see
+``Prompts_Interop.py``'s per-section ``pattern`` construction, fix wave 1
+of Task 5's review) because this spec's lossless round-trip acceptance
+criterion cannot be met while they stand:
 
-1. Its trailing ``\\s*\\n`` (between a section's closing ``###`` and the
-   captured value) is greedy and backtrack-swallows a blank value line's
-   own newline whenever another section follows, so a BLANK
-   AUTHOR/SYSTEM/USER value bleeds into capturing the literal text of the
-   NEXT section's header instead of parsing back as ``None``.
-2. Its capture uses a bare ``$`` (under ``re.MULTILINE``) as one of two
+1. Its capture used a bare ``$`` (under ``re.MULTILINE``) as one of two
    "stop here" lookahead alternatives, and ``$`` matches before EVERY
    newline in multiline mode (not just end-of-string) -- so a multi-line
-   SYSTEM/USER value is truncated after its first line, every time,
-   regardless of what (if anything) follows it in the file.
+   SYSTEM/USER value was truncated after its first line, every time,
+   regardless of what (if anything) followed it in the file. FIXED: the
+   terminator is now "the next actual ``### WORD ###`` header line, or
+   true end-of-string (``\\Z``)" -- a body line that merely *contains*
+   ``###`` mid-line (not as a whole header line) no longer terminates a
+   section, and interior blank lines are preserved.
+2. A blank AUTHOR/SYSTEM/USER value, when another section followed it (the
+   common case), used to bleed into capturing the literal text of the
+   NEXT section's header instead of parsing back as ``None`` -- the old
+   pattern's trailing ``\\s*\\n`` (between a section's closing ``###`` and
+   the captured value) was greedy and could backtrack-swallow the blank
+   value line's own newline. FIXED as a side effect of the same
+   terminator fix: a blank value's zero-length capture now correctly
+   matches the "next header line" lookahead at the blank line's own
+   boundary.
 
-Both are properties of ``Prompts_Interop.py`` (not modified by Task 5 --
-see its file list), not of this renderer or its callers. They are pinned
-here as characterization tests (not requirements) so a future fix to the
-parser is validated against real, previously-observed behavior, and so
-this discovery is not silently lost. Multi-line ``details`` is UNAFFECTED
-(the TITLE block's own regex looks for a literal ``### AUTHOR ###``/``\\Z``
+The two tests below that used to pin these as "known limitation"
+characterization tests now pin the CORRECT (fixed) behavior instead --
+see ``test_prompt_markdown_export_roundtrips_blank_author_field`` and
+``test_prompt_markdown_export_roundtrips_multiline_system_and_user``.
+Multi-line ``details`` was always unaffected by either bug (the TITLE
+block's own regex looks for a literal ``### AUTHOR ###``/``\\Z``
 terminator, not a generic ``$``), so it round-trips correctly and is
-covered as a real (non-characterization) test.
+covered as its own test.
 """
 
 from __future__ import annotations
@@ -65,7 +74,7 @@ def test_prompt_markdown_export_roundtrips():
     )
     # Author/details/keywords round-trip too -- the parser DOES carry all
     # three (all single-line/non-blank here, which round-trips correctly;
-    # see the module docstring above for the blank/multi-line exceptions).
+    # see the module docstring above for the blank/multi-line coverage).
     assert p["author"] == "me"
     assert p["details"] == "d"
     assert p["keywords"] == ["release", "notes"]
@@ -74,8 +83,8 @@ def test_prompt_markdown_export_roundtrips():
 def test_prompt_markdown_export_roundtrips_multiline_details():
     """``details`` (derived from the TITLE block's own regex, which looks
     for a literal ``### AUTHOR ###``/end-of-string terminator rather than a
-    generic ``$``) correctly round-trips multi-line content -- unlike
-    SYSTEM/USER, see the "known limitation" test below."""
+    generic ``$``) correctly round-trips multi-line content -- exactly
+    like the (now-fixed) SYSTEM/USER handling below."""
     detail = {
         "name": "Multi-line details prompt",
         "author": "Alice",
@@ -113,14 +122,14 @@ def test_prompt_markdown_export_accepts_keywords_as_csv_string():
     assert parsed[0]["keywords"] == ["release", "notes"]
 
 
-def test_prompt_markdown_export_documents_known_parser_limitation_blank_field():
-    """CHARACTERIZATION TEST (not a requirement): pins the parser's ACTUAL
-    behavior for a blank AUTHOR value followed by more sections -- it
-    bleeds into the next section's header text instead of parsing back as
-    ``None``. See the module docstring's bug (1) for the root cause. Other
-    fields (details/system_prompt/user_prompt/keywords) are unaffected,
-    since each section is extracted by an independent ``re.search`` over
-    the whole content.
+def test_prompt_markdown_export_roundtrips_blank_author_field():
+    """FIX (formerly a "known limitation" characterization test): a blank
+    AUTHOR value followed by more sections must parse back as ``None``,
+    never as the next section's literal header text. See the module
+    docstring's bug (2) for the (fixed) root cause. Other fields
+    (details/system_prompt/user_prompt/keywords) are unaffected, since each
+    section is extracted by an independent ``re.search`` over the whole
+    content.
     """
     detail = {
         "name": "No author prompt",
@@ -138,17 +147,17 @@ def test_prompt_markdown_export_documents_known_parser_limitation_blank_field():
     assert p["details"] == "some details"
     assert p["system_prompt"] == "sys text"
     assert p["user_prompt"] == "user text"
-    # BUG (pre-existing, in Prompts_Interop.py, not this renderer): a blank
-    # AUTHOR value followed by another section parses back as that next
-    # section's literal header text, not "" or None.
-    assert p["author"] == "### SYSTEM ###"
+    # FIXED (was: bled into "### SYSTEM ###", the next section's literal
+    # header text). A blank value now parses back as None (the parser's
+    # own zero-length-capture default), never as a header string.
+    assert p["author"] is None
 
 
-def test_prompt_markdown_export_documents_known_parser_limitation_multiline_system():
-    """CHARACTERIZATION TEST (not a requirement): pins the parser's ACTUAL
-    behavior for a multi-line SYSTEM value -- it is truncated after the
-    first line, regardless of what follows. See the module docstring's bug
-    (2) for the root cause."""
+def test_prompt_markdown_export_roundtrips_multiline_system_and_user():
+    """FIX (formerly a "known limitation" characterization test): a
+    multi-line SYSTEM/USER value must be preserved in full -- including
+    interior blank lines -- not truncated after its first line. See the
+    module docstring's bug (1) for the (fixed) root cause."""
     detail = {
         "name": "Multi-line system prompt",
         "author": "Alice",
@@ -162,7 +171,52 @@ def test_prompt_markdown_export_documents_known_parser_limitation_multiline_syst
     assert len(parsed) == 1
     p = parsed[0]
     assert p["name"] == "Multi-line system prompt"
-    # BUG (pre-existing, in Prompts_Interop.py, not this renderer):
-    # truncated after the first line instead of keeping both.
-    assert p["system_prompt"] == "System line one"
-    assert p["user_prompt"] == "User line one"
+    # FIXED (was: truncated after the first line).
+    assert p["system_prompt"] == "System line one\nSystem line two"
+    assert p["user_prompt"] == "User line one\nUser line two"
+
+
+def test_prompt_markdown_export_roundtrips_multiline_with_blank_interior_lines():
+    """A multi-line SYSTEM/USER body may itself contain blank interior
+    lines -- those must not be mistaken for a section boundary and must
+    survive the round-trip (modulo the parser's own ``.strip()`` of
+    leading/trailing whitespace on the whole captured section)."""
+    detail = {
+        "name": "Blank interior lines prompt",
+        "author": "Alice",
+        "details": "d",
+        "system_prompt": "System line one\n\nSystem line two\n\nSystem line three",
+        "user_prompt": "User line one\n\n\nUser line two",
+        "keywords": ["x"],
+    }
+    text = render_prompt_markdown(detail)
+    parsed = parse_markdown_prompts_from_content(text)
+    assert len(parsed) == 1
+    p = parsed[0]
+    assert p["system_prompt"] == "System line one\n\nSystem line two\n\nSystem line three"
+    assert p["user_prompt"] == "User line one\n\n\nUser line two"
+    assert p["keywords"] == ["x"]
+
+
+def test_prompt_markdown_export_roundtrips_body_line_containing_hash_markers():
+    """A body line that merely CONTAINS the literal text ``###`` mid-line
+    (not as a whole ``### WORD ###`` header line) must not be mistaken for
+    a section boundary -- only lines that ARE a header terminate a
+    section's capture."""
+    detail = {
+        "name": "Hash markers in body prompt",
+        "author": "Alice",
+        "details": "d",
+        "system_prompt": "Some system text with ### markers mid-line\nand a second line",
+        "user_prompt": "A line with ### inline\nUser line two",
+        "keywords": [],
+    }
+    text = render_prompt_markdown(detail)
+    parsed = parse_markdown_prompts_from_content(text)
+    assert len(parsed) == 1
+    p = parsed[0]
+    assert (
+        p["system_prompt"]
+        == "Some system text with ### markers mid-line\nand a second line"
+    )
+    assert p["user_prompt"] == "A line with ### inline\nUser line two"

@@ -6061,10 +6061,22 @@ class LibraryScreen(BaseAppScreen):
             return
 
         if validated_path.is_dir():
-            files = sorted(
-                child for child in validated_path.iterdir()
-                if child.is_file() and child.suffix.lower() in _LIBRARY_PROMPT_IMPORT_PARSERS
-            )
+            try:
+                files = sorted(
+                    child for child in validated_path.iterdir()
+                    if child.is_file() and child.suffix.lower() in _LIBRARY_PROMPT_IMPORT_PARSERS
+                )
+            except Exception:
+                # Same quiet-status pattern as the per-file read below --
+                # e.g. a folder whose permissions were revoked after the
+                # path-validation check above (TOCTOU) must surface an
+                # honest outcome line, never hang or silently report
+                # "No supported prompt files found."
+                logger.opt(exception=True).warning(
+                    f"Could not enumerate Library prompt import folder '{validated_path}'."
+                )
+                self._apply_library_prompts_import_status("Could not read that folder.")
+                return
         elif validated_path.is_file():
             if validated_path.suffix.lower() not in _LIBRARY_PROMPT_IMPORT_PARSERS:
                 self._apply_library_prompts_import_status("Unsupported file type.")
@@ -6087,6 +6099,7 @@ class LibraryScreen(BaseAppScreen):
 
         imported = 0
         skipped = 0
+        failed = 0
         for file_path in files:
             parser = _LIBRARY_PROMPT_IMPORT_PARSERS[file_path.suffix.lower()]
             try:
@@ -6154,13 +6167,15 @@ class LibraryScreen(BaseAppScreen):
                     logger.opt(exception=True).warning(
                         f"Failed to import Library prompt '{name}' from '{file_path}'."
                     )
+                    failed += 1
                     continue
                 imported += 1
 
         self._library_prompts_import_path = ""
-        self._apply_library_prompts_import_status(
-            f"{imported} imported · {skipped} skipped (duplicate name)"
-        )
+        status = f"{imported} imported · {skipped} skipped (duplicate name)"
+        if failed:
+            status = f"{status} · {failed} failed"
+        self._apply_library_prompts_import_status(status)
         self._refresh_local_source_snapshot()
 
     @on(Button.Pressed, ".library-prompt-row")

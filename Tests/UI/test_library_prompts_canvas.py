@@ -1078,6 +1078,125 @@ async def test_library_prompts_import_invalid_path_shows_quiet_status(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_library_prompts_import_counts_per_prompt_save_failures_as_failed(tmp_path):
+    """A per-prompt save failure (a non-duplicate-name exception from the
+    scope service's ``save_prompt``) must be tracked as its own ``failed``
+    bucket -- previously it fell into neither ``imported`` nor ``skipped``
+    and vanished from the outcome line entirely."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+
+    real_save_prompt = service.save_prompt
+
+    def _flaky_save_prompt(*args, **kwargs):
+        if kwargs.get("name") == "Boom":
+            raise RuntimeError("simulated save failure")
+        return real_save_prompt(*args, **kwargs)
+
+    app.prompt_scope_service = SimpleNamespace(
+        get_prompt=service.get_prompt, save_prompt=_flaky_save_prompt
+    )
+    host = LibraryHarness(app)
+
+    import_dir = tmp_path / "prompts_to_import"
+    import_dir.mkdir()
+    (import_dir / "ok.md").write_text(
+        render_prompt_markdown(
+            {"name": "Fine", "author": "A", "details": "", "system_prompt": "s1", "user_prompt": "u1", "keywords": []}
+        ),
+        encoding="utf-8",
+    )
+    (import_dir / "boom.md").write_text(
+        render_prompt_markdown(
+            {"name": "Boom", "author": "B", "details": "", "system_prompt": "s2", "user_prompt": "u2", "keywords": []}
+        ),
+        encoding="utf-8",
+    )
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompts_list(screen, pilot)
+
+        status_text = await _run_import(screen, pilot, str(import_dir))
+
+        assert status_text == "1 imported · 0 skipped (duplicate name) · 1 failed"
+        assert db.fetch_prompt_details("Fine") is not None
+        assert db.fetch_prompt_details("Boom") is None
+
+
+@pytest.mark.asyncio
+async def test_library_prompts_import_outcome_omits_failed_segment_when_zero(tmp_path):
+    """When nothing failed, the outcome line keeps its exact pre-existing
+    two-part copy -- no trailing "· K failed" segment at all (not even
+    "· 0 failed"). ``test_library_prompts_import_from_file_creates_prompt_and_reports_outcome``
+    already pins this exact string for the plain success path; this test
+    pins it again explicitly alongside the failed-segment tests above so
+    both copies ("N imported · M skipped (duplicate name)" and its
+    "· K failed" extension) are each proven by a dedicated assertion."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    import_file = tmp_path / "clean.md"
+    import_file.write_text(
+        render_prompt_markdown(
+            {"name": "Clean Import", "author": "A", "details": "", "system_prompt": "s", "user_prompt": "u", "keywords": []}
+        ),
+        encoding="utf-8",
+    )
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompts_list(screen, pilot)
+
+        status_text = await _run_import(screen, pilot, str(import_file))
+
+        assert status_text == "1 imported · 0 skipped (duplicate name)"
+
+
+@pytest.mark.asyncio
+async def test_library_prompts_import_folder_permission_error_shows_quiet_status(
+    tmp_path, monkeypatch
+):
+    """A folder enumeration failure (e.g. permissions revoked between the
+    Import row's path-validation check and the worker's own ``iterdir()``
+    call) must surface an honest status line -- mirroring the per-file read
+    try/except below it -- rather than raising out of the worker or
+    reporting a misleading "No supported prompt files found."."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    import_dir = tmp_path / "locked_prompts"
+    import_dir.mkdir()
+
+    real_iterdir = Path.iterdir
+
+    def _flaky_iterdir(self):
+        if str(self) == str(import_dir):
+            raise PermissionError("simulated permission error")
+        return real_iterdir(self)
+
+    monkeypatch.setattr(Path, "iterdir", _flaky_iterdir)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompts_list(screen, pilot)
+
+        status_text = await _run_import(screen, pilot, str(import_dir))
+
+        assert status_text == "Could not read that folder."
+
+
+@pytest.mark.asyncio
 async def test_library_prompt_export_pushes_file_save_dialog(tmp_path):
     """Export… pushes a ``FileSave`` dialog pre-filled with a sanitized
     default filename derived from the prompt's current name -- mirrors
