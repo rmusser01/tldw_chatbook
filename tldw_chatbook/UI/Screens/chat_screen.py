@@ -87,6 +87,10 @@ from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.chat_models import ChatSessionData
 from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
 from ...Chat.console_message_actions import ConsoleActionResult, ConsoleMessageActionService
+from ...Chat.console_save_targets import (
+    console_chatbook_artifact_payload,
+    derive_console_save_title,
+)
 from ...Chat.console_live_work import (
     ConsoleLiveWorkLaunch,
     ConsoleLiveWorkSourceReadinessState,
@@ -6409,11 +6413,15 @@ class ChatScreen(BaseAppScreen):
             destinations = self._console_save_as_destinations(message)
 
             def _apply_save_as(destination: str | None) -> None:
-                if destination == "Note":
-                    self.run_worker(
-                        self._save_console_message_as_note(message_id),
-                        exclusive=True,
-                    )
+                savers = {
+                    "Note": self._save_console_message_as_note,
+                    "Media": self._save_console_message_as_media,
+                    "Prompt": self._save_console_message_as_prompt,
+                    "Chatbook": self._save_console_message_as_chatbook,
+                }
+                saver = savers.get(destination or "")
+                if saver is not None:
+                    self.run_worker(saver(message_id), exclusive=True)
 
             await self.app.push_screen(
                 ConsoleSaveAsModal(
@@ -6512,14 +6520,48 @@ class ChatScreen(BaseAppScreen):
 
     def _console_save_as_destinations(self, message: Any) -> list[Any]:
         """Return Save-as destinations available in the current app runtime."""
-        _ = message
         available_destinations: set[str] = set()
+        unavailable_reasons: dict[str, str] = {}
+
         notes_scope_service = getattr(self.app_instance, "notes_scope_service", None)
         if callable(getattr(notes_scope_service, "save_note", None)):
             available_destinations.add("Note")
+        else:
+            unavailable_reasons["Note"] = "Notes service is not ready in this session."
+
+        media_db = getattr(self.app_instance, "media_db", None)
+        if callable(getattr(media_db, "add_media_with_keywords", None)):
+            available_destinations.add("Media")
+        else:
+            unavailable_reasons["Media"] = "Media library is not ready in this session."
+
+        prompts_db = getattr(self.app_instance, "prompts_db", None)
+        if callable(getattr(prompts_db, "add_prompt", None)):
+            available_destinations.add("Prompt")
+        else:
+            unavailable_reasons["Prompt"] = "Prompts service is not ready in this session."
+
+        chatbook_service = getattr(self.app_instance, "local_chatbook_service", None)
+        if not callable(getattr(chatbook_service, "create_chatbook", None)):
+            unavailable_reasons["Chatbook"] = (
+                "Chatbook artifacts service is not ready in this session."
+            )
+        elif not ConsoleMessageActionService._is_assistant_message(message):
+            unavailable_reasons["Chatbook"] = (
+                "Only assistant responses can be saved as Chatbook artifacts."
+            )
+        else:
+            available_destinations.add("Chatbook")
+
         return ConsoleMessageActionService(
             available_save_destinations=available_destinations,
+            unavailable_save_reasons=unavailable_reasons,
         ).save_as_destinations(message)
+
+    def _console_save_source_title(self) -> str:
+        """Return the active Console conversation title for save-as derivations."""
+        session = self._active_native_console_session()
+        return str(getattr(session, "title", "") or "").strip()
 
     async def _save_console_message_as_note(self, message_id: str) -> None:
         """Persist one selected Console message as a local Note."""
@@ -6541,23 +6583,25 @@ class ChatScreen(BaseAppScreen):
             )
             return
 
-        content = (
-            message.variants.current.content
-            if message.variants is not None
-            else message.content
-        )
-        result = save_note(
-            scope=ScopeType.LOCAL_NOTE.value,
-            title="Console message",
-            content=content,
-            note_id=None,
-            version=None,
-            user_id=getattr(self.app_instance, "current_user", None) or "default_user",
-            workspace_id=None,
-            keywords=["console"],
-        )
-        if inspect.isawaitable(result):
-            result = await result
+        content = self._console_message_content(message)
+        title = derive_console_save_title(self._console_save_source_title())
+        try:
+            result = save_note(
+                scope=ScopeType.LOCAL_NOTE.value,
+                title=title,
+                content=content,
+                note_id=None,
+                version=None,
+                user_id=getattr(self.app_instance, "current_user", None) or "default_user",
+                workspace_id=None,
+                keywords=["console"],
+            )
+            if inspect.isawaitable(result):
+                result = await result
+        except Exception as exc:
+            logger.opt(exception=True).warning("Console save-as Note failed.")
+            self.app_instance.notify(f"Save as Note failed: {exc}", severity="error")
+            return
         if not result:
             self.app_instance.notify("Save as Note failed.", severity="error")
             return
@@ -6569,6 +6613,199 @@ class ChatScreen(BaseAppScreen):
             target_content=content,
         )
         self.app_instance.notify("Saved message as Note.", severity="information")
+
+    async def _save_console_message_as_media(self, message_id: str) -> None:
+        """Persist one selected Console message as a Library media item."""
+        media_db = getattr(self.app_instance, "media_db", None)
+        add_media = getattr(media_db, "add_media_with_keywords", None)
+        if not callable(add_media):
+            self.app_instance.notify(
+                "Save as Media is unavailable: Media library is not ready.",
+                severity="warning",
+            )
+            return
+
+        try:
+            message = self._ensure_console_chat_store().get_message(message_id)
+        except KeyError:
+            self.app_instance.notify(
+                "Console message action target no longer exists.",
+                severity="warning",
+            )
+            return
+
+        content = self._console_message_content(message)
+        title = derive_console_save_title(
+            self._console_save_source_title(),
+            role_label=self._console_message_role_label(message),
+        )
+        try:
+            media_id, _media_uuid, save_message = add_media(
+                title=title,
+                media_type="plaintext",
+                content=content,
+                keywords=["console"],
+            )
+        except Exception as exc:
+            logger.opt(exception=True).warning("Console save-as Media failed.")
+            self.app_instance.notify(f"Save as Media failed: {exc}", severity="error")
+            return
+        if media_id is None:
+            self.app_instance.notify(
+                f"Save as Media failed: {save_message or 'no media record was created.'}",
+                severity="error",
+            )
+            return
+        self._last_console_action = ConsoleActionResult(
+            action_id="save-as-media",
+            status="completed",
+            visible_copy="Saved message as Media.",
+            target_message_id=message_id,
+            target_content=content,
+        )
+        self.app_instance.notify(
+            "Saved message as Media. It appears under Library ▸ Media.",
+            severity="information",
+        )
+
+    async def _save_console_message_as_prompt(self, message_id: str) -> None:
+        """Persist one selected Console message as a prompt in the Prompts library."""
+        prompts_db = getattr(self.app_instance, "prompts_db", None)
+        add_prompt = getattr(prompts_db, "add_prompt", None)
+        if not callable(add_prompt):
+            self.app_instance.notify(
+                "Save as Prompt is unavailable: Prompts service is not ready.",
+                severity="warning",
+            )
+            return
+
+        try:
+            message = self._ensure_console_chat_store().get_message(message_id)
+        except KeyError:
+            self.app_instance.notify(
+                "Console message action target no longer exists.",
+                severity="warning",
+            )
+            return
+
+        from tldw_chatbook.DB.Prompts_DB import ConflictError
+
+        content = self._console_message_content(message)
+        conversation_title = self._console_save_source_title()
+        base_name = derive_console_save_title(conversation_title)
+        details = (
+            f"Saved from Console conversation: {conversation_title}."
+            if conversation_title
+            else "Saved from a Console conversation."
+        )
+        prompt_id = None
+        saved_name = base_name
+        try:
+            for attempt in range(1, 10):
+                saved_name = base_name if attempt == 1 else f"{base_name} ({attempt})"
+                try:
+                    prompt_id, _prompt_uuid, save_message = add_prompt(
+                        name=saved_name,
+                        author="Console",
+                        details=details,
+                        system_prompt=content,
+                        keywords=["console"],
+                        overwrite=False,
+                    )
+                except ConflictError:
+                    continue
+                if prompt_id is not None and "soft-deleted" in str(save_message or ""):
+                    # Name collides with a soft-deleted prompt: nothing was
+                    # saved, so keep probing suffixed names.
+                    prompt_id = None
+                    continue
+                break
+        except Exception as exc:
+            logger.opt(exception=True).warning("Console save-as Prompt failed.")
+            self.app_instance.notify(f"Save as Prompt failed: {exc}", severity="error")
+            return
+        if prompt_id is None:
+            self.app_instance.notify(
+                "Save as Prompt failed: a prompt with this name already exists.",
+                severity="error",
+            )
+            return
+        self._last_console_action = ConsoleActionResult(
+            action_id="save-as-prompt",
+            status="completed",
+            visible_copy="Saved message as Prompt.",
+            target_message_id=message_id,
+            target_content=content,
+        )
+        self.app_instance.notify(
+            f"Saved message as Prompt '{saved_name}' in the local Prompts library.",
+            severity="information",
+        )
+
+    async def _save_console_message_as_chatbook(self, message_id: str) -> None:
+        """Register one selected assistant message as a Chatbook artifact."""
+        chatbook_service = getattr(self.app_instance, "local_chatbook_service", None)
+        create_chatbook = getattr(chatbook_service, "create_chatbook", None)
+        if not callable(create_chatbook):
+            self.app_instance.notify(
+                "Save as Chatbook is unavailable: Chatbook artifacts service is not ready.",
+                severity="warning",
+            )
+            return
+
+        try:
+            message = self._ensure_console_chat_store().get_message(message_id)
+        except KeyError:
+            self.app_instance.notify(
+                "Console message action target no longer exists.",
+                severity="warning",
+            )
+            return
+
+        if not ConsoleMessageActionService._is_assistant_message(message):
+            self.app_instance.notify(
+                "Only assistant responses can be saved as Chatbook artifacts.",
+                severity="warning",
+            )
+            return
+
+        content = self._console_message_content(message)
+        provider: str | None = None
+        model: str | None = None
+        try:
+            provider, model, _settings = self._active_console_provider_model_display()
+        except Exception:
+            logger.opt(exception=True).debug(
+                "Console save-as Chatbook could not resolve provider/model context."
+            )
+        payload = console_chatbook_artifact_payload(
+            title=derive_console_save_title(self._console_save_source_title()),
+            message_text=content,
+            message_role=self._console_message_role_label(message),
+            conversation_id=self._current_console_conversation_id(),
+            message_id=message_id,
+            provider=provider,
+            model=model,
+        )
+        try:
+            result = create_chatbook(**payload)
+            if inspect.isawaitable(result):
+                await result
+        except Exception as exc:
+            logger.opt(exception=True).warning("Console save-as Chatbook failed.")
+            self.app_instance.notify(f"Save as Chatbook failed: {exc}", severity="error")
+            return
+        self._last_console_action = ConsoleActionResult(
+            action_id="save-as-chatbook",
+            status="completed",
+            visible_copy="Saved message as Chatbook artifact.",
+            target_message_id=message_id,
+            target_content=content,
+        )
+        self.app_instance.notify(
+            "Saved message as a Chatbook artifact. It appears under Artifacts.",
+            severity="information",
+        )
 
     async def _open_console_message_edit_modal(self, *, message_id: str, content: str) -> None:
         """Open the dedicated transcript edit modal for one Console message."""

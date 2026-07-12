@@ -75,7 +75,7 @@ def test_pending_assistant_message_shows_completed_actions_disabled_with_reasons
     assert all(action.disabled_reason for action in actions)
 
 
-def test_unavailable_save_destinations_are_explicit_wip():
+def test_unavailable_save_destinations_carry_honest_default_reason():
     service = ConsoleMessageActionService(available_save_destinations={"Chatbook"})
     message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="answer")
 
@@ -83,18 +83,37 @@ def test_unavailable_save_destinations_are_explicit_wip():
 
     note = next(destination for destination in destinations if destination.label == "Note")
     assert note.available is False
-    assert "WIP" in note.reason
+    assert note.reason == "Save as Note is not available in this session."
+    assert "WIP" not in note.reason
 
 
-def test_default_save_destinations_do_not_claim_chatbook_is_wired():
-    service = ConsoleMessageActionService()
-    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="answer")
+def test_unavailable_save_destinations_use_provided_specific_reason():
+    service = ConsoleMessageActionService(
+        available_save_destinations={"Note", "Media", "Prompt"},
+        unavailable_save_reasons={
+            "Chatbook": "Only assistant responses can be saved as Chatbook artifacts.",
+        },
+    )
+    message = ConsoleChatMessage(role=ConsoleMessageRole.USER, content="question")
 
     destinations = service.save_as_destinations(message)
 
     chatbook = next(destination for destination in destinations if destination.label == "Chatbook")
     assert chatbook.available is False
-    assert "WIP" in chatbook.reason
+    assert chatbook.reason == "Only assistant responses can be saved as Chatbook artifacts."
+    assert [d.label for d in destinations if d.available] == ["Note", "Media", "Prompt"]
+
+
+def test_available_save_destinations_have_no_reason():
+    service = ConsoleMessageActionService(
+        available_save_destinations={"Chatbook", "Note", "Media", "Prompt"},
+    )
+    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="answer")
+
+    destinations = service.save_as_destinations(message)
+
+    assert all(destination.available for destination in destinations)
+    assert all(destination.reason == "" for destination in destinations)
 
 
 def test_action_labels_fit_compact_terminal_width_budget():

@@ -2840,31 +2840,51 @@ async def test_console_selected_message_save_as_action_opens_modal():
     assert console._last_console_action.action_id == "save-as"
 
 
+def _install_console_save_service_fakes(app) -> None:
+    """Give the test app callable handles for every Save-as destination."""
+    app.notes_scope_service = SimpleNamespace(
+        save_note=AsyncMock(return_value={"id": "note-1"})
+    )
+    app.media_db = SimpleNamespace(
+        add_media_with_keywords=Mock(return_value=(7, "media-uuid-7", "Media added."))
+    )
+    app.prompts_db = SimpleNamespace(
+        add_prompt=Mock(return_value=(5, "prompt-uuid-5", "Prompt added."))
+    )
+    app.local_chatbook_service = SimpleNamespace(
+        create_chatbook=AsyncMock(return_value={"id": "1", "chatbook_id": 1})
+    )
+
+
+async def _open_save_as_modal_for_message(host, pilot, console, role, content):
+    """Append one message, select it, and open its Save as modal."""
+    store = console._ensure_console_chat_store()
+    session = store.ensure_session()
+    message = store.append_message(session.id, role=role, content=content)
+    await console._sync_native_console_chat_ui()
+
+    transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+    transcript.select_message(message.id)
+    await console._sync_native_console_chat_ui()
+    await _wait_for_selector(console, pilot, f"#console-message-action-save-as-{message.id}")
+
+    await pilot.click(f"#console-message-action-save-as-{message.id}")
+    await _wait_for_selector(host.screen_stack[-1], pilot, "#console-save-as-modal")
+    return message, host.screen_stack[-1]
+
+
 @pytest.mark.asyncio
-async def test_console_save_as_modal_labels_unwired_destinations_as_wip():
+async def test_console_save_as_modal_offers_all_wired_destinations():
     app = _build_test_app()
+    _install_console_save_service_fakes(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
-        store = console._ensure_console_chat_store()
-        session = store.ensure_session()
-        message = store.append_message(
-            session.id,
-            role=ConsoleMessageRole.ASSISTANT,
-            content="answer",
+        _message, save_as_modal = await _open_save_as_modal_for_message(
+            host, pilot, console, ConsoleMessageRole.ASSISTANT, "answer"
         )
-        await console._sync_native_console_chat_ui()
-
-        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
-        transcript.select_message(message.id)
-        await console._sync_native_console_chat_ui()
-        await _wait_for_selector(console, pilot, f"#console-message-action-save-as-{message.id}")
-
-        await pilot.click(f"#console-message-action-save-as-{message.id}")
-        await _wait_for_selector(host.screen_stack[-1], pilot, "#console-save-as-modal")
-        save_as_modal = host.screen_stack[-1]
 
         assert "Saving selected Assistant message" in _static_plain_text(
             save_as_modal.query_one("#console-save-as-context", Static)
@@ -2872,18 +2892,67 @@ async def test_console_save_as_modal_labels_unwired_destinations_as_wip():
         assert "answer" in _static_plain_text(
             save_as_modal.query_one("#console-save-as-excerpt", Static)
         )
-        assert _static_plain_text(save_as_modal.query_one("#console-save-as-wip-chatbook", Static)).startswith(
-            "Chatbook [WIP]"
+        for destination in ("chatbook", "note", "media", "prompt"):
+            assert save_as_modal.query(f"#console-save-as-destination-{destination}")
+        modal_text = _visible_text(save_as_modal)
+        assert "WIP" not in modal_text
+        assert "unavailable" not in modal_text
+        assert "No Save as destinations are wired" not in modal_text
+
+
+@pytest.mark.asyncio
+async def test_console_save_as_modal_gates_chatbook_for_user_messages_with_honest_reason():
+    app = _build_test_app()
+    _install_console_save_service_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        _message, save_as_modal = await _open_save_as_modal_for_message(
+            host, pilot, console, ConsoleMessageRole.USER, "question"
         )
-        assert "WIP: save as Chatbook is not wired yet." in _static_plain_text(
-            save_as_modal.query_one("#console-save-as-wip-chatbook", Static)
+
+        for destination in ("note", "media", "prompt"):
+            assert save_as_modal.query(f"#console-save-as-destination-{destination}")
+        assert not save_as_modal.query("#console-save-as-destination-chatbook")
+        gated_copy = _static_plain_text(
+            save_as_modal.query_one("#console-save-as-unavailable-chatbook", Static)
         )
-        assert "WIP: save as Media is not wired yet." in _static_plain_text(
-            save_as_modal.query_one("#console-save-as-wip-media", Static)
-        )
-        assert "WIP: save as Prompt is not wired yet." in _static_plain_text(
-            save_as_modal.query_one("#console-save-as-wip-prompt", Static)
-        )
+        assert "Only assistant responses can be saved as Chatbook artifacts." in gated_copy
+        assert "WIP" not in gated_copy
+        assert "No Save as destinations are wired" not in _visible_text(save_as_modal)
+
+
+def test_console_save_as_destinations_gate_on_runtime_services_and_role():
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    _install_console_save_service_fakes(app)
+    assistant = SimpleNamespace(role=ConsoleMessageRole.ASSISTANT, content="answer")
+    user = SimpleNamespace(role=ConsoleMessageRole.USER, content="question")
+
+    wired = screen._console_save_as_destinations(assistant)
+    assert [d.label for d in wired] == ["Chatbook", "Note", "Media", "Prompt"]
+    assert all(d.available for d in wired)
+
+    gated = screen._console_save_as_destinations(user)
+    chatbook = next(d for d in gated if d.label == "Chatbook")
+    assert chatbook.available is False
+    assert chatbook.reason == "Only assistant responses can be saved as Chatbook artifacts."
+    assert [d.label for d in gated if d.available] == ["Note", "Media", "Prompt"]
+
+    app.notes_scope_service = None
+    app.media_db = None
+    app.prompts_db = None
+    app.local_chatbook_service = None
+    dark = screen._console_save_as_destinations(assistant)
+    assert all(d.available is False for d in dark)
+    reasons = {d.label: d.reason for d in dark}
+    assert reasons["Note"] == "Notes service is not ready in this session."
+    assert reasons["Media"] == "Media library is not ready in this session."
+    assert reasons["Prompt"] == "Prompts service is not ready in this session."
+    assert reasons["Chatbook"] == "Chatbook artifacts service is not ready in this session."
+    assert all("WIP" not in reason for reason in reasons.values())
 
 
 @pytest.mark.asyncio
@@ -2897,37 +2966,182 @@ async def test_console_selected_message_save_as_note_creates_note_from_message()
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
-        store = console._ensure_console_chat_store()
-        session = store.ensure_session()
-        message = store.append_message(
-            session.id,
-            role=ConsoleMessageRole.ASSISTANT,
-            content="answer",
+        message, _modal = await _open_save_as_modal_for_message(
+            host, pilot, console, ConsoleMessageRole.ASSISTANT, "answer"
         )
-        await console._sync_native_console_chat_ui()
-
-        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
-        transcript.select_message(message.id)
-        await console._sync_native_console_chat_ui()
-        await _wait_for_selector(console, pilot, f"#console-message-action-save-as-{message.id}")
-
-        await pilot.click(f"#console-message-action-save-as-{message.id}")
         await _wait_for_selector(host.screen_stack[-1], pilot, "#console-save-as-destination-note")
         await pilot.click("#console-save-as-destination-note")
         await pilot.pause()
 
-    app.notes_scope_service.save_note.assert_awaited_once_with(
-        scope="local_note",
-        title="Console message",
-        content="answer",
-        note_id=None,
-        version=None,
-        user_id="default_user",
-        workspace_id=None,
-        keywords=["console"],
-    )
+    app.notes_scope_service.save_note.assert_awaited_once()
+    kwargs = app.notes_scope_service.save_note.await_args.kwargs
+    # Title carries the conversation title plus a short UTC date, e.g.
+    # "Console message — Chat 1 (2026-07-11)" (UAT: no more generic titles).
+    assert kwargs["title"].startswith("Console message — Chat 1 (")
+    assert kwargs["title"].endswith(")")
+    assert len(kwargs["title"]) <= 80
+    assert kwargs["scope"] == "local_note"
+    assert kwargs["content"] == "answer"
+    assert kwargs["note_id"] is None
+    assert kwargs["version"] is None
+    assert kwargs["user_id"] == "default_user"
+    assert kwargs["workspace_id"] is None
+    assert kwargs["keywords"] == ["console"]
     assert console._last_console_action.action_id == "save-as-note"
     assert console._last_console_action.visible_copy == "Saved message as Note."
+
+
+@pytest.mark.asyncio
+async def test_console_selected_message_save_as_media_adds_plaintext_media():
+    app = _build_test_app()
+    _install_console_save_service_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        message, _modal = await _open_save_as_modal_for_message(
+            host, pilot, console, ConsoleMessageRole.ASSISTANT, "answer"
+        )
+        await _wait_for_selector(host.screen_stack[-1], pilot, "#console-save-as-destination-media")
+        await pilot.click("#console-save-as-destination-media")
+        await pilot.pause()
+
+    add_media = app.media_db.add_media_with_keywords
+    add_media.assert_called_once()
+    kwargs = add_media.call_args.kwargs
+    assert kwargs["media_type"] == "plaintext"
+    assert kwargs["content"] == "answer"
+    assert kwargs["keywords"] == ["console"]
+    assert kwargs["title"].startswith("Console assistant message — Chat 1 (")
+    assert len(kwargs["title"]) <= 80
+    assert console._last_console_action.action_id == "save-as-media"
+    assert console._last_console_action.visible_copy == "Saved message as Media."
+
+
+@pytest.mark.asyncio
+async def test_console_selected_message_save_as_prompt_persists_prompt():
+    app = _build_test_app()
+    _install_console_save_service_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        message, _modal = await _open_save_as_modal_for_message(
+            host, pilot, console, ConsoleMessageRole.ASSISTANT, "answer"
+        )
+        await _wait_for_selector(host.screen_stack[-1], pilot, "#console-save-as-destination-prompt")
+        await pilot.click("#console-save-as-destination-prompt")
+        await pilot.pause()
+
+    add_prompt = app.prompts_db.add_prompt
+    add_prompt.assert_called_once()
+    kwargs = add_prompt.call_args.kwargs
+    assert kwargs["name"].startswith("Console message — Chat 1 (")
+    assert kwargs["system_prompt"] == "answer"
+    assert kwargs["author"] == "Console"
+    assert kwargs["keywords"] == ["console"]
+    assert kwargs["overwrite"] is False
+    assert "Chat 1" in kwargs["details"]
+    assert console._last_console_action.action_id == "save-as-prompt"
+    assert console._last_console_action.visible_copy == "Saved message as Prompt."
+
+
+@pytest.mark.asyncio
+async def test_console_save_as_prompt_retries_with_suffix_on_name_conflict():
+    from tldw_chatbook.DB.Prompts_DB import ConflictError as PromptsConflictError
+
+    app = _build_test_app()
+    _install_console_save_service_fakes(app)
+    calls = []
+
+    def add_prompt(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise PromptsConflictError("Prompt already exists.")
+        return (9, "prompt-uuid-9", "added")
+
+    app.prompts_db = SimpleNamespace(add_prompt=add_prompt)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        _message, _modal = await _open_save_as_modal_for_message(
+            host, pilot, console, ConsoleMessageRole.ASSISTANT, "answer"
+        )
+        await _wait_for_selector(host.screen_stack[-1], pilot, "#console-save-as-destination-prompt")
+        await pilot.click("#console-save-as-destination-prompt")
+        await pilot.pause()
+
+    assert len(calls) == 2
+    assert calls[1]["name"] == f"{calls[0]['name']} (2)"
+    assert console._last_console_action.action_id == "save-as-prompt"
+
+
+@pytest.mark.asyncio
+async def test_console_selected_message_save_as_chatbook_registers_console_artifact():
+    app = _build_test_app()
+    _install_console_save_service_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        message, _modal = await _open_save_as_modal_for_message(
+            host, pilot, console, ConsoleMessageRole.ASSISTANT, "answer"
+        )
+        await _wait_for_selector(host.screen_stack[-1], pilot, "#console-save-as-destination-chatbook")
+        await pilot.click("#console-save-as-destination-chatbook")
+        await pilot.pause()
+
+    create_chatbook = app.local_chatbook_service.create_chatbook
+    create_chatbook.assert_awaited_once()
+    kwargs = create_chatbook.await_args.kwargs
+    assert kwargs["name"].startswith("Console message — Chat 1 (")
+    assert kwargs["tags"] == ["console", "artifact"]
+    metadata = kwargs["metadata"]
+    assert metadata["artifact_source"] == "console"
+    assert metadata["artifact_kind"] == "assistant-response"
+    assert metadata["content"] == "answer"
+    assert metadata["message_id"] == message.id
+    assert console._last_console_action.action_id == "save-as-chatbook"
+    assert console._last_console_action.visible_copy == "Saved message as Chatbook artifact."
+
+
+@pytest.mark.asyncio
+async def test_console_save_as_media_failure_notifies_without_crashing():
+    app = _build_test_app()
+    _install_console_save_service_fakes(app)
+    app.media_db = SimpleNamespace(
+        add_media_with_keywords=Mock(side_effect=RuntimeError("disk full"))
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        notifications = []
+        app.notify = lambda *args, **kwargs: notifications.append((args, kwargs))
+        message, _modal = await _open_save_as_modal_for_message(
+            host, pilot, console, ConsoleMessageRole.ASSISTANT, "answer"
+        )
+        await _wait_for_selector(host.screen_stack[-1], pilot, "#console-save-as-destination-media")
+        await pilot.click("#console-save-as-destination-media")
+        await pilot.pause()
+
+        # Screen stays alive and responsive after the failed save.
+        assert console.query("#console-native-transcript")
+
+    failure_messages = [
+        args[0]
+        for args, kwargs in notifications
+        if args and "Save as Media failed" in str(args[0])
+    ]
+    assert failure_messages
+    assert "disk full" in failure_messages[0]
+    assert console._last_console_action.action_id == "save-as"
 
 
 @pytest.mark.asyncio

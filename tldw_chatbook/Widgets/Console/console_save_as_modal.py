@@ -11,7 +11,7 @@ from tldw_chatbook.Chat.console_message_actions import ConsoleSaveDestination
 
 
 class ConsoleSaveAsModal(ModalScreen[str | None]):
-    """List available and WIP Save as destinations for a selected message."""
+    """List available and unavailable Save as destinations for a selected message."""
 
     DEFAULT_CSS = """
     ConsoleSaveAsModal {
@@ -27,7 +27,7 @@ class ConsoleSaveAsModal(ModalScreen[str | None]):
     }
 
     .console-save-as-destination,
-    .console-save-as-wip,
+    .console-save-as-unavailable,
     .console-save-as-empty-state {
         height: auto;
         margin: 0 0 1 0;
@@ -85,9 +85,10 @@ class ConsoleSaveAsModal(ModalScreen[str | None]):
                     continue
                 reason = f"\n{destination.reason}" if destination.reason else ""
                 yield Static(
-                    f"{destination.label} [WIP]{reason}",
-                    id=_destination_id(destination.label, prefix="wip"),
-                    classes="console-save-as-wip",
+                    f"{destination.label} (unavailable){reason}",
+                    id=_destination_id(destination.label, prefix="unavailable"),
+                    classes="console-save-as-unavailable",
+                    markup=False,
                 )
             yield Button("Close", id="console-save-as-close")
 
