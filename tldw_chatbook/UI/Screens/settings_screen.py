@@ -19,8 +19,18 @@ from textual.events import DescendantFocus, Key
 from textual.message_pump import NoActiveAppError
 from textual.reactive import reactive
 from textual.strip import Strip
-from textual.widgets import Button, Input, Rule, Select, SelectionList, Static, TextArea
+from textual.widgets import (
+    Button,
+    Collapsible,
+    Input,
+    Rule,
+    Select,
+    SelectionList,
+    Static,
+    TextArea,
+)
 
+from ...Chat.console_provider_endpoints import URL_BASED_PROVIDER_KEYS
 from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
 from ...Chat.console_provider_support import (
     ConsoleProviderCatalogEntry,
@@ -73,6 +83,7 @@ from ...Utils.path_validation import validate_path_simple
 from ..Navigation.base_app_screen import BaseAppScreen
 from .provider_model_resolution import EffectiveProviderModel, resolve_effective_provider_model
 from .settings_config_adapter import SettingsConfigAdapter, redact_secret_text
+from .settings_endpoint_probe import probe_settings_endpoint
 from .settings_config_models import (
     SettingsCategoryId,
     SettingsCategorySummary,
@@ -3641,20 +3652,34 @@ class SettingsScreen(BaseAppScreen):
         return self._profile_input_value(value)
 
     def _provider_generation_support_copy(self, provider: object) -> str:
+        """Summarize gated generation controls in one line (task-189).
+
+        Instead of rendering rows of "Unavailable for <provider>" placeholder
+        fields, the Generation defaults disclosure shows this single summary
+        and hides the dead rows entirely.
+
+        Returns:
+            Copy such as ``"Reasoning/Thinking controls: unavailable for
+            llama.cpp."`` or ``""`` when every gated control is available.
+        """
         provider_label = self._provider_display_name(str(provider or "").strip())
         if not provider_label:
             provider_label = "this provider"
-        reasoning_status = (
-            f"Reasoning available for {provider_label}"
-            if self._provider_supports_openai_reasoning(provider)
-            else f"Reasoning unavailable for {provider_label}"
-        )
-        thinking_status = (
-            f"Thinking available for {provider_label}"
-            if self._provider_supports_anthropic_thinking(provider)
-            else f"Thinking unavailable for {provider_label}"
-        )
-        return f"{reasoning_status}; {thinking_status}."
+        unavailable: list[str] = []
+        if not self._provider_supports_openai_reasoning(provider):
+            unavailable.append("Reasoning")
+        if not self._provider_supports_anthropic_thinking(provider):
+            unavailable.append("Thinking")
+        if not unavailable:
+            return ""
+        return f"{'/'.join(unavailable)} controls: unavailable for {provider_label}."
+
+    @staticmethod
+    def _gated_profile_row_classes(supported: bool) -> str:
+        """Return input-row classes, hiding gated rows the provider lacks."""
+        if supported:
+            return "settings-input-row"
+        return "settings-input-row settings-gated-profile-hidden"
 
     def _provider_form_values_from_widgets(self) -> dict[str, object]:
         loaded_values = self._provider_loaded_setting_values()
@@ -4138,8 +4163,26 @@ class SettingsScreen(BaseAppScreen):
                 widget.disabled = not supported
                 widget.placeholder = self._model_profile_input_placeholder(provider, draft_key)
                 widget.value = self._profile_input_value(value) if supported else ""
+                # task-189: gated rows are hidden (not rendered as disabled
+                # placeholder noise); the disclosure shows one summary line.
+                try:
+                    row = self.query_one(f"{selector}-row", Horizontal)
+                except QueryError:
+                    continue
+                row.set_class(not supported, "settings-gated-profile-hidden")
         finally:
             self._syncing_provider_model_profile = False
+        self._refresh_generation_support_summary(provider)
+
+    def _refresh_generation_support_summary(self, provider: str) -> None:
+        """Update the one-line gated-controls summary and its visibility."""
+        support_copy = self._provider_generation_support_copy(provider)
+        try:
+            summary = self.query_one("#settings-provider-generation-support", Static)
+        except QueryError:
+            return
+        summary.update(support_copy)
+        summary.set_class(not support_copy, "settings-gated-profile-hidden")
 
     def _provider_endpoint_setting_key(self, provider: str) -> str:
         provider_key = provider_config_key(provider)
@@ -4587,6 +4630,58 @@ class SettingsScreen(BaseAppScreen):
         detail, _summary, _passed = self._provider_readiness_test_report()
         return detail
 
+    def _provider_live_probe_base_url(self) -> str:
+        """Return the endpoint to live-probe after a passing readiness test.
+
+        task-191: only URL-based/local providers with a concrete endpoint
+        (unsaved widget value first, then saved config) are probed; cloud and
+        key-based providers keep the local-only Test behavior.
+
+        Returns:
+            The endpoint base URL, or ``""`` when no live probe applies.
+        """
+        provider = self._provider_widget_value()
+        if provider_config_key(provider) not in URL_BASED_PROVIDER_KEYS:
+            return ""
+        try:
+            endpoint = self.query_one("#settings-provider-endpoint-value", Input).value.strip()
+        except QueryError:
+            endpoint = ""
+        return endpoint or self._provider_endpoint_value(provider)
+
+    @work(exclusive=True, group="settings-endpoint-probe")
+    async def _provider_endpoint_probe_worker(
+        self,
+        base_url: str,
+        detail: str,
+        summary: str,
+    ) -> None:
+        outcome = await probe_settings_endpoint(base_url)
+        self._apply_provider_endpoint_probe_outcome(detail, summary, outcome)
+
+    def _apply_provider_endpoint_probe_outcome(
+        self,
+        detail: str,
+        summary: str,
+        outcome,
+    ) -> None:
+        """Fold a live endpoint probe outcome into the Test result and toast.
+
+        Args:
+            detail: Readiness detail line shown in the results row.
+            summary: Passing readiness toast summary the probe extends.
+            outcome: ``SettingsEndpointProbeOutcome`` from the probe helper.
+        """
+        self._provider_test_result = redact_secret_text(
+            f"{detail} | endpoint {outcome.summary}"
+        )
+        self._update_provider_test_result()
+        combined = f"{summary.rstrip('.')}; endpoint {outcome.summary}."
+        self.app.notify(
+            redact_secret_text(combined),
+            severity="information" if outcome.reachable else "warning",
+        )
+
     def _update_provider_test_result(self) -> None:
         try:
             self.query_one("#settings-provider-test-result", Static).update(self._provider_test_result)
@@ -4638,10 +4733,7 @@ class SettingsScreen(BaseAppScreen):
             )
         except QueryError:
             pass
-        self._set_static_text(
-            "#settings-provider-generation-support",
-            self._provider_generation_support_copy(provider),
-        )
+        self._refresh_generation_support_summary(provider)
         self._refresh_provider_field_guidance()
 
     def _detail_row(self, label: str, value: object, *, identifier: str | None = None) -> Static:
@@ -5153,6 +5245,14 @@ class SettingsScreen(BaseAppScreen):
         yield Static("Providers & Models", classes="destination-section settings-column-title")
         with Vertical(id="settings-providers-models-card", classes="settings-focus-card"):
             yield self._render_category_state_banner(SettingsCategoryId.PROVIDERS_MODELS)
+            # task-189: the Connect block (provider, model, endpoint,
+            # credentials, readiness/test) leads; sampling and tuning live in
+            # the collapsed "Generation defaults" disclosure below it.
+            yield Static(
+                "Connect",
+                id="settings-provider-connect-title",
+                classes="destination-section",
+            )
             with Horizontal(classes="settings-input-row settings-select-row"):
                 yield Static("Provider", classes="settings-input-label")
                 yield Select(
@@ -5186,192 +5286,6 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-model-value",
                     classes="settings-compact-input",
                     placeholder="Model name",
-                )
-            yield Static(
-                "Selected model defaults",
-                id="settings-selected-model-defaults-title",
-                classes="destination-section",
-            )
-            yield Static(
-                "Global fallbacks live under Console Defaults; these values apply only "
-                "to the provider+model above.",
-                classes="settings-detail-row",
-            )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("Temperature", classes="settings-input-label")
-                yield Input(
-                    value=self._profile_input_value(values["model_profile_temperature"]),
-                    id="settings-model-profile-temperature",
-                    classes="settings-compact-input",
-                    placeholder="0.0 - 2.0",
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("Top P", classes="settings-input-label")
-                yield Input(
-                    value=self._profile_input_value(values["model_profile_top_p"]),
-                    id="settings-model-profile-top-p",
-                    classes="settings-compact-input",
-                    placeholder="0.0 - 1.0",
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("Min P", classes="settings-input-label")
-                yield Input(
-                    value=self._profile_input_value(values["model_profile_min_p"]),
-                    id="settings-model-profile-min-p",
-                    classes="settings-compact-input",
-                    placeholder="optional 0.0 - 1.0",
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("Top K", classes="settings-input-label")
-                yield Input(
-                    value=self._profile_input_value(values["model_profile_top_k"]),
-                    id="settings-model-profile-top-k",
-                    classes="settings-compact-input",
-                    placeholder="optional whole number",
-                    restrict=r"^[0-9]*$",
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("Max tokens", classes="settings-input-label")
-                yield Input(
-                    value=self._profile_input_value(values["model_profile_max_tokens"]),
-                    id="settings-model-profile-max-tokens",
-                    classes="settings-compact-input",
-                    placeholder="optional whole number",
-                    restrict=r"^[0-9]*$",
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("Seed", classes="settings-input-label")
-                yield Input(
-                    value=self._profile_input_value(values["model_profile_seed"]),
-                    id="settings-model-profile-seed",
-                    classes="settings-compact-input",
-                    placeholder="optional whole number",
-                    restrict=r"^[0-9]*$",
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("Presence", classes="settings-input-label")
-                yield Input(
-                    value=self._profile_input_value(values["model_profile_presence_penalty"]),
-                    id="settings-model-profile-presence-penalty",
-                    classes="settings-compact-input",
-                    placeholder="-2.0 - 2.0",
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("Frequency", classes="settings-input-label")
-                yield Input(
-                    value=self._profile_input_value(values["model_profile_frequency_penalty"]),
-                    id="settings-model-profile-frequency-penalty",
-                    classes="settings-compact-input",
-                    placeholder="-2.0 - 2.0",
-                )
-            yield Static(
-                self._provider_generation_support_copy(provider),
-                id="settings-provider-generation-support",
-                classes="settings-detail-row",
-            )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("Reasoning", classes="settings-input-label")
-                yield Input(
-                    value=self._model_profile_input_value(
-                        provider,
-                        "model_profile_reasoning_effort",
-                        values["model_profile_reasoning_effort"],
-                    ),
-                    id="settings-model-profile-reasoning-effort",
-                    classes="settings-compact-input",
-                    placeholder=self._model_profile_input_placeholder(
-                        provider,
-                        "model_profile_reasoning_effort",
-                    ),
-                    disabled=not self._model_profile_field_supported(
-                        provider,
-                        "model_profile_reasoning_effort",
-                    ),
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("Summary", classes="settings-input-label")
-                yield Input(
-                    value=self._model_profile_input_value(
-                        provider,
-                        "model_profile_reasoning_summary",
-                        values["model_profile_reasoning_summary"],
-                    ),
-                    id="settings-model-profile-reasoning-summary",
-                    classes="settings-compact-input",
-                    placeholder=self._model_profile_input_placeholder(
-                        provider,
-                        "model_profile_reasoning_summary",
-                    ),
-                    disabled=not self._model_profile_field_supported(
-                        provider,
-                        "model_profile_reasoning_summary",
-                    ),
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("Verbosity", classes="settings-input-label")
-                yield Input(
-                    value=self._model_profile_input_value(
-                        provider,
-                        "model_profile_verbosity",
-                        values["model_profile_verbosity"],
-                    ),
-                    id="settings-model-profile-verbosity",
-                    classes="settings-compact-input",
-                    placeholder=self._model_profile_input_placeholder(
-                        provider,
-                        "model_profile_verbosity",
-                    ),
-                    disabled=not self._model_profile_field_supported(
-                        provider,
-                        "model_profile_verbosity",
-                    ),
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("Thinking", classes="settings-input-label")
-                yield Input(
-                    value=self._model_profile_input_value(
-                        provider,
-                        "model_profile_thinking_effort",
-                        values["model_profile_thinking_effort"],
-                    ),
-                    id="settings-model-profile-thinking-effort",
-                    classes="settings-compact-input",
-                    placeholder=self._model_profile_input_placeholder(
-                        provider,
-                        "model_profile_thinking_effort",
-                    ),
-                    disabled=not self._model_profile_field_supported(
-                        provider,
-                        "model_profile_thinking_effort",
-                    ),
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("Think budget", classes="settings-input-label")
-                yield Input(
-                    value=self._model_profile_input_value(
-                        provider,
-                        "model_profile_thinking_budget_tokens",
-                        values["model_profile_thinking_budget_tokens"],
-                    ),
-                    id="settings-model-profile-thinking-budget-tokens",
-                    classes="settings-compact-input",
-                    placeholder=self._model_profile_input_placeholder(
-                        provider,
-                        "model_profile_thinking_budget_tokens",
-                    ),
-                    restrict=r"^[0-9]*$",
-                    disabled=not self._model_profile_field_supported(
-                        provider,
-                        "model_profile_thinking_budget_tokens",
-                    ),
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("Streaming", classes="settings-input-label")
-                yield Input(
-                    value=self._profile_input_value(values["model_profile_streaming"]),
-                    id="settings-model-profile-streaming",
-                    classes="settings-compact-input",
-                    placeholder="true or false",
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static("Endpoint", classes="settings-input-label")
@@ -5420,31 +5334,22 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-provider-credential-guidance",
                 classes="settings-status-row",
             )
-            yield Static(
-                self._provider_catalog_summary(),
-                id="settings-provider-catalog",
-                classes="settings-status-row",
+            # task-189: the Test affordance closes the first-run Connect job
+            # (provider -> model -> endpoint -> credentials -> test) before
+            # the informational readiness and discovery sections.
+            yield Button(
+                "Test Provider",
+                id="settings-test-provider",
+                tooltip=(
+                    "Run a local readiness check for this provider configuration; "
+                    "URL-based local providers also get a short live endpoint probe."
+                ),
             )
+            yield Static(self._provider_test_result, id="settings-provider-test-result")
             yield Static(
-                self._provider_catalog_key_policy(),
-                id="settings-provider-catalog-policy",
+                self._provider_save_result,
+                id="settings-provider-save-result",
                 classes="settings-status-row",
-            )
-            yield Static(
-                "Choose a catalog provider (type in the open list to jump to one), "
-                "or use Manual / custom provider for other keys.",
-                id="settings-provider-manual-entry-policy",
-                classes="settings-status-row",
-            )
-            yield Static(
-                "Sampling and transport defaults are routed to Console Defaults.",
-                id="settings-provider-sampling-route",
-                classes="settings-status-row",
-            )
-            yield self._detail_row(
-                "Endpoint key",
-                self._provider_endpoint_row(str(values["provider"])).removeprefix("Endpoint key: "),
-                identifier="settings-provider-endpoint-key",
             )
             yield Static("Provider readiness", classes="destination-section")
             yield self._detail_row(
@@ -5517,16 +5422,269 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-discovered-models-list",
                 disabled=not self._model_discovery_models,
             )
-            yield Button(
-                "Test Provider",
-                id="settings-test-provider",
-                tooltip="Run a local, non-network readiness check for this provider configuration.",
-            )
-            yield Static(self._provider_test_result, id="settings-provider-test-result")
+            # task-189: sampling and provider-specific tuning live below the
+            # Connect block in a collapsed-by-default disclosure.
+            with Collapsible(
+                title="Generation defaults",
+                collapsed=True,
+                id="settings-generation-defaults",
+            ):
+                yield Static(
+                    "Selected model defaults",
+                    id="settings-selected-model-defaults-title",
+                    classes="destination-section",
+                )
+                yield Static(
+                    "Global fallbacks live under Console Defaults; these values apply only "
+                    "to the provider+model above.",
+                    classes="settings-detail-row",
+                )
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("Temperature", classes="settings-input-label")
+                    yield Input(
+                        value=self._profile_input_value(values["model_profile_temperature"]),
+                        id="settings-model-profile-temperature",
+                        classes="settings-compact-input",
+                        placeholder="0.0 - 2.0",
+                    )
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("Top P", classes="settings-input-label")
+                    yield Input(
+                        value=self._profile_input_value(values["model_profile_top_p"]),
+                        id="settings-model-profile-top-p",
+                        classes="settings-compact-input",
+                        placeholder="0.0 - 1.0",
+                    )
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("Min P", classes="settings-input-label")
+                    yield Input(
+                        value=self._profile_input_value(values["model_profile_min_p"]),
+                        id="settings-model-profile-min-p",
+                        classes="settings-compact-input",
+                        placeholder="optional 0.0 - 1.0",
+                    )
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("Top K", classes="settings-input-label")
+                    yield Input(
+                        value=self._profile_input_value(values["model_profile_top_k"]),
+                        id="settings-model-profile-top-k",
+                        classes="settings-compact-input",
+                        placeholder="optional whole number",
+                        restrict=r"^[0-9]*$",
+                    )
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("Max tokens", classes="settings-input-label")
+                    yield Input(
+                        value=self._profile_input_value(values["model_profile_max_tokens"]),
+                        id="settings-model-profile-max-tokens",
+                        classes="settings-compact-input",
+                        placeholder="optional whole number",
+                        restrict=r"^[0-9]*$",
+                    )
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("Seed", classes="settings-input-label")
+                    yield Input(
+                        value=self._profile_input_value(values["model_profile_seed"]),
+                        id="settings-model-profile-seed",
+                        classes="settings-compact-input",
+                        placeholder="optional whole number",
+                        restrict=r"^[0-9]*$",
+                    )
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("Presence", classes="settings-input-label")
+                    yield Input(
+                        value=self._profile_input_value(values["model_profile_presence_penalty"]),
+                        id="settings-model-profile-presence-penalty",
+                        classes="settings-compact-input",
+                        placeholder="-2.0 - 2.0",
+                    )
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("Frequency", classes="settings-input-label")
+                    yield Input(
+                        value=self._profile_input_value(values["model_profile_frequency_penalty"]),
+                        id="settings-model-profile-frequency-penalty",
+                        classes="settings-compact-input",
+                        placeholder="-2.0 - 2.0",
+                    )
+                # task-189: one summary line replaces per-row "Unavailable
+                # for <provider>" placeholders; unsupported rows are hidden.
+                support_copy = self._provider_generation_support_copy(provider)
+                support_summary = Static(
+                    support_copy,
+                    id="settings-provider-generation-support",
+                    classes="settings-detail-row",
+                )
+                support_summary.set_class(not support_copy, "settings-gated-profile-hidden")
+                yield support_summary
+                with Horizontal(
+                    id="settings-model-profile-reasoning-effort-row",
+                    classes=self._gated_profile_row_classes(
+                        self._model_profile_field_supported(
+                            provider,
+                            "model_profile_reasoning_effort",
+                        )
+                    ),
+                ):
+                    yield Static("Reasoning", classes="settings-input-label")
+                    yield Input(
+                        value=self._model_profile_input_value(
+                            provider,
+                            "model_profile_reasoning_effort",
+                            values["model_profile_reasoning_effort"],
+                        ),
+                        id="settings-model-profile-reasoning-effort",
+                        classes="settings-compact-input",
+                        placeholder=self._model_profile_input_placeholder(
+                            provider,
+                            "model_profile_reasoning_effort",
+                        ),
+                        disabled=not self._model_profile_field_supported(
+                            provider,
+                            "model_profile_reasoning_effort",
+                        ),
+                    )
+                with Horizontal(
+                    id="settings-model-profile-reasoning-summary-row",
+                    classes=self._gated_profile_row_classes(
+                        self._model_profile_field_supported(
+                            provider,
+                            "model_profile_reasoning_summary",
+                        )
+                    ),
+                ):
+                    yield Static("Summary", classes="settings-input-label")
+                    yield Input(
+                        value=self._model_profile_input_value(
+                            provider,
+                            "model_profile_reasoning_summary",
+                            values["model_profile_reasoning_summary"],
+                        ),
+                        id="settings-model-profile-reasoning-summary",
+                        classes="settings-compact-input",
+                        placeholder=self._model_profile_input_placeholder(
+                            provider,
+                            "model_profile_reasoning_summary",
+                        ),
+                        disabled=not self._model_profile_field_supported(
+                            provider,
+                            "model_profile_reasoning_summary",
+                        ),
+                    )
+                with Horizontal(
+                    id="settings-model-profile-verbosity-row",
+                    classes=self._gated_profile_row_classes(
+                        self._model_profile_field_supported(
+                            provider,
+                            "model_profile_verbosity",
+                        )
+                    ),
+                ):
+                    yield Static("Verbosity", classes="settings-input-label")
+                    yield Input(
+                        value=self._model_profile_input_value(
+                            provider,
+                            "model_profile_verbosity",
+                            values["model_profile_verbosity"],
+                        ),
+                        id="settings-model-profile-verbosity",
+                        classes="settings-compact-input",
+                        placeholder=self._model_profile_input_placeholder(
+                            provider,
+                            "model_profile_verbosity",
+                        ),
+                        disabled=not self._model_profile_field_supported(
+                            provider,
+                            "model_profile_verbosity",
+                        ),
+                    )
+                with Horizontal(
+                    id="settings-model-profile-thinking-effort-row",
+                    classes=self._gated_profile_row_classes(
+                        self._model_profile_field_supported(
+                            provider,
+                            "model_profile_thinking_effort",
+                        )
+                    ),
+                ):
+                    yield Static("Thinking", classes="settings-input-label")
+                    yield Input(
+                        value=self._model_profile_input_value(
+                            provider,
+                            "model_profile_thinking_effort",
+                            values["model_profile_thinking_effort"],
+                        ),
+                        id="settings-model-profile-thinking-effort",
+                        classes="settings-compact-input",
+                        placeholder=self._model_profile_input_placeholder(
+                            provider,
+                            "model_profile_thinking_effort",
+                        ),
+                        disabled=not self._model_profile_field_supported(
+                            provider,
+                            "model_profile_thinking_effort",
+                        ),
+                    )
+                with Horizontal(
+                    id="settings-model-profile-thinking-budget-tokens-row",
+                    classes=self._gated_profile_row_classes(
+                        self._model_profile_field_supported(
+                            provider,
+                            "model_profile_thinking_budget_tokens",
+                        )
+                    ),
+                ):
+                    yield Static("Think budget", classes="settings-input-label")
+                    yield Input(
+                        value=self._model_profile_input_value(
+                            provider,
+                            "model_profile_thinking_budget_tokens",
+                            values["model_profile_thinking_budget_tokens"],
+                        ),
+                        id="settings-model-profile-thinking-budget-tokens",
+                        classes="settings-compact-input",
+                        placeholder=self._model_profile_input_placeholder(
+                            provider,
+                            "model_profile_thinking_budget_tokens",
+                        ),
+                        restrict=r"^[0-9]*$",
+                        disabled=not self._model_profile_field_supported(
+                            provider,
+                            "model_profile_thinking_budget_tokens",
+                        ),
+                    )
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("Streaming", classes="settings-input-label")
+                    yield Input(
+                        value=self._profile_input_value(values["model_profile_streaming"]),
+                        id="settings-model-profile-streaming",
+                        classes="settings-compact-input",
+                        placeholder="true or false",
+                    )
             yield Static(
-                self._provider_save_result,
-                id="settings-provider-save-result",
+                self._provider_catalog_summary(),
+                id="settings-provider-catalog",
                 classes="settings-status-row",
+            )
+            yield Static(
+                self._provider_catalog_key_policy(),
+                id="settings-provider-catalog-policy",
+                classes="settings-status-row",
+            )
+            yield Static(
+                "Choose a catalog provider (type in the open list to jump to one), "
+                "or use Manual / custom provider for other keys.",
+                id="settings-provider-manual-entry-policy",
+                classes="settings-status-row",
+            )
+            yield Static(
+                "Sampling and transport defaults are routed to Console Defaults.",
+                id="settings-provider-sampling-route",
+                classes="settings-status-row",
+            )
+            yield self._detail_row(
+                "Endpoint key",
+                self._provider_endpoint_row(str(values["provider"])).removeprefix("Endpoint key: "),
+                identifier="settings-provider-endpoint-key",
             )
 
     def _render_console_behavior_card(self, *, compact: bool = False) -> ComposeResult:
@@ -8249,6 +8407,14 @@ class SettingsScreen(BaseAppScreen):
             return
         if self._active_category_id() is SettingsCategoryId.PROVIDERS_MODELS:
             detail, summary, passed = self._provider_readiness_test_report()
+            probe_base_url = self._provider_live_probe_base_url() if passed else ""
+            if probe_base_url:
+                # task-191: readiness passed for a URL-based provider; run a
+                # short live probe in a worker and fold it into the toast.
+                self._provider_test_result = f"{detail} | endpoint probe: checking"
+                self._update_provider_test_result()
+                self._provider_endpoint_probe_worker(probe_base_url, detail, summary)
+                return
             self._provider_test_result = detail
             self._update_provider_test_result()
             self.app.notify(

@@ -2980,6 +2980,13 @@ Button.settings-category-button.settings-secondary-search-match {
     display: none;
 }
 
+/* task-189: generation-profile rows a provider does not support are hidden
+   entirely; the Generation defaults disclosure shows one summary line instead
+   of per-row "Unavailable for <provider>" placeholders. */
+.settings-gated-profile-hidden {
+    display: none;
+}
+
 .settings-status-row {
     width: 100%;
     min-height: 1;
