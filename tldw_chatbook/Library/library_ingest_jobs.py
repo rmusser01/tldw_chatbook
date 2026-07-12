@@ -61,11 +61,12 @@ a "replaced-on-transition" job is always safe to hand out to callers, too.
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Callable
+from typing import Callable, Protocol
 
 from loguru import logger
 
@@ -160,10 +161,10 @@ class LibraryIngestJob:
             row's own ``can_retry = failed and not permanent`` gating in
             ``library_ingest_state.py``.
         retry_count: Number of times this job has been retried via
-            ``requeue``. Persisted by :class:`~tldw_chatbook.DB.
-            Library_Ingest_Jobs_DB.LibraryIngestJobsDB` for job-history
-            display; not yet incremented anywhere in this module (that is
-            wired up alongside the requeue-carry logic). ``0`` for every
+            ``requeue`` (incremented on the new copy: ``source.retry_count
+            + 1``, never on the superseded original). Persisted by
+            :class:`~tldw_chatbook.DB.Library_Ingest_Jobs_DB.
+            LibraryIngestJobsDB` for job-history display. ``0`` for every
             job unless explicitly set.
     """
 
@@ -189,6 +190,20 @@ class LibraryIngestJob:
     retry_count: int = 0
 
 
+class IngestJobStore(Protocol):
+    """Write-through persistence sink for :class:`LibraryIngestJobRegistry`.
+
+    Optional -- a registry with no store attached (the default) is 100%
+    pure/in-memory, matching every pre-existing behavior byte-for-byte.
+    When attached (``attach_store``), every mutation best-effort persists
+    the affected job(s); a store exception is caught and logged, never
+    allowed to break the mutation itself (see ``_persist``/``_persist_delete``).
+    """
+
+    def upsert_job(self, job: "LibraryIngestJob") -> None: ...
+    def delete_job(self, job_id: str) -> None: ...
+
+
 class LibraryIngestJobRegistry:
     """In-memory, UI-thread-only registry for Library ingest jobs.
 
@@ -206,6 +221,10 @@ class LibraryIngestJobRegistry:
         # worker). No locking -- see the module docstring's threading
         # contract; this attribute is UI-thread-only like everything else.
         self.runner_active: bool = False
+        # Optional write-through persistence sink (Task 2, 161). ``None`` by
+        # default so a registry with no ``attach_store`` call stays 100%
+        # pure/in-memory -- every pre-existing test's behavior is unchanged.
+        self._store: IngestJobStore | None = None
 
     # -- id allocation -----------------------------------------------------
 
@@ -213,6 +232,67 @@ class LibraryIngestJobRegistry:
         job_id = f"ingest-job-{self._next_id}"
         self._next_id += 1
         return job_id
+
+    # -- persistence (Task 2, 161) -----------------------------------------
+
+    def attach_store(self, store: IngestJobStore) -> None:
+        """Attach a write-through persistence sink.
+
+        Args:
+            store: An object implementing ``IngestJobStore``
+                (``upsert_job``/``delete_job``). Once attached, every
+                mutation best-effort persists the affected job(s) -- see
+                ``_persist``/``_persist_delete``. Not attaching one (the
+                default) keeps the registry 100% pure/in-memory.
+        """
+        self._store = store
+
+    def _persist(self, job: LibraryIngestJob) -> None:
+        """Best-effort write ``job`` through to the attached store, if any.
+
+        A store exception is caught and debug-logged, never allowed to
+        propagate -- a persistence failure must never break the in-memory
+        mutation that already succeeded.
+        """
+        if self._store is None:
+            return
+        try:
+            self._store.upsert_job(job)
+        except Exception:
+            logger.opt(exception=True).debug(f"ingest job persist failed: {job.job_id}")
+
+    def _persist_delete(self, job_id: str) -> None:
+        """Best-effort delete ``job_id`` from the attached store, if any.
+
+        Same swallow-and-log contract as ``_persist``.
+        """
+        if self._store is None:
+            return
+        try:
+            self._store.delete_job(job_id)
+        except Exception:
+            logger.opt(exception=True).debug(f"ingest job delete-persist failed: {job_id}")
+
+    def restore(self, jobs: list[LibraryIngestJob], next_id: int) -> None:
+        """Seed the registry from a prior session's persisted jobs.
+
+        Args:
+            jobs: The jobs to seed ``self._jobs`` with, in the same
+                seq-ascending (insertion) order the registry itself
+                maintains internally.
+            next_id: The next ``job_id`` sequence number to allocate.
+
+        This is a bulk operation (app-startup only) -- unlike every other
+        mutation in this class, it does NOT fire a per-job ``_persist``
+        call (the jobs are, by definition, already in the store; re-
+        persisting all of them here would be redundant work on every
+        launch). Callers that need to write through normalized/pruned
+        jobs (see ``plan_restore``) do so explicitly via the store before
+        calling this method.
+        """
+        self._jobs = list(jobs)
+        self._next_id = next_id
+        self._notify_listeners()
 
     # -- listeners -----------------------------------------------------
 
@@ -314,6 +394,7 @@ class LibraryIngestJobRegistry:
         )
         self._jobs.append(job)
         self._notify_listeners()
+        self._persist(job)
         return replace(job)
 
     def next_queued(self, *, skip_types: frozenset[str] = frozenset()) -> LibraryIngestJob | None:
@@ -381,6 +462,7 @@ class LibraryIngestJobRegistry:
         )
         self._jobs[index] = updated
         self._notify_listeners()
+        self._persist(updated)
         return replace(updated)
 
     def mark_writing(self, job_id: str) -> LibraryIngestJob | None:
@@ -412,6 +494,7 @@ class LibraryIngestJobRegistry:
         updated = replace(current, state=IngestJobState.WRITING)
         self._jobs[index] = updated
         self._notify_listeners()
+        self._persist(updated)
         return replace(updated)
 
     def mark_done(self, job_id: str, *, media_id: int) -> LibraryIngestJob | None:
@@ -449,6 +532,7 @@ class LibraryIngestJobRegistry:
         )
         self._jobs[index] = updated
         self._notify_listeners()
+        self._persist(updated)
         return replace(updated)
 
     def mark_failed(
@@ -495,6 +579,7 @@ class LibraryIngestJobRegistry:
         )
         self._jobs[index] = updated
         self._notify_listeners()
+        self._persist(updated)
         return replace(updated)
 
     def requeue(self, job_id: str) -> LibraryIngestJob | None:
@@ -556,10 +641,14 @@ class LibraryIngestJobRegistry:
             detected_type=source.detected_type,
             state=IngestJobState.QUEUED,
             submitted_at=time.monotonic(),
+            retry_count=source.retry_count + 1,
         )
-        self._jobs[index] = replace(source, superseded=True)
+        superseded_source = replace(source, superseded=True)
+        self._jobs[index] = superseded_source
         self._jobs.append(new_job)
         self._notify_listeners()
+        self._persist(superseded_source)
+        self._persist(new_job)
         return replace(new_job)
 
     def dismiss(self, job_id: str) -> LibraryIngestJob | None:
@@ -593,6 +682,7 @@ class LibraryIngestJobRegistry:
         updated = replace(current, dismissed=True)
         self._jobs[index] = updated
         self._notify_listeners()
+        self._persist(updated)
         return replace(updated)
 
     def clear_finished(self) -> int:
@@ -610,15 +700,21 @@ class LibraryIngestJobRegistry:
             The number of jobs actually removed (0 when there was nothing
             to clear -- a no-op that does not fire the listener).
         """
-        before = len(self._jobs)
+        removed_jobs = [
+            job
+            for job in self._jobs
+            if job.state in (IngestJobState.DONE, IngestJobState.FAILED)
+        ]
         self._jobs = [
             job
             for job in self._jobs
             if job.state not in (IngestJobState.DONE, IngestJobState.FAILED)
         ]
-        removed = before - len(self._jobs)
+        removed = len(removed_jobs)
         if removed:
             self._notify_listeners()
+            for job in removed_jobs:
+                self._persist_delete(job.job_id)
         return removed
 
     # -- reads -----------------------------------------------------
@@ -680,3 +776,112 @@ class LibraryIngestJobRegistry:
             and not job.dismissed
             and job.detected_type in types
         )
+
+
+# -- restore (Task 2, 161) --------------------------------------------------
+
+
+@dataclass
+class RestorePlan:
+    """The pure result of :func:`plan_restore`, ready to feed a registry/store.
+
+    Attributes:
+        jobs: The full seq-ascending job list to hand to
+            ``LibraryIngestJobRegistry.restore`` -- interrupted jobs
+            normalized to ``FAILED`` and the oldest jobs pruned when the
+            persisted row count exceeds ``max_persisted``.
+        next_id: The next ``job_id`` sequence number the registry should
+            resume allocating from.
+        upsert: The subset of ``jobs`` that changed relative to the
+            persisted rows (only the normalized-to-``FAILED`` jobs) and so
+            must be re-persisted to the store to keep it in sync.
+        delete_ids: The ``job_id``s of jobs pruned for exceeding
+            ``max_persisted`` -- must be deleted from the store.
+    """
+
+    jobs: list["LibraryIngestJob"]
+    next_id: int
+    upsert: list["LibraryIngestJob"]  # normalized jobs to re-persist
+    delete_ids: list[str]  # pruned jobs to delete from the store
+
+
+_INTERRUPTED_STATES = (IngestJobState.QUEUED, IngestJobState.PARSING, IngestJobState.WRITING)
+
+
+def _job_from_row(row: dict) -> "LibraryIngestJob":
+    """Rebuild a :class:`LibraryIngestJob` from a persisted store row.
+
+    Args:
+        row: A dict-like row as returned by
+            ``LibraryIngestJobsDB`` (see that module for the schema).
+
+    Returns:
+        The reconstructed job. The monotonic-clock fields
+        (``submitted_at``/``started_at``/``finished_at``) are NOT
+        round-trippable across a process restart (``time.monotonic()`` has
+        no fixed epoch) -- they are left at their dataclass defaults
+        (``0.0``/``None``/``None``).
+    """
+    return LibraryIngestJob(
+        job_id=row["job_id"],
+        source_path=row["source_path"],
+        title=row["title"] or "",
+        author=row["author"] or "",
+        keywords=tuple(json.loads(row["keywords"] or "[]")),
+        perform_analysis=bool(row["perform_analysis"]),
+        chunk_enabled=bool(row["chunk_enabled"]),
+        chunk_size=int(row["chunk_size"]),
+        state=IngestJobState(row["state"]),
+        detected_type=row["detected_type"] or "",
+        media_id=row["media_id"],
+        error=row["error"] or "",
+        finished_at_wall=row["finished_at_wall"] or "",
+        superseded=bool(row["superseded"]),
+        dismissed=bool(row["dismissed"]),
+        permanent=bool(row["permanent"]),
+        retry_count=int(row["retry_count"]),
+        # monotonic fields are not round-trippable -- leave defaults.
+        submitted_at=0.0, started_at=None, finished_at=None,
+    )
+
+
+def plan_restore(rows: list[dict], *, max_persisted: int, now_iso: str) -> RestorePlan:
+    """Pure planning step for restoring a registry from persisted rows.
+
+    Args:
+        rows: Persisted job rows, seq-ascending (oldest first) -- the same
+            order ``LibraryIngestJobRegistry._jobs`` maintains internally.
+        max_persisted: The maximum number of rows to keep; anything beyond
+            this, oldest-by-seq first, is pruned.
+        now_iso: The wall-clock timestamp (``datetime.now(timezone.utc).
+            isoformat()``) to stamp onto jobs normalized as interrupted.
+
+    Returns:
+        A :class:`RestorePlan` with jobs still ``QUEUED``/``PARSING``/
+        ``WRITING`` at the time of persistence normalized to ``FAILED``
+        (an app restart abandons those jobs -- see the module docstring's
+        accepted v1 limits on parse/write loss on quit) with the error
+        ``"Interrupted by app restart"``, ``permanent=False`` (so they
+        remain retryable), and ``finished_at_wall=now_iso``. ``retry_count``
+        is preserved, not reset. When ``len(rows) > max_persisted``, the
+        oldest-by-seq rows beyond the cap are dropped from ``jobs`` and
+        their ids returned in ``delete_ids``.
+    """
+    jobs = [_job_from_row(r) for r in rows]  # rows are seq-ascending
+    normalized_ids: set[str] = set()
+    for i, job in enumerate(jobs):
+        if job.state in _INTERRUPTED_STATES:
+            jobs[i] = replace(
+                job, state=IngestJobState.FAILED,
+                error="Interrupted by app restart", permanent=False,
+                finished_at_wall=now_iso,
+            )
+            normalized_ids.add(job.job_id)
+    delete_ids: list[str] = []
+    if len(jobs) > max_persisted:
+        pruned = jobs[:-max_persisted]
+        delete_ids = [j.job_id for j in pruned]
+        jobs = jobs[-max_persisted:]
+    upsert = [j for j in jobs if j.job_id in normalized_ids]  # kept + normalized
+    next_id = max((int(j.job_id.rsplit("-", 1)[-1]) for j in jobs), default=0) + 1
+    return RestorePlan(jobs=jobs, next_id=next_id, upsert=upsert, delete_ids=delete_ids)

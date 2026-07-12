@@ -757,3 +757,90 @@ def test_parsing_count_for_types_counts_only_inflight_heavy():
     registry.mark_parsing(d1.job_id, detected_type="plaintext")
     assert registry.parsing_count_for_types(heavy) == 1        # only a1 is heavy+parsing
     assert a2.job_id                                            # a2 still QUEUED, not counted
+
+
+class _FakeStore:
+    def __init__(self):
+        self.upserts = []
+        self.deletes = []
+    def upsert_job(self, job):
+        self.upserts.append(job.job_id)
+    def delete_job(self, job_id):
+        self.deletes.append(job_id)
+
+
+def test_submit_starts_retry_count_zero_and_requeue_increments():
+    from tldw_chatbook.Library.library_ingest_jobs import IngestJobState
+    reg = LibraryIngestJobRegistry()
+    j = reg.submit(source_path="/a.mp3")
+    assert j.retry_count == 0
+    reg.mark_parsing(j.job_id); reg.mark_failed(j.job_id, error="boom")
+    r = reg.requeue(j.job_id)
+    assert r.retry_count == 1
+    reg.mark_parsing(r.job_id); reg.mark_failed(r.job_id, error="boom2")
+    r2 = reg.requeue(r.job_id)
+    assert r2.retry_count == 2
+
+
+def test_store_hook_writes_through_on_mutations():
+    store = _FakeStore()
+    reg = LibraryIngestJobRegistry()
+    reg.attach_store(store)
+    j = reg.submit(source_path="/a.mp3")
+    reg.mark_parsing(j.job_id)
+    assert store.upserts.count(j.job_id) >= 2       # submit + mark_parsing
+    reg.mark_done(j.job_id, media_id=1)
+    reg.clear_finished()
+    assert j.job_id in store.deletes
+
+
+def test_store_hook_none_is_pure_and_errors_swallowed():
+    reg = LibraryIngestJobRegistry()          # no store
+    reg.submit(source_path="/a.mp3")          # must not raise
+    class _Boom:
+        def upsert_job(self, job): raise RuntimeError("disk full")
+        def delete_job(self, job_id): raise RuntimeError("disk full")
+    reg2 = LibraryIngestJobRegistry()
+    reg2.attach_store(_Boom())
+    j = reg2.submit(source_path="/b.mp3")     # store raises, mutation still succeeds
+    assert j.state.value == "queued"
+
+
+def test_plan_restore_normalizes_interrupted_and_prunes():
+    from tldw_chatbook.Library.library_ingest_jobs import plan_restore, IngestJobState
+    rows = [
+        {"seq": 1, "job_id": "ingest-job-1", "source_path": "/a", "title": "", "author": "",
+         "keywords": "[]", "perform_analysis": 0, "chunk_enabled": 0, "chunk_size": 0,
+         "state": "done", "retry_count": 0, "detected_type": "", "error": "",
+         "finished_at_wall": "2026-07-12T00:00:00+00:00", "media_id": 7,
+         "superseded": 0, "dismissed": 0, "permanent": 0},
+        {"seq": 2, "job_id": "ingest-job-2", "source_path": "/b", "title": "", "author": "",
+         "keywords": "[]", "perform_analysis": 0, "chunk_enabled": 0, "chunk_size": 0,
+         "state": "parsing", "retry_count": 1, "detected_type": "audio", "error": "",
+         "finished_at_wall": "", "media_id": None, "superseded": 0, "dismissed": 0, "permanent": 0},
+    ]
+    plan = plan_restore(rows, max_persisted=500, now_iso="2026-07-12T09:00:00+00:00")
+    by_id = {j.job_id: j for j in plan.jobs}
+    assert by_id["ingest-job-1"].state == IngestJobState.DONE and by_id["ingest-job-1"].media_id == 7
+    assert by_id["ingest-job-2"].state == IngestJobState.FAILED
+    assert by_id["ingest-job-2"].error == "Interrupted by app restart"
+    assert by_id["ingest-job-2"].finished_at_wall == "2026-07-12T09:00:00+00:00"
+    assert by_id["ingest-job-2"].retry_count == 1          # count preserved, not reset
+    assert plan.next_id == 3
+    assert "ingest-job-2" in [j.job_id for j in plan.upsert]   # normalized -> re-persist
+    assert plan.delete_ids == []
+
+
+def test_plan_restore_prune_cap_drops_oldest():
+    from tldw_chatbook.Library.library_ingest_jobs import plan_restore
+    rows = [
+        {"seq": i, "job_id": f"ingest-job-{i}", "source_path": "/p", "title": "", "author": "",
+         "keywords": "[]", "perform_analysis": 0, "chunk_enabled": 0, "chunk_size": 0,
+         "state": "done", "retry_count": 0, "detected_type": "", "error": "",
+         "finished_at_wall": "", "media_id": None, "superseded": 0, "dismissed": 0, "permanent": 0}
+        for i in range(1, 6)
+    ]
+    plan = plan_restore(rows, max_persisted=3, now_iso="2026-07-12T09:00:00+00:00")
+    assert [j.job_id for j in plan.jobs] == ["ingest-job-3", "ingest-job-4", "ingest-job-5"]
+    assert plan.delete_ids == ["ingest-job-1", "ingest-job-2"]
+    assert plan.next_id == 6
