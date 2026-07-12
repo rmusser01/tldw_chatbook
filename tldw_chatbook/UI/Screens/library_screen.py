@@ -2504,6 +2504,12 @@ class LibraryScreen(BaseAppScreen):
                 "notes": self._local_source_counts.get("notes", 0),
                 "media": self._local_source_counts.get("media", 0),
                 "conversations": self._local_source_counts.get("conversations", 0),
+                # "prompts" carries (count, page_records) in
+                # `_local_source_records` (see its `__init__` comment), not
+                # a bare count in `_local_source_counts` -- reuse the
+                # already-fetched count-seam value rather than fetching
+                # again.
+                "prompts": self._local_source_records.get("prompts", (None, ()))[0] or 0,
                 "workspaces": 0,
                 "collections": 0,
             },
@@ -9866,13 +9872,37 @@ class LibraryScreen(BaseAppScreen):
         actions reuse.
 
         Args:
-            source_type: ``"media"``, ``"notes"``, or ``"conversations"``.
+            source_type: ``"media"``, ``"notes"``, ``"conversations"``, or
+                ``"prompt"`` (singular -- distinct from the "prompts"
+                scope-toggle/source key; see ``_OPEN_SOURCE_TYPE_MAP``).
                 Any other value (including empty) is a no-op -- defensive
                 only, since the Open action is only rendered for rows with
                 resolvable provenance (``LibraryRagResultRow.can_open``).
             record_id: The item's id within its source type.
         """
-        if not record_id or source_type not in ("media", "notes", "conversations"):
+        if not record_id or source_type not in ("media", "notes", "conversations", "prompt"):
+            return
+
+        if source_type == "prompt":
+            if not await self._flush_library_prompt_save():
+                return
+            try:
+                parsed_prompt_id = int(record_id)
+            except (TypeError, ValueError):
+                return
+            # Mirrors handle_library_prompt_row's full state-set exactly so
+            # the recomposed canvas lands on a clean editor, never a stale
+            # one carried over from a previously opened prompt.
+            self._reset_library_prompt_editor_state()
+            self._selected_prompt_id = parsed_prompt_id
+            self._library_selected_row_id = LIBRARY_ROW_BROWSE_PROMPTS
+            self._library_prompts_view = "editor"
+            self.run_worker(
+                self._refresh_library_prompt_detail(parsed_prompt_id),
+                exclusive=True,
+                group="library_prompt_detail",
+            )
+            self.refresh(recompose=True)
             return
 
         if source_type == "media":

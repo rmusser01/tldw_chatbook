@@ -22,13 +22,14 @@ LIBRARY_RAG_SOURCE_TYPES: tuple[tuple[str, str], ...] = (
     ("notes", "Notes"),
     ("media", "Media"),
     ("conversations", "Conversations"),
+    ("prompts", "Prompts"),
     ("workspaces", "Workspaces"),
     ("collections", "Collections"),
 )
 # The subset of LIBRARY_RAG_SOURCE_TYPES with a real per-source toggle in the
 # Search canvas scope region (B2): workspaces/collections have no retrieval
 # seam of their own yet, so they get no toggle row.
-LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES: tuple[str, ...] = ("notes", "media", "conversations")
+LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES: tuple[str, ...] = ("notes", "media", "conversations", "prompts")
 LIBRARY_RAG_DEFAULT_TOP_K = 5
 LIBRARY_RAG_RUN_ACTION_ID = "library-rag-run-query"
 LIBRARY_RAG_USE_IN_CONSOLE_ACTION_ID = "library-rag-use-in-console"
@@ -88,6 +89,12 @@ _OPEN_SOURCE_TYPE_MAP = {
     "media": "media", "media_chunk": "media",
     "conversation": "conversations", "conversations": "conversations",
     "chat": "conversations",
+    # Deliberately singular, unlike the other three (whose canonical/open
+    # value coincides with the plural scope-toggle key "prompts"):
+    # `_open_library_item_by_id`'s dispatch key for prompts is "prompt" (see
+    # its docstring), distinct from the "prompts" scope-toggle/source key
+    # used for search selection and the rail row.
+    "prompt": "prompt",
 }
 
 
@@ -298,6 +305,7 @@ class LibraryRagScopeState:
         notes: Any = 0,
         media: Any = 0,
         conversations: Any = 0,
+        prompts: Any = 0,
         workspaces: Any = 0,
         collections: Any = 0,
         selected: Sequence[str] | None = None,
@@ -309,6 +317,7 @@ class LibraryRagScopeState:
             notes: Available note source count.
             media: Available media source count.
             conversations: Available conversation source count.
+            prompts: Available prompt source count.
             workspaces: Available workspace source count.
             collections: Available collection source count.
             selected: Selected source type IDs. `None` selects all available sources;
@@ -323,6 +332,7 @@ class LibraryRagScopeState:
             "notes": _coerce_non_negative_int(notes),
             "media": _coerce_non_negative_int(media),
             "conversations": _coerce_non_negative_int(conversations),
+            "prompts": _coerce_non_negative_int(prompts),
             "workspaces": _coerce_non_negative_int(workspaces),
             "collections": _coerce_non_negative_int(collections),
         }
@@ -825,6 +835,7 @@ class LibraryRagPanelState:
             notes=counts.get("notes", 0),
             media=counts.get("media", 0),
             conversations=counts.get("conversations", 0),
+            prompts=counts.get("prompts", 0),
             workspaces=counts.get("workspaces", 0),
             collections=counts.get("collections", 0),
             selected=selected_source_types,

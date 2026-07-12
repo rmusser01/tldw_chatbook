@@ -9,8 +9,12 @@ import pytest
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 from tldw_chatbook.Library.library_fts_query import build_fts_match_query, expand_keyword_term
-from tldw_chatbook.Library.library_local_rag_search_service import LibraryLocalRagSearchService
+from tldw_chatbook.Library.library_local_rag_search_service import (
+    LibraryLocalRagSearchService,
+    _prompt_row,
+)
 from tldw_chatbook.Library.library_rag_service import (
     LibraryRagSearchOutcome,
     LibraryRagSearchRequest,
@@ -20,6 +24,10 @@ from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingSer
 from tldw_chatbook.Media.media_reading_scope_service import MediaReadingScopeService
 from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
+from tldw_chatbook.Prompt_Management.prompt_scope_service import (
+    LocalPromptService,
+    PromptScopeService,
+)
 
 
 class FakeNotesScopeService:
@@ -69,6 +77,36 @@ class FakeMediaReadingScopeService:
         if self.error is not None:
             raise self.error
         return {"items": self.items, "total": len(self.items), "offset": offset, "limit": limit}
+
+
+class FakePromptScopeService:
+    """Mirrors PromptScopeService.search_prompts's exact keyword-only signature."""
+
+    def __init__(self, rows=None, error: Exception | None = None):
+        self.rows = rows if rows is not None else []
+        self.error = error
+        self.calls: list[dict] = []
+
+    async def search_prompts(
+        self,
+        *,
+        mode="local",
+        query,
+        limit=10,
+        include_deleted=False,
+        fts_match_query=None,
+    ):
+        self.calls.append(
+            {
+                "mode": mode,
+                "query": query,
+                "limit": limit,
+                "fts_match_query": fts_match_query,
+            }
+        )
+        if self.error is not None:
+            raise self.error
+        return self.rows
 
 
 class FakeRagService:
@@ -199,6 +237,60 @@ async def test_notes_keyword_search_keeps_the_plain_query_unchanged():
     # alphabetic terms become OR-groups; the quote-bearing term stays a
     # doubled-quote-escaped literal, never bare FTS5 syntax.
     assert call["fts_match_query"] == '("operator" OR "operators") AND """said"'
+
+
+# --- Task 6: prompts as a Search source -----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_prompts_keyword_search_sends_widened_match_query():
+    prompt_service = FakePromptScopeService(rows=[])
+    app = SimpleNamespace(prompt_scope_service=prompt_service)
+    service = LibraryLocalRagSearchService(app)
+
+    await service.search("feedback loop", ("prompts",), "search", top_k=5)
+
+    call = prompt_service.calls[0]
+    assert call["mode"] == "local"
+    assert call["query"] == "feedback loop"
+    assert call["fts_match_query"] == '("feedback" OR "feedbacks") AND ("loop" OR "loops")'
+
+
+def test_prompt_row_uses_raw_local_id_not_composite_id():
+    """Task 4 review trap: `search_prompts` normalizes each result via
+    `normalize_prompt_record`, whose "id" is a composite "local:prompt:<n>"
+    string -- `_prompt_row` must key off "local_id" (the raw int) instead,
+    since `_open_library_item_by_id("prompt", ...)` expects the raw int.
+    """
+    row = _prompt_row(
+        {
+            "id": "local:prompt:5",
+            "local_id": 5,
+            "name": "Retro learnings",
+            "user_prompt": "We keep creating feedback loops.",
+        }
+    )
+
+    assert row["source_id"] == "5"
+    assert row["title"] == "Retro learnings"
+    assert row["provenance"]["source_type"] == "prompt"
+
+
+@pytest.mark.asyncio
+async def test_prompts_seam_missing_yields_unavailable_not_blocked():
+    """A missing `prompt_scope_service` degrades like the other three seams
+    (see `test_missing_media_seam_yields_notes_and_conversations_only`):
+    when at least one OTHER seam is available the overall search stays
+    "ready", just without any prompt rows.
+    """
+    notes_service = FakeNotesScopeService(rows=[])
+    app = SimpleNamespace(notes_scope_service=notes_service, prompt_scope_service=None)
+    service = LibraryLocalRagSearchService(app)
+
+    result = await service.search("credential", ("notes", "prompts"), "search", top_k=5)
+
+    assert not isinstance(result, LibraryRagSearchOutcome)
+    assert all(row["provenance"]["source_type"] != "prompt" for row in result["results"])
 
 
 @pytest.mark.asyncio
@@ -723,3 +815,60 @@ async def test_media_and_conversation_keyword_search_match_plural_singular_varia
     rows_by_type = {row["provenance"]["source_type"]: row for row in result["results"]}
     assert rows_by_type["media"]["source_id"] == media_id
     assert rows_by_type["conversation"]["source_id"] == conversation_id
+
+
+@pytest.fixture
+def real_prompts_app(tmp_path):
+    """Real prompts seam (PromptScopeService -> LocalPromptService -> Prompts FTS DB)."""
+    prompts_db = PromptsDatabase(tmp_path / "library_prompts_fts.db", client_id="prompts-fts")
+    prompt_id, _uuid, _message = prompts_db.add_prompt(
+        name="Retro learnings",
+        author="tester",
+        details="",
+        system_prompt="",
+        user_prompt="We keep creating feedback loops.",
+        keywords=None,
+    )
+    app = SimpleNamespace(
+        prompt_scope_service=PromptScopeService(
+            local_service=LocalPromptService(prompts_db),
+            server_service=None,
+        ),
+    )
+    try:
+        yield app, prompt_id
+    finally:
+        prompts_db.close_connection()
+
+
+# End-to-end UAT reproduction (task-185 pattern applied to prompts): a prompt
+# whose user prompt contains "feedback loops." must be hit by the query
+# "feedback loop" via the plural/singular expansion builder.
+@pytest.mark.asyncio
+async def test_prompts_keyword_search_matches_plural_variant(real_prompts_app):
+    app, prompt_id = real_prompts_app
+
+    result = await LibraryLocalRagSearchService(app).search(
+        "feedback loop", ("prompts",), "search", top_k=5
+    )
+
+    rows = result["results"]
+    assert len(rows) == 1
+    assert rows[0]["provenance"]["source_type"] == "prompt"
+    assert rows[0]["source_id"] == str(prompt_id)
+
+
+# Deselecting the prompts source yields zero prompt rows even though the
+# same query would otherwise match (mirrors (e), the media scope-filtering
+# test above).
+@pytest.mark.asyncio
+async def test_prompts_deselected_yields_zero_prompt_rows(real_prompts_app):
+    app, _prompt_id = real_prompts_app
+    app.notes_scope_service = FakeNotesScopeService(rows=[])
+
+    result = await LibraryLocalRagSearchService(app).search(
+        "feedback loop", ("notes",), "search", top_k=5
+    )
+
+    assert not isinstance(result, LibraryRagSearchOutcome)
+    assert all(row["provenance"]["source_type"] != "prompt" for row in result["results"])

@@ -303,11 +303,12 @@ def search_prompts(search_query: Optional[str],
                    search_fields: Optional[List[str]] = None,
                    page: int = 1,
                    results_per_page: int = 20,
-                   include_deleted: bool = False
+                   include_deleted: bool = False,
+                   fts_match_query: Optional[str] = None,
                    ) -> Tuple[List[Dict[str, Any]], int]:
     """Searches prompts using FTS. See PromptsDatabase.search_prompts for details."""
     db = get_db_instance()
-    return db.search_prompts(search_query, search_fields, page, results_per_page, include_deleted)
+    return db.search_prompts(search_query, search_fields, page, results_per_page, include_deleted, fts_match_query)
 
 # --- Sync Log Access Methods ---
 def get_sync_log_entries(since_change_id: int = 0, limit: Optional[int] = None) -> List[Dict]:

@@ -22,7 +22,7 @@ logger = logger.bind(module="LibraryLocalRagSearchService")
 
 _SEARCH_RUNTIME_BACKEND = "local-fts"
 _RAG_RUNTIME_BACKEND = "rag-semantic"
-_KNOWN_KEYWORD_SOURCE_TYPES = ("notes", "media", "conversations")
+_KNOWN_KEYWORD_SOURCE_TYPES = ("notes", "media", "conversations", "prompts")
 # Mirrors `library_rag_state`'s `_OPEN_SOURCE_TYPE_MAP` canonicalization:
 # raw provenance `source_type` values -> the scope-toggle identifiers used
 # by `LibraryRagScopeState`/the Search canvas's per-source toggles.
@@ -66,7 +66,7 @@ def _validated_query(query: str) -> str:
 class LibraryLocalRagSearchService:
     """Keyword-first Library retrieval over the app's local source seams.
 
-    `search` mode fans out over notes/media/conversations FTS seams and
+    `search` mode fans out over notes/media/conversations/prompts FTS seams and
     always works when at least one seam is available. `rag` mode delegates
     to the app's `_rag_service` and degrades to a blocked outcome with
     setup routing when that runtime is absent.
@@ -109,7 +109,7 @@ class LibraryLocalRagSearchService:
         scope: tuple[str, ...],
         top_k: int,
     ) -> Any:
-        """Fan out a keyword search over the notes/media/conversations seams."""
+        """Fan out a keyword search over the notes/media/conversations/prompts seams."""
         user_id = getattr(self._app, "notes_user_id", None) or "default_user"
         coroutines: dict[str, Any] = {}
         if "notes" in scope:
@@ -118,6 +118,8 @@ class LibraryLocalRagSearchService:
             coroutines["media"] = self._search_media(query, top_k)
         if "conversations" in scope:
             coroutines["conversations"] = self._search_conversations(query, top_k)
+        if "prompts" in scope:
+            coroutines["prompts"] = self._search_prompts(query, top_k)
 
         if not coroutines:
             return LibraryRagSearchOutcome(
@@ -214,6 +216,29 @@ class LibraryLocalRagSearchService:
             return True, []
         return True, [_conversation_row(item) for item in raw_results or () if isinstance(item, Mapping)]
 
+    async def _search_prompts(
+        self,
+        query: str,
+        top_k: int,
+    ) -> tuple[bool, list[dict[str, Any]]]:
+        """Search the prompts seam. Returns (seam_available, rows)."""
+        service = getattr(self._app, "prompt_scope_service", None)
+        if service is None:
+            return False, []
+        try:
+            raw_results = await service.search_prompts(
+                mode="local",
+                query=query,
+                limit=top_k,
+                # Pre-built MATCH string (plural/singular widened), same as
+                # the notes/media/conversations seams above.
+                fts_match_query=build_fts_match_query(query),
+            )
+        except Exception:
+            logger.opt(exception=True).warning("Library keyword search: prompts seam failed.")
+            return True, []
+        return True, [_prompt_row(item) for item in raw_results or () if isinstance(item, Mapping)]
+
     async def _search_semantic(
         self,
         query: str,
@@ -295,6 +320,24 @@ def _conversation_row(item: Mapping[str, Any]) -> dict[str, Any]:
         # RAG-mode rows (see `_semantic_row`) keep their real scores.
         "score": None,
         "provenance": {"source_type": "conversation"},
+    }
+
+
+def _prompt_row(item: Mapping[str, Any]) -> dict[str, Any]:
+    # Trap (Task 4 review): `PromptScopeService.search_prompts` normalizes
+    # each result via `normalize_prompt_record`, whose "id" is a composite
+    # "local:prompt:<n>" string -- the raw integer prompt id lives under
+    # "local_id". Using "id" here would break
+    # `_open_library_item_by_id("prompt", ...)`/`handle_library_prompt_row`,
+    # which both expect the raw int.
+    local_id = item.get("local_id")
+    return {
+        "source_id": str(local_id) if local_id is not None else "",
+        "chunk_id": "",
+        "title": item.get("name") or "",
+        "snippet": item.get("user_prompt") or item.get("details") or "",
+        "score": None,
+        "provenance": {"source_type": "prompt"},
     }
 
 
@@ -380,7 +423,7 @@ def _no_backend_recovery_state() -> DestinationRecoveryState:
     return DestinationRecoveryState(
         status_label="Unavailable",
         unavailable_what="Library Search/RAG retrieval",
-        why="No local Library source seam (notes, media, or conversations) is available",
+        why="No local Library source seam (notes, media, conversations, or prompts) is available",
         next_action="Configure Library RAG retrieval or use standalone Search/RAG",
         recovery_action="Search/RAG setup",
         authority_owner="Library retrieval service",

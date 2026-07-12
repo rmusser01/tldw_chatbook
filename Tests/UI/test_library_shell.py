@@ -23,6 +23,7 @@ from tldw_chatbook.Constants import (
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 from tldw_chatbook.Library.library_ingest_jobs import (
     IngestJobState,
     LibraryIngestJob,
@@ -49,6 +50,10 @@ from tldw_chatbook.Library.library_shell_state import (
 from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingService
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.Media.media_reading_scope_service import MediaReadingScopeService
+from tldw_chatbook.Prompt_Management.prompt_scope_service import (
+    LocalPromptService,
+    PromptScopeService,
+)
 from tldw_chatbook.Study_Interop.local_quiz_service import LocalQuizService
 from tldw_chatbook.Study_Interop.local_study_service import LocalStudyService
 from tldw_chatbook.Study_Interop.quiz_scope_service import QuizScopeService
@@ -7987,6 +7992,73 @@ async def test_library_shell_search_result_open_media_switches_to_viewer():
             call["media_id"] == "media-1"
             for call in app.media_reading_scope_service.detail_calls
         )
+
+
+@pytest.mark.asyncio
+async def test_library_shell_search_result_open_prompt_lands_in_editor(tmp_path):
+    """Pressing Open on a prompt evidence result jumps straight to that
+    prompt's in-canvas editor (Task 6), selecting the Prompts rail row --
+    mirroring the note/media Open-path tests above. The row's `source_id`
+    must be the raw int prompt id (never the scope-service's composite
+    "local:prompt:<n>" envelope id, see `normalize_prompt_record`) for
+    `_open_library_item_by_id` to resolve it via `get_prompt`.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    # File-backed, not ":memory:": `_refresh_library_prompt_detail` isolates
+    # its `get_prompt` call onto a worker thread, and an in-memory SQLite
+    # connection is thread-local (same guard other Library seams use).
+    prompts_db = PromptsDatabase(tmp_path / "prompts.db", client_id="library-open-path-test")
+    prompt_id, _uuid, _msg = prompts_db.add_prompt(
+        name="Summarize",
+        author="Alice",
+        details="A summarizer",
+        system_prompt="You are concise.",
+        user_prompt="Summarize: {text}",
+    )
+    app.prompt_scope_service = PromptScopeService(
+        local_service=LocalPromptService(prompts_db),
+        server_service=None,
+    )
+    service = _StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "source_id": str(prompt_id),
+                    "title": "Summarize",
+                    "snippet": "Summarize: {text}",
+                    "provenance": {"source_type": "prompt"},
+                }
+            ]
+        }
+    )
+    app.library_rag_search_service = service
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _run_library_search_and_wait_for_open_result(screen, pilot, "summarize")
+
+            screen.query_one("#library-rag-open-result-0").press()
+            await _wait_for_selector(screen, pilot, "#library-prompt-name")
+            for _ in range(120):
+                if (
+                    screen._selected_prompt_id == prompt_id
+                    and screen._library_prompts_view == "editor"
+                ):
+                    break
+                await pilot.pause(0.02)
+            else:
+                raise AssertionError("Open never landed on the prompt editor.")
+            await pilot.pause()
+
+            assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
+            name_input = screen.query_one("#library-prompt-name", Input)
+            assert name_input.value == "Summarize"
+    finally:
+        prompts_db.close_connection()
 
 
 @pytest.mark.asyncio

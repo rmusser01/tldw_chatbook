@@ -22,6 +22,7 @@ def test_scope_state_exposes_library_source_scope_and_empty_recovery() -> None:
         notes=2,
         media=1,
         conversations=0,
+        prompts=0,
         workspaces=0,
         collections=0,
         selected=("notes", "media"),
@@ -34,6 +35,7 @@ def test_scope_state_exposes_library_source_scope_and_empty_recovery() -> None:
         "notes",
         "media",
         "conversations",
+        "prompts",
         "workspaces",
         "collections",
     )
@@ -42,11 +44,14 @@ def test_scope_state_exposes_library_source_scope_and_empty_recovery() -> None:
     assert scope.option_by_type("notes").selected is True
     assert scope.option_by_type("conversations").available is False
     assert "No conversations available" in scope.option_by_type("conversations").recovery
+    assert scope.option_by_type("prompts").label == "Prompts"
+    assert scope.option_by_type("prompts").available is False
 
     empty_scope = LibraryRagScopeState.from_source_counts(
         notes=0,
         media=0,
         conversations=0,
+        prompts=0,
         workspaces=0,
         collections=0,
     )
@@ -410,6 +415,48 @@ def test_explicit_empty_scope_selection_is_not_defaulted_to_all_sources() -> Non
     assert panel.query_state.run_action.disabled_reason == "Select at least one Library source."
 
 
+# --- Task 6: prompts as a Search source -----------------------------------
+
+
+def test_prompts_source_toggle_label_and_gate_with_four_sources() -> None:
+    """`Prompts (N)` toggle label composes from `label`/`count`, and the
+    "select at least one source" gate keeps working once a 4th real source
+    (prompts) exists alongside notes/media/conversations.
+    """
+    scope = LibraryRagScopeState.from_source_counts(
+        notes=1,
+        media=1,
+        conversations=1,
+        prompts=5,
+        selected=("notes", "media", "conversations", "prompts"),
+    )
+
+    prompts_option = scope.option_by_type("prompts")
+    assert prompts_option.label == "Prompts"
+    assert prompts_option.count == 5
+    assert prompts_option.available is True
+    assert prompts_option.selected is True
+
+    panel = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1, "media": 1, "conversations": 1, "prompts": 5},
+        selected_source_types=(),
+        query="Find policy evidence",
+    )
+
+    assert panel.scope.has_selected_sources is False
+    assert panel.retrieval_status == "blocked"
+    assert panel.query_state.run_action.disabled_reason == "Select at least one Library source."
+
+    ready = LibraryRagPanelState.from_values(
+        source_counts={"notes": 0, "media": 0, "conversations": 0, "prompts": 5},
+        selected_source_types=("prompts",),
+        query="Find policy evidence",
+    )
+
+    assert ready.scope.selected_source_types == ("prompts",)
+    assert ready.retrieval_status == "ready"
+
+
 class TestUpdateSearchHistory:
     def test_prepends_new_query(self):
         assert update_search_history(("b",), "a") == ("a", "b")
@@ -460,6 +507,18 @@ class TestResultRowOpenTarget:
         )
         assert media.open_source_type == "media"
         assert convo.open_source_type == "conversations"
+
+    def test_prompt_result_opens_prompt_singular_not_plural(self):
+        """Task 6: prompts' open-target is the singular "prompt" -- distinct
+        from the "prompts" scope-toggle/source key -- because
+        `_open_library_item_by_id`'s dispatch key is "prompt" (singular).
+        """
+        row = LibraryRagResultRow.from_result(
+            {"source_id": "5", "title": "T", "snippet": "s",
+             "provenance": {"source_type": "prompt"}}
+        )
+        assert row.open_source_type == "prompt"
+        assert row.can_open is True
 
     def test_unknown_type_or_missing_id_cannot_open(self):
         no_type = LibraryRagResultRow.from_result(
