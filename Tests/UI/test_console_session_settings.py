@@ -30,9 +30,12 @@ from tldw_chatbook.UI.Screens.chat_screen import (
     ChatScreen,
 )
 from tldw_chatbook.UI.Screens import provider_model_resolution
+from tldw_chatbook.Chat.local_server_discovery import LocalModelProbeResult
 from tldw_chatbook.Widgets.Console.console_settings_modal import (
     MODAL_BODY_MIN_HEIGHT,
     MODAL_CONTROL_HEIGHT,
+    MODEL_DISCOVER_BUTTON_ID,
+    MODEL_DISCOVER_STATUS_ID,
     ConsoleSettingsInput,
     ConsoleSettingsModal,
     _settings_screen_region,
@@ -3955,3 +3958,181 @@ def test_console_stale_default_refresh_respects_user_marked_settings() -> None:
     refreshed = console._ensure_active_console_session_settings()
     assert refreshed.provider == "llama_cpp"
     assert refreshed.source == "derived"
+
+
+# --- task-188/191: provider display names + Discover models -----------------
+
+
+def _select_labels(select: Select) -> set[str]:
+    options = getattr(select, "options", None)
+    if options is None:
+        options = getattr(select, "_options", [])
+    labels: set[str] = set()
+    for option in options:
+        prompt = getattr(option, "prompt", None)
+        if prompt is None and isinstance(option, tuple) and option:
+            prompt = option[0]
+        if prompt is not None:
+            labels.add(str(getattr(prompt, "plain", prompt)))
+    return labels
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_provider_labels_use_catalog_display_names() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"], "openai": ["gpt-4.1"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            )
+        )
+        await pilot.pause()
+
+        provider_select = app.screen.query_one("#console-settings-provider", Select)
+        labels = _select_labels(provider_select)
+        values = _select_values(provider_select)
+
+    # Labels render shared-catalog display names; values stay raw config keys.
+    assert "llama.cpp" in labels
+    assert "OpenAI" in labels
+    assert "Ollama" in labels
+    assert "llama_cpp" not in labels
+    assert {"llama_cpp", "openai", "ollama"}.issubset(values)
+
+
+class _RecordingProber:
+    def __init__(self, result: LocalModelProbeResult) -> None:
+        self.result = result
+        self.calls: list[tuple[str, str]] = []
+
+    async def __call__(self, base_url: str, provider_key: str) -> LocalModelProbeResult:
+        self.calls.append((base_url, provider_key))
+        return self.result
+
+
+async def _wait_for_discover_status(app, pilot, fragment: str) -> Static:
+    status = app.screen.query_one(f"#{MODEL_DISCOVER_STATUS_ID}", Static)
+    for _ in range(60):
+        if fragment in str(status.renderable):
+            return status
+        await pilot.pause(0.05)
+    raise AssertionError(
+        f"discover status never showed {fragment!r}; last: {str(status.renderable)!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_discover_models_success_swaps_input_for_select() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model=None)
+    prober = _RecordingProber(
+        LocalModelProbeResult(
+            ok=True,
+            base_url="http://127.0.0.1:9099",
+            model_ids=("srv-a", "srv-b"),
+        )
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": []},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+                model_prober=prober,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        app.screen.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button).press()
+        await _wait_for_discover_status(app, pilot, "Found 2 models at http://127.0.0.1:9099.")
+
+        assert prober.calls == [("http://127.0.0.1:9099", "llama_cpp")]
+        model_select = app.screen.query_one("#console-settings-model-select", Select)
+        assert model_select.display is True
+        assert model_select.disabled is False
+        assert _select_values(model_select) == {"srv-a", "srv-b"}
+        assert model_select.value == "srv-a"
+        # Free-text fallback stays available after discovery.
+        model_custom = app.screen.query_one("#console-settings-model-custom", Button)
+        assert model_custom.display is True
+        assert model_custom.disabled is False
+
+        await pilot.click("#console-settings-save")
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.model == "srv-a"
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_discover_models_failure_shows_inline_copy() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model=None)
+    prober = _RecordingProber(
+        LocalModelProbeResult(
+            ok=False,
+            base_url="http://127.0.0.1:9099",
+            detail="No models endpoint at http://127.0.0.1:9099.",
+        )
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": []},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+                model_prober=prober,
+            )
+        )
+        await pilot.pause()
+
+        discover = app.screen.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
+        discover.press()
+        await _wait_for_discover_status(
+            app, pilot, "No models endpoint at http://127.0.0.1:9099."
+        )
+
+        # Honest inline line, button usable again, manual entry still works.
+        assert discover.disabled is False
+        model_input = app.screen.query_one("#console-settings-model-input", Input)
+        assert model_input.display is True
+        assert model_input.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_discover_button_only_for_url_based_providers() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="openai", model="gpt-4.1")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"openai": ["gpt-4.1"], "llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            )
+        )
+        await pilot.pause()
+
+        discover = app.screen.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
+        assert discover.display is False
+        assert discover.disabled is True
+
+        app.screen.query_one("#console-settings-provider", Select).value = "llama_cpp"
+        await pilot.pause()
+        assert discover.display is True
+        assert discover.disabled is False

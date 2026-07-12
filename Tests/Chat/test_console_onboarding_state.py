@@ -6,10 +6,12 @@ from tldw_chatbook.Chat.console_onboarding_state import (
     CONSOLE_SETUP_CARD_TITLE,
     CONSOLE_SETUP_STEP_THREE_DETAIL,
     ConsoleSetupCardState,
+    build_console_detected_server_action,
     build_console_setup_card_state,
     coerce_console_first_send_completed,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsReadiness
+from tldw_chatbook.Chat.local_server_discovery import DiscoveredLocalServer
 
 
 def _readiness(label: str, *, ready: bool = False, detail: str = "") -> ConsoleSettingsReadiness:
@@ -113,3 +115,59 @@ def test_coerce_first_send_completed():
     assert coerce_console_first_send_completed(None) is False
     assert coerce_console_first_send_completed("no") is False
     assert coerce_console_first_send_completed({}) is False
+
+
+def test_detected_server_action_offers_labeled_affordance_with_model():
+    action = build_console_detected_server_action(
+        DiscoveredLocalServer(
+            provider_key="llama_cpp",
+            base_url="http://127.0.0.1:8080",
+            model_ids=("qwen-3", "phi-4"),
+        ),
+        card_mode="card",
+    )
+
+    assert action is not None
+    assert action.label == "Use detected llama.cpp (127.0.0.1:8080)"
+    assert action.tooltip == "Sets provider to llama.cpp at 127.0.0.1:8080 and model to qwen-3."
+    assert action.provider_key == "llama_cpp"
+    assert action.base_url == "http://127.0.0.1:8080"
+    assert action.model_id == "qwen-3"
+
+
+def test_detected_server_action_without_models_asks_for_model_next():
+    action = build_console_detected_server_action(
+        DiscoveredLocalServer(
+            provider_key="ollama",
+            base_url="http://localhost:11434",
+            model_ids=(),
+        ),
+        card_mode="card",
+    )
+
+    assert action is not None
+    assert action.label == "Use detected Ollama (localhost:11434)"
+    assert action.tooltip == "Sets provider to Ollama at localhost:11434. Pick a model next."
+    assert action.model_id is None
+
+
+def test_detected_server_action_only_exists_in_card_mode():
+    server = DiscoveredLocalServer(
+        provider_key="llama_cpp",
+        base_url="http://127.0.0.1:8080",
+    )
+
+    assert build_console_detected_server_action(server, card_mode="ready_line") is None
+    assert build_console_detected_server_action(server, card_mode="quiet") is None
+    assert build_console_detected_server_action(None, card_mode="card") is None
+
+
+def test_detected_server_action_drops_non_loopback_and_malformed_servers():
+    remote = DiscoveredLocalServer(
+        provider_key="vllm",
+        base_url="http://192.168.1.5:8000",
+    )
+    blank = DiscoveredLocalServer(provider_key="", base_url="http://127.0.0.1:8080")
+
+    assert build_console_detected_server_action(remote, card_mode="card") is None
+    assert build_console_detected_server_action(blank, card_mode="card") is None
