@@ -37,7 +37,10 @@ New units (each independently testable):
 - `tldw_chatbook/Widgets/Library/library_prompts_canvas.py` — list + editor canvases (mirror
   the notes canvas; `ds-*` classes, single-row toolbar).
 - `tldw_chatbook/Chat/console_command_grammar.py` — pure slash-command registry + tokenizer.
-  Registry entries: name, argument hint, handler id. v1 registers `/prompt`, `/system`.
+  Registry entries: name, argument hint, handler id. v1 registers `/prompt`, `/system`. The
+  registry also exposes a fallback-resolver hook consulted after exact-command lookup fails and
+  before the unknown-command hint — the Skills spec registers a resolver there so bare
+  `/skill-name` invocation needs no grammar changes. v1 ships the hook with no resolvers.
 - Console prompt picker modal + system-prompt editor modal (Widgets/Console).
 - Prompts search seam in the Library search service.
 
@@ -106,13 +109,16 @@ match first, then unique prefix. Unique match → the draft is replaced by the p
 part**, inserted with paste semantics (short bodies inline; bodies over the paste-collapse
 threshold become the standard collapsed-paste token). No/ambiguous match → keyboard-first picker
 modal, pre-filtered with the query (type-to-filter on name/keywords, Enter inserts, Esc cancels,
-focus returns to the composer either way). Library's "Insert in Console" inserts that specific
-prompt directly through the same insertion path (no picker).
+focus returns to the composer either way). The picker's type-to-filter queries `search_prompts`
+(FTS) with a bounded page — never load-all. Library's "Insert in Console" inserts that specific
+prompt directly through the same insertion path (no picker); when the composer already holds a
+draft it APPENDS with paste semantics rather than replacing — existing text is never clobbered.
 
 `/system [name]`: with a name → resolve like `/prompt` (case-insensitive, exact then prefix) but
 apply the **system part** to the active session; an ambiguous match opens the same picker in
-apply-system mode (selection applies the system part instead of inserting); empty system part →
-inline error, session unchanged. Bare `/system` → the system editor modal.
+apply-system mode (selection applies the system part instead of inserting; rows whose system
+part is empty render dimmed with a "(no system part)" suffix and refuse selection with that
+reason); a directly-named prompt with an empty system part → inline error, session unchanged. Bare `/system` → the system editor modal.
 
 System-prompt plumbing: `ConsoleSessionSettings` gains `system_prompt: str | None = None`
 (per session/tab). `_provider_messages_for_session` prepends it as a system message when
