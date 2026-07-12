@@ -141,10 +141,11 @@ def build_library_shell_state(
             count_known=state.notes_known,
         ),
         LibraryRailRow(
-            # Row click lands on the existing placeholder-empty canvas for
-            # now (no "prompts" branch in the screen's canvas dispatch
-            # yet) -- the dedicated prompts list canvas lands in a later
-            # task; this row is inert-but-selectable until then.
+            # Row click resolves target_id "prompts" as its canvas_kind
+            # below; the screen's compose_content (Task 3) renders
+            # LibraryPromptsListCanvas for that kind -- no registry change
+            # needed here, the row -> canvas_kind mapping already existed
+            # from Task 1.
             row_id=LIBRARY_ROW_BROWSE_PROMPTS,
             section_id="browse",
             title="Prompts",

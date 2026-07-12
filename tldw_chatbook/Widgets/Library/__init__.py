@@ -7,6 +7,7 @@ from .library_ingest_canvas import LibraryIngestCanvas
 from .library_media_canvas import LibraryMediaCanvas
 from .library_media_viewer import LibraryMediaViewer
 from .library_notes_canvas import LibraryNotesCanvas
+from .library_prompts_canvas import LibraryPromptsListCanvas
 from .library_rail import LIBRARY_RAIL_ROW_PREFIX, LibraryRail, library_dim_label_text
 from .library_search_rag_panel import (
     LibrarySearchRagInspectorPanel,
@@ -30,6 +31,7 @@ __all__ = [
     "LibraryMediaCanvas",
     "LibraryMediaViewer",
     "LibraryNotesCanvas",
+    "LibraryPromptsListCanvas",
     "LibraryRail",
     "LibrarySearchRagInspectorPanel",
     "LibrarySearchRagPanel",

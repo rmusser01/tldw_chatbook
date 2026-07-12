@@ -4519,9 +4519,10 @@ async def test_library_shell_prompts_rail_row_shows_exact_count():
     """The Browse rail renders a ``Prompts (2)`` row -- id
     ``LIBRARY_ROW_BROWSE_PROMPTS`` -- once ``count_prompts`` is wired into
     the Library screen's local-source snapshot fetch (Task 1). Row
-    selection is inert-but-selectable for now (the prompts canvas itself
-    lands in a later task): clicking it must not error and must fall
-    through to the existing placeholder-empty canvas path."""
+    selection renders the Task 3 list canvas: this fake only exposes
+    ``count_prompts`` (no ``list_prompts``), so the page-records fetch is
+    skipped entirely (guarded by ``callable(list_prompts)``) and the canvas
+    renders its empty state rather than erroring."""
     app = _build_test_app()
     app.notes_scope_service = StaticLibraryNotesListScopeService([])
     app.media_reading_scope_service = StaticLibraryMediaScopeService([])
@@ -4547,7 +4548,8 @@ async def test_library_shell_prompts_rail_row_shows_exact_count():
         await pilot.pause()
 
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
-        assert screen.query_one("#library-canvas-landing")
+        assert screen.query_one("#library-prompts-canvas")
+        assert screen.query_one("#library-prompts-empty")
     assert app.prompt_scope_service.count_calls
 
 

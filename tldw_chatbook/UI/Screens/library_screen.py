@@ -97,6 +97,7 @@ from ...Library.library_notes_sync_state import (
     sync_conflict_label,
     sync_status_line,
 )
+from ...Library.library_prompts_state import build_prompts_list_state
 from ...Library.library_rag_service import (
     LibraryRagSearchOutcome,
     LibraryRagSearchRequest,
@@ -122,6 +123,7 @@ from ...Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
     LIBRARY_ROW_BROWSE_MEDIA,
     LIBRARY_ROW_BROWSE_NOTES,
+    LIBRARY_ROW_BROWSE_PROMPTS,
     LIBRARY_ROW_BROWSE_SEARCH,
     LIBRARY_ROW_CREATE_NOTE,
     LIBRARY_ROW_INGEST_EXPORT,
@@ -150,6 +152,7 @@ from ...Widgets.Library import (
     LibraryMediaCanvas,
     LibraryMediaViewer,
     LibraryNotesCanvas,
+    LibraryPromptsListCanvas,
     LibraryRail,
     LibrarySearchRagInspectorPanel,
     LibrarySearchRagPanel,
@@ -174,7 +177,12 @@ from .study_scope_models import (
 
 
 logger = logger.bind(module="LibraryScreen")
-LIBRARY_SOURCE_PAGE_SIZES = {"notes": 100, "media": 50, "conversations": 50}
+LIBRARY_SOURCE_PAGE_SIZES = {"notes": 100, "media": 50, "conversations": 50, "prompts": 100}
+# Only two prompts sort modes (unlike notes' three) -- cycled by
+# handle_library_prompts_sort. Kept local to the screen (not
+# library_prompts_state.py) since it's screen-toolbar-cycling concern, not
+# pure list-state-building logic.
+_LIBRARY_PROMPTS_SORT_MODES = ("newest", "name")
 LIBRARY_SERVICE_ERROR_COPY = "Library source services unavailable; retry Library later."
 LIBRARY_SERVICE_UNAVAILABLE_COPY = "Library source services are unavailable in this runtime."
 LIBRARY_EMPTY_COPY = "No local Library content yet."
@@ -589,6 +597,9 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_sort: str = "newest"
         self._library_notes_filter: str = ""
         self._library_notes_filter_records: list | None = None
+        self._library_prompts_sort: str = "newest"
+        self._library_prompts_filter: str = ""
+        self._selected_prompt_id: int | None = None
         self._library_note_detail: Mapping[str, Any] | None = None
         self._selected_note_id: str = ""
         self._library_note_version: int | None = None
@@ -857,8 +868,9 @@ class LibraryScreen(BaseAppScreen):
         because their rows are frozen dataclasses -- copies are taken below
         only to avoid aliasing a live mutable set with the stashed dict.
 
-        The four per-pane filter/sort values below (media type cycle, notes
-        sort mode, notes substring filter, conversations query) are VIEW
+        The per-pane filter/sort values below (media type cycle, notes
+        sort mode, notes substring filter, prompts sort mode, prompts
+        substring filter, selected prompt id, conversations query) are VIEW
         state exactly like the selection ids above -- they change what the
         canvas builders render, not what data is fetched -- so they belong
         here too (PR #595 shipped the selection/RAG half of this contract
@@ -885,6 +897,9 @@ class LibraryScreen(BaseAppScreen):
         state["library_media_type_filter"] = self._library_media_type_filter
         state["library_notes_sort"] = self._library_notes_sort
         state["library_notes_filter"] = self._library_notes_filter
+        state["library_prompts_sort"] = self._library_prompts_sort
+        state["library_prompts_filter"] = self._library_prompts_filter
+        state["selected_prompt_id"] = self._selected_prompt_id
         state["library_conversation_query"] = getattr(
             self, "_library_conversation_query", ""
         )
@@ -979,6 +994,16 @@ class LibraryScreen(BaseAppScreen):
         )
         notes_filter = state.get("library_notes_filter")
         self._library_notes_filter = notes_filter if isinstance(notes_filter, str) else ""
+        prompts_sort = state.get("library_prompts_sort")
+        self._library_prompts_sort = (
+            prompts_sort if isinstance(prompts_sort, str) and prompts_sort else "newest"
+        )
+        prompts_filter = state.get("library_prompts_filter")
+        self._library_prompts_filter = prompts_filter if isinstance(prompts_filter, str) else ""
+        selected_prompt_id = state.get("selected_prompt_id")
+        self._selected_prompt_id = (
+            selected_prompt_id if isinstance(selected_prompt_id, int) else None
+        )
         conversation_query = state.get("library_conversation_query")
         self._library_conversation_query = self._safe_text(
             conversation_query if isinstance(conversation_query, str) else "",
@@ -1531,11 +1556,12 @@ class LibraryScreen(BaseAppScreen):
         ``_notes_true_count_or_none``: the count seam is optional (guarded
         by ``callable(count_prompts)`` at the call site), so when it is
         missing this method is never invoked, and when it *is* present but
-        raises, the failure is swallowed and ``None`` is returned -- there
-        is no paginated prompts fetch to fall back to yet (Task 1 has no
-        prompts canvas), so a failed count simply renders the Prompts rail
-        row with no badge at all rather than surfacing an error or failing
-        the whole snapshot fetch.
+        raises, the failure is swallowed and ``None`` is returned -- unlike
+        the paginated page-records fetch (``_prompts_page_records_or_empty``,
+        run alongside this in the same gather), a failed count has no
+        fallback of its own, so it simply renders the Prompts rail row with
+        no badge at all rather than surfacing an error or failing the whole
+        snapshot fetch.
 
         Args:
             count_prompts: The bound ``count_prompts`` callable to invoke.
@@ -1551,6 +1577,79 @@ class LibraryScreen(BaseAppScreen):
             logger.opt(exception=True).warning("Failed to fetch local prompts count; Prompts row will show no count.")
             return None
         return result if isinstance(result, int) else None
+
+    async def _prompts_page_records_or_empty(
+        self, list_prompts: Any, **kwargs: Any
+    ) -> tuple[Mapping[str, Any], ...]:
+        """Fetch the local prompts snapshot page, degrading quietly on failure.
+
+        Runs inside the same ``asyncio.gather`` as ``count_prompts`` (see
+        ``_list_local_source_snapshot``). Mirrors ``_prompts_count_or_none``'s
+        degrade contract: the page fetch is optional (guarded by
+        ``callable(list_prompts)`` at the call site), and on failure this
+        returns an empty tuple rather than surfacing an error or failing the
+        whole snapshot fetch -- the Prompts rail badge (from the sibling
+        ``count_prompts`` call) still renders even when this fails, just
+        with an empty list canvas underneath.
+
+        ``PromptScopeService.list_prompts`` returns a *normalized* envelope
+        (composite ``"local:prompt:<id>"`` string ids and a separate integer
+        ``local_id``, per ``normalize_prompt_record``) rather than the raw
+        ``PromptsDatabase.list_prompts`` row shape
+        ``build_prompts_list_state`` expects -- each item is remapped back
+        to a raw-shaped record (``local_id`` -> ``id``) here so the pure
+        state builder can consume it unchanged.
+
+        Note: the raw local ``list_prompts`` DB query selects only
+        ``id, name, uuid, author, last_modified`` -- it does not join
+        keywords, so every remapped record's ``keywords`` here is the
+        (always empty) list the normalizer defaults to. Bulk-enriching a
+        page of prompts with keywords would need either a new batched-join
+        DB seam or N per-row ``fetch_keywords_for_prompt`` calls; the notes
+        list canvas sets the precedent for skipping this (its own bulk
+        ``list_notes`` fetch has never carried keywords either -- only the
+        single-note editor enriches, via ``_fetch_library_note_keywords``),
+        so this deliberately matches that precedent rather than fetching
+        keywords per row here.
+
+        Args:
+            list_prompts: The bound ``list_prompts`` callable to invoke.
+            **kwargs: Forwarded to ``list_prompts`` (``mode``, ``page``,
+                ``per_page``).
+
+        Returns:
+            The fetched page's records, raw-shaped for
+            ``build_prompts_list_state`` (``id``, ``name``, ``author``,
+            ``keywords``, ``last_modified``, ``version``), or ``()`` on
+            failure or an unrecognized response shape.
+        """
+        try:
+            response = await self._run_library_service_call(
+                list_prompts, isolate_in_worker=True, **kwargs
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Failed to fetch local prompts page; Prompts list will render empty."
+            )
+            return ()
+        items = response.get("items") if isinstance(response, Mapping) else None
+        if not isinstance(items, (list, tuple)):
+            return ()
+        records: list[Mapping[str, Any]] = []
+        for item in items:
+            if not isinstance(item, Mapping):
+                continue
+            records.append(
+                {
+                    "id": item.get("local_id"),
+                    "name": item.get("name"),
+                    "author": item.get("author"),
+                    "keywords": item.get("keywords"),
+                    "last_modified": item.get("last_modified"),
+                    "version": item.get("version"),
+                }
+            )
+        return tuple(records)
 
     async def _study_count_or_none(self, count_callable: Any, label: str, **kwargs: Any) -> int | None:
         """Fetch a decorative Create-rail count, degrading quietly on failure.
@@ -1619,6 +1718,8 @@ class LibraryScreen(BaseAppScreen):
         count_quizzes = getattr(quiz_service, "count_quizzes", None)
         count_prompts = getattr(prompt_service, "count_prompts", None)
         count_prompts_available = callable(count_prompts)
+        list_prompts = getattr(prompt_service, "list_prompts", None)
+        list_prompts_available = callable(list_prompts)
         notes_user_id = getattr(self.app_instance, "notes_user_id", None) or "default_user"
 
         empty_records: dict[str, tuple[Mapping[str, Any], ...]] = {
@@ -1702,6 +1803,18 @@ class LibraryScreen(BaseAppScreen):
             optional_calls.append(
                 ("prompts_count", self._prompts_count_or_none(count_prompts, mode="local"))
             )
+        if list_prompts_available:
+            optional_calls.append(
+                (
+                    "prompts_page",
+                    self._prompts_page_records_or_empty(
+                        list_prompts,
+                        mode="local",
+                        page=1,
+                        per_page=LIBRARY_SOURCE_PAGE_SIZES["prompts"],
+                    ),
+                )
+            )
         gathered_calls.extend(call for _, call in optional_calls)
 
         try:
@@ -1743,6 +1856,7 @@ class LibraryScreen(BaseAppScreen):
 
         notes_true_count = optional_values.get("notes_true_count")
         prompts_count = optional_values.get("prompts_count")
+        prompts_page_records = optional_values.get("prompts_page") or ()
         study_counts: dict[str, int | None] = {
             "study_decks": optional_values.get("study_decks"),
             "flashcards_due": optional_values.get("flashcards_due"),
@@ -1764,10 +1878,12 @@ class LibraryScreen(BaseAppScreen):
                 "notes": notes,
                 "media": media,
                 "conversations": conversations,
-                # Placeholder page records (Task 1 has no prompts canvas to
-                # page through yet) alongside the exact count -- see the
-                # ``__init__``/``empty_records`` comments above.
-                "prompts": (prompts_count, ()),
+                # (count, page_records) -- see the ``__init__``/
+                # ``empty_records`` comments above. ``prompts_page_records``
+                # is ``()`` whenever the local backend has no ``list_prompts``
+                # seam or the fetch failed (degrade-quietly contract; see
+                # ``_prompts_page_records_or_empty``).
+                "prompts": (prompts_count, prompts_page_records),
             },
             {
                 "notes": notes_count,
@@ -2757,6 +2873,13 @@ class LibraryScreen(BaseAppScreen):
                         mode="create",
                         id="library-notes-canvas",
                     )
+                elif shell.canvas_kind == "prompts":
+                    yield LibraryPromptsListCanvas(
+                        self._build_library_prompts_state(),
+                        sort_mode=self._library_prompts_sort,
+                        filter_value=self._library_prompts_filter,
+                        id="library-prompts-canvas",
+                    )
                 elif shell.canvas_kind == "search":
                     yield LibrarySearchRagPanel(
                         self._library_rag_panel_state(),
@@ -2938,6 +3061,29 @@ class LibraryScreen(BaseAppScreen):
         if self._library_notes_select_mode:
             self._library_notes_row_selection.reconcile(r.note_id for r in state.rows)
         return state
+
+    def _build_library_prompts_state(self):
+        """Build the Library prompts canvas's list-view display state.
+
+        Reads the ``(count, page_records)`` snapshot entry seeded by
+        ``_list_local_source_snapshot`` (Task 1's count seam, Task 3's
+        ``list_prompts`` page fetch) -- ``page_records`` degrades to ``()``
+        whenever the local backend has no ``list_prompts`` seam, the fetch
+        failed, or the snapshot simply hasn't loaded yet, in which case the
+        pure builder below renders an empty list rather than raising.
+        """
+        prompts_entry = self._local_source_records.get("prompts")
+        page_records = (
+            prompts_entry[1]
+            if isinstance(prompts_entry, tuple) and len(prompts_entry) == 2
+            else ()
+        )
+        return build_prompts_list_state(
+            page_records,
+            query=self._library_prompts_filter,
+            sort=self._library_prompts_sort,
+            now=datetime.now(timezone.utc),
+        )
 
     async def _refresh_library_media_detail(self, media_id: str) -> None:
         """Fetch and store the full detail for a selected Library media item.
@@ -5637,6 +5783,64 @@ class LibraryScreen(BaseAppScreen):
             self.query_one("#library-notes-filter", Input).focus()
         except (NoMatches, QueryError):
             pass
+
+    @on(Button.Pressed, "#library-prompts-sort")
+    def handle_library_prompts_sort(self, event: Button.Pressed) -> None:
+        """Cycle the Library prompts canvas sort mode (newest/name).
+
+        Unlike the notes filter (which re-fetches via the ``search_notes``
+        seam), the prompts filter/sort are both pure in-memory operations
+        over the already-fetched snapshot page (``_build_library_prompts_state``
+        -> ``build_prompts_list_state``) -- no worker needed, just a
+        recompose.
+
+        Args:
+            event: Button press event emitted by the prompts sort control.
+        """
+        event.stop()
+        try:
+            index = _LIBRARY_PROMPTS_SORT_MODES.index(self._library_prompts_sort)
+        except ValueError:
+            index = -1
+        self._library_prompts_sort = _LIBRARY_PROMPTS_SORT_MODES[
+            (index + 1) % len(_LIBRARY_PROMPTS_SORT_MODES)
+        ]
+        self.refresh(recompose=True)
+
+    @on(Input.Submitted, "#library-prompts-filter")
+    def handle_library_prompts_filter(self, event: Input.Submitted) -> None:
+        """Apply the Library prompts filter on Enter.
+
+        Purely in-memory (see ``handle_library_prompts_sort``'s note): the
+        submitted text is stored and the canvas recomposes, re-running
+        ``build_prompts_list_state`` over the already-fetched snapshot page
+        with the new query -- no service call or worker involved.
+
+        Args:
+            event: Input submission event emitted by the prompts filter box.
+        """
+        event.stop()
+        self._library_prompts_filter = self._safe_text(event.value, max_length=200).strip()
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, ".library-prompt-row")
+    def handle_library_prompt_row(self, event: Button.Pressed) -> None:
+        """Select a prompt row in the Library prompts canvas.
+
+        Recording-only for now (mirrors ``handle_library_conversation_row``'s
+        select-and-recompose shape): the in-canvas prompt editor lands in a
+        later task, so this stores the selection for that task to pick up
+        rather than navigating anywhere.
+
+        Args:
+            event: Button press event emitted by a prompt row button.
+        """
+        event.stop()
+        prompt_id = getattr(event.button, "prompt_id", None)
+        if isinstance(prompt_id, int):
+            self._selected_prompt_id = prompt_id
+        self._library_selected_row_id = LIBRARY_ROW_BROWSE_PROMPTS
+        self.refresh(recompose=True)
 
     _LIBRARY_NOTE_IMPORT_TITLE_MAX_CHARS = 300
 
