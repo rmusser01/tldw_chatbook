@@ -10,7 +10,7 @@
 
 The chatbook RAG module **copies the shape** of tldw_server's design — semantic/hybrid modes, an embeddings wrapper, vector-store classes, citations, reranking — but at runtime **every retrieval a user can trigger resolves to SQLite FTS5 keyword search**. The semantic machinery is fully coded and almost entirely dead, because:
 
-1. **Nothing ever populates the vector store.** The only indexing entry point (`index_documents_modular` → `rag_service.embed_documents`, `Event_Handlers/Chat_Events/chat_rag_integration.py:300-325`) has **zero callers**. No app code calls `index_document` / `index_batch` on any RAG service. (task-197)
+1. **Nothing ever populates the vector store.** The only indexing entry point (`index_documents_modular` → `rag_service.embed_documents`, `Event_Handlers/Chat_Events/chat_rag_integration.py:300-325`) has **zero callers** (and would crash with an `AttributeError` if called, as `embed_documents` is not defined on `RAGService`). No app code calls `index_document` / `index_batch` on any RAG service. (task-197)
 2. **The default vector store is in-memory** (`RAG_Search/simplified/config.py:48`, `type: str = "memory"`), and the `hybrid_basic` runtime profile doesn't override it — so even if something indexed, it would start empty every launch. (task-196)
 3. **The RAG runtime itself is only initialized by one lazy path** — the chat sidebar (`chat_rag_events.py:339` is the sole caller of `get_or_initialize_rag_service`). Every other surface that offers a "semantic" mode either never initializes it or silently returns nothing when it's absent.
 
