@@ -273,6 +273,7 @@ class LibraryIngestJobRegistry:
         perform_analysis: bool = False,
         chunk_enabled: bool = False,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
+        detected_type: str = "",
     ) -> LibraryIngestJob:
         """Append a new ``QUEUED`` job.
 
@@ -284,6 +285,9 @@ class LibraryIngestJobRegistry:
             perform_analysis: Whether to run post-ingest analysis.
             chunk_enabled: Whether to chunk the ingested content.
             chunk_size: Requested chunk size when ``chunk_enabled``.
+            detected_type: The file type detected by the ingest seam, when
+                already known at submission time. Optional; defaults to
+                ``""`` when not yet known.
 
         Returns:
             The newly created ``QUEUED`` job (a registry-owned copy).
@@ -299,20 +303,28 @@ class LibraryIngestJobRegistry:
             chunk_size=chunk_size,
             state=IngestJobState.QUEUED,
             submitted_at=time.monotonic(),
+            detected_type=detected_type,
         )
         self._jobs.append(job)
         self._notify_listeners()
         return replace(job)
 
-    def next_queued(self) -> LibraryIngestJob | None:
+    def next_queued(self, *, skip_types: frozenset[str] = frozenset()) -> LibraryIngestJob | None:
         """Return the oldest still-``QUEUED`` job, or ``None`` if none.
 
+        Args:
+            skip_types: ``detected_type`` values to skip. Empty (default)
+                returns the oldest queued job of any type; a non-empty set
+                returns the oldest queued job whose ``detected_type`` is not
+                in the set (skip-ahead for the heavy-lane cap).
+
         Returns:
-            A copy of the oldest queued job in FIFO submission order, or
-            ``None`` when no job is queued.
+            A copy of the oldest queued job in FIFO submission order whose
+            ``detected_type`` is not in ``skip_types``, or ``None`` when no
+            such job is queued.
         """
         for job in self._jobs:
-            if job.state == IngestJobState.QUEUED:
+            if job.state == IngestJobState.QUEUED and job.detected_type not in skip_types:
                 return replace(job)
         return None
 
@@ -632,3 +644,18 @@ class LibraryIngestJobRegistry:
                 continue
             counts[job.state.value] += 1
         return counts
+
+    def parsing_count_for_types(self, types: frozenset[str]) -> int:
+        """Count visible ``PARSING`` jobs whose ``detected_type`` is in ``types``.
+
+        Excludes ``superseded``/``dismissed`` jobs, matching ``counts()`` so
+        the heavy-lane in-flight count aligns with the total-slot accounting.
+        """
+        return sum(
+            1
+            for job in self._jobs
+            if job.state == IngestJobState.PARSING
+            and not job.superseded
+            and not job.dismissed
+            and job.detected_type in types
+        )

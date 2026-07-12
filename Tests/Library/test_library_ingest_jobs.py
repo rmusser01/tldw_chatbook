@@ -699,3 +699,42 @@ def test_clear_finished_fires_listener_once() -> None:
     registry.clear_finished()
 
     assert len(calls) == 1
+
+
+def test_submit_stores_detected_type():
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="a.mp3", detected_type="audio")
+    assert job.detected_type == "audio"
+    assert registry.next_queued().detected_type == "audio"
+
+
+def test_next_queued_skip_types_skips_heavy_returns_next_light():
+    registry = LibraryIngestJobRegistry()
+    a1 = registry.submit(source_path="a1.mp3", detected_type="audio")
+    a2 = registry.submit(source_path="a2.mp3", detected_type="audio")
+    d1 = registry.submit(source_path="d1.txt", detected_type="plaintext")
+    heavy = frozenset({"audio", "video"})
+    # default: oldest queued regardless of type
+    assert registry.next_queued().job_id == a1.job_id
+    # skipping heavy: first non-heavy queued job
+    assert registry.next_queued(skip_types=heavy).job_id == d1.job_id
+
+
+def test_next_queued_skip_types_none_when_only_heavy_left():
+    registry = LibraryIngestJobRegistry()
+    registry.submit(source_path="a1.mp3", detected_type="audio")
+    registry.submit(source_path="a2.mp3", detected_type="video")
+    assert registry.next_queued(skip_types=frozenset({"audio", "video"})) is None
+
+
+def test_parsing_count_for_types_counts_only_inflight_heavy():
+    registry = LibraryIngestJobRegistry()
+    a1 = registry.submit(source_path="a1.mp3", detected_type="audio")
+    a2 = registry.submit(source_path="a2.mp3", detected_type="audio")
+    d1 = registry.submit(source_path="d1.txt", detected_type="plaintext")
+    heavy = frozenset({"audio", "video"})
+    assert registry.parsing_count_for_types(heavy) == 0        # all still QUEUED
+    registry.mark_parsing(a1.job_id, detected_type="audio")
+    registry.mark_parsing(d1.job_id, detected_type="plaintext")
+    assert registry.parsing_count_for_types(heavy) == 1        # only a1 is heavy+parsing
+    assert a2.job_id                                            # a2 still QUEUED, not counted
