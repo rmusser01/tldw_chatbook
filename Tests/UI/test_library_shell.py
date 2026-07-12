@@ -3608,6 +3608,11 @@ async def test_library_shell_repeat_visit_renders_cached_snapshot_before_refresh
     cached snapshot renders at the second mount's first paint -- strictly
     before the gate is ever released, i.e. before that mount's own
     background refresh could possibly have completed.
+
+    Args:
+        monkeypatch: pytest fixture used to gate the SECOND mount's
+            ``_list_local_source_snapshot`` so the cached-apply window can be
+            observed before the fresh fetch resolves.
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
@@ -3671,6 +3676,10 @@ async def test_library_shell_expired_cache_does_not_apply_stale_snapshot(monkeyp
     once the cached snapshot is older than that, a repeat visit must NOT
     render stale content -- it falls back to today's loading-then-refresh
     behavior instead.
+
+    Args:
+        monkeypatch: pytest fixture used to gate the second mount's snapshot
+            fetch so the (absence of an) instant-apply can be observed.
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
@@ -3727,12 +3736,47 @@ def _error_source_snapshot():
 
 
 @pytest.mark.asyncio
+async def test_library_shell_snapshot_cache_is_isolated_from_live_record_mutation():
+    """The app-scoped snapshot cache must hold COPIES, not the live records
+    dict (Qodo review). ``_apply_local_source_snapshot`` aliases
+    ``self._local_source_records = records``, and later in-place key
+    reassignments (a media edit does ``self._local_source_records["media"]
+    = ...``) would otherwise mutate the cached dict too -- corrupting the
+    next visit's instant-apply. Mutating the live records after a snapshot is
+    cached must leave the cache untouched.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        cached = getattr(app, "_library_source_snapshot_cache", None)
+        assert cached is not None, "a successful snapshot should have been cached"
+        cached_records = cached[0]
+        # The cached dict must not be the same object the live view holds.
+        assert cached_records is not screen._local_source_records
+
+        sentinel = ({"id": "sentinel-mutation"},)
+        screen._local_source_records["media"] = sentinel
+
+        # The cache still holds the pre-mutation records.
+        assert app._library_source_snapshot_cache[0]["media"] is not sentinel
+
+
+@pytest.mark.asyncio
 async def test_library_shell_error_snapshot_is_not_cached_for_instant_apply(monkeypatch):
     """A failed/service-unavailable snapshot must NOT seed the app cache: it
     still applies to the current view (the error banner shows now, unchanged),
     but a return visit within TTL must do a normal fresh fetch instead of
     instant-applying the stale error -- no "services unavailable" flash on
     re-entry.
+
+    Args:
+        monkeypatch: pytest fixture used to swap ``_list_local_source_snapshot``
+            for a gated fake that returns an error snapshot on first mount.
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())

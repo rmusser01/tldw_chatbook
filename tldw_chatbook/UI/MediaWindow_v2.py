@@ -1771,7 +1771,9 @@ class MediaWindow(Container):
         record = next(
             (
                 item for item in results
-                if isinstance(item, dict) and str(item.get("id") or "") == pending_id
+                if isinstance(item, dict)
+                and item.get("id") is not None
+                and str(item.get("id")) == pending_id
             ),
             None,
         )

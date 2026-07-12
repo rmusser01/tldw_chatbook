@@ -660,6 +660,18 @@ class LibraryScreen(BaseAppScreen):
         self._library_export_run_id: int = 0
 
     def on_mount(self) -> None:
+        """Populate the Library on entry, rendering instantly from cache.
+
+        Arms the snapshot-timeout failsafe, then (166) if the app-scoped
+        snapshot cache holds a recent result (within
+        ``LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS``) applies it synchronously so a
+        returning visit paints immediately instead of showing the loading
+        placeholder, and unconditionally kicks
+        ``_refresh_local_source_snapshot`` to reconcile against the DB. Also
+        seeds the ingest registry listener and runs any deferred deep-link
+        loads (collections / note editor / media viewer) that
+        ``apply_navigation_context`` could not run before mount.
+        """
         super().on_mount()
         self.set_timer(
             LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS,
@@ -941,8 +953,11 @@ class LibraryScreen(BaseAppScreen):
         )
         notes_filter = state.get("library_notes_filter")
         self._library_notes_filter = notes_filter if isinstance(notes_filter, str) else ""
+        conversation_query = state.get("library_conversation_query")
         self._library_conversation_query = self._safe_text(
-            state.get("library_conversation_query"), "", max_length=200
+            conversation_query if isinstance(conversation_query, str) else "",
+            "",
+            max_length=200,
         )
 
     async def flush_pending_work(self) -> bool:
@@ -1152,13 +1167,22 @@ class LibraryScreen(BaseAppScreen):
         # snapshot (or nothing) in place, so the next visit does a normal
         # fresh fetch instead.
         if lookup_error is None:
+            # Cache SHALLOW COPIES of the mutable containers, not the live
+            # objects (Qodo review): ``_apply_local_source_snapshot`` below
+            # aliases ``self._local_source_records = records``, and later
+            # in-place key reassignments (e.g. ``self._local_source_records
+            # ["media"] = ...`` after a media edit) would otherwise mutate
+            # the cached dict too, so a return visit's instant-apply would
+            # render a snapshot whose records no longer match its cached
+            # counts/totals. The record tuples themselves are immutable, so a
+            # one-level dict copy is enough to isolate the cache.
             self.app_instance._library_source_snapshot_cache = (
-                records,
-                counts,
-                total_known,
+                dict(records),
+                dict(counts) if isinstance(counts, dict) else counts,
+                dict(total_known) if isinstance(total_known, dict) else total_known,
                 lookup_error,
                 recovery_state,
-                study_counts,
+                dict(study_counts) if isinstance(study_counts, dict) else study_counts,
             )
             self.app_instance._library_source_snapshot_cache_stamp = time.monotonic()
         self._apply_local_source_snapshot(
