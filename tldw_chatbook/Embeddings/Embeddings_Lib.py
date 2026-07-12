@@ -45,14 +45,61 @@ from pydantic import BaseModel, Field, field_validator, model_validator, HttpUrl
 
 # Optional dependencies with fallbacks
 from ..Utils.optional_deps import (
-    check_dependency, require_dependency, get_safe_import, 
-    DEPENDENCIES_AVAILABLE, create_unavailable_feature_handler
+    check_dependency, require_dependency, get_safe_import,
+    DEPENDENCIES_AVAILABLE
 )
 
-# Import optional dependencies safely
-numpy = get_safe_import('numpy')
-torch = get_safe_import('torch')
-transformers = get_safe_import('transformers')
+# torch/transformers/numpy are heavy optional dependencies (torch alone pulls
+# in roughly a thousand transitive modules, transformers a few hundred more).
+# They are NOT imported at module scope; each is imported lazily on first
+# real use via the _ensure_*() helpers below, which are called at the top of
+# every method that dereferences the corresponding name. This keeps
+# `import tldw_chatbook.app` free of torch/transformers/numpy while
+# preserving identical behavior (and identical error messages) once an
+# embedding is actually created.
+torch = None
+transformers = None
+numpy = None
+AutoModel = None
+AutoTokenizer = None
+
+
+def _ensure_torch():
+    """Import torch on first actual use.
+
+    No-ops (leaves ``torch`` as ``None``) if torch isn't installed, matching
+    the previous eager ``get_safe_import('torch')`` fallback semantics.
+    """
+    global torch
+    if torch is not None:
+        return torch
+    torch = get_safe_import('torch')
+    return torch
+
+
+def _ensure_transformers():
+    """Import transformers (and torch, which HF embedding code always needs)
+    on first actual use."""
+    global transformers, AutoModel, AutoTokenizer
+    _ensure_torch()
+    if transformers is not None:
+        return transformers
+    transformers = get_safe_import('transformers')
+    if transformers is not None:
+        AutoModel = transformers.AutoModel
+        AutoTokenizer = transformers.AutoTokenizer
+    return transformers
+
+
+def _ensure_numpy():
+    """Import numpy on first actual use."""
+    global numpy, np
+    if numpy is not None:
+        return numpy
+    numpy = get_safe_import('numpy')
+    if numpy is not None:
+        np = numpy
+    return numpy
 
 
 def _current_dependencies_available() -> Dict[str, bool]:
@@ -63,33 +110,32 @@ def _current_dependencies_available() -> Dict[str, bool]:
         return current_registry
     return DEPENDENCIES_AVAILABLE
 
-# Create type aliases that work with or without dependencies
-if torch is not None:
-    Tensor = torch.Tensor
-    normalize = torch.nn.functional.normalize
-    AutoModel = transformers.AutoModel
-    AutoTokenizer = transformers.AutoTokenizer
-else:
-    # Create placeholder types
-    Tensor = Any
-    normalize = create_unavailable_feature_handler('torch', 'pip install tldw_chatbook[embeddings_rag]')
-    AutoModel = create_unavailable_feature_handler('transformers', 'pip install tldw_chatbook[embeddings_rag]')
-    AutoTokenizer = create_unavailable_feature_handler('transformers', 'pip install tldw_chatbook[embeddings_rag]')
+# `Tensor` is only used for type annotations (deferred at runtime by
+# `from __future__ import annotations`, at the top of this module) and in the
+# `PoolingFn` alias just below, so a plain `Any` placeholder is sufficient
+# without importing torch. The real torch/transformers classes are resolved
+# lazily by _ensure_torch()/_ensure_transformers() at the call sites that
+# actually need them (see `_masked_mean` and `_HuggingFaceEmbedder`).
+Tensor = Any
 
-if numpy is not None:
-    np = numpy
-else:
-    # Create a basic np-like object for type annotations
-    class _NumpyPlaceholder:
-        @staticmethod
-        def asarray(*args, **kwargs):
-            raise ImportError("NumPy not available. Install with: pip install tldw_chatbook[embeddings_rag]")
-        
-        @staticmethod  
-        def empty(*args, **kwargs):
-            raise ImportError("NumPy not available. Install with: pip install tldw_chatbook[embeddings_rag]")
-    
-    np = _NumpyPlaceholder()
+
+class _NumpyPlaceholder:
+    """Stand-in for the `numpy` module until _ensure_numpy() resolves it.
+
+    Also serves as the permanent placeholder when numpy genuinely isn't
+    installed, matching the previous eager-import fallback behavior.
+    """
+
+    @staticmethod
+    def asarray(*args, **kwargs):
+        raise ImportError("NumPy not available. Install with: pip install tldw_chatbook[embeddings_rag]")
+
+    @staticmethod
+    def empty(*args, **kwargs):
+        raise ImportError("NumPy not available. Install with: pip install tldw_chatbook[embeddings_rag]")
+
+
+np = _NumpyPlaceholder()
 #
 # Local Imports
 #
@@ -209,13 +255,14 @@ class EmbeddingConfigSchema(BaseModel):
 
 def _masked_mean(last_hidden: Tensor, attn: Tensor) -> Tensor:
     """Default pooling: mean of vectors where attention_mask is 1."""
+    _ensure_torch()
     if torch is None:
         raise ImportError("torch is required for pooling operations")
     mask = attn.unsqueeze(-1).type_as(last_hidden)
     summed = (last_hidden * mask).sum(dim=1)
     lengths = mask.sum(dim=1).clamp(min=1e-9)
     avg = summed / lengths
-    return normalize(avg, p=2, dim=1)
+    return torch.nn.functional.normalize(avg, p=2, dim=1)
 
 
 class HFModelCfg(BaseModel):
@@ -295,6 +342,16 @@ class _HuggingFaceEmbedder:
     """Wraps HF model/tokenizer; exposes poolable, dtype/device-aware embedding."""
 
     def __init__(self, cfg: HFModelCfg):
+        # Resolve torch/transformers on first real use. `_build()` already
+        # gates construction of this class on both being available, but this
+        # keeps the class safe to construct directly too.
+        _ensure_torch()
+        _ensure_transformers()
+        if torch is None or transformers is None:
+            raise ImportError(
+                "HuggingFace embeddings require torch and transformers. "
+                "Install with: pip install tldw_chatbook[embeddings_rag]"
+            )
         try:
             # Use cache_dir if provided, otherwise HuggingFace will use default
             cache_dir = cfg.cache_dir if cfg.cache_dir else None
@@ -420,6 +477,7 @@ class _HuggingFaceEmbedder:
 
     def _forward(self, inp: Dict[str, Tensor]) -> Tensor:
         # Apply inference mode only if torch is available
+        _ensure_torch()
         if torch is not None:
             with torch.inference_mode():
                 out = self._model(**inp).last_hidden_state
@@ -445,6 +503,7 @@ class _HuggingFaceEmbedder:
             vecs.append(self._forward(tok))
 
         # --- [FIX] Performance: concatenate on GPU, then move to CPU once ---
+        _ensure_torch()
         if torch is None:
             raise ImportError("torch is required for HuggingFace embeddings")
         joined = torch.cat(vecs, dim=0).float().cpu().numpy()
@@ -452,6 +511,7 @@ class _HuggingFaceEmbedder:
 
     def close(self) -> None:
         del self._model, self._tok
+        _ensure_torch()
         if torch is not None and torch.cuda.is_available():
             torch.cuda.empty_cache()
 
@@ -480,6 +540,7 @@ def _openai_embedder(cfg: OpenAICfg) -> Callable[[list[str], Any, bool], Any]: #
 
 
     def _embed(texts: List[str], *, as_list: bool = False) -> np.ndarray | List[List[float]]:
+        _ensure_numpy()
         payload = {"input": texts, "model": cfg.model_name_or_path} # CHANGED: Use cfg.model_name_or_path
         for attempt, wait in enumerate(_BACKOFF, 1):
             t0 = time.perf_counter()
@@ -573,7 +634,10 @@ class EmbeddingFactory:
 
         t0 = time.perf_counter()
         if spec.provider == "huggingface":
-            # Check if torch and transformers are available
+            # Check if torch and transformers are available (imports them on
+            # first real use if they haven't been loaded yet)
+            _ensure_torch()
+            _ensure_transformers()
             if torch is None or transformers is None:
                 raise ImportError(
                     "HuggingFace embeddings require torch and transformers. "
@@ -642,6 +706,7 @@ class EmbeddingFactory:
 
         if not texts:
             logger.debug("embed: Empty texts list provided, returning empty result")
+            _ensure_numpy()
             return [] if as_list else np.empty((0, 0), dtype=np.float32)
 
         # --- The lock must be held during the embedding call to prevent use-after-free ---

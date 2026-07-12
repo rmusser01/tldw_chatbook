@@ -76,9 +76,13 @@ else:
 logger = logger.bind(module="Chroma_Lib")
 #
 # Local Imports
-from tldw_chatbook.Chunking.Chunk_Lib import chunk_for_embedding
+# `chunk_for_embedding` (Chunking.Chunk_Lib) and `analyze`
+# (LLM_Calls.Summarization_General_Lib) each transitively pull in the
+# nltk/scipy/sklearn/pandas summarization/chunking stack. They are imported
+# lazily inside process_and_store_content()/situate_context() below, only
+# when actually chunking/summarizing content, so a plain
+# `import tldw_chatbook.app` doesn't eagerly load them.
 from tldw_chatbook.Embeddings.Embeddings_Lib import EmbeddingFactory, EmbeddingConfigSchema
-from tldw_chatbook.LLM_Calls.Summarization_General_Lib import analyze
 #
 ########################################################################################################################
 #
@@ -494,6 +498,8 @@ class ChromaDBManager:
         return self.situate_context(api_name_for_context, doc_content, chunk_content)
 
     def situate_context(self, api_name_for_context: str, doc_content: str, chunk_content: str) -> str:
+        from tldw_chatbook.LLM_Calls.Summarization_General_Lib import analyze
+
         prompt = self.situate_context_prompt_template.format(doc_content=doc_content, chunk_content=chunk_content)
         system_message = CONFIG_PROMPT_SITUATE_CHUNK_CONTEXT
         try:
@@ -545,6 +551,8 @@ class ChromaDBManager:
             ValueError: If embedding model ID cannot be resolved
             RuntimeError: If embedding generation fails
         """
+        from tldw_chatbook.Chunking.Chunk_Lib import chunk_for_embedding
+
         logger.debug(f"process_and_store_content: Starting for media_id={media_id}, file_name={file_name}")
         logger.debug(f"process_and_store_content: Parameters - collection_name={collection_name}, " +
                     f"embedding_model_id_override={embedding_model_id_override}, create_embeddings={create_embeddings}, " +

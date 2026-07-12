@@ -34,6 +34,7 @@ Dependencies:
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import hashlib
+import importlib.util
 import json
 import os
 import random
@@ -58,12 +59,11 @@ except ImportError:
     BS4_AVAILABLE = False
     BeautifulSoup = None
 
-try:
-    import pandas as pd
-    PANDAS_AVAILABLE = True
-except ImportError:
-    PANDAS_AVAILABLE = False
-    pd = None
+# pandas is only needed by parse_csv_urls() below (~300 transitive modules),
+# so probe availability cheaply via find_spec (no import) and defer the real
+# `import pandas` to that function.
+PANDAS_AVAILABLE = importlib.util.find_spec("pandas") is not None
+pd = None
 
 try:
     from playwright.async_api import (
@@ -96,7 +96,11 @@ except ImportError:
         return iterable
 #
 # Import Local
-from tldw_chatbook.LLM_Calls.Summarization_General_Lib import analyze
+# `analyze` (LLM_Calls.Summarization_General_Lib) pulls in the summarization
+# stack (nltk/scipy/sklearn/pandas via Chunking/Chunk_Lib). It is imported
+# lazily inside scrape_and_summarize_multiple(), only when summarization is
+# actually requested, so a plain `import tldw_chatbook.app` doesn't eagerly
+# load it.
 from tldw_chatbook.Metrics.metrics_logger import log_histogram, log_counter
 from tldw_chatbook.Logging_Config import logging
 from tldw_chatbook.DB.Client_Media_DB_v2 import ingest_article_to_db_new
@@ -596,6 +600,11 @@ async def scrape_and_summarize_multiple(
                 if summarize_checkbox:
                     content = article.get('content', '')
                     if content:
+                        # Deferred: pulls in the summarization stack
+                        # (nltk/scipy/sklearn/pandas), so only import it once
+                        # we actually have content to summarize.
+                        from tldw_chatbook.LLM_Calls.Summarization_General_Lib import analyze
+
                         # Prepare prompts
                         system_message_final = system_message or \
                                                "Act as a professional summarizer and summarize this article."
@@ -1147,7 +1156,9 @@ def parse_csv_urls(file_path: str) -> Dict[str, Union[str, List[str]]]:
     if not PANDAS_AVAILABLE:
         logging.error("Pandas not available for CSV parsing. Install with: pip install tldw_chatbook[websearch]")
         return {}
-        
+
+    import pandas as pd
+
     try:
         # Read CSV file
         df = pd.read_csv(file_path)
