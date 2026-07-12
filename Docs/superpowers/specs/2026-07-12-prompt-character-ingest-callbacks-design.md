@@ -81,7 +81,12 @@ Semantics are unchanged from today except that the callbacks now fire:
 
 ## Testing
 
-One harness-free unit test module (`Tests/Event_Handlers/test_ingest_import_dispatch.py`), following the project's fake-`app` pattern (no Textual harness). Each test builds a fake `app` (a `SimpleNamespace`/`MagicMock`) exposing exactly what the trigger + callbacks touch, calls the async trigger, captures the coroutine handed to the fake `run_worker`, and awaits it:
+Mirror the **existing** T167 notes test, `Tests/Event_Handlers/test_note_ingest_events.py`, which is the established template: a `_make_mock_app(...)` helper builds a `Mock` app whose `query_one` has a selector side-effect and whose `run_worker` side-effect **captures the `worker_callable`**; the test `await`s the async trigger, then `await worker_callable()` (the captured coroutine), then asserts the dispatched effects. Add one test file per module, matching that file's naming and pattern (no Textual harness, `@pytest.mark.asyncio`, `Button.Pressed(Mock(spec=Button))` for the event):
+
+- `Tests/Event_Handlers/test_prompt_ingest_events.py`
+- `Tests/Event_Handlers/test_character_ingest_events.py`
+
+Each test builds a fake `app` exposing exactly what the trigger + callbacks touch, calls the async trigger, captures the coroutine handed to the fake `run_worker`, and awaits it:
 
 - **Prompt success:** fake app with `selected_prompt_files_for_import=[Path("p.json")]`, `query_one`→stub `TextArea` (`.text`, `.load_text`, `.refresh`), `notify`/`call_later`/`run_worker` as mocks; patch `prompts_db_initialized`→`True` and `import_prompts_from_files`→a results list. After awaiting the captured coroutine, assert the stub TextArea's `load_text` was called with the summary (i.e. `process_prompt_import_success` fired).
 - **Prompt failure:** same, but `import_prompts_from_files` raises. Assert awaiting the captured coroutine **re-raises**, and `app.notify` was called with an error severity (i.e. `process_prompt_import_failure` fired).
