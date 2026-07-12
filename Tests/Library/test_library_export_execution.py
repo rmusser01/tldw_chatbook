@@ -109,7 +109,7 @@ class _FakeExportService:
         }
         self._create_error = create_error
 
-    async def export_chatbook(self, request_data):
+    async def export_chatbook(self, request_data, *, progress_callback=None, cancel_check=None):
         self.calls.append("export_chatbook")
         self.export_payloads.append(dict(request_data))
         return dict(self._export_result)
@@ -198,7 +198,7 @@ def test_export_via_service_reports_success_even_when_registry_recording_raises(
 
 def test_export_via_service_wraps_export_chatbook_exception_as_failure():
     class _RaisingService:
-        async def export_chatbook(self, request_data):
+        async def export_chatbook(self, request_data, *, progress_callback=None, cancel_check=None):
             raise RuntimeError("boom")
 
     outcome = LibraryScreen._run_library_export_via_service(

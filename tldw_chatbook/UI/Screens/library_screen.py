@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import re
+import threading
 import time
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
@@ -33,6 +34,10 @@ from ...Constants import (
     LIBRARY_NAV_CONTEXT_NOTES_CREATE,
 )
 from ...DB.ChaChaNotes_DB import ConflictError
+from ...Library.export_progress import (
+    ExportProgressThrottle,
+    format_export_progress_line,
+)
 from ...Library.library_collections_service import LibraryCollectionsServiceError
 from ...Library.library_collections_state import LibraryCollectionsPanelState
 from ...Library.library_conversations_state import build_library_conversations_state
@@ -659,6 +664,12 @@ class LibraryScreen(BaseAppScreen):
         # at, mirroring ``_apply_library_export_counts``'s scope-mismatch
         # staleness guard for the sibling counts worker.
         self._library_export_run_id: int = 0
+        # Task 4: the current run's cancellation signal. Created fresh at
+        # every submit (``handle_library_export_submit``); the worker reads
+        # ``event.is_set`` as the service's ``cancel_check``. Nothing sets
+        # it yet in this task -- the Cancel button and navigate-away wiring
+        # land in Task 5.
+        self._library_export_cancel_event: threading.Event | None = None
 
     def on_mount(self) -> None:
         """Populate the Library on entry, rendering instantly from cache.
@@ -3426,6 +3437,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_export_status = f"Exporting… ({total} items)"
         self._library_export_run_id += 1
         run_id = self._library_export_run_id
+        self._library_export_cancel_event = threading.Event()
+        cancel_event = self._library_export_cancel_event
         self.refresh(recompose=True)
         self._start_library_export_worker(
             run_id=run_id,
@@ -3434,6 +3447,7 @@ class LibraryScreen(BaseAppScreen):
             description=description,
             media_quality=media_quality,
             destination=destination,
+            cancel_event=cancel_event,
         )
 
     def _start_library_export_worker(
@@ -3445,6 +3459,7 @@ class LibraryScreen(BaseAppScreen):
         description: str,
         media_quality: str,
         destination: str,
+        cancel_event: threading.Event,
     ) -> None:
         """Resolve selections (memory-DB-safe), then dispatch the real export worker.
 
@@ -3495,6 +3510,7 @@ class LibraryScreen(BaseAppScreen):
             media_db=media_db,
             chachanotes_db=chachanotes_db,
             preresolved_selections=preresolved_selections,
+            cancel_event=cancel_event,
         )
 
     @staticmethod
@@ -3534,6 +3550,8 @@ class LibraryScreen(BaseAppScreen):
         *,
         name: str,
         description: str,
+        progress_callback=None,
+        cancel_check=None,
     ) -> dict[str, Any]:
         """Execute one export through ``service``, synchronously: zip first, registry only on success.
 
@@ -3557,7 +3575,9 @@ class LibraryScreen(BaseAppScreen):
         ``dependency_info``, ``registry_recorded``.
         """
         try:
-            export_result = asyncio.run(service.export_chatbook(payload))
+            export_result = asyncio.run(service.export_chatbook(
+                payload, progress_callback=progress_callback, cancel_check=cancel_check,
+            ))
         except Exception as exc:
             logger.opt(exception=True).warning("Library export service call failed.")
             return {
@@ -3616,6 +3636,7 @@ class LibraryScreen(BaseAppScreen):
         media_db: Any,
         chachanotes_db: Any,
         preresolved_selections: dict[ContentType, list[str]] | None,
+        cancel_event: threading.Event | None,
     ) -> None:
         if preresolved_selections is not None:
             selections = preresolved_selections
@@ -3645,8 +3666,23 @@ class LibraryScreen(BaseAppScreen):
             destination=destination,
             media_quality=media_quality,
         )
+        throttle = ExportProgressThrottle()
+
+        def _progress_cb(evt) -> None:
+            try:
+                if not throttle.should_emit(evt.phase, evt.current, evt.total, time.monotonic()):
+                    return
+                self.app.call_from_thread(
+                    self._apply_library_export_progress, run_id, evt.phase, evt.current, evt.total,
+                )
+            except Exception:
+                # NoApp/shutdown mid-marshal must not crash the worker.
+                pass
+
         outcome = self._run_library_export_via_service(
-            service, payload, name=name, description=description
+            service, payload, name=name, description=description,
+            progress_callback=_progress_cb,
+            cancel_check=(cancel_event.is_set if cancel_event is not None else None),
         )
         if outcome["success"]:
             self._marshal_library_export_success(
@@ -3829,6 +3865,26 @@ class LibraryScreen(BaseAppScreen):
         self._library_export_status = ""
         self._library_export_error = escape_markup(str(message))
         self._update_library_export_canvas_after_run()
+
+    def _apply_library_export_progress(
+        self, run_id: int, phase: str, current: int, total: int
+    ) -> None:
+        """UI-thread progress tick: update the status line in place if this run is current."""
+        if run_id != self._library_export_run_id or not self._library_export_running:
+            return
+        self._library_export_status = format_export_progress_line(phase, current, total)
+        self._refresh_library_export_status_line()
+
+    def _refresh_library_export_status_line(self) -> None:
+        """Update only the #library-export-status-line widget (no recompose)."""
+        if not self.is_mounted or self._library_selected_row_id != LIBRARY_ROW_INGEST_EXPORT:
+            return
+        try:
+            widget = self.query_one("#library-export-status-line", Static)
+            widget.update(self._library_export_status)
+            widget.display = bool(self._library_export_status)
+        except (NoMatches, QueryError):
+            pass
 
     def _update_library_export_canvas_after_run(self) -> None:
         """Targeted DOM update once an export run finishes (success or failure).
