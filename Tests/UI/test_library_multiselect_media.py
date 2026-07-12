@@ -55,6 +55,18 @@ async def test_export_selected_builds_ids_scope():
     assert fake._opened == [ExportScope(kind="media", ids=("1", "2", "3"))]
 
 
+@pytest.mark.asyncio
+async def test_export_selected_empty_is_noop_not_whole_source():
+    # An empty selection must NOT fall through to a whole-source export
+    # (empty ids == whole source in resolve_export_selections).
+    fake = _media_fake(select_mode=True)
+    async def _open(scope): fake._opened.append(scope)
+    fake._open_library_export_canvas = _open
+    event = SimpleNamespace(stop=lambda: None)
+    await LibraryScreen.handle_library_media_export_selected(fake, event)
+    assert fake._opened == []
+
+
 def _select_mode_canvas_state() -> LibraryMediaCanvasState:
     rows = (
         LibraryMediaRow(

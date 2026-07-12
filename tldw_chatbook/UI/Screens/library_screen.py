@@ -5349,6 +5349,12 @@ class LibraryScreen(BaseAppScreen):
     async def handle_library_conversations_export_selected(self, event: Button.Pressed) -> None:
         """Open the export canvas scoped to the currently selected conversation ids."""
         event.stop()
+        # Defensive: an empty selection would resolve to a whole-source export
+        # (empty ids == whole source). The button is disabled at 0 selected, so
+        # this is normally unreachable -- guard anyway so a future activation
+        # path can't silently export everything.
+        if not self._library_conversations_row_selection.count:
+            return
         await self._open_library_export_canvas(
             self._library_conversations_row_selection.export_scope()
         )
@@ -5432,6 +5438,10 @@ class LibraryScreen(BaseAppScreen):
     async def handle_library_media_export_selected(self, event: Button.Pressed) -> None:
         """Open the export canvas scoped to the currently selected media ids."""
         event.stop()
+        # Defensive: an empty selection would resolve to a whole-source export
+        # (empty ids == whole source); the button is disabled at 0 selected.
+        if not self._library_media_row_selection.count:
+            return
         await self._open_library_export_canvas(self._library_media_row_selection.export_scope())
 
     @on(Button.Pressed, "#library-media-open-viewer")
@@ -6563,6 +6573,10 @@ class LibraryScreen(BaseAppScreen):
     async def handle_library_notes_export_selected(self, event: Button.Pressed) -> None:
         """Open the export canvas scoped to the currently selected note ids."""
         event.stop()
+        # Defensive: an empty selection would resolve to a whole-source export
+        # (empty ids == whole source); the button is disabled at 0 selected.
+        if not self._library_notes_row_selection.count:
+            return
         await self._open_library_export_canvas(self._library_notes_row_selection.export_scope())
 
     @on(Button.Pressed, "#library-note-back")
