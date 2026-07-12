@@ -1318,6 +1318,9 @@ async def test_library_destination_lists_local_source_snapshot_from_services():
         "mode": "local",
         "limit": library_page_sizes.get("conversations"),
         "offset": 0,
+        # Library lists conversations across scopes so Console workspace
+        # chats appear alongside global ones (task-179).
+        "scope_type": "all",
     }
 
 
