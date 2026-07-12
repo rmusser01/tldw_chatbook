@@ -51,6 +51,15 @@ class LibraryPromptsListCanvas(Vertical):
             ``"Saved."`` or a name-conflict explanation), or ``""`` when
             idle. Not shown while ``conflict`` is set -- the conflict
             banner communicates the outcome instead.
+        import_open: List-view only. When ``True``, renders the inline
+            Import row (a path ``Input`` for a file OR folder, plus
+            Import/Cancel actions) below the sort/Import…/Export…
+            toolbar.
+        import_path: The Import row's path ``Input`` prefilled value.
+            Only meaningful while ``import_open`` is ``True``.
+        import_status: Muted outcome line shown below the Import row
+            (e.g. ``"2 imported · 1 skipped (duplicate name)"``), or
+            ``""`` when idle/not yet run.
     """
 
     def __init__(
@@ -63,6 +72,9 @@ class LibraryPromptsListCanvas(Vertical):
         editor_state: PromptEditorState | None = None,
         conflict: bool = False,
         status: str = "",
+        import_open: bool = False,
+        import_path: str = "",
+        import_status: str = "",
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -73,6 +85,9 @@ class LibraryPromptsListCanvas(Vertical):
         self.editor_state = editor_state
         self.conflict = conflict
         self.status = status
+        self.import_open = import_open
+        self.import_path = import_path
+        self.import_status = import_status
         self.styles.width = "1fr"
         self.styles.min_width = 40
 
@@ -116,6 +131,8 @@ class LibraryPromptsListCanvas(Vertical):
                 "Export…", id="library-prompts-export",
                 classes="library-canvas-action", compact=True,
             )
+        if self.import_open:
+            yield from self._compose_import_row()
         if not state.rows:
             yield Static(
                 _EMPTY_PROMPTS_FILTER_COPY if self.filter_value else _EMPTY_PROMPTS_COPY,
@@ -139,6 +156,41 @@ class LibraryPromptsListCanvas(Vertical):
                 )
                 button.prompt_id = row.prompt_id
                 yield button
+
+    def _compose_import_row(self) -> ComposeResult:
+        """Render the inline Import row: a path Input, then a Run/Cancel
+        action toolbar, then the outcome line.
+
+        The path ``Input`` is its own full-width sibling -- NOT packed into
+        a ``Horizontal`` alongside the action Buttons -- mirroring
+        ``LibraryIngestCanvas``'s documented render-safe shape for this
+        canvas family: a ``Horizontal`` mixing a 1fr-width Input with
+        fixed-width compact Buttons is this family's known non-rendering
+        failure mode. The Run/Cancel Buttons instead get their own
+        ``ds-toolbar`` row underneath, the same fixed-width-only shape as
+        the sort/Import…/Export… toolbar above.
+        """
+        yield Input(
+            placeholder="File or folder path…",
+            id="library-prompts-import-path",
+            value=self.import_path,
+        )
+        toolbar = Horizontal(classes="ds-toolbar")
+        toolbar.styles.height = "auto"
+        with toolbar:
+            yield Button(
+                "Import", id="library-prompts-import-run",
+                classes="library-canvas-action", compact=True,
+            )
+            yield Button(
+                "Cancel", id="library-prompts-import-cancel",
+                classes="library-canvas-action", compact=True,
+            )
+        yield Static(
+            self.import_status,
+            id="library-prompts-import-status",
+            markup=False,
+        )
 
     def _compose_editor(self) -> ComposeResult:
         """Render the prompt editor: Back, six fields, meta, actions.

@@ -848,6 +848,36 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     color: $ds-text-muted;
 }
 
+/* Toolbar Import… row (library_prompts_canvas.py, Task 5): the path Input
+   matches the filter box's field look; the outcome line is muted like the
+   editor's save-status Static. */
+#library-prompts-import-path {
+    width: 100%;
+    height: 3;
+    min-height: 3;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#library-prompts-import-path:focus {
+    border: tall $ds-input-focus-accent;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+#library-prompts-import-status {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    margin: 0 0 1 0;
+    color: $ds-text-muted;
+}
+
 #library-notes-create-header {
     width: 100%;
     min-width: 0;

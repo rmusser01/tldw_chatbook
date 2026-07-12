@@ -104,6 +104,13 @@ from ...Library.library_prompts_state import (
     classify_prompt_save_error,
     prompt_editor_meta_line,
 )
+from ...Prompt_Management.prompt_markdown_export import render_prompt_markdown
+from ...Prompt_Management.Prompts_Interop import (
+    parse_json_prompts_from_content,
+    parse_markdown_prompts_from_content,
+    parse_txt_prompts_from_content,
+    parse_yaml_prompts_from_content,
+)
 from ...Library.library_rag_service import (
     LibraryRagSearchOutcome,
     LibraryRagSearchRequest,
@@ -189,6 +196,21 @@ LIBRARY_SOURCE_PAGE_SIZES = {"notes": 100, "media": 50, "conversations": 50, "pr
 # library_prompts_state.py) since it's screen-toolbar-cycling concern, not
 # pure list-state-building logic.
 _LIBRARY_PROMPTS_SORT_MODES = ("newest", "name")
+# Toolbar Import… (Task 5): which parser handles which file extension.
+# Mirrors ``Prompts_Interop._get_file_type``'s extension map, but writes
+# through ``prompt_scope_service``/``LocalPromptService`` per-prompt
+# (duplicate-name = skip, never overwrite) rather than
+# ``import_prompts_from_files`` -- that helper's own write path
+# (``add_or_update_prompt_interop``) hardcodes ``overwrite=True`` with no
+# way to opt out, and bypasses the scope service entirely. See
+# ``_run_library_prompts_import``.
+_LIBRARY_PROMPT_IMPORT_PARSERS = {
+    ".json": parse_json_prompts_from_content,
+    ".yaml": parse_yaml_prompts_from_content,
+    ".yml": parse_yaml_prompts_from_content,
+    ".md": parse_markdown_prompts_from_content,
+    ".txt": parse_txt_prompts_from_content,
+}
 LIBRARY_SERVICE_ERROR_COPY = "Library source services unavailable; retry Library later."
 LIBRARY_SERVICE_UNAVAILABLE_COPY = "Library source services are unavailable in this runtime."
 LIBRARY_EMPTY_COPY = "No local Library content yet."
@@ -631,6 +653,12 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompt_dirty: bool = False
         self._library_prompt_status: str = ""
         self._library_prompt_conflict_snapshot: PromptEditorState | None = None
+        # Toolbar Import… state (Task 5): a path Input (file OR folder)
+        # inlined below the sort/Import…/Export… toolbar, worker-executed
+        # on Run/Enter. See ``_run_library_prompts_import``.
+        self._library_prompts_import_open: bool = False
+        self._library_prompts_import_path: str = ""
+        self._library_prompts_import_status: str = ""
         # Guards against the spurious ``Input.Changed``/``TextArea.Changed``
         # Textual fires when a widget mounts with a non-empty initial value
         # -- without this, opening a prompt would immediately mark it dirty
@@ -2943,6 +2971,9 @@ class LibraryScreen(BaseAppScreen):
                         self._build_library_prompts_state(),
                         sort_mode=self._library_prompts_sort,
                         filter_value=self._library_prompts_filter,
+                        import_open=self._library_prompts_import_open,
+                        import_path=self._library_prompts_import_path,
+                        import_status=self._library_prompts_import_status,
                         id="library-prompts-canvas",
                     )
                 elif shell.canvas_kind == "search":
@@ -5893,6 +5924,245 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompts_filter = self._safe_text(event.value, max_length=200).strip()
         self.refresh(recompose=True)
 
+    @on(Button.Pressed, "#library-prompts-import")
+    def handle_library_prompts_import(self, event: Button.Pressed) -> None:
+        """Open the inline Import row below the prompts toolbar.
+
+        Idempotent while already open -- pressing Import… again does not
+        close it. Cancel is the only way to close the row once opened,
+        avoiding a confusing double-duty toggle that would also hide a
+        just-shown outcome line.
+
+        Args:
+            event: Button press event emitted by the "Import…" action.
+        """
+        event.stop()
+        if self._library_prompts_import_open:
+            return
+        self._library_prompts_import_open = True
+        self._library_prompts_import_path = ""
+        self._library_prompts_import_status = ""
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-prompts-import-cancel")
+    def handle_library_prompts_import_cancel(self, event: Button.Pressed) -> None:
+        """Close the inline Import row, discarding any typed path/outcome.
+
+        Args:
+            event: Button press event emitted by the Import row's
+                "Cancel" action.
+        """
+        event.stop()
+        self._library_prompts_import_open = False
+        self._library_prompts_import_path = ""
+        self._library_prompts_import_status = ""
+        self.refresh(recompose=True)
+
+    @on(Input.Changed, "#library-prompts-import-path")
+    def handle_library_prompts_import_path_changed(self, event: Input.Changed) -> None:
+        """Track the Import row's path text as the user types it (state only).
+
+        Args:
+            event: Input change event emitted by the Import row's path field.
+        """
+        event.stop()
+        self._library_prompts_import_path = event.value
+
+    @on(Input.Submitted, "#library-prompts-import-path")
+    def handle_library_prompts_import_path_submitted(self, event: Input.Submitted) -> None:
+        """Run the import when Enter is pressed in the Import row's path field.
+
+        Args:
+            event: Input submission event emitted by the Import row's
+                path field.
+        """
+        event.stop()
+        self._start_library_prompts_import()
+
+    @on(Button.Pressed, "#library-prompts-import-run")
+    def handle_library_prompts_import_run(self, event: Button.Pressed) -> None:
+        """Run the import when the Import row's "Import" action is pressed.
+
+        Args:
+            event: Button press event emitted by the Import row's
+                "Import" action.
+        """
+        event.stop()
+        self._start_library_prompts_import()
+
+    def _start_library_prompts_import(self) -> None:
+        """Validate the Import row has a non-blank path, then run the import worker.
+
+        Worker-executed (exclusive, its own group) since it performs file
+        IO plus one or more service calls per parsed prompt -- never
+        inline on the UI thread. A blank path is a quiet inline status
+        line, matching every other Library form's "nothing to do yet"
+        gate (e.g. ``_submit_library_ingest_form``'s blank-path notice).
+        """
+        if self._library_prompts_view != "list":
+            return
+        raw_path = self._library_prompts_import_path.strip()
+        if not raw_path:
+            self._apply_library_prompts_import_status("Please enter a file or folder path.")
+            return
+        self.run_worker(
+            self._run_library_prompts_import(raw_path),
+            exclusive=True,
+            group="library_prompts_import",
+        )
+
+    def _apply_library_prompts_import_status(self, text: str) -> None:
+        """Set the Import row's outcome line and recompose to show it."""
+        self._library_prompts_import_status = text
+        if self.is_mounted:
+            self.refresh(recompose=True)
+
+    async def _run_library_prompts_import(self, raw_path: str) -> None:
+        """Import prompts from a file or folder path, skipping duplicate names.
+
+        Deliberately does NOT use
+        ``Prompts_Interop.import_prompts_from_files``: that helper's own
+        write path (``add_or_update_prompt_interop``) hardcodes
+        ``overwrite=True`` with no parameter to opt out, and writes
+        directly through the global interop DB singleton, bypassing
+        ``prompt_scope_service``/``LocalPromptService`` entirely -- both
+        violate this feature's "duplicate name = skip, never overwrite"
+        contract and this codebase's "UI writes only through the scope
+        service" rule. Instead, each supported file is read and parsed via
+        the same module-level parser functions
+        ``import_prompts_from_files`` itself dispatches to
+        (``parse_json_prompts_from_content`` etc. -- see
+        ``_LIBRARY_PROMPT_IMPORT_PARSERS``), and each parsed prompt is
+        created individually through the service layer, mirroring
+        ``_save_library_prompt``'s own duplicate-name pre-check (a
+        ``get_prompt`` lookup by name, ``include_deleted=True``, since
+        ``Prompts.name`` is globally unique regardless of soft-delete
+        state) before ever attempting a write -- a soft-deleted name is
+        treated as "taken" too, matching "never overwrite/suffix".
+
+        A file that fails to read/parse (invalid JSON/YAML, decode error)
+        is logged and skipped WHOLE -- it never partially applies some of
+        its prompts while silently discarding the rest because of a
+        parse-time exception.
+
+        Args:
+            raw_path: The Import row's typed path (file or folder),
+                already known non-blank by the caller.
+        """
+        try:
+            validated_path = validate_path_simple(
+                Path(raw_path).expanduser(), require_exists=True
+            )
+        except ValueError:
+            logger.opt(exception=True).warning(
+                f"Rejected Library prompts import path {raw_path!r}."
+            )
+            self._apply_library_prompts_import_status("Could not find that file or folder.")
+            return
+
+        if validated_path.is_dir():
+            files = sorted(
+                child for child in validated_path.iterdir()
+                if child.is_file() and child.suffix.lower() in _LIBRARY_PROMPT_IMPORT_PARSERS
+            )
+        elif validated_path.is_file():
+            if validated_path.suffix.lower() not in _LIBRARY_PROMPT_IMPORT_PARSERS:
+                self._apply_library_prompts_import_status("Unsupported file type.")
+                return
+            files = [validated_path]
+        else:
+            self._apply_library_prompts_import_status("Could not find that file or folder.")
+            return
+
+        if not files:
+            self._apply_library_prompts_import_status("No supported prompt files found.")
+            return
+
+        service = getattr(self.app_instance, "prompt_scope_service", None)
+        get_prompt = getattr(service, "get_prompt", None)
+        save_prompt = getattr(service, "save_prompt", None)
+        if not callable(get_prompt) or not callable(save_prompt):
+            self._apply_library_prompts_import_status("Prompt import is unavailable.")
+            return
+
+        imported = 0
+        skipped = 0
+        for file_path in files:
+            parser = _LIBRARY_PROMPT_IMPORT_PARSERS[file_path.suffix.lower()]
+            try:
+                content = await asyncio.to_thread(
+                    file_path.read_text, encoding="utf-8", errors="strict"
+                )
+                parsed_prompts = parser(content)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"Could not parse Library prompt import file '{file_path}'; skipping it whole."
+                )
+                continue
+
+            for prompt_data in parsed_prompts:
+                if not isinstance(prompt_data, Mapping):
+                    continue
+                name = self._sanitize_media_field(prompt_data.get("name") or "", max_length=300)
+                if not name:
+                    continue
+                try:
+                    existing = await self._run_library_service_call(
+                        get_prompt,
+                        mode="local",
+                        prompt_identifier=name,
+                        include_deleted=True,
+                        isolate_in_worker=True,
+                    )
+                except Exception:
+                    existing = None
+                if isinstance(existing, Mapping) and existing.get("local_id") is not None:
+                    skipped += 1
+                    continue
+
+                author = self._sanitize_media_field(
+                    prompt_data.get("author") or "", max_length=200
+                ) or None
+                details = self._sanitize_note_content(
+                    prompt_data.get("details") or "", max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS
+                )
+                system_prompt = self._sanitize_note_content(
+                    prompt_data.get("system_prompt") or "", max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS
+                )
+                user_prompt = self._sanitize_note_content(
+                    prompt_data.get("user_prompt") or "", max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS
+                )
+                keywords = [
+                    self._sanitize_media_field(str(kw), max_length=100)
+                    for kw in (prompt_data.get("keywords") or ())
+                    if str(kw).strip()
+                ] or None
+
+                try:
+                    await self._run_library_service_call(
+                        save_prompt,
+                        mode="local",
+                        name=name,
+                        author=author,
+                        details=details,
+                        system_prompt=system_prompt,
+                        user_prompt=user_prompt,
+                        keywords=keywords,
+                        isolate_in_worker=True,
+                    )
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        f"Failed to import Library prompt '{name}' from '{file_path}'."
+                    )
+                    continue
+                imported += 1
+
+        self._library_prompts_import_path = ""
+        self._apply_library_prompts_import_status(
+            f"{imported} imported · {skipped} skipped (duplicate name)"
+        )
+        self._refresh_local_source_snapshot()
+
     @on(Button.Pressed, ".library-prompt-row")
     async def handle_library_prompt_row(self, event: Button.Pressed) -> None:
         """Select a prompt row and open the in-canvas Library prompt editor.
@@ -6405,6 +6675,128 @@ class LibraryScreen(BaseAppScreen):
         self._reset_library_prompt_editor_state()
         self._refresh_local_source_snapshot()
         self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-prompt-export")
+    async def handle_library_prompt_export(self, event: Button.Pressed) -> None:
+        """Export the open prompt as Markdown via a ``FileSave`` dialog.
+
+        Args:
+            event: Button press event emitted by the editor's "Export…" action.
+        """
+        event.stop()
+        await self._export_library_prompt()
+
+    async def _export_library_prompt(self) -> None:
+        """Push the Export dialog for the open Library prompt.
+
+        Mirrors ``_export_library_note`` exactly (see that method's
+        docstring for the full ``FileSave`` constructor-shape rationale):
+        a ``FileSave`` prompt pre-filled with a sanitized default filename,
+        whose callback renders and writes the export once a path is
+        chosen. Reads the *live* editor widgets (via
+        ``_read_library_prompt_editor_fields``), never the DB/detail
+        mapping, so unlike Save there is nothing to flush first -- the
+        export reflects exactly what's on screen, including unsaved edits.
+        """
+        if self._library_prompts_view != "editor" or not self._selected_prompt_id:
+            return
+        fields = self._read_library_prompt_editor_fields()
+        if fields is None:
+            return
+        name, author, details, system_prompt, user_prompt, keywords_text = fields
+        prompt_id = self._selected_prompt_id
+        # Same inline sanitize-for-filename technique as
+        # ``_export_library_note``'s ``safe_title`` -- alnum/space/-/_ only,
+        # falling back to a generic name when that leaves nothing (e.g. a
+        # prompt named entirely in punctuation/emoji).
+        safe_name = "".join(
+            char for char in (name.strip() or "prompt") if char.isalnum() or char in (" ", "-", "_")
+        ).rstrip() or "prompt"
+        default_filename = f"{safe_name}.md"
+        await self.app.push_screen(
+            FileSave(
+                location=str(Path.home()),
+                title="Export Prompt as Markdown",
+                default_file=default_filename,
+            ),
+            callback=lambda path: self.call_after_refresh(
+                self._write_library_prompt_export_file,
+                path,
+                name,
+                author,
+                details,
+                system_prompt,
+                user_prompt,
+                keywords_text,
+                prompt_id,
+            ),
+        )
+
+    def _write_library_prompt_export_file(
+        self,
+        selected_path: Path | None,
+        name: str,
+        author: str,
+        details: str,
+        system_prompt: str,
+        user_prompt: str,
+        keywords_text: str,
+        prompt_id: int,
+    ) -> None:
+        """Write the exported prompt content to the path chosen via ``FileSave``.
+
+        Mirrors ``_write_library_note_export_file`` exactly: runs the
+        dialog-returned path through ``validate_path_simple`` (the same
+        base-directory-free validator this screen uses for every other
+        user-chosen save path) before writing, and is a plain (not async)
+        method since the write is a synchronous ``Path.write_text`` --
+        ``call_after_refresh`` (its only caller) accepts either.
+
+        Args:
+            selected_path: The chosen destination, or ``None`` if the
+                dialog was cancelled.
+            name: The prompt's live (possibly unsaved) name.
+            author: The prompt's live author.
+            details: The prompt's live details text.
+            system_prompt: The prompt's live system-prompt text.
+            user_prompt: The prompt's live user-prompt text.
+            keywords_text: The prompt's live keywords, as a
+                comma-separated string.
+            prompt_id: The prompt's id (used only for logging).
+        """
+        notify = getattr(self.app_instance, "notify", None)
+        if not selected_path:
+            if callable(notify):
+                notify("Prompt export cancelled.", severity="information")
+            return
+        try:
+            validated_path = validate_path_simple(selected_path, require_exists=False)
+        except ValueError as exc:
+            logger.warning(
+                f"Rejected Library prompt export path {selected_path!r} for {prompt_id!r}: {exc}"
+            )
+            if callable(notify):
+                notify(f"Rejected export path: {exc}", severity="warning")
+            return
+        keywords = self._library_note_keywords_from_input(keywords_text) or []
+        detail = {
+            "name": name,
+            "author": author,
+            "details": details,
+            "system_prompt": system_prompt,
+            "user_prompt": user_prompt,
+            "keywords": keywords,
+        }
+        try:
+            validated_path.write_text(render_prompt_markdown(detail), encoding="utf-8")
+        except Exception as exc:
+            logger.opt(exception=True).warning(
+                f"Error exporting Library prompt {prompt_id!r} to '{validated_path}'.")
+            if callable(notify):
+                notify(f"Error exporting prompt: {type(exc).__name__}", severity="error")
+            return
+        if callable(notify):
+            notify(f"Prompt exported successfully to {validated_path.name}", severity="information")
 
     @on(Button.Pressed, "#library-prompt-delete")
     def handle_library_prompt_delete(self, event: Button.Pressed) -> None:

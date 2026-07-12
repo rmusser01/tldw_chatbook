@@ -23,10 +23,11 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Input, TextArea
+from textual.widgets import Button, Input, Static, TextArea
 
 from tldw_chatbook.DB.Prompts_DB import ConflictError, PromptsDatabase
 from tldw_chatbook.Library.library_prompts_state import (
@@ -35,10 +36,14 @@ from tldw_chatbook.Library.library_prompts_state import (
     build_prompts_list_state,
 )
 from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_PROMPTS
+from tldw_chatbook.Prompt_Management.prompt_markdown_export import render_prompt_markdown
+from tldw_chatbook.Prompt_Management.Prompts_Interop import parse_markdown_prompts_from_content
 from tldw_chatbook.Prompt_Management.prompt_scope_service import (
     LocalPromptService as ScopeLocalPromptService,
     PromptScopeService,
 )
+from tldw_chatbook.Third_Party.textual_fspicker import FileSave
+from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library.library_prompts_canvas import LibraryPromptsListCanvas
 
@@ -166,6 +171,59 @@ async def test_prompts_canvas_sort_label_reflects_sort_mode():
     async with app.run_test() as pilot:
         sort_button = pilot.app.query_one("#library-prompts-sort", Button)
         assert "Name" in str(sort_button.label)
+
+
+# ---------------------------------------------------------------------------
+# Task 5: toolbar Import… row widget tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_prompts_canvas_import_row_hidden_by_default():
+    """The Import row (path Input, Run/Cancel actions, outcome line) is not
+    mounted at all while ``import_open`` is ``False`` (the default)."""
+    app = _CanvasHost(_three_row_state())
+    async with app.run_test() as pilot:
+        assert len(pilot.app.query("#library-prompts-import-path")) == 0
+        assert len(pilot.app.query("#library-prompts-import-run")) == 0
+        assert len(pilot.app.query("#library-prompts-import-cancel")) == 0
+
+
+@pytest.mark.asyncio
+async def test_prompts_canvas_import_row_renders_when_open():
+    """``import_open=True`` renders the path Input (prefilled from
+    ``import_path``), Run/Cancel actions, and the outcome Static (showing
+    ``import_status`` verbatim)."""
+    app = _CanvasHost(
+        _three_row_state(),
+        import_open=True,
+        import_path="/tmp/my-prompts.md",
+        import_status="2 imported · 1 skipped (duplicate name)",
+    )
+    async with app.run_test() as pilot:
+        path_input = pilot.app.query_one("#library-prompts-import-path", Input)
+        assert path_input.value == "/tmp/my-prompts.md"
+        assert pilot.app.query_one("#library-prompts-import-run", Button)
+        assert pilot.app.query_one("#library-prompts-import-cancel", Button)
+        status = pilot.app.query_one("#library-prompts-import-status", Static)
+        assert str(status.renderable) == "2 imported · 1 skipped (duplicate name)"
+
+
+@pytest.mark.asyncio
+async def test_prompts_canvas_import_path_input_is_not_packed_into_a_toolbar_row():
+    """The path Input is its own full-width sibling, NOT packed into a
+    ``Horizontal`` alongside the Run/Cancel Buttons -- this canvas family's
+    documented non-rendering failure mode is a ``Horizontal`` mixing a 1fr
+    Input with fixed-width compact Buttons (see
+    ``LibraryIngestCanvas``'s docstring)."""
+    app = _CanvasHost(_three_row_state(), import_open=True)
+    async with app.run_test() as pilot:
+        path_input = pilot.app.query_one("#library-prompts-import-path", Input)
+        assert path_input.parent is not None
+        assert not path_input.parent.has_class("ds-toolbar")
+        run_button = pilot.app.query_one("#library-prompts-import-run", Button)
+        assert run_button.parent is not None
+        assert run_button.parent.has_class("ds-toolbar")
 
 
 # ---------------------------------------------------------------------------
@@ -435,6 +493,39 @@ def test_library_prompt_editor_field_css_blocks_match_notes_editor_parity():
         assert "#library-prompt-conflict-copy," in text
         assert "#library-prompt-save-status {" in text
         status_block = _css_block(text, "#library-prompt-save-status {")
+        assert "color: $ds-text-muted;" in status_block
+
+
+def test_library_prompts_import_row_css_blocks_match_filter_status_parity():
+    """Toolbar Import… row ids introduced by Task 5 (the path Input, its
+    outcome Static) must have stylesheet rules matching their
+    ``#library-prompts-filter``/``#library-prompt-save-status`` siblings,
+    instead of silently falling back to unstyled defaults."""
+    agentic_terminal = AGENTIC_TERMINAL.read_text(encoding="utf-8")
+    bundled_stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+
+    for text in (agentic_terminal, bundled_stylesheet):
+        assert "#library-prompts-import-path {" in text
+        assert "#library-prompts-import-path:focus {" in text
+        assert "#library-prompts-import-status {" in text
+
+        input_block = _css_block(text, "#library-prompts-import-path {")
+        filter_block = _css_block(text, "#library-prompts-filter {")
+        for pinned in (
+            "height: 3;",
+            "border: tall $ds-grid-line;",
+            "background: $ds-surface-raised;",
+        ):
+            assert pinned in input_block
+            assert pinned in filter_block
+
+        focus_block = _css_block(text, "#library-prompts-import-path:focus {")
+        filter_focus_block = _css_block(text, "#library-prompts-filter:focus {")
+        for pinned in ("border: tall $ds-input-focus-accent;", "outline: none;"):
+            assert pinned in focus_block
+            assert pinned in filter_focus_block
+
+        status_block = _css_block(text, "#library-prompts-import-status {")
         assert "color: $ds-text-muted;" in status_block
 
 
@@ -774,3 +865,344 @@ async def test_library_prompt_save_success_updates_status_and_persists(tmp_path)
         persisted = db.fetch_prompt_details(prompt_id)
         assert persisted["author"] == "Updated Author"
         assert persisted["version"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Task 5: toolbar Import… + editor Export .md, end-to-end (real DB + service)
+# ---------------------------------------------------------------------------
+
+
+async def _open_prompts_list(screen, pilot) -> None:
+    """Open the rail's Prompts row (list view, not the editor)."""
+    screen.query_one("#library-row-browse-prompts").press()
+    await pilot.pause()
+    await pilot.pause()
+
+
+async def _wait_for_import_status(screen, pilot, *, attempts=200) -> str:
+    for _ in range(attempts):
+        if screen._library_prompts_import_status:
+            return screen._library_prompts_import_status
+        await pilot.pause(0.02)
+    return screen._library_prompts_import_status
+
+
+async def _run_import(screen, pilot, path: str) -> str:
+    """Open the Import row, type ``path``, press Import, and wait for the outcome."""
+    screen.query_one("#library-prompts-import", Button).press()
+    await pilot.pause()
+    screen.query_one("#library-prompts-import-path", Input).value = path
+    await pilot.pause()
+    screen.query_one("#library-prompts-import-run", Button).press()
+    await pilot.pause()
+    return await _wait_for_import_status(screen, pilot)
+
+
+@pytest.mark.asyncio
+async def test_library_prompts_import_button_opens_row(tmp_path):
+    db, service = _real_prompt_scope_service(tmp_path)
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompts_list(screen, pilot)
+
+        assert len(screen.query("#library-prompts-import-path")) == 0
+        screen.query_one("#library-prompts-import", Button).press()
+        await pilot.pause()
+
+        assert screen.query_one("#library-prompts-import-path", Input)
+
+
+@pytest.mark.asyncio
+async def test_library_prompts_import_cancel_closes_row(tmp_path):
+    db, service = _real_prompt_scope_service(tmp_path)
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompts_list(screen, pilot)
+
+        screen.query_one("#library-prompts-import", Button).press()
+        await pilot.pause()
+        assert screen.query_one("#library-prompts-import-path", Input)
+
+        screen.query_one("#library-prompts-import-cancel", Button).press()
+        await pilot.pause()
+
+        assert len(screen.query("#library-prompts-import-path")) == 0
+
+
+@pytest.mark.asyncio
+async def test_library_prompts_import_from_file_creates_prompt_and_reports_outcome(tmp_path):
+    db, service = _real_prompt_scope_service(tmp_path)
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    import_file = tmp_path / "imported.md"
+    import_file.write_text(
+        render_prompt_markdown(
+            {
+                "name": "Imported Prompt",
+                "author": "Importer",
+                "details": "from a file",
+                "system_prompt": "sys text",
+                "user_prompt": "user text",
+                "keywords": ["a", "b"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompts_list(screen, pilot)
+
+        status_text = await _run_import(screen, pilot, str(import_file))
+
+        assert status_text == "1 imported · 0 skipped (duplicate name)"
+        persisted = db.fetch_prompt_details("Imported Prompt")
+        assert persisted is not None
+        assert persisted["author"] == "Importer"
+        assert persisted["details"] == "from a file"
+        assert persisted["system_prompt"] == "sys text"
+        assert persisted["user_prompt"] == "user text"
+        assert sorted(persisted["keywords"]) == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_library_prompts_import_skips_existing_duplicate_name(tmp_path):
+    """Duplicate names are SKIPPED, never overwritten -- the pre-existing
+    row's content must be untouched after the import runs."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    db.add_prompt(
+        name="Existing", author="Original", details="d", user_prompt="original text"
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    import_file = tmp_path / "dup.md"
+    import_file.write_text(
+        render_prompt_markdown(
+            {
+                "name": "Existing",
+                "author": "Different",
+                "details": "d2",
+                "system_prompt": "sys2",
+                "user_prompt": "different text",
+                "keywords": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompts_list(screen, pilot)
+
+        status_text = await _run_import(screen, pilot, str(import_file))
+
+        assert status_text == "0 imported · 1 skipped (duplicate name)"
+        persisted = db.fetch_prompt_details("Existing")
+        assert persisted["author"] == "Original"
+        assert persisted["user_prompt"] == "original text"
+
+
+@pytest.mark.asyncio
+async def test_library_prompts_import_from_folder_aggregates_two_files(tmp_path):
+    db, service = _real_prompt_scope_service(tmp_path)
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    import_dir = tmp_path / "prompts_to_import"
+    import_dir.mkdir()
+    (import_dir / "one.md").write_text(
+        render_prompt_markdown(
+            {"name": "Folder One", "author": "A", "details": "", "system_prompt": "s1", "user_prompt": "u1", "keywords": []}
+        ),
+        encoding="utf-8",
+    )
+    (import_dir / "two.md").write_text(
+        render_prompt_markdown(
+            {"name": "Folder Two", "author": "B", "details": "", "system_prompt": "s2", "user_prompt": "u2", "keywords": []}
+        ),
+        encoding="utf-8",
+    )
+    (import_dir / "ignored.dat").write_text("not a supported extension", encoding="utf-8")
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompts_list(screen, pilot)
+
+        status_text = await _run_import(screen, pilot, str(import_dir))
+
+        assert status_text == "2 imported · 0 skipped (duplicate name)"
+        assert db.fetch_prompt_details("Folder One") is not None
+        assert db.fetch_prompt_details("Folder Two") is not None
+
+
+@pytest.mark.asyncio
+async def test_library_prompts_import_invalid_path_shows_quiet_status(tmp_path):
+    db, service = _real_prompt_scope_service(tmp_path)
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompts_list(screen, pilot)
+
+        status_text = await _run_import(screen, pilot, str(tmp_path / "does_not_exist.md"))
+
+        assert status_text == "Could not find that file or folder."
+        assert db.list_prompts()[3] == 0  # total_items
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_export_pushes_file_save_dialog(tmp_path):
+    """Export… pushes a ``FileSave`` dialog pre-filled with a sanitized
+    default filename derived from the prompt's current name -- mirrors
+    ``test_library_shell_note_export_markdown_pushes_file_save_dialog``."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Export Me", author="Author", details="d", system_prompt="s", user_prompt="u"
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+
+        screen.query_one("#library-prompt-export", Button).press()
+        for _ in range(150):
+            if isinstance(host.screen_stack[-1], FileSave):
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Export… never pushed a FileSave dialog.")
+
+        dialog = host.screen_stack[-1]
+        assert dialog._default_file == "Export Me.md"
+
+        await host.pop_screen()
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_write_export_file_writes_roundtrippable_markdown(tmp_path):
+    """The export write-path (bypassing the dialog UI, exercised separately
+    above) writes content that round-trips through the real parser --
+    mirrors ``test_library_shell_note_write_export_file_writes_expected_content``."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Export Me", author="Author", details="d", system_prompt="s", user_prompt="u",
+        keywords=["k1", "k2"],
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    app.notify = Mock()
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+
+        destination = tmp_path / "export.md"
+        screen._write_library_prompt_export_file(
+            destination, "Export Me", "Author", "d", "s", "u", "k1, k2", prompt_id,
+        )
+
+        written = destination.read_text(encoding="utf-8")
+        parsed = parse_markdown_prompts_from_content(written)
+        assert len(parsed) == 1
+        p = parsed[0]
+        assert (p["name"], p["author"], p["details"], p["system_prompt"], p["user_prompt"]) == (
+            "Export Me", "Author", "d", "s", "u",
+        )
+        assert p["keywords"] == ["k1", "k2"]
+        app.notify.assert_called_once()
+        assert "exported successfully" in app.notify.call_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_write_export_file_rejects_invalid_path(tmp_path, monkeypatch):
+    """A ``FileSave``-returned path that fails ``validate_path_simple`` must
+    be rejected with a quiet warning notice -- no write, no crash."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(name="Export Me", author="A", details="d", user_prompt="u")
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    app.notify = Mock()
+    host = LibraryHarness(app)
+
+    def _reject_path(*_args, **_kwargs):
+        raise ValueError("rejected for test")
+
+    monkeypatch.setattr(library_screen_module, "validate_path_simple", _reject_path)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+
+        destination = tmp_path / "export.md"
+        screen._write_library_prompt_export_file(
+            destination, "Export Me", "A", "d", "", "u", "", prompt_id,
+        )
+
+        assert not destination.exists()
+        app.notify.assert_called_once()
+        args, kwargs = app.notify.call_args
+        assert "Rejected export path" in args[0]
+        assert kwargs.get("severity") == "warning"
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_write_export_file_cancelled_dialog_notifies_quietly(tmp_path):
+    """A cancelled ``FileSave`` dialog (``selected_path=None``) is a silent
+    no-op plus a quiet notice -- no write, no crash."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(name="Export Me", author="A", details="d", user_prompt="u")
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    app.notify = Mock()
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+
+        screen._write_library_prompt_export_file(
+            None, "Export Me", "A", "d", "", "u", "", prompt_id,
+        )
+
+        app.notify.assert_called_once()
+        assert "cancelled" in app.notify.call_args.args[0]
