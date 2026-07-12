@@ -84,10 +84,14 @@ def _ensure_transformers():
     _ensure_torch()
     if transformers is not None:
         return transformers
-    transformers = get_safe_import('transformers')
-    if transformers is not None:
-        AutoModel = transformers.AutoModel
-        AutoTokenizer = transformers.AutoTokenizer
+    _transformers = get_safe_import('transformers')
+    if _transformers is not None:
+        # Bind the helper globals BEFORE the gate global (`transformers`), so a
+        # racing thread that observes `transformers is not None` is guaranteed
+        # to also see AutoModel/AutoTokenizer fully bound.
+        AutoModel = _transformers.AutoModel
+        AutoTokenizer = _transformers.AutoTokenizer
+        transformers = _transformers
     return transformers
 
 
@@ -96,9 +100,12 @@ def _ensure_numpy():
     global numpy, np
     if numpy is not None:
         return numpy
-    numpy = get_safe_import('numpy')
-    if numpy is not None:
-        np = numpy
+    _numpy = get_safe_import('numpy')
+    if _numpy is not None:
+        # Bind `np` BEFORE the gate global (`numpy`), so a racing thread that
+        # observes `numpy is not None` never finds `np` still the placeholder.
+        np = _numpy
+        numpy = _numpy
     return numpy
 
 
@@ -126,12 +133,10 @@ class _NumpyPlaceholder:
     installed, matching the previous eager-import fallback behavior.
     """
 
-    @staticmethod
-    def asarray(*args, **kwargs):
-        raise ImportError("NumPy not available. Install with: pip install tldw_chatbook[embeddings_rag]")
-
-    @staticmethod
-    def empty(*args, **kwargs):
+    def __getattr__(self, name: str) -> Any:
+        # Any attribute access (asarray, empty, float32, ndarray, ...) raises
+        # the same clear ImportError, so a genuinely-missing numpy fails loudly
+        # and consistently rather than with an incidental AttributeError.
         raise ImportError("NumPy not available. Install with: pip install tldw_chatbook[embeddings_rag]")
 
 

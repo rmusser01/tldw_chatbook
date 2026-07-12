@@ -72,8 +72,11 @@ def _ensure_nltk():
         from nltk.tokenize import sent_tokenize as _sent_tokenize
     except ImportError:
         return None
-    nltk = _nltk
+    # Bind `sent_tokenize` BEFORE the gate global (`nltk`), so a racing thread
+    # that observes `nltk is not None` never finds `sent_tokenize` still the
+    # regex fallback.
     sent_tokenize = _sent_tokenize
+    nltk = _nltk
     return nltk
 
 #
