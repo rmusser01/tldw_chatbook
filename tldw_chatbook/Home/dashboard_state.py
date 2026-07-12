@@ -374,7 +374,16 @@ def build_home_controls(
     # fallback) Pause keeps its unconditional-when-running behavior.
     selected_item_is_ingest_job = selected_item_is_running and _is_local_ingest_item(selected_item)
     chatbook_item = _first_chatbook_artifact_item(state)
-    detail_item = choose_home_selected_item(state)
+    # When a real item is selected, its details/console controls target THAT
+    # item -- mirroring the selected_item overrides for Retry/Pause above (PR
+    # #600 review). Without this, "Open details" (and "Open in Console")
+    # pointed at whichever item ``choose_home_selected_item`` ranks first
+    # (approval > failed > running > ...), so selecting a non-first failed
+    # item and pressing Open details opened the first item's details while the
+    # canvas showed the second. The no-selection callers (summarize_home_
+    # dashboard, the triage builder's count-only fallback) pass
+    # ``selected_item=None`` and keep today's first-in-priority behavior.
+    detail_item = selected_item if selected_item is not None else choose_home_selected_item(state)
 
     if _pending_approval_count(state):
         controls.extend(

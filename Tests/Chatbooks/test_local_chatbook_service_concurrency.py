@@ -25,6 +25,13 @@ THREAD_COUNT = 20
 
 
 def test_concurrent_create_chatbook_preserves_all_records_and_unique_ids(tmp_path):
+    """Concurrent create_chatbook calls must not lose records or collide on next_id.
+
+    Spawns ``THREAD_COUNT`` OS threads that each call ``create_chatbook`` on
+    one shared service, synchronized on a barrier to force interleaving, and
+    asserts the registry ends with exactly ``THREAD_COUNT`` records and that
+    many distinct ``chatbook_id``s. Fails without the read-modify-write lock.
+    """
     registry_path = tmp_path / "chatbooks.json"
     service = LocalChatbookService(db_paths={}, registry_path=registry_path)
 
@@ -48,6 +55,11 @@ def test_concurrent_create_chatbook_preserves_all_records_and_unique_ids(tmp_pat
         thread.start()
     for thread in threads:
         thread.join(timeout=30)
+
+    # A thread still alive after join() means it hung (e.g. a deadlock on the
+    # registry lock) -- fail loudly rather than reading a half-written registry.
+    stuck = [t.name for t in threads if t.is_alive()]
+    assert not stuck, f"worker thread(s) did not terminate within 30s: {stuck}"
 
     assert not errors, f"worker thread(s) raised: {errors}"
 

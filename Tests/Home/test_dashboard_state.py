@@ -726,6 +726,36 @@ def test_build_home_controls_selected_recent_only_item_gets_open_details():
     assert controls_by_id["home-open-details"].applies_to == "work_details"
 
 
+def test_build_home_controls_open_details_targets_selected_failed_item_not_first():
+    """PR #600 review (Gemini): the count-driven ``home-open-details`` must
+    target the SELECTED item, not whichever ``choose_home_selected_item``
+    ranks first. With 2+ failed items, selecting the second and opening its
+    details must open the second's details -- the same selected-item scoping
+    Retry/Pause already have.
+    """
+    first = HomeActiveWorkItem(
+        item_id="fail-1", title="first", source="Runs", status="failed",
+        detail_route="chat",
+    )
+    second = HomeActiveWorkItem(
+        item_id="fail-2", title="second", source="Runs", status="failed",
+        detail_route="chat",
+    )
+    state = HomeDashboardInput(
+        model_ready=True,
+        failed_run_count=2,
+        active_work_items=(first, second),
+    )
+
+    controls = build_home_controls(
+        state, selected_row_id=second.item_id, selected_item=second
+    )
+
+    controls_by_id = {c.control_id: c for c in controls}
+    assert "home-open-details" in controls_by_id
+    assert controls_by_id["home-open-details"].target_id == second.item_id
+
+
 def test_triage_selecting_recent_only_row_builds_canvas_with_open_details():
     """Same defect as above, exercised through the full triage builder (the
     real production path: ``build_home_triage_state`` resolves the selected
