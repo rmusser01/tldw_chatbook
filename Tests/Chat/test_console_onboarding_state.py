@@ -4,6 +4,7 @@ from tldw_chatbook.Chat.console_onboarding_state import (
     CONSOLE_QUIET_EMPTY_COPY,
     CONSOLE_READY_EMPTY_COPY,
     CONSOLE_SETUP_CARD_TITLE,
+    CONSOLE_SETUP_STEP_THREE_DETAIL,
     ConsoleSetupCardState,
     build_console_setup_card_state,
     coerce_console_first_send_completed,
@@ -32,16 +33,30 @@ def _build(**overrides) -> ConsoleSetupCardState:
     return build_console_setup_card_state(**defaults)
 
 
-def test_missing_key_renders_card_with_api_key_step_active():
+def test_missing_key_renders_card_with_provider_step_active():
     state = _build()
     assert state.mode == "card"
     assert CONSOLE_SETUP_CARD_TITLE == "Get started"
-    assert [step.state for step in state.steps] == ["active", "done", "pending"]
-    assert state.steps[0].label == "Add an API key"
+    # Step 2 must not be pre-checked by a template-default model while the
+    # provider is still blocked (virgin-profile gpt-4o default, task-183).
+    assert [step.state for step in state.steps] == ["active", "pending", "pending"]
+    assert state.steps[0].label == "Connect a provider (API key or local server)"
     assert state.steps[0].glyph == "●"
     assert state.steps[1].label == "Pick a model"
     assert state.steps[2].label == "Send your first message"
     assert state.steps[2].glyph == "○"
+    # The composer is blocked by the setup modal while the card shows, so the
+    # detail must not claim typing/Enter works yet.
+    assert state.steps[2].detail == CONSOLE_SETUP_STEP_THREE_DETAIL
+    assert state.steps[2].detail == "Composer unlocks after setup"
+
+
+def test_template_default_model_does_not_precheck_step_two():
+    blocked_with_default_model = _build(has_model=True)
+    assert blocked_with_default_model.steps[1].state == "pending"
+
+    ready_without_model = _build(readiness=_readiness("Ready", ready=True), has_model=False)
+    assert ready_without_model.steps[1].state == "active"
 
 
 def test_endpoint_problems_relabel_step_one():

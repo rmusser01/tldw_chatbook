@@ -727,3 +727,39 @@ def test_model_section_lines_tolerate_missing_rows():
     line1, line2 = build_console_model_section_lines(summary)
     assert line1 == "not selected / no model"
     assert line2 == ""
+
+
+def test_model_section_line_truncates_long_local_model_names():
+    """Long gguf names must stay visible (truncated), not word-wrap away.
+
+    Live UAT 2026-07: the one-row rail line rendered ``"llama_cpp / "``
+    because the full model token wrapped onto a clipped second row.
+    """
+    from tldw_chatbook.Chat.console_session_settings import (
+        CONSOLE_MODEL_SECTION_MODEL_MAX_CHARS,
+        build_console_model_section_lines,
+    )
+
+    summary = ConsoleSettingsSummaryState(
+        model_row="Model: Qwen3.6-27B-Uncensored-HauhauCS-Aggressive-Q8_K_P.gguf",
+        context_row="Context: 0 / 4,096 tokens",
+        sampling_row="Sampling: T 0.60",
+        identity_row="Persona: General",
+        provider_row="Provider: llama_cpp",
+        transport_row="Streaming: off",
+    )
+    line1, _line2 = build_console_model_section_lines(summary)
+    provider_part, _, model_part = line1.partition(" / ")
+    assert provider_part == "llama_cpp"
+    assert model_part.startswith("Qwen3.6-27B-")
+    assert model_part.endswith("…")
+    assert len(model_part) <= CONSOLE_MODEL_SECTION_MODEL_MAX_CHARS
+    # Short names remain untouched.
+    short = ConsoleSettingsSummaryState(
+        model_row="Model: gpt-4o",
+        context_row="",
+        sampling_row="",
+        identity_row="",
+        provider_row="Provider: openai",
+    )
+    assert build_console_model_section_lines(short)[0] == "openai / gpt-4o"

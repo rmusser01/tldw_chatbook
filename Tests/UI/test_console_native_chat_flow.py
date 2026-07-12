@@ -2269,7 +2269,7 @@ async def test_console_setup_required_state_groups_recovery_and_action_copy():
         assert recovery.display is False
         modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
         assert modal.display is True
-        assert "Add an API key" in _visible_text(console)
+        assert "Connect a provider (API key or local server)" in _visible_text(console)
         assert (
             str(console.query_one("#console-setup-modal-action", Button).label)
             == CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL
@@ -2292,7 +2292,7 @@ async def test_console_empty_transcript_teaches_setup_and_start_paths():
         assert modal.display is True
         console_text = _visible_text(console)
         assert "Get started" in console_text
-        assert "Add an API key" in console_text
+        assert "Connect a provider (API key or local server)" in console_text
         assert "Send your first message" in console_text
         assert "Attach context" in console_text
         assert "Run Library RAG" in console_text
@@ -2314,7 +2314,7 @@ async def test_console_blocked_empty_transcript_shows_setup_card_steps():
         await _wait_for_selector(console, pilot, "#console-transcript-empty-state")
         text = _visible_text(console)
         assert "Get started" in text
-        assert "Add an API key" in text
+        assert "Connect a provider (API key or local server)" in text
         assert "Pick a model" in text
         assert "Send your first message" in text
         # The legacy provider recovery strip must not compete with the setup card.
@@ -2332,7 +2332,7 @@ async def test_console_first_send_flag_switches_empty_state_to_quiet():
         text = _visible_text(console)
         assert "No messages yet." in text
         assert "Get started" not in text
-        assert "Add an API key" not in text
+        assert "Connect a provider" not in text
 
 
 @pytest.mark.asyncio
@@ -2360,6 +2360,66 @@ async def test_console_accepted_send_records_first_send_flag():
 
         onboarding = app.app_config.get("console", {}).get("onboarding", {})
         assert onboarding.get("first_send_completed") is True
+
+
+@pytest.mark.asyncio
+async def test_console_failed_send_does_not_record_first_send_flag():
+    """A FAILED first send must not set the one-time onboarding flag (task-182d)."""
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
+    app.console_provider_gateway_factory = lambda: FailThenRecoverGateway()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        _select_llamacpp_console(console)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("hello")
+
+        console.query_one("#console-send-message", Button).press()
+        await _wait_for_text(console, pilot, "llama.cpp stream failed")
+
+        onboarding = app.app_config.get("console", {})
+        if isinstance(onboarding, dict):
+            onboarding = onboarding.get("onboarding", {})
+        assert not (isinstance(onboarding, dict) and onboarding.get("first_send_completed"))
+        assert console._console_first_send_completed() is False
+
+        # The provider error must not be stored as assistant message content.
+        store = console._ensure_console_chat_store()
+        assistant_contents = [
+            message.content
+            for message in store.messages_for_session(store.active_session_id)
+            if message.role is ConsoleMessageRole.ASSISTANT
+        ]
+        assert all("Provider stream failed" not in content for content in assistant_contents)
+
+
+@pytest.mark.asyncio
+async def test_console_accepted_send_clears_composer_before_run_end():
+    """The composer clears when the submit is accepted, not only at run end."""
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
+    app.console_provider_gateway_factory = lambda: CapturingGateway(chunks=("accepted",))
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        _select_llamacpp_console(console)
+        controller = console._ensure_console_chat_controller()
+        assert controller.on_submission_accepted is not None
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("clear me on accept")
+        # Invoke the acceptance hook exactly as the controller does the moment
+        # the user message is persisted; the composer must clear immediately.
+        controller.on_submission_accepted()
+        await pilot.pause()
+        assert composer.draft_text() == ""
 
 
 @pytest.mark.asyncio
@@ -2890,7 +2950,13 @@ async def test_console_failed_stream_renders_inline_retry_and_recovers():
         await _wait_for_text(console, pilot, "llama.cpp stream failed")
 
         store = console._ensure_console_chat_store()
-        failed = store.messages_for_session(store.active_session_id)[-1]
+        # The failure copy now lands in a trailing system row; retry targets
+        # the failed assistant message itself.
+        failed = next(
+            message
+            for message in reversed(store.messages_for_session(store.active_session_id))
+            if message.role is ConsoleMessageRole.ASSISTANT and message.status == "failed"
+        )
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         transcript.select_message(failed.id)
         await console._sync_native_console_chat_ui()

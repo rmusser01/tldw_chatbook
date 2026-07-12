@@ -425,8 +425,11 @@ async def test_console_visible_rail_headers_are_left_aligned_and_collapse_button
         context_title = console.query_one("#console-context-rail-title", Static)
         context_collapse = console.query_one("#console-context-rail-collapse", Button)
         assert context_title.has_class("console-rail-title")
+        # Pane title is distinct from the "Context" (staged sources) section
+        # header below it, so no two left-rail titles collide (task-186).
+        assert str(context_title.renderable) == "Session & Context"
         assert str(context_collapse.label) == "◂"
-        assert context_collapse.tooltip == "Collapse Context rail"
+        assert context_collapse.tooltip == "Collapse Session & Context rail"
         assert context_collapse.region.width >= 3
         assert context_title.region.x < context_collapse.region.x
 

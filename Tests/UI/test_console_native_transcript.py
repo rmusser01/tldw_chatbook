@@ -583,3 +583,40 @@ async def test_console_tab_reaches_major_console_screen_regions():
     assert "console-native-transcript" in seen_focus_ids
     assert "console-native-composer" in seen_focus_ids
     assert "console-inspector-rail-open" in seen_focus_ids
+
+
+def test_console_streaming_assistant_row_shows_generating_placeholder_until_first_token():
+    """Between send-accepted and first token the assistant row must not be empty."""
+    from tldw_chatbook.Widgets.Console.console_transcript import (
+        CONSOLE_GENERATING_PLACEHOLDER,
+        _message_body,
+        _message_render_text,
+    )
+
+    pending = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        id="m-generating",
+        status="streaming",
+    )
+    assert _message_body(pending) == CONSOLE_GENERATING_PLACEHOLDER
+    rendered = _message_render_text(pending, selected=False)
+    assert CONSOLE_GENERATING_PLACEHOLDER in rendered.plain
+
+    # First streamed token replaces the placeholder immediately.
+    started = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Once",
+        id="m-generating",
+        status="streaming",
+    )
+    assert _message_body(started) == "Once [streaming]"
+
+    # Other terminal statuses keep their existing suffix rendering.
+    failed = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        id="m-failed",
+        status="failed",
+    )
+    assert _message_body(failed) == "[failed]"

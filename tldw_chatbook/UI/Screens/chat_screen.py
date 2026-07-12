@@ -111,6 +111,7 @@ from ...config import (
     coerce_int_setting,
     delete_settings_from_cli_config,
     get_cli_providers_and_models,
+    load_settings,
     save_setting_to_cli_config,
 )
 from ...Library.library_rag_service import (
@@ -206,7 +207,7 @@ CONSOLE_FRAME_BORDER = ("solid", CONSOLE_FRAME_COLOR)
 CONSOLE_QUIET_FRAME_BORDER = ("none", CONSOLE_FRAME_COLOR)
 CONSOLE_START_HERE_COPY = ""
 CONSOLE_ACTION_HINTS_COPY = ""
-CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL = "Configure API+API Key"
+CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL = "Set up provider"
 CONSOLE_PROVIDER_ACTION_ARROW = " ---------------------->"
 NATIVE_CONSOLE_STATE_VERSION = "1.0"
 CONSOLE_FOCUS_REGISTRY = WorkbenchFocusRegistry(
@@ -571,7 +572,7 @@ class ChatScreen(BaseAppScreen):
         controller = self._ensure_console_chat_controller()
         modal = ConsoleSettingsModal(
             settings=settings,
-            app_config=getattr(self.app_instance, "app_config", {}) or {},
+            app_config=self._provider_readiness_app_config(),
             providers_models=await self._providers_models_for_console_settings(
                 settings.provider,
                 current_model=settings.model,
@@ -1076,13 +1077,48 @@ class ChatScreen(BaseAppScreen):
         self.ui_state = UIState()
         self._load_sidebar_state()
 
+    # Sections `load_settings()` always injects into a disk-loaded config but
+    # which Console test fakes never carry. Used to tell a real boot snapshot
+    # (safe to refresh from disk) apart from an injected test config (must be
+    # honored verbatim; reading the developer's real config would break
+    # hermetic tests).
+    _CONSOLE_LIVE_CONFIG_MARKER_SECTIONS = ("general", "logging", "splash_screen")
+
     def _provider_readiness_app_config(self) -> Any:
-        """Return app config for provider-readiness checks."""
+        """Return the freshest app config for provider-readiness checks.
+
+        ``app.app_config`` is a boot-time snapshot: Settings saves invalidate
+        the config module cache but never refresh the snapshot, so readiness
+        built from it stays blocked until restart (core-loop UAT 2026-07,
+        task-177). When the snapshot looks disk-loaded, re-source it from
+        ``load_settings()`` - cheap (cached) except right after a save, which
+        is exactly when the fresh read matters.
+        """
         try:
             app_config = getattr(self.app, "app_config")
         except (AttributeError, NoActiveAppError):
-            return getattr(self.app_instance, "app_config", {}) or {}
-        return app_config or {}
+            app_config = getattr(self.app_instance, "app_config", {}) or {}
+        app_config = app_config or {}
+        if not self._console_config_snapshot_is_disk_loaded(app_config):
+            return app_config
+        try:
+            fresh = load_settings()
+        except Exception:
+            logger.debug("Console readiness refresh via load_settings() failed; using snapshot")
+            return app_config
+        if isinstance(fresh, Mapping) and fresh:
+            return fresh
+        return app_config
+
+    @classmethod
+    def _console_config_snapshot_is_disk_loaded(cls, app_config: Any) -> bool:
+        """Return True when a config snapshot came from ``load_settings()``."""
+        if not isinstance(app_config, Mapping):
+            return False
+        return all(
+            section in app_config
+            for section in cls._CONSOLE_LIVE_CONFIG_MARKER_SECTIONS
+        )
 
     def _ensure_chat_window(self) -> ChatWindowEnhanced:
         if self.chat_window is None:
@@ -1302,7 +1338,7 @@ class ChatScreen(BaseAppScreen):
         """Build the default settings snapshot for a new native Console session."""
         provider, model = self._effective_console_provider_model()
         settings = build_default_console_session_settings(
-            getattr(self.app_instance, "app_config", {}) or {},
+            self._provider_readiness_app_config(),
             str(provider).strip() if _has_selected_text(provider) else None,
             str(model).strip() if _has_selected_text(model) else None,
         )
@@ -1580,7 +1616,7 @@ class ChatScreen(BaseAppScreen):
             )
         readiness = build_console_settings_readiness(
             effective_settings,
-            app_config=getattr(self.app_instance, "app_config", {}) or {},
+            app_config=self._provider_readiness_app_config(),
         )
         model_warning = self._console_model_capability_warning(
             effective_settings.provider,
@@ -1623,7 +1659,9 @@ class ChatScreen(BaseAppScreen):
                 factory()
                 if callable(factory)
                 else ConsoleProviderGateway(
-                    config_provider=lambda: getattr(self.app_instance, "app_config", {}) or {},
+                    # Fresh-config source: the gateway re-resolves readiness at
+                    # send time and must see Settings saves made after boot.
+                    config_provider=self._provider_readiness_app_config,
                 )
             )
         return self._console_provider_gateway
@@ -1654,6 +1692,9 @@ class ChatScreen(BaseAppScreen):
                 thinking_budget_tokens=selection.thinking_budget_tokens,
                 streaming=selection.streaming,
             )
+        self._console_chat_controller.on_submission_accepted = (
+            self._on_console_submission_accepted
+        )
         self._sync_console_chat_core_state()
         return self._console_chat_controller
 
@@ -4920,8 +4961,10 @@ class ChatScreen(BaseAppScreen):
                     left_rail_header.styles.min_height = 1
                     left_rail_header.styles.max_height = 1
                     with left_rail_header:
+                        # Titled distinctly from the "Context" (staged sources)
+                        # rail section below so no two rail titles collide.
                         rail_label = Static(
-                            "Context",
+                            "Session & Context",
                             id="console-context-rail-title",
                             classes="console-rail-title",
                         )
@@ -4933,7 +4976,7 @@ class ChatScreen(BaseAppScreen):
                             classes="console-rail-collapse-button",
                             compact=True,
                         )
-                        collapse_button.tooltip = "Collapse Context rail"
+                        collapse_button.tooltip = "Collapse Session & Context rail"
                         collapse_button.styles.width = 3
                         collapse_button.styles.min_width = 3
                         collapse_button.styles.max_width = 3
@@ -5032,6 +5075,11 @@ class ChatScreen(BaseAppScreen):
                                 classes="console-model-section-line",
                                 markup=False,
                             )
+                            # The rail line is clipped to one row; without
+                            # nowrap a long model token word-wraps onto the
+                            # hidden second row and vanishes ("llama_cpp / ").
+                            line1.styles.text_wrap = "nowrap"
+                            line1.styles.text_overflow = "ellipsis"
                             yield line1
                             line2 = Static(
                                 model_line2,
@@ -5039,6 +5087,8 @@ class ChatScreen(BaseAppScreen):
                                 classes="console-model-section-line",
                                 markup=False,
                             )
+                            line2.styles.text_wrap = "nowrap"
+                            line2.styles.text_overflow = "ellipsis"
                             yield line2
                             configure = Button(
                                 "Configure",
@@ -6146,12 +6196,27 @@ class ChatScreen(BaseAppScreen):
             composer = None
         if result.should_clear_draft and composer is not None:
             composer.clear_draft()
-        if result.accepted:
+        if result.accepted and controller.run_state.status is ConsoleRunStatus.COMPLETED:
             # Retry/continue/regenerate paths intentionally don't record the flag here —
             # they require an existing message, so ``has_messages`` already keeps the
             # card hidden and the flag was set by the originating submit.
+            # Failed/stopped first sends must NOT set the one-time flag: the
+            # setup card should return until a send completes with content.
             self._record_console_first_send()
         await self._sync_native_console_chat_ui()
+
+    def _on_console_submission_accepted(self) -> None:
+        """Clear the composer as soon as a submit is accepted, not at run end.
+
+        Keeping the sent text in the composer for the whole run reads as
+        "not sent" during long local-model generations; blocked submits never
+        reach this hook, so their draft is preserved for correction.
+        """
+        try:
+            composer = self.query_one("#console-native-composer", ConsoleComposerBar)
+        except QueryError:
+            return
+        composer.clear_draft()
 
     def _console_send_blocked_reason(self) -> str:
         """Return a user-facing reason if Console send cannot safely run."""

@@ -2039,7 +2039,7 @@ async def test_console_empty_transcript_promotes_setup_card_over_banner():
         for expected in (
             CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
             "Get started",
-            "Add an API key",
+            "Connect a provider (API key or local server)",
             "Send your first message",
         ):
             assert expected in text
