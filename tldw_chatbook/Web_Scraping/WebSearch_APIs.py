@@ -67,7 +67,12 @@ except ImportError:
 # Local Imports
 from tldw_chatbook.Web_Scraping.Article_Extractor_Lib import scrape_article
 from tldw_chatbook.Chat.Chat_Functions import chat_api_call
-from tldw_chatbook.LLM_Calls.Summarization_General_Lib import analyze
+# `analyze` (LLM_Calls.Summarization_General_Lib) pulls in the summarization
+# stack (nltk/scipy/sklearn/pandas via Chunking/Chunk_Lib). It is imported
+# lazily inside search_result_relevance(), only when actually summarizing a
+# relevant result, so a plain `import tldw_chatbook.app` doesn't eagerly
+# load it (this module sits on the app.py -> Tools -> WebSearch_APIs boot
+# path via the tool-executor registry).
 from loguru import logger
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.config import load_settings
@@ -694,6 +699,8 @@ async def search_result_relevance(
     Returns:
         Dict[str, Dict]: A dictionary of relevant results, keyed by a unique ID or index.
     """
+    from tldw_chatbook.LLM_Calls.Summarization_General_Lib import analyze
+
     relevant_results = {}
 
     # Summarization prompt template

@@ -6,6 +6,7 @@
 #
 ####
 import hashlib
+import importlib.util
 import json
 import re
 import time
@@ -27,18 +28,56 @@ except ImportError:
     def detect(text):
         raise ImportError("langdetect is not installed. Install with: pip install langdetect")
 
-try:
-    import nltk
-    from nltk.tokenize import sent_tokenize
-    NLTK_AVAILABLE = True
-except ImportError:
-    NLTK_AVAILABLE = False
-    # Define placeholder for when nltk is not available
-    def sent_tokenize(text):
-        # Simple fallback - split on common sentence endings
-        import re
-        sentences = re.split(r'[.!?]+', text)
-        return [s.strip() for s in sentences if s.strip()]
+# nltk is a heavy optional dependency: it transitively imports scipy
+# (from nltk/metrics/association.py) and scikit-learn (from
+# nltk/classify/scikitlearn.py) -- roughly 950 modules in total. Probe
+# availability cheaply via find_spec (no import) and defer the real
+# `import nltk` (and its punkt-data check/download) to first actual use via
+# _ensure_nltk()/ensure_nltk_data(), so a plain `import tldw_chatbook.app`
+# doesn't pull the whole nltk/scipy/sklearn stack at boot.
+NLTK_AVAILABLE = importlib.util.find_spec("nltk") is not None
+nltk = None
+
+
+def _sent_tokenize_fallback(text):
+    # Simple fallback - split on common sentence endings. Single-arg
+    # signature is intentional (matches the historical fallback): callers
+    # pass ``language=`` only on the real-nltk path, and the resulting
+    # TypeError here is caught by their surrounding try/except, which then
+    # routes to a non-NLTK fallback -- preserving the prior behavior exactly.
+    sentences = re.split(r'[.!?]+', text)
+    return [s.strip() for s in sentences if s.strip()]
+
+
+# `sent_tokenize` starts as the regex fallback (so the name always exists and
+# behaves identically when nltk is absent); _ensure_nltk() rebinds it to
+# nltk's real tokenizer on first successful import.
+sent_tokenize = _sent_tokenize_fallback
+
+
+def _ensure_nltk():
+    """Import nltk on first actual use and bind the real ``sent_tokenize``.
+
+    No-ops (leaves ``nltk`` as ``None`` and the regex-fallback
+    ``sent_tokenize`` in place) if nltk isn't installed, matching the
+    previous eager-import fallback semantics.
+    """
+    global nltk, sent_tokenize
+    if nltk is not None:
+        return nltk
+    if not NLTK_AVAILABLE:
+        return None
+    try:
+        import nltk as _nltk
+        from nltk.tokenize import sent_tokenize as _sent_tokenize
+    except ImportError:
+        return None
+    # Bind `sent_tokenize` BEFORE the gate global (`nltk`), so a racing thread
+    # that observes `nltk is not None` never finds `sent_tokenize` still the
+    # regex fallback.
+    sent_tokenize = _sent_tokenize
+    nltk = _nltk
+    return nltk
 
 #
 # Import Local
@@ -86,26 +125,56 @@ MAX_DOCUMENT_SIZE_BYTES = MAX_DOCUMENT_SIZE_MB * 1024 * 1024  # In bytes
 # Config Settings & NLTK
 #
 
-def ensure_nltk_data():
+# Set once ensure_nltk_data() has confirmed (or downloaded) punkt, so the
+# check/network-download happens at most once per process -- and, crucially,
+# NOT at import time. Previously ensure_nltk_data() was called at module
+# scope, forcing a real `import nltk` (plus a potential punkt network
+# download) into app boot.
+_nltk_data_ready = False
+
+
+def ensure_nltk_data() -> None:
+    """Ensure NLTK's ``punkt`` tokenizer data is present, lazily and once.
+
+    Idempotent: the first successful check flips the module-level
+    ``_nltk_data_ready`` flag so repeat calls are no-ops. Triggers the lazy
+    ``nltk`` import via :func:`_ensure_nltk` and, if the ``punkt`` resource is
+    missing, downloads it. A no-op when NLTK isn't installed. Moved off module
+    scope so importing this module (and the app) no longer pays the import or a
+    network download at boot.
+
+    Returns:
+        None.
+    """
+    global _nltk_data_ready
+    if _nltk_data_ready:
+        return
     if not NLTK_AVAILABLE:
         logger.debug("NLTK not available, skipping punkt tokenizer check")
         return
-        
+
+    _ensure_nltk()
+    if nltk is None:
+        # find_spec said nltk was present but the real import failed; behave
+        # as if nltk were unavailable (the regex fallback stays bound).
+        return
+
     try:
         nltk.data.find('tokenizers/punkt')
+        _nltk_data_ready = True
     except LookupError:
         logger.info("NLTK 'punkt' tokenizer not found. Downloading...")
         try:
             download_ok = nltk.download('punkt')
             if download_ok:
                 logger.info("'punkt' downloaded successfully.")
+                _nltk_data_ready = True
             else:
                 logger.warning("NLTK 'punkt' download did not complete; sentence tokenization may fall back or fail later.")
         except Exception as e:
             logger.error(f"Failed to download 'punkt': {e}")
             # Depending on how critical this is, you might raise an error or just warn
             # For now, we'll let it proceed, and sent_tokenize will fail later if needed.
-ensure_nltk_data()
 
 
 ### REWRITTEN SECTION: New Configuration Loading ###
@@ -575,6 +644,10 @@ class Chunker:
     def _adaptive_chunk_size_nltk(self, text: str, base_size: int, min_size: int, max_size: int, language: str) -> int:
         """Adjusts chunk size based on NLTK sentence tokenization."""
         logger.debug(f"Calculating adaptive chunk size (NLTK) for lang '{language}'. Base: {base_size}, Min: {min_size}, Max: {max_size}")
+        # Resolve nltk (rebinding the real sent_tokenize) and ensure punkt is
+        # available on first real use -- deferred out of module import.
+        _ensure_nltk()
+        ensure_nltk_data()
         try:
             nltk_lang_map = {'en': 'english', 'es': 'spanish', 'fr': 'french', 'de': 'german'}
             nltk_language = nltk_lang_map.get(language.lower(), language.lower())
@@ -655,6 +728,11 @@ class Chunker:
             from sklearn.metrics.pairwise import cosine_similarity
         except ImportError:
             raise ChunkingError("Scikit-learn not installed. Cannot use 'semantic' chunking. Install with 'pip install scikit-learn'")
+
+        # Resolve nltk (rebinding the real sent_tokenize) and ensure punkt is
+        # available on first real use -- deferred out of module import.
+        _ensure_nltk()
+        ensure_nltk_data()
 
         language = self._ensure_language(text, self._get_option('language'))
         nltk_lang_map = {'en': 'english', 'es': 'spanish', 'fr': 'french', 'de': 'german'}
