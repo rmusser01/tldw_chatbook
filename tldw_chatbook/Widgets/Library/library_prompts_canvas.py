@@ -58,8 +58,8 @@ class LibraryPromptsListCanvas(Vertical):
             real affordance. Never shown together with ``conflict``.
         import_open: List-view only. When ``True``, renders the inline
             Import row (a path ``Input`` for a file OR folder, plus
-            Import/Cancel actions) below the sort/Import…/Export…
-            toolbar.
+            Import/Cancel actions) below the sort/Import… toolbar (Task 8c
+            D5 removed the dead Export… button that used to sit here).
         import_path: The Import row's path ``Input`` prefilled value.
             Only meaningful while ``import_open`` is ``True``.
         import_status: Muted outcome line shown below the Import row
@@ -119,10 +119,15 @@ class LibraryPromptsListCanvas(Vertical):
             id="library-prompts-filter",
             value=self.filter_value,
         )
-        # One horizontal ds-toolbar row for sort/Import/Export -- mirrors
+        # One horizontal ds-toolbar row for sort/Import -- mirrors
         # library_notes_canvas.py's toolbar exactly (same render-safe shape:
         # every child is a fixed-width compact Button, never mixed with a
-        # 1fr sibling).
+        # 1fr sibling). Task 8c D5: the list-toolbar "Export…" button that
+        # used to sit here had no handler anywhere -- pressing it silently
+        # no-op'd -- so it was removed rather than wired to a fake bulk
+        # export. Bulk export is deferred to backlog task-197; per-prompt
+        # export lives in the editor's own #library-prompt-export and still
+        # works.
         toolbar = Horizontal(classes="ds-toolbar")
         toolbar.styles.height = "auto"
         with toolbar:
@@ -132,10 +137,6 @@ class LibraryPromptsListCanvas(Vertical):
             )
             yield Button(
                 "Import…", id="library-prompts-import",
-                classes="library-canvas-action", compact=True,
-            )
-            yield Button(
-                "Export…", id="library-prompts-export",
                 classes="library-canvas-action", compact=True,
             )
         if self.import_open:
@@ -175,7 +176,7 @@ class LibraryPromptsListCanvas(Vertical):
         fixed-width compact Buttons is this family's known non-rendering
         failure mode. The Run/Cancel Buttons instead get their own
         ``ds-toolbar`` row underneath, the same fixed-width-only shape as
-        the sort/Import…/Export… toolbar above.
+        the sort/Import… toolbar above.
         """
         yield Input(
             placeholder="File or folder path…",

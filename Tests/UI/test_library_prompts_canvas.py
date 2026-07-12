@@ -141,18 +141,28 @@ async def test_prompts_canvas_escapes_bracket_titles_verbatim():
 
 @pytest.mark.asyncio
 async def test_prompts_canvas_toolbar_is_one_horizontal_row():
-    """sort/Import/Export share a single ``ds-toolbar`` Horizontal parent
-    -- proven structurally (shared parentage), not via region/geometry
-    (the bare harness has no app CSS loaded)."""
+    """sort/Import share a single ``ds-toolbar`` Horizontal parent -- proven
+    structurally (shared parentage), not via region/geometry (the bare
+    harness has no app CSS loaded)."""
     app = _CanvasHost(_three_row_state())
     async with app.run_test() as pilot:
         sort_button = pilot.app.query_one("#library-prompts-sort", Button)
         import_button = pilot.app.query_one("#library-prompts-import", Button)
-        export_button = pilot.app.query_one("#library-prompts-export", Button)
         toolbar = sort_button.parent
         assert toolbar is not None and toolbar.has_class("ds-toolbar")
         assert import_button.parent is toolbar
-        assert export_button.parent is toolbar
+
+
+@pytest.mark.asyncio
+async def test_prompts_canvas_list_toolbar_has_no_dead_export_button():
+    """D5 (Task 8c): the list-toolbar "Export..." button had no handler
+    anywhere -- pressing it silently no-op'd. Bulk export is deferred to
+    task-197; per-prompt export lives in the editor's own
+    ``#library-prompt-export`` and still works. The dead affordance is
+    removed rather than wired to a fake bulk export."""
+    app = _CanvasHost(_three_row_state())
+    async with app.run_test() as pilot:
+        assert len(pilot.app.query("#library-prompts-export")) == 0
 
 
 @pytest.mark.asyncio
