@@ -485,6 +485,26 @@ def build_home_controls(
                     chatbook_item.item_id,
                 )
             )
+    # T153: the block above only fires when some active/failed/running/
+    # paused/approval count is nonzero, so a selected RECENT-ONLY item (a
+    # done import, a chatbook artifact -- present only in
+    # ``state.recent_work_items``, bumping no active count) got no
+    # ``home-open-details`` control at all, even though it is the item the
+    # user actually selected. Append one, targeting the selected item,
+    # unless the count-driven block already covered it above (guards
+    # against a double ``home-open-details``).
+    if selected_item is not None and not any(
+        control.control_id == "home-open-details" for control in controls
+    ):
+        controls.append(
+            HomeControl(
+                "home-open-details",
+                "Open details",
+                selected_item.detail_route,
+                "work_details",
+                selected_item.item_id,
+            )
+        )
     if state.flashcards_due_count > 0 and (
         not selected_row_id or selected_row_id == HOME_FLASHCARDS_DUE_ROW_ID
     ):
