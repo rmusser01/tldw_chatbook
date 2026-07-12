@@ -17,6 +17,8 @@
 
 A small SQLite store persists every visible ingest job; the registry **writes through** on each mutation and is **loaded once at startup**. Interrupted in-flight jobs (QUEUED/PARSING/WRITING at quit) normalize to `FAILED("Interrupted by app restart")` on load, so the app is idle on launch and the user retries manually (chosen over auto-resume in brainstorm — no surprise heavy work on launch). Done/failed jobs restore as-is. Mechanism follows the existing `LibraryCollectionsDB` template.
 
+**Crash recovery (bonus):** because the store writes through on every transition — including the transient PARSING/WRITING — a job caught mid-parse by a *crash* (not just a clean quit) is already persisted as PARSING and comes back as retryable FAILED-interrupted on the next launch. This is why the transient states are persisted rather than only terminal ones.
+
 ### Why per-mutation write-through is safe (threading)
 
 Every registry mutation runs on the **UI thread**: `submit`/`mark_parsing`/`mark_writing` in UI-thread coordinator methods, and the writer thread marshals `mark_done`/`mark_failed` back via `self.call_from_thread(...)` (`app.py:2113`/`2128`), as do the pool-completion (`_on_ingest_parse_complete`) and broken-pool paths. So the store is accessed from a single thread — per-mutation synchronous SQLite writes need no cross-thread connection handling.
@@ -25,7 +27,7 @@ Every registry mutation runs on the **UI thread**: `submit`/`mark_parsing`/`mark
 
 ### 1. `LibraryIngestJobsDB` (`tldw_chatbook/DB/Library_Ingest_Jobs_DB.py`, new)
 
-A `BaseDB` subclass mirroring `LibraryCollectionsDB`: `_CURRENT_SCHEMA_VERSION = 1`, a `transaction()` context manager, `_initialize_schema()` via `executescript` with a `schema_version` table. **WAL mode** enabled for fast, low-contention writes. One table `ingest_jobs`:
+A `BaseDB` subclass mirroring `LibraryCollectionsDB`: `_CURRENT_SCHEMA_VERSION = 1`, a `transaction()` context manager, `_initialize_schema()` via `executescript` with a `schema_version` table. **WAL mode** enabled. Because writes fire per mutation and store access is single-threaded (UI thread), the store keeps a **persistent connection** (opened once at `attach_store`, reused, closed on app shutdown) rather than opening/closing per write — a large drop (e.g. 100 files → ~100 `submit` upserts plus per-transition writes) then pays only the ~sub-ms write, not connection setup each time. (`close()` on app teardown.) One table `ingest_jobs`:
 
 | column | type | notes |
 |---|---|---|
@@ -62,7 +64,7 @@ Persistence is **best-effort**: `_persist`/`_delete` wrap the store call in `try
 2. Rebuild `LibraryIngestJob`s (keywords JSON→tuple, ints→bools, monotonic fields defaulted: `submitted_at` re-seeded to a fresh `time.monotonic()`, `started_at`/`finished_at` = None).
 3. **Normalize interrupted states:** any job whose stored `state` ∈ {QUEUED, PARSING, WRITING} → `FAILED`, `error="Interrupted by app restart"`, `permanent=False` (retryable), and stamp `finished_at_wall = datetime.now(timezone.utc).isoformat()`.
 4. **Prune cap:** keep at most the most recent `_MAX_PERSISTED_JOBS` (constant, 500) rows by `seq`; older terminal rows are dropped from the load AND deleted from the store.
-5. Seed the registry via `restore(jobs, next_id=max(seq)+1)`, then **re-persist the normalized/pruned set** (upsert the interrupted→FAILED jobs; delete the pruned ones) so the store reflects the post-restart truth.
+5. Seed the registry via `restore(jobs, next_id=max(seq)+1)`, then **incrementally** reconcile the store to the post-restart truth: `upsert_job` ONLY the jobs whose state was normalized (interrupted→FAILED) and `delete_job` ONLY the pruned rows. Everything else already loaded is current — do NOT re-write all rows (no startup write storm).
 6. No auto-dispatch: `_top_up_ingest_parse_pool()` is NOT called at startup — the app is idle until the user retries.
 
 The registry stays store-less in `TldwCli.__init__` (`app.py:3190`, unchanged, no DB I/O at construction); `_restore_ingest_jobs()` runs once in `on_mount`, where it creates the `LibraryIngestJobsDB` (independent of `media_db`), `attach_store`s it to the registry, then loads/normalizes/restores. No submits happen between `__init__` and `on_mount`, so nothing is lost by attaching late.
@@ -98,5 +100,5 @@ user Retry (existing) → requeue → upsert both → _top_up dispatches (alread
 
 - No auto-resume / startup auto-dispatch; interrupted jobs come back as retryable FAILED.
 - No new UI — the existing Home/Library ingest list + Retry control render whatever's in the registry.
-- `time.monotonic()` timestamps deliberately not preserved; only `finished_at_wall` round-trips.
+- `time.monotonic()` timestamps deliberately not preserved; only `finished_at_wall` round-trips. Known cosmetic limit: restored rows lose their original *submit* wall-time (`submitted_at` is re-seeded to a fresh monotonic), so a relative "submitted N ago" reads ~now for restored jobs; terminal jobs still show a real finished time. Not adding a `submitted_at_wall` field (scope creep).
 - Prune cap is a fixed constant (500), not user-configurable (YAGNI); `clear_finished()` remains the manual purge.
