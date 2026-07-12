@@ -16,7 +16,7 @@ priority: high
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Nothing in the app ever populates the RAG vector store: the only indexing entry point (index_documents_modular in Event_Handlers/Chat_Events/chat_rag_integration.py:300, which calls rag_service.embed_documents) has zero callers, and no app code invokes index_document/index_batch on any RAG service. Semantic and hybrid search therefore query an empty store and the vector leg always contributes nothing. Mirror the tldw_server design where chunking plus embedding plus storage happens at ingestion time via a background worker so semantic search has something to search. Filed from the 2026-07-12 RAG module audit.
+Nothing in the app ever populates the RAG vector store: the only indexing entry point (index_documents_modular in Event_Handlers/Chat_Events/chat_rag_integration.py:300, which calls the non-existent `rag_service.embed_documents` method) has zero callers, and no app code invokes index_document/index_batch on any RAG service. Semantic and hybrid search therefore query an empty store and the vector leg always contributes nothing. Mirror the tldw_server design where chunking plus embedding plus storage happens at ingestion time via a background worker so semantic search has something to search. Filed from the 2026-07-12 RAG module audit.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
