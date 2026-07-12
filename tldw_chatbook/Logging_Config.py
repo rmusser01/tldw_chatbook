@@ -283,7 +283,9 @@ def configure_application_logging(app_instance):
         else:
             logging.info("Standard Logging: RichLogHandler already exists and is added.")
     except QueryError:
-        logging.error("!!! ERROR: Failed to find #app-log-display widget for RichLogHandler setup.")
+        # The legacy Logs window widget (#app-log-display) does not exist in the
+        # master-shell UI, so skipping the RichLogHandler here is expected on every boot.
+        logging.debug("RichLogHandler setup skipped: #app-log-display widget not present (legacy Logs window).")
         app_instance._rich_log_handler = None
     except Exception as e:
         logging.error(f"!!! ERROR setting up RichLogHandler: {e}", exc_info=True)
