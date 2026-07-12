@@ -21,5 +21,8 @@ Upgrade opportunities from core-loop UAT 2026-07-11: a user running llama.cpp lo
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 First-run offers a detected local server as a one-click provider option when one is reachable,Local OpenAI-compatible providers offer a model picker fed by /v1/models with free-text fallback,Home surfaces a start-a-conversation action when the provider is ready and reflects existing content counts,Save-as dialog either hides unwired destinations or ships them
+- [ ] #1 First-run offers a detected local server as a one-click provider option when one is reachable
+- [ ] #2 Local OpenAI-compatible providers offer a model picker fed by /v1/models with free-text fallback
+- [ ] #3 Home surfaces a start-a-conversation action when the provider is ready and reflects existing content counts
+- [ ] #4 Save-as dialog either hides unwired destinations or ships them
 <!-- AC:END -->
