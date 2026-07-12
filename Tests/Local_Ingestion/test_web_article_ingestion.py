@@ -5,22 +5,29 @@ from tldw_chatbook.Local_Ingestion.web_article_ingestion import extract_article_
 from tldw_chatbook.Local_Ingestion.local_file_ingestion import PermanentIngestError
 
 
-def _resp(html, *, status=200, ctype="text/html; charset=utf-8", final_url=None):
+def _resp(html, *, status=200, ctype="text/html; charset=utf-8", final_url=None, chunks=None):
     r = MagicMock()
     r.status_code = status
     r.headers = {"content-type": ctype, "content-length": str(len(html))}
     r.url = final_url or "https://example.com/post"
+    r.encoding = "utf-8"
     r.text = html
-    r.iter_bytes = lambda chunk_size=65536: iter([html.encode("utf-8")])
+    _chunks = chunks if chunks is not None else [html.encode("utf-8")]
+    r.iter_bytes = lambda chunk_size=65536: iter(_chunks)
     r.raise_for_status = MagicMock()
     return r
 
 
 def _client_returning(resp):
+    # The extractor uses `with client.stream("GET", url) as resp:`, so the
+    # mock client must expose a `stream(...)` context manager yielding resp.
     client = MagicMock()
     client.__enter__.return_value = client
     client.__exit__.return_value = False
-    client.get.return_value = resp
+    stream_cm = MagicMock()
+    stream_cm.__enter__.return_value = resp
+    stream_cm.__exit__.return_value = False
+    client.stream.return_value = stream_cm
     return client
 
 
@@ -80,3 +87,68 @@ def test_missing_trafilatura_is_permanent(monkeypatch):
          patch.object(builtins, "__import__", _fail):
         with pytest.raises(PermanentIngestError):
             extract_article_for_ingest("https://example.com/a", {})
+
+
+def test_oversized_streamed_body_is_permanent_before_full_buffer():
+    # Two 8 MB chunks: the guard must abort after the SECOND chunk crosses the
+    # 10 MB cap without draining the (unbounded) remainder.
+    from tldw_chatbook.Local_Ingestion import web_article_ingestion as wai
+    big = b"x" * (8 * 1024 * 1024)
+    drained = {"chunks": 0}
+    def _gen():
+        for _ in range(1000):          # far more than the cap would allow
+            drained["chunks"] += 1
+            yield big
+    resp = _resp("<html></html>", chunks=_gen())
+    with patch("httpx.Client", return_value=_client_returning(resp)):
+        with pytest.raises(PermanentIngestError):
+            extract_article_for_ingest("https://example.com/huge", {})
+    assert drained["chunks"] == 2      # aborted at the 2nd chunk, did not drain 1000
+
+
+def test_invalid_url_is_permanent():
+    import httpx
+    client = MagicMock()
+    client.__enter__.return_value = client
+    client.__exit__.return_value = False
+    client.stream.side_effect = httpx.InvalidURL("bad")   # not an httpx.HTTPError
+    with patch("httpx.Client", return_value=client):
+        with pytest.raises(PermanentIngestError):
+            extract_article_for_ingest("https://exa mple.com/x", {})
+
+
+def test_unsupported_protocol_is_permanent():
+    import httpx
+    client = MagicMock()
+    client.__enter__.return_value = client
+    client.__exit__.return_value = False
+    client.stream.side_effect = httpx.UnsupportedProtocol("nope")
+    with patch("httpx.Client", return_value=client):
+        with pytest.raises(PermanentIngestError):
+            extract_article_for_ingest("ftp://example.com/x", {})
+
+
+def test_dns_failure_is_permanent():
+    import httpx, socket
+    err = httpx.ConnectError("name resolution failed")
+    err.__cause__ = socket.gaierror(-2, "Name or service not known")
+    client = MagicMock()
+    client.__enter__.return_value = client
+    client.__exit__.return_value = False
+    client.stream.side_effect = err
+    with patch("httpx.Client", return_value=client):
+        with pytest.raises(PermanentIngestError):
+            extract_article_for_ingest("https://no-such-host.invalid/x", {})
+
+
+def test_connection_error_without_dns_cause_is_retryable():
+    import httpx
+    err = httpx.ConnectError("connection refused")   # no gaierror cause
+    client = MagicMock()
+    client.__enter__.return_value = client
+    client.__exit__.return_value = False
+    client.stream.side_effect = err
+    with patch("httpx.Client", return_value=client):
+        with pytest.raises(Exception) as ei:
+            extract_article_for_ingest("https://example.com/x", {})
+    assert not isinstance(ei.value, PermanentIngestError)   # retryable transport error

@@ -61,8 +61,20 @@ def classify_ingest_source(source: str) -> str:
 
     For an http/https URL: a known video host or a video-extension path ->
     ``"video"``; an audio-extension path -> ``"audio"``; otherwise
-    ``"article"``. For any non-URL source, delegate to ``detect_file_type``
-    (extension-based; raises ``FileIngestionError`` for unknown types).
+    ``"article"``. For any non-URL source, delegate to ``detect_file_type``.
+
+    Args:
+        source: A local file path or an http/https URL to classify.
+
+    Returns:
+        str: The media type -- ``"video"``, ``"audio"``, or ``"article"`` for
+        a URL; for a file path, whatever ``detect_file_type`` returns
+        (``"pdf"``, ``"document"``, ``"audio"``, ...).
+
+    Raises:
+        FileIngestionError: If ``source`` is a non-URL path whose extension is
+            not a recognized ingestible type (propagated from
+            ``detect_file_type``).
     """
     from urllib.parse import urlparse
     source = str(source)
@@ -79,17 +91,37 @@ def classify_ingest_source(source: str) -> str:
 
 
 def canonicalize_url(url: str) -> str:
-    """Canonicalize a URL for a clean stored value: lowercase scheme/host,
-    drop default port + fragment, strip trailing slash (except root), remove
-    tracking params, and sort remaining query params for stability.
+    """Canonicalize a URL to a stable, clean stored value.
+
+    Lowercases the scheme and host, drops a default port (80/443) and the URL
+    fragment, strips a trailing slash (except at the root), removes common
+    tracking parameters (``utm_*``, ``gclid``, ``fbclid``, ...), and sorts the
+    remaining query parameters so the same logical URL always canonicalizes to
+    an identical string.
+
+    Args:
+        url: The URL to canonicalize -- typically the post-redirect
+            ``resp.url`` from a successful fetch.
+
+    Returns:
+        str: The canonicalized URL.
+
+    Raises:
+        PermanentIngestError: If the URL carries a non-integer port (a
+            malformed URL that fails identically on every retry).
     """
     from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
     parsed = urlparse(url)
     scheme = (parsed.scheme or "https").lower()
     host = (parsed.hostname or "").lower()
     netloc = host
-    if parsed.port and not ((scheme == "https" and parsed.port == 443) or (scheme == "http" and parsed.port == 80)):
-        netloc = f"{host}:{parsed.port}"
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        # urllib raises ValueError for a non-integer port (e.g. ":foo").
+        raise PermanentIngestError(f"Invalid URL port: {url}") from exc
+    if port and not ((scheme == "https" and port == 443) or (scheme == "http" and port == 80)):
+        netloc = f"{host}:{port}"
     path = parsed.path or "/"
     if len(path) > 1 and path.endswith("/"):
         path = path.rstrip("/")
@@ -569,7 +601,13 @@ def parse_local_file_for_ingest(file_path: Union[str, Path], options: Dict[str, 
         media_metadata = result.get('metadata', {})
         if metadata:
             media_metadata.update(metadata)
-        media_metadata['ingestion_method'] = 'local_file'
+        # Preserve how the source was ingested so metadata consumers can tell
+        # a web-article extraction from a local-file parse (don't clobber the
+        # extractor's 'web_article' marker with 'local_file').
+        if is_url:
+            media_metadata['ingestion_method'] = 'web_article' if file_type == 'article' else 'url_download'
+        else:
+            media_metadata['ingestion_method'] = 'local_file'
         media_metadata['file_path'] = raw_source if is_url else str(file_path)
         media_metadata['file_type'] = file_type
 

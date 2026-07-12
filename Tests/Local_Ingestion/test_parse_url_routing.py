@@ -15,6 +15,8 @@ def test_article_url_routes_to_extractor_and_sets_real_url():
     assert payload["content"] == "Body text here"
     assert payload["url"] == "https://example.com/post"          # NOT file://, NOT .absolute()
     assert not payload["url"].startswith("file://")
+    # the web-article marker must survive the shared tail, not be clobbered to 'local_file'
+    assert payload["metadata"]["ingestion_method"] == "web_article"
 
 
 def test_video_url_routes_to_audio_video_branch():

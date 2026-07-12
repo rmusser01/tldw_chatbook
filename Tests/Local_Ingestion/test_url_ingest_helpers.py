@@ -37,6 +37,13 @@ def test_canonicalize_url_strips_tracking_and_normalizes():
     assert canonicalize_url("https://example.com/p/") == "https://example.com/p"
 
 
+def test_canonicalize_url_invalid_port_is_permanent():
+    # A non-integer port makes urllib's parsed.port raise ValueError; it must
+    # surface as PermanentIngestError (permanent), not crash into a retry loop.
+    with pytest.raises(PermanentIngestError):
+        canonicalize_url("https://example.com:foo/path")
+
+
 def test_classify_parse_failure_permanent_ingest_error():
     assert classify_parse_failure(PermanentIngestError("bad url")) is True
     assert classify_parse_failure(RuntimeError("transient")) is False
