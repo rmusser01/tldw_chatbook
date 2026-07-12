@@ -3,7 +3,7 @@ id: TASK-191
 title: >-
   Settings provider test: optional live connectivity probe; Console modal reuses
   provider display names
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-12 05:33'
 labels:
@@ -22,5 +22,11 @@ Follow-ups from the 2026-07-11 remediation: (1) the Settings 'Test' action is a 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Test toast can report actual endpoint reachability for local providers,Console modal provider options show the same display names as Settings,Display-name mapping has a single source of truth
+- [x] #1 Test toast can report actual endpoint reachability for local providers,Console modal provider options show the same display names as Settings,Display-name mapping has a single source of truth
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented on claude/uat-upgrade-wave-2026-07 (commits b843daac/c5aa69d2/54746ffa): shared Chat/provider_catalog is the single display-name source consumed by Settings and the Console modal; Settings Test now live-probes URL-based providers and reports reachable(with model count)/refused/timeout/HTTP status. Residual: console_model_popover still renders raw keys (minor).
+<!-- SECTION:NOTES:END -->

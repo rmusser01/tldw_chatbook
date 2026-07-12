@@ -3,7 +3,7 @@ id: TASK-188
 title: >-
   Auto-detect local LLM servers during onboarding and populate models from
   /v1/models
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-12 03:05'
 labels:
@@ -21,5 +21,11 @@ Upgrade opportunity from core-loop UAT 2026-07-11: a user already running llama.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 First-run setup offers a detected reachable local server as a one-click provider option,Local OpenAI-compatible providers get a model picker fed by /v1/models with free-text fallback,No probe traffic leaves localhost without user action
+- [x] #1 First-run setup offers a detected reachable local server as a one-click provider option,Local OpenAI-compatible providers get a model picker fed by /v1/models with free-text fallback,No probe traffic leaves localhost without user action
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented on claude/uat-upgrade-wave-2026-07 (commit c5aa69d2): Chat/local_server_discovery probes llama.cpp/Ollama defaults + configured local endpoints (strict localhost), setup card offers one-click 'Use detected ...' writing provider/endpoint/model config, Console modal gains Discover models (/v1/models -> Select with free-text fallback).
+<!-- SECTION:NOTES:END -->
