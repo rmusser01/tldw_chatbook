@@ -118,7 +118,7 @@ from tldw_chatbook.Library.library_ingest_jobs import (
     LibraryIngestJobRegistry,
 )
 from tldw_chatbook.Library.library_local_rag_search_service import LibraryLocalRagSearchService
-from tldw_chatbook.Local_Ingestion import detect_file_type
+from tldw_chatbook.Local_Ingestion import detect_file_type, FileIngestionError
 from tldw_chatbook.Local_Ingestion.ingest_parse_worker import classify_parse_failure, run_parse_job
 from tldw_chatbook.Local_Ingestion.local_file_ingestion import persist_parsed_media
 from tldw_chatbook.Home.active_work_adapter import (
@@ -1331,7 +1331,18 @@ class LibraryIngestQueueMixin:
         """
         try:
             detected_type = detect_file_type(source_path) or ""
+        except FileIngestionError:
+            # Expected for an unsupported extension -- treat as light work.
+            detected_type = ""
         except Exception:
+            # An UNEXPECTED classification failure must not silently disable the
+            # heavy-lane cap (an empty type is treated as light work, so a
+            # misclassified audio/video job would bypass the transcription cap).
+            # Log it so a regression is observable, then fall back to light.
+            logger.opt(exception=True).warning(
+                f"detect_file_type failed unexpectedly for {source_path!r}; "
+                "treating as light work (heavy-lane cap may not apply)."
+            )
             detected_type = ""
         job = self.library_ingest_jobs.submit(
             source_path=source_path,
@@ -1602,11 +1613,17 @@ class LibraryIngestQueueMixin:
             return
         worker_count = self._ingest_parse_worker_count()
         heavy_cap = self._ingest_heavy_lane_max_workers()
-        while self.library_ingest_jobs.counts().get("parsing", 0) < worker_count:
-            heavy_full = (
-                self.library_ingest_jobs.parsing_count_for_types(_INGEST_HEAVY_TYPES)
-                >= heavy_cap
-            )
+        # Read the total + heavy in-flight counts ONCE, then track them locally
+        # as we dispatch. This whole method is UI-thread-only and synchronous,
+        # so nothing but our own mark_parsing() calls can change these counts
+        # mid-loop -- re-scanning the registry (O(N)) every iteration would make
+        # the loop O(worker_count * N) on the UI thread for no benefit.
+        parsing_count = self.library_ingest_jobs.counts().get("parsing", 0)
+        heavy_parsing_count = self.library_ingest_jobs.parsing_count_for_types(
+            _INGEST_HEAVY_TYPES
+        )
+        while parsing_count < worker_count:
+            heavy_full = heavy_parsing_count >= heavy_cap
             job = self.library_ingest_jobs.next_queued(
                 skip_types=_INGEST_HEAVY_TYPES if heavy_full else frozenset()
             )
@@ -1635,6 +1652,12 @@ class LibraryIngestQueueMixin:
                     f"this top-up pass."
                 )
                 break
+            # Track the just-claimed job locally (mirrors what a fresh
+            # counts()/parsing_count_for_types() scan would report next
+            # iteration) so the loop stays O(N), not O(worker_count * N).
+            parsing_count += 1
+            if job.detected_type in _INGEST_HEAVY_TYPES:
+                heavy_parsing_count += 1
             options = self._ingest_job_options(claimed)
             job_id = claimed.job_id
             source_path = claimed.source_path

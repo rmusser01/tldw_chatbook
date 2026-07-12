@@ -656,6 +656,14 @@ class LibraryIngestJobRegistry:
 
         Excludes ``superseded``/``dismissed`` jobs, matching ``counts()`` so
         the heavy-lane in-flight count aligns with the total-slot accounting.
+
+        Args:
+            types: The ``detected_type`` values to count (e.g. the heavy set
+                ``{"audio", "video"}`` for the transcription cap).
+
+        Returns:
+            The number of currently-``PARSING``, non-hidden jobs whose
+            ``detected_type`` is in ``types``.
         """
         return sum(
             1
