@@ -42,6 +42,8 @@ from tldw_chatbook.Prompt_Management.prompt_scope_service import (
     LocalPromptService as ScopeLocalPromptService,
     PromptScopeService,
 )
+from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer
+from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.Third_Party.textual_fspicker import FileSave
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
@@ -549,6 +551,34 @@ def _real_prompt_scope_service(tmp_path):
     return db, service
 
 
+def _real_prompt_scope_service_with_production_policy_enforcer(tmp_path):
+    """Like ``_real_prompt_scope_service``, but wires the real production
+    runtime-policy seam instead of leaving ``policy_enforcer`` unset.
+
+    ``_real_prompt_scope_service`` (used by every other test below) passes
+    no ``policy_enforcer`` at all, so ``PromptScopeService._enforce_policy``
+    short-circuits and never calls ``require_allowed`` -- that is exactly
+    why the Phase-1 gate defect (clicking a prompt row raised
+    ``PolicyDeniedError: Unknown runtime-policy action_id:
+    prompts.detail.local``) went uncaught by every existing UI test here.
+
+    This mirrors how ``app.py`` (~2345-2350, 2513-2517) actually builds the
+    production seam: a ``ServicePolicyEnforcer`` around the real
+    ``CAPABILITY_REGISTRY`` (via its default ``PolicyEngine``), fed a
+    ``RuntimeSourceState`` in local mode.
+    """
+    db = PromptsDatabase(tmp_path / "prompts.db", client_id="test-client")
+    policy_enforcer = ServicePolicyEnforcer(
+        state_provider=lambda: RuntimeSourceState(active_source="local"),
+    )
+    service = PromptScopeService(
+        local_service=ScopeLocalPromptService(db),
+        server_service=None,
+        policy_enforcer=policy_enforcer,
+    )
+    return db, service
+
+
 def _wire_empty_non_prompt_services(app) -> None:
     app.notes_scope_service = StaticLibraryNotesListScopeService([])
     app.media_reading_scope_service = StaticLibraryMediaScopeService([])
@@ -607,6 +637,49 @@ async def test_library_prompt_row_opens_editor_with_six_fields_populated(tmp_pat
         assert screen.query_one("#library-prompt-system", TextArea).text == "You are concise."
         assert screen.query_one("#library-prompt-user", TextArea).text == "Summarize: {text}"
         assert screen.query_one("#library-prompt-keywords", Input).value == "summary, writing"
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_row_opens_editor_under_real_runtime_policy_enforcer(tmp_path):
+    """Regression test for the Phase-1 gate defect (live-blocking): clicking
+    a Library prompt row raised
+    ``PolicyDeniedError: Unknown runtime-policy action_id: prompts.detail.local``
+    from ``PromptScopeService.get_prompt`` -> ``_enforce_policy``, which
+    ``_refresh_library_prompt_detail`` (``UI/Screens/library_screen.py``)
+    swallows via a bare ``except Exception`` and then treats as "prompt no
+    longer available" -- the editor never opened.
+
+    Unlike ``test_library_prompt_row_opens_editor_with_six_fields_populated``
+    above (and every other test in this module), this wires the *real*
+    production runtime-policy seam -- ``ServicePolicyEnforcer`` bound to the
+    real ``CAPABILITY_REGISTRY`` -- via
+    ``_real_prompt_scope_service_with_production_policy_enforcer`` instead of
+    leaving ``policy_enforcer`` unset. That gap (no test exercised the real
+    enforcer+registry combination against the Library Prompts screen) is why
+    the missing ``prompts.detail.local`` registry row went uncaught.
+    """
+    db, service = _real_prompt_scope_service_with_production_policy_enforcer(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Summarize",
+        author="Alice",
+        details="A summarizer",
+        system_prompt="You are concise.",
+        user_prompt="Summarize: {text}",
+        keywords=["writing", "summary"],
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+
+        assert screen._library_prompts_view == "editor"
+        assert screen._library_prompt_detail is not None
+        assert screen.query_one("#library-prompt-name", Input).value == "Summarize"
 
 
 @pytest.mark.asyncio

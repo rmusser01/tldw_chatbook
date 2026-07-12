@@ -405,7 +405,14 @@ AUDITED_CAPABILITY_SEEDS = (
         resources=(
             _resource(
                 "prompts",
-                actions=(LIST, PREVIEW, CREATE, UPDATE, DELETE),
+                # DETAIL is distinct from PREVIEW: PREVIEW ("prompts.preview.*")
+                # backs the prompt-chatbook "render this prompt's variables"
+                # flow (see Prompt_Management/prompt_chatbook_scope_service.py
+                # and MCP/local_control_service.py); DETAIL ("prompts.detail.*")
+                # is PromptScopeService.get_prompt's single-record fetch, used
+                # by the Library Prompts editor (UI/Screens/library_screen.py's
+                # _refresh_library_prompt_detail) to open a prompt row.
+                actions=(LIST, DETAIL, PREVIEW, CREATE, UPDATE, DELETE),
                 domain_id="prompts",
             ),
             _resource(
