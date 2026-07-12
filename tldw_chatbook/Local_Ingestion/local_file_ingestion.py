@@ -32,6 +32,106 @@ class FileIngestionError(Exception):
     pass
 
 
+class PermanentIngestError(FileIngestionError):
+    """A parse/fetch failure that will fail identically on retry (bad URL,
+    4xx, non-HTML content, empty extraction, missing extractor dependency).
+    ``classify_parse_failure`` maps this to a permanent (non-retryable) job.
+    """
+
+
+_VIDEO_URL_HOSTS = ("youtube.com", "youtu.be", "vimeo.com", "dailymotion.com")
+_VIDEO_EXTS = (".mp4", ".avi", ".mkv", ".mov", ".webm", ".flv", ".wmv", ".m4v", ".mpg", ".mpeg")
+_AUDIO_EXTS = (".mp3", ".m4a", ".wav", ".flac", ".ogg", ".aac", ".wma", ".opus")
+_TRACKING_PARAMS = frozenset({
+    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+    "gclid", "fbclid", "igshid", "mc_cid", "mc_eid", "ref", "ref_src",
+})
+
+
+def _is_http_url(source: str) -> bool:
+    from urllib.parse import urlparse
+    try:
+        return urlparse(source).scheme in ("http", "https")
+    except Exception:
+        return False
+
+
+def classify_ingest_source(source: str) -> str:
+    """Classify an ingest source into a media type.
+
+    For an http/https URL: a known video host or a video-extension path ->
+    ``"video"``; an audio-extension path -> ``"audio"``; otherwise
+    ``"article"``. For any non-URL source, delegate to ``detect_file_type``.
+
+    Args:
+        source: A local file path or an http/https URL to classify.
+
+    Returns:
+        str: The media type -- ``"video"``, ``"audio"``, or ``"article"`` for
+        a URL; for a file path, whatever ``detect_file_type`` returns
+        (``"pdf"``, ``"document"``, ``"audio"``, ...).
+
+    Raises:
+        FileIngestionError: If ``source`` is a non-URL path whose extension is
+            not a recognized ingestible type (propagated from
+            ``detect_file_type``).
+    """
+    from urllib.parse import urlparse
+    source = str(source)
+    if _is_http_url(source):
+        parsed = urlparse(source)
+        host = (parsed.hostname or "").lower()
+        path = parsed.path.lower()
+        if any(host == h or host.endswith("." + h) for h in _VIDEO_URL_HOSTS) or path.endswith(_VIDEO_EXTS):
+            return "video"
+        if path.endswith(_AUDIO_EXTS):
+            return "audio"
+        return "article"
+    return detect_file_type(source)
+
+
+def canonicalize_url(url: str) -> str:
+    """Canonicalize a URL to a stable, clean stored value.
+
+    Lowercases the scheme and host, drops a default port (80/443) and the URL
+    fragment, strips a trailing slash (except at the root), removes common
+    tracking parameters (``utm_*``, ``gclid``, ``fbclid``, ...), and sorts the
+    remaining query parameters so the same logical URL always canonicalizes to
+    an identical string.
+
+    Args:
+        url: The URL to canonicalize -- typically the post-redirect
+            ``resp.url`` from a successful fetch.
+
+    Returns:
+        str: The canonicalized URL.
+
+    Raises:
+        PermanentIngestError: If the URL carries a non-integer port (a
+            malformed URL that fails identically on every retry).
+    """
+    from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
+    parsed = urlparse(url)
+    scheme = (parsed.scheme or "https").lower()
+    host = (parsed.hostname or "").lower()
+    netloc = host
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        # urllib raises ValueError for a non-integer port (e.g. ":foo").
+        raise PermanentIngestError(f"Invalid URL port: {url}") from exc
+    if port and not ((scheme == "https" and port == 443) or (scheme == "http" and port == 80)):
+        netloc = f"{host}:{port}"
+    path = parsed.path or "/"
+    if len(path) > 1 and path.endswith("/"):
+        path = path.rstrip("/")
+    query = urlencode(sorted(
+        (k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True)
+        if k.lower() not in _TRACKING_PARAMS
+    ))
+    return urlunparse((scheme, netloc, path, "", query, ""))
+
+
 def detect_file_type(file_path: Union[str, Path]) -> str:
     """
     Detect the type of file based on its extension.
@@ -183,18 +283,24 @@ def parse_local_file_for_ingest(file_path: Union[str, Path], options: Dict[str, 
             see identical error text regardless of whether the failure
             originated during parsing or persistence).
     """
-    file_path = Path(file_path)
-
-    # Validate file exists
-    if not file_path.exists():
-        raise FileNotFoundError(f"File not found: {file_path}")
-
-    # Detect file type
-    try:
-        file_type = detect_file_type(file_path)
-    except FileIngestionError as e:
-        logger.error(f"Unsupported file type: {file_path} - {e}")
-        raise
+    raw_source = str(file_path)
+    is_url = _is_http_url(raw_source)
+    if is_url:
+        # URL source: skip the file-path machinery entirely.
+        file_type = classify_ingest_source(raw_source)   # "article" | "audio" | "video"
+        source_url = raw_source                            # article branch overrides w/ canonical
+        # keep file_path as the raw URL string so the audio/video branches'
+        # `str(file_path)` passes the URL straight to the URL-accepting processor.
+    else:
+        file_path = Path(file_path)
+        if not file_path.exists():
+            raise FileNotFoundError(f"File not found: {file_path}")
+        try:
+            file_type = detect_file_type(file_path)
+        except FileIngestionError as e:
+            logger.error(f"Unsupported file type: {file_path} - {e}")
+            raise
+        source_url = f"file://{file_path.absolute()}"
 
     title = options.get('title')
     author = options.get('author')
@@ -209,7 +315,7 @@ def parse_local_file_for_ingest(file_path: Union[str, Path], options: Dict[str, 
 
     # Set default values
     if title is None:
-        title = file_path.stem
+        title = raw_source if is_url else file_path.stem
     if keywords is None:
         keywords = []
     if chunk_options is None:
@@ -459,7 +565,12 @@ def parse_local_file_for_ingest(file_path: Union[str, Path], options: Dict[str, 
                 'chunks': [],  # Chunking will be handled by the database
                 'analysis': ''
             }
-        
+
+        elif file_type == 'article':
+            from .web_article_ingestion import extract_article_for_ingest
+            result = extract_article_for_ingest(raw_source, options)
+            source_url = result.get('url', source_url)     # canonical post-redirect URL
+
         # Check if processing was successful. NOTE: some processors (e.g.
         # ``process_pdf``) always initialize an ``'error'`` key (defaulting
         # to ``None``) in their result dict, so ``'error' in result`` is
@@ -490,8 +601,14 @@ def parse_local_file_for_ingest(file_path: Union[str, Path], options: Dict[str, 
         media_metadata = result.get('metadata', {})
         if metadata:
             media_metadata.update(metadata)
-        media_metadata['ingestion_method'] = 'local_file'
-        media_metadata['file_path'] = str(file_path)
+        # Preserve how the source was ingested so metadata consumers can tell
+        # a web-article extraction from a local-file parse (don't clobber the
+        # extractor's 'web_article' marker with 'local_file').
+        if is_url:
+            media_metadata['ingestion_method'] = 'web_article' if file_type == 'article' else 'url_download'
+        else:
+            media_metadata['ingestion_method'] = 'local_file'
+        media_metadata['file_path'] = raw_source if is_url else str(file_path)
         media_metadata['file_type'] = file_type
 
         return {
@@ -501,14 +618,17 @@ def parse_local_file_for_ingest(file_path: Union[str, Path], options: Dict[str, 
             'author': extracted_author,
             'content': content,
             'keywords': all_keywords,
-            'url': f"file://{file_path.absolute()}",
+            'url': source_url,
             'analysis_content': analysis,
             'chunks': chunks if chunks else None,
             'chunk_options': chunk_options if chunk_options else None,
             'metadata': media_metadata,
-            'file_path': str(file_path),
+            'file_path': raw_source if is_url else str(file_path),
         }
 
+    except PermanentIngestError:
+        # keep the permanent classification intact for classify_parse_failure
+        raise
     except Exception as e:
         logger.error(f"Error parsing {file_type} file {file_path}: {e}")
         raise FileIngestionError(f"Failed to ingest {file_type} file: {str(e)}")

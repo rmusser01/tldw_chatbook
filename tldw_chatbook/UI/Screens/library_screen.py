@@ -135,7 +135,7 @@ from ...runtime_policy.types import PolicyDeniedError, RuntimeSourceState
 from ...Sync_Interop.sync_promotion_state import build_sync_promotion_state
 from ...Sync_Interop.sync_readiness import DEFAULT_SYNC_ELIGIBILITY_REGISTRY, build_sync_readiness_report
 from ...Third_Party.textual_fspicker import FileOpen, FileSave
-from ...Utils.input_validation import sanitize_string, validate_text_input
+from ...Utils.input_validation import sanitize_string, validate_text_input, validate_url
 from ...Utils.path_validation import validate_path_simple
 from ...Workspaces import LibraryWorkspaceDepthState, build_library_workspace_depth_state
 from ...Widgets.Console.console_rail_section import (
@@ -6189,20 +6189,34 @@ class LibraryScreen(BaseAppScreen):
         if not raw_path:
             self._notify_library_ingest_warning("Please choose a file to ingest.")
             return
-        try:
-            validated_path = validate_path_simple(
-                Path(raw_path).expanduser(), require_exists=True
-            )
-        except ValueError:
-            logger.opt(exception=True).warning(f"Rejected Library ingest path {raw_path!r}.")
-            self._notify_library_ingest_warning("Could not find that file.")
-            return
+        from urllib.parse import urlparse
+
+        if urlparse(raw_path).scheme in ("http", "https"):
+            # A URL source: skip the filesystem-existence check entirely --
+            # validate_url is a syntax check, not a network fetch, matching
+            # the file branch's "cheap, local, synchronous" validation cost.
+            if not validate_url(raw_path):
+                self._notify_library_ingest_warning(
+                    "That doesn't look like a valid http(s) URL."
+                )
+                return
+            submitted_source = raw_path
+        else:
+            try:
+                validated_path = validate_path_simple(
+                    Path(raw_path).expanduser(), require_exists=True
+                )
+            except ValueError:
+                logger.opt(exception=True).warning(f"Rejected Library ingest path {raw_path!r}.")
+                self._notify_library_ingest_warning("Could not find that file.")
+                return
+            submitted_source = str(validated_path)
         submit = getattr(self.app_instance, "submit_library_ingest_job", None)
         if not callable(submit):
             self._notify_library_ingest_warning(INGEST_UNAVAILABLE_COPY)
             return
         submit(
-            source_path=str(validated_path),
+            source_path=submitted_source,
             title=self._safe_text(form.title, max_length=300),
             author=self._safe_text(form.author, max_length=200),
             keywords=parse_keywords(form.keywords),

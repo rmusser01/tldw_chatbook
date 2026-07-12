@@ -119,9 +119,9 @@ from tldw_chatbook.Library.library_ingest_jobs import (
     LibraryIngestJobRegistry,
 )
 from tldw_chatbook.Library.library_local_rag_search_service import LibraryLocalRagSearchService
-from tldw_chatbook.Local_Ingestion import detect_file_type, FileIngestionError
+from tldw_chatbook.Local_Ingestion import FileIngestionError
 from tldw_chatbook.Local_Ingestion.ingest_parse_worker import classify_parse_failure, run_parse_job
-from tldw_chatbook.Local_Ingestion.local_file_ingestion import persist_parsed_media
+from tldw_chatbook.Local_Ingestion.local_file_ingestion import classify_ingest_source, persist_parsed_media
 from tldw_chatbook.Home.active_work_adapter import (
     HomeControlAction,
     HomeControlResult,
@@ -1365,7 +1365,7 @@ class LibraryIngestQueueMixin:
             ``FAILED`` when ``media_db`` is unavailable.
         """
         try:
-            detected_type = detect_file_type(source_path) or ""
+            detected_type = classify_ingest_source(source_path) or ""
         except FileIngestionError:
             # Expected for an unsupported extension -- treat as light work.
             detected_type = ""
@@ -1375,7 +1375,7 @@ class LibraryIngestQueueMixin:
             # misclassified audio/video job would bypass the transcription cap).
             # Log it so a regression is observable, then fall back to light.
             logger.opt(exception=True).warning(
-                f"detect_file_type failed unexpectedly for {source_path!r}; "
+                f"classify_ingest_source failed unexpectedly for {source_path!r}; "
                 "treating as light work (heavy-lane cap may not apply)."
             )
             detected_type = ""
@@ -1624,7 +1624,7 @@ class LibraryIngestQueueMixin:
         no new parse work should be handed to a pool that's about to be
         terminated).
 
-        ``detect_file_type`` is called once, at enqueue time (in
+        ``classify_ingest_source`` is called once, at enqueue time (in
         ``submit_library_ingest_job``), and its result is stamped onto the
         job's ``detected_type`` -- not recomputed here. Dispatch reuses that
         stored value both to claim the job (``mark_parsing``) and to decide
