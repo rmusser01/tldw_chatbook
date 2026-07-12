@@ -23,3 +23,11 @@ Feature regression: 404 passed / 20 skipped / 0 failed across Chunking/RAG/RAG_A
 RAG_Search/Web_Scraping/startup-polish/optional_deps. numpy stays (chromadb/pymupdf, allowed).
 Pre-existing punkt vs punkt_tab nltk-5.x bug in semantic chunking documented as follow-up
 (reproduces on original code, out of scope).
+
+## Task 163 — COMPLETE (2026-07-11)
+- Commit b5970b19: torch/transformers/numpy + summarization stack deferred (Embeddings_Lib, Chroma_Lib, Article_Extractor_Lib, WebSearch_APIs)
+- Commit fd79452a: nltk deferred in Chunk_Lib → scipy+sklearn+pandas (all nltk-transitive) also gone
+- Whole-branch review (opus): APPROVE, 2 Minor non-blocking thread-window notes
+- Gate: perf test + Chunking + RAG + RAG_Admin + RAG_Search + embeddings-datatable = 319 passed / 20 skipped / 0 failed; app import OK
+- Boot: 6,519 → 3,291 modules (−49.5%), ~5.65s → ~1.48s; torch/transformers/nltk/scipy/sklearn/pandas/docling/torchvision all absent
+- Follow-up logged: pre-existing nltk 5.x punkt/punkt_tab semantic-chunk resource mismatch (reproduces on original code)
