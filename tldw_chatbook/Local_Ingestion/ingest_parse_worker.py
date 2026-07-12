@@ -98,6 +98,12 @@ def classify_parse_failure(exc: Exception) -> bool:
         error carrying the same copy still classifies consistently).
         ``False`` for everything else.
     """
+    try:
+        from .local_file_ingestion import PermanentIngestError
+        if isinstance(exc, PermanentIngestError):
+            return True
+    except Exception:
+        pass
     if isinstance(exc, FileNotFoundError):
         return True
     return str(exc).strip().startswith("Unsupported file type")

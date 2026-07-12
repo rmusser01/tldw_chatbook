@@ -32,6 +32,74 @@ class FileIngestionError(Exception):
     pass
 
 
+class PermanentIngestError(FileIngestionError):
+    """A parse/fetch failure that will fail identically on retry (bad URL,
+    4xx, non-HTML content, empty extraction, missing extractor dependency).
+    ``classify_parse_failure`` maps this to a permanent (non-retryable) job.
+    """
+
+
+_VIDEO_URL_HOSTS = ("youtube.com", "youtu.be", "vimeo.com", "dailymotion.com")
+_VIDEO_EXTS = (".mp4", ".avi", ".mkv", ".mov", ".webm", ".flv", ".wmv", ".m4v", ".mpg", ".mpeg")
+_AUDIO_EXTS = (".mp3", ".m4a", ".wav", ".flac", ".ogg", ".aac", ".wma", ".opus")
+_TRACKING_PARAMS = frozenset({
+    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+    "gclid", "fbclid", "igshid", "mc_cid", "mc_eid", "ref", "ref_src",
+})
+
+
+def _is_http_url(source: str) -> bool:
+    from urllib.parse import urlparse
+    try:
+        return urlparse(source).scheme in ("http", "https")
+    except Exception:
+        return False
+
+
+def classify_ingest_source(source: str) -> str:
+    """Classify an ingest source into a media type.
+
+    For an http/https URL: a known video host or a video-extension path ->
+    ``"video"``; an audio-extension path -> ``"audio"``; otherwise
+    ``"article"``. For any non-URL source, delegate to ``detect_file_type``
+    (extension-based; raises ``FileIngestionError`` for unknown types).
+    """
+    from urllib.parse import urlparse
+    source = str(source)
+    if _is_http_url(source):
+        parsed = urlparse(source)
+        host = (parsed.hostname or "").lower()
+        path = parsed.path.lower()
+        if any(host == h or host.endswith("." + h) for h in _VIDEO_URL_HOSTS) or path.endswith(_VIDEO_EXTS):
+            return "video"
+        if path.endswith(_AUDIO_EXTS):
+            return "audio"
+        return "article"
+    return detect_file_type(source)
+
+
+def canonicalize_url(url: str) -> str:
+    """Canonicalize a URL for a clean stored value: lowercase scheme/host,
+    drop default port + fragment, strip trailing slash (except root), remove
+    tracking params, and sort remaining query params for stability.
+    """
+    from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
+    parsed = urlparse(url)
+    scheme = (parsed.scheme or "https").lower()
+    host = (parsed.hostname or "").lower()
+    netloc = host
+    if parsed.port and not ((scheme == "https" and parsed.port == 443) or (scheme == "http" and parsed.port == 80)):
+        netloc = f"{host}:{parsed.port}"
+    path = parsed.path or "/"
+    if len(path) > 1 and path.endswith("/"):
+        path = path.rstrip("/")
+    query = urlencode(sorted(
+        (k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True)
+        if k.lower() not in _TRACKING_PARAMS
+    ))
+    return urlunparse((scheme, netloc, path, "", query, ""))
+
+
 def detect_file_type(file_path: Union[str, Path]) -> str:
     """
     Detect the type of file based on its extension.
