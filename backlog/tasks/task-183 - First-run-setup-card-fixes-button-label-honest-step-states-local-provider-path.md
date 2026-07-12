@@ -21,5 +21,8 @@ Core-loop UAT 2026-07-11: the blocking card's primary button is literally 'Confi
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Primary button reads as plain language (e.g. Set up a provider),Checklist steps reflect user actions not template defaults,Copy offers the no-API-key local path,Blocked state does not invite typing below
+- [ ] #1 Primary button reads as plain language (e.g. Set up a provider)
+- [ ] #2 Checklist steps reflect user actions not template defaults
+- [ ] #3 Copy offers the no-API-key local path
+- [ ] #4 Blocked state does not invite typing below
 <!-- AC:END -->
