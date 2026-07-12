@@ -3,6 +3,7 @@ import pytest
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP,
     LIBRARY_ROW_BROWSE_PROMPTS,
+    LIBRARY_ROW_CREATE_PROMPT,
     LIBRARY_ROW_INGEST_EXPORT,
     LibraryShellInput,
     build_library_shell_state,
@@ -37,9 +38,11 @@ def test_shell_sections_rows_and_targets_are_fixed():
     prompts = browse.rows[3]
     assert (prompts.target_kind, prompts.target_id, prompts.count) == ("canvas", "prompts", 9)
     create_ids = [r.row_id for r in shell.sections[1].rows]
-    assert create_ids == ["create-note", "create-study", "create-flashcards", "create-quizzes"]
+    assert create_ids == [
+        "create-note", LIBRARY_ROW_CREATE_PROMPT, "create-study", "create-flashcards", "create-quizzes",
+    ]
     assert [r.title for r in shell.sections[1].rows] == [
-        "New note", "Study decks", "Flashcards", "Quizzes"
+        "New note", "New prompt", "Study decks", "Flashcards", "Quizzes"
     ]
     assert (shell.sections[1].rows[0].target_kind, shell.sections[1].rows[0].target_id) == (
         "canvas", "notes-create",
@@ -157,6 +160,22 @@ def test_create_note_row_targets_notes_create_canvas():
     assert row.target_id == "notes-create"
     assert (shell.canvas_kind, shell.canvas_target) == ("notes-create", "")
     assert shell.selected_row_id == "create-note"
+
+
+def test_create_prompt_row_targets_prompts_canvas():
+    # Task 8b D1: the "New prompt" row reuses the SAME canvas kind
+    # ("prompts") Browse > Prompts targets -- the screen distinguishes the
+    # two by view state (`_library_prompts_view`), not by a separate canvas
+    # kind, mirroring the brief's "a `prompts` editor view ... prompt_id=None
+    # sentinel" design.
+    shell = build_library_shell_state(LibraryShellInput(), selected_row_id=LIBRARY_ROW_CREATE_PROMPT)
+    row = next(
+        r for section in shell.sections for r in section.rows if r.row_id == LIBRARY_ROW_CREATE_PROMPT
+    )
+    assert row.target_kind == "canvas"
+    assert row.target_id == "prompts"
+    assert (shell.canvas_kind, shell.canvas_target) == ("prompts", "")
+    assert shell.selected_row_id == LIBRARY_ROW_CREATE_PROMPT
 
 
 def test_unknown_rows_resolve_to_empty_canvas():

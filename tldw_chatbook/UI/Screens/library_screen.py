@@ -139,6 +139,7 @@ from ...Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_PROMPTS,
     LIBRARY_ROW_BROWSE_SEARCH,
     LIBRARY_ROW_CREATE_NOTE,
+    LIBRARY_ROW_CREATE_PROMPT,
     LIBRARY_ROW_INGEST_EXPORT,
     LIBRARY_ROW_INGEST_MEDIA,
     LibraryShellInput,
@@ -5584,6 +5585,13 @@ class LibraryScreen(BaseAppScreen):
         # ``_reset_library_export_transient_state``'s docstring.
         self._reset_library_export_transient_state()
         self._invalidate_library_workspace_depth_state()
+        if row_id == LIBRARY_ROW_CREATE_PROMPT:
+            # Task 8b D1: "New prompt" -- applied AFTER
+            # _reset_library_prompt_editor_state() above (which it would
+            # otherwise immediately undo), mirroring the reset-then-set
+            # ordering ``apply_navigation_context``'s notes-create branch
+            # already uses.
+            self._enter_library_prompt_create_editor()
         if (
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
             and not self._library_collections_loaded
@@ -5595,6 +5603,8 @@ class LibraryScreen(BaseAppScreen):
         self.refresh(recompose=True)
         if self._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT:
             self._start_library_export_counts_worker()
+        if row_id == LIBRARY_ROW_CREATE_PROMPT and self.is_mounted:
+            self.call_after_refresh(self._arm_library_prompt_editor)
 
     @on(Button.Pressed, ".console-rail-section-toggle")
     def handle_library_rail_section_toggle(self, event: Button.Pressed) -> None:
@@ -6298,6 +6308,37 @@ class LibraryScreen(BaseAppScreen):
         """
         self._library_prompt_editor_armed = True
 
+    def _enter_library_prompt_create_editor(self) -> None:
+        """Open the in-canvas prompt editor on a blank, not-yet-saved record.
+
+        Entered via the Create rail's "New prompt" row
+        (``LIBRARY_ROW_CREATE_PROMPT``, whose ``target_id`` is ``"prompts"``
+        -- the SAME canvas kind Browse > Prompts targets -- and via the
+        Duplicate action (see ``handle_library_prompt_duplicate``, which
+        pre-fills the blank record from the current prompt's fields after
+        calling this).
+
+        ``_selected_prompt_id`` stays ``None``: the sentinel
+        ``_save_library_prompt`` reads to route its scope-service
+        ``save_prompt`` call into the create path (``prompt_identifier=None``)
+        instead of update, and the sentinel ``prompt_editor_meta_line`` reads
+        to render "New prompt" instead of "Modified … · vN".
+        ``_library_prompt_detail`` is set to ``{}`` (not ``None``) so the
+        editor renders blank fields immediately -- ``None`` would instead
+        show the "Loading prompt…" placeholder the browse-and-fetch path
+        uses while ``_refresh_library_prompt_detail`` is in flight; there is
+        nothing to fetch here.
+        """
+        self._selected_prompt_id = None
+        self._library_prompts_view = "editor"
+        self._library_prompt_detail = {}
+        self._library_prompt_original_name = ""
+        self._library_prompt_version = None
+        self._library_prompt_dirty = False
+        self._library_prompt_status = ""
+        self._library_prompt_conflict_snapshot = None
+        self._library_prompt_editor_armed = False
+
     def _reset_library_prompt_editor_state(self) -> None:
         """Clear all in-canvas Library prompt editor/save state.
 
@@ -6439,10 +6480,22 @@ class LibraryScreen(BaseAppScreen):
         Every branch re-checks that the prompt this save was *for* is still
         selected (and the editor still showing) before mutating shared
         state, mirroring ``_save_library_note``'s stale-result guard.
+
+        Task 8b D1: ``prompt_id is None`` (``_selected_prompt_id`` unset) is
+        the create-flow sentinel -- set by
+        ``_enter_library_prompt_create_editor``/``handle_library_prompt_duplicate``,
+        never a stray/invalid state (a browsed prompt always has a real
+        int id). ``save_prompt`` already routes ``prompt_identifier=None``
+        to its own create path (``PromptScopeService.save_prompt``), so the
+        actual write call below is unchanged between create and update --
+        only the pre-checks (the version-staleness read has nothing to
+        check for a not-yet-created prompt) and the post-write bookkeeping
+        (adopting the freshly created id) differ, per ``is_create`` below.
         """
-        if self._library_prompts_view != "editor" or not self._selected_prompt_id:
+        if self._library_prompts_view != "editor":
             return
         prompt_id = self._selected_prompt_id
+        is_create = prompt_id is None
         fields = self._read_library_prompt_editor_fields()
         if fields is None:
             return
@@ -6489,33 +6542,39 @@ class LibraryScreen(BaseAppScreen):
                 )
                 return
 
-        try:
-            fresh = await self._run_library_service_call(
-                get_prompt,
-                mode="local",
-                prompt_identifier=prompt_id,
-                include_deleted=True,
-                isolate_in_worker=True,
-            )
-        except Exception:
-            fresh = None
-        if prompt_id != self._selected_prompt_id or self._library_prompts_view != "editor":
-            return
-        fresh_version = fresh.get("version") if isinstance(fresh, Mapping) else None
-        if (
-            fresh_version is not None
-            and self._library_prompt_version is not None
-            and fresh_version != self._library_prompt_version
-        ):
-            self._enter_library_prompt_conflict(
-                name=raw_name,
-                author=raw_author,
-                details=raw_details,
-                system_prompt=raw_system,
-                user_prompt=raw_user,
-                keywords_text=raw_keywords_text,
-            )
-            return
+        if not is_create:
+            # A not-yet-created prompt has no existing row to have gone
+            # stale -- skip the pre-read entirely rather than calling
+            # ``get_prompt(prompt_identifier=None)`` (which would only
+            # raise, harmlessly swallowed by the ``except`` below, but is
+            # wasted work with no real check to perform).
+            try:
+                fresh = await self._run_library_service_call(
+                    get_prompt,
+                    mode="local",
+                    prompt_identifier=prompt_id,
+                    include_deleted=True,
+                    isolate_in_worker=True,
+                )
+            except Exception:
+                fresh = None
+            if prompt_id != self._selected_prompt_id or self._library_prompts_view != "editor":
+                return
+            fresh_version = fresh.get("version") if isinstance(fresh, Mapping) else None
+            if (
+                fresh_version is not None
+                and self._library_prompt_version is not None
+                and fresh_version != self._library_prompt_version
+            ):
+                self._enter_library_prompt_conflict(
+                    name=raw_name,
+                    author=raw_author,
+                    details=raw_details,
+                    system_prompt=raw_system,
+                    user_prompt=raw_user,
+                    keywords_text=raw_keywords_text,
+                )
+                return
 
         try:
             result = await self._run_library_service_call(
@@ -6568,6 +6627,7 @@ class LibraryScreen(BaseAppScreen):
             )
             return
 
+        new_id = result_id if is_create else prompt_id
         version = result.get("version") if isinstance(result, Mapping) else None
         self._library_prompt_version = (
             version if version is not None else (self._library_prompt_version or 0) + 1
@@ -6577,7 +6637,7 @@ class LibraryScreen(BaseAppScreen):
             if isinstance(self._library_prompt_detail, Mapping)
             else {}
         )
-        patched_detail["id"] = prompt_id
+        patched_detail["id"] = new_id
         patched_detail["name"] = name
         patched_detail["author"] = author
         patched_detail["details"] = details
@@ -6594,6 +6654,19 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompt_detail = patched_detail
         self._library_prompt_original_name = name
         self._library_prompt_dirty = False
+        if is_create:
+            # Adopts the freshly created id -- every subsequent save for
+            # this editor session is now an update against a real row (the
+            # `is_create`/staleness-pre-check-skip branches above only ever
+            # apply once, to the create itself).
+            self._selected_prompt_id = new_id
+            # Unlike a plain in-place field update (which defers the
+            # broader snapshot refresh to when the editor is actually left
+            # -- see the comment below), a brand-new prompt changes the
+            # list's membership/count, so the Prompts rail badge and list
+            # must pick up the new row now. Fire-and-forget, mirrors
+            # ``_create_library_note``'s equivalent post-create refresh.
+            self._refresh_local_source_snapshot()
         # Targeted updates only (no recompose): the fields already hold the
         # user's just-saved text, so nothing there needs to change -- only
         # the meta line's version and the status line need to reflect the
@@ -6821,6 +6894,54 @@ class LibraryScreen(BaseAppScreen):
             return
         if callable(notify):
             notify(f"Prompt exported successfully to {validated_path.name}", severity="information")
+
+    @on(Button.Pressed, "#library-prompt-duplicate")
+    def handle_library_prompt_duplicate(self, event: Button.Pressed) -> None:
+        """Open the editor on a NEW blank-id record pre-filled from the
+        current prompt's fields (Task 8b U3).
+
+        Reads the *live* editor widgets (never the DB/detail mapping) --
+        same rationale as ``_export_library_prompt``: the duplicate should
+        carry whatever is currently on screen, including unsaved edits, not
+        revert to the last-saved text. The name becomes ``"<name> (copy)"``;
+        the new record is dirty/unsaved by construction (unlike the D1
+        blank-create entry, which starts clean). Reuses the D1 create path
+        on Save (``_selected_prompt_id`` is ``None``, exactly like
+        ``_enter_library_prompt_create_editor``'s sentinel).
+
+        Args:
+            event: Button press event emitted by the editor's "Duplicate" action.
+        """
+        event.stop()
+        if self._library_prompts_view != "editor":
+            return
+        fields = self._read_library_prompt_editor_fields()
+        if fields is None:
+            return
+        name, author, details, system_prompt, user_prompt, keywords_text = fields
+        self._selected_prompt_id = None
+        self._library_prompt_detail = {
+            "name": f"{name} (copy)",
+            "author": author,
+            "details": details,
+            "system_prompt": system_prompt,
+            "user_prompt": user_prompt,
+            # A raw CSV string is a valid `keywords` input for
+            # `build_prompt_editor_state`/`_csv_from_keywords` (it passes a
+            # `str` through verbatim after stripping) -- preserves the live
+            # Keywords field's exact text rather than round-tripping it
+            # through a list.
+            "keywords": keywords_text,
+        }
+        self._library_prompt_original_name = ""
+        self._library_prompt_version = None
+        self._library_prompt_status = ""
+        self._library_prompt_conflict_snapshot = None
+        self._library_prompt_dirty = True
+        self._library_prompt_editor_armed = False
+        if self.is_mounted:
+            self.refresh(recompose=True)
+            self.call_after_refresh(self._arm_library_prompt_editor)
 
     @on(Button.Pressed, "#library-prompt-delete")
     def handle_library_prompt_delete(self, event: Button.Pressed) -> None:

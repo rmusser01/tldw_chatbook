@@ -230,9 +230,14 @@ def prompt_editor_meta_line(editor_state: PromptEditorState, *, now: datetime | 
             current UTC time.
 
     Returns:
-        ``"Modified <age> · vN"``, with either part omitted (and its
-        separator) when unknown.
+        ``"New prompt"`` when ``editor_state.prompt_id`` is ``None`` (the
+        Task 8b D1 create-flow sentinel: a blank, not-yet-saved record --
+        see ``library_screen.py``'s ``_enter_library_prompt_create_editor``
+        and the Duplicate action). Otherwise ``"Modified <age> · vN"``,
+        with either part omitted (and its separator) when unknown.
     """
+    if editor_state.prompt_id is None:
+        return "New prompt"
     reference_now = now if now is not None else datetime.now(timezone.utc)
     parts: list[str] = []
     if editor_state.modified:

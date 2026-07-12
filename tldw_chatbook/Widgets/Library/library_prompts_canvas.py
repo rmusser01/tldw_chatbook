@@ -201,6 +201,10 @@ class LibraryPromptsListCanvas(Vertical):
         here (prompts use an explicit Save button only), and no inline
         delete-confirmation state -- Delete is a single, confirm-free
         action (styled the same danger tier as the notes delete button).
+
+        Field order (Task 8b U2): Name, Description, System prompt, User
+        prompt, Keywords, Author -- Author is demoted from 2nd position to
+        last, beside Keywords (ids unchanged; only compose order moved).
         """
         editor_state = self.editor_state
         if editor_state is None:
@@ -213,9 +217,9 @@ class LibraryPromptsListCanvas(Vertical):
         )
         yield Static("Name", classes="library-prompt-field-label", markup=False)
         yield Input(value=editor_state.name, id="library-prompt-name")
-        yield Static("Author", classes="library-prompt-field-label", markup=False)
-        yield Input(value=editor_state.author, id="library-prompt-author")
-        yield Static("Details", classes="library-prompt-field-label", markup=False)
+        # Task 8b U4: rendered label only -- the DB/record field name
+        # (``details``, ``#library-prompt-details``) is untouched.
+        yield Static("Description", classes="library-prompt-field-label", markup=False)
         yield Input(value=editor_state.details, id="library-prompt-details")
         yield Static("System prompt", classes="library-prompt-field-label", markup=False)
         yield TextArea(editor_state.system_prompt, id="library-prompt-system")
@@ -226,6 +230,8 @@ class LibraryPromptsListCanvas(Vertical):
             placeholder="Keywords (comma-separated)",
             id="library-prompt-keywords",
         )
+        yield Static("Author", classes="library-prompt-field-label", markup=False)
+        yield Input(value=editor_state.author, id="library-prompt-author")
         yield Static(
             prompt_editor_meta_line(editor_state),
             id="library-prompt-meta",
@@ -283,6 +289,12 @@ class LibraryPromptsListCanvas(Vertical):
                 yield Button(
                     "Copy",
                     id="library-prompt-copy",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                yield Button(
+                    "Duplicate",
+                    id="library-prompt-duplicate",
                     classes="library-canvas-action",
                     compact=True,
                 )

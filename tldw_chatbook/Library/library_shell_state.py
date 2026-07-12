@@ -16,6 +16,15 @@ LIBRARY_ROW_BROWSE_PROMPTS = "browse-prompts"
 LIBRARY_ROW_BROWSE_SEARCH = "browse-search"
 LIBRARY_ROW_BROWSE_COLLECTIONS = "browse-collections"
 LIBRARY_ROW_CREATE_NOTE = "create-note"
+# Task 8b D1: "New prompt" -- unlike LIBRARY_ROW_CREATE_NOTE (its own
+# "notes-create" canvas kind, a landing chooser of Blank/template rows),
+# this row's target_id is "prompts" itself: it reuses the SAME canvas kind
+# Browse > Prompts targets. The screen distinguishes "opened via Browse" vs
+# "opened via New prompt" by view/selection state
+# (`_library_prompts_view == "editor"` plus a `prompt_id=None` sentinel),
+# not by a separate canvas kind -- see library_screen.py's
+# `_enter_library_prompt_create_editor`.
+LIBRARY_ROW_CREATE_PROMPT = "create-prompt"
 LIBRARY_ROW_INGEST_MEDIA = "ingest-import-media"
 LIBRARY_ROW_INGEST_EXPORT = "ingest-export"
 
@@ -181,6 +190,15 @@ def build_library_shell_state(
             title="New note",
             target_kind="canvas",
             target_id="notes-create",
+            count=None,
+            count_known=True,
+        ),
+        LibraryRailRow(
+            row_id=LIBRARY_ROW_CREATE_PROMPT,
+            section_id="create",
+            title="New prompt",
+            target_kind="canvas",
+            target_id="prompts",
             count=None,
             count_known=True,
         ),

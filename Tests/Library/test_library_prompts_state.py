@@ -9,6 +9,7 @@ from tldw_chatbook.Library.library_prompts_state import (
     build_prompt_editor_state,
     build_prompts_list_state,
     classify_prompt_save_error,
+    prompt_editor_meta_line,
 )
 
 NOW = datetime(2026, 7, 7, 12, 0, tzinfo=timezone.utc)
@@ -136,3 +137,17 @@ def test_classify_ok():
 
 def test_classify_error_fallback():
     assert classify_prompt_save_error(None, "boom", RuntimeError("boom")) == "error"
+
+
+def test_meta_line_new_prompt_sentinel_overrides_modified_and_version():
+    """Task 8b D1: a blank, not-yet-saved editor state (``prompt_id=None``)
+    renders "New prompt", never "Modified … · vN" -- even when the caller
+    (a malformed record) happens to also carry ``modified``/``version``."""
+    state = build_prompt_editor_state({"last_modified": "2026-07-07T11:00:00+00:00", "version": 3})
+    assert state.prompt_id is None
+    assert prompt_editor_meta_line(state) == "New prompt"
+
+
+def test_meta_line_existing_prompt_unaffected_by_new_prompt_sentinel():
+    state = build_prompt_editor_state(PROMPT_A)
+    assert prompt_editor_meta_line(state, now=NOW) == "Modified 3m · v2"
