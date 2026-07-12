@@ -279,6 +279,29 @@ class LocalPromptService:
             include_deleted=include_deleted,
         )
 
+    def count_prompts(self, *, include_deleted: bool = False, **_kwargs: Any) -> int:
+        """Count local prompts without fetching a full page.
+
+        Mirrors ``list_prompts`` above: fetches a single row
+        (``per_page=1``) purely to read the paginated response's exact
+        total.
+
+        Args:
+            include_deleted: Whether to include soft-deleted prompts.
+            **_kwargs: Accepted and ignored, mirroring ``list_prompts``'s
+                permissive signature so callers can forward the same
+                kwargs (e.g. ``mode``) uniformly.
+
+        Returns:
+            The exact number of matching prompts.
+        """
+        _prompts, _total_pages, _current_page, total_items = self.prompt_db.list_prompts(
+            page=1,
+            per_page=1,
+            include_deleted=include_deleted,
+        )
+        return total_items
+
     def get_prompt(self, prompt_identifier: str | int, *, include_deleted: bool = False) -> Any:
         if hasattr(self.prompt_db, "fetch_prompt_details"):
             return self.prompt_db.fetch_prompt_details(prompt_identifier, include_deleted=include_deleted)
@@ -497,6 +520,36 @@ class PromptScopeService:
             )
         )
         return normalize_prompt_list(response, backend=normalized_mode.value, page=page, per_page=per_page)
+
+    async def count_prompts(self, *, mode: PromptBackend | str = "local") -> int:
+        """Count prompts in the given backend without fetching a full page.
+
+        Mirrors ``NotesScopeService.count_notes``: reuses the existing
+        ``list`` policy action rather than a dedicated ``count`` action
+        (no such capability exists in the runtime policy registry), and
+        only the local backend exposes a count-only seam today -- there is
+        no server-side count-only endpoint, only a paginated ``list_prompts``
+        whose total would require a full fetch to read.
+
+        Args:
+            mode: Backend to count in; only the local backend is supported
+                today (see Raises). Defaults to ``"local"``.
+
+        Returns:
+            The exact number of non-deleted prompts in the local backend.
+
+        Raises:
+            ValueError: For the server backend, or when the resolved
+                backend is unavailable.
+        """
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id(normalized_mode, "list"))
+        if normalized_mode != PromptBackend.LOCAL:
+            raise ValueError(
+                "Server prompt counts are not supported; use list_prompts for a scoped total."
+            )
+        service = self._service_for_mode(normalized_mode)
+        return int(await self._maybe_await(service.count_prompts()))
 
     async def get_prompt(
         self,
