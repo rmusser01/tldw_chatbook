@@ -21,5 +21,7 @@ Core-loop UAT 2026-07-11: a note titled '[draft] Q3 plan [wip]' renders as ' Q3 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Bracketed note titles render verbatim in the list and cannot crash rendering,Notes toolbar renders as a non-overlapping row,List modified-age and ordering reflect an edit without leaving the Notes canvas
+- [ ] #1 Bracketed note titles render verbatim in the list and cannot crash rendering
+- [ ] #2 Notes toolbar renders as a non-overlapping row
+- [ ] #3 List modified-age and ordering reflect an edit without leaving the Notes canvas
 <!-- AC:END -->
