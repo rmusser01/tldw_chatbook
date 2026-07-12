@@ -91,7 +91,14 @@ the current selection set and a `select_mode` flag and sets `checked` =
 - Row `Button` label prefix: in select mode show `☑`/`☐` from `row.checked`;
   in normal mode the existing `▸`/space marker. (Keep it a single `Button`;
   only the leading glyph changes.)
-- Toolbar: a **Select** toggle button (`#library-{source}-select-toggle`).
+- Toolbar: a **Select** toggle button (`#library-{source}-select-toggle`) that
+  reflects its active state (its label/pressed style shows select mode is on —
+  it is also the control to exit, by pressing it again). It is **disabled when
+  the source has 0 rows** (nothing to select).
+- Entering select mode **hides the whole-source "Export…" toolbar button**
+  (`#library-{source}-export`); it returns on exit. So normal mode offers
+  whole-source "Export…" and select mode offers "Export selected" — never both
+  at once.
 - A selection action row, shown only in select mode, with `N selected` text and
   buttons: **Select all N shown** (`#library-{source}-select-all`) — labelled
   with the rendered-row count so the cap is explicit — **Clear**
@@ -132,6 +139,10 @@ targeted-update discipline established in task-157
   snapshot refreshes. On each select-mode render the selection set is reconciled
   to the currently-rendered ids (ids no longer present are dropped), so
   `N selected` and the eventual export never drift from what the user sees.
+  *Accepted tradeoff:* a background refresh could push a still-existing selected
+  item past the row cap and thus drop it from the selection. This is consistent
+  with the visible-rows-only / WYSIWYG rule; the alternative (freezing the list
+  during selection) fights the live-snapshot design and is out of scope.
 - **Notes flush:** entering select mode on the Notes canvas first calls the
   existing `_flush_library_note_save` (as `_open_library_export_canvas` does at
   `:3197`), so a pending in-canvas note edit is never stranded by the mode switch.
