@@ -109,7 +109,7 @@ class _FakeExportService:
         }
         self._create_error = create_error
 
-    async def export_chatbook(self, request_data):
+    async def export_chatbook(self, request_data, *, progress_callback=None, cancel_check=None):
         self.calls.append("export_chatbook")
         self.export_payloads.append(dict(request_data))
         return dict(self._export_result)
@@ -156,6 +156,7 @@ def test_export_via_service_calls_export_then_create_in_order_on_success():
         "path": "/tmp/out.zip",
         "dependency_info": {"auto_included": [1, 2]},
         "registry_recorded": True,
+        "cancelled": False,
     }
     assert service.create_kwargs[0]["file_path"] == "/tmp/out.zip"
     assert service.create_kwargs[0]["tags"] == ["library-export"]
@@ -198,7 +199,7 @@ def test_export_via_service_reports_success_even_when_registry_recording_raises(
 
 def test_export_via_service_wraps_export_chatbook_exception_as_failure():
     class _RaisingService:
-        async def export_chatbook(self, request_data):
+        async def export_chatbook(self, request_data, *, progress_callback=None, cancel_check=None):
             raise RuntimeError("boom")
 
     outcome = LibraryScreen._run_library_export_via_service(

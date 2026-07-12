@@ -141,3 +141,11 @@ class LibraryExportCanvas(VerticalScroll):
             compact=True,
             disabled=not state.export_enabled,
         )
+        cancel_button = Button(
+            "Cancel",
+            id="library-export-cancel",
+            classes="library-canvas-action",
+            compact=True,
+        )
+        cancel_button.display = bool(state.running)
+        yield cancel_button

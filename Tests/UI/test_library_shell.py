@@ -10070,7 +10070,7 @@ class _FakeLibraryExportService:
         self._gate = gate
         self._create_error = create_error
 
-    async def export_chatbook(self, request_data):
+    async def export_chatbook(self, request_data, *, progress_callback=None, cancel_check=None):
         if self._gate is not None:
             assert self._gate.wait(
                 timeout=_GATED_RELEASE_TIMEOUT_SECONDS
