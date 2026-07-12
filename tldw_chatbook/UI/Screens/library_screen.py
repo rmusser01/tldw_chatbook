@@ -3185,6 +3185,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_export_running = False
         self._library_export_error = ""
         self._library_export_status = ""
+        if self._library_export_cancel_event is not None:
+            self._library_export_cancel_event.set()
         self._library_export_run_id += 1
 
     async def _open_library_export_canvas(self, scope: ExportScope) -> None:
@@ -3450,6 +3452,23 @@ class LibraryScreen(BaseAppScreen):
             cancel_event=cancel_event,
         )
 
+    @on(Button.Pressed, "#library-export-cancel")
+    def handle_library_export_cancel(self, event: "Button.Pressed") -> None:
+        """Request cancellation of the in-flight export.
+
+        Sets the worker's cancel Event (idempotent) and flips the status line to
+        "Cancelling…". Deliberately does NOT bump _library_export_run_id: the run
+        is still the current, visible one until the worker reports back with the
+        cancelled outcome (see _apply_library_export_cancelled).
+        """
+        if not self._library_export_running:
+            return
+        event_obj = self._library_export_cancel_event
+        if event_obj is not None:
+            event_obj.set()
+        self._library_export_status = "Cancelling…"
+        self._refresh_library_export_status_line()
+
     def _start_library_export_worker(
         self,
         *,
@@ -3586,6 +3605,7 @@ class LibraryScreen(BaseAppScreen):
                 "path": "",
                 "dependency_info": {},
                 "registry_recorded": False,
+                "cancelled": False,
             }
 
         if not export_result.get("success"):
@@ -3595,6 +3615,7 @@ class LibraryScreen(BaseAppScreen):
                 "path": export_result.get("path") or payload.get("output_path", ""),
                 "dependency_info": export_result.get("dependency_info") or {},
                 "registry_recorded": False,
+                "cancelled": bool(export_result.get("cancelled", False)),
             }
 
         output_path = export_result.get("path") or payload.get("output_path", "")
@@ -3621,6 +3642,7 @@ class LibraryScreen(BaseAppScreen):
             "path": output_path,
             "dependency_info": dependency_info,
             "registry_recorded": registry_recorded,
+            "cancelled": False,
         }
 
     @work(thread=True, exclusive=True, group="library_export")
@@ -3684,7 +3706,9 @@ class LibraryScreen(BaseAppScreen):
             progress_callback=_progress_cb,
             cancel_check=(cancel_event.is_set if cancel_event is not None else None),
         )
-        if outcome["success"]:
+        if outcome.get("cancelled"):
+            self._marshal_library_export_cancelled(run_id)
+        elif outcome["success"]:
             self._marshal_library_export_success(
                 run_id,
                 outcome["path"],
@@ -3730,6 +3754,25 @@ class LibraryScreen(BaseAppScreen):
             # Textual's NoApp (which subclasses Exception, not RuntimeError)
             # -- either way the worker thread must not crash on teardown.
             pass
+
+    def _marshal_library_export_cancelled(self, run_id: int) -> None:
+        """Marshal a cancelled run onto the UI thread (called from the worker)."""
+        try:
+            self.app.call_from_thread(self._apply_library_export_cancelled, run_id)
+        except Exception:
+            # A shutdown/detach mid-marshal can raise RuntimeError OR
+            # Textual's NoApp (which subclasses Exception, not RuntimeError)
+            # -- either way the worker thread must not crash on teardown.
+            pass
+
+    def _apply_library_export_cancelled(self, run_id: int) -> None:
+        """UI-thread completion for a cancelled run: clear running, show cancelled, return to form."""
+        if run_id != self._library_export_run_id:
+            return
+        self._library_export_running = False
+        self._library_export_status = "Export cancelled."
+        self._library_export_error = ""
+        self._update_library_export_canvas_after_run()
 
     @staticmethod
     def _build_library_export_success_message(
@@ -3923,6 +3966,7 @@ class LibraryScreen(BaseAppScreen):
             self.query_one("#library-export-submit", Button).disabled = (
                 not state.export_enabled
             )
+            self.query_one("#library-export-cancel", Button).display = bool(state.running)
         except (NoMatches, QueryError):
             pass
 
