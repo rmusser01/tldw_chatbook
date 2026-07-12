@@ -113,6 +113,39 @@ async def test_canvas_select_mode_renders_action_row_and_disables_export():
         assert export_selected_btn.disabled is True
 
 
+def _empty_select_mode_state() -> LibraryMediaCanvasState:
+    # Select mode is active but the list rendered zero rows (e.g. a background
+    # refresh emptied it). "Done" must stay pressable so the user can exit.
+    return LibraryMediaCanvasState(
+        rows=(),
+        type_options=("All",),
+        active_type="All",
+        status_copy="",
+        empty_copy="No media in your Library yet.",
+        selected_id="",
+        preview_lines=(),
+        count=0,
+        select_mode=True,
+        selected_count=0,
+    )
+
+
+class _EmptySelectModeCanvasApp(App):
+    def compose(self):
+        yield LibraryMediaCanvas(canvas=_empty_select_mode_state(), id="library-media-canvas")
+
+
+@pytest.mark.asyncio
+async def test_done_toggle_stays_enabled_at_zero_rows_in_select_mode():
+    # Regression: the Select/Done toggle must NOT be disabled at 0 rendered rows
+    # while select mode is active, or the user is stuck with no way to exit.
+    app = _EmptySelectModeCanvasApp()
+    async with app.run_test() as pilot:
+        toggle = pilot.app.query_one("#library-media-select-toggle", Button)
+        assert toggle.disabled is False
+        assert str(toggle.label) == "Done"
+
+
 def _filtered_select_mode_state() -> LibraryMediaCanvasState:
     # Two media types; filtering to "video" renders ONE row while
     # ``count`` (the pre-filter total across all types) stays at 3.
