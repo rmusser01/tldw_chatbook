@@ -93,6 +93,12 @@ SERVER_EVENT_STATE_UNAVAILABLE = "unavailable"
 HOME_FLASHCARDS_DUE_ROW_ID = "home-flashcards-due"
 HOME_FLASHCARDS_DUE_STATUS_CATEGORY = "due"
 
+# Prefix for a Library ingest job's HomeActiveWorkItem.item_id
+# ("local:ingest:<job_id>"). Shared by the adapter that builds these items
+# and every consumer that recognizes them (PR #599 review — was hardcoded in
+# 5 places).
+LOCAL_INGEST_ITEM_ID_PREFIX = "local:ingest:"
+
 APPROVAL_STATUSES = frozenset({"approval_required", "pending_approval", "pending"})
 # "parsing"/"writing" (F3): the Library ingest job registry's two active
 # sub-states (replacing its old single "running" state -- see
@@ -586,7 +592,7 @@ def _is_local_ingest_item(item: HomeActiveWorkItem) -> bool:
     module is a leaf (``active_work_adapter`` imports *from* it), so it
     cannot import back without a cycle.
     """
-    return item.item_id.startswith("local:ingest:")
+    return item.item_id.startswith(LOCAL_INGEST_ITEM_ID_PREFIX)
 
 
 def _first_chatbook_artifact_item(state: HomeDashboardInput) -> HomeActiveWorkItem | None:

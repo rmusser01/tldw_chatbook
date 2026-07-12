@@ -15,7 +15,9 @@ from textual.containers import VerticalScroll
 
 # Local Imports
 from ..DB.ChaChaNotes_DB import ConflictError as ChaChaConflictError, CharactersRAGDBError
-from ..UI.Screens.library_screen import LibraryScreen
+# NOTE: LibraryScreen is imported lazily inside on_import_success_notes (not at
+# module scope) -- event handlers and UI screens import each other, so a
+# top-level import here risks a circular import at load time (PR #599 review).
 from ..Utils.note_importers import note_importer_registry, ParsedNote
 from ..Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
 from .ingest_utils import (
@@ -456,6 +458,9 @@ async def handle_ingest_notes_import_now_button_pressed(app: 'TldwCli', event: B
             # guarded with isinstance since the active screen is usually
             # NOT Library (e.g. the user is on the Ingest tab importing).
             screen = getattr(app, "screen", None)
+            # Lazy import: avoids a module-load circular import between event
+            # handlers and UI screens (PR #599 review).
+            from ..UI.Screens.library_screen import LibraryScreen
             if isinstance(screen, LibraryScreen):
                 try:
                     screen._refresh_local_source_snapshot()
