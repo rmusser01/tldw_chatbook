@@ -21,5 +21,8 @@ Core-loop UAT 2026-07-11: between send and first token (30-90s on local models) 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A visible generating state exists between send and first token,Composer clears (or visibly locks) once the send is accepted,Provider errors render as system/status rows and are not persisted as assistant message content,A failed first send does not permanently dismiss the onboarding card
+- [ ] #1 A visible generating state exists between send and first token
+- [ ] #2 Composer clears (or visibly locks) once the send is accepted
+- [ ] #3 Provider errors render as system/status rows and are not persisted as assistant message content
+- [ ] #4 A failed first send does not permanently dismiss the onboarding card
 <!-- AC:END -->
