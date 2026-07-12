@@ -70,6 +70,7 @@ from .Widgets.AppFooterStatus import AppFooterStatus
 from .config import (
     get_cli_setting,
     get_library_collections_db_path,
+    get_library_ingest_jobs_db_path,
     get_media_db_path,
     get_notifications_db_path,
     get_prompts_db_path,
@@ -1198,6 +1199,11 @@ def _stream_fileno(stream: Any) -> int:
 # heavy-lane cap limits how many of these parse concurrently.
 _INGEST_HEAVY_TYPES = frozenset({"audio", "video"})
 
+# Cap on how many persisted ingest jobs `_restore_ingest_jobs` carries
+# forward on restart (see `Library.library_ingest_jobs.plan_restore`) --
+# keeps startup and the in-memory registry bounded for a long-lived store.
+_MAX_PERSISTED_INGEST_JOBS = 500
+
 
 # Keep-alive singleton for `_ingest_pool_real_stderr`'s devnull fallback.
 # Module-level on purpose: the multiprocessing resource tracker inherits this
@@ -1297,6 +1303,30 @@ class LibraryIngestQueueMixin:
     share no resources (parse workers never touch ``media_db``; the writer
     never touches the pool).
     """
+
+    def _restore_ingest_jobs(self) -> None:
+        """One-time on_mount restore of persisted ingest job history."""
+        from datetime import datetime, timezone
+        from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
+        from tldw_chatbook.Library.library_ingest_jobs import plan_restore
+        try:
+            store = LibraryIngestJobsDB(get_library_ingest_jobs_db_path())
+            self._library_ingest_jobs_store = store
+            self.library_ingest_jobs.attach_store(store)
+            plan = plan_restore(
+                store.all_jobs(),
+                max_persisted=_MAX_PERSISTED_INGEST_JOBS,
+                now_iso=datetime.now(timezone.utc).isoformat(),
+            )
+            self.library_ingest_jobs.restore(plan.jobs, plan.next_id)
+            for job in plan.upsert:
+                store.upsert_job(job)
+            for job_id in plan.delete_ids:
+                store.delete_job(job_id)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Failed to restore persisted ingest job history; starting empty."
+            )
 
     def submit_library_ingest_job(
         self,
@@ -5421,7 +5451,12 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     def on_mount(self) -> None:
         """Configure logging and schedule post-mount setup."""
         mount_start = time.perf_counter()
-        
+
+        # Restore persisted Library ingest job history (self.library_ingest_jobs
+        # already exists -- constructed store-less in __init__). Never raises:
+        # a corrupt/unreadable store falls back to starting empty.
+        self._restore_ingest_jobs()
+
         # Update splash screen progress only if splash screen is active
         if self.splash_screen_active and self._splash_screen_widget:
             try:
@@ -6276,7 +6311,13 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                             self.loguru_logger.error(f"Error stopping thread {thread.name}: {e}")
         except Exception as e:
             self.loguru_logger.error(f"Error checking active threads: {e}")
-        
+
+        # Close the persisted Library ingest job history store (after pool
+        # shutdown, above -- no more job writes are in flight by this point).
+        store = getattr(self, "_library_ingest_jobs_store", None)
+        if store is not None:
+            store.close()
+
         logging.shutdown()
         self.loguru_logger.info("--- App Unmounted (Loguru) ---")
 

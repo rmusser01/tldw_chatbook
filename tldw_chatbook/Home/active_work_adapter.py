@@ -619,9 +619,9 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                     # any brackets in the error. Titles stay escaped -- they
                     # DO reach a markup-parsing Button label in the rail.
                     status_detail=(
-                        short_ingest_error(job.error)
-                        if job.state == IngestJobState.FAILED and job.error
-                        else ""
+                        (short_ingest_error(job.error)
+                         if job.state == IngestJobState.FAILED and job.error else "")
+                        + _ingest_retry_suffix(job)
                     ),
                     # M4 (fix batch F1b): a permanent (validation-class)
                     # failure fails the same way on every retry -- Home
@@ -785,6 +785,18 @@ def _ingest_job_title(job: LibraryIngestJob) -> str:
     Chatbook artifact titles.
     """
     return escape(Path(str(job.source_path)).name or str(job.source_path))
+
+
+def _ingest_retry_suffix(job) -> str:
+    """Return a `` · retry {n}`` suffix once a job has been requeued.
+
+    ``job.retry_count`` (0 until ``LibraryIngestJobRegistry.requeue`` bumps
+    it -- see ``library_ingest_jobs.py``) survives an app restart via the
+    persisted store (backlog 161), so a job restored after a restart and
+    retried again from Home still shows how many attempts it has had.
+    Markup-safe plain text, consistent with ``status_detail``'s
+    ``markup=False`` rendering (no escaping needed/wanted here either)."""
+    return f" · retry {job.retry_count}" if job.retry_count else ""
 
 
 def _item_updated_at(record: Any) -> str:

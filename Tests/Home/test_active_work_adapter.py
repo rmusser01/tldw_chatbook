@@ -1387,6 +1387,35 @@ def test_local_notification_adapter_status_detail_is_not_markup_escaped():
     assert item.status_detail == "failed near [bold]tag[/bold] marker"
 
 
+def test_local_notification_adapter_status_detail_appends_retry_suffix():
+    """(Task 3, backlog 161) A FAILED job that has been retried at least once
+    (``retry_count > 0``, set by ``LibraryIngestJobRegistry.requeue``) carries
+    a `` · retry {n}`` suffix on Home's status_detail line, so a job restored
+    after an app restart and requeued from Home shows it has already been
+    retried."""
+    jobs = (
+        LibraryIngestJob(
+            job_id="ingest-job-7",
+            source_path="/tmp/retry.pdf",
+            state=IngestJobState.FAILED,
+            error="bad codec",
+            retry_count=2,
+        ),
+    )
+    adapter = LocalNotificationHomeActiveWorkAdapter(ingest_jobs_provider=lambda: jobs)
+
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    item = next(
+        i for i in dashboard_input.active_work_items
+        if i.item_id == "local:ingest:ingest-job-7"
+    )
+    assert item.status_detail == "bad codec · retry 2"
+
+
 def test_local_notification_adapter_sorts_done_ingest_jobs_into_recent_by_finished_at_wall():
     jobs = (
         LibraryIngestJob(
