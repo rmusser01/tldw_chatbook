@@ -1,9 +1,10 @@
 ---
 id: TASK-165
 title: Richer Media screen state restore (row highlight and viewer detail)
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-11 22:02'
+updated_date: '2026-07-12 02:36'
 labels:
   - follow-up
   - media
@@ -19,6 +20,12 @@ MediaScreen restore is scalar-only for the selected id: the list re-highlight an
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Restored Media screen re-highlights the previously selected row
-- [ ] #2 A previously open media viewer re-fetches its detail on restore
+- [x] #1 Restored Media screen re-highlights the previously selected row
+- [x] #2 A previously open media viewer re-fetches its detail on restore
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Fixed in the persistence batch (branch claude/followups-persistence). See Docs/superpowers/plans/2026-07-11-followups-persistence.md.
+<!-- SECTION:NOTES:END -->

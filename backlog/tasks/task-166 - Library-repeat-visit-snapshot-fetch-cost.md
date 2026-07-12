@@ -1,9 +1,10 @@
 ---
 id: TASK-166
 title: Library repeat-visit snapshot-fetch cost
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-11 22:02'
+updated_date: '2026-07-12 02:36'
 labels:
   - follow-up
   - library
@@ -19,6 +20,12 @@ Since screen instance caching was removed (freeze fix, PR #595), LibraryScreen.o
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Repeat Library visits within a short window avoid a redundant full snapshot fetch
-- [ ] #2 No stale data shown beyond the memo window
+- [x] #1 Repeat Library visits within a short window avoid a redundant full snapshot fetch
+- [x] #2 No stale data shown beyond the memo window
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Fixed in the persistence batch (branch claude/followups-persistence). See Docs/superpowers/plans/2026-07-11-followups-persistence.md.
+<!-- SECTION:NOTES:END -->
