@@ -20,5 +20,7 @@ Core-loop UAT 2026-07-11: Console rail labels its auto-persisted chats 'saved wo
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A conversation created by chatting in Console is discoverable from Library Browse Conversations (or the rail copy stops calling unsaved chats saved),Console and Library use the same term for the same persistence state,Library conversation count matches what Console lists for the same profile
+- [ ] #1 A conversation created by chatting in Console is discoverable from Library Browse Conversations (or the rail copy stops calling unsaved chats saved)
+- [ ] #2 Console and Library use the same term for the same persistence state
+- [ ] #3 Library conversation count matches what Console lists for the same profile
 <!-- AC:END -->
