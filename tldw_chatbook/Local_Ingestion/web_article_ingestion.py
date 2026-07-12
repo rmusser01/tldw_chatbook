@@ -9,8 +9,6 @@ from __future__ import annotations
 import re
 from typing import Any, Dict
 
-from loguru import logger
-
 from .local_file_ingestion import PermanentIngestError, canonicalize_url
 
 _MAX_BYTES = 10 * 1024 * 1024  # 10 MB body guard
