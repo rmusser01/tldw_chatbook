@@ -661,7 +661,11 @@ class SettingsScreen(BaseAppScreen):
         self.manual_sync_rows = self._manual_sync_loading_rows()
 
     def save_state(self) -> dict[str, object]:
-        """Save process-local Settings navigation and draft state."""
+        """Save process-local Settings navigation and draft state.
+
+        Returns:
+            A deep-copy-safe state mapping for a fresh Settings screen.
+        """
         state = super().save_state()
         if not isinstance(state, dict):
             state = {}
@@ -673,7 +677,11 @@ class SettingsScreen(BaseAppScreen):
         return state
 
     def restore_state(self, state: dict[str, object]) -> None:
-        """Restore validated process-local Settings state on a fresh screen."""
+        """Restore validated process-local Settings state on a fresh screen.
+
+        Args:
+            state: Previously saved Settings navigation and draft state.
+        """
         super().restore_state(state)
         if not isinstance(state, dict):
             return

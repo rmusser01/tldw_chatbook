@@ -4,7 +4,11 @@ from typing import Any
 
 
 def main_cli_runner() -> Any:
-    """Load and run the full application only when the CLI is invoked."""
+    """Load and run the full application only when the CLI is invoked.
+
+    Returns:
+        The full application runner's return value.
+    """
 
     from tldw_chatbook.app import main_cli_runner as app_main_cli_runner
 

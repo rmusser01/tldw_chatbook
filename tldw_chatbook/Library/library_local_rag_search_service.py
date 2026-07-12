@@ -9,8 +9,12 @@ from typing import Any
 from loguru import logger
 
 from tldw_chatbook.Library.library_rag_service import LibraryRagSearchOutcome
-from tldw_chatbook.Library.library_rag_state import LIBRARY_RAG_SERVICE_ERROR_SELECTOR
+from tldw_chatbook.Library.library_rag_state import (
+    LIBRARY_RAG_QUERY_MAX_LENGTH,
+    LIBRARY_RAG_SERVICE_ERROR_SELECTOR,
+)
 from tldw_chatbook.UI.destination_recovery import DestinationRecoveryState
+from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 
 logger = logger.bind(module="LibraryLocalRagSearchService")
 
@@ -31,6 +35,35 @@ _SEMANTIC_SOURCE_TYPE_MAP = {
 def _plain_text_fts_query(query: str) -> str:
     """Quote whitespace-delimited terms for safe SQLite FTS MATCH input."""
     return " ".join('"' + term.replace('"', '""') + '"' for term in query.split())
+
+
+def _validated_query(query: str) -> str:
+    """Validate a user query before it reaches retrieval or FTS seams.
+
+    Args:
+        query: Raw Library search or RAG query.
+
+    Returns:
+        The unchanged query when it passes the shared input validators.
+
+    Raises:
+        ValueError: If the query is empty, oversized, contains stripped
+            control characters, or fails shared text-safety validation.
+    """
+    if not isinstance(query, str):
+        raise ValueError("Enter a safe Library search query.")
+    sanitized = sanitize_string(query, max_length=LIBRARY_RAG_QUERY_MAX_LENGTH)
+    if (
+        sanitized != query
+        or not sanitized.strip()
+        or not validate_text_input(
+            sanitized,
+            max_length=LIBRARY_RAG_QUERY_MAX_LENGTH,
+            allow_html=False,
+        )
+    ):
+        raise ValueError("Enter a safe Library search query.")
+    return sanitized
 
 
 class LibraryLocalRagSearchService:
@@ -63,7 +96,11 @@ class LibraryLocalRagSearchService:
             to normalize into evidence rows, or a `LibraryRagSearchOutcome`
             directly for blocked states (missing local seams, missing RAG
             runtime).
+
+        Raises:
+            ValueError: If `query` fails shared Library input validation.
         """
+        query = _validated_query(query)
         top_k = max(1, int(kwargs.get("top_k") or 5))
         if mode == "rag":
             return await self._search_semantic(query, scope, top_k, kwargs)
