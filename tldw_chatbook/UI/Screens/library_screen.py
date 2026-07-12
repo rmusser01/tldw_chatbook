@@ -562,6 +562,8 @@ class LibraryScreen(BaseAppScreen):
         self._selected_conversation_id = ""
         self._library_selected_row_id: str = ""
         self._library_conversation_query: str = ""
+        self._library_conversations_select_mode: bool = False
+        self._library_conversations_row_selection = RowSelection("conversations")
         self._library_media_type_filter: str = "All"
         self._selected_media_id: str = ""
         self._library_media_select_mode: bool = False
@@ -2837,11 +2839,18 @@ class LibraryScreen(BaseAppScreen):
 
     def _build_library_conversations_state(self):
         """Build the conversations canvas display state from local records."""
-        return build_library_conversations_state(
+        state = build_library_conversations_state(
             self._conversation_records(),
             query=self._library_conversation_query,
             selected_id=self._selected_conversation_id,
+            select_mode=self._library_conversations_select_mode,
+            selected_ids=self._library_conversations_row_selection.ids,
         )
+        if self._library_conversations_select_mode:
+            self._library_conversations_row_selection.reconcile(
+                r.conversation_id for r in state.rows
+            )
+        return state
 
     def _build_library_media_state(self) -> LibraryMediaCanvasState:
         """Build the media canvas display state from local records."""
@@ -5278,17 +5287,60 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, ".library-conversation-row")
     def handle_library_conversation_row(self, event: Button.Pressed) -> None:
-        """Select a conversation row in the Library conversations canvas.
+        """Select mode: toggle the row's checkbox. Normal mode: select the row.
+
+        In select mode, a row press toggles that row's id in
+        ``_library_conversations_row_selection`` and recomposes the screen --
+        it never sets the normal-mode selection/detail while in select mode.
+        Outside select mode, behavior is unchanged: selects the conversation
+        and switches the Library rail to the conversations browse row.
 
         Args:
             event: Button press event emitted by a conversation row button.
         """
         event.stop()
         conversation_id = str(getattr(event.button, "conversation_id", "") or "")
+        if self._library_conversations_select_mode:
+            self._library_conversations_row_selection.toggle(conversation_id)
+            self.refresh(recompose=True)
+            return
         if conversation_id:
             self._selected_conversation_id = conversation_id
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_CONVERSATIONS
         self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-conversations-select-toggle")
+    def handle_library_conversations_select_toggle(self, event: Button.Pressed) -> None:
+        """Enter/exit conversations select mode; clears the selection set (both on enter and exit)."""
+        event.stop()
+        self._library_conversations_select_mode = not self._library_conversations_select_mode
+        self._library_conversations_row_selection.clear()
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-conversations-select-all")
+    def handle_library_conversations_select_all(self, event: Button.Pressed) -> None:
+        """Select every conversation row currently rendered by the canvas."""
+        event.stop()
+        rows = self._build_library_conversations_state().rows
+        self._library_conversations_row_selection.select_all(
+            r.conversation_id for r in rows
+        )
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-conversations-select-clear")
+    def handle_library_conversations_select_clear(self, event: Button.Pressed) -> None:
+        """Clear the current conversations selection without leaving select mode."""
+        event.stop()
+        self._library_conversations_row_selection.clear()
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-conversations-export-selected")
+    async def handle_library_conversations_export_selected(self, event: Button.Pressed) -> None:
+        """Open the export canvas scoped to the currently selected conversation ids."""
+        event.stop()
+        await self._open_library_export_canvas(
+            self._library_conversations_row_selection.export_scope()
+        )
 
     @on(Button.Pressed, "#library-media-type-filter")
     def handle_library_media_type_filter_pressed(self, event: Button.Pressed) -> None:
@@ -7695,6 +7747,8 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         self._library_conversation_query = self._safe_text(event.value, max_length=200)
+        self._library_conversations_select_mode = False
+        self._library_conversations_row_selection.clear()
         self.refresh(recompose=True)
         self.call_after_refresh(self._focus_library_conversations_filter)
 
