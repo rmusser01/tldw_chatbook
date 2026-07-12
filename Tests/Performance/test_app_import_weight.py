@@ -21,21 +21,23 @@ torch/transformers are now imported lazily (see
 / `_ensure_numpy()` helpers) and the `analyze`/`chunk_for_embedding`/pandas
 imports above were moved into the functions that actually use them.
 
-KNOWN REMAINING GAP: nltk/scipy/sklearn/pandas are still pulled in via a
-*separate*, out-of-scope chain:
+nltk/scipy/sklearn/pandas were a second chain, pulled in via
 `app.py` -> `RAG_Admin/local_rag_admin_service.py:11
 from ..Chunking.chunking_interop_library import get_chunking_service` ->
-`Chunking/__init__.py:6 from .Chunk_Lib import (...)` (package `__init__`
-runs unconditionally for *any* import under `tldw_chatbook.Chunking`) ->
-`Chunking/Chunk_Lib.py:31 import nltk` (module scope) -> nltk pulls in
-scipy (`nltk/metrics/association.py`) and sklearn
-(`nltk/classify/scikitlearn.py`); pandas is pulled the same way. Fixing that
-requires editing `Chunking/__init__.py` and/or `Chunking/Chunk_Lib.py`,
-which is outside this task's authorized scope
-(Embeddings/Web_Scraping/LLM_Calls only) -- see the task 163 report for the
-full trace. `test_app_import_does_not_load_full_heavy_dependency_set` below
-tracks this as an `xfail`; it should be promoted to a hard assertion once a
-follow-up task fixes the `Chunking` package.
+`Chunking/__init__.py from .Chunk_Lib import (...)` (package `__init__` runs
+for *any* import under `tldw_chatbook.Chunking`) -> `Chunking/Chunk_Lib.py`'s
+module-scope `import nltk` (nltk transitively imports scipy from
+`nltk/metrics/association.py`, sklearn from `nltk/classify/scikitlearn.py`,
+and pandas). `Chunk_Lib.py`'s `import nltk` was deferred behind an
+`_ensure_nltk()` helper + a `find_spec`-based `NLTK_AVAILABLE` probe, and the
+module-scope `ensure_nltk_data()` call (which did a punkt *network download*
+at import time) was removed and made lazy/idempotent -- so nltk, and with it
+scipy/sklearn/pandas, no longer load at boot. This is the full task 163 guard
+set (`HEAVY_MODULES` below), now asserted as a hard requirement by
+`test_app_import_does_not_load_full_heavy_dependency_set`.
+
+numpy is intentionally NOT in the guard set: it is pulled by chromadb (and
+pymupdf), is comparatively light, and is a legitimate boot-time dependency.
 """
 from __future__ import annotations
 
@@ -51,7 +53,9 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# The full heavy-dependency guard set from the task 163 plan.
+# The full heavy-dependency guard set from the task 163 plan. NONE of these
+# may be resident after a plain `import tldw_chatbook.app` (numpy is
+# deliberately excluded -- see module docstring).
 HEAVY_MODULES = (
     "torch",
     "transformers",
@@ -63,19 +67,19 @@ HEAVY_MODULES = (
     "torchvision",
 )
 
-# What this task actually, unconditionally eliminated from app boot.
-# (nltk/scipy/sklearn/pandas remain -- see module docstring.)
+# A focused subset kept as its own named test so a torch/transformers
+# regression produces an obviously-scoped failure message.
 ELIMINATED_MODULES = ("torch", "transformers")
 
-# Generous catastrophic-regression bounds. Pre-fix baseline measured
-# ~4.8s-5.7s / 6,518-6,519 modules; post-fix is ~2.1s-4.5s / 4,658-4,660
-# modules (wall time is noisy -- cold-cache subprocess boot on a fresh
-# isolated HOME can vary a lot -- so the module count, which is
-# deterministic module-for-module, is the primary signal here; time is just
-# a loose sanity check for a hang/runaway import, not a tight perf
-# assertion).
+# Generous catastrophic-regression bounds. Original pre-fix baseline measured
+# ~4.8s-5.7s / 6,518-6,519 modules; after the torch/transformers deferral it
+# was ~4,659 modules; after the nltk (scipy/sklearn/pandas) deferral it is
+# ~1.5s-2s / ~3,291 modules (wall time is noisy -- cold-cache subprocess boot
+# on a fresh isolated HOME can vary a lot -- so the module count, which is
+# deterministic module-for-module, is the primary signal here; time is just a
+# loose sanity check for a hang/runaway import, not a tight perf assertion).
 MAX_IMPORT_SECONDS = 8.0
-MAX_MODULE_COUNT = 5200
+MAX_MODULE_COUNT = 4000
 
 
 def _run_isolated_python(tmp_path: Path, code: str) -> subprocess.CompletedProcess[str]:
@@ -163,7 +167,8 @@ def test_app_import_stays_well_under_pre_fix_baseline(tmp_path: Path) -> None:
 
     Not a tight perf assertion (machines vary) -- just a guard against
     accidentally reintroducing the whole torch/transformers/nltk stack at
-    boot. Pre-fix baseline: ~4.8s-5.7s / 6,518-6,519 modules.
+    boot. Original pre-fix baseline: ~4.8s-5.7s / 6,518-6,519 modules;
+    post-fix: ~1.5s-2s / ~3,291 modules.
     """
     payload = _measure_app_import(tmp_path)
     assert payload["elapsed"] < MAX_IMPORT_SECONDS, (
@@ -176,22 +181,20 @@ def test_app_import_stays_well_under_pre_fix_baseline(tmp_path: Path) -> None:
     )
 
 
-@pytest.mark.xfail(
-    reason=(
-        "nltk/scipy/sklearn/pandas are still pulled in via "
-        "RAG_Admin/local_rag_admin_service.py -> Chunking/__init__.py "
-        "(package init) -> Chunking/Chunk_Lib.py:31 `import nltk`, a chain "
-        "outside task 163's authorized scope (Embeddings/Web_Scraping/"
-        "LLM_Calls only). See this file's module docstring and the task 163 "
-        "report for the full trace. Promote to a hard assertion once a "
-        "follow-up fixes the Chunking package."
-    ),
-    strict=True,
-)
 def test_app_import_does_not_load_full_heavy_dependency_set(tmp_path: Path) -> None:
-    """The full task-163-plan guard: no heavy module at all should load at boot."""
+    """The full task-163-plan guard: no heavy module at all should load at boot.
+
+    Covers torch/transformers (deferred in Embeddings_Lib) AND
+    nltk/scipy/sklearn/pandas (deferred by making Chunk_Lib's `import nltk`
+    lazy via `_ensure_nltk()` -- nltk transitively pulls scipy/sklearn/pandas,
+    so deferring nltk removes all four). numpy is intentionally excluded from
+    HEAVY_MODULES (legit chromadb/pymupdf dependency).
+    """
     payload = _measure_app_import(tmp_path)
-    assert payload["loaded_heavy"] == []
+    assert payload["loaded_heavy"] == [], (
+        f"import tldw_chatbook.app eagerly loaded heavy modules: "
+        f"{payload['loaded_heavy']}"
+    )
 
 
 def test_ensure_torch_resolves_real_torch_when_installed() -> None:

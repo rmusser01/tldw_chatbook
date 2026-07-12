@@ -12,8 +12,14 @@ found), WebSearch_APIs.py (analyze deferral -- 3rd eager edge found, separate bo
 path via Tools/web_search_tool.py).
 Result: torch/transformers fully eliminated from `import tldw_chatbook.app`
 (6519->4659 modules, ~5.65s->~4.11s, fresh-dir apples-to-apples).
-BLOCKED: nltk/scipy/sklearn/pandas still load via RAG_Admin/local_rag_admin_service.py
--> Chunking/__init__.py (package init) -> Chunking/Chunk_Lib.py:31 `import nltk` --
-outside authorized scope (Chunking/, RAG_Admin/, not Embeddings/Web_Scraping/LLM_Calls).
-Tracked via Tests/Performance/test_app_import_weight.py::test_app_import_does_not_load_full_heavy_dependency_set
-(xfail, strict=True). Task 163 should stay open pending a follow-up scoped to Chunking/.
+Commit 2 (scope extension AUTHORIZED 2026-07-11): Chunking/Chunk_Lib.py -- deferred
+`import nltk` behind _ensure_nltk() + find_spec-based NLTK_AVAILABLE; removed the
+module-scope ensure_nltk_data() call (which did a punkt NETWORK DOWNLOAD at import)
+and made it idempotent + lazy; guarded _adaptive_chunk_size_nltk + _semantic_chunking
+use sites. nltk-transitive scipy/sklearn/pandas removed automatically.
+Result: ALL 8 HEAVY_MODULES absent at boot. 6519 -> 3291 modules (-49.5%), ~5.65s -> ~1.48s.
+AC #1 SATISFIED. Full-set perf test promoted from xfail to hard assertion (RED-verified).
+Feature regression: 404 passed / 20 skipped / 0 failed across Chunking/RAG/RAG_Admin/
+RAG_Search/Web_Scraping/startup-polish/optional_deps. numpy stays (chromadb/pymupdf, allowed).
+Pre-existing punkt vs punkt_tab nltk-5.x bug in semantic chunking documented as follow-up
+(reproduces on original code, out of scope).

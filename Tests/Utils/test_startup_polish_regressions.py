@@ -83,6 +83,11 @@ def test_nltk_download_false_is_not_logged_as_success(monkeypatch: pytest.Monkey
 
         monkeypatch.setattr(Chunk_Lib, "NLTK_AVAILABLE", True)
         monkeypatch.setattr(Chunk_Lib, "nltk", fake_nltk)
+        # ensure_nltk_data() is now idempotent (first successful run sets
+        # _nltk_data_ready); reset it so this test always exercises the real
+        # find/download path regardless of whether an earlier test already
+        # warmed punkt in this process.
+        monkeypatch.setattr(Chunk_Lib, "_nltk_data_ready", False)
 
         Chunk_Lib.ensure_nltk_data()
     finally:
