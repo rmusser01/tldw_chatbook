@@ -75,6 +75,41 @@ def test_parse_returns_payload_without_touching_a_database(tmp_path: Path) -> No
     pickle.dumps(payload)
 
 
+def test_parse_pdf_success_with_present_but_none_error_key_does_not_raise(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """task-168(c): ``process_pdf``'s result dict always has an ``'error'``
+    key (initialized to ``None`` and only ever overwritten on a real
+    failure -- see ``PDF_Processing_Lib.process_pdf``'s initial ``result``
+    dict). ``'error' in result`` is therefore ALWAYS ``True``, even on a
+    clean success, so every real PDF parse incorrectly raised
+    ``FileIngestionError``. The check must key off truthiness
+    (``result.get('error')``) instead of key presence."""
+    source = tmp_path / "doc.pdf"
+    source.write_bytes(b"%PDF-1.4 stub bytes, never actually parsed (process_pdf is mocked).")
+
+    stub_result = {
+        "status": "Success",
+        "content": "Extracted PDF text.",
+        "title": "Doc title",
+        "author": "Some Author",
+        "keywords": [],
+        "chunks": [],
+        "analysis": "",
+        "metadata": {},
+        "error": None,  # present, falsy -- the real process_pdf shape on success
+    }
+    monkeypatch.setattr(
+        "tldw_chatbook.Local_Ingestion.local_file_ingestion.process_pdf",
+        lambda **kwargs: stub_result,
+    )
+
+    payload = parse_local_file_for_ingest(str(source), {"perform_analysis": False})
+
+    assert payload["content"] == "Extracted PDF text."
+    assert payload["title"] == "Doc title"
+
+
 def test_parse_missing_file_raises_filenotfounderror(tmp_path: Path) -> None:
     missing = tmp_path / "does-not-exist.txt"
     with pytest.raises(FileNotFoundError):

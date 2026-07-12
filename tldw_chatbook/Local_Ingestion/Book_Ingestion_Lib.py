@@ -1045,7 +1045,7 @@ def process_epub(
         result["error"] = "File not found"
         log_counter("epub_processing_error", labels={"file_path": file_path, "error": "FileNotFoundError"})
     except ValueError as ve: # Catch errors from extraction/parsing
-         logger.opt(exception=False).error(f"Value error processing EPUB {file_path}: {str(ve)}") # Don't need full trace for expected parse errors
+         logger.error(f"Value error processing EPUB {file_path}: {str(ve)}") # Don't need full trace for expected parse errors
          result["status"] = "Error"
          result["error"] = str(ve)
          log_counter("epub_processing_error", labels={"file_path": file_path, "error": "ValueError"})

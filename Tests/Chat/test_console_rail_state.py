@@ -6,6 +6,8 @@ from tldw_chatbook.Chat.console_display_state import (
 )
 from tldw_chatbook.Chat.console_rail_state import (
     ConsoleRailPreferences,
+    _INACTIVE_STAGED_SUMMARIES,
+    _normalized_inactive_text,
     build_console_context_rail_badge,
     build_console_inspector_rail_badge,
     build_console_rail_preference_key,
@@ -174,6 +176,11 @@ def test_console_context_rail_badge_ignores_workspace_fallback_labels():
 
 def test_console_context_rail_badge_ignores_empty_staged_summary():
     empty_summary = ConsoleStagedContextState.empty().summary
+
+    # Drift guard: if a future copy change alters the empty-state summary,
+    # this fails loudly instead of silently reintroducing the badge bug
+    # where the empty-state summary was treated as "active" staged context.
+    assert _normalized_inactive_text(empty_summary) in _INACTIVE_STAGED_SUMMARIES
 
     assert (
         build_console_context_rail_badge(

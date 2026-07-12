@@ -1306,7 +1306,7 @@ def chat_with_cohere(
     except requests.exceptions.HTTPError as e:
         status_code = getattr(e.response, 'status_code', 500)
         error_text = getattr(e.response, 'text', str(e))
-        logger.opt(exception=False).error(f"Cohere API call HTTPError to {COHERE_CHAT_URL} status {status_code}. Details: {error_text[:500]}")
+        logger.error(f"Cohere API call HTTPError to {COHERE_CHAT_URL} status {status_code}. Details: {error_text[:500]}")
         
         # Log HTTP error metrics
         duration = time.time() - start_time
@@ -1752,7 +1752,7 @@ def chat_with_google(
     except requests.exceptions.HTTPError as e:
         status_code = e.response.status_code if e.response is not None else 500
         error_text = e.response.text if e.response is not None else "No response text"
-        logger.opt(exception=False).error(f"Google Gemini API call HTTPError {status_code}. Details: {error_text[:500]}")
+        logger.error(f"Google Gemini API call HTTPError {status_code}. Details: {error_text[:500]}")
         
         # Log HTTP error metrics
         duration = time.time() - start_time
@@ -2247,7 +2247,7 @@ def chat_with_huggingface(
     except requests.exceptions.HTTPError as e:
         status_code = getattr(e.response, 'status_code', 500)
         error_text = getattr(e.response, 'text', str(e))
-        logger.opt(exception=False).error(f"HuggingFace API call failed to {api_url} with status {status_code}. Details: {error_text[:500]}")
+        logger.error(f"HuggingFace API call failed to {api_url} with status {status_code}. Details: {error_text[:500]}")
         
         # Log HTTP error metrics
         duration = time.time() - start_time

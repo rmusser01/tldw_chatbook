@@ -93,6 +93,12 @@ SERVER_EVENT_STATE_UNAVAILABLE = "unavailable"
 HOME_FLASHCARDS_DUE_ROW_ID = "home-flashcards-due"
 HOME_FLASHCARDS_DUE_STATUS_CATEGORY = "due"
 
+# Prefix for a Library ingest job's HomeActiveWorkItem.item_id
+# ("local:ingest:<job_id>"). Shared by the adapter that builds these items
+# and every consumer that recognizes them (PR #599 review — was hardcoded in
+# 5 places).
+LOCAL_INGEST_ITEM_ID_PREFIX = "local:ingest:"
+
 APPROVAL_STATUSES = frozenset({"approval_required", "pending_approval", "pending"})
 # "parsing"/"writing" (F3): the Library ingest job registry's two active
 # sub-states (replacing its old single "running" state -- see
@@ -351,6 +357,22 @@ def build_home_controls(
         # in the list" -- is what Retry (and its retry_available gate)
         # should reflect when a real item is selected.
         failed_item = selected_item
+    selected_item_is_running = (
+        selected_item is not None and _normalized_status(selected_item) in _RUNNING_STATUSES
+    )
+    if selected_item_is_running:
+        # Same as the failed-item override above: when a running item is
+        # selected, Pause's target should reflect *that* item rather than
+        # just "the first running item in the list".
+        running_item = selected_item
+    # T154: Library ingest jobs (item_id "local:ingest:<job_id>") have no
+    # wired pause action -- the ingest job registry has no pause state, only
+    # queued/parsing/writing/done/failed (see library_ingest_jobs.py) -- so
+    # Home must not offer a control with nothing behind it. Scoped to the
+    # *selected* item, mirroring selected_item_is_failed above: with no
+    # selection (summarize_home_dashboard, the triage builder's count-only
+    # fallback) Pause keeps its unconditional-when-running behavior.
+    selected_item_is_ingest_job = selected_item_is_running and _is_local_ingest_item(selected_item)
     chatbook_item = _first_chatbook_artifact_item(state)
     detail_item = choose_home_selected_item(state)
 
@@ -373,7 +395,9 @@ def build_home_controls(
                 ),
             )
         )
-    if _running_run_count(state) or (not state.active_work_items and state.active_run_count):
+    if (
+        _running_run_count(state) or (not state.active_work_items and state.active_run_count)
+    ) and not selected_item_is_ingest_job:
         controls.append(
             HomeControl(
                 "home-pause",
@@ -556,6 +580,19 @@ def _first_item_for_status(
     statuses: frozenset[str],
 ) -> HomeActiveWorkItem | None:
     return next((item for item in state.active_work_items if _normalized_status(item) in statuses), None)
+
+
+def _is_local_ingest_item(item: HomeActiveWorkItem) -> bool:
+    """True when ``item`` mirrors a Library ingest job.
+
+    Uses the same ``local:ingest:<job_id>`` item_id marker that
+    ``active_work_adapter._local_ingest_job_items`` stamps on ingest-mirrored
+    ``HomeActiveWorkItem``s (see also that module's
+    ``_is_local_ingest_job_id``). Duplicated rather than imported: this
+    module is a leaf (``active_work_adapter`` imports *from* it), so it
+    cannot import back without a cycle.
+    """
+    return item.item_id.startswith(LOCAL_INGEST_ITEM_ID_PREFIX)
 
 
 def _first_chatbook_artifact_item(state: HomeDashboardInput) -> HomeActiveWorkItem | None:

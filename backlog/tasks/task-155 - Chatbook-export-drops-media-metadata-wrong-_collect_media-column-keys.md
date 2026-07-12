@@ -1,9 +1,10 @@
 ---
 id: TASK-155
 title: Chatbook export drops media metadata (wrong _collect_media column keys)
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-11 22:01'
+updated_date: '2026-07-11 23:52'
 labels:
   - follow-up
   - chatbooks
@@ -22,3 +23,9 @@ ChatbookCreator._collect_media reads media_type/created_at/updated_at from dict 
 - [ ] #1 Exported media entries carry the correct type and timestamps
 - [ ] #2 Round-trip test asserts media type survives export+import
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Fixed in the quick-wins batch (branch claude/followups-quickwins). See Docs/superpowers/plans/2026-07-11-followups-quickwins.md.
+<!-- SECTION:NOTES:END -->

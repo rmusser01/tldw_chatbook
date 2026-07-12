@@ -1,9 +1,10 @@
 ---
 id: TASK-158
 title: Export success message carries the creator's item counts
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-11 22:01'
+updated_date: '2026-07-11 23:52'
 labels:
   - follow-up
   - export
@@ -21,3 +22,9 @@ On a successful Library export the completion notification reports only the path
 - [ ] #1 Success notification includes exported item counts
 - [ ] #2 Deleted-mid-export skips are reflected in the message
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Fixed in the quick-wins batch (branch claude/followups-quickwins). See Docs/superpowers/plans/2026-07-11-followups-quickwins.md.
+<!-- SECTION:NOTES:END -->

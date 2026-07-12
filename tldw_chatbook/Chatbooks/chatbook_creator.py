@@ -45,6 +45,24 @@ MAX_CITATION_REPORT_REFERENCES_PER_MESSAGE = 50
 MAX_CITATION_REPORT_TOTAL_REFERENCES = 200
 
 
+def _coerce_media_timestamp(value: Any) -> Optional[datetime]:
+    """Normalize a Media DB ``DATETIME`` column to a ``datetime``.
+
+    ``MediaDatabase`` opens its connection with ``PARSE_DECLTYPES`` and a
+    registered ``DATETIME`` converter, so ``ingestion_date``/
+    ``last_modified`` come back as real ``datetime`` instances (not ISO
+    strings) -- ``datetime.fromisoformat`` would raise on them directly.
+    """
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    return None
+
+
 class ChatbookCreator:
     """Service for creating chatbooks from database content."""
     
@@ -783,16 +801,22 @@ class ChatbookCreator:
                     logger.warning(f"Media item not found: {media_id}")
                     continue
                 
-                # Create media data structure
+                # Create media data structure.
+                # NOTE: the Media table's real columns are ``type``,
+                # ``ingestion_date``, and ``last_modified`` -- there is no
+                # ``media_type``/``created_at``/``updated_at`` column, so
+                # reading those keys off ``media_item`` always resolved to
+                # ``None`` and silently dropped the media type and both
+                # timestamps from every export.
                 media_data = {
                     "id": media_item['id'],
                     "title": media_item.get('title', 'Untitled'),
-                    "media_type": media_item.get('media_type'),
+                    "media_type": media_item.get('type'),
                     "url": media_item.get('url'),
                     "author": media_item.get('author'),
                     "content": media_item.get('content', ''),
-                    "created_at": media_item.get('created_at'),
-                    "updated_at": media_item.get('updated_at'),
+                    "created_at": media_item.get('ingestion_date'),
+                    "updated_at": media_item.get('last_modified'),
                     "metadata": {
                         "ingestion_date": media_item.get('ingestion_date'),
                         "media_keywords": media_item.get('media_keywords'),
@@ -836,10 +860,10 @@ class ChatbookCreator:
                     type=ContentType.MEDIA,
                     title=media_item.get('title', 'Untitled'),
                     description=media_item.get('summary'),
-                    created_at=datetime.fromisoformat(media_item['created_at']) if media_item.get('created_at') else datetime.now(),
-                    updated_at=datetime.fromisoformat(media_item['updated_at']) if media_item.get('updated_at') else datetime.now(),
+                    created_at=_coerce_media_timestamp(media_item.get('ingestion_date')) or datetime.now(),
+                    updated_at=_coerce_media_timestamp(media_item.get('last_modified')) or datetime.now(),
                     metadata={
-                        "media_type": media_item.get('media_type'),
+                        "media_type": media_item.get('type'),
                         "quality": quality,
                         "has_content": bool(media_item.get('content'))
                     },

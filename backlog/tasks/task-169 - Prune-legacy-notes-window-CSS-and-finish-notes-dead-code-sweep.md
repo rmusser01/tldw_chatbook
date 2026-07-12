@@ -1,9 +1,10 @@
 ---
 id: TASK-169
 title: Prune legacy notes-window CSS and finish notes dead-code sweep
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-11 22:03'
+updated_date: '2026-07-11 23:52'
 labels:
   - follow-up
   - tech-debt
@@ -23,3 +24,9 @@ The F2 dead-code sweep pruned the notes-workbench selectors but left the pre-wor
 - [ ] #2 ALL_MAIN_WINDOW_IDS no longer references a dead window id
 - [ ] #3 build_css.py no longer warns about a missing _evaluation_v2.tcss module
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Fixed in the quick-wins batch (branch claude/followups-quickwins). See Docs/superpowers/plans/2026-07-11-followups-quickwins.md.
+<!-- SECTION:NOTES:END -->

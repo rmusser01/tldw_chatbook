@@ -769,7 +769,7 @@ async def perform_ccp_conversation_search(app: 'TldwCli') -> None:
                         if char_details and char_details.get('name'):
                             char_name_prefix = f"[{char_details['name']}] "
                     except Exception as e_char_name_fetch:
-                        logger.opt(exception=False).warning(
+                        logger.warning(
                             f"Could not fetch char name for conv {conv_data['id']}, char_id {char_id_for_conv}: {e_char_name_fetch}")
 
                 display_title = f"{char_name_prefix}{base_title}"

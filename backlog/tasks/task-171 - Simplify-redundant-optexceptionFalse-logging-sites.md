@@ -1,9 +1,10 @@
 ---
 id: TASK-171
 title: Simplify redundant opt(exception=False) logging sites
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-11 22:03'
+updated_date: '2026-07-11 23:52'
 labels:
   - follow-up
   - logging
@@ -22,3 +23,9 @@ The repo-wide exc_info codemod (PR #592) left ~6 sites using logger.opt(exceptio
 - [ ] #1 opt(exception=False) sites reduced to plain logger calls
 - [ ] #2 No traceback-capturing behavior changed
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Fixed in the quick-wins batch (branch claude/followups-quickwins). See Docs/superpowers/plans/2026-07-11-followups-quickwins.md.
+<!-- SECTION:NOTES:END -->

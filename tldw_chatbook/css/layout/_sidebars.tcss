@@ -306,17 +306,12 @@
     margin-bottom: 1; 
 }
 
-/* Notes content header and expand button */
-.notes-content-header {
-    height: 2;
-    align: left middle;
-    margin-bottom: 0;
-}
-
-.notes-content-label {
-    width: auto;
-}
-
+/* Notes expand button */
+/* T169: the two legacy "notes content header"/"notes content label"
+ * classes previously declared here were pruned -- pre-workbench Notes tab
+ * CSS (Notes_Window.py, since removed) with zero live references anywhere
+ * in tldw_chatbook/*.py. .notes-expand-button below is still live (Chat
+ * sidebar's "Notes" expand control). */
 .notes-expand-button {
     width: auto;
     min-width: 12;

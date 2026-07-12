@@ -3512,12 +3512,18 @@ class LibraryScreen(BaseAppScreen):
                 outcome["path"],
                 outcome["dependency_info"],
                 bool(outcome["registry_recorded"]),
+                outcome["message"],
             )
         else:
             self._marshal_library_export_failure(run_id, outcome["message"])
 
     def _marshal_library_export_success(
-        self, run_id: int, path: str, dependency_info: Any, registry_recorded: bool
+        self,
+        run_id: int,
+        path: str,
+        dependency_info: Any,
+        registry_recorded: bool,
+        message: str = "",
     ) -> None:
         """Marshal a successful run onto the UI thread (called from the worker)."""
         try:
@@ -3527,6 +3533,7 @@ class LibraryScreen(BaseAppScreen):
                 path,
                 dependency_info,
                 registry_recorded,
+                message,
             )
         except Exception:
             # A shutdown/detach mid-marshal can raise RuntimeError OR
@@ -3546,16 +3553,79 @@ class LibraryScreen(BaseAppScreen):
             # -- either way the worker thread must not crash on teardown.
             pass
 
+    @staticmethod
+    def _build_library_export_success_message(
+        path: Any, dependency_info: Any, creator_message: Any = ""
+    ) -> str:
+        """Build the success notification text.
+
+        Three pieces, in order:
+
+        1. The destination path (always present), ``escape_markup``'d:
+           Textual notifications render Rich console markup, so a
+           user-chosen path containing ``[...]`` (legal in filenames on
+           any platform) would otherwise mis-render or raise in the
+           markup parser.
+        2. The creator's own ``outcome["message"]`` detail (task-158):
+           ``ChatbookCreator.create_chatbook`` returns a message carrying
+           its own counts (e.g. missing-dependency warnings) that was
+           previously discarded entirely by the caller. Its redundant
+           ``"Chatbook created successfully at <path>"`` prefix -- the
+           path is already the primary notify line above -- is stripped
+           so only the actual detail remains; an unrecognized message
+           shape (e.g. a different service implementation) is kept
+           verbatim rather than guessed at.
+        3. The ``dependency_info.get("auto_included")`` count suffix (the
+           character ids ``ChatbookCreator`` pulled in automatically as
+           conversation dependencies) -- BUT only when the creator detail
+           above does not already state it. ``create_chatbook`` already
+           puts an ``"Auto-included N character dependencies"`` clause
+           into its own message (that clause and ``auto_included`` derive
+           from the same ``self.auto_included_characters`` state), so
+           emitting the suffix on top of a detail that carries that clause
+           would restate the identical fact twice. The suffix therefore
+           only fires when the auto-included count would otherwise go
+           unstated (e.g. an empty creator message, or a creator message
+           whose only detail is a missing-dependency warning).
+        """
+        message = f"Exported chatbook to {escape_markup(str(path))}"
+
+        detail = str(creator_message or "").strip()
+        known_prefix = f"Chatbook created successfully at {path}"
+        if detail.startswith(known_prefix):
+            detail = detail[len(known_prefix):].strip(" .")
+        if detail:
+            message += f": {escape_markup(detail)}"
+
+        auto_included = (
+            dependency_info.get("auto_included")
+            if isinstance(dependency_info, dict)
+            else None
+        )
+        # De-dup: skip the suffix when the surfaced detail already states
+        # the auto-included count (see point 3 above).
+        if auto_included and "auto-included" not in detail.lower():
+            try:
+                count = len(auto_included)
+            except TypeError:
+                count = auto_included
+            message += f" ({count} characters auto-included)"
+
+        return message
+
     def _apply_library_export_success(
-        self, run_id: int, path: str, dependency_info: Any, registry_recorded: bool
+        self,
+        run_id: int,
+        path: str,
+        dependency_info: Any,
+        registry_recorded: bool,
+        message: str = "",
     ) -> None:
         """UI-thread completion: notify, clear running/error, update the form.
 
-        ``dependency_info.get("auto_included")`` -- the character ids
-        ``ChatbookCreator`` pulled in automatically as conversation
-        dependencies -- gets appended to the notification as a count when
-        non-empty (``ChatbookCreator``'s own dependency_info contract; see
-        ``chatbook_creator.py``'s docstring).
+        See ``_build_library_export_success_message`` for how the
+        notification text itself (path + creator detail + auto-included
+        count) is assembled.
 
         ``registry_recorded=False`` (the zip succeeded but the
         ``create_chatbook`` registry step failed -- see
@@ -3576,31 +3646,13 @@ class LibraryScreen(BaseAppScreen):
         away from (see ``_library_export_run_id``'s docstring) must not
         stomp ``_library_export_running``/``_error``/``_status`` or the
         canvas DOM out from under whatever the user is now looking at.
-
-        The full destination path is ``escape_markup``'d before it reaches
-        the toast: Textual notifications render Rich console markup, so a
-        user-chosen path containing ``[...]`` (a real possibility on any
-        platform -- brackets are legal in filenames) would otherwise
-        mis-render or raise in the markup parser. Mirrors the note-export
-        convention (``_write_library_note_export_file``); the full path
-        (not just ``.name``) is kept because the user explicitly chose the
-        destination and seeing where the artifact landed is useful.
         """
-        message = f"Exported chatbook to {escape_markup(str(path))}"
-        auto_included = (
-            dependency_info.get("auto_included")
-            if isinstance(dependency_info, dict)
-            else None
+        notify_message = self._build_library_export_success_message(
+            path, dependency_info, message
         )
-        if auto_included:
-            try:
-                count = len(auto_included)
-            except TypeError:
-                count = auto_included
-            message += f" ({count} characters auto-included)"
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
-            notify(message, severity="information")
+            notify(notify_message, severity="information")
             if not registry_recorded:
                 notify(
                     "Export saved, but couldn't be registered — it won't "

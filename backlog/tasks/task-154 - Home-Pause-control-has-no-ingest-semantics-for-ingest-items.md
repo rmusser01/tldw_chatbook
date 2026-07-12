@@ -1,9 +1,10 @@
 ---
 id: TASK-154
 title: Home Pause control has no ingest semantics for ingest items
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-11 22:01'
+updated_date: '2026-07-11 23:52'
 labels:
   - follow-up
   - home
@@ -22,3 +23,9 @@ The generic Home Pause control renders for local Library ingest items (they ente
 - [ ] #1 Pause is not shown for ingest items OR is wired to a real pause action
 - [ ] #2 Behavior covered by a Home pilot
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Fixed in the quick-wins batch (branch claude/followups-quickwins). See Docs/superpowers/plans/2026-07-11-followups-quickwins.md.
+<!-- SECTION:NOTES:END -->

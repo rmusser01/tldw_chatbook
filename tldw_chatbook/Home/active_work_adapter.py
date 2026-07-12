@@ -21,6 +21,7 @@ from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 from tldw_chatbook.Utils.path_validation import validate_path
 from .dashboard_state import (
+    LOCAL_INGEST_ITEM_ID_PREFIX,
     HomeActiveWorkItem,
     HomeDashboardInput,
     SERVER_EVENT_STATE_AVAILABLE,
@@ -601,7 +602,7 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                 continue
             items.append(
                 HomeActiveWorkItem(
-                    item_id=f"local:ingest:{job.job_id}",
+                    item_id=f"{LOCAL_INGEST_ITEM_ID_PREFIX}{job.job_id}",
                     title=_ingest_job_title(job),
                     source="Library",
                     status=job.state.value,
@@ -651,7 +652,7 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                 continue
             items.append(
                 HomeActiveWorkItem(
-                    item_id=f"local:ingest:{job.job_id}",
+                    item_id=f"{LOCAL_INGEST_ITEM_ID_PREFIX}{job.job_id}",
                     title=_ingest_job_title(job),
                     source="Library",
                     status="done",
@@ -824,7 +825,7 @@ def _is_local_chatbook_id(value: str | None) -> bool:
 
 
 def _is_local_ingest_job_id(value: str | None) -> bool:
-    return bool(value and str(value).startswith("local:ingest:"))
+    return bool(value and str(value).startswith(LOCAL_INGEST_ITEM_ID_PREFIX))
 
 
 def _runtime_server_status_fields(runtime_policy: Any | None) -> dict[str, object]:
