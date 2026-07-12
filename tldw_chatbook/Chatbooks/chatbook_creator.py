@@ -9,15 +9,17 @@ Handles the creation and packaging of chatbooks from database content.
 """
 
 import json
+import os
 import shutil
 import tempfile
 import zipfile
 import hashlib
 import html
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Set, Tuple
+from typing import Callable, List, Dict, Any, Optional, Set, Tuple
 from loguru import logger
 
 from .chatbook_models import (
@@ -63,9 +65,21 @@ def _coerce_media_timestamp(value: Any) -> Optional[datetime]:
     return None
 
 
+@dataclass(frozen=True)
+class ExportProgress:
+    """A single progress tick emitted during chatbook creation."""
+    phase: str
+    current: int
+    total: int
+
+
+class ChatbookExportCancelled(Exception):
+    """Raised internally when cancel_check() returns True at a checkpoint."""
+
+
 class ChatbookCreator:
     """Service for creating chatbooks from database content."""
-    
+
     def __init__(self, db_paths: Dict[str, str]):
         """
         Initialize the chatbook creator.
@@ -92,8 +106,35 @@ class ChatbookCreator:
         self.missing_dependencies: Set[int] = set()
         self.auto_included_characters: Set[int] = set()
         self._selected_characters: Set[str] = set()  # Track explicitly selected characters
+        self._progress_callback: Optional[Callable[[ExportProgress], None]] = None
+        self._cancel_check: Optional[Callable[[], bool]] = None
         logger.info("ChatbookCreator.__init__: Initialization complete")
-        
+
+    def _emit_progress(self, phase: str, current: int, total: int) -> None:
+        cb = self._progress_callback
+        if cb is None:
+            return
+        try:
+            cb(ExportProgress(phase=phase, current=current, total=total))
+        except Exception:
+            logger.opt(exception=True).debug("ChatbookCreator: progress_callback raised; ignored")
+
+    def _check_cancel(self) -> None:
+        if self._cancel_check is not None and self._cancel_check():
+            raise ChatbookExportCancelled()
+
+    def _cleanup_paths(self, *paths: Optional[Path]) -> None:
+        for p in paths:
+            if not p:
+                continue
+            try:
+                if p.is_dir():
+                    shutil.rmtree(p, ignore_errors=True)
+                elif p.exists():
+                    p.unlink()
+            except Exception:
+                logger.opt(exception=True).debug(f"ChatbookCreator: cleanup failed for {p}")
+
     def create_chatbook(
         self,
         name: str,
@@ -106,7 +147,9 @@ class ChatbookCreator:
         include_embeddings: bool = False,
         tags: List[str] = None,
         categories: List[str] = None,
-        auto_include_dependencies: bool = True
+        auto_include_dependencies: bool = True,
+        progress_callback: Optional[Callable[["ExportProgress"], None]] = None,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> Tuple[bool, str, Dict[str, Any]]:
         """
         Create a chatbook from selected content.
@@ -133,7 +176,11 @@ class ChatbookCreator:
         logger.info(f"ChatbookCreator.create_chatbook: Starting creation of '{name}'")
         logger.info(f"ChatbookCreator.create_chatbook: Options - include_media={include_media}, media_quality={media_quality}, include_embeddings={include_embeddings}, auto_include_dependencies={auto_include_dependencies}")
         logger.info(f"ChatbookCreator.create_chatbook: Content selections - {[(t.value, len(ids)) for t, ids in content_selections.items()]}")
-        
+
+        self._progress_callback = progress_callback
+        self._cancel_check = cancel_check
+        work_dir: Optional[Path] = None
+        partial_path: Optional[Path] = None
         try:
             # Reset dependency tracking
             self.missing_dependencies.clear()
@@ -241,15 +288,12 @@ class ChatbookCreator:
             logger.info("ChatbookCreator.create_chatbook: Creating README")
             self._create_readme(work_dir, manifest)
             
-            # Package into archive
-            if output_path.suffix == '.zip':
-                logger.info(f"ChatbookCreator.create_chatbook: Creating ZIP archive at {output_path}")
-                self._create_zip_archive(work_dir, output_path)
-            else:
-                # Default to ZIP if no extension specified
+            # Package into archive (atomic finalize: write .partial, then os.replace)
+            if output_path.suffix != '.zip':
                 output_path = output_path.with_suffix('.zip')
-                logger.info(f"ChatbookCreator.create_chatbook: Creating ZIP archive at {output_path} (defaulted to .zip)")
-                self._create_zip_archive(work_dir, output_path)
+            partial_path = output_path.with_name(output_path.name + ".partial")
+            logger.info(f"ChatbookCreator.create_chatbook: Creating ZIP archive at {output_path}")
+            self._create_zip_archive(work_dir, output_path, partial_path)
             
             # Calculate final size
             manifest.total_size_bytes = output_path.stat().st_size
@@ -275,14 +319,26 @@ class ChatbookCreator:
             logger.info(f"ChatbookCreator.create_chatbook: Success - {message}")
             return True, message, dependency_info
             
+        except ChatbookExportCancelled:
+            logger.info("ChatbookCreator.create_chatbook: cancelled by request")
+            self._cleanup_paths(work_dir, partial_path)
+            return False, "Export cancelled", {
+                "cancelled": True,
+                "missing_dependencies": list(self.missing_dependencies),
+                "auto_included": list(self.auto_included_characters),
+            }
         except Exception as e:
             logger.opt(exception=True).error("ChatbookCreator.create_chatbook: Error creating chatbook")
+            self._cleanup_paths(work_dir, partial_path)
             dependency_info = {
                 "missing_dependencies": list(self.missing_dependencies),
                 "auto_included": list(self.auto_included_characters)
             }
             return False, f"Error creating chatbook: {str(e)}", dependency_info
-    
+        finally:
+            self._progress_callback = None
+            self._cancel_check = None
+
     def _collect_conversations(
         self,
         conversation_ids: List[str],
@@ -307,7 +363,10 @@ class ChatbookCreator:
         conv_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"ChatbookCreator._collect_conversations: Created conversations directory at {conv_dir}")
         
-        for conv_id in conversation_ids:
+        total = len(conversation_ids)
+        for idx, conv_id in enumerate(conversation_ids):
+            self._check_cancel()
+            self._emit_progress("conversations", idx + 1, total)
             logger.debug(f"ChatbookCreator._collect_conversations: Processing conversation {conv_id}")
             try:
                 # Get conversation details
@@ -654,7 +713,10 @@ class ChatbookCreator:
         notes_dir = work_dir / "content" / "notes"
         notes_dir.mkdir(parents=True, exist_ok=True)
         
-        for note_id in note_ids:
+        total = len(note_ids)
+        for idx, note_id in enumerate(note_ids):
+            self._check_cancel()
+            self._emit_progress("notes", idx + 1, total)
             try:
                 # Get note details
                 note = db.get_note_by_id(note_id)
@@ -729,7 +791,10 @@ class ChatbookCreator:
         chars_dir = work_dir / "content" / "characters"
         chars_dir.mkdir(parents=True, exist_ok=True)
         
-        for char_id in character_ids:
+        total = len(character_ids)
+        for idx, char_id in enumerate(character_ids):
+            self._check_cancel()
+            self._emit_progress("characters", idx + 1, total)
             try:
                 # Get character card (which includes all details)
                 char = db.get_character_card_by_id(int(char_id))
@@ -793,7 +858,10 @@ class ChatbookCreator:
         metadata_dir = media_dir / "metadata"
         metadata_dir.mkdir(exist_ok=True)
         
-        for media_id in media_ids:
+        total = len(media_ids)
+        for idx, media_id in enumerate(media_ids):
+            self._check_cancel()
+            self._emit_progress("media", idx + 1, total)
             try:
                 # Get media details from database
                 media_item = db.get_media_by_id(int(media_id))
@@ -891,7 +959,10 @@ class ChatbookCreator:
         prompts_dir = work_dir / "content" / "prompts"
         prompts_dir.mkdir(parents=True, exist_ok=True)
         
-        for prompt_id in prompt_ids:
+        total = len(prompt_ids)
+        for idx, prompt_id in enumerate(prompt_ids):
+            self._check_cancel()
+            self._emit_progress("prompts", idx + 1, total)
             try:
                 # Get prompt details
                 prompt = db.get_prompt_by_id(int(prompt_id))
@@ -1012,6 +1083,8 @@ class ChatbookCreator:
     
     def _discover_relationships(self, manifest: ChatbookManifest, content: ChatbookContent) -> None:
         """Discover relationships between content items."""
+        self._check_cancel()
+        self._emit_progress("relationships", 1, 1)
         # Find conversation-character relationships
         for conv in content.conversations:
             if conv.get('character_id'):
@@ -1087,10 +1160,14 @@ class ChatbookCreator:
             else:
                 f.write("See individual content files for licensing information.")
     
-    def _create_zip_archive(self, work_dir: Path, output_path: Path) -> None:
-        """Create a ZIP archive of the chatbook."""
-        with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-            for file_path in work_dir.rglob('*'):
-                if file_path.is_file():
-                    arcname = file_path.relative_to(work_dir)
-                    zf.write(file_path, arcname)
+    def _create_zip_archive(self, work_dir: Path, output_path: Path, partial_path: Path) -> None:
+        """Zip work_dir into a sibling .partial, then atomically replace output_path."""
+        files = [p for p in work_dir.rglob('*') if p.is_file()]
+        total = len(files)
+        with zipfile.ZipFile(partial_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for idx, file_path in enumerate(files):
+                self._check_cancel()
+                arcname = file_path.relative_to(work_dir)
+                zf.write(file_path, arcname)
+                self._emit_progress("packaging", idx + 1, total)
+        os.replace(partial_path, output_path)
