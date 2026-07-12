@@ -32,7 +32,10 @@ class RowSelection:
     def toggle(self, row_id: str) -> None:
         if not row_id:
             return
-        self._ids.discard(row_id) if row_id in self._ids else self._ids.add(row_id)
+        if row_id in self._ids:
+            self._ids.discard(row_id)
+        else:
+            self._ids.add(row_id)
 
     def select_all(self, rendered_ids: Iterable[str]) -> None:
         self._ids.update(rid for rid in rendered_ids if rid)

@@ -182,12 +182,16 @@ class LibraryNotesCanvas(Vertical):
                 # (or crashing on an unmatched closing tag) -- the same
                 # fix class as the escaped search-history Button labels.
                 title = escape_markup(row.title)
-                label = f"{title}\n{row.age_label}" if row.age_label else title
                 if select_mode:
                     # Notes rows had no marker at all before select mode
                     # existed -- normal mode keeps that markerless label
-                    # (no ``▸``, unlike the media/conversations rows).
-                    label = ("☑ " if row.checked else "☐ ") + label
+                    # (no ``▸``, unlike the media/conversations rows). The 2-col
+                    # glyph shifts line 1, so indent the age line by 2 to keep it
+                    # aligned under the title rather than under the checkbox.
+                    glyph = "☑ " if row.checked else "☐ "
+                    label = f"{glyph}{title}\n  {row.age_label}" if row.age_label else f"{glyph}{title}"
+                else:
+                    label = f"{title}\n{row.age_label}" if row.age_label else title
                 button = Button(
                     label,
                     id=f"library-notes-row-{index}",
