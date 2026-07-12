@@ -1142,15 +1142,25 @@ class LibraryScreen(BaseAppScreen):
         # LibraryScreen instance mounted from here on -- including a
         # concurrent one, since screens are recomposed per visit -- reads
         # this fetch's result rather than stale/no data.
-        self.app_instance._library_source_snapshot_cache = (
-            records,
-            counts,
-            total_known,
-            lookup_error,
-            recovery_state,
-            study_counts,
-        )
-        self.app_instance._library_source_snapshot_cache_stamp = time.monotonic()
+        #
+        # Only a SUCCESSFUL snapshot (``lookup_error is None``) is cached: an
+        # error/service-unavailable result still applies to the current view
+        # as usual below (unchanged), but must not become the next visit's
+        # instant-apply seed -- otherwise a return visit within TTL would
+        # flash the "services unavailable" banner for one frame before the
+        # reconcile corrects it. Skipping the write leaves the previous good
+        # snapshot (or nothing) in place, so the next visit does a normal
+        # fresh fetch instead.
+        if lookup_error is None:
+            self.app_instance._library_source_snapshot_cache = (
+                records,
+                counts,
+                total_known,
+                lookup_error,
+                recovery_state,
+                study_counts,
+            )
+            self.app_instance._library_source_snapshot_cache_stamp = time.monotonic()
         self._apply_local_source_snapshot(
             records, counts, total_known, lookup_error, recovery_state, study_counts
         )

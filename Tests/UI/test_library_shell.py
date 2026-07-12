@@ -3711,6 +3711,86 @@ async def test_library_shell_expired_cache_does_not_apply_stale_snapshot(monkeyp
         assert "Conversations (2)" not in visible
 
 
+def _error_source_snapshot():
+    """A service-unavailable snapshot tuple, matching the shape
+    ``_list_local_source_snapshot`` returns when the local source services
+    are not callable (see its ``LIBRARY_SERVICE_UNAVAILABLE_COPY`` branch).
+    """
+    return (
+        {"notes": (), "media": (), "conversations": ()},
+        {"notes": 0, "media": 0, "conversations": 0},
+        {"notes": True, "media": True, "conversations": True},
+        library_screen_module.LIBRARY_SERVICE_UNAVAILABLE_COPY,
+        None,
+        {"study_decks": None, "flashcards_due": None, "quizzes": None},
+    )
+
+
+@pytest.mark.asyncio
+async def test_library_shell_error_snapshot_is_not_cached_for_instant_apply(monkeypatch):
+    """A failed/service-unavailable snapshot must NOT seed the app cache: it
+    still applies to the current view (the error banner shows now, unchanged),
+    but a return visit within TTL must do a normal fresh fetch instead of
+    instant-applying the stale error -- no "services unavailable" flash on
+    re-entry.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    calls = {"count": 0}
+    gate = threading.Event()
+
+    async def _gated_error_snapshot(self):
+        calls["count"] += 1
+        if calls["count"] > 1:
+            # Hold the second mount's fetch open so we can observe its
+            # pre-fetch first paint (bounded per the gated-fake convention).
+            await asyncio.to_thread(gate.wait, _GATED_RELEASE_TIMEOUT_SECONDS)
+        return _error_source_snapshot()
+
+    monkeypatch.setattr(
+        LibraryScreen, "_list_local_source_snapshot", _gated_error_snapshot
+    )
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        first_screen = _active_library_screen(host)
+        # Wait for the first (unblocked) error refresh to land.
+        for _ in range(120):
+            if first_screen._library_lookup_error:
+                break
+            await pilot.pause(0.02)
+        assert first_screen._library_lookup_error
+
+        # The crux: a failed snapshot must never become the instant-apply
+        # seed. Without the `lookup_error is None` guard this holds the error
+        # tuple instead of staying unset -> the RED failure.
+        assert getattr(app, "_library_source_snapshot_cache", None) is None
+        assert getattr(app, "_library_source_snapshot_cache_stamp", None) is None
+
+        await host.pop_screen()
+        await pilot.pause()
+
+        second_screen = LibraryScreen(app)
+        second_screen.apply_navigation_context({"mode": "conversations"})
+        await host.push_screen(second_screen)
+        await pilot.pause()
+        await pilot.pause()
+
+        try:
+            # No cached error to instant-apply -> the second mount shows the
+            # normal loading placeholder while its own (gated) fresh fetch is
+            # still in flight, NOT the "services unavailable" error banner.
+            assert second_screen._library_loaded is False
+            assert second_screen.query_one("#library-canvas-loading")
+            assert not second_screen.query("#library-canvas-error")
+        finally:
+            gate.set()
+
+        await pilot.pause()
+        await pilot.pause()
+
+
 @pytest.mark.asyncio
 async def test_library_shell_details_toggle_persists():
     app = _build_test_app()
