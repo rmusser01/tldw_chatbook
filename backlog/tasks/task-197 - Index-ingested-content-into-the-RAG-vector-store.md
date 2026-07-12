@@ -20,10 +20,12 @@ Nothing in the app ever populates the RAG vector store: the only indexing entry 
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
+## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 Newly ingested media is chunked and embedded and indexed into the RAG vector store when embeddings deps are installed via a non-blocking background worker
 - [ ] #2 A semantic search for distinctive content of a newly ingested document returns that document
 - [ ] #3 A bulk backfill path exists to index pre-existing media/notes/conversations
 - [ ] #4 Indexing failures are logged and surfaced without breaking ingestion
 - [ ] #5 When embeddings deps are missing no indexing is attempted and ingestion is unaffected
+- [ ] #6 The broken/dead `index_documents_modular` entry point in `chat_rag_integration.py` is either removed or corrected to use the valid `RAGService` batch indexing API (e.g., `index_batch_optimized`)
 <!-- AC:END -->
