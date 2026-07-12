@@ -47,6 +47,21 @@ def _ingest_heavy_lane_max_workers(self) -> int:
 `<=0 → 1` so a mis-set value can never permanently starve heavy work. A cap
 larger than `worker_count` is harmless (the pool total still bounds everything).
 
+**Discoverability (AC2):** add a `[library]` section to the shipped default
+template `CONFIG_TOML_CONTENT` (`config.py:1465`) documenting BOTH ingest-tuning
+keys, commented so defaults still apply (the F3 sibling
+`ingest_parse_workers` currently ships undocumented — this closes that gap too):
+```toml
+[library]
+# Parallel ingest parse workers. Default: min(3, cpu-1). Uncomment to override.
+# ingest_parse_workers = 3
+# Max concurrent heavy (audio/video transcription) parses; documents fan out
+# past this cap to fill the remaining pool workers. Default: 1.
+# ingest_heavy_lane_max_workers = 1
+```
+Place it near the existing ingest/media config in the template. The keys stay
+runtime-optional — commenting them keeps every default unchanged.
+
 ### 2. Classify once at enqueue (`app.py` + registry)
 
 `detect_file_type` (a pure extension map, `local_file_ingestion.py:35-84`) is
@@ -90,14 +105,18 @@ select by type without re-deriving:
 ### 4. Dispatcher (`_top_up_ingest_parse_pool`, `app.py:1542+`)
 
 ```python
-HEAVY_TYPES = frozenset({"audio", "video"})   # module/class constant
+# Module-level constant near the coordinator. The two values are exactly the
+# `detect_file_type` return values whose parse worker runs transcription
+# (local_file_ingestion.py audio/video branches) -- anchored by a comment there
+# so it can't silently drift if a new media type is added.
+_INGEST_HEAVY_TYPES = frozenset({"audio", "video"})
 ...
 worker_count = self._ingest_parse_worker_count()
 heavy_cap = self._ingest_heavy_lane_max_workers()
 while self.library_ingest_jobs.counts().get("parsing", 0) < worker_count:
-    heavy_full = self.library_ingest_jobs.parsing_count_for_types(HEAVY_TYPES) >= heavy_cap
+    heavy_full = self.library_ingest_jobs.parsing_count_for_types(_INGEST_HEAVY_TYPES) >= heavy_cap
     job = self.library_ingest_jobs.next_queued(
-        skip_types=HEAVY_TYPES if heavy_full else frozenset()
+        skip_types=_INGEST_HEAVY_TYPES if heavy_full else frozenset()
     )
     if job is None:
         return   # queue empty, or only heavy jobs remain and the lane is full
@@ -146,6 +165,10 @@ audio/video transcribe.
   - `submit(..., detected_type="audio")` stores the type on the QUEUED row.
 - **Config unit:** `_ingest_heavy_lane_max_workers` returns the configured value,
   defaults to 1 when unset, clamps `0`/negative to 1.
+- **Template unit:** `CONFIG_TOML_CONTENT` still parses as valid TOML after the
+  `[library]` section is added, and — because the new keys are commented — a
+  fresh config loaded from the template yields the defaults (the heavy-lane
+  helper returns 1). Guards against a malformed-template regression.
 - **Coordinator (fake-pool harness, `Tests/Library/test_library_ingest_runner.py`):**
   the headline scenario — `worker_count=3`, `heavy_cap=1`, enqueue five jobs
   whose `source_path` extensions classify as `[audio1, audio2, doc1, doc2, doc3]`
