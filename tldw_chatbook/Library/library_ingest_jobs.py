@@ -159,6 +159,12 @@ class LibraryIngestJob:
             (returns ``None``) as defense in depth, matching the queue
             row's own ``can_retry = failed and not permanent`` gating in
             ``library_ingest_state.py``.
+        retry_count: Number of times this job has been retried via
+            ``requeue``. Persisted by :class:`~tldw_chatbook.DB.
+            Library_Ingest_Jobs_DB.LibraryIngestJobsDB` for job-history
+            display; not yet incremented anywhere in this module (that is
+            wired up alongside the requeue-carry logic). ``0`` for every
+            job unless explicitly set.
     """
 
     job_id: str
@@ -180,6 +186,7 @@ class LibraryIngestJob:
     superseded: bool = False
     dismissed: bool = False
     permanent: bool = False
+    retry_count: int = 0
 
 
 class LibraryIngestJobRegistry:
