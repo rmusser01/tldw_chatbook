@@ -1523,31 +1523,40 @@ class MediaDatabase:
                 # Instead, we'll use a single MATCH condition with the OR operator inside the FTS query
                 fts_query_parts = []
 
-                # For very short search terms (1-2 characters), add wildcards to improve matching
-                is_quoted_fts_query = (
-                    effective_fts_query.startswith('"')
-                    and effective_fts_query.endswith('"')
-                )
-                if len(effective_fts_query) <= 2 and not is_quoted_fts_query:
-                    # Add suffix wildcard for better partial matching with short terms
-                    fts_query_parts.append(f"{effective_fts_query}*")
-
-                    # Note: SQLite FTS5 doesn't support prefix wildcards (*term)
-                    # We'll handle "ends with" matching using LIKE conditions instead
-
-                    # Add case-insensitive versions if needed
-                    if effective_fts_query.lower() != effective_fts_query:
-                        fts_query_parts.append(f"{effective_fts_query.lower()}*")
-                else:
-                    # For longer terms, use the original query
+                if fts_match_query is not None:
+                    # Caller-owned preformatted FTS expression (e.g. the
+                    # Library keyword search's plural/singular-widened
+                    # AND-of-OR-groups). Use it verbatim: appending wildcard
+                    # or lowercased duplicates would corrupt its operators
+                    # (FTS5 keywords must stay uppercase), and unicode61
+                    # matching is case-insensitive already.
                     fts_query_parts.append(effective_fts_query)
+                else:
+                    # For very short search terms (1-2 characters), add wildcards to improve matching
+                    is_quoted_fts_query = (
+                        effective_fts_query.startswith('"')
+                        and effective_fts_query.endswith('"')
+                    )
+                    if len(effective_fts_query) <= 2 and not is_quoted_fts_query:
+                        # Add suffix wildcard for better partial matching with short terms
+                        fts_query_parts.append(f"{effective_fts_query}*")
 
-                    # Add case-insensitive version if needed
-                    if (
-                        not is_quoted_fts_query
-                        and effective_fts_query.lower() != effective_fts_query
-                    ):
-                        fts_query_parts.append(effective_fts_query.lower())
+                        # Note: SQLite FTS5 doesn't support prefix wildcards (*term)
+                        # We'll handle "ends with" matching using LIKE conditions instead
+
+                        # Add case-insensitive versions if needed
+                        if effective_fts_query.lower() != effective_fts_query:
+                            fts_query_parts.append(f"{effective_fts_query.lower()}*")
+                    else:
+                        # For longer terms, use the original query
+                        fts_query_parts.append(effective_fts_query)
+
+                        # Add case-insensitive version if needed
+                        if (
+                            not is_quoted_fts_query
+                            and effective_fts_query.lower() != effective_fts_query
+                        ):
+                            fts_query_parts.append(effective_fts_query.lower())
 
                 # Combine all FTS query parts with OR
                 combined_fts_query = " OR ".join(fts_query_parts)
