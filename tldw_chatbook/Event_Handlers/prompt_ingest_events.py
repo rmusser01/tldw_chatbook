@@ -337,17 +337,23 @@ async def handle_ingest_prompts_import_now_button_pressed(app: 'TldwCli', event:
             logger.error("Failed to find #prompt-import-status-area in process_prompt_import_failure.")
         app.notify(f"Prompt import failed: {str(error)[:100]}", severity="error", timeout=10)
 
-    # Store these handlers on the app instance temporarily or pass them via a different mechanism
-    # For simplicity here, we'll assume app.py's on_worker_state_changed will call them.
-    # A more robust way is to make these methods of a class or use a dispatch dictionary in app.py.
-    app.prompt_import_success_handler = process_prompt_import_success
-    app.prompt_import_failure_handler = process_prompt_import_failure
+    async def _run_prompt_import_worker_and_dispatch():
+        # Task 172: the file_operations worker group has no worker-state
+        # handler, so process_prompt_import_success/_failure were never
+        # invoked. This worker is a plain coroutine (no thread=True), so it
+        # runs on the main event loop -- dispatching the callbacks directly
+        # here (as T167 did for notes) is safe.
+        try:
+            results = await import_worker_target()
+        except Exception as e:
+            process_prompt_import_failure(e, "prompt_import_worker")
+            raise
+        process_prompt_import_success(results, "prompt_import_worker")
+        return results
 
-    # Run the worker
     app.run_worker(
-        import_worker_target,  # The async callable
+        _run_prompt_import_worker_and_dispatch,
         name="prompt_import_worker",  # Crucial for identifying the worker later
         group="file_operations",
         description="Importing selected prompt files."
-        # No on_success or on_failure here
     )
