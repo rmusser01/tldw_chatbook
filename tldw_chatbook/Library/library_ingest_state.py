@@ -82,6 +82,18 @@ def short_ingest_error(error: str) -> str:
     return error.split(_SUPPORTED_TYPES_ERROR_MARKER)[0].rstrip()
 
 
+def _retry_suffix(job: LibraryIngestJob) -> str:
+    """Return a `` · retry {n}`` suffix once a job has been requeued.
+
+    Mirrors ``active_work_adapter._ingest_retry_suffix`` -- kept as a
+    separate (Library-side) copy rather than a shared import so this
+    module's Textual-free, importable-in-isolation contract (see the module
+    docstring) never has to reach into ``Home`` (the dependency runs the
+    other way: ``Home`` already imports from ``Library``).
+    """
+    return f" · retry {job.retry_count}" if job.retry_count else ""
+
+
 @lru_cache(maxsize=1)
 def _supported_types_line() -> str:
     """Build the ingest form's supported-extensions line.
@@ -325,7 +337,8 @@ def _build_queue_row(job: LibraryIngestJob, *, now: float) -> IngestQueueRow:
       ``" Supported types: ..."`` tail from ``job.error`` -- that list now
       lives on the form as ``supported_types_line`` instead, always visible
       rather than repeated on every failed row. An error without that exact
-      marker passes through whole.
+      marker passes through whole. Once ``job.retry_count`` is nonzero
+      (task 161), a `` · retry {n}`` suffix is appended.
     """
     basename = _basename(job.source_path)
     if job.state == IngestJobState.PARSING:
@@ -376,7 +389,7 @@ def _build_queue_row(job: LibraryIngestJob, *, now: float) -> IngestQueueRow:
     return IngestQueueRow(
         job_id=job.job_id,
         glyph=_GLYPH_FAILED,
-        line=f"{_GLYPH_FAILED} failed · {basename} · {short_error}",
+        line=f"{_GLYPH_FAILED} failed · {basename} · {short_error}{_retry_suffix(job)}",
         can_open=False,
         can_retry=not job.permanent,
         can_dismiss=True,

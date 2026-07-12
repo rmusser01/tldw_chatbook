@@ -347,6 +347,24 @@ def test_failed_row_line_without_marker_passes_through_whole():
     assert row.line == "✗ failed · report.txt · Media database is unavailable."
 
 
+def test_failed_row_line_appends_retry_suffix():
+    """(Task 3, backlog 161) Mirrors Home's status_detail retry suffix --
+    single source of truth per short_ingest_error's docstring."""
+    jobs = (
+        _job(
+            state=IngestJobState.FAILED,
+            source_path="/tmp/report.txt",
+            started_at=100.0,
+            finished_at=101.0,
+            error="bad codec",
+            retry_count=2,
+        ),
+    )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
+    row = state.queue_rows[0]
+    assert row.line == "✗ failed · report.txt · bad codec · retry 2"
+
+
 def test_supported_types_line_present_and_derived_from_live_registry():
     state = build_library_ingest_state((), form=LibraryIngestFormState())
     assert state.supported_types_line.startswith("Supported: ")
