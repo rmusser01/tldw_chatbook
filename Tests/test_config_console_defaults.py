@@ -1,9 +1,12 @@
 """Console configuration defaults."""
 
+import os
+from pathlib import Path
 import tomllib
 
 from loguru import logger
 
+CONFIG_PATH_BEFORE_CONFIG_IMPORT = os.environ.get("TLDW_CONFIG_PATH")
 from tldw_chatbook import config as config_module
 
 
@@ -126,6 +129,32 @@ def test_save_setting_respects_tldw_config_path_override(tmp_path, monkeypatch):
     saved_override = tomllib.loads(override_config.read_text(encoding="utf-8"))
     assert saved_override["console"]["collapse_large_pastes"] is False
     assert not default_config.exists()
+
+
+def test_config_path_is_bootstrapped_before_config_import():
+    assert CONFIG_PATH_BEFORE_CONFIG_IMPORT is not None
+    bootstrap_config = Path(CONFIG_PATH_BEFORE_CONFIG_IMPORT)
+    assert bootstrap_config != config_module.DEFAULT_CONFIG_PATH
+    assert bootstrap_config.parent.is_dir()
+
+
+def test_autouse_fixture_isolates_config_saves(tmp_path):
+    isolated_config = tmp_path / "test_data" / "config" / "config.toml"
+    default_config = config_module.DEFAULT_CONFIG_PATH
+    default_contents = default_config.read_bytes() if default_config.exists() else None
+
+    assert config_module._get_effective_config_path() == isolated_config.resolve()
+    assert config_module.save_setting_to_cli_config(
+        "console",
+        "collapse_large_pastes",
+        False,
+    )
+
+    saved = tomllib.loads(isolated_config.read_text(encoding="utf-8"))
+    assert saved["console"]["collapse_large_pastes"] is False
+    assert (
+        default_config.read_bytes() if default_config.exists() else None
+    ) == default_contents
 
 
 def test_save_setting_redacts_sensitive_value_in_attempt_log(tmp_path, monkeypatch):

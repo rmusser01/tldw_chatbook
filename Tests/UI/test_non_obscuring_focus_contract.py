@@ -109,6 +109,15 @@ def css_selectors(text: str) -> list[str]:
     return selectors
 
 
+def css_selectors_contain_class(
+    selectors: list[str],
+    class_selector: str,
+) -> bool:
+    """Return whether selectors contain an exact CSS class token."""
+    token = re.compile(rf"{re.escape(class_selector)}(?![\w-])")
+    return any(token.search(selector) is not None for selector in selectors)
+
+
 def css_block(text: str, selector: str) -> str:
     """Return a CSS rule body whose selector list contains selector."""
     blocks = css_blocks(text, selector)
@@ -673,38 +682,25 @@ def test_console_composer_action_availability_states_are_visually_distinct():
 
 
 def test_library_mode_chip_selector_is_retired_from_focus_contracts():
-    """``.library-mode-chip`` (base rule, ``:focus``, ``.is-active``, and
-    ``.is-active:focus``) was deleted wholesale in L3b Task 9 along with
-    ``LIBRARY_MODES`` and the rest of the mode-switch chrome the Library
-    rail + canvas shell superseded. ``.notes-mode-chip``/``.personas-mode-chip``
-    still render their own mode strips, so their base rule, ``:focus`` rule,
-    and shared ``.is-active``/``.is-active:focus`` variants keep the same
-    non-obscuring, readable-selected-state contracts this suite enforces
-    elsewhere -- only the ``library-`` selector is gone."""
+    """Retired Library and Notes mode-chip selectors stay absent."""
     for text in (
         AGENTIC.read_text(encoding="utf-8"),
         BUNDLE.read_text(encoding="utf-8"),
     ):
-        assert ".library-mode-chip" not in css_selectors(text)
-        assert ".library-mode-chip:focus" not in css_selectors(text)
+        selectors = css_selectors(text)
+        assert not css_selectors_contain_class(selectors, ".library-mode-chip")
+        assert not css_selectors_contain_class(selectors, ".notes-mode-chip")
 
-        assert_non_obscuring_focus(css_block(text, ".notes-mode-chip:focus"))
 
-        active = css_block(text, ".notes-mode-chip.is-active")
-        assert_readable_selected_state_contract(active)
-        # Chips are one row tall; selection reads through background/underline,
-        # not a border that would consume the single content row.
-        assert "border: none;" in active
-        assert "background: $ds-focus-bg;" in active
-
-        active_focus = css_block(text, ".notes-mode-chip.is-active:focus")
-        assert_non_obscuring_focus(active_focus)
-        assert active_focus != active
-        assert "border: none;" in active_focus
-        assert "$primary" not in active_focus
-        assert "$accent" not in active_focus
-        assert "background: $ds-focus-bg;" in active_focus
-        assert "color: $ds-focus-fg;" in active_focus
+def test_css_class_selector_matching_uses_token_boundaries():
+    assert css_selectors_contain_class(
+        [".notes-mode-chip:focus", ".foo.notes-mode-chip.is-active"],
+        ".notes-mode-chip",
+    )
+    assert not css_selectors_contain_class(
+        [".legacy-notes-mode-chip-help", ".notes-mode-chip-help"],
+        ".notes-mode-chip",
+    )
 
 
 def test_console_composer_focus_uses_thin_input_treatment():

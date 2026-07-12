@@ -3,6 +3,26 @@ Pytest configuration for UI tests.
 
 This file provides shared fixtures and configuration for all UI tests.
 """
+import os
+import shutil
+import tempfile
+from pathlib import Path
+
+_TEST_CONFIG_ROOT_ENV = "TLDW_TEST_CONFIG_ROOT"
+_TEST_CONFIG_OWNER_ENV = "TLDW_TEST_CONFIG_ROOT_OWNER"
+_existing_test_config_root = os.environ.get(_TEST_CONFIG_ROOT_ENV)
+if _existing_test_config_root:
+    _BOOTSTRAP_CONFIG_ROOT = Path(_existing_test_config_root)
+    _OWNS_BOOTSTRAP_CONFIG_ROOT = False
+else:
+    _BOOTSTRAP_CONFIG_ROOT = Path(tempfile.mkdtemp(prefix="tldw_test_config_"))
+    os.environ[_TEST_CONFIG_ROOT_ENV] = str(_BOOTSTRAP_CONFIG_ROOT)
+    os.environ[_TEST_CONFIG_OWNER_ENV] = str(Path(__file__).resolve())
+    _OWNS_BOOTSTRAP_CONFIG_ROOT = True
+_BOOTSTRAP_CONFIG_PATH = _BOOTSTRAP_CONFIG_ROOT / "config" / "config.toml"
+_BOOTSTRAP_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+os.environ["TLDW_CONFIG_PATH"] = str(_BOOTSTRAP_CONFIG_PATH)
+
 import pytest
 import pytest_asyncio
 from typing import Type, TypeVar, Callable
@@ -24,6 +44,27 @@ from Tests.textual_test_harness import (
 # Type variables
 W = TypeVar('W', bound=Widget)
 A = TypeVar('A', bound=App)
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Remove the module-load config sandbox created by this conftest."""
+    if not _OWNS_BOOTSTRAP_CONFIG_ROOT:
+        return
+    if os.environ.get("TLDW_CONFIG_PATH") == str(_BOOTSTRAP_CONFIG_PATH):
+        os.environ.pop("TLDW_CONFIG_PATH", None)
+    if os.environ.get(_TEST_CONFIG_ROOT_ENV) == str(_BOOTSTRAP_CONFIG_ROOT):
+        os.environ.pop(_TEST_CONFIG_ROOT_ENV, None)
+        os.environ.pop(_TEST_CONFIG_OWNER_ENV, None)
+    shutil.rmtree(_BOOTSTRAP_CONFIG_ROOT, ignore_errors=True)
+
+
+@pytest.fixture(autouse=True)
+def isolate_ui_config_path(monkeypatch, tmp_path):
+    """Isolate config when Tests/UI/pytest.ini is the pytest root."""
+    monkeypatch.setenv(
+        "TLDW_CONFIG_PATH",
+        str(tmp_path / "test_data" / "config" / "config.toml"),
+    )
 
 
 @pytest.fixture(scope="session")
