@@ -1,10 +1,10 @@
 ---
 id: TASK-163
 title: Slim remaining eager heavy imports at app startup
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-11 22:02'
-updated_date: '2026-07-12 03:44'
+updated_date: '2026-07-12 04:04'
 labels:
   - follow-up
   - performance
@@ -19,9 +19,9 @@ F3 dropped the ingest chain from ~5.5s to ~0.9s, but app boot still eagerly load
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 import tldw_chatbook.app no longer loads nltk/torch/transformers at boot
-- [ ] #2 A subprocess regression test pins the absence
-- [ ] #3 No feature regression from the deferral
+- [x] #1 import tldw_chatbook.app no longer loads nltk/torch/transformers at boot
+- [x] #2 A subprocess regression test pins the absence
+- [x] #3 No feature regression from the deferral
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -36,7 +36,5 @@ F3 dropped the ingest chain from ~5.5s to ~0.9s, but app boot still eagerly load
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-PARTIAL: torch/transformers fully eliminated from app boot (verified via subprocess sys.modules check, 6519->4659 modules, ~5.65s->~4.11s fresh-dir apples-to-apples). AC #1 NOT fully met: nltk/scipy/sklearn/pandas still load via a chain outside the authorized fix scope: RAG_Admin/local_rag_admin_service.py -> Chunking/__init__.py (package init) -> Chunking/Chunk_Lib.py:31 eager `import nltk`. AC #2 met (Tests/Performance/test_app_import_weight.py, subprocess-based, RED-verified). AC #3 met (full feature-regression sweep green: RAG_Search, Chunking, RAG_Admin, RAG, Web_Scraping, Tools_Interop, optional_deps, embeddings UI -- all passing, plus a real end-to-end HF embedding creation).
-
-Full trace, before/after numbers, and a recommended follow-up (fix Chunking/__init__.py or Chunk_Lib.py's eager nltk import, same _ensure_*() pattern) are in .superpowers/sdd/startup-perf-report.md. Left as In Progress rather than Done pending that follow-up (or an explicit AC narrowing) per Definition of Done.
+DONE. All three ACs satisfied. `import tldw_chatbook.app` no longer loads torch/transformers (commit b5970b19: lazy _ensure_torch/_ensure_transformers/_ensure_numpy in Embeddings_Lib.py + deferred analyze/chunk_for_embedding/pandas imports in Chroma_Lib/Article_Extractor_Lib/WebSearch_APIs) NOR nltk/scipy/sklearn/pandas (commit fd79452a, authorized scope extension: deferred `import nltk` + removed the import-time punkt network download in Chunking/Chunk_Lib.py; scipy/sklearn/pandas are nltk-transitive and dropped with it). AC #1: all 8 HEAVY_MODULES absent at boot, 6519->3291 modules (-49.5%), ~5.65s->~1.48s. AC #2: Tests/Performance/test_app_import_weight.py (subprocess, fresh interpreter) hard-asserts the full absent set + lazy-accessor availability, RED-verified against pre-fix code. AC #3: 404 passed/20 skipped/0 failed across Chunking/RAG/RAG_Admin/RAG_Search/Web_Scraping/optional_deps + real end-to-end embedding & chunk runs. numpy intentionally still loads (chromadb/pymupdf dep, light, allowed). Full detail: .superpowers/sdd/startup-perf-report.md. Documented follow-up (NOT an AC, pre-existing, reproduces on original code): semantic chunking hits an nltk-5.x punkt vs punkt_tab resource-name mismatch -- update the two 'punkt' strings in ensure_nltk_data()/_semantic_chunking to 'punkt_tab'.
 <!-- SECTION:NOTES:END -->
