@@ -1504,6 +1504,13 @@ base_url = "http://127.0.0.1:8000" # Or your actual default remote endpoint
 # Default auth token can be stored here, or leave empty if user must always provide
 auth_token = "default-secret-key-for-single-user"
 
+[library]
+# Parallel ingest parse workers. Default: min(3, cpu-1). Uncomment to override.
+# ingest_parse_workers = 3
+# Max concurrent heavy (audio/video transcription) parses; document parses fan
+# out past this cap to fill the remaining pool workers. Default: 1.
+# ingest_heavy_lane_max_workers = 1
+
 [splash_screen]
 # Splash screen configuration for startup animations
 # See Docs/Examples/SPLASH_SCREENS_CATALOG.md for all available splash screens

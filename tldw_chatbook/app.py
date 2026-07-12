@@ -118,7 +118,7 @@ from tldw_chatbook.Library.library_ingest_jobs import (
     LibraryIngestJobRegistry,
 )
 from tldw_chatbook.Library.library_local_rag_search_service import LibraryLocalRagSearchService
-from tldw_chatbook.Local_Ingestion import detect_file_type
+from tldw_chatbook.Local_Ingestion import detect_file_type, FileIngestionError
 from tldw_chatbook.Local_Ingestion.ingest_parse_worker import classify_parse_failure, run_parse_job
 from tldw_chatbook.Local_Ingestion.local_file_ingestion import persist_parsed_media
 from tldw_chatbook.Home.active_work_adapter import (
@@ -1193,6 +1193,12 @@ def _stream_fileno(stream: Any) -> int:
     return fd if isinstance(fd, int) and fd >= 0 else -1
 
 
+# The detect_file_type() values whose parse worker runs transcription
+# (see Local_Ingestion/local_file_ingestion.py audio/video branches). The
+# heavy-lane cap limits how many of these parse concurrently.
+_INGEST_HEAVY_TYPES = frozenset({"audio", "video"})
+
+
 # Keep-alive singleton for `_ingest_pool_real_stderr`'s devnull fallback.
 # Module-level on purpose: the multiprocessing resource tracker inherits this
 # fd ONCE at its (process-global, once-per-process) launch and keeps writing
@@ -1323,6 +1329,21 @@ class LibraryIngestQueueMixin:
             The newly created job: ``QUEUED`` normally, or immediately
             ``FAILED`` when ``media_db`` is unavailable.
         """
+        try:
+            detected_type = detect_file_type(source_path) or ""
+        except FileIngestionError:
+            # Expected for an unsupported extension -- treat as light work.
+            detected_type = ""
+        except Exception:
+            # An UNEXPECTED classification failure must not silently disable the
+            # heavy-lane cap (an empty type is treated as light work, so a
+            # misclassified audio/video job would bypass the transcription cap).
+            # Log it so a regression is observable, then fall back to light.
+            logger.opt(exception=True).warning(
+                f"detect_file_type failed unexpectedly for {source_path!r}; "
+                "treating as light work (heavy-lane cap may not apply)."
+            )
+            detected_type = ""
         job = self.library_ingest_jobs.submit(
             source_path=source_path,
             title=title,
@@ -1331,6 +1352,7 @@ class LibraryIngestQueueMixin:
             perform_analysis=perform_analysis,
             chunk_enabled=chunk_enabled,
             chunk_size=chunk_size,
+            detected_type=detected_type,
         )
         if self.media_db is None:
             failed = self.library_ingest_jobs.mark_failed(
@@ -1391,6 +1413,21 @@ class LibraryIngestQueueMixin:
             return configured
         cpu_count = os.cpu_count() or 2
         return min(3, max(1, cpu_count - 1))
+
+    def _ingest_heavy_lane_max_workers(self) -> int:
+        """Resolve the heavy-lane (audio/video transcription) cap from config.
+
+        UI-thread only. Reads ``library.ingest_heavy_lane_max_workers`` via the
+        dotted 1-arg ``get_cli_setting`` form (same reason as
+        ``_ingest_parse_worker_count``). Defaults to 1; a missing, invalid, or
+        non-positive value clamps to 1 so heavy work is never permanently
+        starved.
+        """
+        try:
+            configured = int(get_cli_setting("library.ingest_heavy_lane_max_workers"))
+        except (TypeError, ValueError):
+            configured = 0
+        return configured if configured > 0 else 1
 
     def _create_ingest_parse_pool(self):
         """Create the Library ingest parse pool.
@@ -1552,30 +1589,48 @@ class LibraryIngestQueueMixin:
         no new parse work should be handed to a pool that's about to be
         terminated).
 
-        For each job claimed off the queue, ``detect_file_type`` is called
-        here (cheap: a pure extension check, never touches the filesystem
-        beyond ``Path.suffix``) purely to stamp a cosmetic ``detected_type``
-        onto the ``PARSING`` row for the queue-row copy -- an unsupported
-        extension here is silently ignored (left ``""``) rather than
+        ``detect_file_type`` is called once, at enqueue time (in
+        ``submit_library_ingest_job``), and its result is stamped onto the
+        job's ``detected_type`` -- not recomputed here. Dispatch reuses that
+        stored value both to claim the job (``mark_parsing``) and to decide
+        eligibility under the heavy-lane gate below; an unsupported
+        extension at enqueue time is silently left ``""`` rather than
         fast-failing the job: real classification (permanent vs. retryable)
         happens inside the pool worker, where the authoritative exception
         is available (see ``classify_parse_failure``), matching the F3
         design spec's "permanent-vs-retryable classification happens inside
         the worker" decision.
+
+        Heavy-lane gate: at most ``_ingest_heavy_lane_max_workers()`` jobs
+        whose ``detected_type`` is in ``_INGEST_HEAVY_TYPES`` (audio/video
+        transcription) may be ``PARSING`` at once, independent of the
+        overall pool cap -- when that lane is full, ``next_queued`` is asked
+        to skip those types so a queued document can fill the slot instead,
+        letting document parses fan out wide while transcriptions stay
+        capped.
         """
         if self._ingest_shutdown:
             return
         worker_count = self._ingest_parse_worker_count()
-        while self.library_ingest_jobs.counts().get("parsing", 0) < worker_count:
-            job = self.library_ingest_jobs.next_queued()
+        heavy_cap = self._ingest_heavy_lane_max_workers()
+        # Read the total + heavy in-flight counts ONCE, then track them locally
+        # as we dispatch. This whole method is UI-thread-only and synchronous,
+        # so nothing but our own mark_parsing() calls can change these counts
+        # mid-loop -- re-scanning the registry (O(N)) every iteration would make
+        # the loop O(worker_count * N) on the UI thread for no benefit.
+        parsing_count = self.library_ingest_jobs.counts().get("parsing", 0)
+        heavy_parsing_count = self.library_ingest_jobs.parsing_count_for_types(
+            _INGEST_HEAVY_TYPES
+        )
+        while parsing_count < worker_count:
+            heavy_full = heavy_parsing_count >= heavy_cap
+            job = self.library_ingest_jobs.next_queued(
+                skip_types=_INGEST_HEAVY_TYPES if heavy_full else frozenset()
+            )
             if job is None:
                 return
-            try:
-                detected_type = detect_file_type(job.source_path) or ""
-            except Exception:
-                detected_type = ""
             claimed = self.library_ingest_jobs.mark_parsing(
-                job.job_id, detected_type=detected_type
+                job.job_id, detected_type=job.detected_type
             )
             if claimed is None:
                 # Invariant violation (Task-3 reviewer's guard note): the
@@ -1597,6 +1652,12 @@ class LibraryIngestQueueMixin:
                     f"this top-up pass."
                 )
                 break
+            # Track the just-claimed job locally (mirrors what a fresh
+            # counts()/parsing_count_for_types() scan would report next
+            # iteration) so the loop stays O(N), not O(worker_count * N).
+            parsing_count += 1
+            if job.detected_type in _INGEST_HEAVY_TYPES:
+                heavy_parsing_count += 1
             options = self._ingest_job_options(claimed)
             job_id = claimed.job_id
             source_path = claimed.source_path
