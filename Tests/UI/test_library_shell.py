@@ -9940,7 +9940,11 @@ async def test_library_shell_export_submit_missing_service_surfaces_error_and_re
         await pilot.pause()
 
         for _ in range(150):
-            if screen._library_export_running is False:
+            if (
+                screen._library_export_running is False
+                and screen._library_export_error
+                == "Chatbook export service unavailable."
+            ):
                 break
             await pilot.pause(0.02)
         else:
@@ -10013,7 +10017,7 @@ async def test_library_shell_export_registry_failure_warns_it_wont_appear_in_art
         await pilot.pause()
 
         for _ in range(150):
-            if screen._library_export_running is False:
+            if screen._library_export_running is False and len(notified) == 2:
                 break
             await pilot.pause(0.02)
         else:
