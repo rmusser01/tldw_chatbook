@@ -156,6 +156,7 @@ def test_export_via_service_calls_export_then_create_in_order_on_success():
         "path": "/tmp/out.zip",
         "dependency_info": {"auto_included": [1, 2]},
         "registry_recorded": True,
+        "cancelled": False,
     }
     assert service.create_kwargs[0]["file_path"] == "/tmp/out.zip"
     assert service.create_kwargs[0]["tags"] == ["library-export"]

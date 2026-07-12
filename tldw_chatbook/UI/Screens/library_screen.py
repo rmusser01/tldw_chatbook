@@ -3463,6 +3463,8 @@ class LibraryScreen(BaseAppScreen):
         """
         if not self._library_export_running:
             return
+        if event is not None:
+            event.stop()
         event_obj = self._library_export_cancel_event
         if event_obj is not None:
             event_obj.set()
