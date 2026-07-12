@@ -775,6 +775,17 @@ class LibraryScreen(BaseAppScreen):
         ``_apply_library_rag_search_outcome``) are safe to carry verbatim
         because their rows are frozen dataclasses -- copies are taken below
         only to avoid aliasing a live mutable set with the stashed dict.
+
+        The four per-pane filter/sort values below (media type cycle, notes
+        sort mode, notes substring filter, conversations query) are VIEW
+        state exactly like the selection ids above -- they change what the
+        canvas builders render, not what data is fetched -- so they belong
+        here too (PR #595 shipped the selection/RAG half of this contract
+        but left these out). ``_library_notes_filter_records`` (the
+        substring filter's recomputed result cache) is deliberately NOT
+        persisted -- it is a derived/bulk snapshot like
+        ``_local_source_records``, and restore leaves it ``None`` so the
+        canvas recomputes it fresh from ``_library_notes_filter`` on mount.
         """
         state = super().save_state()
         state["library_selected_row_id"] = self._library_selected_row_id
@@ -790,6 +801,12 @@ class LibraryScreen(BaseAppScreen):
         state["library_rag_selected_result_id"] = self._library_rag_selected_result_id
         state["library_rag_retrieval_status"] = self._library_rag_retrieval_status
         state["library_rag_recovery_state"] = self._library_rag_recovery_state
+        state["library_media_type_filter"] = self._library_media_type_filter
+        state["library_notes_sort"] = self._library_notes_sort
+        state["library_notes_filter"] = self._library_notes_filter
+        state["library_conversation_query"] = getattr(
+            self, "_library_conversation_query", ""
+        )
         return state
 
     def restore_state(self, state: dict[str, Any]) -> None:
@@ -811,6 +828,20 @@ class LibraryScreen(BaseAppScreen):
         (should never happen, but a saved-state dict is not statically typed)
         degrades to the list view below rather than rendering a permanent
         loading placeholder.
+
+        The four per-pane filter/sort values restored below are read by the
+        canvas builders at mount time (``_build_library_media_state``,
+        the notes canvas branch of ``compose_content``,
+        ``_build_library_conversations_state``) -- setting them here, before
+        ``switch_screen`` mounts this instance, is all that is needed for
+        the first paint to already reflect them; no on_mount re-kick is
+        required (unlike a fetched detail). The conversations query is
+        user text re-sanitized through ``_safe_text`` here too -- it was
+        already sanitized once when the user submitted it
+        (``handle_library_conversations_filter_submitted``), but a saved-
+        state dict is not statically typed, so this is defense against a
+        corrupted/foreign dict rather than a real double-sanitization of
+        trusted input.
         """
         super().restore_state(state)
         if not isinstance(state, dict):
@@ -855,6 +886,20 @@ class LibraryScreen(BaseAppScreen):
         recovery_state = state.get("library_rag_recovery_state")
         self._library_rag_recovery_state = (
             recovery_state if isinstance(recovery_state, DestinationRecoveryState) else None
+        )
+
+        media_type_filter = state.get("library_media_type_filter")
+        self._library_media_type_filter = (
+            media_type_filter if isinstance(media_type_filter, str) and media_type_filter else "All"
+        )
+        notes_sort = state.get("library_notes_sort")
+        self._library_notes_sort = (
+            notes_sort if isinstance(notes_sort, str) and notes_sort else "newest"
+        )
+        notes_filter = state.get("library_notes_filter")
+        self._library_notes_filter = notes_filter if isinstance(notes_filter, str) else ""
+        self._library_conversation_query = self._safe_text(
+            state.get("library_conversation_query"), "", max_length=200
         )
 
     async def flush_pending_work(self) -> bool:

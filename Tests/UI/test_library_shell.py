@@ -8725,6 +8725,196 @@ def test_library_shell_restore_state_tolerates_garbage_values():
     screen.restore_state(None)
 
 
+# --- T164: per-pane filter/sort persistence (PR #595 follow-up) ------------
+#
+# ``save_state``/``restore_state`` already carried selection/view + RAG
+# state; these four attrs -- media type cycle, notes sort, notes substring
+# filter, conversations query -- are VIEW state of the exact same kind (they
+# change what the canvas builders render, not what gets fetched) but were
+# left out of PR #595's contract. See ``LibraryScreen.save_state``.
+
+
+def test_library_shell_restore_state_sets_per_pane_filter_attrs_on_fresh_unmounted_instance():
+    """Mirrors ``test_library_shell_restore_state_sets_attrs_on_fresh_unmounted_instance``
+    for the four per-pane filter/sort attrs: round-trip through the real
+    ``save_state``/``restore_state`` methods on a freshly-constructed,
+    not-yet-mounted instance -- exactly how the app calls them.
+    """
+    app = _build_test_app()
+    original = LibraryScreen(app)
+    original._library_media_type_filter = "audio"
+    original._library_notes_sort = "oldest"
+    original._library_notes_filter = "retro"
+    original._library_notes_filter_records = ["must never be persisted"]
+    original._library_conversation_query = "quarterly"
+    state = original.save_state()
+
+    # The recomputed filter-records cache is a derived/bulk snapshot like
+    # ``_local_source_records`` -- it must never leak into the persisted
+    # dict (see ``save_state``'s docstring).
+    assert "library_notes_filter_records" not in state
+
+    restored = LibraryScreen(app)
+    restored.restore_state(state)
+
+    assert restored._library_media_type_filter == "audio"
+    assert restored._library_notes_sort == "oldest"
+    assert restored._library_notes_filter == "retro"
+    assert restored._library_conversation_query == "quarterly"
+    # Never restored -- the notes canvas recomputes it fresh from
+    # ``_library_notes_filter`` on mount.
+    assert restored._library_notes_filter_records is None
+
+
+def test_library_shell_restore_state_defaults_per_pane_filters_on_garbage_values():
+    """Same tolerate-garbage contract as
+    ``test_library_shell_restore_state_tolerates_garbage_values``, for the
+    four per-pane filter/sort attrs: a saved-state dict from a different
+    build/shape must never crash restore, and must fall back to each
+    attr's normal default.
+    """
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+
+    screen.restore_state(
+        {
+            "library_media_type_filter": 42,
+            "library_notes_sort": ["oldest"],
+            "library_notes_filter": None,
+            "library_conversation_query": None,
+        }
+    )
+
+    assert screen._library_media_type_filter == "All"
+    assert screen._library_notes_sort == "newest"
+    assert screen._library_notes_filter == ""
+    assert screen._library_conversation_query == ""
+
+
+def test_library_shell_restore_state_resanitizes_conversation_query():
+    """The conversations query is user text -- restore must re-run it
+    through ``_safe_text`` (control-character stripping, tag removal,
+    length capping) rather than trusting the saved-state dict verbatim. A
+    saved-state dict is not statically typed, so this is defense, not a
+    real double-sanitization of trusted input (the live submit handler,
+    ``handle_library_conversations_filter_submitted``, already sanitizes
+    once on entry).
+    """
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+
+    screen.restore_state({"library_conversation_query": "<b>hi</b> " + "x" * 300})
+
+    assert "<" not in screen._library_conversation_query
+    assert ">" not in screen._library_conversation_query
+    assert len(screen._library_conversation_query) <= 200
+
+
+@pytest.mark.asyncio
+async def test_library_shell_restored_media_type_filter_renders_on_first_paint():
+    """The media canvas builder reads ``_library_media_type_filter`` at
+    MOUNT time (``_build_library_media_state``'s ``active_type=``) -- a
+    restored non-default type must already narrow the canvas on first
+    paint, not just sit unused on the screen instance. Cycle the live
+    filter off "All" first to get a real, non-default saved value (not a
+    hand-typed one), mirroring ``test_library_shell_media_type_filter_narrows_list``.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-type-filter")
+        screen.query_one("#library-media-type-filter", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        active_type = screen._library_media_type_filter
+        assert active_type != "All"
+        state = screen.save_state()
+
+    assert state["library_media_type_filter"] == active_type
+
+    restored = LibraryScreen(app)
+    restored.restore_state(state)
+    host2 = LibraryHarness(app, screen=restored)
+
+    async with host2.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen2 = _active_library_screen(host2)
+        await _wait_for_selector(screen2, pilot, "#library-media-type-filter")
+
+        assert screen2._library_media_type_filter == active_type
+        filter_button = screen2.query_one("#library-media-type-filter", Button)
+        assert str(filter_button.label) == f"type: {active_type} ▸"
+        rows = list(screen2.query(".library-media-row"))
+        assert len(rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_library_shell_restored_notes_sort_and_filter_render_on_first_paint():
+    """The notes canvas builder reads ``_library_notes_sort``/
+    ``_library_notes_filter`` at MOUNT time (the notes branch of
+    ``compose_content``'s ``sort_mode=``/``filter_value=``) -- restored
+    values must already be reflected on first paint.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, [], notes=_two_notes())
+
+    screen = LibraryScreen(app)
+    screen.restore_state(
+        {
+            "library_selected_row_id": LIBRARY_ROW_BROWSE_NOTES,
+            "library_notes_sort": "oldest",
+            "library_notes_filter": "retro",
+        }
+    )
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        active_screen = _active_library_screen(host)
+        await _wait_for_selector(active_screen, pilot, "#library-notes-sort")
+
+        sort_button = active_screen.query_one("#library-notes-sort")
+        assert "Oldest" in str(sort_button.label)
+        filter_box = active_screen.query_one("#library-notes-filter", Input)
+        assert filter_box.value == "retro"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_restored_conversation_query_renders_on_first_paint():
+    """The conversations canvas builder reads ``_library_conversation_query``
+    at MOUNT time (``_build_library_conversations_state``'s ``query=``) --
+    a restored query must already narrow the canvas on first paint.
+    Restoring directly (rather than clicking the rail row) is deliberate:
+    the LIVE rail-row press for this pane always resets the query on entry
+    (``handle_library_rail_row``'s canvas-target branch) -- that is
+    existing, unrelated in-session behavior, not what a cross-visit
+    restore goes through.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+
+    screen = LibraryScreen(app)
+    screen.restore_state(
+        {
+            "library_selected_row_id": LIBRARY_ROW_BROWSE_CONVERSATIONS,
+            "library_conversation_query": "quarterly",
+        }
+    )
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        active_screen = _active_library_screen(host)
+        await _wait_for_selector(active_screen, pilot, "#library-conversations-status")
+
+        status = str(active_screen.query_one("#library-conversations-status").renderable)
+        assert "quarterly" in status
+        filter_box = active_screen.query_one("#library-conversations-filter", Input)
+        assert filter_box.value == "quarterly"
+
+
 @pytest.mark.asyncio
 async def test_library_shell_restored_media_viewer_fetches_detail_on_mount():
     """Mirrors the notes-editor nav-context deep link ``on_mount`` already
