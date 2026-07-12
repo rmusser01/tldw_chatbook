@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import re
+import time
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
@@ -177,6 +178,15 @@ LIBRARY_INSPECTOR_EMPTY_NEXT_ACTION_COPY = (
     "Library remains a hub; Notes, Media, Search/RAG, and Study own deeper work."
 )
 LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS = 5.0
+# Navigation composes a FRESH LibraryScreen instance per visit (PR #595
+# freeze fix), so a per-instance memo is useless -- the previous visit's
+# snapshot is cached on the APP instance instead (see `on_mount` and
+# `_refresh_local_source_snapshot`) so a repeat visit within this window
+# renders instantly instead of showing the loading placeholder again. The
+# cached snapshot is always applied THEN immediately reconciled with a
+# fresh background fetch, so staleness is bounded to a single refresh
+# cycle regardless of this TTL's length.
+LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS = 5.0
 LIBRARY_NOTES_AUTOSAVE_SECONDS = 2.0
 LIBRARY_NOTE_CONTENT_MAX_CHARS = 2_000_000
 LIBRARY_COLLECTION_SYNC_CONFLICT_LIMIT = 200
@@ -655,6 +665,39 @@ class LibraryScreen(BaseAppScreen):
             LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS,
             self._apply_source_snapshot_timeout,
         )
+        cached_snapshot = getattr(
+            self.app_instance, "_library_source_snapshot_cache", None
+        )
+        cached_stamp = getattr(
+            self.app_instance, "_library_source_snapshot_cache_stamp", None
+        )
+        if (
+            cached_snapshot is not None
+            and cached_stamp is not None
+            and time.monotonic() - cached_stamp < LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS
+        ):
+            # Instant-then-reconcile: paint the previous visit's snapshot
+            # synchronously (this screen instance is brand new, so nothing
+            # else has populated `_local_source_records` yet) so a
+            # returning visit never shows the loading placeholder, then
+            # still kick the real refresh below -- its completion re-applies
+            # fresh data and refreshes the cache, so this can't drift more
+            # than one refresh cycle stale.
+            self._apply_local_source_snapshot(*cached_snapshot)
+            # `_apply_local_source_snapshot`'s own `self.is_mounted`-guarded
+            # `refresh(recompose=True)` is a no-op here: Textual only flips
+            # `_is_mounted` True in the `finally` clause AFTER the Mount
+            # event finishes dispatching (see
+            # `MessagePump._pre_process`) -- i.e. strictly after this very
+            # `on_mount` call returns -- so without an explicit recompose
+            # here the cached attrs above would be set correctly but the
+            # already-composed (stale, pre-cache) DOM would never actually
+            # repaint. `Widget.refresh(recompose=True)` itself has no such
+            # guard (it just schedules `_check_recompose` via
+            # `call_next`), so calling it directly is safe mid-mount and is
+            # what actually makes the cached snapshot visible at first
+            # paint.
+            self.refresh(recompose=True)
         self._refresh_local_source_snapshot()
         registry = self._library_ingest_registry()
         if registry is not None:
@@ -1094,6 +1137,20 @@ class LibraryScreen(BaseAppScreen):
             recovery_state,
             study_counts,
         ) = await self._list_local_source_snapshot()
+        # Refresh the app-scoped instant-repeat-visit cache (see `on_mount`)
+        # with this fresh snapshot before applying it, so any other
+        # LibraryScreen instance mounted from here on -- including a
+        # concurrent one, since screens are recomposed per visit -- reads
+        # this fetch's result rather than stale/no data.
+        self.app_instance._library_source_snapshot_cache = (
+            records,
+            counts,
+            total_known,
+            lookup_error,
+            recovery_state,
+            study_counts,
+        )
+        self.app_instance._library_source_snapshot_cache_stamp = time.monotonic()
         self._apply_local_source_snapshot(
             records, counts, total_known, lookup_error, recovery_state, study_counts
         )

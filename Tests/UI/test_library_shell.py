@@ -4,6 +4,7 @@ import asyncio
 import json
 import re
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -3588,6 +3589,126 @@ async def test_library_shell_shows_lookup_error_in_canvas(monkeypatch):
         error_static = active_screen.query_one("#library-canvas-error")
         assert "unavailable" in str(error_static.renderable).lower()
         assert not active_screen.query("#library-canvas-loading")
+
+
+# --- 166: app-scoped snapshot cache for instant repeat visits --------------
+
+
+@pytest.mark.asyncio
+async def test_library_shell_repeat_visit_renders_cached_snapshot_before_refresh_resolves(
+    monkeypatch,
+):
+    """Navigation composes a FRESH ``LibraryScreen`` instance per visit (the
+    PR #595 freeze fix), so a per-instance memo cannot survive a tab
+    round-trip. Without an app-scoped cache, a returning visit re-shows the
+    loading placeholder until a brand-new DB snapshot fetch resolves.
+
+    Gates the SECOND mount's ``_list_local_source_snapshot`` call only (the
+    first is left unblocked so it can populate the cache), then asserts the
+    cached snapshot renders at the second mount's first paint -- strictly
+    before the gate is ever released, i.e. before that mount's own
+    background refresh could possibly have completed.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    calls = {"count": 0}
+    gate = threading.Event()
+    original_list_snapshot = LibraryScreen._list_local_source_snapshot
+
+    async def _gated_list_snapshot(self):
+        calls["count"] += 1
+        if calls["count"] > 1:
+            # Widen the window past the second mount's first paint without
+            # actually hanging the suite -- see the gated-fake convention
+            # note above (`_GATED_RELEASE_TIMEOUT_SECONDS`).
+            await asyncio.to_thread(gate.wait, _GATED_RELEASE_TIMEOUT_SECONDS)
+        return await original_list_snapshot(self)
+
+    monkeypatch.setattr(
+        LibraryScreen, "_list_local_source_snapshot", _gated_list_snapshot
+    )
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        first_screen = _active_library_screen(host)
+        await _wait_for_library_shell(first_screen, pilot)
+
+        assert getattr(app, "_library_source_snapshot_cache", None) is not None
+        assert getattr(app, "_library_source_snapshot_cache_stamp", None) is not None
+
+        await host.pop_screen()
+        await pilot.pause()
+
+        second_screen = LibraryScreen(app)
+        await host.push_screen(second_screen)
+
+        try:
+            # `_wait_for_library_shell` only waits on `_library_loaded` and
+            # the rail's presence -- both flip synchronously off the cached
+            # apply (including the recompose it forces), independent of
+            # the still-gated second fetch below. If the cache path
+            # regresses, this times out and raises (the RED failure)
+            # instead of silently passing.
+            await _wait_for_library_shell(second_screen, pilot)
+
+            visible = _visible_text(second_screen)
+            assert "Conversations (2)" in visible
+        finally:
+            # Release regardless of pass/fail so a failure here can't wedge
+            # the executor thread pool at interpreter shutdown.
+            gate.set()
+
+        # Let the gated reconcile fetch resolve before the harness tears
+        # down so its worker doesn't race teardown.
+        await pilot.pause()
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_library_shell_expired_cache_does_not_apply_stale_snapshot(monkeypatch):
+    """The instant-apply is bounded to ``LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS``:
+    once the cached snapshot is older than that, a repeat visit must NOT
+    render stale content -- it falls back to today's loading-then-refresh
+    behavior instead.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        first_screen = _active_library_screen(host)
+        await _wait_for_library_shell(first_screen, pilot)
+
+        assert getattr(app, "_library_source_snapshot_cache", None) is not None
+        app._library_source_snapshot_cache_stamp = (
+            time.monotonic()
+            - library_screen_module.LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS
+            - 1.0
+        )
+
+        await host.pop_screen()
+        await pilot.pause()
+
+        # `_never_loads` freezes the second mount's own refresh
+        # deterministically, mirroring the pre-load pilots above -- if the
+        # (expired) cache were wrongly applied, this would be the only
+        # source of content, making a false positive here impossible.
+        monkeypatch.setattr(
+            LibraryScreen, "_refresh_local_source_snapshot", _never_loads
+        )
+
+        second_screen = LibraryScreen(app)
+        second_screen.apply_navigation_context({"mode": "conversations"})
+        await host.push_screen(second_screen)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert second_screen._library_loaded is False
+        assert second_screen.query_one("#library-canvas-loading")
+        assert not second_screen.query("#library-conversations-canvas")
+        visible = _visible_text(second_screen)
+        assert "Conversations (2)" not in visible
 
 
 @pytest.mark.asyncio
