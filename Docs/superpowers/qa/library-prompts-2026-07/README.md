@@ -79,3 +79,22 @@ all user-approved and implemented before Phase 2. New captures:
 Not folded in (backlogged): U5 (name the skipped files on import), keyword-in-list filtering +
 chips (needs the batched seam), and a discard-without-save path for the editor (pre-existing
 Task-4 explicit-save veto model).
+
+## Second sr-UX/HCI polish wave (Task 8c, commits cced5fe0..32e08546)
+
+A second design review found four more items (all user-approved, fixed before Phase 2):
+- **D5** removed the dead list-toolbar Export… button (no handler; bulk export is backlog task-197).
+- **U6** `polish2-unsaved-changes-marker-2026-07-12.png` — editing a field now shows
+  `Modified … · vN · • Unsaved changes` in the meta line (in-place update, no keystroke recompose);
+  Save clears it. The explicit-save nav-veto is no longer invisible.
+- **U7** `polish2-editor-modified-meta-field-hints-2026-07-12.png` — dim helper text under each
+  label: System = "Instructions the model always follows.", User = "The message inserted into the
+  composer." — the two-part model is now self-explaining.
+- **U8** Copy → "Copy text", Duplicate → "Duplicate prompt" (clipboard vs clone, no longer confusable).
+
+Regression caught + fixed at review: the meta line had been showing **"New prompt" for every
+existing prompt** (a composite-id parse bug a prior task exposed and 8b's sentinel surfaced) — the
+capture above confirms it now correctly reads "Modified 4h · v1". `_resolve_editor_prompt_id` prefers
+`local_id`; real-production-path regression test added.
+
+Backlogged: U9 action-row grouping (task-202), U10 bulk/multi-select (task-203).
