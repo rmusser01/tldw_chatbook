@@ -58,12 +58,32 @@ class LibraryMediaCanvas(Vertical):
             classes="library-canvas-action",
             compact=True,
         )
-        yield Button(
-            "Export…",
-            id="library-media-export",
-            classes="library-canvas-action",
-            compact=True,
-        )
+        select_mode = getattr(self.canvas, "select_mode", False)
+        export_btn = Button("Export…", id="library-media-export",
+                            classes="library-canvas-action", compact=True)
+        export_btn.display = not select_mode
+        yield export_btn
+        select_btn = Button("Done" if select_mode else "Select",
+                            id="library-media-select-toggle",
+                            classes="library-canvas-action", compact=True)
+        select_btn.disabled = self.canvas.count == 0
+        yield select_btn
+        if select_mode:
+            action_row = Horizontal(classes="ds-toolbar")
+            action_row.styles.height = "auto"
+            with action_row:
+                yield Static(f"{self.canvas.selected_count} selected",
+                             id="library-media-selected-count", markup=False)
+                yield Button(f"Select all {self.canvas.count} shown",
+                             id="library-media-select-all",
+                             classes="library-canvas-action", compact=True)
+                yield Button("Clear", id="library-media-select-clear",
+                             classes="library-canvas-action", compact=True)
+                export_selected = Button("Export selected",
+                                         id="library-media-export-selected",
+                                         classes="library-canvas-action", compact=True)
+                export_selected.disabled = self.canvas.selected_count == 0
+                yield export_selected
 
         status_text = self.canvas.status_copy or self.canvas.empty_copy
         status = Static(
@@ -78,7 +98,10 @@ class LibraryMediaCanvas(Vertical):
         media_list.styles.height = "auto"
         with media_list:
             for index, row in enumerate(self.canvas.rows):
-                marker = "▸" if row.selected else " "
+                if select_mode:
+                    marker = "☑" if row.checked else "☐"
+                else:
+                    marker = "▸" if row.selected else " "
                 button = Button(
                     f"{marker} {_visible_row_title(row.title)}"
                     f"\n    {row.secondary}",

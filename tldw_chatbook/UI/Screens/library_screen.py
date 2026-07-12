@@ -128,6 +128,7 @@ from ...Library.library_shell_state import (
     LibraryShellInput,
     build_library_shell_state,
 )
+from ...Library.row_selection import RowSelection
 from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
 from ...runtime_policy.types import PolicyDeniedError, RuntimeSourceState
 from ...Sync_Interop.sync_promotion_state import build_sync_promotion_state
@@ -563,6 +564,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_conversation_query: str = ""
         self._library_media_type_filter: str = "All"
         self._selected_media_id: str = ""
+        self._library_media_select_mode: bool = False
+        self._library_media_row_selection = RowSelection("media")
         self._library_media_view: str = "list"
         self._library_media_detail: Mapping[str, Any] | None = None
         self._library_media_editing: bool = False
@@ -2842,11 +2845,16 @@ class LibraryScreen(BaseAppScreen):
 
     def _build_library_media_state(self) -> LibraryMediaCanvasState:
         """Build the media canvas display state from local records."""
-        return build_library_media_state(
+        state = build_library_media_state(
             self._local_source_records.get("media", ()),
             active_type=self._library_media_type_filter,
             selected_id=self._selected_media_id,
+            select_mode=self._library_media_select_mode,
+            selected_ids=self._library_media_row_selection.ids,
         )
+        if self._library_media_select_mode:
+            self._library_media_row_selection.reconcile(r.media_id for r in state.rows)
+        return state
 
     async def _refresh_library_media_detail(self, media_id: str) -> None:
         """Fetch and store the full detail for a selected Library media item.
@@ -5306,14 +5314,20 @@ class LibraryScreen(BaseAppScreen):
             current_index = 0
         next_index = (current_index + 1) % len(type_options)
         self._library_media_type_filter = type_options[next_index]
+        self._library_media_select_mode = False
+        self._library_media_row_selection.clear()
         self.refresh(recompose=True)
 
     @on(Button.Pressed, ".library-media-row")
     def handle_library_media_row(self, event: Button.Pressed) -> None:
-        """Select a media row and open the full Library media viewer.
+        """Select mode: toggle the row's checkbox. Normal mode: open the viewer.
 
-        Switches the media canvas from its list view to the in-canvas
-        viewer, clears any stale detail, and kicks the async detail fetch
+        In select mode, a row press toggles that row's id in
+        ``_library_media_row_selection`` and recomposes the screen -- it
+        never opens the full Library media viewer while in select mode.
+        Outside select mode, behavior is unchanged: switches the media
+        canvas from its list view to the in-canvas viewer, clears any
+        stale detail, and kicks the async detail fetch
         (``_refresh_library_media_detail``); the viewer renders a loading
         line until that worker stores the fetched detail and recomposes.
 
@@ -5322,7 +5336,40 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         media_id = str(getattr(event.button, "media_id", "") or "")
+        if self._library_media_select_mode:
+            self._library_media_row_selection.toggle(media_id)
+            self.refresh(recompose=True)
+            return
         self._open_library_media_viewer(media_id)
+
+    @on(Button.Pressed, "#library-media-select-toggle")
+    def handle_library_media_select_toggle(self, event: Button.Pressed) -> None:
+        """Enter/exit media select mode; entering starts from an empty set."""
+        event.stop()
+        self._library_media_select_mode = not self._library_media_select_mode
+        self._library_media_row_selection.clear()
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-media-select-all")
+    def handle_library_media_select_all(self, event: Button.Pressed) -> None:
+        """Select every media row currently rendered by the canvas."""
+        event.stop()
+        rows = self._build_library_media_state().rows
+        self._library_media_row_selection.select_all(r.media_id for r in rows)
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-media-select-clear")
+    def handle_library_media_select_clear(self, event: Button.Pressed) -> None:
+        """Clear the current media selection without leaving select mode."""
+        event.stop()
+        self._library_media_row_selection.clear()
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-media-export-selected")
+    async def handle_library_media_export_selected(self, event: Button.Pressed) -> None:
+        """Open the export canvas scoped to the currently selected media ids."""
+        event.stop()
+        await self._open_library_export_canvas(self._library_media_row_selection.export_scope())
 
     @on(Button.Pressed, "#library-media-open-viewer")
     def handle_library_media_open_viewer(self, event: Button.Pressed) -> None:
