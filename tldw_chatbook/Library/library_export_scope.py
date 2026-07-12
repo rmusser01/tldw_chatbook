@@ -26,6 +26,12 @@ _VALID_KINDS = ("everything", "media", "conversations", "notes")
 # Sentinel used by the Library media canvas's "no filter" select option.
 _UNFILTERED_MEDIA_TYPE_SENTINEL = "All"
 
+_KIND_TO_CONTENT_TYPE = {
+    "media": ContentType.MEDIA,
+    "conversations": ContentType.CONVERSATION,
+    "notes": ContentType.NOTE,
+}
+
 
 @dataclass(frozen=True)
 class ExportScope:
@@ -38,16 +44,24 @@ class ExportScope:
             other ``kind``. ``None`` and the Library media canvas's "no
             filter" sentinel ``"All"`` both mean unfiltered -- every active
             media item is in scope.
+        ids: An explicit subset of ids to export, overriding a whole-source
+            query. Only meaningful for a single-source ``kind`` ("media",
+            "conversations", "notes") -- raises if set with
+            ``kind="everything"``. When non-empty, every resolver returns
+            these ids directly without querying the database.
     """
 
     kind: str
     media_type: str | None = None
+    ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.kind not in _VALID_KINDS:
             raise ValueError(
                 f"Unknown export scope kind: {self.kind!r}. Expected one of {_VALID_KINDS}."
             )
+        if self.ids and self.kind == "everything":
+            raise ValueError("ExportScope.ids may only scope a single source, not 'everything'.")
 
 
 class MediaIdSource(Protocol):
@@ -92,6 +106,9 @@ def count_export_scope(
     outside ``scope`` reports 0 rather than being omitted from the dict.
     """
     counts = {"media": 0, "conversations": 0, "notes": 0}
+    if scope.ids:
+        counts[scope.kind] = len(scope.ids)
+        return counts
     if scope.kind in ("everything", "media"):
         counts["media"] = len(media_db.get_all_active_media_ids(_effective_media_type(scope)))
     if scope.kind in ("everything", "conversations"):
@@ -124,6 +141,8 @@ def resolve_export_selections(
     ``ContentType.MEDIA in selections`` -> ``include_media`` decision --
     correct without extra empty-list special-casing downstream.
     """
+    if scope.ids:
+        return {_KIND_TO_CONTENT_TYPE[scope.kind]: list(scope.ids)}
     selections: dict[ContentType, list[str]] = {}
     if scope.kind in ("everything", "media"):
         media_ids = [
@@ -153,6 +172,8 @@ def export_scope_label(scope: ExportScope, counts: Mapping[str, int]) -> str:
         "Conversations · 542 items"
         "Notes · 87 items"
     """
+    if scope.ids:
+        return f"Selected {scope.kind} · {counts.get(scope.kind, len(scope.ids))} items"
     if scope.kind == "everything":
         return (
             f"Everything: {counts.get('media', 0)} media · "
