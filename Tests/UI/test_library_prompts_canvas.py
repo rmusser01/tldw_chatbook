@@ -719,6 +719,45 @@ async def test_library_prompt_row_opens_editor_with_six_fields_populated(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_library_prompt_row_opens_editor_with_modified_meta_not_new_prompt(tmp_path):
+    """Critical regression: ``handle_library_prompt_row`` ->
+    ``_refresh_library_prompt_detail`` fetches through the REAL production
+    seam (``PromptScopeService.get_prompt`` -> ``normalize_prompt_record``),
+    whose ``detail["id"]`` is a composite string (``"local:prompt:<uuid>"``)
+    with the raw int id under ``detail["local_id"]`` instead.
+    ``build_prompt_editor_state`` used to read only ``detail["id"]``, so
+    ``_to_int`` silently returned ``None`` and every EXISTING saved prompt's
+    meta line rendered "New prompt" (the D1 blank-create sentinel) instead
+    of "Modified ... · vN". This is the assertion whose absence let that
+    slip past ``test_library_prompt_row_opens_editor_with_six_fields_populated``
+    above (which never inspects the meta line)."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Summarize",
+        author="Alice",
+        details="A summarizer",
+        system_prompt="You are concise.",
+        user_prompt="Summarize: {text}",
+        keywords=["writing", "summary"],
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+
+        meta = screen.query_one("#library-prompt-meta", Static)
+        meta_text = str(meta.renderable)
+        assert "New prompt" not in meta_text
+        assert "Modified" in meta_text
+        assert "v1" in meta_text
+
+
+@pytest.mark.asyncio
 async def test_library_prompt_row_opens_editor_under_real_runtime_policy_enforcer(tmp_path):
     """Regression test for the Phase-1 gate defect (live-blocking): clicking
     a Library prompt row raised

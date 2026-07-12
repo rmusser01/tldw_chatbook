@@ -145,6 +145,37 @@ def _to_int(value: Any) -> int | None:
         return None
 
 
+def _resolve_editor_prompt_id(detail: Mapping[str, Any]) -> int | None:
+    """Resolve a prompt detail mapping's raw numeric id, robustly.
+
+    The REAL production seam (``PromptScopeService.get_prompt`` ->
+    ``normalize_prompt_record``, see
+    ``tldw_chatbook/Prompt_Management/prompt_normalizers.py``) returns
+    ``detail["id"]`` as a COMPOSITE STRING (``"<backend>:prompt:<uuid>"``)
+    -- the raw local numeric id lives under ``detail["local_id"]`` instead.
+    Preferring ``local_id`` here (when it resolves to an int) fixes that
+    seam. Falling back to ``id`` keeps the other, non-composite-shaped
+    callers working: the raw ``PromptsDatabase.fetch_prompt_details``/
+    ``list_prompts`` row shape (``id`` IS the raw int, no ``local_id`` key
+    at all) used directly by a handful of call sites/tests, and the
+    post-save ``patched_detail`` the screen builds itself (which always
+    writes a raw int straight into ``id``). ``_to_int`` on a composite
+    string (or ``None``) naturally returns ``None``, so this never
+    resolves a truly blank/new-editor detail (neither key present, e.g.
+    the D1 create/Duplicate-action shapes) to anything but ``None``.
+
+    Args:
+        detail: A prompt detail mapping.
+
+    Returns:
+        The resolved int id, or ``None`` when unresolvable.
+    """
+    local_id = _to_int(detail.get("local_id"))
+    if local_id is not None:
+        return local_id
+    return _to_int(detail.get("id"))
+
+
 def _row(record: Mapping[str, Any], *, now: datetime) -> PromptListRow | None:
     prompt_id = _to_int(record.get("id"))
     if prompt_id is None:
@@ -205,9 +236,14 @@ def build_prompt_editor_state(detail: Mapping[str, Any]) -> PromptEditorState:
     """Build the prompt editor's display state from a prompt detail mapping.
 
     Args:
-        detail: A prompt detail mapping (the raw ``fetch_prompt_details``
-            row, ``keywords`` as a list of strings), or a malformed/empty
-            mapping. Tolerated to have missing/None fields.
+        detail: A prompt detail mapping -- either the raw
+            ``fetch_prompt_details`` row shape (``id`` IS the raw int,
+            ``keywords`` a list of strings), or the normalized
+            ``PromptScopeService.get_prompt``/``normalize_prompt_record``
+            shape (``id`` a composite ``"<backend>:prompt:<uuid>"``
+            string, the raw int under ``local_id`` instead -- see
+            ``_resolve_editor_prompt_id``), or a malformed/empty mapping.
+            Tolerated to have missing/None fields.
 
     Returns:
         Immutable editor state, with keywords joined into a single
@@ -216,7 +252,7 @@ def build_prompt_editor_state(detail: Mapping[str, Any]) -> PromptEditorState:
     if not isinstance(detail, Mapping):
         detail = {}
     return PromptEditorState(
-        prompt_id=_to_int(detail.get("id")),
+        prompt_id=_resolve_editor_prompt_id(detail),
         name=_text(detail.get("name")),
         author=_text(detail.get("author")),
         details=_raw_text(detail.get("details")),

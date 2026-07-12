@@ -120,6 +120,74 @@ def test_editor_state_maps_fetch_prompt_details_fields():
     )
 
 
+def test_editor_state_resolves_prompt_id_from_local_id_when_id_is_composite_string():
+    """Critical regression: the REAL production seam
+    (``PromptScopeService.get_prompt`` -> ``normalize_prompt_record``, see
+    ``tldw_chatbook/Prompt_Management/prompt_normalizers.py``) returns
+    ``detail["id"]`` as the COMPOSITE STRING ``"<backend>:prompt:<uuid>"``
+    -- the raw local numeric id lives under ``detail["local_id"]`` instead.
+    ``_to_int`` silently swallows the ``ValueError`` on the composite
+    string, so ``build_prompt_editor_state`` used to return
+    ``prompt_id=None`` for every EXISTING saved prompt loaded this way,
+    which made ``prompt_editor_meta_line`` render "New prompt" instead of
+    "Modified ... · vN". ``build_prompt_editor_state`` must prefer
+    ``local_id`` when present."""
+    detail = {
+        "id": "local:prompt:9f4e2f0a-1111-2222-3333-444455556666",
+        "backend": "local",
+        "source_id": "9f4e2f0a-1111-2222-3333-444455556666",
+        "local_id": 7,
+        "server_id": None,
+        "uuid": "9f4e2f0a-1111-2222-3333-444455556666",
+        "name": "Summarize",
+        "author": "Alice",
+        "details": "Summarizes text",
+        "system_prompt": "You are helpful.",
+        "user_prompt": "Summarize: {text}",
+        "keywords": ["writing", "summary"],
+        "version": 2,
+        "last_modified": "2026-07-07T11:57:00+00:00",
+    }
+    state = build_prompt_editor_state(detail)
+    assert state.prompt_id == 7
+    assert prompt_editor_meta_line(state, now=NOW) == "Modified 3m · v2"
+
+
+def test_editor_state_prompt_id_none_when_local_id_absent_and_id_is_composite_string():
+    """The server-backend shape (``local_id`` present but ``None``, ``id``
+    a composite string) must still resolve to ``prompt_id=None`` rather
+    than raising -- unchanged from before this fix (server prompts were
+    never resolvable via the plain ``id`` field either)."""
+    detail = {
+        "id": "server:prompt:9f4e2f0a-1111-2222-3333-444455556666",
+        "backend": "server",
+        "local_id": None,
+        "server_id": 7,
+        "name": "Summarize",
+    }
+    state = build_prompt_editor_state(detail)
+    assert state.prompt_id is None
+
+
+def test_editor_state_prompt_id_none_for_blank_create_flow_detail():
+    """The D1 blank-create / Duplicate-action detail shapes
+    (``_enter_library_prompt_create_editor``,
+    ``handle_library_prompt_duplicate``) never carry an ``id`` or
+    ``local_id`` key at all -- ``prompt_id`` must stay ``None`` so the
+    editor still renders "New prompt", not a false "Modified ... · vN"."""
+    detail = {
+        "name": "Brand New (copy)",
+        "author": "Alice",
+        "details": "d",
+        "system_prompt": "s",
+        "user_prompt": "u",
+        "keywords": "kw1, kw2",
+    }
+    state = build_prompt_editor_state(detail)
+    assert state.prompt_id is None
+    assert prompt_editor_meta_line(state) == "New prompt"
+
+
 def test_editor_state_tolerates_empty_mapping():
     state = build_prompt_editor_state({})
     assert state == PromptEditorState(
