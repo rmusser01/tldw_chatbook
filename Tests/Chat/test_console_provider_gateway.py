@@ -14,6 +14,8 @@ from tldw_chatbook.Chat.Chat_Deps import (
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_provider_gateway import (
+    GENERATION_READ_TIMEOUT_SECONDS,
+    PROBE_TIMEOUT_SECONDS,
     ConsoleProviderGateway,
     ConsoleProviderResolution,
     LlamaCppProviderConfig,
@@ -1166,3 +1168,79 @@ async def test_gateway_does_not_close_injected_http_client():
 
     assert client.is_closed is False
     await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_owned_http_client_uses_generous_generation_read_timeout():
+    """The owned client must not cap slow local generations at the old 30s."""
+    gateway = ConsoleProviderGateway()
+    try:
+        timeout = gateway.http_client.timeout
+        assert timeout.read == GENERATION_READ_TIMEOUT_SECONDS
+        assert timeout.read >= 120
+        assert timeout.write >= 120
+        assert timeout.pool >= 120
+        assert timeout.connect is not None and timeout.connect <= 30
+    finally:
+        await gateway.aclose()
+
+
+@pytest.mark.asyncio
+async def test_llamacpp_probes_use_short_per_request_timeout():
+    """Readiness probes stay snappy even though generation reads are long."""
+    seen: list[tuple[str, dict]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.path, dict(request.extensions.get("timeout", {}))))
+        if request.url.path == "/health":
+            return httpx.Response(200, json={"status": "ok"})
+        return httpx.Response(200, json={"data": [{"id": "model-a"}]})
+
+    gateway = ConsoleProviderGateway(
+        http_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            timeout=GENERATION_READ_TIMEOUT_SECONDS,
+        )
+    )
+
+    explicit = await gateway.resolve_llamacpp(LlamaCppProviderConfig(explicit_model="m"))
+    discovered = await gateway.resolve_llamacpp(LlamaCppProviderConfig())
+
+    assert explicit.ready is True
+    assert discovered.model == "model-a"
+    assert [path for path, _ in seen] == ["/health", "/v1/models"]
+    for path, timeout in seen:
+        assert timeout.get("connect") == PROBE_TIMEOUT_SECONDS, path
+        assert timeout.get("read") == PROBE_TIMEOUT_SECONDS, path
+
+
+@pytest.mark.asyncio
+async def test_llamacpp_generation_calls_keep_client_level_timeout():
+    """Generation requests inherit the client timeout, not the probe override."""
+    client_timeout = 222.0
+    seen: list[tuple[str, dict]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.path, dict(request.extensions.get("timeout", {}))))
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "slow answer"}}]},
+        )
+
+    gateway = ConsoleProviderGateway(
+        http_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            timeout=client_timeout,
+        )
+    )
+
+    completion = await gateway.complete_llamacpp_chat(
+        base_url="http://127.0.0.1:9099",
+        model="m",
+        messages=[{"role": "user", "content": "hi"}],
+    )
+
+    assert completion == "slow answer"
+    assert [path for path, _ in seen] == ["/v1/chat/completions"]
+    assert seen[0][1].get("read") == client_timeout
+    assert seen[0][1].get("read") != PROBE_TIMEOUT_SECONDS

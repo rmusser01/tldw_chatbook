@@ -10,6 +10,46 @@ CONFIG_PATH_BEFORE_CONFIG_IMPORT = os.environ.get("TLDW_CONFIG_PATH")
 from tldw_chatbook import config as config_module
 
 
+LOCAL_STREAMING_PROVIDER_SECTIONS = (
+    "llama_cpp",
+    "oobabooga",
+    "koboldcpp",
+    "ollama",
+    "vllm",
+    "aphrodite",
+    "tabbyapi",
+    "local-llm",
+    "local_llamafile",
+    "local_llamacpp",
+    "local_vllm",
+    "local_ollama",
+    "local_onnx",
+    "local_transformers",
+    "local_mlx_lm",
+)
+
+
+def test_config_template_defaults_local_provider_streaming_on():
+    """Local providers stream by default so slow generations do not appear hung.
+
+    Regression guard for the Console UAT failure where the generated template's
+    ``streaming = false`` forced llama.cpp onto the slow non-streamed path.
+    """
+    template = tomllib.loads(config_module.CONFIG_TOML_CONTENT)
+    api_settings = template["api_settings"]
+
+    for provider in LOCAL_STREAMING_PROVIDER_SECTIONS:
+        assert api_settings[provider]["streaming"] is True, provider
+
+
+def test_config_template_keeps_cloud_provider_streaming_opt_in():
+    template = tomllib.loads(config_module.CONFIG_TOML_CONTENT)
+    api_settings = template["api_settings"]
+
+    for provider in ("openai", "anthropic", "google", "mistralai", "openrouter", "groq"):
+        assert api_settings[provider]["streaming"] is False, provider
+
+
 def test_console_large_paste_collapse_defaults_enabled():
     assert config_module.DEFAULT_CONFIG_FROM_TOML["console"]["collapse_large_pastes"] is True
     assert config_module.DEFAULT_CONFIG_FROM_TOML["console"]["paste_collapse_threshold"] == 50
