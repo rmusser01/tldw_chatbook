@@ -37,6 +37,7 @@ PROMPT_C = {
     "id": 3,
     "name": "Zeta ideas",
     "author": None,
+    "details": "Ideas for the offsite",
     "keywords": ["kw1", "kw2"],
     "last_modified": "2026-07-07T11:00:00+00:00",
 }
@@ -61,27 +62,45 @@ def test_list_state_query_matches_name_case_insensitively():
     assert state.count == 1
 
 
-def test_list_state_query_matches_keyword_case_insensitively():
-    state = build_prompts_list_state([PROMPT_A, PROMPT_B], query="WRITING", sort="newest", now=NOW)
+def test_list_state_query_matches_details_case_insensitively():
+    """D2/U1: the filter matches ``details`` -- a field list-page records
+    actually carry (unlike ``keywords``, which real list rows never do --
+    see ``_prompts_page_records_or_empty``)."""
+    state = build_prompts_list_state([PROMPT_A, PROMPT_B], query="SUMMARIZES", sort="newest", now=NOW)
     assert [row.prompt_id for row in state.rows] == [1]
 
 
-def test_list_state_secondary_omits_empty_author_and_keywords():
+def test_list_state_query_does_not_silently_match_keywords_absent_from_list_rows():
+    """D2/U1 regression: the old behavior matched ``keywords`` -- a field
+    real list-page records never carry -- which could never actually match
+    anything in production. PROMPT_A's ``keywords`` field only exists here
+    because this fixture also doubles for the editor-detail-shaped tests
+    below; "WRITING" (one of its keywords) is absent from every record's
+    name/details, so the filter must now find nothing."""
+    state = build_prompts_list_state([PROMPT_A, PROMPT_B], query="WRITING", sort="newest", now=NOW)
+    assert state.rows == ()
+
+
+def test_list_state_secondary_omits_empty_details():
     state = build_prompts_list_state([PROMPT_B], query="", sort="newest", now=NOW)
     assert state.rows[0] == PromptListRow(prompt_id=2, name="brainstorm", secondary="1d")
 
 
-def test_list_state_secondary_includes_all_parts():
+def test_list_state_secondary_shows_details_and_age():
     state = build_prompts_list_state([PROMPT_A], query="", sort="newest", now=NOW)
     assert state.rows[0] == PromptListRow(
-        prompt_id=1, name="Summarize", secondary="Alice · writing, summary · 3m"
+        prompt_id=1, name="Summarize", secondary="Summarizes text · 3m"
     )
 
 
-def test_list_state_secondary_omits_only_empty_author():
+def test_list_state_secondary_ignores_author_and_keywords_even_when_present():
+    """D2/U1: author/keywords are dropped from the secondary line entirely
+    now, even when a record happens to carry them (PROMPT_C's ``author``/
+    ``keywords`` here only exist because this fixture doubles for the
+    editor-detail tests below) -- only details + age surface."""
     state = build_prompts_list_state([PROMPT_C], query="", sort="newest", now=NOW)
     assert state.rows[0] == PromptListRow(
-        prompt_id=3, name="Zeta ideas", secondary="kw1, kw2 · 1h"
+        prompt_id=3, name="Zeta ideas", secondary="Ideas for the offsite · 1h"
     )
 
 

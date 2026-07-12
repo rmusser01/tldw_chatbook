@@ -341,6 +341,7 @@ class _FakePromptScopeServiceWithList:
                 "local_id": prompt["id"],
                 "name": prompt["name"],
                 "author": prompt.get("author"),
+                "details": prompt.get("details"),
                 "keywords": prompt.get("keywords") or [],
                 "last_modified": prompt.get("last_modified"),
                 "version": prompt.get("version"),
@@ -389,6 +390,38 @@ async def test_library_shell_prompts_row_press_renders_list_canvas():
         assert canvas is not None
         assert screen.query_one("#library-prompt-row-5", Button)
         assert screen.query_one("#library-prompt-row-6", Button)
+
+
+@pytest.mark.asyncio
+async def test_library_shell_prompts_row_secondary_line_shows_details_not_author():
+    """Task 8b D2/U1: the list row's secondary line surfaces the prompt's
+    PURPOSE (``details``) instead of ``author · age`` -- exercises the full
+    pipeline: the screen's ``_prompts_page_records_or_empty`` remap now
+    carries ``details`` through, and the pure state builder's secondary
+    line uses it instead of ``author``."""
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesListScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.prompt_scope_service = _FakePromptScopeServiceWithList(
+        [
+            {"id": 5, "name": "Summarize", "author": "Alice", "details": "Summarizes text",
+             "last_modified": "2026-07-01T00:00:00+00:00"},
+        ]
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-prompts").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        button = screen.query_one("#library-prompt-row-5", Button)
+        label_text = str(button.label)
+        assert "Summarizes text" in label_text
+        assert "Alice" not in label_text
 
 
 # ---------------------------------------------------------------------------

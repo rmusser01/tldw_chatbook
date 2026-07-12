@@ -27,9 +27,11 @@ class PromptListRow:
     Attributes:
         prompt_id: The prompt's id.
         name: Display name, raw (the canvas escapes markup at render time).
-        secondary: ``"<author> · <kw1, kw2> · <age>"`` with any empty part
-            (missing author, no keywords, or no timestamp) omitted, along
-            with its separator.
+        secondary: ``"<details> · <age>"`` -- the prompt's purpose, not
+            ``author``/``keywords`` (Task 8b D2/U1; see ``_matches_query``'s
+            comment for why keywords are never shown here) -- with either
+            part (no details, or no timestamp) omitted, along with its
+            separator.
     """
 
     prompt_id: int
@@ -123,7 +125,17 @@ def _matches_query(record: Mapping[str, Any], query_lower: str) -> bool:
         return True
     if query_lower in _text(record.get("name")).lower():
         return True
-    return query_lower in _csv_from_keywords(record.get("keywords")).lower()
+    # Task 8b D2: matches `details`, NOT `keywords` -- the raw local
+    # `list_prompts` DB query has no per-page-keyword-join seam (only a
+    # per-single-id `fetch_keywords_for_prompt`, an N+1 shape for a whole
+    # page), so real list-page records never carry `keywords` at all (see
+    # `_prompts_page_records_or_empty`'s docstring). Matching on it here
+    # would silently promise a capability the filter could never actually
+    # deliver. `details` IS present on list rows (the DB query now selects
+    # it too), so this is the honest, still-cheap (no extra query) fix.
+    # Keyword-in-list filtering awaits a batched per-page keyword-join DB
+    # seam (backlog) if that capability is ever wanted.
+    return query_lower in _text(record.get("details")).lower()
 
 
 def _to_int(value: Any) -> int | None:
@@ -137,11 +149,14 @@ def _row(record: Mapping[str, Any], *, now: datetime) -> PromptListRow | None:
     prompt_id = _to_int(record.get("id"))
     if prompt_id is None:
         return None
-    author = _text(record.get("author"))
-    keywords_csv = _csv_from_keywords(record.get("keywords"))
+    # Task 8b D2/U1: surfaces the prompt's PURPOSE (details) instead of
+    # `author · age` -- author (and keywords, never present on list rows
+    # anyway -- see `_matches_query`'s comment) are dropped from the
+    # secondary line entirely.
+    details = _text(record.get("details"))
     raw_timestamp = _timestamp_raw(record)
     age = format_console_relative_age(raw_timestamp, now=now) if raw_timestamp else ""
-    secondary = " · ".join(part for part in (author, keywords_csv, age) if part)
+    secondary = " · ".join(part for part in (details, age) if part)
     return PromptListRow(prompt_id=prompt_id, name=_text(record.get("name")), secondary=secondary)
 
 
@@ -161,7 +176,9 @@ def build_prompts_list_state(
     Args:
         records: The prompts to render.
         query: Filter text, matched case-insensitively against name and
-            keywords; ``""`` disables filtering.
+            details (Task 8b D2 -- not keywords, a field list-page records
+            never actually carry; see ``_matches_query``); ``""`` disables
+            filtering.
         sort: ``"name"`` sorts alphabetically case-insensitively; any other
             value (including ``"newest"``) sorts by most-recent
             modified/created timestamp, newest first.

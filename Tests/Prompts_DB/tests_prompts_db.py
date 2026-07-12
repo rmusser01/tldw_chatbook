@@ -330,6 +330,17 @@ class TestQueryOperations(BaseTestCase):
         _, _, _, total_items = self.db.list_prompts(include_deleted=True)
         self.assertEqual(total_items, 4)
 
+    def test_list_prompts_includes_details_column(self):
+        """Task 8b D2: the list page must carry ``details`` so the Library
+        list canvas's secondary line/filter can use it without an N+1
+        per-row ``fetch_keywords_for_prompt``-style fetch -- see
+        ``_prompts_page_records_or_empty``'s remap in ``library_screen.py``.
+        """
+        prompts, _, _, _ = self.db.list_prompts(page=1, per_page=10)
+        by_name = {p["name"]: p for p in prompts}
+        self.assertEqual(by_name["Recipe Generator"]["details"], "Creates recipes for cooking")
+        self.assertEqual(by_name["Code Explainer"]["details"], "Explains python code snippets")
+
     def test_fetch_prompt_details(self):
         details = self.db.fetch_prompt_details("Recipe Generator")
         self.assertIsNotNone(details)

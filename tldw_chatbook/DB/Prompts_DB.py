@@ -1555,8 +1555,12 @@ class PromptsDatabase:
 
                 results_data = []
                 if total_items > 0:
-                    # Select desired fields, e.g., id, name, uuid, author
-                    query = f"""SELECT id, name, uuid, author, last_modified FROM Prompts
+                    # `details` (Task 8b D2): the Library list canvas's
+                    # secondary line/filter need the prompt's description
+                    # without an N+1 per-row `fetch_keywords_for_prompt`-
+                    # style fetch for a whole page -- this is a single extra
+                    # TEXT column on the same query, not a second query.
+                    query = f"""SELECT id, name, uuid, author, details, last_modified FROM Prompts
                                 {where_clause} ORDER BY last_modified DESC, id DESC
                                 LIMIT ? OFFSET ?"""
                     cursor.execute(query, (per_page, offset))

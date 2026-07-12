@@ -1671,9 +1671,9 @@ class LibraryScreen(BaseAppScreen):
         to a raw-shaped record (``local_id`` -> ``id``) here so the pure
         state builder can consume it unchanged.
 
-        Note: the raw local ``list_prompts`` DB query selects only
-        ``id, name, uuid, author, last_modified`` -- it does not join
-        keywords, so every remapped record's ``keywords`` here is the
+        Note: the raw local ``list_prompts`` DB query selects
+        ``id, name, uuid, author, details, last_modified`` -- it does not
+        join keywords, so every remapped record's ``keywords`` here is the
         (always empty) list the normalizer defaults to. Bulk-enriching a
         page of prompts with keywords would need either a new batched-join
         DB seam or N per-row ``fetch_keywords_for_prompt`` calls; the notes
@@ -1681,7 +1681,10 @@ class LibraryScreen(BaseAppScreen):
         ``list_notes`` fetch has never carried keywords either -- only the
         single-note editor enriches, via ``_fetch_library_note_keywords``),
         so this deliberately matches that precedent rather than fetching
-        keywords per row here.
+        keywords per row here. ``details``, unlike keywords, IS cheap to
+        carry (a single extra column on the same query, Task 8b D2) --
+        ``build_prompts_list_state``'s filter/secondary-line now use it
+        instead of the never-populated ``keywords``.
 
         Args:
             list_prompts: The bound ``list_prompts`` callable to invoke.
@@ -1691,8 +1694,8 @@ class LibraryScreen(BaseAppScreen):
         Returns:
             The fetched page's records, raw-shaped for
             ``build_prompts_list_state`` (``id``, ``name``, ``author``,
-            ``keywords``, ``last_modified``, ``version``), or ``()`` on
-            failure or an unrecognized response shape.
+            ``details``, ``keywords``, ``last_modified``, ``version``), or
+            ``()`` on failure or an unrecognized response shape.
         """
         try:
             response = await self._run_library_service_call(
@@ -1715,6 +1718,7 @@ class LibraryScreen(BaseAppScreen):
                     "id": item.get("local_id"),
                     "name": item.get("name"),
                     "author": item.get("author"),
+                    "details": item.get("details"),
                     "keywords": item.get("keywords"),
                     "last_modified": item.get("last_modified"),
                     "version": item.get("version"),
