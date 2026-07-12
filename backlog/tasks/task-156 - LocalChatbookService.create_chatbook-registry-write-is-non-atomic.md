@@ -19,8 +19,8 @@ create_chatbook does a read-modify-write of the chatbook registry with no lock. 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Concurrent create_chatbook calls do not lose records or collide on next_id
-- [ ] #2 Serialization/locking added around the registry read-modify-write
+- [x] #1 Concurrent create_chatbook calls do not lose records or collide on next_id
+- [x] #2 Serialization/locking added around the registry read-modify-write
 <!-- AC:END -->
 
 ## Implementation Notes
