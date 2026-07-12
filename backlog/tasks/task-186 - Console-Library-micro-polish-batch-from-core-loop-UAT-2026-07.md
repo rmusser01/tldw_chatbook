@@ -19,5 +19,11 @@ Small defects from the 2026-07-11 UAT (evidence in Docs/superpowers/qa/core-loop
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Model rail shows the selected model or omits the empty slash,Rail section titles are unique,Footer shows the palette hint once,Enter submits a valid ingest form,Media open action label matches its in-Library destination,Saved-message notes carry conversation title/date context,Splash NameError and recurring legacy-selector errors are fixed or silenced
+- [ ] #1 Model rail shows the selected model or omits the empty slash
+- [ ] #2 Rail section titles are unique
+- [ ] #3 Footer shows the palette hint once
+- [ ] #4 Enter submits a valid ingest form
+- [ ] #5 Media open action label matches its in-Library destination
+- [ ] #6 Saved-message notes carry conversation title/date context
+- [ ] #7 Splash NameError and recurring legacy-selector errors are fixed or silenced
 <!-- AC:END -->
