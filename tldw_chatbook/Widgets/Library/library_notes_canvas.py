@@ -151,7 +151,10 @@ class LibraryNotesCanvas(Vertical):
                 id="library-notes-select-toggle",
                 classes="library-canvas-action", compact=True,
             )
-            select_btn.disabled = rendered_count == 0
+            # Disable only when nothing to select AND not already in select mode
+            # -- in select mode "Done" must stay pressable so the user can exit
+            # even if the rows dropped to zero (e.g. a background refresh).
+            select_btn.disabled = rendered_count == 0 and not select_mode
             yield select_btn
         if select_mode:
             action_row = Horizontal(classes="ds-toolbar")

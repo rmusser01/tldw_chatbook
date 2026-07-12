@@ -74,7 +74,11 @@ class LibraryMediaCanvas(Vertical):
         select_btn = Button("Done" if select_mode else "Select",
                             id="library-media-select-toggle",
                             classes="library-canvas-action", compact=True)
-        select_btn.disabled = rendered_count == 0
+        # Disable only when there's nothing to select AND we're not already in
+        # select mode -- in select mode the button is "Done" and must always be
+        # pressable so the user can exit even if the rows dropped to zero
+        # (e.g. a background snapshot refresh emptied the list).
+        select_btn.disabled = rendered_count == 0 and not select_mode
         yield select_btn
         if select_mode:
             action_row = Horizontal(classes="ds-toolbar")
