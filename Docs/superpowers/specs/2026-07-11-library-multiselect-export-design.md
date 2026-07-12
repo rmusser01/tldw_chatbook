@@ -67,6 +67,18 @@ class ExportScope:
   the existing per-kind label. `media_type` is ignored when `ids` is set (the
   ids already encode the exact subset).
 
+In every resolver the `scope.ids` check must run **before** any `media_type`
+logic (`_effective_media_type`, `:76`) so an ids export never touches the
+media-type path.
+
+**Deliberately unchanged consumer:** `library_export_state.py:167`
+(`show_media_fields = scope.kind in _MEDIA_BEARING_SCOPE_KINDS`) gates the
+media-only form fields (media quality). Because we reuse `kind="media"` for a
+selected-media scope, those fields correctly still render — a new `"selected"`
+kind would have silently hidden them. This is why the design reuses `kind` +
+`ids` rather than adding a kind; keep `kind` intact when building a selected
+scope.
+
 ### 3. Row `checked` state (`Library/library_{media,conversations,notes}_state.py`)
 
 Each row dataclass gains `checked: bool = False`. The pure state builder accepts
@@ -81,11 +93,18 @@ the current selection set and a `select_mode` flag and sets `checked` =
   only the leading glyph changes.)
 - Toolbar: a **Select** toggle button (`#library-{source}-select-toggle`).
 - A selection action row, shown only in select mode, with `N selected` text and
-  buttons: **Select all** (`#library-{source}-select-all`), **Clear**
+  buttons: **Select all N shown** (`#library-{source}-select-all`) — labelled
+  with the rendered-row count so the cap is explicit — **Clear**
   (`#library-{source}-select-clear`), **Export selected**
   (`#library-{source}-export-selected`, disabled when the set is empty).
   Rendered via the same always-yield-then-`.display`-toggle pattern the canvas
   already uses, so it can be shown/hidden without a full recompose.
+
+**Row-toggle update:** toggling a row's checkbox updates that row's `Button.label`
+in place (and the `N selected` text) rather than recomposing the whole
+canvas — a full recompose of 50–100 rows per keystroke is janky. This reuses the
+targeted-update discipline established in task-157
+(`_update_library_export_canvas_after_run`).
 
 ### 5. Screen wiring (`UI/Screens/library_screen.py`)
 
@@ -109,6 +128,18 @@ the current selection set and a `select_mode` flag and sets `checked` =
 - **Lifecycle:** leaving the canvas / changing the source filter clears the set
   and turns select mode off (fresh WYSIWYG). Selection covers only the rendered
   (capped) rows — `LIBRARY_SOURCE_PAGE_SIZES` (notes 100, media/conv 50).
+- **Reconcile on re-render:** the Library re-renders on background ingest
+  snapshot refreshes. On each select-mode render the selection set is reconciled
+  to the currently-rendered ids (ids no longer present are dropped), so
+  `N selected` and the eventual export never drift from what the user sees.
+- **Notes flush:** entering select mode on the Notes canvas first calls the
+  existing `_flush_library_note_save` (as `_open_library_export_canvas` does at
+  `:3197`), so a pending in-canvas note edit is never stranded by the mode switch.
+- **Shared helper:** factor the per-source selection set + toggle + reconcile +
+  `Export selected` scope-building into one small shared helper (keyed by source
+  → ContentType/kind) so Media/Conversations/Notes do not carry three divergent
+  copies of the logic; only the row-widget glyph and toolbar wiring stay
+  per-canvas.
 
 ## Data flow
 
@@ -141,6 +172,10 @@ Export selected → ExportScope(kind="media", ids=(…)) → _open_library_expor
   - `export_scope_label` with `ids` returns `"Selected {source} · N items"`.
   - State builder: `checked` is set for ids in the selection and false otherwise;
     select-all/clear semantics.
+  - Shared selection helper: toggle add/remove; select-all-shown adds only
+    rendered ids; **reconcile drops ids no longer in the rendered set** (keeps
+    `N selected` honest); `Export selected` builds `ExportScope(kind=<source>,
+    ids=tuple(sorted(sel)))`.
 - **Screen handlers:** a row press in select mode toggles the id and does NOT
   open the viewer; "Export selected" builds the expected `ExportScope`
   (`SimpleNamespace`-fake `self` where feasible, mirroring the task-157 tests).
