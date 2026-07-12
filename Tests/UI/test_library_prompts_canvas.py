@@ -20,6 +20,7 @@ path end to end.
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -48,6 +49,21 @@ from Tests.UI.test_library_shell import (
     _wait_for_library_shell,
 )
 from Tests.UI.test_screen_navigation import _build_test_app
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+AGENTIC_TERMINAL = REPO_ROOT / "tldw_chatbook/css/components/_agentic_terminal.tcss"
+BUNDLED_STYLESHEET = REPO_ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
+
+
+def _css_block(text: str, selector: str) -> str:
+    """Return a CSS rule body starting at ``selector`` (mirrors
+    ``test_product_maturity_phase3_library_contract_layout.py``'s helper of
+    the same name)."""
+    start = text.index(selector)
+    block_start = text.index("{", start)
+    block_end = text.index("}", block_start)
+    return text[block_start:block_end]
 
 
 def _three_row_state(*, sort: str = "newest") -> PromptsListState:
@@ -309,3 +325,73 @@ async def test_library_shell_prompts_row_press_renders_list_canvas():
         assert canvas is not None
         assert screen.query_one("#library-prompt-row-5", Button)
         assert screen.query_one("#library-prompt-row-6", Button)
+
+
+# ---------------------------------------------------------------------------
+# Stylesheet parity pin (review finding: the canvas's ids/classes had no
+# stylesheet rules at all, so prompt rows silently rendered as auto-width
+# default Buttons instead of matching the sibling notes list's look).
+# ---------------------------------------------------------------------------
+
+
+def test_library_prompt_row_class_matches_notes_row_visual_parity():
+    """``.library-prompt-row`` (the row Buttons in
+    ``library_prompts_canvas.py``) must have a stylesheet block, with the
+    same width/height/border/background as ``.library-notes-row`` -- visual
+    parity with the sibling notes list, not default auto-width Buttons."""
+    agentic_terminal = AGENTIC_TERMINAL.read_text(encoding="utf-8")
+    bundled_stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+
+    for text in (agentic_terminal, bundled_stylesheet):
+        assert ".library-prompt-row {" in text
+        prompt_row_block = _css_block(text, ".library-prompt-row {")
+        notes_row_block = _css_block(text, ".library-notes-row {")
+        for pinned in (
+            "width: 100%;",
+            "height: 2;",
+            "border: none;",
+            "background: $ds-surface-panel;",
+        ):
+            assert pinned in prompt_row_block
+            assert pinned in notes_row_block
+
+
+def test_library_prompts_header_filter_empty_have_css_blocks():
+    """``#library-prompts-header``/``#library-prompts-filter``
+    (+ ``:focus``)/``#library-prompts-empty`` (``library_prompts_canvas.py``)
+    must have stylesheet rules matching their ``#library-notes-*`` siblings,
+    instead of silently falling back to unstyled defaults."""
+    agentic_terminal = AGENTIC_TERMINAL.read_text(encoding="utf-8")
+    bundled_stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+
+    for text in (agentic_terminal, bundled_stylesheet):
+        assert "#library-prompts-header {" in text
+        assert "#library-prompts-filter {" in text
+        assert "#library-prompts-filter:focus {" in text
+        assert "#library-prompts-empty {" in text
+
+        header_block = _css_block(text, "#library-prompts-header {")
+        notes_header_block = _css_block(text, "#library-notes-header {")
+        assert "height: auto;" in header_block
+        assert "height: auto;" in notes_header_block
+
+        filter_block = _css_block(text, "#library-prompts-filter {")
+        notes_filter_block = _css_block(text, "#library-notes-filter {")
+        for pinned in (
+            "height: 3;",
+            "border: tall $ds-grid-line;",
+            "background: $ds-surface-raised;",
+        ):
+            assert pinned in filter_block
+            assert pinned in notes_filter_block
+
+        focus_block = _css_block(text, "#library-prompts-filter:focus {")
+        notes_focus_block = _css_block(text, "#library-notes-filter:focus {")
+        for pinned in ("border: tall $ds-input-focus-accent;", "outline: none;"):
+            assert pinned in focus_block
+            assert pinned in notes_focus_block
+
+        empty_block = _css_block(text, "#library-prompts-empty {")
+        notes_empty_block = _css_block(text, "#library-notes-empty {")
+        assert "color: $ds-text-muted;" in empty_block
+        assert "color: $ds-text-muted;" in notes_empty_block

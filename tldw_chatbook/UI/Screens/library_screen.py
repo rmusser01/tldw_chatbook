@@ -512,11 +512,13 @@ class LibraryScreen(BaseAppScreen):
             "notes": (),
             "media": (),
             "conversations": (),
-            # Task 1 (count seam + rail row): unlike the three sources
-            # above, "prompts" carries ``(count, page_records)`` rather
-            # than a bare records tuple -- there is no prompts canvas yet
-            # to page through, only the Browse rail badge's exact count
-            # (a later task wires the real list canvas and page records).
+            # Task 1/3 (count seam + rail row + list canvas): unlike the
+            # three sources above, "prompts" carries ``(count,
+            # page_records)`` rather than a bare records tuple. The
+            # ``LibraryPromptsListCanvas`` list view now renders this
+            # page's records (see ``_build_library_prompts_state``); only
+            # fetching/paging past the first page of records remains
+            # future work.
             "prompts": (None, ()),
         }
         self._local_source_counts: dict[str, int] = {
