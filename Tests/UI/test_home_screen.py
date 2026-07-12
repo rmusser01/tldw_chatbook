@@ -1591,3 +1591,108 @@ async def test_home_retry_button_click_requeues_failed_ingest_job():
     # (L3b AB wave, B1) Retry supersedes the original failed job -- net job
     # count is unchanged (one hidden, one added).
     assert len(app.library_ingest_jobs.jobs()) == jobs_before
+
+
+@pytest.mark.asyncio
+async def test_home_retry_requeues_selected_failed_item_not_first():
+    """T152: with 2+ retryable failed items, Retry must requeue the
+    SELECTED failed item, not just the first failed item in the list.
+
+    ``build_home_controls`` already scopes ``home-retry.target_id`` to the
+    selected item (the ``selected_item_is_failed`` override), but
+    ``_activate_home_control`` was dispatching from the UNSCOPED
+    ``self._current_dashboard.controls`` (``summarize_home_dashboard(...)``
+    output, whose ``home-retry.target_id`` is always
+    ``_first_item_for_status`` -- the FIRST failed item) instead of the
+    selection-scoped ``triage.canvas.actions`` the user actually sees and
+    presses. Fixed by dispatching from the scoped canvas controls first.
+    """
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        active_work_items=(
+            HomeActiveWorkItem(
+                item_id="local:watchlist_run:1",
+                title="First failed run",
+                source="W+C",
+                status="failed",
+                detail_route="subscriptions",
+            ),
+            HomeActiveWorkItem(
+                item_id="local:watchlist_run:2",
+                title="Second failed run",
+                source="W+C",
+                status="failed",
+                detail_route="subscriptions",
+            ),
+        ),
+    )
+    app.retry_active_home_item = Mock()
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        # Select the SECOND failed item's rail row via a real press.
+        row_button = next(
+            btn for btn in home.query("Button")
+            if str(getattr(btn, "row_id", "")) == "local:watchlist_run:2"
+        )
+        await pilot.click(row_button)
+        await pilot.pause(HOME_MOUNT_PAUSE)
+
+        await pilot.click("#home-retry")
+        await pilot.pause(HOME_MOUNT_PAUSE)
+
+    app.retry_active_home_item.assert_called_once_with(
+        target_id="local:watchlist_run:2"
+    )
+
+
+@pytest.mark.asyncio
+async def test_home_recent_only_item_selection_gets_open_details_control():
+    """T153: a selected item that lives ONLY in ``recent_work_items`` (a
+    finished import, a chatbook artifact) bumps no active/failed/running/
+    paused count, so the canvas's count-driven ``home-open-details`` block
+    was skipped entirely -- selecting it left the item with no control to
+    open it at all. Also covers AC#2: pressing the real button for a
+    recent-only item must not raise (``open_active_home_item_details``
+    already accepts recent/ingest ids per the F1b review).
+    """
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        recent_work_items=(
+            HomeActiveWorkItem(
+                item_id="local:ingest:done-1",
+                title="report.pdf",
+                source="Library",
+                status="done",
+                detail_route="library",
+            ),
+        ),
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        row_button = next(
+            btn for btn in home.query("Button")
+            if str(getattr(btn, "row_id", "")) == "local:ingest:done-1"
+        )
+        await pilot.click(row_button)
+        await pilot.pause(HOME_MOUNT_PAUSE)
+
+        assert home.query_one("#home-open-details"), (
+            "recent-only selected item has no home-open-details control"
+        )
+
+        # AC#2: pressing it must not raise even though the item only ever
+        # lived in recent_work_items (never active/failed/running/paused).
+        await pilot.click("#home-open-details")
+        await pilot.pause(HOME_MOUNT_PAUSE)

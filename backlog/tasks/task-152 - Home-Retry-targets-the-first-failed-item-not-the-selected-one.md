@@ -1,9 +1,10 @@
 ---
 id: TASK-152
 title: 'Home Retry targets the first failed item, not the selected one'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-11 22:01'
+updated_date: '2026-07-12 01:08'
 labels:
   - follow-up
   - home
@@ -18,6 +19,12 @@ Home's Retry control dispatches through the unscoped summarize_home_dashboard co
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Pressing Retry on a selected failed Home item requeues THAT item
-- [ ] #2 Regression test with 2+ retryable failed items asserts the selected item is the one requeued
+- [x] #1 Pressing Retry on a selected failed Home item requeues THAT item
+- [x] #2 Regression test with 2+ retryable failed items asserts the selected item is the one requeued
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Fixed in the correctness batch (branch claude/followups-correctness). See Docs/superpowers/plans/2026-07-11-followups-correctness.md.
+<!-- SECTION:NOTES:END -->

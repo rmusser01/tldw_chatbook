@@ -1,9 +1,10 @@
 ---
 id: TASK-156
 title: LocalChatbookService.create_chatbook registry write is non-atomic
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-11 22:01'
+updated_date: '2026-07-12 01:08'
 labels:
   - follow-up
   - chatbooks
@@ -18,6 +19,12 @@ create_chatbook does a read-modify-write of the chatbook registry with no lock. 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Concurrent create_chatbook calls do not lose records or collide on next_id
-- [ ] #2 Serialization/locking added around the registry read-modify-write
+- [x] #1 Concurrent create_chatbook calls do not lose records or collide on next_id
+- [x] #2 Serialization/locking added around the registry read-modify-write
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Fixed in the correctness batch (branch claude/followups-correctness). See Docs/superpowers/plans/2026-07-11-followups-correctness.md.
+<!-- SECTION:NOTES:END -->

@@ -1,9 +1,10 @@
 ---
 id: TASK-153
 title: Recent-only Home items have no per-item open control
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-11 22:01'
+updated_date: '2026-07-12 01:08'
 labels:
   - follow-up
   - home
@@ -18,6 +19,12 @@ A Home item that appears only in the Recent feed (e.g. a done Library import, a 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A selected recent-only Home item exposes an open/details control on its canvas
-- [ ] #2 No crash when the control is invoked for a recent item
+- [x] #1 A selected recent-only Home item exposes an open/details control on its canvas
+- [x] #2 No crash when the control is invoked for a recent item
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Fixed in the correctness batch (branch claude/followups-correctness). See Docs/superpowers/plans/2026-07-11-followups-correctness.md.
+<!-- SECTION:NOTES:END -->

@@ -374,7 +374,16 @@ def build_home_controls(
     # fallback) Pause keeps its unconditional-when-running behavior.
     selected_item_is_ingest_job = selected_item_is_running and _is_local_ingest_item(selected_item)
     chatbook_item = _first_chatbook_artifact_item(state)
-    detail_item = choose_home_selected_item(state)
+    # When a real item is selected, its details/console controls target THAT
+    # item -- mirroring the selected_item overrides for Retry/Pause above (PR
+    # #600 review). Without this, "Open details" (and "Open in Console")
+    # pointed at whichever item ``choose_home_selected_item`` ranks first
+    # (approval > failed > running > ...), so selecting a non-first failed
+    # item and pressing Open details opened the first item's details while the
+    # canvas showed the second. The no-selection callers (summarize_home_
+    # dashboard, the triage builder's count-only fallback) pass
+    # ``selected_item=None`` and keep today's first-in-priority behavior.
+    detail_item = selected_item if selected_item is not None else choose_home_selected_item(state)
 
     if _pending_approval_count(state):
         controls.extend(
@@ -485,6 +494,26 @@ def build_home_controls(
                     chatbook_item.item_id,
                 )
             )
+    # T153: the block above only fires when some active/failed/running/
+    # paused/approval count is nonzero, so a selected RECENT-ONLY item (a
+    # done import, a chatbook artifact -- present only in
+    # ``state.recent_work_items``, bumping no active count) got no
+    # ``home-open-details`` control at all, even though it is the item the
+    # user actually selected. Append one, targeting the selected item,
+    # unless the count-driven block already covered it above (guards
+    # against a double ``home-open-details``).
+    if selected_item is not None and not any(
+        control.control_id == "home-open-details" for control in controls
+    ):
+        controls.append(
+            HomeControl(
+                "home-open-details",
+                "Open details",
+                selected_item.detail_route,
+                "work_details",
+                selected_item.item_id,
+            )
+        )
     if state.flashcards_due_count > 0 and (
         not selected_row_id or selected_row_id == HOME_FLASHCARDS_DUE_ROW_ID
     ):

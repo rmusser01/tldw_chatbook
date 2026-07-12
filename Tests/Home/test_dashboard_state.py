@@ -695,6 +695,125 @@ def test_build_home_controls_without_selected_item_keeps_default_retry_behavior(
     assert any(c.control_id == "home-retry" for c in controls)
 
 
+def test_build_home_controls_selected_recent_only_item_gets_open_details():
+    """T153: a selected item that lives ONLY in ``recent_work_items`` (a
+    finished import, a chatbook artifact) bumps no active/failed/running/
+    paused count, so the count-driven block that emits ``home-open-details``
+    is skipped entirely -- before the fix, this leaves the selected item
+    with no control to open it at all.
+    """
+    recent_item = HomeActiveWorkItem(
+        item_id="local:ingest:done-1",
+        title="report.pdf",
+        source="Library",
+        status="done",
+        detail_route="library",
+    )
+    state = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        recent_work_items=(recent_item,),
+    )
+
+    controls = build_home_controls(
+        state, selected_row_id=recent_item.item_id, selected_item=recent_item
+    )
+
+    controls_by_id = {c.control_id: c for c in controls}
+    assert "home-open-details" in controls_by_id
+    assert controls_by_id["home-open-details"].target_id == recent_item.item_id
+    assert controls_by_id["home-open-details"].target_route == recent_item.detail_route
+    assert controls_by_id["home-open-details"].applies_to == "work_details"
+
+
+def test_build_home_controls_open_details_targets_selected_failed_item_not_first():
+    """PR #600 review (Gemini): the count-driven ``home-open-details`` must
+    target the SELECTED item, not whichever ``choose_home_selected_item``
+    ranks first. With 2+ failed items, selecting the second and opening its
+    details must open the second's details -- the same selected-item scoping
+    Retry/Pause already have.
+    """
+    first = HomeActiveWorkItem(
+        item_id="fail-1", title="first", source="Runs", status="failed",
+        detail_route="chat",
+    )
+    second = HomeActiveWorkItem(
+        item_id="fail-2", title="second", source="Runs", status="failed",
+        detail_route="chat",
+    )
+    state = HomeDashboardInput(
+        model_ready=True,
+        failed_run_count=2,
+        active_work_items=(first, second),
+    )
+
+    controls = build_home_controls(
+        state, selected_row_id=second.item_id, selected_item=second
+    )
+
+    controls_by_id = {c.control_id: c for c in controls}
+    assert "home-open-details" in controls_by_id
+    assert controls_by_id["home-open-details"].target_id == second.item_id
+
+
+def test_triage_selecting_recent_only_row_builds_canvas_with_open_details():
+    """Same defect as above, exercised through the full triage builder (the
+    real production path: ``build_home_triage_state`` resolves the selected
+    row's backing item from ``active_work_items + recent_work_items`` and
+    threads it into ``build_home_controls`` as ``selected_item``).
+    """
+    state = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        recent_work_items=(
+            HomeActiveWorkItem(
+                item_id="local:ingest:done-1",
+                title="report.pdf",
+                source="Library",
+                status="done",
+                detail_route="library",
+            ),
+        ),
+    )
+
+    triage = build_home_triage_state(
+        state, selected_row_id="local:ingest:done-1", now=_NOW
+    )
+
+    controls_by_id = {c.control_id: c for c in triage.canvas.actions}
+    assert "home-open-details" in controls_by_id
+    assert controls_by_id["home-open-details"].target_id == "local:ingest:done-1"
+    assert controls_by_id["home-open-details"].target_route == "library"
+
+
+def test_build_home_controls_does_not_duplicate_open_details_for_active_selection():
+    """Guard against a double ``home-open-details``: when the selected item
+    is already covered by the count-driven block (a real active/failed
+    item), the recent-only fallback must not append a second control."""
+    state = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        active_work_items=(
+            HomeActiveWorkItem(
+                item_id="local:watchlist_run:5",
+                title="Daily security feed",
+                source="W+C",
+                status="failed",
+                detail_route="subscriptions",
+            ),
+        ),
+    )
+    selected = state.active_work_items[0]
+
+    controls = build_home_controls(
+        state, selected_row_id=selected.item_id, selected_item=selected
+    )
+
+    open_details_controls = [c for c in controls if c.control_id == "home-open-details"]
+    assert len(open_details_controls) == 1
+    assert open_details_controls[0].target_id == selected.item_id
+
+
 def test_canvas_primary_control_flips_between_failed_item_and_flashcards_row():
     """Selecting a different row moves primary emphasis with it (no button
     stays permanently accented) -- mirrors the live pilot: failed ingest

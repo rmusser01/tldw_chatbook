@@ -10,6 +10,7 @@ from textual.widgets import Button, Static
 
 from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
 from tldw_chatbook.Home.dashboard_state import (
+    HomeControl,
     HomeDashboard,
     HomeDashboardInput,
     HomeTriageState,
@@ -92,6 +93,14 @@ class HomeScreen(BaseAppScreen):
         self._current_dashboard: HomeDashboard | None = None
         self._current_dashboard_input: HomeDashboardInput | None = None
         self._home_selected_row_id: str = ""
+        # T152: the scoped canvas controls the user actually sees/presses
+        # (``triage.canvas.actions``) -- kept alongside ``_current_dashboard``
+        # (the UNSCOPED ``summarize_home_dashboard`` controls) because only
+        # the scoped set carries a selection-aware ``target_id`` (e.g.
+        # ``home-retry`` pointed at the SELECTED failed item rather than
+        # just the first failed item in the list). See
+        # ``_activate_home_control``.
+        self._current_canvas_controls: tuple[HomeControl, ...] = ()
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -154,9 +163,14 @@ class HomeScreen(BaseAppScreen):
             dashboard_input,
             selected_row_id=self._home_selected_row_id,
         )
-        # Keep the legacy dashboard object for the unchanged control dispatch.
+        # Keep the legacy dashboard object as the defensive fallback for
+        # control dispatch (count-only canvases with no selection have
+        # their controls in both); the scoped canvas controls
+        # (``_current_canvas_controls``) are what the user actually sees
+        # and presses, and are tried first in ``_activate_home_control``.
         self._current_dashboard = summarize_home_dashboard(dashboard_input)
         self._current_dashboard_input = dashboard_input
+        self._current_canvas_controls = triage.canvas.actions
         self._home_selected_row_id = triage.selected_row_id
 
         yield Static(
@@ -302,6 +316,7 @@ class HomeScreen(BaseAppScreen):
         )
         self._current_dashboard = summarize_home_dashboard(dashboard_input)
         self._current_dashboard_input = dashboard_input
+        self._current_canvas_controls = triage.canvas.actions
         self._home_selected_row_id = triage.selected_row_id
         try:
             self.query_one("#home-rail", HomeRail).sync_state(
@@ -364,7 +379,19 @@ class HomeScreen(BaseAppScreen):
         dashboard = self._current_dashboard
         if dashboard is None:
             return
-        control = next((item for item in dashboard.controls if item.control_id == button_id), None)
+        # T152: resolve from the SELECTION-SCOPED canvas controls first --
+        # the set the user actually sees and presses, whose target_id
+        # reflects the SELECTED item (e.g. home-retry pointed at the
+        # selected failed item, not just the first failed item in the
+        # list). Fall back to the unscoped dashboard controls only when
+        # the pressed control isn't there (defensive: count-only fallback
+        # canvases with no selection have their controls in both sets).
+        control = next(
+            (item for item in self._current_canvas_controls if item.control_id == button_id),
+            None,
+        )
+        if control is None:
+            control = next((item for item in dashboard.controls if item.control_id == button_id), None)
         if control is None:
             return
 
