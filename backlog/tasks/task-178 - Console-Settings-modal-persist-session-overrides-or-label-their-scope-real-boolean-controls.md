@@ -21,5 +21,7 @@ Core-loop UAT 2026-07-11: values entered in the Console Settings modal (e.g. Str
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Modal changes either persist or the modal states clearly that they are session-only with a path to persist,Boolean settings use a toggle/cycle control instead of free text,Enumerated fields show their accepted values
+- [ ] #1 Modal changes either persist or the modal states clearly that they are session-only with a path to persist
+- [ ] #2 Boolean settings use a toggle/cycle control instead of free text
+- [ ] #3 Enumerated fields show their accepted values
 <!-- AC:END -->
