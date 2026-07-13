@@ -8,14 +8,14 @@ labels:
   - sync
   - console
 dependencies:
-  - task-57
+  - TASK-57
 priority: low
 ---
 
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Console image messages (PR #621) sync text-only: the Sync v2 chat enqueue passes content fields and skips image bytes by design. Once the Sync v2 attachment upload client (task-57) is available, carry chat message images through it so a synced conversation round-trips its images. Depends on task-57.
+Console image messages (PR #621) sync text-only: the Sync v2 chat enqueue passes content fields and skips image bytes by design. Once the Sync v2 attachment upload client (task-57) is available, carry chat message images through it so a synced conversation round-trips its images. Depends on task-57. Image-only messages (no text content) currently do not enqueue to Sync v2 at all, because the enqueue guard skips any message where `not message.content`, so the receiving side is missing the message entirely, not just its image.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

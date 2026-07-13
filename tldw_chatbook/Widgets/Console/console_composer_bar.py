@@ -1159,7 +1159,7 @@ class ConsoleComposerBar(Horizontal):
             actions.styles.min_width = 42
             actions.styles.max_width = 42
             attach_button.label = "📎✓"
-            attach_button.tooltip = f"Attached: {normalized}. Press to replace."
+            attach_button.tooltip = f"Attached: {escape(normalized)}. Press to replace."
         else:
             indicator.update("")
             indicator.styles.display = "none"

@@ -3,6 +3,7 @@
 from collections.abc import Mapping
 from dataclasses import asdict, replace
 from datetime import datetime
+import asyncio
 import inspect
 import os
 from pathlib import Path
@@ -13,6 +14,7 @@ import uuid
 
 import toml
 from loguru import logger
+from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
@@ -6656,7 +6658,9 @@ class ChatScreen(BaseAppScreen):
         from tldw_chatbook.Chat.attachment_core import process_attachment_path
 
         try:
-            attachment = await process_attachment_path(file_path)
+            attachment = await asyncio.to_thread(
+                lambda: asyncio.run(process_attachment_path(file_path))
+            )
         except Exception as exc:
             logger.error(f"Console attachment processing failed for {file_path}: {exc}")
             self.app_instance.notify(
@@ -6673,7 +6677,9 @@ class ChatScreen(BaseAppScreen):
             composer.insert_file_segment(
                 attachment.text_content, f"📄 {attachment.label}"
             )
-            self.app_instance.notify(f"{attachment.display_name} content inserted")
+            self.app_instance.notify(
+                f"{escape_markup(attachment.display_name)} content inserted"
+            )
         else:
             store = self._ensure_console_chat_store()
             session = store.ensure_session(
@@ -6682,7 +6688,7 @@ class ChatScreen(BaseAppScreen):
             store.set_pending_attachment(session.id, attachment)
             if composer is not None:
                 composer.set_pending_attachment_label(attachment.label)
-            self.app_instance.notify(f"{attachment.display_name} attached")
+            self.app_instance.notify(f"{escape_markup(attachment.display_name)} attached")
         self._sync_console_control_bar()
 
     @on(Button.Pressed, "#console-clear-attachment")
@@ -6982,17 +6988,22 @@ class ChatScreen(BaseAppScreen):
         mime_type = message.image_mime_type
         if image_data is None and message.persisted_message_id is not None:
             db = getattr(self.app_instance, "chachanotes_db", None)
-            try:
-                row = (
-                    db.get_message_by_id(message.persisted_message_id)
-                    if db is not None
-                    else None
-                )
-            except Exception:
-                logger.opt(exception=True).warning(
-                    "Console save-image DB fallback lookup failed."
-                )
-                row = None
+            persisted_message_id = message.persisted_message_id
+
+            def _fetch_persisted_row() -> Optional[dict]:
+                try:
+                    return (
+                        db.get_message_by_id(persisted_message_id)
+                        if db is not None
+                        else None
+                    )
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        "Console save-image DB fallback lookup failed."
+                    )
+                    return None
+
+            row = await asyncio.to_thread(_fetch_persisted_row)
             if row:
                 image_data = row.get("image_data")
                 mime_type = row.get("image_mime_type") or mime_type
@@ -7001,7 +7012,8 @@ class ChatScreen(BaseAppScreen):
                 "No image data available for this message.", severity="warning"
             )
             return
-        try:
+
+        def _write_image_to_disk() -> Path:
             save_location = Path(
                 os.path.expanduser(
                     get_cli_setting("chat.images", "save_location", "~/Downloads")
@@ -7016,9 +7028,15 @@ class ChatScreen(BaseAppScreen):
                 target = save_location / f"{base_name}_{counter}{extension}"
                 counter += 1
             target.write_bytes(bytes(image_data))
+            return target
+
+        try:
+            target = await asyncio.to_thread(_write_image_to_disk)
         except Exception as exc:
             logger.opt(exception=True).warning("Console save-image write failed.")
-            self.app_instance.notify(f"Could not save image: {exc}", severity="error")
+            self.app_instance.notify(
+                f"Could not save image: {escape_markup(str(exc))}", severity="error"
+            )
             return
         self.app_instance.notify(f"Image saved to {target}")
 
