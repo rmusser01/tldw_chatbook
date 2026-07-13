@@ -5,7 +5,9 @@ import json
 import pytest
 
 from tldw_chatbook.Agents.agent_models import (
-    RUN_DONE, RUN_STUCK, SPAWN_TOOL_NAME, AgentConfig, RunBudget,
+    DIRECT_DISCLOSE_THRESHOLD, LOAD_TOOLS_NAME, RUN_DONE, RUN_STUCK,
+    SPAWN_TOOL_NAME, AgentConfig, RunBudget, ToolCatalogEntry, ToolResult,
+    ToolSchema,
 )
 from tldw_chatbook.Agents.agent_service import (
     SUBAGENT_SYSTEM_PROMPT, AgentService,
@@ -192,6 +194,68 @@ def test_stuck_run_persists_stuck_status(db):
         config=tight, api_endpoint="llama_cpp")
     assert outcome.status == RUN_STUCK
     assert db.get_run(run_id)["status"] == "stuck"
+
+
+class FakeBigProvider:
+    """A provider with more tools than DIRECT_DISCLOSE_THRESHOLD.
+
+    Mirrors Tests/Agents/test_tool_catalog.py's FakeBigProvider: a catalog
+    this large forces the find/load path (initial_disclosure defers
+    everything and offers find_tools/load_tools instead of disclosing
+    directly), which is the only path that exercises load_schemas' own
+    room-capping.
+    """
+
+    def list_catalog(self):
+        return [ToolCatalogEntry(id=f"fake:t{i}", name=f"t{i}",
+                                 one_line_description=f"tool {i}",
+                                 source="fake")
+                for i in range(DIRECT_DISCLOSE_THRESHOLD + 3)]
+
+    def load_schema(self, tool_id):
+        return ToolSchema(id=tool_id, name=tool_id.split(":")[1],
+                          description="fake", parameters={"type": "object"})
+
+    def invoke(self, tool_id, args):
+        return ToolResult(ok=True, content=f"invoked {tool_id}")
+
+
+def test_load_tools_gate_disclosure_mirrors_loop_active_cap(db):
+    """F1 regression: disclosed_names must stay capped like the loop's
+    active list. Room is only 2, so requesting t0/t1/t2 must leave t2
+    ungated — the loop's own room-slicing keeps `active` at [t0, t1], and
+    the gate must refuse anything the loop didn't actually admit.
+    """
+    registry = ToolCatalogRegistry()
+    registry.register_provider(FakeBigProvider())
+    allowed = tuple(f"t{i}" for i in range(DIRECT_DISCLOSE_THRESHOLD + 3))
+    config = AgentConfig(
+        model="m", system_prompt="s", allowed_tools=allowed,
+        budget=RunBudget(max_active_tools=2, max_steps=20))
+    chat = ScriptedChat([
+        fence(LOAD_TOOLS_NAME, {"ids": ["fake:t0", "fake:t1", "fake:t2"]}),
+        fence("t2", {}),   # beyond room — the loop refused it "no room"
+        fence("t0", {}),   # within room — must remain callable
+        "done",
+    ])
+    service = AgentService(db=db, registry=registry, chat_call=chat)
+    run_id, outcome = service.run_turn(
+        conversation_id="c", messages=[{"role": "user", "content": "q"}],
+        config=config, api_endpoint="llama_cpp")
+
+    assert outcome.status == RUN_DONE and outcome.final_text == "done"
+    run = db.get_run(run_id)
+    tool_results = [s for s in run["steps"] if s["kind"] == "tool_result"]
+    assert len(tool_results) == 3
+
+    load_result, t2_result, t0_result = tool_results
+    # The loop's own room-slicing already only admits 2 into `active`.
+    assert load_result["result"] == "loaded: t0, t1"
+    # The gate must refuse t2: the loop never put it in `active`.
+    assert "Tool not permitted: t2" in t2_result["result"]
+    # t0 stayed in room, so it must remain genuinely callable through
+    # the gate (a real provider invocation, not a permission error).
+    assert t0_result["result"] == "invoked fake:t0"
 
 
 def test_provider_exception_persists_error_status(db):

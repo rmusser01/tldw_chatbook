@@ -126,8 +126,17 @@ class AgentService:
                 except KeyError:
                     continue
                 schemas.append(schema)
+            # Mirror the loop's own room-slicing (agent_runtime.py's
+            # load_tools branch) so the gate-disclosed set never grows past
+            # what the loop actually admits into `active`. disclosed_names
+            # starts equal to the initial active set and only ever gains
+            # names here, so its size always matches len(active) — the same
+            # room computation the loop performs independently.
+            room = config.budget.max_active_tools - len(disclosed_names)
+            accepted = schemas[:max(room, 0)]
+            for schema in accepted:
                 disclosed_names.add(schema.name)
-            return schemas
+            return accepted
 
         def spawn(spawn_task: str) -> ToolResult:
             remaining = config.budget.max_wall_seconds - (
