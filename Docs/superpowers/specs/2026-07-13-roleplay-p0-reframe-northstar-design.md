@@ -1,4 +1,4 @@
-# Studio (Personas redesign) — P0: reframe + north-star (design)
+# Roleplay (Personas redesign) — P0: reframe + north-star (design)
 
 **Status:** Design approved (brainstorm), pending spec review.
 **Program:** Personas workbench redesign, sub-project **P0** of `P0 → P1 → P2 → P3`. P0 is the thin foundation (identity reframe + the binding interaction contract); P1 = Dictionaries mode, P2 = Lore mode, P3 = Characters/Personas flow polish — each its own spec → plan → PR.
@@ -11,13 +11,13 @@ The Personas screen is a 3-column workbench (`personas_screen.py`) with a 5-chip
 
 ## Goal / Acceptance
 
-- **AC1 (reframe, shippable):** The screen presents as **"Studio"** with an honest, self-explaining 4-mode strip — every chip says what it *is*, and not-yet-built modes read as an inviting "coming soon," never a dead "not available yet."
+- **AC1 (reframe, shippable):** The screen presents as **"Roleplay"** with an honest, self-explaining 4-mode strip — every chip says what it *is*, and not-yet-built modes read as an inviting "coming soon," never a dead "not available yet."
 - **AC2 (north-star, documented):** This spec defines the binding **List → Detail → Try-it** interaction pattern (below) that P1/P2/P3 implement, so the four modes are consistent instead of each reinventing a layout.
 - **AC3 (no collision):** P0 edits only Personas-owned display in `personas_screen.py`. The route id `personas`, the screen registry, and nav/shell files (`screen_registry.py`, `shell_destinations.py`, `route_inventory.py`) are **not touched** — they're owned by the parallel Library-Prompts branch.
 
 ## Part A — The north-star interaction pattern (binding contract)
 
-Every Studio mode inherits one three-pane skeleton. This is the contract P1/P2/P3 build to; P0 does not build a shared framework speculatively — shared widgets get extracted when the *second* mode needs them, not before.
+Every Roleplay mode inherits one three-pane skeleton. This is the contract P1/P2/P3 build to; P0 does not build a shared framework speculatively — shared widgets get extracted when the *second* mode needs them, not before.
 
 ```
  LIST (left rail)        DETAIL (center)                 TRY-IT (right)
@@ -43,17 +43,17 @@ Every Studio mode inherits one three-pane skeleton. This is the contract P1/P2/P
 - **Honest list + empty states.** Inline enable/disable (never buried in the editor), scannable badges, a Duplicate action, and empty states that offer starter templates instead of a blank void.
 - **Structured validation.** Problems surface as a jump-to-entry list of `{code, field, message}` items, not opaque prose.
 
-**Two things Studio does *better than the server* (seeded now, built in P1/P2):**
-- **"What's in play."** Because Studio holds all four modes in one workbench (the server scatters them), it can answer *"for this character / conversation, which persona + lorebooks + dictionaries apply?"* — a cross-mode attachments summary the server never built. Direction: also support **character-level attachment** (not only per-conversation), so one lorebook/dictionary serves all a character's chats.
+**Two things Roleplay does *better than the server* (seeded now, built in P1/P2):**
+- **"What's in play."** Because Roleplay holds all four modes in one workbench (the server scatters them), it can answer *"for this character / conversation, which persona + lorebooks + dictionaries apply?"* — a cross-mode attachments summary the server never built. Direction: also support **character-level attachment** (not only per-conversation), so one lorebook/dictionary serves all a character's chats.
 - **Near-misses in diagnostics.** The Lore Try-it shows not just what fired but what *matched-yet-was-skipped* — answering *"why did X NOT fire,"* which the server's diagnostics can't.
 
 ## Part B — P0 shippable scope (the reframe, display-only)
 
 All in `personas_screen.py` (Personas-owned), no behavior change to the working modes:
 
-1. **Identity.** `#personas-title` (`_title_text()`) → **"Studio"**; the `#personas-purpose` tagline → *"Author the pieces that shape a chat — characters, personas, dictionaries, and lore — and attach them to Console."* (drop the stale "prompts" mention; see collision note).
-2. **Self-explaining mode strip.** Each chip's `tooltip` becomes what the mode *is*, not "switch to X": *Characters* → "Who the AI plays," *Personas* → "Who you are," *Dictionaries* → "Text find/replace rules," *Lore* → "World facts injected on keywords."
-3. **Honest coming-soon.** The `PLACEHOLDER_COPY` for not-yet-built modes (Dictionaries, Lore) changes from *"not available yet"* to an inviting one-liner per mode — what it will do + "coming soon" — so the chips advertise the roadmap honestly instead of dead-ending. (P1/P2 replace the placeholder with the real workbench.)
+1. **Identity.** `_title_text()` is a *live* header — currently `base = "Personas | Behavior profiles for chat and agents"` with dynamic ` | New {character|persona}` and ` - unsaved` suffixes appended. Reframe **only the base string** → `"Roleplay | Author the pieces that shape a chat"`, preserving the create-mode/unsaved suffix logic verbatim. The `#personas-purpose` tagline → *"Characters, personas, dictionaries, and lore — the pieces that shape a chat. Attach them to Console."*
+2. **Self-explaining mode strip — visible, not tooltip-only.** Tooltips are hover-only and useless to keyboard users, so the active mode's meaning must be **visible on selection**: on mode switch, update a persistent one-line descriptor (extend `#personas-purpose` or add a subtitle under the strip) to what the *active* mode is — *Characters* → "Who the AI plays," *Personas* → "Who you are," *Dictionaries* → "Text find/replace rules," *Lore* → "World facts injected on keywords." Keep the chip `tooltip`s too (as the same copy) for mouse users, but the visible descriptor is the primary affordance and doubles as a "where am I" cue.
+3. **Honest coming-soon.** The `PLACEHOLDER_COPY` for not-yet-built modes (Dictionaries, Lore) changes from a flat *"not available yet"* to an inviting, per-mode one-liner — what it will do + "coming soon" — and the chips are visually de-emphasized (dimmed/planned-looking) so they read as *roadmap*, not *broken*. **Fallback:** if P1/P2 slip well past P0, prefer *hiding* the two chips over a stale "coming soon" (don't advertise nav that doesn't work); coming-soon is the default only because the builds are imminent. P1/P2 replace the placeholder with the real workbench.
 4. **Keep the three-pane frame.** No structural change to the shell in P0; it already matches the north-star's skeleton.
 
 ## Data flow / error handling
@@ -63,11 +63,12 @@ None — P0 changes display copy/labels only; the working Characters/Personas fl
 ## Collision constraints (parallel Library-Prompts branch)
 
 - **Do not touch** `screen_registry.py` / `shell_destinations.py` / `route_inventory.py` / the route id `personas`. P0 is display-only inside `personas_screen.py`.
-- `MODE_CHIP_ORDER` and the `#personas-purpose` copy both still name **"prompts"**; the parallel branch's Task 7 removes it. P0 should **not fight that** — leave the `prompts` entry in `MODE_CHIP_ORDER` for P0 (its removal is the other branch's job) and expect a trivial one-line reconcile of `MODE_CHIP_ORDER` + the purpose copy at the eventual rebase. P0's reframe copy is written to be correct *whether or not* "prompts" is still present.
+- **Exact overlap (verified):** the parallel branch's Task 7 edits the *same three sites* P0 touches — `MODE_CHIP_ORDER` (drops "prompts"), the class docstring, and the `#personas-purpose` copy (drops "prompts"). So a rebase conflict on these lines is *guaranteed but trivial*. P0 should **not fight the prompts removal** — leave the `prompts` entry in `MODE_CHIP_ORDER` for P0 (removing it is the other branch's job), and write P0's new purpose/title copy **prompts-free as its final form**, so the reconcile is simply "take P0's Roleplay copy" regardless of merge order (P0's copy already omits prompts, superseding the other branch's copy edit on that line).
+- Name check: **"Roleplay"** was chosen specifically to avoid colliding with the existing **"Prompt Studio"** feature (`Prompt_Studio_Interop/`); do not reintroduce "Studio" for this workbench.
 
 ## Testing
 
-- Harness-free / `app.run_test()` smoke on `PersonasScreen`: `#personas-title` renders **"Studio"**; `#personas-purpose` contains the new tagline; each mode chip carries its "what it is" tooltip; selecting a not-yet-built mode shows the "coming soon" copy (not "not available yet"); Characters/Personas modes still compose + switch unchanged (no regression).
+- Harness-free / `app.run_test()` smoke on `PersonasScreen`: the header (`_title_text()`/`#personas-title`) leads with **"Roleplay"** and still appends the `New …`/`- unsaved` suffixes in create/dirty states; switching modes updates the **visible mode descriptor** to the active mode's meaning (a direct assertion, not tooltip inspection); selecting a not-yet-built mode shows the "coming soon" copy (not "not available yet"); Characters/Personas modes still compose + switch unchanged (no regression).
 - Follow the existing Personas UI test patterns (`Tests/UI/` personas tests) + the project's CSS-presence pin discipline if any class names change.
 
 ## Scope / non-goals
