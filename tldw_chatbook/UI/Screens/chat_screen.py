@@ -1740,6 +1740,7 @@ class ChatScreen(BaseAppScreen):
             thinking_effort=selection_settings.thinking_effort,
             thinking_budget_tokens=selection_settings.thinking_budget_tokens,
             streaming=selection_settings.streaming,
+            system_prompt=selection_settings.system_prompt,
             workspace_context=self._current_console_workspace_context(),
         )
 
@@ -1850,6 +1851,7 @@ class ChatScreen(BaseAppScreen):
                 thinking_effort=selection.thinking_effort,
                 thinking_budget_tokens=selection.thinking_budget_tokens,
                 streaming=selection.streaming,
+                system_prompt=selection.system_prompt,
             )
         self._console_chat_controller.on_submission_accepted = (
             self._on_console_submission_accepted
@@ -1888,6 +1890,7 @@ class ChatScreen(BaseAppScreen):
                 self._console_chat_controller.thinking_effort = selection.thinking_effort
                 self._console_chat_controller.thinking_budget_tokens = selection.thinking_budget_tokens
                 self._console_chat_controller.streaming = selection.streaming
+                self._console_chat_controller.system_prompt = selection.system_prompt
         return selection
 
     def _activate_console_session_for_workspace(self, workspace_id: str) -> None:
@@ -2175,6 +2178,27 @@ class ChatScreen(BaseAppScreen):
             )
         return messages
 
+    def _console_session_settings_for_resume(
+        self,
+        conversation: Mapping[str, Any],
+    ) -> ConsoleSessionSettings:
+        """Return settings for a resumed session, restoring its system prompt.
+
+        Every other field is inherited from the currently active session's
+        settings (or the config-derived defaults when there is none yet);
+        only ``system_prompt`` is overridden from the persisted conversation
+        row so a saved system prompt survives close/resume even though it is
+        never seeded from ``[chat_defaults]``.
+        """
+        settings = self._active_console_session_settings() or self._default_console_session_settings()
+        raw_system_prompt = conversation.get("system_prompt")
+        system_prompt = (
+            str(raw_system_prompt).strip()
+            if isinstance(raw_system_prompt, str)
+            else None
+        )
+        return replace(settings, system_prompt=system_prompt or None)
+
     async def _resume_console_workspace_conversation(
         self,
         conversation_id: str,
@@ -2253,7 +2277,7 @@ class ChatScreen(BaseAppScreen):
             workspace_id=workspace_id,
             persisted_conversation_id=target,
             messages=messages,
-            settings=self._active_console_session_settings(),
+            settings=self._console_session_settings_for_resume(conversation),
         )
         self._set_active_workspace_for_console_session(session.id)
         self._sync_console_chat_core_state()

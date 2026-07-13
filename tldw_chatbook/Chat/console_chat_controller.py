@@ -103,6 +103,7 @@ class ConsoleChatController:
         thinking_effort: str | None = None,
         thinking_budget_tokens: int | None = None,
         streaming: bool = True,
+        system_prompt: str | None = None,
     ) -> None:
         self.store = store
         self.provider_gateway = provider_gateway
@@ -124,6 +125,7 @@ class ConsoleChatController:
         self.thinking_effort = thinking_effort
         self.thinking_budget_tokens = thinking_budget_tokens
         self.streaming = streaming
+        self.system_prompt = system_prompt
         self.run_state = ConsoleRunState()
         self.run_state_history: list[ConsoleRunStatus] = [self.run_state.status]
         #: Optional owner hook invoked once a submit is accepted (user message
@@ -222,6 +224,7 @@ class ConsoleChatController:
             self.thinking_effort,
             self.thinking_budget_tokens,
             self.streaming,
+            self.system_prompt,
         )
         self.provider = selection.provider
         self.model = selection.explicit_model
@@ -241,6 +244,7 @@ class ConsoleChatController:
         self.thinking_effort = selection.thinking_effort
         self.thinking_budget_tokens = selection.thinking_budget_tokens
         self.streaming = selection.streaming
+        self.system_prompt = selection.system_prompt
         current_selection = (
             self.provider,
             self.model,
@@ -260,6 +264,7 @@ class ConsoleChatController:
             self.thinking_effort,
             self.thinking_budget_tokens,
             self.streaming,
+            self.system_prompt,
         )
         if current_selection != previous_selection:
             self._clear_terminal_run_state()
@@ -492,6 +497,7 @@ class ConsoleChatController:
             thinking_effort=self.thinking_effort,
             thinking_budget_tokens=self.thinking_budget_tokens,
             streaming=self.streaming,
+            system_prompt=self.system_prompt,
             workspace_context=self.store.workspace_context,
         )
 
@@ -682,13 +688,27 @@ class ConsoleChatController:
                 self._active_stream_task = None
                 self._stop_requested = False
 
+    def _leading_system_message(self) -> list[dict[str, str]]:
+        """Return a single-item system message list when a system prompt is set.
+
+        Applies to every native Console send path (submit, retry, regenerate,
+        continue) since they all build their provider payload by prepending
+        this to the transcript-derived messages. Blank/whitespace-only prompts
+        are treated as "no system prompt" (native Console default stays silent
+        unless a user has explicitly set one for this session).
+        """
+        text = str(self.system_prompt or "").strip()
+        if not text:
+            return []
+        return [{"role": ConsoleMessageRole.SYSTEM.value, "content": text}]
+
     def _provider_messages_for_session(
         self,
         session_id: str,
         *,
         before_message_id: str | None = None,
     ) -> list[dict[str, str]]:
-        messages: list[dict[str, str]] = []
+        messages: list[dict[str, str]] = self._leading_system_message()
         for message in self.store.messages_for_session(session_id):
             if message.id == before_message_id:
                 break
@@ -706,7 +726,7 @@ class ConsoleChatController:
         session_id: str,
         message_id: str,
     ) -> list[dict[str, str]]:
-        messages: list[dict[str, str]] = []
+        messages: list[dict[str, str]] = self._leading_system_message()
         for message in self.store.messages_for_session(session_id):
             content = (
                 message.variants.current.content

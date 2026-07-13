@@ -1194,6 +1194,24 @@ def test_console_provider_selection_reads_local_llamacpp_configured_model():
     assert selection.workspace_context.active_workspace_id == DEFAULT_WORKSPACE_ID
 
 
+def test_console_provider_selection_carries_active_session_system_prompt():
+    """The selection built for the controller carries the session's system prompt."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    screen = ChatScreen(app)
+    settings = screen._ensure_active_console_session_settings()
+    screen._replace_active_console_session_settings(
+        replace(settings, system_prompt="Answer only in French.")
+    )
+
+    selection = screen._build_console_provider_selection()
+
+    assert selection.system_prompt == "Answer only in French."
+
+    controller = screen._ensure_console_chat_controller()
+    assert controller.system_prompt == "Answer only in French."
+
+
 def test_console_provider_selection_restores_default_workspace_when_none_active():
     app = _build_test_app()
     service = app.workspace_registry_service
@@ -5463,6 +5481,71 @@ async def test_console_workspace_conversation_row_resumes_persisted_conversation
 
 
 @pytest.mark.asyncio
+async def test_console_workspace_conversation_resume_restores_system_prompt():
+    """Resuming a saved conversation restores its persisted system prompt.
+
+    Task 0 persistence seam: the resumed session's settings must carry the
+    ``system_prompt`` column from the persisted conversation row (read via
+    ``get_conversation_by_id``/``get_conversation_tree``), not whatever
+    system prompt (if any) the previously active session had.
+    """
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    service = app.workspace_registry_service
+    active_workspace = service.get_active_workspace()
+    service.link_membership(
+        active_workspace.workspace_id,
+        item_type="conversation",
+        item_id="persisted-chat-system-prompt",
+        role="workspace-thread",
+        title="System prompt chat",
+    )
+    app.chat_conversation_scope_service = StaticConversationTreeService(
+        {
+            "persisted-chat-system-prompt": {
+                "conversation": {
+                    "id": "persisted-chat-system-prompt",
+                    "title": "System prompt chat",
+                    "workspace_id": active_workspace.workspace_id,
+                    "system_prompt": "Answer only in French.",
+                },
+                "root_threads": [],
+                "pagination": {"total_root_threads": 0},
+            }
+        }
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        await _wait_for_workspace_conversation_text(
+            console,
+            pilot,
+            "System prompt chat",
+            selected=False,
+        )
+
+        await _click_console_workspace_conversation_for_id(
+            console,
+            pilot,
+            "persisted-chat-system-prompt",
+        )
+
+        await _wait_for_workspace_conversation_text(
+            console,
+            pilot,
+            "System prompt chat",
+            selected=True,
+        )
+        store = console._ensure_console_chat_store()
+        active_session = store.switch_session(store.active_session_id)
+        assert active_session.persisted_conversation_id == "persisted-chat-system-prompt"
+        assert active_session.settings is not None
+        assert active_session.settings.system_prompt == "Answer only in French."
+
+
+@pytest.mark.asyncio
 async def test_console_workspace_conversation_resume_uses_persisted_workspace():
     """Resume into the persisted conversation workspace when it differs from active."""
     app = _build_test_app()
@@ -6043,6 +6126,44 @@ def test_native_console_state_round_trip_preserves_session_updated_at():
 
     restored_session = restored_store.sessions()[0]
     assert restored_session.updated_at == "2020-01-01T00:00:00+00:00"
+
+
+def test_native_console_state_round_trip_preserves_session_system_prompt():
+    """Verify a restored session keeps its per-session system prompt.
+
+    ``ConsoleSessionSettings.system_prompt`` must flow through the generic
+    ``__dataclass_fields__``-based whitelist in ``_restore_console_settings``
+    the same way ``source`` and every other settings field does, with no
+    per-field allowlist entry needed.
+    """
+    store = ConsoleChatStore()
+    session = ConsoleChatSession(
+        id="session-a",
+        title="Chat 1",
+        settings=ConsoleSessionSettings(
+            provider="openai",
+            model="gpt-4o",
+            system_prompt="Be terse and cite sources.",
+        ),
+    )
+    store.restore_state(
+        sessions=[session],
+        messages_by_session={session.id: []},
+        active_session_id=session.id,
+    )
+    screen = _bare_console_screen(store)
+
+    payload = screen._serialize_native_console_state()
+    assert payload is not None
+    assert payload["sessions"][0]["settings"]["system_prompt"] == "Be terse and cite sources."
+
+    restored_store = ConsoleChatStore()
+    restored_screen = _bare_console_screen(restored_store)
+    restored_screen._restore_native_console_state(payload)
+
+    restored_session = restored_store.sessions()[0]
+    assert restored_session.settings is not None
+    assert restored_session.settings.system_prompt == "Be terse and cite sources."
 
 
 def test_native_console_state_restore_tolerates_legacy_payload_without_updated_at():

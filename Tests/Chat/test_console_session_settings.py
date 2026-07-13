@@ -96,6 +96,38 @@ def test_default_settings_prefers_chat_defaults_and_provider_config() -> None:
     assert settings.max_tokens == 2048
 
 
+def test_console_session_settings_system_prompt_defaults_to_none() -> None:
+    """Native Console session settings carry no system prompt by default."""
+    settings = ConsoleSessionSettings(provider="llama_cpp")
+
+    assert settings.system_prompt is None
+
+
+def test_default_settings_never_seeds_system_prompt_from_chat_defaults() -> None:
+    """``build_default_console_session_settings`` must never seed a system prompt.
+
+    This is an explicit product decision (not an oversight): the native
+    Console sends no system message until a user sets one for a session, even
+    when ``[chat_defaults]`` carries a ``system_prompt`` key used by other
+    (non-Console) chat surfaces.
+    """
+    config = {
+        "chat_defaults": {
+            "provider": "llama_cpp",
+            "model": "chat-default",
+            "system_prompt": "You are a helpful assistant.",
+        },
+    }
+
+    settings = build_default_console_session_settings(
+        app_config=config,
+        provider="llama_cpp",
+        model=None,
+    )
+
+    assert settings.system_prompt is None
+
+
 def test_default_settings_uses_api_base_for_llamacpp_base_url() -> None:
     settings = build_default_console_session_settings(
         {

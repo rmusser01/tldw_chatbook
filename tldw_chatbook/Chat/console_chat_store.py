@@ -57,6 +57,14 @@ class ConsoleChatPersistence(Protocol):
     ) -> bool:
         """Update persisted message content."""
 
+    def update_conversation_system_prompt(
+        self,
+        *,
+        conversation_id: str,
+        system_prompt: str | None,
+    ) -> bool:
+        """Persist a changed system prompt for an already-saved conversation."""
+
 
 class ConsoleChatSyncProducer(Protocol):
     """Sync v2 producer surface used after durable local Chat writes."""
@@ -499,8 +507,47 @@ class ConsoleChatStore:
             conversation_title=session.title,
             workspace_id=persisted_workspace_id,
             scope_type=scope_type,
+            system_prompt=session.settings.system_prompt if session.settings is not None else None,
         )
         return session.persisted_conversation_id
+
+    def set_session_system_prompt(
+        self,
+        session_id: str,
+        system_prompt: str | None,
+    ) -> ConsoleChatSession:
+        """Apply a system prompt to a session, persisting it if already saved.
+
+        Updates the in-memory settings snapshot for the session and, when the
+        session already owns a persisted conversation, writes the change
+        through to durable storage so a later resume restores the same
+        system prompt (Task 0 persistence seam: no update-conversation call
+        path existed before this method).
+
+        Args:
+            session_id: Native Console session ID to update.
+            system_prompt: New system prompt text, or ``None``/blank to clear it.
+
+        Returns:
+            The updated Console session.
+        """
+        session = self._session_or_raise(session_id)
+        normalized = system_prompt.strip() if isinstance(system_prompt, str) else None
+        normalized = normalized or None
+        if session.settings is not None:
+            session.settings = replace(session.settings, system_prompt=normalized)
+        if session.persisted_conversation_id is not None and self.persistence is not None:
+            update_system_prompt = getattr(
+                self.persistence,
+                "update_conversation_system_prompt",
+                None,
+            )
+            if callable(update_system_prompt):
+                update_system_prompt(
+                    conversation_id=session.persisted_conversation_id,
+                    system_prompt=normalized,
+                )
+        return session
 
     def _persist_new_message_or_defer(self, *, session_id: str, message: ConsoleChatMessage) -> None:
         if self.persistence is None:

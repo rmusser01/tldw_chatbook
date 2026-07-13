@@ -137,6 +137,10 @@ class ConsoleProviderSelection:
     thinking_effort: str | None = None
     thinking_budget_tokens: int | None = None
     streaming: bool = True
+    #: Optional per-session system prompt to prepend to provider messages.
+    #: Not used for readiness resolution; carried through so the controller
+    #: can build provider messages from a single selection snapshot.
+    system_prompt: str | None = None
     workspace_context: ConsoleWorkspaceContext = field(default_factory=ConsoleWorkspaceContext)
 
 

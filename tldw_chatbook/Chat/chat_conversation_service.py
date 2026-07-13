@@ -230,6 +230,7 @@ def normalize_conversation_row(
         "cluster_id": _clean_text(conversation_row.get("cluster_id")),
         "source": _clean_text(conversation_row.get("source")),
         "external_ref": _clean_text(conversation_row.get("external_ref")),
+        "system_prompt": _clean_text(conversation_row.get("system_prompt")),
         "version": conversation_row.get("version"),
     }
 

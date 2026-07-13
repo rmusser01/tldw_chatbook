@@ -139,7 +139,7 @@ class CharactersRAGDB:
         is_memory_db (bool): True if the database is in-memory.
         db_path_str (str): String representation of the database path for SQLite connection.
     """
-    _CURRENT_SCHEMA_VERSION = 17  # Adds local-only conversation marks.
+    _CURRENT_SCHEMA_VERSION = 18  # Adds per-conversation system_prompt.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -2112,7 +2112,115 @@ UPDATE db_schema_version
    AND version = 16;
 """
 
-    def __init__(self, db_path: Union[str, Path], client_id: str, 
+    # Keep this runner SQL aligned with
+    # tldw_chatbook/DB/migrations/chachanotes_v17_to_v18_conversation_system_prompt.sql.
+    _MIGRATE_V17_TO_V18_SQL = """
+ALTER TABLE conversations ADD COLUMN system_prompt TEXT;
+
+DROP TRIGGER IF EXISTS conversations_sync_create;
+DROP TRIGGER IF EXISTS conversations_sync_update;
+DROP TRIGGER IF EXISTS conversations_sync_delete;
+DROP TRIGGER IF EXISTS conversations_sync_undelete;
+
+CREATE TRIGGER conversations_sync_create
+AFTER INSERT ON conversations BEGIN
+  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
+  VALUES('conversations',NEW.id,'create',NEW.last_modified,NEW.client_id,NEW.version,
+         json_object('id',NEW.id,'root_id',NEW.root_id,'forked_from_message_id',NEW.forked_from_message_id,
+                     'parent_conversation_id',NEW.parent_conversation_id,'character_id',NEW.character_id,
+                     'assistant_kind',NEW.assistant_kind,'assistant_id',NEW.assistant_id,
+                     'persona_memory_mode',NEW.persona_memory_mode,'scope_type',NEW.scope_type,
+                     'workspace_id',NEW.workspace_id,'state',NEW.state,'topic_label',NEW.topic_label,
+                     'topic_label_source',NEW.topic_label_source,'topic_last_tagged_at',NEW.topic_last_tagged_at,
+                     'topic_last_tagged_message_id',NEW.topic_last_tagged_message_id,'cluster_id',NEW.cluster_id,
+                     'source',NEW.source,'external_ref',NEW.external_ref,
+                     'runtime_backend',NEW.runtime_backend,'discovery_owner',NEW.discovery_owner,
+                     'discovery_entity_id',NEW.discovery_entity_id,'system_prompt',NEW.system_prompt,
+                     'title',NEW.title,'rating',NEW.rating,'created_at',NEW.created_at,'last_modified',NEW.last_modified,
+                     'deleted',NEW.deleted,'client_id',NEW.client_id,'version',NEW.version));
+END;
+
+CREATE TRIGGER conversations_sync_update
+AFTER UPDATE ON conversations
+WHEN OLD.deleted = NEW.deleted AND (
+     OLD.title IS NOT NEW.title OR
+     OLD.rating IS NOT NEW.rating OR
+     OLD.forked_from_message_id IS NOT NEW.forked_from_message_id OR
+     OLD.parent_conversation_id IS NOT NEW.parent_conversation_id OR
+     OLD.character_id IS NOT NEW.character_id OR
+     OLD.assistant_kind IS NOT NEW.assistant_kind OR
+     OLD.assistant_id IS NOT NEW.assistant_id OR
+     OLD.persona_memory_mode IS NOT NEW.persona_memory_mode OR
+     OLD.scope_type IS NOT NEW.scope_type OR
+     OLD.workspace_id IS NOT NEW.workspace_id OR
+     OLD.state IS NOT NEW.state OR
+     OLD.topic_label IS NOT NEW.topic_label OR
+     OLD.topic_label_source IS NOT NEW.topic_label_source OR
+     OLD.topic_last_tagged_at IS NOT NEW.topic_last_tagged_at OR
+     OLD.topic_last_tagged_message_id IS NOT NEW.topic_last_tagged_message_id OR
+     OLD.cluster_id IS NOT NEW.cluster_id OR
+     OLD.source IS NOT NEW.source OR
+     OLD.external_ref IS NOT NEW.external_ref OR
+     OLD.runtime_backend IS NOT NEW.runtime_backend OR
+     OLD.discovery_owner IS NOT NEW.discovery_owner OR
+     OLD.discovery_entity_id IS NOT NEW.discovery_entity_id OR
+     OLD.system_prompt IS NOT NEW.system_prompt OR
+     OLD.last_modified IS NOT NEW.last_modified OR
+     OLD.version IS NOT NEW.version)
+BEGIN
+  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
+  VALUES('conversations',NEW.id,'update',NEW.last_modified,NEW.client_id,NEW.version,
+         json_object('id',NEW.id,'root_id',NEW.root_id,'forked_from_message_id',NEW.forked_from_message_id,
+                     'parent_conversation_id',NEW.parent_conversation_id,'character_id',NEW.character_id,
+                     'assistant_kind',NEW.assistant_kind,'assistant_id',NEW.assistant_id,
+                     'persona_memory_mode',NEW.persona_memory_mode,'scope_type',NEW.scope_type,
+                     'workspace_id',NEW.workspace_id,'state',NEW.state,'topic_label',NEW.topic_label,
+                     'topic_label_source',NEW.topic_label_source,'topic_last_tagged_at',NEW.topic_last_tagged_at,
+                     'topic_last_tagged_message_id',NEW.topic_last_tagged_message_id,'cluster_id',NEW.cluster_id,
+                     'source',NEW.source,'external_ref',NEW.external_ref,
+                     'runtime_backend',NEW.runtime_backend,'discovery_owner',NEW.discovery_owner,
+                     'discovery_entity_id',NEW.discovery_entity_id,'system_prompt',NEW.system_prompt,
+                     'title',NEW.title,'rating',NEW.rating,'created_at',NEW.created_at,'last_modified',NEW.last_modified,
+                     'deleted',NEW.deleted,'client_id',NEW.client_id,'version',NEW.version));
+END;
+
+CREATE TRIGGER conversations_sync_delete
+AFTER UPDATE ON conversations
+WHEN OLD.deleted = 0 AND NEW.deleted = 1
+BEGIN
+  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
+  VALUES('conversations',NEW.id,'delete',NEW.last_modified,NEW.client_id,NEW.version,
+         json_object('id',NEW.id,'deleted',NEW.deleted,'last_modified',NEW.last_modified,
+                     'version',NEW.version,'client_id',NEW.client_id));
+END;
+
+CREATE TRIGGER conversations_sync_undelete
+AFTER UPDATE ON conversations
+WHEN OLD.deleted = 1 AND NEW.deleted = 0
+BEGIN
+  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
+  VALUES('conversations',NEW.id,'update',NEW.last_modified,NEW.client_id,NEW.version,
+         json_object('id',NEW.id,'root_id',NEW.root_id,'forked_from_message_id',NEW.forked_from_message_id,
+                     'parent_conversation_id',NEW.parent_conversation_id,'character_id',NEW.character_id,
+                     'assistant_kind',NEW.assistant_kind,'assistant_id',NEW.assistant_id,
+                     'persona_memory_mode',NEW.persona_memory_mode,'scope_type',NEW.scope_type,
+                     'workspace_id',NEW.workspace_id,'state',NEW.state,'topic_label',NEW.topic_label,
+                     'topic_label_source',NEW.topic_label_source,'topic_last_tagged_at',NEW.topic_last_tagged_at,
+                     'topic_last_tagged_message_id',NEW.topic_last_tagged_message_id,'cluster_id',NEW.cluster_id,
+                     'source',NEW.source,'external_ref',NEW.external_ref,
+                     'runtime_backend',NEW.runtime_backend,'discovery_owner',NEW.discovery_owner,
+                     'discovery_entity_id',NEW.discovery_entity_id,'system_prompt',NEW.system_prompt,
+                     'title',NEW.title,'rating',NEW.rating,'created_at',NEW.created_at,'last_modified',NEW.last_modified,
+                     'deleted',NEW.deleted,'client_id',NEW.client_id,'version',NEW.version));
+END;
+
+UPDATE db_schema_version
+   SET version = 18
+ WHERE schema_name = 'rag_char_chat_schema'
+   AND version = 17;
+"""
+
+    def __init__(self, db_path: Union[str, Path], client_id: str,
                  check_integrity_on_startup: bool = False):
         """
         Initializes the CharactersRAGDB instance.
@@ -2980,6 +3088,34 @@ UPDATE db_schema_version
             logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V16→V17] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V16 to V17 for '{self._SCHEMA_NAME}': {e}") from e
 
+    def _migrate_from_v17_to_v18(self, conn: sqlite3.Connection):
+        """
+        Migrates the database schema from version 17 to version 18.
+
+        This migration adds a nullable ``system_prompt`` column to
+        ``conversations`` for the native Console per-session system prompt
+        feature, and redefines the ``conversations_sync_*`` triggers so edits
+        to the new column are reflected in ``sync_log``.
+        """
+        logger.info(f"Migrating schema from V17 to V18 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        try:
+            conn.executescript(self._MIGRATE_V17_TO_V18_SQL)
+            logger.debug(f"[{self._SCHEMA_NAME} V17→V18] Migration script executed.")
+
+            final_version = self._get_db_version(conn)
+            if final_version != 18:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V17→V18] Migration version check failed. Expected 18, got: {final_version}"
+                )
+
+            logger.info(f"[{self._SCHEMA_NAME} V17→V18] Migration completed successfully for DB: {self.db_path_str}.")
+        except sqlite3.Error as e:
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V17→V18] Migration failed: {e}")
+            raise SchemaError(f"Migration from V17 to V18 failed for '{self._SCHEMA_NAME}': {e}") from e
+        except Exception as e:
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V17→V18] Unexpected error during migration: {e}")
+            raise SchemaError(f"Unexpected error migrating from V17 to V18 for '{self._SCHEMA_NAME}': {e}") from e
+
     def _migrate_from_v7_to_v8(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 7 to version 8.
@@ -3065,6 +3201,7 @@ UPDATE db_schema_version
                     14: self._migrate_from_v14_to_v15,
                     15: self._migrate_from_v15_to_v16,
                     16: self._migrate_from_v16_to_v17,
+                    17: self._migrate_from_v17_to_v18,
                 }
 
                 if current_db_version == 0:
@@ -4250,6 +4387,7 @@ UPDATE db_schema_version
             discovery_owner=conv_data.get("discovery_owner"),
             discovery_entity_id=conv_data.get("discovery_entity_id"),
         )
+        system_prompt = self._normalize_nullable_text(conv_data.get('system_prompt'))
 
         now = self._get_current_utc_timestamp_iso()
         query = """
@@ -4257,16 +4395,16 @@ UPDATE db_schema_version
                                            character_id, assistant_kind, assistant_id, persona_memory_mode, \
                                            scope_type, workspace_id, state, topic_label, topic_label_source, \
                                            topic_last_tagged_at, topic_last_tagged_message_id, cluster_id, source, external_ref, \
-                                           runtime_backend, discovery_owner, discovery_entity_id, \
+                                           runtime_backend, discovery_owner, discovery_entity_id, system_prompt, \
                                            title, rating, created_at, last_modified, client_id, version, deleted) \
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0) \
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0) \
                 """ # created_at added
         params = (
             conv_id, root_id, conv_data.get('forked_from_message_id'),
             conv_data.get('parent_conversation_id'), character_id, assistant_kind, assistant_id, persona_memory_mode,
             scope_type, workspace_id, state, topic_label, topic_label_source,
             topic_last_tagged_at, topic_last_tagged_message_id, cluster_id, source, external_ref,
-            runtime_backend, discovery_owner, discovery_entity_id,
+            runtime_backend, discovery_owner, discovery_entity_id, system_prompt,
             conv_data.get('title'), conv_data.get('rating'),
             now, now, client_id # created_at, last_modified, client_id
         )
@@ -4854,7 +4992,7 @@ UPDATE db_schema_version
                            persona_memory_mode, scope_type, workspace_id, state, topic_label,
                            topic_label_source, topic_last_tagged_at, topic_last_tagged_message_id,
                            cluster_id, source, external_ref,
-                           runtime_backend, discovery_owner, discovery_entity_id
+                           runtime_backend, discovery_owner, discovery_entity_id, system_prompt
                     FROM conversations
                     WHERE id = ?
                     """,
@@ -4944,6 +5082,10 @@ UPDATE db_schema_version
                 if 'external_ref' in update_data:
                     external_ref = self._normalize_nullable_text(update_data.get('external_ref'))
 
+                system_prompt = current_state['system_prompt']
+                if 'system_prompt' in update_data:
+                    system_prompt = self._normalize_nullable_text(update_data.get('system_prompt'))
+
                 if runtime_update_requested:
                     runtime_backend, discovery_owner, discovery_entity_id = self._normalize_conversation_runtime_visibility(
                         runtime_backend=update_data.get("runtime_backend", current_state["runtime_backend"]),
@@ -4999,6 +5141,9 @@ UPDATE db_schema_version
                 if 'external_ref' in update_data:
                     fields_to_update_sql.append("external_ref = ?")
                     params_for_set_clause.append(external_ref)
+                if 'system_prompt' in update_data:
+                    fields_to_update_sql.append("system_prompt = ?")
+                    params_for_set_clause.append(system_prompt)
                 if runtime_update_requested:
                     fields_to_update_sql.extend([
                         "runtime_backend = ?",

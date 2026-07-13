@@ -160,6 +160,12 @@ class ConsoleSessionSettings:
     streaming: bool = True
     persona_label: str = "General"
     character_label: str = ""
+    #: Optional per-session system prompt prepended as the first provider
+    #: message on every native Console send (submit/retry/regenerate/continue).
+    #: Defaults to ``None`` (native Console sends no system message unless a
+    #: user explicitly sets one for this session) -- it is never seeded from
+    #: ``[chat_defaults].system_prompt``.
+    system_prompt: str | None = None
     #: Provenance of this snapshot: ``"derived"`` for config-derived defaults
     #: (refreshable when config changes while the session is unused) vs
     #: ``"user"`` for explicit user selections (never auto-replaced).
