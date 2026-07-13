@@ -84,12 +84,16 @@ max_images = 5 }`), app process restarted:
   background + underline, non-obscuring contract): inline action row shows
   Copy / Edit / Save as… / regenerate / continue / rate / delete / and the
   image-specific "Save Image" action.
-- resume-chip-rehydrated.png — textual-serve killed and restarted (new
-  server on :9108, fresh app process), conversation resumed from its rail
-  row ("Describe this ima… saved chat - 1m"): the image chip renders after
-  rehydration — but with a degraded label, see Defect 1.
+- resume-chip-rehydrated.png — textual-serve killed and restarted (fresh
+  app process serving HEAD 8da69f3f), conversation resumed from its rail
+  row ("Describe this ima… active session"): the image chip renders after
+  rehydration reading `🖼 image/png · 184 B`. Re-captured 2026-07-12 after
+  the Defect 1 fix (see Defect 1 — FIXED); the earlier capture showed the
+  bare `🖼 image/png`.
 - resume-message-selected.png — the rehydrated message selected in the
-  resumed session: action row with "Save Image" available after relaunch.
+  resumed session: chip still reads `🖼 image/png · 184 B`, and the inline
+  action row exposes "Save Image" after relaunch (Copy / Edit / Save as… /
+  regenerate / --> / rate / delete / Save Image). Re-captured 2026-07-12.
 - save-image-clicked.png — "Save Image" clicked in the resumed session:
   tooltip "Save image to disk." and toast "Image saved to
   /private/tmp/tldw-qa-attach-20260712/Downloads/console_image_20260712_232457.png".
@@ -99,19 +103,23 @@ max_images = 5 }`), app process restarted:
 
 ## Defects found
 
-1. MINOR — rehydrated chip label loses filename/size. After relaunch+resume
-   the chip renders `🖼 image/png` instead of `🖼 red-square.png · 184 B`.
-   Root cause: `_console_messages_from_conversation_tree`
+1. MINOR — FIXED in 8da69f3f. rehydrated chip label previously lost the
+   filename/size: after relaunch+resume the chip rendered a bare
+   `🖼 image/png` instead of a labeled chip. Root cause was that
+   `_console_messages_from_conversation_tree`
    (tldw_chatbook/UI/Screens/chat_screen.py:2138-2167) rebuilds resumed
    messages with `image_data`/`image_mime_type` from the DB row but never
-   sets `attachment_label`, so `_message_image_chip`
-   (tldw_chatbook/Widgets/Console/console_transcript.py:88-93) falls back to
-   the mime type. In-process screen-state save/restore DOES carry
-   `attachment_label` (chat_screen.py:5633-5676), so the loss only shows
-   after a DB rehydration. Save Image still works after resume (it re-fetches
-   image bytes by persisted message id). Repro: attach image → send → quit →
-   relaunch → resume conversation → chip label reads "image/png".
-   Not a walk-stopper; flagged for the approval gate.
+   sets `attachment_label` (the DB never stored it), so `_message_image_chip`
+   (tldw_chatbook/Widgets/Console/console_transcript.py) fell back to the
+   bare mime type. Fix: `_message_image_chip` now synthesizes
+   `f"{mime} · {size}"` from the persisted bytes when the label is missing
+   but `image_data` is present. The re-captured resume-chip-rehydrated.png /
+   resume-message-selected.png (2026-07-12, fresh process serving 8da69f3f)
+   show `🖼 image/png · 184 B` — a real mime+size label instead of nothing.
+   The synthesized label is generic (mime, not the original "red-square.png")
+   because the DB never persisted the filename; that is by design for the
+   display-side fallback. Save Image still works after resume (re-fetches
+   image bytes by persisted message id).
 
 2. OBSERVATION (possibly pre-existing design) — the `[failed]` assistant row
    and the "Provider stream failed…" System row do NOT rehydrate on resume;
