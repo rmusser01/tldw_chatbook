@@ -1605,12 +1605,6 @@ class PersonasScreen(BaseAppScreen):
         }
         try:
             record = await service.create_dictionary(payload, mode="local")
-            # create_dictionary ignores strategy (column default); set it after.
-            source_strategy = str(source.get("strategy") or "sorted_evenly")
-            if source_strategy != "sorted_evenly":
-                record = await service.update_dictionary(
-                    int(record["id"]), {"strategy": source_strategy}, mode="local"
-                )
         except ConflictError:
             self._notify("A dictionary with that name already exists.", "error")
             return
@@ -1618,6 +1612,19 @@ class PersonasScreen(BaseAppScreen):
             logger.opt(exception=True).warning("Could not duplicate the dictionary.")
             self._notify(f"Duplicate failed: {exc}", "error")
             return
+        # create_dictionary ignores strategy (column default); set it after.
+        source_strategy = str(source.get("strategy") or "sorted_evenly")
+        if source_strategy != "sorted_evenly":
+            try:
+                record = await service.update_dictionary(
+                    int(record["id"]), {"strategy": source_strategy}, mode="local"
+                )
+            except Exception as exc:
+                logger.opt(exception=True).warning("Could not copy the strategy onto the duplicate.")
+                self._notify(
+                    f"Duplicated, but the strategy could not be copied ({exc}). Set it in Settings.",
+                    "warning",
+                )
         await self._render_dictionary_rows(query="")
         await self._select_dictionary(str(record.get("id")), str(record.get("name") or name))
 

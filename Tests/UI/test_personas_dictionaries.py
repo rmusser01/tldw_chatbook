@@ -759,3 +759,44 @@ class TestDictionaryNewDuplicate:
             await pilot.click("#personas-mode-dictionaries")
             await pilot.pause()
             assert dup.display is True
+
+    async def test_duplicate_survives_failed_strategy_copy(self, mock_app_instance, stub_characters, fake_dict_service):
+        """Verify that a failed strategy copy doesn't orphan the new dictionary."""
+        # Set non-default strategy on source
+        fake_dict_service.records[1]["strategy"] = "character_lore_first"
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+
+            # Monkeypatch update_dictionary to fail
+            original_update = fake_dict_service.update_dictionary
+            async def _failing_update(dictionary_id, request_data, mode="local", **kwargs):
+                raise RuntimeError("strategy update boom")
+
+            fake_dict_service.update_dictionary = _failing_update
+
+            # Click duplicate
+            await pilot.click("#personas-library-duplicate")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            # Restore the original update method
+            fake_dict_service.update_dictionary = original_update
+
+            # Verify the copy EXISTS in the service records
+            copy_rec = next(
+                (r for r in fake_dict_service.records.values() if r["name"] == "Medical Abbrev (copy)"),
+                None
+            )
+            assert copy_rec is not None, "Duplicate dictionary should exist despite strategy update failure"
+
+            # Verify its strategy is still default (update failed, so strategy wasn't changed)
+            assert copy_rec["strategy"] == "sorted_evenly", \
+                f"Strategy should remain default after failed update, but got {copy_rec['strategy']}"
+
+            # Verify the screen selected the new copy (not orphaned)
+            assert screen.state.selected_entity_name == "Medical Abbrev (copy)", \
+                f"Screen should have selected the copy despite update failure, but selected {screen.state.selected_entity_name}"
