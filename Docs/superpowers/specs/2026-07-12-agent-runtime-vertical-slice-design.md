@@ -28,6 +28,11 @@ and MCP (task-201) later register as tool providers through one interface define
 - **Surface:** the existing **Console**. Left conversation tree gains a tiered `[N Sub-Agents]`
   node per conversation; the right status rail becomes an **agent inspector** (agent actions +
   sub-agent list + click-through into any sub-agent's session, with stuck/error surfaced).
+- **Entry point — agent-capable by default:** every Console conversation is agent-capable, like
+  Codex / Claude Code sessions. There is **no agent mode or toggle**: the agent loop *is* the
+  reply-generation engine that replaces the single provider call in the existing send path. A
+  message that needs no tools costs exactly **one provider call** (today's behavior, streamed); the
+  model engages tools/sub-agents only when it decides to.
 - **Runtime:** a new **internal constrained loop** reusing the app's provider path (`chat_api_call`)
   and `tool_executor`. **Not** ACP. (ACP — driving an *external* agent process — stays a possible
   future **alternative agent engine** surfaced through the same Console run/inspector UI; that is a
@@ -90,6 +95,13 @@ the agent calls them. This keeps context lean (the "constrained agent" property)
 attach point for large MCP/Skills catalogs later. Mirrors this harness's own ToolSearch. A run's
 active set is capped (budget) so disclosure can't balloon context.
 
+**Small-catalog shortcut (important for the slice):** forcing `find_tools`→`load_tools`→invoke for a
+handful of built-in tools is 3 wasted round-trips — painful on a slow local model. So when the total
+catalog is **≤ a threshold** (default 8), all tools are disclosed **directly** into the active set
+and the find/load dance is skipped; progressive disclosure engages only once the catalog exceeds the
+threshold (i.e. once MCP/Skills add many tools). The slice thus proves the mechanism *and* stays
+snappy.
+
 ## Runtime loop, tool-calling, and the fallback protocol
 
 Primary agent = model (defaults to the Console session's model) + a default agent system prompt (a
@@ -106,36 +118,76 @@ directly when no tool is needed) + the core tools. The loop:
 **Tool-calling transport** (robustness — local models are unreliable at native function-calling):
 the runtime supports **native tool-calls** where the provider advertises them, and a **text-protocol
 fallback** otherwise — tool schemas are rendered into the context with an instruction to emit a
-fenced ` ```tool_call {json}``` ` block, which the runtime parses. If neither native calls nor a
-parseable block appear, the output is treated as a final answer (graceful degradation — the slice
-still produces a response on a tool-incapable model).
+fenced ` ```tool_call {json}``` ` block, which the runtime parses **defensively** (malformed or
+partial JSON → treated as plain output, never a crash). If neither native calls nor a parseable
+block appear, the output is treated as a final answer (graceful degradation — the slice still
+produces a response on a tool-incapable model).
+
+## Console send path — the agent loop as reply engine
+
+Agent-capability is the default, so the loop **replaces the "produce the assistant reply" step** of
+the Console send path — it does not add a parallel mode. The outer shell is untouched: the composer,
+persisting the user message, auto-titling, and the rail all stay; only the inner "call the provider
+once" step becomes "run the agent loop." Consequences:
+
+- A no-tool message → one provider call, streamed exactly like today.
+- **Retry / regenerate / continue** re-run the loop (they already re-generate the reply).
+- **RAG context and staged context** feed the loop's *initial* message history (the same place they
+  inject today); deeper loop-integration (e.g. a retrieval tool) is a follow-up.
+- **Turn model:** one active run per conversation. While a run is in flight the composer is busy
+  (as during a stream today) and **Stop** cancels; a second message waits for the run to finish.
+- Every `AgentConfig` defaults to the conversation's session model + the default agent system
+  prompt + the built-in tools — no per-conversation setup.
+
+This keeps the slice contained (swap the reply engine, keep the shell) while making the Console
+agent-capable everywhere.
 
 ## Sub-agents — isolation, spawn, budgets
 
 - **Spawn is a tool** (`spawn_subagent(task, ...)`). When the primary calls it, the service starts a
   **child run of the same engine** with a **clean, isolated context** — the sub-agent sees only its
   task string and its own tools, **not** the parent transcript (context hygiene is the point of
-  delegation). It returns a **result string** that becomes the parent's `tool_result`.
+  delegation). It returns a **result string** that becomes the parent's `tool_result` — **capped in
+  size** (an over-long result is truncated with a notice), so a chatty sub-agent can't blow the
+  parent's context.
 - **Depth 1 only** in the slice: a sub-agent's tool set **excludes** `spawn_subagent`.
 - **Sequential** execution (parallel sub-agents are a follow-up).
-- **Fan-out + budgets:** `RunBudget(max_steps, max_wall_seconds, max_subagents, max_active_tools)`
-  bounds every run; the parent enforces `max_subagents` per conversation-run.
+- **Fan-out + budgets:** `RunBudget(max_steps, max_wall_seconds, max_subagents, max_active_tools,
+  max_subagent_result_chars)` bounds every run; the parent enforces `max_subagents` per
+  conversation-run. **Slice defaults are deliberately tight** (e.g. `max_subagents`=2, low
+  `max_steps`) so a run on the local 27B model completes in a demoable time.
 
 ## Stuck, error, and cancellation
 
-- **stuck** := budget trip (max steps or wall-clock) **OR** N identical consecutive tool calls
-  (cheap loop detection, N=3 default). Surfaced in the rail + an inline marker; the run stops.
+- **stuck** := budget trip (max steps or wall-clock) **OR** N identical consecutive tool calls —
+  identical = the same `(tool_name, args)` tuple (N=3 default), so the same tool with *different*
+  args is not falsely flagged. Surfaced in the rail + an inline marker; the run stops.
 - **error** := an unrecoverable provider/tool error; captured into the step log; a failed sub-agent
   spawn returns an error result to the parent and never corrupts the parent run.
 - **cancel** := a hard user **Stop** that cancels the whole tree (primary + any running sub-agent)
   via `should_cancel`; the run runs as a Textual background worker so the UI never blocks; state is
   persisted as `cancelled`.
 
+## Concurrency + persistence model
+
+The run executes in a **Textual background worker** so the UI never blocks. Rules that avoid this
+repo's known SQLite-lock hazards:
+
+- Worker → UI updates flow via `post_message` / reactive state, **never** cross-thread widget
+  mutation.
+- `AgentRunsDB` writes happen from the worker through the DB `transaction()` context manager
+  (serialized); UI reads use a **separate connection**.
+- Step-log updates are debounced/batched (a step append per model turn / tool result, not per token)
+  so the inspector stays live without hammering the DB.
+- Exactly one active run per conversation; **Stop** flips a cancel flag the loop and any running
+  sub-agent poll via `should_cancel`, and the worker persists a `cancelled` terminal state.
+
 ## Permission gate
 
 Every tool invocation passes an allow-list checkpoint in `agent_service` **before** execution —
 even for the safe built-ins, so the checkpoint is not retrofitted. Only tools that are both
-**disclosed** (in the active set) **and allowed** for the agent are callable. This is where the
+**disclosed** (in the active set) **and allowed** for the agent are callable. The allow-list source
+is `AgentConfig.allowed_tools` (defaulting to the full built-in set for the slice). This is where the
 Skills trust model and MCP per-workspace permissions plug in later.
 
 ## Data model — `AgentRunsDB` (dedicated store; option A)
@@ -187,6 +239,18 @@ The primary agent's **user-facing** messages remain normal Console conversation 
 - **Live gate (served, 2050×1240):** a real agent conversation where the primary calls a built-in
   tool **and** spawns a sub-agent that returns a result, rail showing the tree; captured. Per the
   established capture recipe.
+
+## Cross-project coordination
+
+- This branch is off `origin/dev`, which does **not** yet include PR #620 (Library Prompts + Console
+  injection). Both heavily edit `chat_screen.py` and the right rail, so whichever merges second
+  rebases; the plan sequences around whichever lands first.
+- The agent's default system prompt must **compose with** #620's per-session system prompt (its
+  `_leading_system_message`) rather than replace it — once #620 lands, the leading system content is
+  the session system prompt layered with the agent's operating prompt, not one clobbering the other.
+- **MCP** (task-201, the parallel session) and **Skills** (task-200) target the `ToolProvider`
+  capability interface defined here — one socket, two plugs — so the three efforts compose instead
+  of inventing overlapping tool models.
 
 ## Out of scope (named follow-ups)
 
