@@ -1,6 +1,6 @@
 # Roleplay P1a — Dictionaries mode foundation (design)
 
-**Status:** Design approved (brainstorm), pending spec review.
+**Status:** Implemented (P1a).
 **Program:** Personas→Roleplay redesign. P0 (reframe + north-star) MERGED (#619). **P1 = Dictionaries mode**, decomposed into **P1a → P1b → P1c → P1d**, each its own spec → plan → PR. This is **P1a**, the foundation the rest build on.
 **Research input:** `Docs/superpowers/research/2026-07-13-server-dictionaries-port.md` (note: several digest claims were corrected by a ground-truth backend audit — see Backend reality below).
 **North-star contract:** the P0 spec's binding **List → Detail → Try-it** pattern (`Docs/superpowers/specs/2026-07-13-roleplay-p0-reframe-northstar-design.md`, Part A).
