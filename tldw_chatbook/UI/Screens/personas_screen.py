@@ -60,6 +60,15 @@ from ...Widgets.Persona_Widgets.personas_pane_messages import (
     PreviewReplyRequested,
     PreviewResetRequested,
 )
+from ...Widgets.Persona_Widgets.personas_dictionary_detail import (
+    DictionaryEntriesReorderRequested,
+    DictionaryEntryAddRequested,
+    DictionaryEntryDeleteRequested,
+    DictionaryEntryUpdateRequested,
+    DictionarySettingsEdited,
+    DictionarySettingsSaveRequested,
+    PersonasDictionaryDetailWidget,
+)
 from ...Widgets.Persona_Widgets.personas_preview_pane import PersonasPreviewPane
 from ...Widgets.Persona_Widgets.personas_state import MODE_LABELS, PersonasWorkbenchState
 from ...Widgets.workbench_focus import WorkbenchPaneTarget, focus_relative_workbench_pane
@@ -118,6 +127,7 @@ PERSONAS_INSPECTOR_RAIL_HANDLE_WIDTH = 11
 
 #: Center-area widgets toggled by ``_show_center``.
 _CENTER_VIEW_IDS: tuple[str, ...] = (
+    "#personas-dictionary-detail",
     "#ccp-character-card-view",
     "#ccp-character-editor-view",
     "#ccp-persona-card-view",
@@ -343,6 +353,7 @@ class PersonasScreen(BaseAppScreen):
         self._characters: list[dict] = []
         self._profiles: list[dict] = []
         self._dictionaries_cache: list[dict] = []
+        self._selected_dictionary_version: int | None = None
         self._profile_lookup_recovery_state: DestinationRecoveryState | None = None
         self._search_debounce_timer: Timer | None = None
         # Serializes library renders: the pane's update_rows has two
@@ -435,6 +446,7 @@ class PersonasScreen(BaseAppScreen):
                                 "Open in Library",
                                 id="personas-conversation-open-library",
                             )
+                        yield PersonasDictionaryDetailWidget(id="personas-dictionary-detail")
                         yield PersonasConversationTranscriptWidget()
                         yield Static(self._mode_placeholder_text("lore"), id="personas-mode-placeholder")
                     yield PersonasPreviewPane(id="personas-preview-pane")
@@ -1011,7 +1023,11 @@ class PersonasScreen(BaseAppScreen):
             await self._run_guarded(
                 lambda: self._select_profile(message.entity_id, message.entity_name)
             )
-        # Prompts, dictionaries, and lore are wired in follow-up tasks.
+        elif message.entity_kind == "dictionary":
+            await self._run_guarded(
+                lambda: self._select_dictionary(message.entity_id, message.entity_name)
+            )
+        # Prompts and lore are wired in follow-up tasks.
 
     async def _select_character(self, entity_id: str, entity_name: str) -> None:
         self.state.select_entity(
@@ -1068,6 +1084,36 @@ class PersonasScreen(BaseAppScreen):
         await inspector.show_conversations(())
         # Profiles have no first_message concept; start the preview empty.
         await self.preview.reset("")
+
+    async def _select_dictionary(self, entity_id: str, entity_name: str) -> None:
+        """Load one dictionary into the center detail; inspector shows the selection."""
+        service = self._dictionary_scope_service()
+        if service is None:
+            self._notify("Dictionaries service is not configured.", "error")
+            return
+        try:
+            record = await service.get_dictionary(int(entity_id), mode="local")
+        except Exception as exc:
+            logger.opt(exception=True).warning(f"Could not load dictionary {entity_id}.")
+            self._notify(f"Could not load dictionary: {exc}", "error")
+            return
+        self._edit_mode = "view"
+        self.state.has_unsaved_changes = False
+        raw_version = record.get("version")
+        self._selected_dictionary_version = int(raw_version) if raw_version is not None else None
+        self.state.select_entity(
+            entity_kind="dictionary", entity_id=entity_id, entity_name=entity_name
+        )
+        detail = self.query_one(PersonasDictionaryDetailWidget)
+        detail.load_dictionary(record)
+        self._show_center("#personas-dictionary-detail")
+        library = self.query_one(PersonasLibraryPane)
+        library.mark_active_row("dictionary", entity_id)
+        inspector = self.query_one(PersonasInspectorPane)
+        inspector.show_selection(name=entity_name, kind="Dictionary", authority="Local")
+        self._sync_inspector_console_actions()
+        self._update_title()
+        self._update_status_row()
 
     # ===== Saved conversations =====
 
@@ -1170,6 +1216,8 @@ class PersonasScreen(BaseAppScreen):
             return "unsaved edits"
         if not self.state.selected_entity_id:
             return "select an item"
+        if self.state.selected_entity_kind == "dictionary":
+            return "attach arrives in a later update"
         if self.state.selected_entity_kind not in ("character", "persona_profile"):
             return "select a character or persona"
         return "unavailable"

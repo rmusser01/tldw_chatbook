@@ -495,3 +495,55 @@ class TestDictionaryDetailWidget:
             await pilot.pause()
             edited = [m for m in app.messages if isinstance(m, DictionarySettingsEdited)]
             assert len(edited) >= 1  # a real user change fires
+
+
+class TestDictionarySelection:
+    async def test_select_shows_detail_and_inspector(self, mock_app_instance, stub_characters, fake_dict_service):
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_inspector_pane import PersonasInspectorPane
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_dictionary_detail import (
+            PersonasDictionaryDetailWidget,
+        )
+        from textual.widgets import DataTable
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _enter_dictionaries(pilot)
+            rows = screen.query_one("#personas-library-rows", ListView)
+            rows.index = 0
+            rows.action_select_cursor()
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            detail = screen.query_one(PersonasDictionaryDetailWidget)
+            assert detail.display is True
+            assert screen.query_one("#personas-dict-name", Input).value == "Medical Abbrev"
+            assert screen.query_one("#personas-dict-entries-table", DataTable).row_count == 2
+            inspector = screen.query_one(PersonasInspectorPane)
+            assert "Medical Abbrev" in str(
+                inspector.query_one("#personas-selected-name", Static).renderable
+            )
+            assert "Dictionary" in str(
+                inspector.query_one("#personas-selected-kind", Static).renderable
+            )
+            assert screen.state.selected_entity_kind == "dictionary"
+            # Console actions blocked with the HONEST dictionary reason, not
+            # "select a character or persona" while a dictionary IS selected.
+            assert not screen._console_action_allowed()
+            assert screen._console_action_block_reason() == "attach arrives in a later update"
+
+    async def test_mode_switch_clears_detail(self, mock_app_instance, stub_characters, fake_dict_service):
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_dictionary_detail import (
+            PersonasDictionaryDetailWidget,
+        )
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _enter_dictionaries(pilot)
+            rows = screen.query_one("#personas-library-rows", ListView)
+            rows.index = 0
+            rows.action_select_cursor()
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.click("#personas-mode-characters")
+            await pilot.pause()
+            assert screen.query_one(PersonasDictionaryDetailWidget).display is False
