@@ -42,6 +42,7 @@ class LibraryRow:
     kind: PersonaEntityKind
     name: str
     is_unsaved: bool = False
+    meta: str | None = None
 
 
 class PersonasLibraryPane(Vertical):
@@ -82,6 +83,19 @@ class PersonasLibraryPane(Vertical):
         min-height: 6;
         text-wrap: wrap;
         text-overflow: clip;
+    }
+
+    PersonasLibraryPane #personas-library-rows ListItem.personas-library-row.personas-library-row-tall {
+        height: 2 !important;
+        min-height: 2 !important;
+    }
+
+    PersonasLibraryPane #personas-library-rows ListItem.personas-library-row.personas-library-row-tall Vertical {
+        height: 2 !important;
+    }
+
+    PersonasLibraryPane #personas-library-rows ListItem.personas-library-row.personas-library-row-tall Static {
+        height: 1 !important;
     }
     """
 
@@ -200,9 +214,26 @@ class PersonasLibraryPane(Vertical):
             classes = "personas-library-row console-action-subdued"
             if row.is_unsaved:
                 classes += " is-unsaved"
-            items.append(
-                ListItem(Static(row.name, markup=False), id=dom_id, classes=classes)
-            )
+            if row.meta:
+                classes += " personas-library-row-tall"
+                item = ListItem(
+                    Vertical(
+                        Static(row.name, markup=False),
+                        Static(
+                            row.meta,
+                            markup=False,
+                            classes="personas-library-row-meta destination-purpose",
+                        ),
+                    ),
+                    id=dom_id,
+                    classes=classes,
+                )
+                item.styles.height = 2
+                items.append(item)
+            else:
+                items.append(
+                    ListItem(Static(row.name, markup=False), id=dom_id, classes=classes)
+                )
         await list_view.extend(items)
         if recovery_copy:
             count = f"{noun.capitalize()} unavailable"
