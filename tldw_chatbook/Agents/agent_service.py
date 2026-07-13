@@ -111,6 +111,11 @@ class AgentService:
 
         active, offer_find_load = initial_disclosure(
             self.registry, config.budget)
+        # Q7(a): the initial active set must respect the allow-list too —
+        # the permission gate is a backstop, not the only checkpoint. A
+        # disallowed tool must never even be disclosed to the model.
+        active = [schema for schema in active
+                 if schema.name in config.allowed_tools]
         disclosed_names = {schema.name for schema in active}
         runtime_schemas = []
         if config.budget.max_subagents > 0:
@@ -118,12 +123,34 @@ class AgentService:
         if offer_find_load:
             runtime_schemas.extend([FIND_TOOLS_SCHEMA, LOAD_TOOLS_SCHEMA])
 
+        def find_tools(query: str):
+            # Q7(b): never surface a disallowed tool through find_tools,
+            # even though it exists in the catalog.
+            return [entry for entry in self.registry.find(query)
+                   if entry.name in config.allowed_tools]
+
         def load_schemas(ids: list):
             schemas = []
             for tool_id in ids:
                 try:
                     schema = self.registry.load_schema(str(tool_id))
                 except KeyError:
+                    continue
+                # Q7(c): never disclose a tool outside the allow-list.
+                if schema.name not in config.allowed_tools:
+                    continue
+                # G3: an id whose name is already disclosed must be
+                # filtered out BEFORE the room slice below — otherwise a
+                # redundant re-load of an already-active tool both eats a
+                # room slot it doesn't need and (because the loop's own
+                # `active` list already holds the schema) desyncs this
+                # gate's disclosed_names from the loop's actual active-set
+                # size, letting the loop append a duplicate. Filtering
+                # first keeps the two lists in lockstep at the cost of a
+                # generic "No valid tools found to load" message on
+                # redundant re-loads — an acceptable trade-off for cap
+                # integrity (see PR review decision).
+                if schema.name in disclosed_names:
                     continue
                 schemas.append(schema)
             # Mirror the loop's own room-slicing (agent_runtime.py's
@@ -170,7 +197,7 @@ class AgentService:
                 config, api_endpoint, runtime_schemas),
             invoke_tool=self._make_invoke_tool(config, disclosed_names),
             spawn=spawn,
-            find_tools=self.registry.find,
+            find_tools=find_tools,
             load_schemas=load_schemas,
             should_cancel=should_cancel,
             clock=self.clock,
@@ -192,7 +219,34 @@ class AgentService:
                  should_cancel: Callable[[], bool] = lambda: False,
                  supersede_run_id: str | None = None
                  ) -> tuple[str, RunOutcome]:
-        """Run one primary-agent turn; returns (run_id, outcome)."""
+        """Run one primary-agent turn (and any sub-agents it spawns).
+
+        Wires the pure ``run_agent_loop`` to the real provider, the tool
+        catalog/permission gate, and ``AgentRunsDB`` persistence. Runs
+        synchronously — callers put this on a worker thread.
+
+        Args:
+            conversation_id: The owning Console conversation's id; also
+                used to scope sub-agent fan-out counting.
+            messages: The initial message history (role/content dicts) to
+                seed the loop with — typically the conversation transcript
+                plus any staged/RAG context.
+            config: The primary agent's model, system prompt, allow-list,
+                and budget.
+            api_endpoint: The provider endpoint identifier passed through
+                to ``chat_api_call``.
+            should_cancel: Polled at step and tool-call boundaries; once it
+                returns ``True`` the whole run tree stops and persists as
+                ``cancelled``.
+            supersede_run_id: When set, marks that prior run (and its
+                sub-agent tree) ``superseded`` before starting this run —
+                used by retry/regenerate/continue.
+
+        Returns:
+            A ``(run_id, outcome)`` tuple: the new primary run's id and its
+            terminal ``RunOutcome``. The run record (and any sub-agent run
+            records) are persisted before this returns.
+        """
         if supersede_run_id:
             self.db.supersede_run_tree(supersede_run_id)
         return self._run_one(

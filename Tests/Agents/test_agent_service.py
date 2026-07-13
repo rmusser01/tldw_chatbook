@@ -5,9 +5,9 @@ import json
 import pytest
 
 from tldw_chatbook.Agents.agent_models import (
-    DIRECT_DISCLOSE_THRESHOLD, LOAD_TOOLS_NAME, RUN_DONE, RUN_STUCK,
-    SPAWN_TOOL_NAME, AgentConfig, RunBudget, ToolCatalogEntry, ToolResult,
-    ToolSchema,
+    DIRECT_DISCLOSE_THRESHOLD, FIND_TOOLS_NAME, LOAD_TOOLS_NAME, RUN_DONE,
+    RUN_STUCK, SPAWN_TOOL_NAME, AgentConfig, RunBudget, ToolCatalogEntry,
+    ToolResult, ToolSchema,
 )
 from tldw_chatbook.Agents.agent_service import (
     SUBAGENT_SYSTEM_PROMPT, AgentService,
@@ -274,3 +274,85 @@ def test_provider_exception_persists_error_status(db):
     assert run["status"] == "error"
     assert any("connection refused" in (s.get("summary") or "")
                for s in run["steps"])
+
+
+# --- G3: reloading an already-active tool must not consume active-tool
+# room or desync the gate's disclosed set from the loop's own `active`
+# list. ---
+
+def test_reload_already_disclosed_tool_does_not_desync_and_admits_next(db):
+    registry = ToolCatalogRegistry()
+    registry.register_provider(FakeBigProvider())
+    allowed = tuple(f"t{i}" for i in range(DIRECT_DISCLOSE_THRESHOLD + 3))
+    config = AgentConfig(
+        model="m", system_prompt="s", allowed_tools=allowed,
+        budget=RunBudget(max_active_tools=2, max_steps=30))
+    chat = ScriptedChat([
+        fence(LOAD_TOOLS_NAME, {"ids": ["fake:t0"]}),
+        fence(LOAD_TOOLS_NAME, {"ids": ["fake:t0"]}),   # re-load: no room eaten
+        fence(LOAD_TOOLS_NAME, {"ids": ["fake:t1"]}),   # must still be admitted
+        fence("t1", {}),
+        "done",
+    ])
+    service = AgentService(db=db, registry=registry, chat_call=chat)
+    run_id, outcome = service.run_turn(
+        conversation_id="c", messages=[{"role": "user", "content": "q"}],
+        config=config, api_endpoint="llama_cpp")
+
+    assert outcome.status == RUN_DONE and outcome.final_text == "done"
+    run = db.get_run(run_id)
+    tool_results = [s for s in run["steps"] if s["kind"] == "tool_result"]
+    load1, load2, load3, t1_result = tool_results
+    assert load1["result"] == "loaded: t0"
+    # Re-loading t0 is filtered out before the room slice — the generic
+    # "no valid tools" message is an acceptable, cap-integrity-preserving
+    # trade-off per the review decision (it's indistinguishable from
+    # "all ids invalid" from the loop's point of view).
+    assert load2["result"] == "ERROR: No valid tools found to load"
+    # t1 must be genuinely admitted — the loop's active list was never
+    # polluted with a duplicate t0 entry, so room for t1 remains.
+    assert load3["result"] == "loaded: t1"
+    assert t1_result["result"] == "invoked fake:t1"
+
+
+# --- Q7: disclosure (initial active set, find_tools, load_tools) must
+# respect config.allowed_tools; the permission gate is a backstop, not
+# the only checkpoint. ---
+
+def test_initial_disclosure_excludes_disallowed_tools(db):
+    narrow = AgentConfig(model="m", system_prompt="s",
+                         allowed_tools=("calculator", SPAWN_TOOL_NAME))
+    service, chat = make_service(db, ["ok"])
+    service.run_turn(conversation_id="c", messages=[
+        {"role": "user", "content": "q"}], config=narrow,
+        api_endpoint="llama_cpp")
+    system = chat.calls[0]["messages_payload"][0]["content"]
+    assert "calculator" in system
+    assert "get_current_datetime" not in system
+
+
+def test_find_and_load_tools_respect_allowed_tools(db):
+    registry = ToolCatalogRegistry()
+    registry.register_provider(FakeBigProvider())
+    # Catalog has t0..t10; only t0 is allowed even though t1 exists.
+    config = AgentConfig(
+        model="m", system_prompt="s", allowed_tools=("t0",),
+        budget=RunBudget(max_active_tools=5, max_steps=20))
+    chat = ScriptedChat([
+        fence(FIND_TOOLS_NAME, {"query": "t"}),
+        fence(LOAD_TOOLS_NAME, {"ids": ["fake:t0", "fake:t1"]}),
+        fence("t1", {}),
+        "done",
+    ])
+    service = AgentService(db=db, registry=registry, chat_call=chat)
+    run_id, outcome = service.run_turn(
+        conversation_id="c", messages=[{"role": "user", "content": "q"}],
+        config=config, api_endpoint="llama_cpp")
+    assert outcome.status == RUN_DONE
+    run = db.get_run(run_id)
+    tool_results = [s for s in run["steps"] if s["kind"] == "tool_result"]
+    find_result, load_result, t1_result = tool_results
+    assert "t0" in find_result["result"]
+    assert "t1" not in find_result["result"]
+    assert load_result["result"] == "loaded: t0"
+    assert "Tool not permitted: t1" in t1_result["result"]
