@@ -6450,6 +6450,36 @@ class ChatScreen(BaseAppScreen):
             return
         composer.clear_draft()
 
+    def _console_pending_image_attachment(self):
+        """Return the active session's staged image attachment, if any."""
+        store = self._console_chat_store
+        if store is None or store.active_session_id is None:
+            return None
+        try:
+            pending = store.pending_attachment(store.active_session_id)
+        except KeyError:
+            return None
+        if (
+            pending is None
+            or pending.insert_mode != "attachment"
+            or pending.file_type != "image"
+            or pending.data is None
+        ):
+            return None
+        return pending
+
+    def _console_attachment_blocked_reason(self) -> str:
+        """Return blocked-send copy when a staged image can't reach the model."""
+        from tldw_chatbook.Chat.attachment_core import vision_block_reason
+
+        if self._console_pending_image_attachment() is None:
+            return ""
+        effective_settings, _readiness = self._active_console_settings_readiness()
+        return (
+            vision_block_reason(effective_settings.provider, effective_settings.model)
+            or ""
+        )
+
     def _console_send_blocked_reason(self) -> str:
         """Return a user-facing reason if Console send cannot safely run."""
         pending_launch = self._consume_pending_console_launch()
@@ -6463,6 +6493,9 @@ class ChatScreen(BaseAppScreen):
         _readiness_settings, readiness = self._active_console_settings_readiness()
         if not readiness.native_send_supported:
             return f"Console send blocked: {readiness.detail}"
+        attachment_reason = self._console_attachment_blocked_reason()
+        if attachment_reason:
+            return attachment_reason
         return ""
 
     async def handle_console_send_message(self, event: Button.Pressed) -> None:
@@ -6477,7 +6510,7 @@ class ChatScreen(BaseAppScreen):
             draft = composer.draft_text()
         except QueryError:
             draft = ""
-        if not draft.strip():
+        if not draft.strip() and self._console_pending_image_attachment() is None:
             self._focus_console_composer_if_needed(force=True)
             return
         self._dismiss_console_guidance()
@@ -7360,15 +7393,26 @@ class ChatScreen(BaseAppScreen):
             run_active = bool(getattr(run_state, "is_stop_allowed", False))
             send_blocked = not bool(getattr(run_state, "is_send_allowed", True))
         setup_blocked_reason = self._console_setup_blocked_reason()
-        send_blocked = send_blocked or bool(setup_blocked_reason)
+        attachment_blocked_reason = self._console_attachment_blocked_reason()
+        send_blocked = (
+            send_blocked
+            or bool(setup_blocked_reason)
+            or bool(attachment_blocked_reason)
+        )
+
+        pending = self._console_pending_image_attachment()
 
         composer.sync_action_state(
-            has_draft=bool(composer.draft_text().strip()),
+            has_draft=bool(composer.draft_text().strip()) or pending is not None,
             run_active=run_active,
             can_save_chatbook=can_save_chatbook,
             send_blocked=send_blocked,
-            setup_blocked_reason=setup_blocked_reason,
+            setup_blocked_reason=setup_blocked_reason or attachment_blocked_reason,
         )
+        # sync_action_state resets the attach button's tooltip to generic copy
+        # (console_composer_bar.py L303); apply the pending-attachment label
+        # after, not before, so "Attached: ..." wins over the generic tooltip.
+        composer.set_pending_attachment_label(pending.label if pending else None)
 
     def _hide_console_legacy_chat_inputs(self) -> None:
         """Keep Console on a single native composer surface."""

@@ -6225,3 +6225,55 @@ async def test_console_attachment_worker_stages_image_and_inlines_text(tmp_path)
             assert "notes.md" in composer._display_draft_text()
         finally:
             attachment_core.load_processed_file = original
+
+
+def _staged_image_attachment():
+    from tldw_chatbook.Chat.attachment_core import PendingAttachment
+
+    return PendingAttachment(
+        file_path="/tmp/photo.png",
+        display_name="photo.png",
+        file_type="image",
+        insert_mode="attachment",
+        data=b"\x89PNG-bytes",
+        mime_type="image/png",
+        original_size=11,
+        processed_size=11,
+    )
+
+
+@pytest.mark.asyncio
+async def test_pending_image_on_non_vision_model_blocks_send(monkeypatch):
+    import tldw_chatbook.Chat.attachment_core as attachment_core
+
+    monkeypatch.setattr(attachment_core, "is_vision_capable", lambda p, m: False)
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.set_pending_attachment(session.id, _staged_image_attachment())
+
+        reason = console._console_send_blocked_reason()
+        assert "can't accept images" in reason
+
+
+@pytest.mark.asyncio
+async def test_pending_image_on_vision_model_does_not_block(monkeypatch):
+    import tldw_chatbook.Chat.attachment_core as attachment_core
+
+    monkeypatch.setattr(attachment_core, "is_vision_capable", lambda p, m: True)
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.set_pending_attachment(session.id, _staged_image_attachment())
+
+        assert console._console_attachment_blocked_reason() == ""
