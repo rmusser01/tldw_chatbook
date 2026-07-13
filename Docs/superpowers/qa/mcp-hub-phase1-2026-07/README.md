@@ -400,6 +400,147 @@ All five captures in this evidence set that show a selected rail row now
 render on `530cf9df`/current HEAD and display a legible, non-blank selected
 row label. No new defects observed in this pass.
 
+## UX A-batch re-capture (2026-07-13, HEAD `6de76924`)
+
+Branch `claude/mcp-hub-phase1` advanced from the prior round's HEAD (`a0018a56`)
+through `530cf9df`'s doc round, then **`f78cf10e`** ("fix(mcp-hub): apply five
+approved UX fixes (A1-A5) to MCP Hub Phase 1") and a docs-only commit
+**`6de76924`** (Phase 2 UX-input notes, no app code). Re-captured all eight
+primary screenshots live against `6de76924` in the same worktree
+(`/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/mcp-hub-phase1`),
+same isolated HOME (`/private/tmp/tldw-qa-mcp-hub-20260713`, unchanged seed
+data), same viewport (2050×1240), route-abort non-`127.0.0.1` traffic.
+
+**Driver note (methodology addendum, not an app defect):** a bare
+`Web_Server.serve.run_web_server()` process (as used in every prior round)
+serves textual-serve's stock JS, which never exposes the xterm terminal/driver
+instance to the page (no `window.__drv` or equivalent) — earlier rounds'
+`window.__drv`-based buffer reads only worked because that JS had been
+hand-patched for a *different*, unrelated QA session's worktree. For this
+round the QA driver was rebuilt from `tldw_chatbook.Web_Server.serve`'s own
+public building blocks (`_load_textual_serve_server_class()` +
+`build_chatbook_web_server_class()` — the exact `ChatbookWebServer` subclass
+`run_web_server()` itself instantiates, so the app's own viewport-resize/
+first-byte JS patches still apply) with one QA-only addition: a `statics_path`
+override pointing at a local copy of textual-serve's bundled
+`static/js/textual.js` with a single extra line (`window.__drv=t;`) inserted
+right after the terminal wrapper object is constructed. No `tldw_chatbook`
+source file was modified — only a QA-local copy of the third-party
+textual-serve static bundle, used solely so the Playwright driver could read
+the live xterm buffer as text/cell-attributes instead of parsing screenshots.
+Screenshot pixels are unaffected either way (confirmed byte-for-byte visual
+match against the pre-existing `mcp-servers-overview-mixed` capture before
+any A-batch interaction). Flagging as a methodology detail for the next QA
+round, not an app defect.
+
+### Per-fix visual + programmatic confirmation
+
+Each fix was checked two ways: (1) objectively, by reading the live xterm
+buffer's per-cell style attributes (`bold`/`underline`/`fg`/`bg`) via the
+`window.__drv` hook above — renderer-agnostic, not a screenshot guess: and
+(2) visually, in the corresponding screenshot.
+
+- **A1 (mode-chip focus vs. active-mode underline) — confirmed.** On a fresh
+  MCP mount (`mcp-servers-overview-mixed-2026-07-13.png`), cell-attribute
+  read of the mode-strip row showed **only** "Servers" (the true active mode)
+  carrying `underline=True`; "Tools"/"Permissions"/"Audit" all read
+  `underline=False`. Later in the session, the already-documented (see
+  "Observation", pre-A1) stray-focus artifact recurred — after clicking a
+  rail row, the "Audit" chip picks up focus as a side effect (unrelated to
+  A1's scope, not re-triggered by this fix) — but it now renders with a
+  **background/foreground color swap and bold, with no underline**
+  (`bg`/`fg` shift from the baseline `#1e1e1e`/`#6f6f6f`-family values to
+  `#272727`/`#e2e2e2`; `underline` stays `False` throughout), objectively
+  distinct from "Servers"'s bold-underline active style. Zoomed crop of
+  `mcp-two-click-inspector-refresh-2026-07-13.png`'s mode strip confirms this
+  visually: "Servers" is plain text with an underline; "Audit" has a filled
+  background box and bold text, no underline. Before this fix, both states
+  rendered identically (bold+underline), which is the bug A1 fixes. The
+  recurring stray-focus landing spot itself is unchanged pre-existing
+  behavior, not filed as a new defect (see "Observation" above).
+
+- **A2 (disabled inspector action buttons legible) — confirmed.** On
+  `mcp-local-profile-detail-docs-server-2026-07-13.png`, the disabled
+  "Connect" button reads cell fg `#6f6f6f` / bg `#1e1e1e` — a dim but
+  distinctly non-background gray, clearly legible in a zoomed crop right next
+  to the enabled "View details" button (bright white). Previously this
+  combination (50% opacity stacked on `$text-disabled`) read as functionally
+  invisible.
+
+- **A3 (no internal reason-code/config-flag vocabulary in user copy) —
+  confirmed.** Full-page text search on the docs-server detail capture found
+  zero occurrences of `[runtime_unavailable]` or any other bracketed
+  `ReasonCode` value. The built-in detail capture
+  (`mcp-builtin-server-detail-2026-07-13.png`) shows `Exposes · tools,
+  resources, prompts` in place of the old raw `expose_tools · True` /
+  `expose_resources · True` / `expose_prompts · True` flag dump (verified
+  `"expose_tools"` is absent from the rendered text).
+
+- **A4 (rail rows left-aligned, one hard left edge; built-in label
+  untruncated) — confirmed.** Column analysis of the rail's five rows on
+  fresh mount: every row's Button content starts flush at the same left
+  column immediately after the border + 1-col padding (no more
+  center-justified Button text sitting at different x-offsets per label
+  length). The local-profile rows' labels ("docs-server", "weather-api",
+  "git-tools") and "All servers" (now padded with a matching 2-col gutter)
+  all start their label text at the same column; the built-in row's label
+  starts 2 columns further right only because it carries an extra
+  `⌂` built-in icon before the label (by design, not a misalignment). `⌂
+  tldw_chatbook (built-in)` renders in full with no ellipsis in both the rail
+  and the servers table, in every capture that shows it.
+
+- **A5 (inspector "Why" line, not a repeat of the canvas message) —
+  confirmed.** `mcp-local-profile-detail-docs-server-2026-07-13.png`'s
+  Inspector reads `Why · Not connected` (the humanized `REASON_LABELS`
+  phrase for `RUNTIME_UNAVAILABLE`), distinct from the canvas detail's own
+  `docs-server: 3 tools discovered; not currently connected.` — previously
+  the Inspector just repeated the canvas's `snapshot.message` verbatim with a
+  bracketed reason code appended.
+
+### Defect 1 / Defect 2 fixes still hold
+
+Re-ran both original repros against `6de76924` as part of this pass:
+
+- **Two-click crash (Defect 1):** `mcp-two-click-inspector-refresh-2026-07-13.png`
+  — clicked `docs-server`, then immediately (~150 ms, row coordinates
+  re-resolved live) clicked `tldw_chatbook (built-in)`. No crash, no "Session
+  ended." screen; canvas/Inspector correctly show the built-in server's Ready
+  state, stdio launch line, all three `expose_*` flags (now rendered as
+  `Exposes · tools, resources, prompts`), and all three READY_ACTIONS
+  buttons.
+- **Advanced-panel secret leak (Defect 2):**
+  `mcp-advanced-external-servers-redacted-2026-07-13.png` — Inspector ▸
+  Advanced ▸ Section ▸ "External Servers" with the built-in row selected.
+  Confirmed programmatically against rendered page text: `sk-qa-test-redact-0001`
+  — 0 occurrences; exactly 3 `***` redaction markers (docs-server's
+  `--api-key` arg, weather-api's `env.API_KEY`, weather-api's
+  `env_placeholders.API_KEY`); docs-server's non-secret
+  `env.WORKSPACE_ROOT: $HOME` correctly left unredacted; git-tools unchanged
+  (no secrets).
+
+### Recaptured files (all 8 primary views, same filenames, overwritten in place)
+
+1. `mcp-servers-overview-mixed-2026-07-13.png`
+2. `mcp-local-profile-detail-docs-server-2026-07-13.png`
+3. `mcp-builtin-server-detail-2026-07-13.png`
+4. `mcp-mode-tools-2026-07-13.png`
+5. `mcp-mode-permissions-2026-07-13.png`
+6. `mcp-mode-audit-2026-07-13.png`
+7. `mcp-advanced-external-servers-redacted-2026-07-13.png`
+8. `mcp-two-click-inspector-refresh-2026-07-13.png`
+
+`mcp-defect-duplicate-ids-crash-2026-07-13.png` (historical, pre-fix) and
+`mcp-advanced-external-servers-2026-07-13.png` (historical, pre-redaction-fix)
+were left untouched, as instructed.
+
+### Nothing else observed wrong in this pass
+
+No new defects surfaced while driving all eight views and the two repro
+flows. The only anomaly is the pre-existing, already-documented stray
+mode-strip focus artifact (see "Observation" above and the A1 write-up),
+which now renders with the fixed, visually-distinct focus style rather than
+impersonating the active-mode indicator.
+
 ## Isolated HOME
 
 Left on disk at **`/private/tmp/tldw-qa-mcp-hub-20260713`** (config +
