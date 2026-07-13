@@ -127,3 +127,133 @@ def render_tool_protocol(schemas: list[ToolSchema]) -> str:
         "call another tool the same way or answer the user directly. If no "
         "tool is needed, just answer directly."
     )
+
+
+# --- appended below the protocol code in tldw_chatbook/Agents/agent_runtime.py ---
+
+from dataclasses import dataclass
+from typing import Callable
+
+from .agent_models import (
+    FIND_TOOLS_NAME, LOAD_TOOLS_NAME, LOOP_DETECTION_N, RUN_CANCELLED,
+    RUN_DONE, RUN_STUCK, SPAWN_TOOL_NAME, STEP_ERROR, STEP_MODEL,
+    STEP_SPAWN, STEP_TOOL_CALL, STEP_TOOL_RESULT, AgentConfig, AgentStep,
+    ModelTurn, RunOutcome, ToolCatalogEntry, ToolResult,
+)
+
+
+@dataclass
+class LoopDeps:
+    """Everything impure, injected. The loop itself stays pure."""
+
+    call_model: Callable[[list, tuple], ModelTurn]
+    invoke_tool: Callable[..., ToolResult]
+    spawn: Callable[[str], ToolResult]
+    find_tools: Callable[[str], list]
+    load_schemas: Callable[[list], list]
+    should_cancel: Callable[[], bool]
+    clock: Callable[[], float]
+
+
+def _catalog_lines(entries: list) -> str:
+    if not entries:
+        return "No matching tools."
+    return "\n".join(
+        f"{e.id} — {e.name}: {e.one_line_description}" for e in entries)
+
+
+def run_agent_loop(config: AgentConfig, initial_messages: list[dict],
+                   active_schemas: list, deps: LoopDeps) -> RunOutcome:
+    """Drive think → (tool) → observe until done / stuck / cancelled.
+
+    Message convention (transport-independent): assistant turns append
+    verbatim; tool results append as user-role
+    ``Tool result for {name}: {content}`` lines.
+    """
+    budget = config.budget
+    steps: list[AgentStep] = []
+    messages = list(initial_messages)
+    active = list(active_schemas)
+    started = deps.clock()
+    spawned = 0
+    last_key: tuple | None = None
+    repeat_count = 0
+
+    def add(kind: str, **kw) -> AgentStep:
+        step = AgentStep(index=len(steps), kind=kind, **kw)
+        steps.append(step)
+        return step
+
+    while True:
+        if deps.should_cancel():
+            return RunOutcome(RUN_CANCELLED, steps,
+                              subagents_spawned=spawned)
+        if len(steps) >= budget.max_steps:
+            add(STEP_ERROR, summary="step budget exhausted")
+            return RunOutcome(RUN_STUCK, steps, subagents_spawned=spawned)
+        if deps.clock() - started > budget.max_wall_seconds:
+            add(STEP_ERROR, summary="wall-clock budget exhausted")
+            return RunOutcome(RUN_STUCK, steps, subagents_spawned=spawned)
+
+        turn = deps.call_model(messages, tuple(active))
+        add(STEP_MODEL, summary=turn.text[:200])
+
+        calls = list(turn.tool_calls)
+        if not calls:
+            _visible, fenced = split_visible_text_and_tool_call(turn.text)
+            if fenced is None:
+                return RunOutcome(RUN_DONE, steps, final_text=turn.text,
+                                  subagents_spawned=spawned)
+            calls = [fenced]
+        messages.append({"role": "assistant", "content": turn.text})
+
+        for call in calls:
+            if deps.should_cancel():
+                return RunOutcome(RUN_CANCELLED, steps,
+                                  subagents_spawned=spawned)
+            key = (call.name, json.dumps(call.args, sort_keys=True))
+            repeat_count = repeat_count + 1 if key == last_key else 1
+            last_key = key
+            if repeat_count >= LOOP_DETECTION_N:
+                add(STEP_ERROR,
+                    summary=f"loop detected: {call.name} repeated "
+                            f"{repeat_count}x with identical args")
+                return RunOutcome(RUN_STUCK, steps,
+                                  subagents_spawned=spawned)
+
+            if call.name == SPAWN_TOOL_NAME:
+                task = str(call.args.get("task", ""))
+                if spawned >= budget.max_subagents:
+                    result = ToolResult(
+                        ok=False, error="sub-agent budget exhausted")
+                else:
+                    add(STEP_SPAWN, summary=task[:200],
+                        tool_name=SPAWN_TOOL_NAME, args=dict(call.args))
+                    result = deps.spawn(task)
+                    spawned += 1
+            elif call.name == FIND_TOOLS_NAME:
+                add(STEP_TOOL_CALL, tool_name=call.name,
+                    args=dict(call.args))
+                entries = deps.find_tools(str(call.args.get("query", "")))
+                result = ToolResult(ok=True, content=_catalog_lines(entries))
+            elif call.name == LOAD_TOOLS_NAME:
+                add(STEP_TOOL_CALL, tool_name=call.name,
+                    args=dict(call.args))
+                ids = list(call.args.get("ids", []))
+                loaded = deps.load_schemas(ids)
+                room = budget.max_active_tools - len(active)
+                accepted = loaded[:max(room, 0)]
+                active.extend(accepted)
+                result = ToolResult(ok=True, content="loaded: " + ", ".join(
+                    s.name for s in accepted) if accepted else "no room")
+            else:
+                add(STEP_TOOL_CALL, tool_name=call.name,
+                    args=dict(call.args))
+                result = deps.invoke_tool(call)
+
+            content = result.content if result.ok else f"ERROR: {result.error}"
+            add(STEP_TOOL_RESULT, tool_name=call.name,
+                result=content[:2000])
+            messages.append({
+                "role": "user",
+                "content": f"Tool result for {call.name}: {content}"})
