@@ -1,0 +1,364 @@
+# tldw_chatbook/UI/MCP_Modules/mcp_workbench.py
+"""MCP Hub workbench: rail + mode canvases + inspector assembly."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from loguru import logger
+from textual.app import ComposeResult
+from textual.containers import Container, Horizontal, Vertical
+from textual.widgets import ContentSwitcher, Static
+
+from tldw_chatbook.config import get_cli_setting
+from tldw_chatbook.MCP.readiness import (
+    HubAction,
+    ReadinessSnapshot,
+    builtin_readiness,
+    local_profile_readiness,
+    server_target_readiness,
+)
+from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
+from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCPRail
+from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
+
+MCP_HUB_MODES: dict[str, dict[str, str]] = {
+    "servers": {"label": "Servers", "button_id": "mcp-mode-servers", "placeholder": ""},
+    "tools": {
+        "label": "Tools",
+        "button_id": "mcp-mode-tools",
+        "placeholder": (
+            "Tools mode arrives in a later phase. Until then, a server's tools are "
+            "listed in its Server detail, and tool actions run via Advanced in the inspector."
+        ),
+    },
+    "permissions": {
+        "label": "Permissions",
+        "button_id": "mcp-mode-permissions",
+        "placeholder": (
+            "Permissions mode arrives in a later phase. MCP tools are not yet callable "
+            "from chat, so there is nothing to permit yet."
+        ),
+    },
+    "audit": {
+        "label": "Audit",
+        "button_id": "mcp-mode-audit",
+        "placeholder": (
+            "Audit mode arrives in a later phase. Action results appear inline in the "
+            "inspector's Advanced section for now."
+        ),
+    },
+}
+
+_LEGACY_SECTIONS = [
+    ("Overview", "overview"),
+    ("Inventory", "inventory"),
+    ("External Servers", "external_servers"),
+    ("Governance", "governance"),
+    ("Advanced", "advanced"),
+]
+
+
+class _AdvancedSectionShim:
+    """Shields the inspector's legacy Advanced pane from local-source scoping.
+
+    Phase 1 scoping (see the deviation note above): the control-plane surface
+    only exposes local-source data through source-scoped listing, not a
+    dict-per-section contract — so `load_section()` can come back as a bare
+    list regardless of which section the legacy Advanced pane asked for. The
+    renderers in `unified_mcp_sections.py` all assume a Mapping, and
+    `MCPInspector.set_service_context()`/`on_select_changed()` schedule the
+    section load as a worker with Textual's default `exit_on_error=True` —
+    an unhandled shape mismatch (or a raised exception) there would crash the
+    whole app, not just the Advanced pane. Normalize and fail closed here
+    instead, at the integration seam this task owns, without touching
+    mcp_inspector.py.
+    """
+
+    def __init__(self, service: Any) -> None:
+        self._service = service
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._service, name)
+
+    async def load_section(self, section: str | None = None) -> dict[str, Any]:
+        try:
+            payload = await self._service.load_section(section)
+        except Exception as exc:
+            logger.warning(f"MCP workbench advanced section load failed: {exc}")
+            return {"source": "local", "section": section or "overview", "error": str(exc)}
+        if isinstance(payload, dict):
+            return payload
+        if isinstance(payload, list):
+            if section == "external_servers":
+                # render_external_servers_section reads this key as a list.
+                return {"source": "local", "section": section, "external_servers": payload}
+            # Any other section (notably "overview", eagerly loaded on
+            # mount) only has counts available from this source-scoped
+            # listing; mirror LocalMCPControlService.get_overview()'s shape
+            # so render_overview_section's `dict(...)` calls stay safe.
+            return {
+                "source": "local",
+                "section": section or "overview",
+                "external_servers": {
+                    "profiles": len(payload),
+                    "discovery_snapshots": sum(
+                        1 for item in payload if isinstance(item, dict) and item.get("discovery_snapshot")
+                    ),
+                },
+            }
+        return {"source": "local", "section": section or "overview"}
+
+
+class MCPWorkbench(Container):
+    """Assembles the Phase 1 MCP Hub. Read-only over the control-plane service."""
+
+    DEFAULT_CSS = """
+    MCPWorkbench {
+        width: 100%;
+        height: 1fr;
+        min-height: 0;
+    }
+    #mcp-hub-grid {
+        width: 100%;
+        height: 100%;
+        min-height: 0;
+    }
+    #mcp-hub-canvas {
+        width: 5fr;
+        min-width: 38;
+        height: 100%;
+        min-height: 0;
+    }
+    """
+
+    def __init__(self, app_instance: Any = None, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._app_instance = app_instance
+        self.active_mode = "servers"
+        self._source = "local"
+        self._selected_server_key: str | None = None
+        self._snapshots: list[ReadinessSnapshot] = []
+        self._pending_view_state: dict[str, Any] | None = None
+
+    @property
+    def app_instance(self) -> Any:
+        if self._app_instance is not None:
+            return self._app_instance
+        try:
+            return self.app
+        except Exception:
+            return None
+
+    def _service(self) -> Any:
+        return getattr(self.app_instance, "unified_mcp_service", None)
+
+    def compose(self) -> ComposeResult:
+        with Horizontal(id="mcp-hub-grid", classes="destination-workbench"):
+            yield MCPRail(
+                source=self._source,
+                snapshots=[],
+                selected_server_key=None,
+                scope_options=[("Personal", "personal")],
+                scope_value="personal",
+                scope_ref_options=[],
+                scope_ref_value=None,
+                id="mcp-hub-rail",
+                classes="destination-workbench-pane",
+            )
+            with ContentSwitcher(
+                initial="mcp-mode-canvas-servers",
+                id="mcp-hub-canvas",
+                classes="destination-workbench-pane",
+            ):
+                yield MCPServersMode(id="mcp-mode-canvas-servers")
+                for mode, spec in MCP_HUB_MODES.items():
+                    if mode == "servers":
+                        continue
+                    with Vertical(id=f"mcp-mode-canvas-{mode}"):
+                        yield Static(
+                            spec["placeholder"],
+                            classes="ds-recovery-callout",
+                            markup=False,
+                        )
+            yield MCPInspector(id="mcp-hub-inspector", classes="destination-workbench-pane")
+
+    async def on_mount(self) -> None:
+        await self.reload()
+        if self._pending_view_state:
+            await self._apply_view_state(self._pending_view_state)
+            self._pending_view_state = None
+
+    # -- data loading ---------------------------------------------------------
+
+    async def reload(self) -> None:
+        service = self._service()
+        if service is not None:
+            try:
+                context = await service.load_context()
+                self._source = context.selected_source or "local"
+            except Exception as exc:
+                logger.warning(f"MCP workbench context load failed: {exc}")
+        self._snapshots = await self._collect_snapshots()
+        self._sync_children()
+        inspector = self.query_one(MCPInspector)
+        inspector.set_service_context(
+            _AdvancedSectionShim(service) if service is not None else None,
+            _LEGACY_SECTIONS,
+        )
+
+    async def _collect_snapshots(self) -> list[ReadinessSnapshot]:
+        snapshots: list[ReadinessSnapshot] = []
+        service = self._service()
+        if self._source == "local":
+            snapshots.append(
+                builtin_readiness(
+                    enabled=bool(get_cli_setting("mcp", "enabled", False)),
+                    expose_tools=bool(get_cli_setting("mcp", "expose_tools", True)),
+                    expose_resources=bool(get_cli_setting("mcp", "expose_resources", True)),
+                    expose_prompts=bool(get_cli_setting("mcp", "expose_prompts", True)),
+                )
+            )
+            if service is not None:
+                try:
+                    records = await service.load_section("external_servers")
+                except Exception as exc:
+                    logger.warning(f"MCP local profile listing failed: {exc}")
+                    records = []
+                if isinstance(records, list):  # local source returns a bare list
+                    snapshots.extend(local_profile_readiness(r) for r in records)
+        else:
+            target_store = getattr(service, "target_store", None)
+            if target_store is not None:
+                snapshots.extend(
+                    server_target_readiness(t) for t in target_store.list_targets()
+                )
+        return snapshots
+
+    def _snapshot_for(self, server_key: str | None) -> ReadinessSnapshot | None:
+        if server_key is None:
+            return None
+        for snap in self._snapshots:
+            if snap.server_key == server_key:
+                return snap
+        return None
+
+    def _sync_children(self) -> None:
+        rail = self.query_one(MCPRail)
+        rail.sync_state(
+            source=self._source,
+            snapshots=self._snapshots,
+            selected_server_key=self._selected_server_key,
+            scope_options=[("Personal", "personal")],
+            scope_value="personal",
+            scope_ref_options=[],
+            scope_ref_value=None,
+        )
+        canvas = self.query_one(MCPServersMode)
+        canvas.update_overview(self._snapshots)
+        selected = self._snapshot_for(self._selected_server_key)
+        canvas.show_detail(selected)
+        self.query_one(MCPInspector).update_readiness(selected)
+
+    # -- modes & view state ---------------------------------------------------
+
+    def set_mode(self, mode: str) -> None:
+        if mode not in MCP_HUB_MODES:
+            mode = "servers"
+        self.active_mode = mode
+        self.query_one(ContentSwitcher).current = f"mcp-mode-canvas-{mode}"
+
+    def get_view_state(self) -> dict[str, Any]:
+        return {
+            "mode": self.active_mode,
+            "source": self._source,
+            "selected_server_key": self._selected_server_key,
+            "scope": "personal",
+            "scope_ref": None,
+        }
+
+    def set_initial_view_state(self, state: dict[str, Any] | None) -> None:
+        if not state:
+            return
+        if self.is_mounted:
+            self.run_worker(
+                self._apply_view_state(dict(state)),
+                group="mcp-workbench-restore",
+                exclusive=True,
+            )
+        else:
+            self._pending_view_state = dict(state)
+
+    async def _apply_view_state(self, state: dict[str, Any]) -> None:
+        # Tolerant restore: unknown keys ignored; legacy panel shape accepted.
+        source = state.get("source") or state.get("selected_source")
+        if source in ("local", "server") and source != self._source:
+            await self._switch_source(str(source))
+        self.set_mode(str(state.get("mode") or "servers"))
+        server_key = state.get("selected_server_key")
+        if isinstance(server_key, str) and self._snapshot_for(server_key) is not None:
+            self._selected_server_key = server_key
+        self._sync_children()
+
+    # -- event wiring -----------------------------------------------------------
+
+    async def _switch_source(self, source: str) -> None:
+        service = self._service()
+        if service is not None:
+            try:
+                await service.select_source(source)
+            except Exception as exc:
+                logger.warning(f"MCP source switch failed: {exc}")
+        self._source = source
+        self._selected_server_key = None
+        self._snapshots = await self._collect_snapshots()
+        self._sync_children()
+
+    async def on_mcp_rail_source_changed(self, event: MCPRail.SourceChanged) -> None:
+        event.stop()
+        await self._switch_source(event.source)
+
+    async def on_mcp_rail_server_selected(self, event: MCPRail.ServerSelected) -> None:
+        event.stop()
+        self._selected_server_key = event.server_key
+        service = self._service()
+        if (
+            service is not None
+            and event.server_key is not None
+            and event.server_key.startswith("server:")
+            and "/" not in event.server_key
+        ):
+            try:
+                await service.select_server_target(event.server_key.split(":", 1)[1])
+            except Exception as exc:
+                logger.warning(f"MCP server target selection failed: {exc}")
+        self._sync_children()
+
+    async def on_mcp_rail_scope_changed(self, event: MCPRail.ScopeChanged) -> None:
+        event.stop()
+        service = self._service()
+        if service is not None:
+            try:
+                await service.select_scope(event.scope, event.scope_ref)
+            except Exception as exc:
+                logger.warning(f"MCP scope selection failed: {exc}")
+
+    def on_mcp_servers_mode_server_row_selected(
+        self, event: MCPServersMode.ServerRowSelected
+    ) -> None:
+        event.stop()
+        self._selected_server_key = event.server_key
+        self._sync_children()
+
+    def on_mcp_inspector_hub_action_requested(
+        self, event: MCPInspector.HubActionRequested
+    ) -> None:
+        event.stop()
+        if event.action is HubAction.VIEW_DETAILS and event.server_key:
+            self._selected_server_key = event.server_key
+            self.set_mode("servers")
+            self._sync_children()
+        elif event.action is HubAction.OPEN_TOOL_CATALOG:
+            self.set_mode("tools")
+        elif event.action is HubAction.OPEN_AUDIT:
+            self.set_mode("audit")
