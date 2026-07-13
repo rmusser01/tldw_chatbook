@@ -98,3 +98,41 @@ def test_initial_disclosure_respects_max_active_tools():
     schemas, _ = initial_disclosure(registry(),
                                     RunBudget(max_active_tools=1))
     assert len(schemas) == 1
+
+
+class VanishingProvider:
+    """Present on the first list_catalog() call, gone by the second.
+
+    Simulates a network-backed provider whose catalog changed between
+    resolve_name()'s list_catalog() call and invoke_by_name's own
+    _owner_and_id() re-listing (Q8) — the two currently list the catalog
+    independently, so a provider could plausibly have deregistered or
+    lost the entry in between.
+    """
+
+    def __init__(self):
+        self.calls = 0
+
+    def list_catalog(self):
+        self.calls += 1
+        if self.calls == 1:
+            return [ToolCatalogEntry(id="vanish:x", name="x",
+                                     one_line_description="d",
+                                     source="vanish")]
+        return []
+
+    def load_schema(self, tool_id):
+        raise NotImplementedError
+
+    def invoke(self, tool_id, args):
+        raise NotImplementedError
+
+
+def test_invoke_by_name_returns_error_result_when_owner_vanishes():
+    """Q8: a None owner from _owner_and_id must be a ToolResult error,
+    never an AttributeError from calling .invoke on None."""
+    reg = ToolCatalogRegistry()
+    reg.register_provider(VanishingProvider())
+    result = reg.invoke_by_name("x", {})
+    assert result.ok is False
+    assert "x" in result.error

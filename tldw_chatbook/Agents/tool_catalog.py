@@ -135,6 +135,9 @@ class ToolCatalogRegistry:
                 or needle in e.one_line_description.lower()]
 
     def _owner_and_id(self, tool_id: str):
+        # TODO(task-201): cache tool_id -> provider mapping — per-lookup
+        # list_catalog() re-listing becomes N remote calls once a
+        # network-backed provider registers.
         for provider in self._providers:
             if any(e.id == tool_id for e in provider.list_catalog()):
                 return provider
@@ -157,6 +160,13 @@ class ToolCatalogRegistry:
         if tool_id is None:
             return ToolResult(ok=False, error=f"Unknown tool: {name}")
         provider = self._owner_and_id(tool_id)
+        if provider is None:
+            # Q8: resolve_name() and _owner_and_id() each re-list the
+            # catalog independently; a provider can plausibly have lost
+            # the entry between the two calls. Never let that surface as
+            # an AttributeError on None.
+            return ToolResult(
+                ok=False, error=f"Tool provider not found for: {name}")
         return provider.invoke(tool_id, args)
 
 
