@@ -547,3 +547,68 @@ class TestDictionarySelection:
             await pilot.click("#personas-mode-characters")
             await pilot.pause()
             assert screen.query_one(PersonasDictionaryDetailWidget).display is False
+
+
+class TestDictionarySettings:
+    async def _select_first(self, pilot, screen):
+        rows = screen.query_one("#personas-library-rows", ListView)
+        rows.index = 0
+        rows.action_select_cursor()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+    async def test_save_persists_and_refreshes_row(self, mock_app_instance, stub_characters, fake_dict_service):
+        from textual.widgets import TabbedContent
+
+        app = StyledPersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 48)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            tabs = screen.query_one("#personas-dict-tabs", TabbedContent)
+            tabs.active = "personas-dict-tab-settings"
+            await pilot.pause()
+            screen.query_one("#personas-dict-name", Input).value = "Medical Terms"
+            await pilot.click("#personas-dict-settings-save")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert fake_dict_service.records[1]["name"] == "Medical Terms"
+            assert screen.state.has_unsaved_changes is False
+            rows = screen.query_one("#personas-library-rows", ListView).children
+            names = [str(r.query(Static).first().renderable) for r in rows]
+            assert "Medical Terms" in names
+
+    async def test_settings_edit_marks_dirty_and_guards_navigation(self, mock_app_instance, stub_characters, fake_dict_service):
+        from textual.widgets import TabbedContent
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            tabs = screen.query_one("#personas-dict-tabs", TabbedContent)
+            tabs.active = "personas-dict-tab-settings"
+            await pilot.pause()
+            screen.query_one("#personas-dict-name", Input).value = "Half-renamed"
+            await pilot.pause()
+            assert screen.state.has_unsaved_changes is True
+            assert "- unsaved" in str(screen.query_one("#personas-title", Static).renderable)
+
+    async def test_conflict_surfaces_status_not_crash(self, mock_app_instance, stub_characters, fake_dict_service):
+        from textual.widgets import TabbedContent
+
+        app = StyledPersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 48)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            tabs = screen.query_one("#personas-dict-tabs", TabbedContent)
+            tabs.active = "personas-dict-tab-settings"
+            await pilot.pause()
+            fake_dict_service.records[1]["version"] = 99  # concurrent writer
+            screen.query_one("#personas-dict-name", Input).value = "Medical Terms"
+            await pilot.click("#personas-dict-settings-save")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            status = screen.query_one("#personas-dict-status", Static)
+            assert "changed since it was loaded" in str(status.renderable)

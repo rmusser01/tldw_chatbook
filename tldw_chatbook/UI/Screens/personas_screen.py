@@ -978,6 +978,8 @@ class PersonasScreen(BaseAppScreen):
         if self._edit_mode == "edit":
             name = self.state.selected_entity_name or "item"
             return f"{base} | Editing {name}{suffix}"
+        if self.state.has_unsaved_changes and self.state.selected_entity_name:
+            return f"{base} | {self.state.selected_entity_name}{suffix}"
         return f"{base} | Ready"
 
     def _mode_descriptor_text(self, mode: str) -> str:
@@ -1114,6 +1116,56 @@ class PersonasScreen(BaseAppScreen):
         self._sync_inspector_console_actions()
         self._update_title()
         self._update_status_row()
+
+    @on(DictionarySettingsEdited)
+    def _handle_dictionary_settings_edited(self, message: DictionarySettingsEdited) -> None:
+        message.stop()
+        if self.state.selected_entity_kind != "dictionary":
+            return
+        if not self.state.has_unsaved_changes:
+            self.state.has_unsaved_changes = True
+            self._update_title()
+            self._sync_inspector_console_actions()
+
+    @on(DictionarySettingsSaveRequested)
+    async def _handle_dictionary_settings_save(self, message: DictionarySettingsSaveRequested) -> None:
+        message.stop()
+        if self.state.selected_entity_kind != "dictionary" or not self.state.selected_entity_id:
+            return
+        detail = self.query_one(PersonasDictionaryDetailWidget)
+        payload = dict(message.payload)
+        if not payload.get("name"):
+            detail.set_status("A name is required.")
+            return
+        service = self._dictionary_scope_service()
+        if service is None:
+            self._notify("Dictionaries service is not configured.", "error")
+            return
+        entity_id = self.state.selected_entity_id
+        try:
+            record = await service.update_dictionary(
+                int(entity_id), payload, mode="local",
+                expected_version=self._selected_dictionary_version,
+            )
+        except ConflictError:
+            detail.set_status(
+                "Save failed: the dictionary changed since it was loaded. Reselect and try again."
+            )
+            return
+        except Exception as exc:
+            logger.opt(exception=True).warning(f"Could not save dictionary {entity_id}.")
+            detail.set_status(f"Save failed: {exc}")
+            return
+        raw_version = record.get("version")
+        self._selected_dictionary_version = int(raw_version) if raw_version is not None else None
+        self.state.has_unsaved_changes = False
+        self.state.selected_entity_name = str(record.get("name") or "")
+        detail.load_dictionary(record)
+        detail.set_status("Saved.")
+        self._update_title()
+        await self._render_dictionary_rows(query=self.state.search_query)
+        self.query_one(PersonasLibraryPane).mark_active_row("dictionary", entity_id)
+        self._sync_inspector_console_actions()
 
     # ===== Saved conversations =====
 
