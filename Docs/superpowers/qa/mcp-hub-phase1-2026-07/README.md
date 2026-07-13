@@ -364,6 +364,42 @@ which mounts `MCPRail` under an `App` loading the real bundled stylesheet
 and asserts the active row's border is empty, its height stays >= 1, and
 its rendered label text is non-empty.
 
+## Remaining two re-captures (2026-07-13, HEAD `a0018a56`)
+
+The `530cf9df` pass above re-captured three of the five screenshots that
+select a rail row. The other two — `mcp-two-click-inspector-refresh-2026-07-13.png`
+(Defect 1 fix-verification) and `mcp-advanced-external-servers-redacted-2026-07-13.png`
+(Defect 2 fix-verification) — still showed the pre-fix blank-selected-row
+rail from their earlier capture pass and needed the same re-shoot. Re-ran
+live against current HEAD (`a0018a56`, `530cf9df` fix included; no code
+changes made in this pass — captures only), same methodology (textual-serve
++ Playwright bundled Chromium over CDP, isolated HOME
+`/private/tmp/tldw-qa-mcp-hub-20260713`, 2050×1240, route-abort non-`127.0.0.1:9870`
+traffic, `body.-first-byte` readiness gate), replacing both files in place:
+
+- `mcp-two-click-inspector-refresh-2026-07-13.png` — repeated the exact
+  Defect 1 repro (click `docs-server`, then immediately click
+  `tldw_chatbook (built-in)`, no wait between): no crash, canvas/Inspector
+  correctly show the built-in server's readiness (`● Ready`, stdio launch
+  line, all three `expose_*` · True, "Copy client config", all three
+  READY_ACTIONS buttons — confirmed "Refresh tools" present via text dump,
+  faint at thumbnail scale as previously noted), and the selected rail row
+  (`● ⌂ tldw_chatbook (buil...`) now renders its bold label instead of a
+  blank bordered box.
+- `mcp-advanced-external-servers-redacted-2026-07-13.png` — with the
+  built-in row still selected (rail label legible), opened Inspector ▸
+  Advanced ▸ Section ▸ "External Servers": same redacted rendering as the
+  `f900e7a9` verification (docs-server `--api-key`/`***`, weather-api
+  `env.API_KEY`/`***` and `env_placeholders.API_KEY`/`***`, git-tools
+  unchanged, docs-server's non-secret `WORKSPACE_ROOT` left unredacted).
+  Confirmed programmatically against the rendered page text: `sk-qa-test-redact-0001`
+  — 0 occurrences; `QA_MISSING_KEY` (raw value) — 0 occurrences; exactly 3
+  `***` markers present.
+
+All five captures in this evidence set that show a selected rail row now
+render on `530cf9df`/current HEAD and display a legible, non-blank selected
+row label. No new defects observed in this pass.
+
 ## Isolated HOME
 
 Left on disk at **`/private/tmp/tldw-qa-mcp-hub-20260713`** (config +
