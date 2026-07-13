@@ -216,6 +216,108 @@ session. Likely just Textual defaulting initial focus to the last-composed
 follow-up since it's the first thing rendered when a user opens MCP for the
 first time and could read as "Audit is selected."
 
+## Fix verification re-capture (2026-07-13, commit `f900e7a9`)
+
+Branch `claude/mcp-hub-phase1` advanced from this round's HEAD (`f2596b55`)
+through one intermediate docs commit (`ecb42feb`, this README) to
+**`f900e7a9`** ("fix(mcp-hub): async-serialize inspector readiness refresh,
+redact Advanced external-server secrets"), which fixes both defects
+documented above. Re-captured the two affected screenshots live against
+`f900e7a9`, same isolated HOME (`/private/tmp/tldw-qa-mcp-hub-20260713`,
+left unchanged), same methodology (textual-serve + Playwright bundled
+Chromium over CDP, 2050×1240, real app CSS, route-abort non-localhost,
+`HOME=/private/tmp/tldw-qa-mcp-hub-20260713 PYTHONPATH=.` from the worktree,
+`Web_Server.serve.run_web_server()` called directly per the capture
+methodology note above). Originals kept; new files use a `-redacted` /
+`-refresh` suffix so both rounds are visible side by side.
+
+### Defect 1 (P0 crash) — fixed → `mcp-two-click-inspector-refresh-2026-07-13.png`
+
+Root cause was `MCPInspector.update_readiness()` calling
+`remove_children()`/`mount()` without awaiting either, so a second server
+selection could mount a same-id `view_details` action button before the
+first selection's removal had finished, raising an unhandled `DuplicateIds`
+(captured pre-fix as `mcp-defect-duplicate-ids-crash-2026-07-13.png` — kept
+above). `f900e7a9` makes `MCPInspector.update_readiness()` and the full
+`MCPWorkbench._sync_children()` call chain genuinely `async`/awaited
+end-to-end.
+
+Re-verified with the **exact original repro**, from a fresh session: clicked
+`docs-server` (STALE → actions `Connect`, `View details`), then
+re-located and clicked `tldw_chatbook (built-in)` (READY → actions
+`Open tool catalog`, `Refresh tools`, `View details`) as the very next
+action — no manual settle-wait injected between the two clicks. (Row
+coordinates were re-resolved via a live DOM text search between the two
+clicks rather than reused, since selecting `docs-server` shifts the rail's
+row layout by one line — a capture-script detail, not app behavior.)
+
+Result: **no crash**. The session stayed alive, no "Session ended." screen,
+and the canvas/Inspector both correctly refreshed to the *second* selection's
+(built-in's) readiness — "● Ready tldw_chatbook (built-in)", the stdio
+launch line (`python3 -m tldw_chatbook.MCP`), all three `expose_*` flags
+`True`, the "Copy client config" button, and all three READY_ACTIONS buttons
+present in the Inspector ("Open tool catalog" / "Refresh tools" / "View
+details" — confirmed via text dump; "Refresh tools" renders faint at
+thumbnail scale, same known cosmetic note as the original round's capture 3).
+This proves the two-click crash — arguably the single most obvious thing a
+user does in Servers mode (select one server, then another) — is gone.
+
+Incidental observation: the mode strip's already-documented "stray focus
+highlight on the Audit chip" (see Observation above, not a defect) recurred
+once during this re-capture's two-click sequence and is visible in this
+screenshot's mode strip (the "Audit" label instead of "Servers" carries the
+underline/bold focus styling). Canvas and Inspector content stayed correctly
+on Servers-mode/built-in data throughout — confirmed via text dump — so this
+remains the same cosmetic focus-ring artifact previously observed, not a
+regression and not related to Defect 1.
+
+### Defect 2 (P1 security leak) — fixed → `mcp-advanced-external-servers-redacted-2026-07-13.png`
+
+Root cause was `_AdvancedSectionShim.load_section()` handing the legacy
+`render_external_servers_section()` renderer raw local-profile dicts; that
+renderer keys records by `"name"` (which local profiles never have — only
+`"profile_id"`), so its `item.get(key) or item` fallback always printed the
+full raw dict, secrets included. `f900e7a9` redacts each record via
+`redact_args()`/`redact_mapping()` (`tldw_chatbook/MCP/redaction.py`) at the
+`_AdvancedSectionShim.load_section()` integration seam, before the renderer
+ever sees it — on both the bare-list local path and any dict payload
+carrying an `external_servers` list.
+
+Re-verified the identical navigation as the original leak capture: Inspector
+→ "Advanced (legacy control plane)" → Section select → "External Servers".
+Same 3 profiles, same raw-dict-dump rendering style (unchanged, as
+expected — only the values are now redacted), directly comparable line by
+line against the kept original `mcp-advanced-external-servers-2026-07-13.png`:
+
+- `docs-server` args: was `[..., '--api-key', 'sk-qa-test-redact-0001', ...]`
+  → now `[..., '--api-key', '***', ...]`.
+- `weather-api` env / env_placeholders: was `{'API_KEY': '$QA_MISSING_KEY'}`
+  in both fields → now `{'API_KEY': '***'}` in both (the `API_KEY` key name
+  itself matches `redact_mapping`'s secret-key pattern, so the env
+  *placeholder name* `$QA_MISSING_KEY` is redacted too, not just literal
+  secrets — a stricter, fail-closed result than the minimum ask).
+- `git-tools`: no secrets in its record either before or after (unchanged).
+- `docs-server`'s non-secret `env: {'WORKSPACE_ROOT': '$HOME'}` is correctly
+  left **unredacted** (key doesn't match the secret pattern) — confirms this
+  isn't a blanket "hide everything" regression, just the secret-keyed
+  fields.
+
+Confirmed programmatically against the rendered page text (not just visual
+read): `sk-qa-test-redact-0001` — **0 occurrences** anywhere on screen;
+`QA_MISSING_KEY` (the raw placeholder value) — **0 occurrences**; exactly
+**3** `***` redaction markers present (docs-server's `--api-key` arg,
+weather-api's `env.API_KEY`, weather-api's `env_placeholders.API_KEY`). This
+proves the "escape hatch" Advanced panel no longer bypasses the redaction
+contract the rest of the Hub UI already enforces.
+
+### Nothing else observed wrong in this re-capture round
+
+No new defects surfaced while driving either flow. The pre-existing
+"Observation (not filed as a defect)" stray-focus-ring item above is the
+only cosmetic artifact seen, and it recurred exactly as previously
+characterized (momentary, content-accurate, not a regression from
+`f900e7a9`).
+
 ## Isolated HOME
 
 Left on disk at **`/private/tmp/tldw-qa-mcp-hub-20260713`** (config +
