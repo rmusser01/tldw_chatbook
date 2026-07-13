@@ -359,8 +359,27 @@ class TestWorkbenchShell:
             assert screen.state.active_mode == "prompts"
             placeholder = screen.query_one("#personas-mode-placeholder", Static)
             assert placeholder.display is True
-            assert "coming soon" in str(placeholder.renderable).lower()
+            # Prompts is departing to the Library — its copy is honest about that,
+            # never a "coming soon" that implies it is arriving in Roleplay.
+            body = str(placeholder.renderable).lower()
+            assert "library" in body
+            assert "coming soon" not in body
             assert "is-active" in screen.query_one("#personas-mode-prompts", Button).classes
+
+    async def test_prompts_chip_reads_as_departing_not_coming_soon(self, mock_app_instance, stub_characters):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            prompts_chip = screen.query_one("#personas-mode-prompts", Button)
+            # Departing mode: honest descriptor tooltip, never the bare fallback label…
+            assert prompts_chip.tooltip == "Prompts — moving to the Library."
+            # …and no "· soon" marker (it is leaving, not arriving).
+            assert "soon" not in str(prompts_chip.label).lower()
+            # Selecting it surfaces the same honest descriptor in the visible purpose line.
+            await screen._apply_mode("prompts")
+            await pilot.pause()
+            purpose = str(screen.query_one("#personas-purpose", Static).renderable)
+            assert purpose == "Prompts — moving to the Library."
 
     async def test_mode_chips_are_self_explaining_and_mark_coming_soon(self, mock_app_instance, stub_characters):
         app = PersonasTestApp(mock_app_instance)

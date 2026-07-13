@@ -20,9 +20,10 @@
 - **Test command** (venv, isolated HOME):
   ```
   HOME=/private/tmp/tldw-chatbook-test-home XDG_DATA_HOME=/private/tmp/tldw-chatbook-test-home/.local/share \
-    /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest <target> \
+    .venv/bin/python -m pytest <target> \
     -q -p no:cacheprovider -o addopts="" --timeout=180 --timeout-method=thread
   ```
+  (Run from the repo root with the venv activated, or use the venv's python directly. From a git worktree the venv lives in the main checkout, so substitute that checkout's `.venv/bin/python` absolute path.)
 
 ---
 
@@ -113,7 +114,7 @@ Then add these methods to `class TestWorkbenchShell:` (reusing its `mock_app_ins
 Run:
 ```
 HOME=/private/tmp/tldw-chatbook-test-home XDG_DATA_HOME=/private/tmp/tldw-chatbook-test-home/.local/share \
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest \
+  .venv/bin/python -m pytest \
   "Tests/UI/test_personas_workbench.py::TestWorkbenchShell::test_title_reframed_to_roleplay_keeps_state_suffix" \
   "Tests/UI/test_personas_workbench.py::TestWorkbenchShell::test_purpose_shows_active_mode_descriptor_and_updates_on_switch" \
   -q -p no:cacheprovider -o addopts="" --timeout=120 --timeout-method=thread
@@ -171,7 +172,7 @@ Then in `_apply_mode`, right after the existing status-row refresh (`self.query_
 Run the full personas workbench suite (catches the exact-title assertion at ~:4056 and `test_route_renders_destination_workbench`) plus the phase6 replay test (whose fragments you updated):
 ```
 HOME=/private/tmp/tldw-chatbook-test-home XDG_DATA_HOME=/private/tmp/tldw-chatbook-test-home/.local/share \
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest \
+  .venv/bin/python -m pytest \
   Tests/UI/test_personas_workbench.py \
   "Tests/UI/test_unified_shell_phase6_first_time_replay.py" \
   -q -p no:cacheprovider -o addopts="" --timeout=300 --timeout-method=thread
@@ -239,7 +240,7 @@ Then add to `class TestWorkbenchShell:`:
 Run:
 ```
 HOME=/private/tmp/tldw-chatbook-test-home XDG_DATA_HOME=/private/tmp/tldw-chatbook-test-home/.local/share \
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest \
+  .venv/bin/python -m pytest \
   "Tests/UI/test_personas_workbench.py::TestWorkbenchShell::test_mode_chips_are_self_explaining_and_mark_coming_soon" \
   "Tests/UI/test_personas_workbench.py::TestWorkbenchShell::test_coming_soon_mode_shows_inviting_copy" \
   -q -p no:cacheprovider -o addopts="" --timeout=120 --timeout-method=thread
@@ -299,7 +300,7 @@ In `_apply_mode`, at the branch that shows the placeholder for not-yet-built mod
 Run:
 ```
 HOME=/private/tmp/tldw-chatbook-test-home XDG_DATA_HOME=/private/tmp/tldw-chatbook-test-home/.local/share \
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest \
+  .venv/bin/python -m pytest \
   Tests/UI/test_personas_workbench.py \
   -q -p no:cacheprovider -o addopts="" --timeout=300 --timeout-method=thread
 ```
@@ -320,7 +321,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ```
 HOME=/private/tmp/tldw-chatbook-test-home XDG_DATA_HOME=/private/tmp/tldw-chatbook-test-home/.local/share \
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest \
+  .venv/bin/python -m pytest \
   Tests/UI/test_personas_workbench.py Tests/UI/test_personas_workbench_foundation.py \
   -q -p no:cacheprovider -o addopts="" --timeout=300 --timeout-method=thread
 ```
