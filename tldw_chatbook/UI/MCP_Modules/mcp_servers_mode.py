@@ -168,8 +168,18 @@ class MCPServersMode(Vertical):
         else:  # builtin
             lines.append("Runs over stdio when an MCP client launches it:")
             lines.append("  python3 -m tldw_chatbook.MCP")
-            for flag in ("expose_tools", "expose_resources", "expose_prompts"):
-                lines.append(f"{flag} · {detail.get(flag, True)}")
+            # A3c: human copy, not a dump of internal config flag names and
+            # raw booleans (was "expose_tools · True").
+            exposed = [
+                name
+                for flag, name in (
+                    ("expose_tools", "tools"),
+                    ("expose_resources", "resources"),
+                    ("expose_prompts", "prompts"),
+                )
+                if detail.get(flag, True)
+            ]
+            lines.append(f"Exposes · {', '.join(exposed)}" if exposed else "Exposes · nothing")
         return "\n".join(lines)
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:

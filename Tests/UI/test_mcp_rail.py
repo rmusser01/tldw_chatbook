@@ -9,7 +9,12 @@ from textual.widgets import Button, Select
 
 import tldw_chatbook
 from tldw_chatbook.MCP.readiness import ReadinessSnapshot, ReadinessState
-from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCP_RAIL_ROW_PREFIX, MCPRail
+from tldw_chatbook.UI.MCP_Modules.mcp_rail import (
+    _MAX_ROW_LABEL,
+    MCP_RAIL_ROW_PREFIX,
+    MCPRail,
+    _row_label,
+)
 
 _BUNDLED_CSS_PATH = str(Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss")
 
@@ -210,3 +215,53 @@ async def test_rail_active_row_label_is_not_blank_with_bundled_css():
             _strip_text(inactive_row.render_line(y)) for y in range(inactive_row.size.height)
         )
         assert "docs" in inactive_text
+
+
+# -- A4: rail rows are left-aligned with a fixed glyph gutter and a wider
+# truncation budget ----------------------------------------------------------
+
+
+def test_row_label_truncation_budget_fits_full_builtin_label():
+    """The built-in server's full label ("tldw_chatbook (built-in)", 24
+    chars) must render whole, not "tldw_chatbook (buil..." -- the old budget
+    of 22 truncated it even though the rail has room at typical widths.
+    """
+    assert _MAX_ROW_LABEL >= 36
+    snap = _snap("builtin:tldw_chatbook", "tldw_chatbook (built-in)")
+    label = _row_label(snap)
+    assert "tldw_chatbook (built-in)" in label
+    assert "..." not in label
+
+
+@pytest.mark.asyncio
+async def test_all_servers_row_shares_left_gutter_with_glyph_prefixed_rows():
+    """"All servers" has no readiness glyph, but its label must start at the
+    same column as glyph-prefixed rows ("<glyph> label...") so the rail's
+    label column has one hard left edge instead of "All servers" sitting
+    flush against the rail edge while every other row is indented.
+    """
+    app = RailApp()
+    async with app.run_test() as pilot:
+        all_row = app.query_one(f"#{MCP_RAIL_ROW_PREFIX}0", Button)
+        glyph_row = app.query_one(f"#{MCP_RAIL_ROW_PREFIX}2", Button)  # local:docs
+        all_label = str(all_row.label)
+        glyph_label = str(glyph_row.label)
+        # Glyph rows are "<glyph><space>label..." -- a 2-char-wide gutter.
+        assert glyph_label[1] == " "
+        # "All servers" must carry the same 2-char gutter instead of sitting
+        # flush left.
+        assert all_label[:2] == "  "
+        assert all_label.strip() == "All servers"
+
+
+@pytest.mark.asyncio
+async def test_rail_rows_are_left_aligned_with_bundled_css():
+    """Button defaults to `text-align: center; content-align: center middle`
+    (see Textual's own Button.DEFAULT_CSS) -- `.mcp-rail-row` must override
+    both to left, mirroring `.library-rail-row` in _agentic_terminal.tcss.
+    """
+    app = RailAppWithBundledCSS()
+    async with app.run_test(size=(80, 30)) as pilot:
+        row = app.query_one(f"#{MCP_RAIL_ROW_PREFIX}0", Button)
+        assert row.styles.text_align == "left"
+        assert row.styles.content_align_horizontal == "left"

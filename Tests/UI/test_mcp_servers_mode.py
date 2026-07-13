@@ -172,3 +172,36 @@ async def test_detail_renders_redacted_config_and_builtin_snippet():
         canvas.show_detail(None)
         await pilot.pause()
         assert app.query_one("#mcp-servers-overview").display
+
+
+@pytest.mark.asyncio
+async def test_builtin_detail_summarizes_exposed_capabilities_in_human_copy():
+    """A3c: the builtin detail pane must read as prose ("Exposes · tools,
+    resources") instead of dumping internal config flag names and raw
+    booleans ("expose_tools · True").
+    """
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        canvas.show_detail(
+            builtin_readiness(
+                enabled=True, expose_tools=True, expose_resources=True, expose_prompts=False
+            )
+        )
+        await pilot.pause()
+        body = str(app.query_one("#mcp-detail-body", Static).renderable)
+        assert "Exposes · tools, resources" in body
+        assert "expose_tools" not in body
+        assert "expose_resources" not in body
+        assert "expose_prompts" not in body
+        assert "True" not in body
+        assert "False" not in body
+
+        canvas.show_detail(
+            builtin_readiness(
+                enabled=True, expose_tools=False, expose_resources=False, expose_prompts=False
+            )
+        )
+        await pilot.pause()
+        body_none = str(app.query_one("#mcp-detail-body", Static).renderable)
+        assert "Exposes · nothing" in body_none

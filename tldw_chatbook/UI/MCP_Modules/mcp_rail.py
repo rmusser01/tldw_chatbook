@@ -13,7 +13,17 @@ from textual.widgets import Button, Label, Select, Static
 from tldw_chatbook.MCP.readiness import STATE_GLYPHS, ReadinessSnapshot
 
 MCP_RAIL_ROW_PREFIX = "mcp-rail-row-"
-_MAX_ROW_LABEL = 22
+# A4: wide enough that the built-in server's full label ("tldw_chatbook
+# (built-in)", 24 chars) always fits without an ellipsis at the rail's real
+# rendered width (min-width 24, typically ~35-40 cols at the 3fr share of a
+# 140-col QA viewport) -- the old budget of 22 truncated it even though the
+# rail had room.
+_MAX_ROW_LABEL = 36
+# "All servers" carries no readiness glyph but must still line up under the
+# same left edge glyph-prefixed rows use ("<glyph> label...", a 2-char-wide
+# gutter) -- see _row_label's return and MCPRail.compose()'s "All servers"
+# row.
+_ALL_SERVERS_GUTTER = "  "
 
 
 def _row_label(snapshot: ReadinessSnapshot) -> str:
@@ -46,6 +56,11 @@ class MCPRail(Vertical):
         min-height: 1;
         padding: 0 1;
         border: none;
+        /* A4: Button defaults to text-align: center; content-align: center
+        middle (see Textual's own Button.DEFAULT_CSS) -- left-align rail rows
+        instead, mirroring .library-rail-row in _agentic_terminal.tcss. */
+        text-align: left;
+        content-align: left middle;
     }
     """
 
@@ -129,7 +144,7 @@ class MCPRail(Vertical):
         yield Static("Servers", classes="destination-section mcp-rail-heading")
         self._row_keys = [None] + [snap.server_key for snap in self.snapshots]
         all_row = Button(
-            "All servers",
+            f"{_ALL_SERVERS_GUTTER}All servers",
             id=f"{MCP_RAIL_ROW_PREFIX}0",
             classes="mcp-rail-row console-action-subdued",
             compact=True,

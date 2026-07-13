@@ -47,6 +47,36 @@ class MCPScreen(BaseAppScreen):
         border: none;
         text-style: bold underline;
     }
+    /* A1: focus must not impersonate the active-mode indicator above (bold
+    underline). A keyboard-focused, non-active chip gets the standard
+    reverse-video focus affordance instead -- no underline -- so the two
+    states read as visually distinct. Kept in lockstep with the
+    higher-specificity app-bundle copy (#mcp-mode-strip .mcp-mode-chip:focus,
+    _agentic_terminal.tcss).
+    NOTE: uses the raw `$surface`/`$text`/`$text-muted` tokens (not the
+    project's `$ds-focus-bg`/`$ds-focus-fg`/`$ds-text-muted` aliases)
+    deliberately -- those aliases are only defined once the app-wide tcss
+    bundle is loaded, and several destination-shell tests mount MCPScreen
+    under a harness App that never sets CSS_PATH. `$ds-focus-bg` and
+    `$ds-focus-fg` currently alias to exactly `$surface` and `$text` (see
+    css/core/_variables.tcss), so this is not a visual compromise. */
+    .mcp-mode-chip:focus,
+    .mcp-mode-chip:hover:focus {
+        background: $surface;
+        color: $text;
+        text-style: bold;
+        outline: none;
+    }
+    /* Active AND focused: still reads as "active" (bold underline, same
+    background as non-focused .is-active) rather than picking up the
+    reverse-video focus treatment above. */
+    .mcp-mode-chip.is-active:focus,
+    .mcp-mode-chip.is-active:hover:focus {
+        background: $surface;
+        color: $text-muted;
+        text-style: bold underline;
+        outline: none;
+    }
     """
 
     def __init__(self, app_instance: Any, **kwargs: Any) -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from tldw_chatbook.MCP.readiness import (
     READY_ACTIONS,
+    REASON_LABELS,
     REASON_PRIORITY,
     REASON_TO_ACTIONS,
     REASON_TO_STATE,
@@ -31,6 +32,21 @@ def test_every_reason_code_has_state_actions_and_priority():
         assert code in REASON_TO_ACTIONS, f"{code} missing action set"
         assert code in REASON_PRIORITY, f"{code} missing from priority order"
     assert len(REASON_PRIORITY) == len(set(REASON_PRIORITY)) == len(list(ReasonCode))
+
+
+def test_every_reason_code_has_a_non_empty_human_label():
+    """A3b: user-facing copy must never fall back to the raw enum value.
+
+    The inspector renders `REASON_LABELS[primary_reason]` instead of the
+    internal reason code (see mcp_inspector.update_readiness) -- every
+    ReasonCode must resolve to a short, non-empty phrase, and that phrase
+    must not just be the internal `.value` string leaking through.
+    """
+    for code in ReasonCode:
+        assert code in REASON_LABELS, f"{code} missing a human label"
+        label = REASON_LABELS[code]
+        assert isinstance(label, str) and label.strip(), f"{code} has an empty label"
+        assert label != code.value, f"{code} label is just the raw reason code"
 
 
 def test_resolve_state_uses_priority_order_not_input_order():

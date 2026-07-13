@@ -123,6 +123,25 @@ STATE_LABELS: dict[ReadinessState, str] = {
     ReadinessState.STALE: "Stale",
 }
 
+# Short, human-facing phrase for each reason code (A3b). The inspector leads
+# its readiness explanation with this instead of the internal `ReasonCode`
+# value (e.g. "runtime_unavailable") -- that vocabulary is control-plane
+# jargon, not something a user should ever have to read to understand what's
+# wrong with a server.
+REASON_LABELS: dict[ReasonCode, str] = {
+    ReasonCode.NOT_CONFIGURED: "Not configured",
+    ReasonCode.AUTH_MISSING: "Missing credentials",
+    ReasonCode.RUNTIME_UNAVAILABLE: "Not connected",
+    ReasonCode.PREFLIGHT_FAILED: "Failed pre-flight checks",
+    ReasonCode.UNREACHABLE: "Server unreachable",
+    ReasonCode.DISCOVERY_FAILED: "Tool discovery failed",
+    ReasonCode.CONFIG_CHANGED: "Configuration changed since last check",
+    ReasonCode.DISCOVERY_NOT_RUN: "Not validated yet",
+    ReasonCode.NO_TOOLS_RETURNED: "No tools returned",
+    ReasonCode.CATALOG_EXPIRED: "Catalog out of date",
+    ReasonCode.PARTIAL_CAPABILITY: "Partially available",
+}
+
 
 def resolve_state(reasons: tuple[ReasonCode, ...]) -> ReadinessState:
     """Return the display state for a reason set via the priority order."""

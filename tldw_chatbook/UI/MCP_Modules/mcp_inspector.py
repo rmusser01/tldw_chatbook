@@ -11,7 +11,7 @@ from textual.containers import Vertical, VerticalScroll
 from textual.message import Message
 from textual.widgets import Button, Label, Select, Static, TextArea
 
-from tldw_chatbook.MCP.readiness import HubAction, ReadinessSnapshot
+from tldw_chatbook.MCP.readiness import REASON_LABELS, HubAction, ReadinessSnapshot
 from tldw_chatbook.MCP.redaction import redact_mapping
 from tldw_chatbook.UI.MCP_Modules.unified_mcp_sections import render_unified_mcp_section
 
@@ -88,6 +88,30 @@ class MCPInspector(Vertical):
         min-height: 1;
         border: none;
     }
+    /* A2: the generic `Button:disabled` rule (_buttons.tcss) stacks 50%
+    opacity on top of `$text-disabled` on a dark surface -- combined with
+    `.console-action-secondary`'s own colors that renders as functionally
+    invisible, not just "disabled-looking". Win back full opacity and use a
+    dim-but-still-readable color instead.
+    NOTE: uses the raw `$text-muted`/`$surface` tokens (not the project's
+    `$ds-text-muted`/`$ds-surface-raised` aliases) deliberately -- those
+    aliases are only defined once the app-wide tcss bundle is loaded, and
+    this widget's own unit tests (test_mcp_inspector.py) mount it without
+    that bundle. `$ds-text-muted` and `$ds-surface-raised` currently alias
+    to exactly these two raw tokens (see css/core/_variables.tcss), so this
+    is not a visual compromise. */
+    Button.mcp-inspector-action:disabled {
+        opacity: 100%;
+        background: $surface;
+        color: $text-muted;
+        text-style: none;
+    }
+    Button.mcp-inspector-action:disabled:hover {
+        opacity: 100%;
+        background: $surface;
+        color: $text-muted;
+        text-style: none;
+    }
     """
 
     class HubActionRequested(Message, namespace="mcp_inspector"):
@@ -150,9 +174,19 @@ class MCPInspector(Vertical):
             message.update("")
             return
         state.update(f"{snapshot.badge_text()}  {snapshot.label}")
+        # A5: lead with the humanized *reason*, not a repeat of the canvas's
+        # own snapshot.message -- the inspector should add "why", which the
+        # canvas detail view doesn't say, rather than mirror what it already
+        # shows. A3a: never leak the internal ReasonCode value (e.g.
+        # "runtime_unavailable") into user-facing copy.
         reason = snapshot.primary_reason
-        reason_suffix = f" [{reason.value}]" if reason else ""
-        message.update(f"{snapshot.message}{reason_suffix}")
+        if reason is not None:
+            why_line = f"Why · {REASON_LABELS[reason]}"
+        elif snapshot.tool_count is not None:
+            why_line = f"Why · Ready — {snapshot.tool_count} tools available"
+        else:
+            why_line = "Why · Ready"
+        message.update(why_line)
         buttons = []
         for action in snapshot.allowed_actions:
             button = Button(

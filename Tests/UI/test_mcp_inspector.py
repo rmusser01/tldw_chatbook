@@ -1,17 +1,23 @@
 # Tests/UI/test_mcp_inspector.py
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Select, Static, TextArea
 
+import tldw_chatbook
 from tldw_chatbook.MCP.readiness import (
+    REASON_LABELS,
     HubAction,
     ReadinessSnapshot,
     ReadinessState,
     ReasonCode,
 )
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
+
+_BUNDLED_CSS_PATH = str(Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss")
 
 
 class FakeAdvService:
@@ -65,7 +71,7 @@ def _ready_snap() -> ReadinessSnapshot:
     return ReadinessSnapshot(
         server_key="local:notes", label="notes", source="local",
         state=ReadinessState.READY, reasons=(),
-        message="Connected — 4 tools available.",
+        message="Connected — 4 tools available.", tool_count=4,
     )
 
 
@@ -87,6 +93,101 @@ async def test_readiness_block_shows_state_message_and_action_buttons():
         # itself" contract; wired buttons previously had none).
         for button in buttons.values():
             assert button.tooltip, f"{button.id} has no tooltip"
+
+
+# -- A2: disabled action buttons must stay legible ---------------------------
+
+
+class InspectorAppWithBundledCSS(App):
+    """Mounts MCPInspector under `#mcp-hub-inspector` (the id the real MCP
+    workbench uses) and loads the actual bundled stylesheet, so
+    `#mcp-hub-inspector Button.mcp-inspector-action:disabled` resolves
+    exactly as it does in the live app. A bare `App()` with no `CSS_PATH`
+    only exercises Textual's own built-in `Button:disabled` defaults, not the
+    project's `_buttons.tcss` override -- `opacity: 50%` stacked on
+    `$text-disabled` on `$surface-darken-1` -- that actually causes the
+    "nearly invisible" bug this fix addresses. Mirrors `RailAppWithBundledCSS`
+    in test_mcp_rail.py.
+    """
+
+    CSS_PATH = _BUNDLED_CSS_PATH
+
+    def compose(self) -> ComposeResult:
+        yield MCPInspector(id="mcp-hub-inspector")
+
+
+@pytest.mark.asyncio
+async def test_disabled_action_buttons_stay_legible_with_bundled_css():
+    """A2: `Button.mcp-inspector-action:disabled` must win over the generic
+    `Button:disabled` rule and stay at full opacity with a dim-but-readable
+    color, instead of the 50%-opacity-on-$text-disabled combination that
+    renders as functionally invisible on top of `.console-action-secondary`.
+    """
+    app = InspectorAppWithBundledCSS()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.update_readiness(_stale_snap())
+        await pilot.pause()
+        connect_button = app.query_one("#mcp-inspector-action-connect", Button)
+        assert connect_button.disabled
+        # The generic Button:disabled rule (_buttons.tcss) sets opacity: 50%;
+        # that -- not just the color choice -- is what made the button read
+        # as nearly invisible. The dedicated rule must restore full opacity.
+        assert connect_button.styles.opacity == 1.0
+        # Tooltip must survive (A2 explicitly keeps existing tooltips).
+        assert connect_button.tooltip
+
+
+# -- A3/A5: humanized reason copy, no raw reason codes -----------------------
+
+
+@pytest.mark.asyncio
+async def test_readiness_message_leads_with_humanized_reason_not_raw_code():
+    """A3a/A5: the inspector's second line must lead with `Why · <label>`
+    from REASON_LABELS, never the bracketed internal reason code, and must
+    not just repeat the canvas's own snapshot.message verbatim.
+    """
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        inspector = app.query_one(MCPInspector)
+        snap = _stale_snap()
+        await inspector.update_readiness(snap)
+        await pilot.pause()
+        message = str(app.query_one("#mcp-inspector-message", Static).renderable)
+        assert message == f"Why · {REASON_LABELS[ReasonCode.RUNTIME_UNAVAILABLE]}"
+        assert "[runtime_unavailable]" not in message
+        assert "runtime_unavailable" not in message
+        assert snap.message not in message
+
+
+@pytest.mark.asyncio
+async def test_readiness_message_ready_state_shows_tool_count_not_raw_message():
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        inspector = app.query_one(MCPInspector)
+        snap = _ready_snap()
+        await inspector.update_readiness(snap)
+        await pilot.pause()
+        message = str(app.query_one("#mcp-inspector-message", Static).renderable)
+        assert message == "Why · Ready — 4 tools available"
+        assert snap.message not in message
+
+
+@pytest.mark.asyncio
+async def test_readiness_message_ready_state_without_tool_count_omits_count():
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        inspector = app.query_one(MCPInspector)
+        snap = ReadinessSnapshot(
+            server_key="builtin:tldw_chatbook", label="tldw_chatbook (built-in)",
+            source="builtin", state=ReadinessState.READY, reasons=(),
+            message="Served over stdio when an MCP client launches chatbook.",
+        )
+        await inspector.update_readiness(snap)
+        await pilot.pause()
+        message = str(app.query_one("#mcp-inspector-message", Static).renderable)
+        assert message == "Why · Ready"
+        assert snap.message not in message
 
 
 @pytest.mark.asyncio

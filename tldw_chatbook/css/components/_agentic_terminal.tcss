@@ -3978,6 +3978,26 @@ ListItem.personas-library-row.is-active.-highlight {
     text-style: bold underline;
 }
 
+/* A1: focus must not impersonate .is-active above (bold underline). Kept in
+   lockstep with the lower-specificity baseline copy in MCPScreen.DEFAULT_CSS
+   (mcp_screen.py) -- see that copy's comment for why it uses raw
+   $surface/$text/$text-muted tokens instead of these $ds- aliases. */
+#mcp-mode-strip .mcp-mode-chip:focus,
+#mcp-mode-strip .mcp-mode-chip:hover:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold;
+    outline: none;
+}
+
+#mcp-mode-strip .mcp-mode-chip.is-active:focus,
+#mcp-mode-strip .mcp-mode-chip.is-active:hover:focus {
+    background: $ds-surface-raised;
+    color: $ds-text-muted;
+    text-style: bold underline;
+    outline: none;
+}
+
 #mcp-hub-rail {
     width: 3fr;
     min-width: 24;
@@ -4020,4 +4040,25 @@ ListItem.personas-library-row.is-active.-highlight {
 
 #mcp-overview-callouts .ds-recovery-callout {
     margin-top: 1;
+}
+
+/* A2: disabled inspector action buttons must stay legible. The generic
+   `Button:disabled` rule above (from _buttons.tcss, same "user CSS" tier as
+   this file -- see MCPInspector.DEFAULT_CSS's matching rule and comment for
+   why a widget-level DEFAULT_CSS override alone can never win this fight)
+   stacks `opacity: 50%` on `$text-disabled` on a dark surface, which reads
+   as functionally invisible on top of `.console-action-secondary`. Restore
+   full opacity and use a dim-but-still-readable color instead. */
+#mcp-hub-inspector Button.mcp-inspector-action:disabled {
+    opacity: 100%;
+    background: $ds-surface-raised;
+    color: $ds-text-muted;
+    text-style: none;
+}
+
+#mcp-hub-inspector Button.mcp-inspector-action:disabled:hover {
+    opacity: 100%;
+    background: $ds-surface-raised;
+    color: $ds-text-muted;
+    text-style: none;
 }
