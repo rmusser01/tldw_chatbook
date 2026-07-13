@@ -88,6 +88,20 @@ class TestURLValidation:
         ]:
             assert validate_url(url) is False, f"URL should be invalid: {url}"
 
+    def test_security_hardening_rejected(self):
+        """urlparse is lenient about these; the hardening rejects them (as the
+        old regex did): backslash hosts (\\-vs-/ parser-discrepancy SSRF),
+        malformed dotted hosts, and credential-bearing URLs (secret leakage)."""
+        for url in [
+            "https://example.com\\path",             # backslash (browsers normalise \\->/)
+            "https://..",                            # bare dots
+            "https://.example.com",                  # leading-dot host
+            "https://example..com",                  # consecutive-dot host
+            "https://user:pass@example.com/path",    # embedded credentials
+            "https://user@example.com/path",         # embedded username
+        ]:
+            assert validate_url(url) is False, f"URL should be invalid: {url}"
+
 
 class TestTextInputValidation:
     """Test text input validation and sanitization."""
