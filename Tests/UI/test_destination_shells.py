@@ -2467,6 +2467,39 @@ async def test_mcp_destination_mode_chip_syncs_to_restored_mode():
 
 
 @pytest.mark.asyncio
+async def test_mcp_destination_mode_chip_syncs_on_inspector_hub_action():
+    """I2 follow-up: inspector hub actions also change the mode without going
+    through `MCPScreen._activate_mode()` -- "Open tool catalog"/"Open audit"
+    call `MCPWorkbench.set_mode()` directly from
+    `on_mcp_inspector_hub_action_requested`. The chip highlight must follow
+    that path too, not just click/keybinding/restore, so `set_mode` itself is
+    the single emission point for the mode-change notification.
+    """
+    from tldw_chatbook.MCP.readiness import HubAction
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "mcp")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause()
+        screen = _active_destination_screen(host)
+        workbench = screen.query_one(MCPWorkbench)
+        inspector = screen.query_one(MCPInspector)
+        assert workbench.active_mode == "servers"
+
+        inspector.post_message(
+            MCPInspector.HubActionRequested(HubAction.OPEN_TOOL_CATALOG, None)
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        assert workbench.active_mode == "tools"
+        tools_chip = screen.query_one("#mcp-mode-tools", Button)
+        servers_chip = screen.query_one("#mcp-mode-servers", Button)
+        assert tools_chip.has_class("is-active")
+        assert not servers_chip.has_class("is-active")
+
+
+@pytest.mark.asyncio
 async def test_mcp_destination_runtime_refresh_uses_exclusive_worker(monkeypatch):
     """Runtime backend changes refresh the workbench via a named, exclusive worker.
 

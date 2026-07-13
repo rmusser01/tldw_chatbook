@@ -105,7 +105,7 @@ class MCPScreen(BaseAppScreen):
         event.stop()
         self._activate_mode(mode)
 
-    def on_mcp_workbench_mode_restored(self, event: MCPWorkbench.ModeRestored) -> None:
+    def on_mcp_workbench_mode_changed(self, event: MCPWorkbench.ModeChanged) -> None:
         event.stop()
         self._sync_mode_chips(event.mode)
 

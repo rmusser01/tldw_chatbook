@@ -106,11 +106,15 @@ class _AdvancedSectionShim:
 class MCPWorkbench(Container):
     """Assembles the Phase 1 MCP Hub. Read-only over the control-plane service."""
 
-    class ModeRestored(Message, namespace="mcp_workbench"):
-        """Posted when a restore (`set_initial_view_state`) changes the
-        active mode, so the hosting screen can keep its mode-chip highlight
-        in sync (chips are only otherwise updated by `_activate_mode()`,
-        i.e. a click or keybinding)."""
+    class ModeChanged(Message, namespace="mcp_workbench"):
+        """Posted by `set_mode()` whenever the active mode actually changes,
+        so the hosting screen can keep its mode-chip highlight in sync.
+        `set_mode` is the single emission point: it covers every path that
+        changes the mode without going through `MCPScreen._activate_mode()`
+        (a click or keybinding) -- state restore and inspector hub actions
+        ("Open tool catalog"/"Open audit") alike. The screen's chip sync is
+        idempotent, so the redundant notification on the _activate_mode
+        path is harmless."""
 
         def __init__(self, mode: str) -> None:
             super().__init__()
@@ -296,8 +300,14 @@ class MCPWorkbench(Container):
     def set_mode(self, mode: str) -> None:
         if mode not in MCP_HUB_MODES:
             mode = "servers"
+        mode_changed = mode != self._active_mode
         self._active_mode = mode
         self.query_one(ContentSwitcher).current = f"mcp-mode-canvas-{mode}"
+        if mode_changed:
+            # Single emission point for mode changes (see ModeChanged) --
+            # covers restore and inspector hub-action paths, which bypass
+            # the screen's _activate_mode chip sync.
+            self.post_message(self.ModeChanged(mode))
 
     def get_view_state(self) -> dict[str, Any]:
         return {
@@ -337,14 +347,10 @@ class MCPWorkbench(Container):
         source = state.get("source") or state.get("selected_source")
         if source in ("local", "server") and source != self._source:
             await self._switch_source(str(source))
-        previous_mode = self._active_mode
+        # I2: a restored non-"servers" mode must also move the screen's
+        # chip highlight -- set_mode() itself posts ModeChanged on any
+        # actual change (single emission point), so no extra post here.
         self.set_mode(str(state.get("mode") or "servers"))
-        if self._active_mode != previous_mode:
-            # I2: chips are composed with Servers active and are otherwise
-            # only kept in sync by `MCPScreen._activate_mode()` (a click or
-            # keybinding). Without this, a restored non-"servers" mode
-            # renders the right canvas under a highlighted Servers chip.
-            self.post_message(self.ModeRestored(self._active_mode))
         server_key = state.get("selected_server_key")
         if isinstance(server_key, str) and self._snapshot_for(server_key) is not None:
             self._selected_server_key = server_key
