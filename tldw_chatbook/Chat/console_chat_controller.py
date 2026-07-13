@@ -730,12 +730,16 @@ class ConsoleChatController:
         continue) since they all build their provider payload by prepending
         this to the transcript-derived messages. Blank/whitespace-only prompts
         are treated as "no system prompt" (native Console default stays silent
-        unless a user has explicitly set one for this session).
+        unless a user has explicitly set one for this session) -- ``strip()``
+        is used ONLY for that emptiness check. The message content itself is
+        ``self.system_prompt`` verbatim: leading/trailing whitespace and
+        internal formatting (blank lines, indentation) are never altered, so
+        a formatting-sensitive prompt reaches the provider unchanged.
         """
-        text = str(self.system_prompt or "").strip()
-        if not text:
+        raw_system_prompt = self.system_prompt
+        if not isinstance(raw_system_prompt, str) or not raw_system_prompt.strip():
             return []
-        return [{"role": ConsoleMessageRole.SYSTEM.value, "content": text}]
+        return [{"role": ConsoleMessageRole.SYSTEM.value, "content": raw_system_prompt}]
 
     def _provider_messages_for_session(
         self,

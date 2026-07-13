@@ -402,6 +402,29 @@ async def test_submit_draft_omits_system_message_when_prompt_is_blank():
 
 
 @pytest.mark.asyncio
+async def test_submit_draft_preserves_system_prompt_formatting_verbatim():
+    """`strip()` is used only to decide "is this blank" -- the system
+    message content sent to the provider must be the prompt exactly as
+    set, leading/trailing whitespace and internal blank lines included."""
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    formatted_prompt = "  line1\n\n  line2  "
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        system_prompt=formatted_prompt,
+    )
+
+    result = await controller.submit_draft("hello")
+
+    assert result.accepted is True
+    assert gateway.messages_seen == [
+        {"role": "system", "content": formatted_prompt},
+        {"role": "user", "content": "hello"},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_controller_provider_selection_includes_sampling_settings() -> None:
     gateway = CapturingGateway()
     store = ConsoleChatStore()

@@ -2275,12 +2275,16 @@ class ChatScreen(BaseAppScreen):
         """
         settings = self._active_console_session_settings() or self._default_console_session_settings()
         raw_system_prompt = conversation.get("system_prompt")
+        # Only blank/whitespace-only text collapses to "no system prompt";
+        # anything else is restored verbatim (leading/trailing whitespace
+        # and internal formatting included) rather than stripped, so a
+        # formatting-sensitive prompt survives close/resume unchanged.
         system_prompt = (
-            str(raw_system_prompt).strip()
-            if isinstance(raw_system_prompt, str)
+            raw_system_prompt
+            if isinstance(raw_system_prompt, str) and raw_system_prompt.strip()
             else None
         )
-        return replace(settings, system_prompt=system_prompt or None)
+        return replace(settings, system_prompt=system_prompt)
 
     async def _resume_console_workspace_conversation(
         self,
@@ -7029,8 +7033,12 @@ class ChatScreen(BaseAppScreen):
             return
         resolved = await self._resolve_console_prompt_by_name(args)
         if resolved is not None:
-            system_prompt = str(resolved.get("system_prompt") or "").strip()
-            if not system_prompt:
+            # Blank check only via strip(); the applied value below is the
+            # raw prompt text so leading/trailing whitespace and internal
+            # formatting survive verbatim.
+            raw_system_prompt = resolved.get("system_prompt")
+            system_prompt = raw_system_prompt if isinstance(raw_system_prompt, str) else ""
+            if not system_prompt.strip():
                 name = str(resolved.get("name") or args)
                 await self._append_native_console_system_message(
                     CONSOLE_SYSTEM_PROMPT_NO_SYSTEM_PART_TEMPLATE.format(name=name)
@@ -7069,8 +7077,11 @@ class ChatScreen(BaseAppScreen):
             self._focus_console_composer_if_needed(force=True)
             if record is None:
                 return
-            system_prompt = str(record.get("system_prompt") or "").strip()
-            if not system_prompt:
+            # Blank check only via strip(); the applied value is the raw
+            # prompt text so formatting survives verbatim.
+            raw_system_prompt = record.get("system_prompt")
+            system_prompt = raw_system_prompt if isinstance(raw_system_prompt, str) else ""
+            if not system_prompt.strip():
                 return
             self._apply_console_session_system_prompt(system_prompt)
 

@@ -238,6 +238,28 @@ async def test_console_system_prompt_modal_cancel_leaves_settings_untouched():
         assert settings.system_prompt == "Keep me."
 
 
+@pytest.mark.asyncio
+async def test_apply_console_session_system_prompt_preserves_formatting_verbatim():
+    """Finding 4: applying a system prompt with leading whitespace and
+    internal blank-line formatting must store it verbatim -- `strip()` is
+    only used to decide whether the prompt is blank, never to reshape a
+    non-blank prompt."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    formatted_prompt = "  line1\n\n  line2  "
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        console._apply_console_session_system_prompt(formatted_prompt)
+        await pilot.pause(0.1)
+
+        settings = console._ensure_active_console_session_settings()
+        assert settings.system_prompt == formatted_prompt
+
+
 # ---------------------------------------------------------------------------
 # `/system <name>` resolution.
 # ---------------------------------------------------------------------------

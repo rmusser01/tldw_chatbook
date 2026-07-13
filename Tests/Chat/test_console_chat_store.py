@@ -456,6 +456,29 @@ def test_set_session_system_prompt_persists_change_when_conversation_already_sav
     ]
 
 
+def test_set_session_system_prompt_preserves_formatting_verbatim():
+    """Only blank/whitespace-only text is treated as "no system prompt";
+    leading whitespace and internal formatting (e.g. a blank line between
+    paragraphs) must survive into storage unchanged rather than being
+    stripped."""
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session(
+        title="Chat 1",
+        settings=ConsoleSessionSettings(provider="llama_cpp"),
+    )
+    store.persist_session_if_needed(session.id)
+    formatted_prompt = "  line1\n\n  line2  "
+
+    updated, persisted = store.set_session_system_prompt(session.id, formatted_prompt)
+
+    assert updated.settings.system_prompt == formatted_prompt
+    assert persisted is True
+    assert persistence.updated_system_prompts == [
+        {"conversation_id": "conv-1", "system_prompt": formatted_prompt}
+    ]
+
+
 def test_set_session_system_prompt_normalizes_blank_to_none():
     persistence = FakePersistence()
     store = ConsoleChatStore(persistence=persistence)
