@@ -1650,15 +1650,21 @@ class PersonasScreen(BaseAppScreen):
             logger.opt(exception=True).warning(f"Could not toggle dictionary {entity_id}.")
             self._notify(f"Toggle failed: {exc}", "error")
             return
-        if str(self.state.selected_entity_id) == str(entity_id):
+        is_selected = str(self.state.selected_entity_id) == str(entity_id)
+        if is_selected:
             raw_version = updated.get("version")
             self._selected_dictionary_version = int(raw_version) if raw_version is not None else None
-            self.query_one(PersonasDictionaryDetailWidget).load_dictionary(updated)
-        await self._render_dictionary_rows(query=self.state.search_query)
-        if self.state.selected_entity_id:
-            self.query_one(PersonasLibraryPane).mark_active_row(
-                "dictionary", self.state.selected_entity_id
+            self.query_one(PersonasDictionaryDetailWidget).apply_enabled(
+                bool(updated.get("enabled", updated.get("is_active", True)))
             )
+        await self._render_dictionary_rows(query=self.state.search_query)
+        library = self.query_one(PersonasLibraryPane)
+        if self.state.selected_entity_id:
+            library.mark_active_row("dictionary", self.state.selected_entity_id)
+        if not is_selected:
+            # The user was browsing an unselected row; keep the cursor there
+            # instead of letting the selected-row re-mark above steal it.
+            library.highlight_row("dictionary", entity_id)
 
     @on(EditPersonaRequested)
     async def _handle_persona_edit_requested(self, message: EditPersonaRequested) -> None:

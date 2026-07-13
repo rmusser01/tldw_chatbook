@@ -262,6 +262,15 @@ class PersonasLibraryPane(Vertical):
             if is_active:
                 list_view.index = index
 
+    def highlight_row(self, kind: str, item_id: str) -> None:
+        """Move only the ListView cursor to one row (no active-marker change)."""
+        target = _row_dom_id(kind, item_id)
+        list_view = self.query_one("#personas-library-rows", ListView)
+        for index, item in enumerate(list_view.children):
+            if item.id == target:
+                list_view.index = index
+                return
+
     def set_row_unsaved(self, kind: str | None, item_id: str | None, unsaved: bool) -> None:
         """Toggle the ``.is-unsaved`` badge without rebuilding the rows.
 

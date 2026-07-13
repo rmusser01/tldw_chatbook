@@ -163,6 +163,16 @@ class PersonasDictionaryDetailWidget(Vertical):
             )
         self.query_one("#personas-dict-entry-error", Static).update("")
 
+    def apply_enabled(self, enabled: bool) -> None:
+        """Reflect an externally-toggled enabled flag without touching other fields.
+
+        Keeps the dirty-detection snapshot consistent so the flip itself never
+        counts as a user edit, while any in-flight edits stay intact.
+        """
+        self.query_one("#personas-dict-enabled", Switch).value = bool(enabled)
+        if self._loaded_settings is not None:
+            self._loaded_settings["enabled"] = bool(enabled)
+
     def clear(self) -> None:
         self._entries = []
         self._loaded_settings = None

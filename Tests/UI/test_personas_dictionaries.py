@@ -867,3 +867,55 @@ class TestDictionaryToggleDelete:
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             assert 1 in fake_dict_service.records
+
+    async def test_space_toggle_keeps_cursor_on_unselected_row(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _enter_dictionaries(pilot)
+            rows = screen.query_one("#personas-library-rows", ListView)
+            rows.focus()
+            rows.index = 1  # Chat-Speak - not selected
+            await pilot.press("space")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert fake_dict_service.records[2]["enabled"] is True
+            assert rows.index is not None
+            row = rows.children[rows.index]
+            assert str(row.query(Static).first().renderable) == "Chat-Speak"
+
+            await pilot.press("space")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert fake_dict_service.records[2]["enabled"] is False
+
+    async def test_space_toggle_on_selected_preserves_unsaved_edits(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
+        from textual.widgets import TabbedContent
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            tabs = screen.query_one("#personas-dict-tabs", TabbedContent)
+            tabs.active = "personas-dict-tab-settings"
+            await pilot.pause()
+            screen.query_one("#personas-dict-name", Input).value = "Half-renamed"
+            await pilot.pause()
+
+            rows = screen.query_one("#personas-library-rows", ListView)
+            rows.focus()
+            rows.index = 0
+            await pilot.press("space")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert fake_dict_service.records[1]["enabled"] is False
+            assert screen.query_one("#personas-dict-name", Input).value == "Half-renamed"
+            assert screen.state.has_unsaved_changes is True
+            assert screen.query_one("#personas-dict-enabled", Switch).value is False
