@@ -29,7 +29,6 @@ def validate_url(url: str) -> bool:
     if any(c.isspace() for c in url):          # a valid URL contains no raw whitespace
         result = False
     else:
-        from urllib.parse import urlparse
         try:
             parsed = urlparse(url)
             _ = parsed.port                     # raises ValueError on a malformed/out-of-range port
@@ -39,6 +38,8 @@ def validate_url(url: str) -> bool:
     # ... existing duration/result/length metrics unchanged ...
     return result
 ```
+
+Add `from urllib.parse import urlparse` at module level (`input_validation.py` already imports `re`/`time`/`ipaddress`; it is not a spawn-worker module, so a top-level import is cleaner than a deferred one). The regex `pattern` block is removed.
 
 **Why urlparse over patching the regex:** it natively handles long TLDs, IPv6 (`[::1]` → host `::1`), IDN (Unicode host), localhost, IPs, and ports — cleanly satisfying the AC's "supported" branch, versus a growing, fragile regex. The `scheme in ("http","https")` check preserves the security property (rejects `file:`/`javascript:`/`data:`/`vbscript:`/`about:`/`chrome:`/`ftp:`).
 
@@ -56,7 +57,7 @@ def validate_url(url: str) -> bool:
 
 Add one test near `test_persist_writes_payload_and_returns_media_id` in `Tests/Local_Ingestion/test_ingest_parse_worker.py` (which currently covers only a *file* payload):
 
-- Build a URL payload dict directly (mirroring the URL-source tail of `parse_local_file_for_ingest`): `media_type='article'`, `file_type='article'`, `url='https://example.com/post'`, `file_path='https://example.com/post'`, `title`, `content`, `keywords=[]`, `analysis_content=''`, `chunks=None`, `chunk_options=None`.
+- Build a URL payload dict directly (mirroring the URL-source tail of `parse_local_file_for_ingest`) with the exact keys `persist_parsed_media` reads — `file_type='article'`, `title`, `media_type='article'`, `content`, `keywords=[]`, `url='https://example.com/post'`, `analysis_content=''`, `author='Unknown'`, `chunks=None`, `chunk_options=None` — plus `file_path='https://example.com/post'` (which `persist_parsed_media` does NOT read — its presence-but-non-use is the point). (Omitting `author` would `KeyError`.)
 - `persist_parsed_media(payload, MediaDatabase(":memory:", client_id="test-url-persist"))`.
 - Assert the returned `media_id` is an int and `db.get_media_by_id(media_id)` has `row["url"] == "https://example.com/post"` and `row["type"] == "article"`.
 - **No-filesystem-access proof:** the payload's `file_path` is a URL string that is *not* a real file. `persist_parsed_media` never stats/opens it (it only passes `url`/`content`/… to `add_media_with_keywords`), so the test succeeding is itself the proof — no file exists at `https://example.com/post`, so any filesystem dependency on `file_path` would fail. `MediaDatabase(":memory:")` keeps the DB write in RAM.
