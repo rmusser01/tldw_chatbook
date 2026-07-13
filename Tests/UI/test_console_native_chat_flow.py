@@ -6277,3 +6277,62 @@ async def test_pending_image_on_vision_model_does_not_block(monkeypatch):
         store.set_pending_attachment(session.id, _staged_image_attachment())
 
         assert console._console_attachment_blocked_reason() == ""
+
+
+def test_resume_hydrates_image_messages_including_image_only_rows():
+    """Verify resuming a saved conversation keeps image-only rows and their bytes."""
+    screen = ChatScreen(_build_test_app())
+    tree = {
+        "conversation": {"title": "Saved", "workspace_id": None},
+        "root_threads": [
+            {
+                "id": "m-1",
+                "sender": "user",
+                "content": "",
+                "image_data": b"\x89PNG-bytes",
+                "image_mime_type": "image/png",
+                "children": [
+                    {
+                        "id": "m-2",
+                        "sender": "assistant",
+                        "content": "a red square",
+                        "children": [],
+                    }
+                ],
+            }
+        ],
+    }
+
+    messages = screen._console_messages_from_conversation_tree(tree)
+
+    assert len(messages) == 2
+    assert messages[0].image_data == b"\x89PNG-bytes"
+    assert messages[0].image_mime_type == "image/png"
+    assert messages[0].content == ""
+    assert messages[1].content == "a red square"
+
+
+def test_console_message_serialization_carries_image_metadata_not_bytes():
+    """Verify screen-state snapshots carry image metadata but never raw bytes."""
+    from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
+
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="look",
+        image_data=b"\x89PNG-bytes",
+        image_mime_type="image/png",
+        attachment_label="photo.png · 11 B",
+    )
+
+    payload = ChatScreen._serialize_console_message(message)
+
+    assert payload["image_mime_type"] == "image/png"
+    assert payload["attachment_label"] == "photo.png · 11 B"
+    assert "image_data" not in payload
+
+    restored = ChatScreen._restore_console_message(payload)
+
+    assert restored is not None
+    assert restored.image_mime_type == "image/png"
+    assert restored.attachment_label == "photo.png · 11 B"
+    assert restored.image_data is None

@@ -2142,7 +2142,11 @@ class ChatScreen(BaseAppScreen):
         messages: list[ConsoleChatMessage] = []
         for row in self._iter_console_tree_messages(tree.get("root_threads")):
             content = str(row.get("content") or "")
-            if not content:
+            raw_image = row.get("image_data")
+            image_data = bytes(raw_image) if isinstance(raw_image, (bytes, bytearray)) else None
+            raw_mime = row.get("image_mime_type")
+            image_mime_type = str(raw_mime) if raw_mime else None
+            if not content and image_data is None:
                 continue
             persisted_message_id = row.get("id")
             messages.append(
@@ -2155,6 +2159,8 @@ class ChatScreen(BaseAppScreen):
                         if persisted_message_id is not None
                         else None
                     ),
+                    image_data=image_data,
+                    image_mime_type=image_mime_type,
                 )
             )
         return messages
@@ -5623,6 +5629,8 @@ class ChatScreen(BaseAppScreen):
             "persisted_message_id": message.persisted_message_id,
             "feedback": message.feedback,
             "variants": cls._serialize_console_variants(message.variants),
+            "image_mime_type": getattr(message, "image_mime_type", None),
+            "attachment_label": getattr(message, "attachment_label", None),
         }
 
     @classmethod
@@ -5657,6 +5665,16 @@ class ChatScreen(BaseAppScreen):
             ),
             variants=cls._restore_console_variants(payload.get("variants")),
             feedback=feedback,  # type: ignore[arg-type]
+            image_mime_type=(
+                str(payload["image_mime_type"])
+                if payload.get("image_mime_type")
+                else None
+            ),
+            attachment_label=(
+                str(payload["attachment_label"])
+                if payload.get("attachment_label")
+                else None
+            ),
         )
 
     def _serialize_native_console_state(self) -> dict[str, Any] | None:
