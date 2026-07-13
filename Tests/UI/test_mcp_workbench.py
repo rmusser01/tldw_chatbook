@@ -243,3 +243,32 @@ async def test_set_initial_view_state_during_inflight_reload_applies_pending_sta
         # A second consumption attempt must not re-apply.
         await workbench._consume_pending_view_state()
         assert len(apply_calls) == 1
+
+
+from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
+
+
+class _StubApp:
+    unified_mcp_service = None
+
+
+def test_screen_hosts_workbench_with_mode_action_and_tolerant_restore():
+    screen = MCPScreen(_StubApp())
+    # New surface: workbench host + mode action (old screen has mcp_panel, no workbench).
+    assert hasattr(screen, "workbench")
+    assert not hasattr(screen, "mcp_panel")
+    assert callable(getattr(screen, "action_mcp_mode", None))
+    # Never crashes on legacy shape, garbage, or empty state pre-mount.
+    screen.restore_state({"unified_mcp_view_state": {"selected_source": "server"}})
+    screen.restore_state({"mcp_hub_view_state": {"mode": "tools"}})
+    screen.restore_state({})
+    state = screen.save_state()
+    assert isinstance(state, dict)
+
+
+def test_mcp_hub_modes_registry_is_complete():
+    from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCP_HUB_MODES
+
+    assert list(MCP_HUB_MODES) == ["servers", "tools", "permissions", "audit"]
+    for spec in MCP_HUB_MODES.values():
+        assert spec["label"] and spec["button_id"].startswith("mcp-mode-")
