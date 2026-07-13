@@ -217,7 +217,6 @@ class PersonasLibraryPane(Vertical):
             if row.is_unsaved:
                 classes += " is-unsaved"
             if row.meta:
-                classes += " personas-library-row-tall"
                 item = ListItem(
                     Vertical(
                         Static(row.name, markup=False),

@@ -609,6 +609,9 @@ class TestDictionaryEntries:
             await self._select_first(pilot, screen)
             table = screen.query_one("#personas-dict-entries-table", DataTable)
             table.move_cursor(row=1)
+            # Let the RowHighlighted-driven form sync land (HR/heart rate)
+            # before typing over it, mirroring real keyboard navigation.
+            await pilot.pause()
             screen.query_one("#personas-dict-entry-pattern", Input).value = "HRV"
             screen.query_one("#personas-dict-entry-replacement", TextArea).text = "heart rate variability"
             await pilot.click("#personas-dict-entry-update")
@@ -616,6 +619,35 @@ class TestDictionaryEntries:
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             assert fake_dict_service.records[1]["entries"][1]["pattern"] == "HRV"
+
+    async def test_arrow_key_highlight_syncs_form_before_update(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
+        """Keyboard nav (RowHighlighted only) must resync the form, not just
+        the cursor - else Update saves a stale, previously-selected row's
+        form values onto whatever row the cursor now sits on."""
+        from textual.widgets import DataTable
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            table = screen.query_one("#personas-dict-entries-table", DataTable)
+            # Click row 0 (BP) - form fills with BP via RowSelected.
+            table.move_cursor(row=0)
+            await pilot.pause()
+            assert screen.query_one("#personas-dict-entry-pattern", Input).value == "BP"
+            # Arrow-down to row 1 (HR) - only RowHighlighted fires here.
+            table.move_cursor(row=1)
+            await pilot.pause()
+            await pilot.click("#personas-dict-entry-update")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            # B kept ITS OWN pattern: the form resynced to B on highlight,
+            # so Update saved B's data, not A's stale "BP".
+            assert fake_dict_service.records[1]["entries"][1]["pattern"] == "HR"
+            assert fake_dict_service.records[1]["entries"][0]["pattern"] == "BP"
 
     async def test_move_down_sends_full_order_and_reorders(self, mock_app_instance, stub_characters, fake_dict_service):
         from textual.widgets import DataTable
@@ -653,6 +685,7 @@ class TestDictionarySettings:
 
     async def test_save_persists_and_refreshes_row(self, mock_app_instance, stub_characters, fake_dict_service):
         from textual.widgets import TabbedContent
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_inspector_pane import PersonasInspectorPane
 
         app = StyledPersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 48)) as pilot:
@@ -671,6 +704,11 @@ class TestDictionarySettings:
             rows = screen.query_one("#personas-library-rows", ListView).children
             names = [str(r.query(Static).first().renderable) for r in rows]
             assert "Medical Terms" in names
+            # Inspector must re-drive with the new name too, not just the row.
+            inspector = screen.query_one(PersonasInspectorPane)
+            assert "Medical Terms" in str(
+                inspector.query_one("#personas-selected-name", Static).renderable
+            )
 
     async def test_settings_edit_marks_dirty_and_guards_navigation(self, mock_app_instance, stub_characters, fake_dict_service):
         from textual.widgets import TabbedContent

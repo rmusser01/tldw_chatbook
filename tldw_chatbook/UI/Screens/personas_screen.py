@@ -1176,6 +1176,9 @@ class PersonasScreen(BaseAppScreen):
         self._selected_dictionary_version = int(raw_version) if raw_version is not None else None
         self.state.has_unsaved_changes = False
         self.state.selected_entity_name = str(record.get("name") or "")
+        self.query_one(PersonasInspectorPane).show_selection(
+            name=self.state.selected_entity_name, kind="Dictionary", authority="Local"
+        )
         detail.load_dictionary(record)
         detail.set_status("Saved.")
         self._update_title()
@@ -1183,12 +1186,18 @@ class PersonasScreen(BaseAppScreen):
         self.query_one(PersonasLibraryPane).mark_active_row("dictionary", entity_id)
         self._sync_inspector_console_actions()
 
-    async def _reload_selected_dictionary_entries(self) -> None:
-        """Re-fetch entries + version after a mutation (positional ids shift)."""
+    async def _reload_selected_dictionary_entries(self) -> bool:
+        """Re-fetch entries + version after a mutation (positional ids shift).
+
+        Returns:
+            True on success; False on an internal failure path (already
+            surfaced via ``detail.set_status``), so callers know not to
+            clobber that status with a blanket "".
+        """
         entity_id = self.state.selected_entity_id
         service = self._dictionary_scope_service()
         if service is None or self.state.selected_entity_kind != "dictionary" or not entity_id:
-            return
+            return False
         detail = self.query_one(PersonasDictionaryDetailWidget)
         try:
             response = await service.list_entries(int(entity_id), mode="local")
@@ -1196,12 +1205,13 @@ class PersonasScreen(BaseAppScreen):
         except Exception as exc:
             logger.opt(exception=True).warning(f"Could not reload dictionary {entity_id} entries.")
             detail.set_status(f"Reload failed: {exc}")
-            return
+            return False
         raw_version = record.get("version")
         self._selected_dictionary_version = int(raw_version) if raw_version is not None else None
         detail.update_entries(list(response.get("entries") or []))
         await self._render_dictionary_rows(query=self.state.search_query)
         self.query_one(PersonasLibraryPane).mark_active_row("dictionary", entity_id)
+        return True
 
     async def _run_dictionary_entry_op(self, op: Callable[[Any], Awaitable[Any]], failure: str) -> None:
         """One guarded service mutation + the mandatory entries reload."""
@@ -1220,8 +1230,10 @@ class PersonasScreen(BaseAppScreen):
             logger.opt(exception=True).warning(failure)
             detail.set_status(f"{failure}: {exc}")
             return
-        await self._reload_selected_dictionary_entries()
-        detail.set_status("")
+        if await self._reload_selected_dictionary_entries():
+            detail.set_status("")
+        # else: the reload already set its own "Reload failed: ..." status -
+        # blanking it here would silently hide that failure from the user.
 
     @on(DictionaryEntryAddRequested)
     async def _handle_dictionary_entry_add(self, message: DictionaryEntryAddRequested) -> None:
@@ -1686,6 +1698,9 @@ class PersonasScreen(BaseAppScreen):
             return
         target = not bool(record.get("enabled", record.get("is_active", True)))
         try:
+            # expected_version is deliberately omitted: this write only ever
+            # sets the enabled column, so last-write-wins is safe for a
+            # boolean flip (no risk of clobbering an unrelated field edit).
             updated = await service.update_dictionary(
                 int(entity_id), {"enabled": target}, mode="local"
             )

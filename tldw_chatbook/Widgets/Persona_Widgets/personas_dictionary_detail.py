@@ -241,10 +241,8 @@ class PersonasDictionaryDetailWidget(Vertical):
 
     # ----- events -----
 
-    @on(DataTable.RowSelected, "#personas-dict-entries-table")
-    def _row_selected(self, event: DataTable.RowSelected) -> None:
-        event.stop()
-        entry_id = str(event.row_key.value)
+    def _fill_form_from_entry(self, entry_id: str) -> None:
+        """Sync the entry form fields from ``entry_id``'s current data."""
         entry = next((e for e in self._entries if str(e.get("id")) == entry_id), None)
         if entry is None:
             return
@@ -257,6 +255,23 @@ class PersonasDictionaryDetailWidget(Vertical):
         )
         self.query_one("#personas-dict-entry-group", Input).value = str(entry.get("group") or "")
         self.query_one("#personas-dict-entry-max-repl", Input).value = str(entry.get("max_replacements") or 1)
+
+    @on(DataTable.RowSelected, "#personas-dict-entries-table")
+    def _row_selected(self, event: DataTable.RowSelected) -> None:
+        event.stop()
+        self._fill_form_from_entry(str(event.row_key.value))
+
+    @on(DataTable.RowHighlighted, "#personas-dict-entries-table")
+    def _row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        # Arrow-key navigation only fires RowHighlighted (not RowSelected), so
+        # without this the form silently keeps stale values from a prior row
+        # while selected_entry_id tracks the cursor - Update would then save
+        # the wrong entry's old form data onto the newly-highlighted entry.
+        # This also fires on the programmatic cursor moves update_entries
+        # triggers on reload, which is fine: it refreshes from the fresh list.
+        event.stop()
+        if event.row_key is not None and event.row_key.value is not None:
+            self._fill_form_from_entry(str(event.row_key.value))
 
     @on(Button.Pressed, "#personas-dict-entry-add")
     def _add_pressed(self, event: Button.Pressed) -> None:
