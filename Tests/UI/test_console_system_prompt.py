@@ -553,6 +553,46 @@ async def test_console_system_prompt_apply_persists_when_conversation_already_sa
         ]
 
 
+@pytest.mark.asyncio
+async def test_console_system_prompt_apply_notifies_on_persistence_failure():
+    """Finding 3: a persistence failure while applying a system prompt must
+    not crash the apply flow. The in-memory session keeps the applied
+    value (this store's existing convention -- mutations are not rolled
+    back when the durable write that follows them fails) and the user
+    gets an honest warning toast rather than silence or a crash.
+    """
+
+    class RaisingPersistence(FakeConsolePersistence):
+        def update_conversation_system_prompt(self, *, conversation_id, system_prompt):
+            raise RuntimeError("conversation vanished")
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        console._ensure_active_console_session_settings()
+        session_id = store.active_session_id
+        store.persistence = FakeConsolePersistence()
+        store.persist_session_if_needed(session_id)
+        store.persistence = RaisingPersistence()
+
+        notifications: list[tuple[str, str]] = []
+        app.notify = lambda message, severity="information", **kwargs: notifications.append(
+            (message, severity)
+        )
+
+        console._apply_console_session_system_prompt("New prompt")
+        await pilot.pause(0.1)
+
+        settings = console._ensure_active_console_session_settings()
+        assert settings.system_prompt == "New prompt"
+        assert any(severity == "warning" for _message, severity in notifications)
+
+
 # ---------------------------------------------------------------------------
 # Context estimate counts the applied system prompt.
 # ---------------------------------------------------------------------------

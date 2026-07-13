@@ -7088,13 +7088,25 @@ class ChatScreen(BaseAppScreen):
         system prompt, persisting the change if the conversation is already
         saved (Task 13's ``ConsoleChatStore.set_session_system_prompt``), and
         refresh the rail preview + context-estimate surfaces in place.
+
+        The in-memory session is always updated even when the durable write
+        fails -- ``set_session_system_prompt`` never rolls that back (see
+        its docstring) -- so a persistence failure only means the change may
+        not survive a reload; it is surfaced here as an honest warning
+        rather than silently swallowed or crashing this callback.
         """
         self._ensure_active_console_session_settings()
         store = self._ensure_console_chat_store()
         session_id = store.active_session_id
         if session_id is None:
             return
-        store.set_session_system_prompt(session_id, system_prompt)
+        _session, persisted = store.set_session_system_prompt(session_id, system_prompt)
+        if not persisted:
+            self.app_instance.notify(
+                "System prompt applied for this session, but the change "
+                "could not be saved -- it may not survive a reload.",
+                severity="warning",
+            )
         self._sync_console_chat_core_state()
         self._sync_console_settings_summary()
 

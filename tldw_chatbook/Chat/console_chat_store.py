@@ -574,27 +574,45 @@ class ConsoleChatStore:
         self,
         session_id: str,
         system_prompt: str | None,
-    ) -> ConsoleChatSession:
+    ) -> tuple[ConsoleChatSession, bool]:
         """Apply a system prompt to a session, persisting it if already saved.
 
         Updates the in-memory settings snapshot for the session and, when the
         session already owns a persisted conversation, writes the change
         through to durable storage so a later resume restores the same
         system prompt (Task 0 persistence seam: no update-conversation call
-        path existed before this method).
+        path existed before this method). Only a blank/whitespace-only value
+        is normalized to ``None`` (no system prompt); any other text is
+        stored verbatim -- including leading/trailing whitespace and
+        internal formatting -- so formatting-sensitive prompts survive
+        unchanged.
+
+        A persistence failure (missing conversation, version conflict, DB
+        error) is caught and logged rather than raised: the in-memory
+        mutation above already happened and is intentionally NOT rolled
+        back, matching this store's existing convention elsewhere (e.g.
+        ``update_message_content`` keeps its in-memory mutation even when
+        the underlying persistence call fails) -- reverting here would just
+        trade one inconsistency (durable state stale) for another (the
+        in-memory session no longer reflecting what the user just applied).
+        Callers get an honest ``persisted`` flag back so they can surface
+        the failure instead of assuming the change was saved.
 
         Args:
             session_id: Native Console session ID to update.
             system_prompt: New system prompt text, or ``None``/blank to clear it.
 
         Returns:
-            The updated Console session.
+            A ``(session, persisted)`` pair: the updated Console session,
+            and whether the durable write (when one was attempted) actually
+            succeeded. ``persisted`` is ``True`` when no durable write was
+            needed (session not yet saved, or no persistence configured).
         """
         session = self._session_or_raise(session_id)
-        normalized = system_prompt.strip() if isinstance(system_prompt, str) else None
-        normalized = normalized or None
+        normalized = system_prompt if isinstance(system_prompt, str) and system_prompt.strip() else None
         if session.settings is not None:
             session.settings = replace(session.settings, system_prompt=normalized)
+        persisted = True
         if session.persisted_conversation_id is not None and self.persistence is not None:
             update_system_prompt = getattr(
                 self.persistence,
@@ -602,11 +620,21 @@ class ConsoleChatStore:
                 None,
             )
             if callable(update_system_prompt):
-                update_system_prompt(
-                    conversation_id=session.persisted_conversation_id,
-                    system_prompt=normalized,
-                )
-        return session
+                try:
+                    update_system_prompt(
+                        conversation_id=session.persisted_conversation_id,
+                        system_prompt=normalized,
+                    )
+                except Exception:
+                    persisted = False
+                    logger.bind(
+                        session_id=session_id,
+                        conversation_id=session.persisted_conversation_id,
+                    ).exception(
+                        "Failed to persist Console session system prompt; "
+                        "in-memory session keeps the applied value."
+                    )
+        return session, persisted
 
     def _persist_new_message_or_defer(self, *, session_id: str, message: ConsoleChatMessage) -> None:
         if self.persistence is None:

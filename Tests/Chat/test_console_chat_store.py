@@ -430,9 +430,10 @@ def test_set_session_system_prompt_updates_settings_without_persisting_when_unsa
         settings=ConsoleSessionSettings(provider="llama_cpp"),
     )
 
-    updated = store.set_session_system_prompt(session.id, "New system prompt")
+    updated, persisted = store.set_session_system_prompt(session.id, "New system prompt")
 
     assert updated.settings.system_prompt == "New system prompt"
+    assert persisted is True
     assert persistence.updated_system_prompts == []
     assert persistence.created_conversations == []
 
@@ -446,9 +447,10 @@ def test_set_session_system_prompt_persists_change_when_conversation_already_sav
     )
     store.persist_session_if_needed(session.id)
 
-    updated = store.set_session_system_prompt(session.id, "  Answer in French.  ")
+    updated, persisted = store.set_session_system_prompt(session.id, "Answer in French.")
 
     assert updated.settings.system_prompt == "Answer in French."
+    assert persisted is True
     assert persistence.updated_system_prompts == [
         {"conversation_id": "conv-1", "system_prompt": "Answer in French."}
     ]
@@ -463,12 +465,41 @@ def test_set_session_system_prompt_normalizes_blank_to_none():
     )
     store.persist_session_if_needed(session.id)
 
-    updated = store.set_session_system_prompt(session.id, "   ")
+    updated, persisted = store.set_session_system_prompt(session.id, "   ")
 
     assert updated.settings.system_prompt is None
+    assert persisted is True
     assert persistence.updated_system_prompts == [
         {"conversation_id": "conv-1", "system_prompt": None}
     ]
+
+
+def test_set_session_system_prompt_survives_persistence_failure():
+    """A persistence error (e.g. the conversation was deleted, or a DB
+    conflict) must not escape `set_session_system_prompt`, and the
+    in-memory session keeps the applied value (this store's existing
+    convention: mutations are not rolled back when the durable write that
+    follows them fails); the caller gets `persisted=False` back so it can
+    surface the failure honestly instead of assuming the change was saved.
+    """
+
+    class RaisingPersistence(FakePersistence):
+        def update_conversation_system_prompt(self, *, conversation_id, system_prompt):
+            raise RuntimeError("conversation vanished")
+
+    persistence = RaisingPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session(
+        title="Chat 1",
+        settings=ConsoleSessionSettings(provider="llama_cpp"),
+    )
+    store.persist_session_if_needed(session.id)
+
+    updated, persisted = store.set_session_system_prompt(session.id, "New prompt")
+
+    assert persisted is False
+    assert updated.settings.system_prompt == "New prompt"
+    assert store.session_settings(session.id).system_prompt == "New prompt"
 
 
 def test_store_enqueues_chat_sync_after_user_message_is_durable():
