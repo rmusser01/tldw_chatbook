@@ -126,3 +126,31 @@ class TestWrapperContract:
         wrapped = process_user_input(sample, entries, max_tokens=6)
         core_text, _ = process_user_input_with_diagnostics(sample, entries, max_tokens=6)
         assert wrapped == core_text
+
+    def test_none_entries_degrades_to_unchanged_input(self):
+        # Pre-refactor behavior: iteration failure degrades inside stage 1.
+        assert process_user_input("hello world", None) == "hello world"
+        text, diag = process_user_input_with_diagnostics("hello world", None)
+        assert text == "hello world"
+        assert diag.matched == 0
+
+    def test_single_pass_iterable_still_substitutes(self):
+        class OneShot:
+            def __init__(self, items):
+                self._items = items
+                self._used = False
+            def __iter__(self):
+                assert not self._used, "consumed twice"
+                self._used = True
+                return iter(self._items)
+            def __len__(self):
+                return len(self._items)
+
+        one_shot = OneShot([_entry("BP", "blood pressure")])
+        assert process_user_input("BP now", one_shot) == "blood pressure now"
+
+    def test_generator_entries_degrades_to_unchanged_input(self):
+        # Length-less generators degraded to no-op pre-refactor (len() raised
+        # inside stage 1); the fix must preserve exactly that.
+        gen = (e for e in [_entry("BP", "blood pressure")])
+        assert process_user_input("BP now", gen) == "BP now"

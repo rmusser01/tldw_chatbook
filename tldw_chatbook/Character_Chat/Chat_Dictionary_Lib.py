@@ -596,14 +596,12 @@ def process_user_input_with_diagnostics(
         were collected before the failure.
     """
     current_time = datetime.now()
-    original_input_for_fallback = user_input
+    original_input_for_fallback = user_input  # Save for critical error case
     temp_user_input = user_input
 
     diagnostics = DictionaryProcessDiagnostics(token_budget=max_tokens)
     # First-wins for pathological duplicate objects in the input list.
     index_by_id: Dict[int, int] = {}
-    for input_index, candidate in enumerate(entries):
-        index_by_id.setdefault(id(candidate), input_index)
     matched_snapshot: List[ChatDictionary] = []
     skip_reason_by_id: Dict[int, str] = {}
     replacements_by_id: Dict[int, int] = {}
@@ -654,13 +652,21 @@ def process_user_input_with_diagnostics(
     try:
         # 1. Match entries  (verbatim from the original body)
         logging.debug(f"Chat Dictionary: Initial matching for: {user_input[:100]}")
+        # The original `entry.matches()` is a simple check. `match_whole_words` is more robust.
+        # The original `process_user_input` had `entry.matches(user_input)` then later `match_whole_words`.
+        # Consolidating to `match_whole_words` as the primary matching mechanism.
         try:
-            valid_initial_entries = [e for e in entries if isinstance(e, ChatDictionary)]
+            # Ensure entries are ChatDictionary instances
+            valid_initial_entries = []
+            for input_index, candidate in enumerate(entries):
+                index_by_id.setdefault(id(candidate), input_index)
+                if isinstance(candidate, ChatDictionary):
+                    valid_initial_entries.append(candidate)
             if len(valid_initial_entries) != len(entries):
                 logging.warning("Some provided entries were not ChatDictionary instances and were skipped.")
             matched_entries = match_whole_words(valid_initial_entries, user_input)
         except re.error as e:
-            log_counter("chat_dict_regex_error", labels={"key": "compilation_phase"})
+            log_counter("chat_dict_regex_error", labels={"key": "compilation_phase"})  # Generic key
             logging.error(f"Invalid regex pattern during initial matching. Error: {str(e)}")
             matched_entries = []
         except Exception as e_match:
@@ -676,10 +682,10 @@ def process_user_input_with_diagnostics(
         try:
             logging.debug(f"Chat Dictionary: Applying group scoring for {len(matched_entries)} entries")
             matched_entries = group_scoring(matched_entries)
-        except Exception as e_gs:
+        except Exception as e_gs:  # More specific exception if defined (ChatProcessingError)
             log_counter("chat_dict_group_scoring_error")
             logging.error(f"Error in group scoring: {str(e_gs)}")
-            matched_entries = []
+            matched_entries = []  # Fallback to empty list
         _record_stage_drops(stage_before, matched_entries, "group_scoring")   # ADDED
 
         # 3. Probability filter (same pattern)
@@ -690,22 +696,23 @@ def process_user_input_with_diagnostics(
         except Exception as e_prob:
             log_counter("chat_dict_probability_error")
             logging.error(f"Error in probability filtering: {str(e_prob)}")
-            matched_entries = []
+            matched_entries = []  # Fallback to empty list
         _record_stage_drops(stage_before, matched_entries, "probability")     # ADDED
 
         # 4. Timed effects (same pattern around the original loop)
+        # And update last_triggered for those that *will* be used
         stage_before = list(matched_entries)                          # ADDED
         active_timed_entries = []
         try:
             logging.debug("Chat Dictionary: Applying timed effects")
             for entry in matched_entries:
-                if apply_timed_effects(entry, current_time):
+                if apply_timed_effects(entry, current_time):  # Checks if eligible
                     active_timed_entries.append(entry)
             matched_entries = active_timed_entries
         except Exception as e_time:
             log_counter("chat_dict_timed_effects_error")
             logging.error(f"Error applying timed effects: {str(e_time)}")
-            matched_entries = []
+            matched_entries = []  # Fallback to empty list
         _record_stage_drops(stage_before, matched_entries, "timed_effects")   # ADDED
 
         # 5. Token budget (same pattern; truncation drives budget_exceeded)
@@ -716,11 +723,11 @@ def process_user_input_with_diagnostics(
         except TokenBudgetExceededWarning as e:
             log_counter("chat_dict_token_limit")
             logging.warning(str(e))
-            matched_entries = []
+            matched_entries = []  # Fallback to empty list
         except Exception as e_budget:
             log_counter("chat_dict_token_budget_error")
             logging.error(f"Error enforcing token budget: {str(e_budget)}")
-            matched_entries = []
+            matched_entries = []  # Fallback to empty list
         _record_stage_drops(stage_before, matched_entries, "token_budget")    # ADDED
         budget_survivor_ids = {id(e) for e in matched_entries}               # ADDED
         diagnostics.budget_exceeded = len(matched_entries) != len(stage_before)  # ADDED
@@ -740,7 +747,7 @@ def process_user_input_with_diagnostics(
         except Exception as e_strategy:
             log_counter("chat_dict_strategy_error")
             logging.error(f"Error applying strategy: {str(e_strategy)}")
-            matched_entries = []
+            matched_entries = []  # Fallback to empty list
         _record_stage_drops(stage_before, matched_entries, "strategy_error")  # ADDED (defensive)
 
         # 7. Replacements (verbatim loop + order/count recording)
@@ -748,16 +755,20 @@ def process_user_input_with_diagnostics(
             applied_order_by_id[id(entry)] = applied_position         # ADDED
             try:
                 logging.debug("Chat Dictionary: Applying replacements")
+                # Use a copy of max_replacements for this run if needed, or modify original for state
                 replacements_done_for_this_entry = 0
-                current_max_replacements = entry.max_replacements
+                # Original code had `entry.max_replacements > 0` check outside loop.
+                # If multiple replacements are allowed by one entry definition:
+                current_max_replacements = entry.max_replacements  # Use current value
                 while current_max_replacements > 0:
                     temp_user_input, replaced_count = apply_replacement_once(temp_user_input, entry)
                     if replaced_count > 0:
                         replacements_done_for_this_entry += 1
                         current_max_replacements -= 1
+                        # Update last_triggered for entries that actually made a replacement
                         entry.last_triggered = current_time
                     else:
-                        break
+                        break  # No more matches for this key
                 if replacements_done_for_this_entry > 0:
                     logging.debug(f"Replaced {replacements_done_for_this_entry} occurrences of '{entry.raw_key}'")
                 replacements_by_id[id(entry)] = replacements_done_for_this_entry  # ADDED
@@ -766,11 +777,11 @@ def process_user_input_with_diagnostics(
                 logging.error(f"Error applying replacement for entry {entry.raw_key}: {str(e_replace)}", exc_info=True)
                 continue
 
-    except Exception as e_crit:
+    except Exception as e_crit:  # Catch-all for ChatProcessingError or other unexpected issues
         log_counter("chat_dict_processing_error")
         logging.error(f"Critical error in process_user_input: {str(e_crit)}", exc_info=True)
         _finalize()                                                   # ADDED
-        return original_input_for_fallback, diagnostics               # CHANGED (tuple)
+        return original_input_for_fallback, diagnostics  # Return original input on critical failure (CHANGED: now a tuple)
 
     _finalize()                                                       # ADDED
     return temp_user_input, diagnostics                               # CHANGED (tuple)
