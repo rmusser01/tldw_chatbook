@@ -1,9 +1,10 @@
 ---
 id: TASK-212
 title: Loosen validate_url for URL ingest (long TLDs / IPv6 / IDN)
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-12 20:58'
+updated_date: '2026-07-13 02:45'
 labels:
   - library
   - ingest
@@ -19,5 +20,11 @@ URL ingest (task 162) made Utils/input_validation.py:validate_url load-bearing a
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A URL with a long TLD (e.g. .software) is accepted by the Library ingest form,IPv6 and IDN host handling is either supported or the rejection copy is made actionable,Existing validate_url callers are unaffected (no regression)
+- [x] #1 A URL with a long TLD (e.g. .software) is accepted by the Library ingest form,IPv6 and IDN host handling is either supported or the rejection copy is made actionable,Existing validate_url callers are unaffected (no regression)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Replaced the regex with urlparse-based validation (scheme + host + port-guard + whitespace-reject); long-TLD/IPv6/IDN now supported; verified no regression against the three existing suites; single-label hosts now accepted and out-of-range ports now rejected (both intentional).
+<!-- SECTION:NOTES:END -->

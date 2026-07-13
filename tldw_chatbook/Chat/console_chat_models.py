@@ -190,6 +190,9 @@ class ConsoleChatMessage:
     persisted_message_id: str | None = None
     variants: "ConsoleVariantSet | None" = None
     feedback: ConsoleMessageFeedback | None = None
+    image_data: bytes | None = None
+    image_mime_type: str | None = None
+    attachment_label: str | None = None
 
 
 @dataclass(frozen=True)

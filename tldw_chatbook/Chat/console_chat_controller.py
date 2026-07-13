@@ -6,7 +6,13 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 
+from tldw_chatbook.Chat.attachment_core import (
+    image_content_parts,
+    max_history_images,
+    vision_block_reason,
+)
 from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
     ConsoleMessageRole,
     ConsoleProviderSelection,
     ConsoleRunState,
@@ -17,6 +23,7 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
+from tldw_chatbook.model_capabilities import is_vision_capable
 
 
 MAX_CONSOLE_DRAFT_LENGTH = 100_000
@@ -64,7 +71,7 @@ class ConsoleProviderGatewayProtocol(Protocol):
     async def resolve_for_send(self, selection: ConsoleProviderSelection) -> Any:
         """Resolve provider readiness for a send."""
 
-    async def stream_chat(self, resolution: Any, messages: list[dict[str, str]]) -> Any:
+    async def stream_chat(self, resolution: Any, messages: list[dict[str, Any]]) -> Any:
         """Stream response chunks for provider messages."""
 
 
@@ -145,9 +152,28 @@ class ConsoleChatController:
         session = self.store.ensure_session(
             workspace_id=self.store.workspace_context.active_workspace_id,
         )
-        clean_draft, validation_error = self._validated_draft(draft)
+        pending = self.store.pending_attachment(session.id)
+        pending_image = (
+            pending
+            if pending is not None
+            and pending.insert_mode == "attachment"
+            and pending.data is not None
+            else None
+        )
+        clean_draft, validation_error = self._validated_draft(
+            draft, allow_empty=pending_image is not None
+        )
         if validation_error is not None:
             return self._block(session.id, validation_error)
+        if pending_image is not None:
+            vision_model = self.model or self.configured_model
+            model_is_vision_capable = bool(vision_model) and is_vision_capable(
+                self.provider, vision_model or ""
+            )
+            if not model_is_vision_capable:
+                block_reason = vision_block_reason(self.provider, vision_model)
+                if block_reason is not None:
+                    return self._block(session.id, block_reason)
         if self.store.workspace_context.has_policy_blocks:
             return self._block(session.id, self.store.workspace_context.recovery_copy)
 
@@ -162,8 +188,13 @@ class ConsoleChatController:
             session.id,
             role=ConsoleMessageRole.USER,
             content=clean_draft,
+            image_data=pending_image.data if pending_image is not None else None,
+            image_mime_type=pending_image.mime_type if pending_image is not None else None,
+            attachment_label=pending_image.label if pending_image is not None else None,
             persist=self.store.persistence is not None,
         )
+        if pending_image is not None:
+            self.store.clear_pending_attachment(session.id)
         self._notify_submission_accepted()
         provider_messages = self._provider_messages_for_session(session.id)
         assistant = self.store.append_message(
@@ -503,7 +534,7 @@ class ConsoleChatController:
 
     @staticmethod
     def _ensure_user_continuation_instruction(
-        provider_messages: list[dict[str, str]],
+        provider_messages: list[dict[str, Any]],
     ) -> None:
         if (
             provider_messages
@@ -514,9 +545,11 @@ class ConsoleChatController:
             )
 
     @staticmethod
-    def _validated_draft(draft: str) -> tuple[str, str | None]:
+    def _validated_draft(draft: str, *, allow_empty: bool = False) -> tuple[str, str | None]:
         raw_draft = str(draft or "")
         if not raw_draft.strip():
+            if allow_empty:
+                return "", None
             return "", "Type a message before sending."
         if not validate_text_input(
             raw_draft,
@@ -526,6 +559,8 @@ class ConsoleChatController:
             return "", "Message blocked: remove unsafe markup or shorten your message."
         clean_draft = sanitize_string(raw_draft, max_length=MAX_CONSOLE_DRAFT_LENGTH)
         if not clean_draft.strip():
+            if allow_empty:
+                return "", None
             return "", "Type a message before sending."
         return clean_draft, None
 
@@ -707,37 +742,75 @@ class ConsoleChatController:
         session_id: str,
         *,
         before_message_id: str | None = None,
-    ) -> list[dict[str, str]]:
-        messages: list[dict[str, str]] = self._leading_system_message()
+    ) -> list[dict[str, Any]]:
+        collected: list[ConsoleChatMessage] = []
         for message in self.store.messages_for_session(session_id):
             if message.id == before_message_id:
                 break
-            if not message.content:
-                continue
-            if message.role not in {ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT}:
-                continue
-            if message.status == "failed":
-                continue
-            messages.append({"role": message.role.value, "content": message.content})
-        return messages
+            collected.append(message)
+        return self._leading_system_message() + self._provider_message_payloads(
+            collected, skip_failed=True
+        )
 
     def _provider_messages_through_message(
         self,
         session_id: str,
         message_id: str,
-    ) -> list[dict[str, str]]:
-        messages: list[dict[str, str]] = self._leading_system_message()
+    ) -> list[dict[str, Any]]:
+        collected: list[ConsoleChatMessage] = []
         for message in self.store.messages_for_session(session_id):
-            content = (
-                message.variants.current.content
-                if message.variants is not None
-                else message.content
-            )
-            if content and message.role in {ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT}:
-                messages.append({"role": message.role.value, "content": content})
+            collected.append(message)
             if message.id == message_id:
                 break
-        return messages
+        return self._leading_system_message() + self._provider_message_payloads(
+            collected, skip_failed=False, use_variant_content=True
+        )
+
+    def _provider_message_payloads(
+        self,
+        session_messages: list[ConsoleChatMessage],
+        *,
+        skip_failed: bool,
+        use_variant_content: bool = False,
+    ) -> list[dict[str, Any]]:
+        model = self.model or self.configured_model
+        vision = bool(model) and is_vision_capable(self.provider, model or "")
+        image_budget = max_history_images(self.provider, model)
+        image_ids = [
+            message.id
+            for message in session_messages
+            if message.role is ConsoleMessageRole.USER and message.image_data is not None
+        ]
+        allowed_image_ids = set(image_ids[-image_budget:]) if vision else set()
+        payloads: list[dict[str, Any]] = []
+        for message in session_messages:
+            if message.role not in {ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT}:
+                continue
+            if skip_failed and message.status == "failed":
+                continue
+            text = (
+                message.variants.current.content
+                if use_variant_content and message.variants is not None
+                else message.content
+            )
+            if (
+                message.id in allowed_image_ids
+                and message.image_data is not None
+                and message.image_mime_type
+            ):
+                payloads.append(
+                    {
+                        "role": message.role.value,
+                        "content": image_content_parts(
+                            text, message.image_data, message.image_mime_type
+                        ),
+                    }
+                )
+                continue
+            if not text:
+                continue
+            payloads.append({"role": message.role.value, "content": text})
+        return payloads
 
     def _mark_stream_stopped(
         self,

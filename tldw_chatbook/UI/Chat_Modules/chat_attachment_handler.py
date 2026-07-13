@@ -10,7 +10,6 @@ Handles all file attachment functionality including:
 """
 
 import asyncio
-import os
 from typing import TYPE_CHECKING, Optional, Any
 from pathlib import Path
 from loguru import logger
@@ -75,16 +74,11 @@ class ChatAttachmentHandler:
                 return any(fnmatch(path.name, pattern) for pattern in pattern_list)
             return filter_func
         
-        # Create comprehensive file filters
+        from ...Chat.attachment_core import ATTACHMENT_FILTER_SPECS
+
         file_filters = Filters(
-            ("All Supported Files", create_filter("*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp;*.tiff;*.tif;*.svg;*.txt;*.md;*.log;*.py;*.js;*.ts;*.java;*.cpp;*.c;*.h;*.cs;*.rb;*.go;*.rs;*.json;*.yaml;*.yml;*.csv;*.tsv;*.pdf;*.doc;*.docx;*.rtf;*.odt;*.epub;*.mobi;*.azw;*.azw3;*.fb2")),
-            ("Image Files", create_filter("*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp;*.tiff;*.tif;*.svg")),
-            ("Document Files", create_filter("*.pdf;*.doc;*.docx;*.rtf;*.odt")),
-            ("E-book Files", create_filter("*.epub;*.mobi;*.azw;*.azw3;*.fb2")),
-            ("Text Files", create_filter("*.txt;*.md;*.log;*.text;*.rst")),
-            ("Code Files", create_filter("*.py;*.js;*.ts;*.java;*.cpp;*.c;*.h;*.cs;*.rb;*.go;*.rs;*.swift;*.kt;*.php;*.r;*.m;*.lua;*.sh;*.bash;*.ps1;*.sql;*.html;*.css;*.xml")),
-            ("Data Files", create_filter("*.json;*.yaml;*.yml;*.csv;*.tsv")),
-            ("All Files", lambda path: True)
+            *[(label, create_filter(patterns)) for label, patterns in ATTACHMENT_FILTER_SPECS],
+            ("All Files", lambda path: True),
         )
         
         # Push the FileOpen dialog directly
@@ -149,26 +143,10 @@ class ChatAttachmentHandler:
         return attached_files
 
     async def _load_processed_file(self, file_path: str) -> Any:
-        """Validate and process a file attachment."""
-        from ...Utils.file_handlers import file_handler_registry
-        from ...Utils.path_validation import is_safe_path
+        """Validate and process a file attachment via the shared core."""
+        from ...Chat.attachment_core import load_processed_file
 
-        logger.info(f"Processing file attachment: {file_path}")
-
-        if not is_safe_path(file_path, os.path.expanduser("~")):
-            raise ValueError("File path is outside allowed directories")
-
-        if not os.path.exists(file_path):
-            raise FileNotFoundError(file_path)
-
-        file_size = os.path.getsize(file_path)
-        max_size = 100 * 1024 * 1024  # 100MB limit
-        if file_size > max_size:
-            raise ValueError(
-                f"File too large: {file_size / 1024 / 1024:.1f}MB (max 100MB)"
-            )
-
-        return await file_handler_registry.process_file(file_path)
+        return await load_processed_file(file_path)
     
     def _process_file_worker(self, file_path: str) -> None:
         """Worker to process file attachment in background thread.

@@ -621,3 +621,74 @@ def test_console_streaming_assistant_row_shows_generating_placeholder_until_firs
         status="failed",
     )
     assert _message_body(failed) == "[failed]"
+
+
+def test_image_message_row_renders_chip_line():
+    from tldw_chatbook.Widgets.Console.console_transcript import _message_render_text
+
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="what is this?",
+        image_data=b"\x89PNG-bytes",
+        image_mime_type="image/png",
+        attachment_label="photo.png · 11 B",
+    )
+    rendered = _message_render_text(message, selected=False)
+    assert "🖼 photo.png · 11 B" in rendered.plain
+
+
+def test_image_only_message_row_renders_chip_without_body():
+    from tldw_chatbook.Widgets.Console.console_transcript import _message_render_text
+
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="",
+        image_data=b"\x89PNG-bytes",
+        image_mime_type="image/png",
+    )
+    rendered = _message_render_text(message, selected=False)
+    assert "🖼" in rendered.plain
+
+
+def test_save_image_action_only_offered_for_image_messages():
+    service = ConsoleMessageActionService()
+    plain = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="text")
+    with_image = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="pic",
+        image_data=b"\x89PNG-bytes",
+        image_mime_type="image/png",
+    )
+    plain_ids = [action.action_id for action in service.available_actions(plain)]
+    image_ids = [action.action_id for action in service.available_actions(with_image)]
+    assert "save-image" not in plain_ids
+    assert "save-image" in image_ids
+
+    result = service.dispatch("save-image", with_image)
+    assert result.status == "completed"
+    assert result.visible_copy == "Saving image to disk."
+
+
+def test_image_chip_falls_back_to_mime_and_size_without_label():
+    from tldw_chatbook.Widgets.Console.console_transcript import _message_render_text
+
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="",
+        image_data=b"x" * 2048,
+        image_mime_type="image/png",
+    )
+    rendered = _message_render_text(message, selected=False)
+    assert "🖼 image/png · 2 KB" in rendered.plain
+
+
+def test_image_chip_metadata_only_keeps_bare_mime():
+    from tldw_chatbook.Widgets.Console.console_transcript import _message_render_text
+
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="look",
+        image_mime_type="image/png",
+    )
+    rendered = _message_render_text(message, selected=False)
+    assert "🖼 image/png" in rendered.plain

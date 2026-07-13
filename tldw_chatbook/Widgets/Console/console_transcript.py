@@ -35,6 +35,7 @@ _ACTION_TOOLTIPS = {
     "copy": "Copy this message to the clipboard.",
     "edit": "Edit this message before continuing the thread.",
     "save-as": "Choose a destination for this message, such as Chatbook or Note.",
+    "save-image": "Save image to disk.",
     "retry": "Retry the failed response.",
     "regenerate": "Generate another assistant variant for this turn.",
     "continue": "Continue and extend the selected message.",
@@ -84,6 +85,41 @@ def _is_generating_placeholder_body(message: ConsoleChatMessage, body: str) -> b
     return message.status == "streaming" and body == CONSOLE_GENERATING_PLACEHOLDER
 
 
+def _human_size(size: int) -> str:
+    """Format a byte count for display, matching ``attachment_core._format_size``.
+
+    Kept as a small local helper (rather than importing ``attachment_core``)
+    to keep this widget free of that dependency.
+    """
+    if size >= 1024 * 1024:
+        return f"{size / 1024 / 1024:.1f} MB"
+    if size >= 1024:
+        return f"{size / 1024:.0f} KB"
+    return f"{size} B"
+
+
+def _message_image_chip(message: ConsoleChatMessage) -> str | None:
+    """Return the placeholder chip line for a message carrying an image.
+
+    ``attachment_label`` (e.g. "photo.png · 11 B") only exists in
+    memory/screen-state -- the DB stores just ``image_data`` +
+    ``image_mime_type``, so a message resumed from the DB has no label. When
+    the raw bytes are available, synthesize a "{mime} · {size}" label instead
+    of falling back to a bare MIME type. When only metadata was restored
+    (``image_data`` is ``None``), keep the bare-mime fallback.
+    """
+    if message.image_data is None and not message.image_mime_type:
+        return None
+    if message.attachment_label:
+        label = message.attachment_label
+    elif message.image_data is not None:
+        mime = message.image_mime_type or "image"
+        label = f"{mime} · {_human_size(len(message.image_data))}"
+    else:
+        label = message.image_mime_type or "image"
+    return f"🖼 {label}"
+
+
 def _message_render_text(message: ConsoleChatMessage, *, selected: bool) -> Content:
     """Return the compact transcript row renderable for a message.
 
@@ -102,6 +138,9 @@ def _message_render_text(message: ConsoleChatMessage, *, selected: bool) -> Cont
     """
     role_label = _message_role_label(message)
     body = _message_body(message)
+    chip = _message_image_chip(message)
+    if chip:
+        body = f"{body}\n{chip}" if body else chip
     body_part: tuple[str, str] | str = body
     if _is_generating_placeholder_body(message, body):
         body_part = (body, "dim")

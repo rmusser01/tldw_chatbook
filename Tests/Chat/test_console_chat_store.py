@@ -872,3 +872,111 @@ def test_append_message_touches_session_updated_at():
     touched = store._sessions[session.id].updated_at
     assert touched != "2020-01-01T00:00:00+00:00"
     assert datetime.fromisoformat(touched) >= datetime.fromisoformat(original)
+
+
+from tldw_chatbook.Chat.attachment_core import PendingAttachment
+
+
+def _image_attachment(name="photo.png"):
+    return PendingAttachment(
+        file_path=f"/tmp/{name}",
+        display_name=name,
+        file_type="image",
+        insert_mode="attachment",
+        data=b"\x89PNG-bytes",
+        mime_type="image/png",
+        original_size=11,
+        processed_size=11,
+    )
+
+
+class RecordingPersistence:
+    def __init__(self):
+        self.created = []
+        self.updated = []
+        self._counter = 0
+
+    def create_conversation(self, **kwargs):
+        return "conv-1"
+
+    def create_message(self, **kwargs):
+        self.created.append(kwargs)
+        self._counter += 1
+        return f"msg-{self._counter}"
+
+    def update_message_content(self, **kwargs):
+        self.updated.append(kwargs)
+        return True
+
+
+def test_pending_attachment_is_per_session():
+    store = ConsoleChatStore()
+    first = store.create_session(title="A")
+    second = store.create_session(title="B")
+
+    store.set_pending_attachment(first.id, _image_attachment())
+
+    assert store.pending_attachment(first.id) is not None
+    assert store.pending_attachment(second.id) is None
+
+    store.clear_pending_attachment(first.id)
+    assert store.pending_attachment(first.id) is None
+
+
+def test_append_message_persists_image_fields():
+    persistence = RecordingPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="what is this?",
+        image_data=b"\x89PNG-bytes",
+        image_mime_type="image/png",
+        attachment_label="photo.png · 11 B",
+        persist=True,
+    )
+
+    assert message.image_data == b"\x89PNG-bytes"
+    assert message.attachment_label == "photo.png · 11 B"
+    assert persistence.created[-1]["image_data"] == b"\x89PNG-bytes"
+    assert persistence.created[-1]["image_mime_type"] == "image/png"
+
+
+def test_image_only_user_message_persists_immediately():
+    persistence = RecordingPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="",
+        image_data=b"\x89PNG-bytes",
+        image_mime_type="image/png",
+        persist=True,
+    )
+
+    assert len(persistence.created) == 1
+    assert persistence.created[0]["content"] == ""
+    assert persistence.created[0]["image_data"] == b"\x89PNG-bytes"
+
+
+def test_editing_message_content_does_not_wipe_persisted_image():
+    persistence = RecordingPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="original",
+        image_data=b"\x89PNG-bytes",
+        image_mime_type="image/png",
+        persist=True,
+    )
+
+    store.update_message_content(message.id, "edited")
+
+    assert persistence.updated[-1]["image_data"] == b"\x89PNG-bytes"
+    assert persistence.updated[-1]["image_mime_type"] == "image/png"

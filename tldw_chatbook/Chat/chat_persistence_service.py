@@ -226,11 +226,17 @@ class ChatPersistenceService:
         if not current_message:
             raise ValueError(f"Message {message_id} not found")
 
-        update_data: Dict[str, Any] = {
-            "content": content,
-            "image_data": image_data,
-            "image_mime_type": image_mime_type,
-        }
+        update_data: Dict[str, Any] = {"content": content}
+        # Only include the image columns when new image bytes are supplied.
+        # ``ChaChaNotes_DB.update_message`` treats an *included* ``image_data``
+        # key of ``None`` as an explicit request to NULL both image columns,
+        # but omitting the key entirely leaves any persisted image untouched.
+        # Callers here (e.g. the Console store) may pass ``image_data=None``
+        # simply because in-memory bytes were never rehydrated -- that must
+        # not wipe an image that already exists in the database.
+        if image_data is not None:
+            update_data["image_data"] = image_data
+            update_data["image_mime_type"] = image_mime_type
         if update_parent:
             update_data["parent_message_id"] = parent_message_id
         if update_feedback:

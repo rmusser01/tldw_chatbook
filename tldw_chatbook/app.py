@@ -2277,16 +2277,14 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     current_selected_note_content: reactive[Optional[str]] = reactive("")
     
     # Notes tab UI state
-    notes_unsaved_changes: reactive[bool] = reactive(False)
     notes_sort_by: reactive[str] = reactive("date_created")  # date_created, date_modified, title
     notes_sort_ascending: reactive[bool] = reactive(False)  # False = newest first
     notes_preview_mode: reactive[bool] = reactive(False)  # False = edit mode, True = preview mode
-    
+
     # Auto-save related reactive variables
     notes_auto_save_enabled: reactive[bool] = reactive(True)  # Auto-save enabled by default
     notes_auto_save_timer: reactive[Optional[Timer]] = reactive(None)  # Timer reference for auto-save
     notes_last_save_time: reactive[Optional[float]] = reactive(None)  # Timestamp of last save
-    notes_auto_save_status: reactive[str] = reactive("")  # Status: "", "saving", "saved"
 
     # --- Reactives for chat sidebar prompt display ---
     chat_sidebar_selected_prompt_id: reactive[Optional[int]] = reactive(None)
@@ -2364,10 +2362,6 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     parsed_notes_for_preview: List[Dict[str, Any]] = []
     last_note_import_dir: Optional[Path] = None
     # Add attributes to hold the handlers (optional, but can be useful)
-    prompt_import_success_handler: Optional[Callable] = None
-    prompt_import_failure_handler: Optional[Callable] = None
-    character_import_success_handler: Optional[Callable] = None
-    character_import_failure_handler: Optional[Callable] = None
     note_import_success_handler: Optional[Callable] = None
     note_import_failure_handler: Optional[Callable] = None
 
@@ -6657,55 +6651,6 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         except QueryError:
             # Sidebar might not be created yet
             pass
-
-
-    
-    def watch_notes_unsaved_changes(self, has_unsaved: bool) -> None:
-        """Update the unsaved changes indicator."""
-        if not self._ui_ready:
-            return
-        try:
-            indicator = self.query_one("#notes-unsaved-indicator", Label)
-            # Don't update if we're showing auto-save status
-            if self.notes_auto_save_status:
-                return
-            if has_unsaved:
-                indicator.update("● Unsaved")
-                indicator.add_class("has-unsaved")
-            else:
-                indicator.update("")
-                indicator.remove_class("has-unsaved")
-        except QueryError:
-            pass  # Indicator might not exist yet
-
-    def watch_notes_auto_save_status(self, status: str) -> None:
-        """Update the indicator based on auto-save status."""
-        if not self._ui_ready:
-            return
-        try:
-            indicator = self.query_one("#notes-unsaved-indicator", Label)
-            if status == "saving":
-                indicator.update("⟳ Auto-saving...")
-                indicator.remove_class("has-unsaved")
-                indicator.add_class("auto-saving")
-            elif status == "saved":
-                indicator.update("✓ Saved")
-                indicator.remove_class("has-unsaved", "auto-saving")
-                indicator.add_class("saved")
-                # Clear the saved status after 2 seconds (keeping this one timer for UX feedback)
-                self.set_timer(2.0, lambda: setattr(self, 'notes_auto_save_status', ''))
-            else:
-                # Empty status - let the unsaved changes watcher handle it
-                indicator.remove_class("auto-saving", "saved")
-                # Re-evaluate unsaved changes
-                if self.notes_unsaved_changes:
-                    indicator.update("● Unsaved")
-                    indicator.add_class("has-unsaved")
-                else:
-                    indicator.update("")
-                    indicator.remove_class("has-unsaved")
-        except QueryError:
-            pass  # Indicator might not exist yet
 
     def watch_conv_char_sidebar_left_collapsed(self, collapsed: bool) -> None:
         """Hide or show the Conversations, Characters & Prompts left sidebar pane."""

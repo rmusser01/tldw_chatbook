@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from loguru import logger
 
+from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
     DEFAULT_CONSOLE_SESSION_TITLE,
@@ -88,6 +89,7 @@ class ConsoleChatSession:
     settings: ConsoleSessionSettings | None = None
     draft: str = ""
     updated_at: str = field(default_factory=_utc_now_iso)
+    pending_attachment: PendingAttachment | None = None
 
 
 class ConsoleChatStore:
@@ -275,6 +277,57 @@ class ConsoleChatStore:
         session.draft = draft
         return session
 
+    def pending_attachment(self, session_id: str) -> PendingAttachment | None:
+        """Return the staged, not-yet-sent attachment for a session.
+
+        Args:
+            session_id: Native Console session ID.
+
+        Returns:
+            The staged attachment, or None when nothing is staged.
+
+        Raises:
+            KeyError: If the session is unknown.
+        """
+        return self._session_or_raise(session_id).pending_attachment
+
+    def set_pending_attachment(
+        self,
+        session_id: str,
+        attachment: PendingAttachment,
+    ) -> ConsoleChatSession:
+        """Stage an attachment on a session, replacing any previous one.
+
+        Args:
+            session_id: Native Console session ID.
+            attachment: Processed attachment to stage for the next send.
+
+        Returns:
+            The updated session.
+
+        Raises:
+            KeyError: If the session is unknown.
+        """
+        session = self._session_or_raise(session_id)
+        session.pending_attachment = attachment
+        return session
+
+    def clear_pending_attachment(self, session_id: str) -> ConsoleChatSession:
+        """Remove the staged attachment from a session.
+
+        Args:
+            session_id: Native Console session ID.
+
+        Returns:
+            The updated session.
+
+        Raises:
+            KeyError: If the session is unknown.
+        """
+        session = self._session_or_raise(session_id)
+        session.pending_attachment = None
+        return session
+
     def set_workspace_context(self, workspace_context: ConsoleWorkspaceContext) -> None:
         """Replace the active workspace context."""
         self.workspace_context = workspace_context
@@ -325,6 +378,9 @@ class ConsoleChatStore:
         role: ConsoleMessageRole,
         content: str,
         persist: bool = False,
+        image_data: bytes | None = None,
+        image_mime_type: str | None = None,
+        attachment_label: str | None = None,
     ) -> ConsoleChatMessage:
         """Append a message to a session and optionally persist it."""
         self._session_or_raise(session_id)
@@ -332,6 +388,9 @@ class ConsoleChatStore:
             role=role,
             content=content,
             status=self._initial_status(role=role, content=content),
+            image_data=image_data,
+            image_mime_type=image_mime_type,
+            attachment_label=attachment_label,
         )
         self._messages_by_session[session_id].append(message)
         self._sessions[session_id].updated_at = _utc_now_iso()
@@ -552,7 +611,7 @@ class ConsoleChatStore:
     def _persist_new_message_or_defer(self, *, session_id: str, message: ConsoleChatMessage) -> None:
         if self.persistence is None:
             return
-        if not message.content:
+        if not message.content and message.image_data is None:
             self._pending_persistence_message_ids.add(message.id)
             self.persist_session_if_needed(session_id)
             return
@@ -568,8 +627,8 @@ class ConsoleChatStore:
             conversation_id=conversation_id,
             sender=message.role.value,
             content=message.content,
-            image_data=None,
-            image_mime_type=None,
+            image_data=message.image_data,
+            image_mime_type=message.image_mime_type,
             message_id=None,
             parent_message_id=None,
             feedback=message.feedback,
@@ -591,8 +650,8 @@ class ConsoleChatStore:
         self.persistence.update_message_content(
             message_id=message.persisted_message_id,
             content=message.content,
-            image_data=None,
-            image_mime_type=None,
+            image_data=message.image_data,
+            image_mime_type=message.image_mime_type,
             parent_message_id=None,
             feedback=message.feedback,
             update_parent=False,

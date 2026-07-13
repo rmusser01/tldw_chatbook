@@ -90,6 +90,68 @@ class TestChatPersistenceService:
         assert variant_after["total_variants"] == variant_before["total_variants"]
         assert variant_after["feedback"] == variant_before["feedback"]
 
+    def test_update_message_content_with_none_image_data_preserves_persisted_image(
+        self, db_instance: CharactersRAGDB
+    ):
+        """A metadata-only edit (image bytes unavailable, e.g. failed rehydration)
+        must not NULL out an image that is already persisted for the message."""
+        service = ChatPersistenceService(db_instance)
+        conversation_id = service.create_conversation(assistant_kind="persona", assistant_id="planner")
+
+        message_id = db_instance.add_message({
+            "id": "msg-with-image",
+            "conversation_id": conversation_id,
+            "sender": "user",
+            "content": "original",
+            "image_data": b"\x89PNG-bytes",
+            "image_mime_type": "image/png",
+            "client_id": db_instance.client_id,
+        })
+
+        # Simulate the Console store editing a message whose in-memory image
+        # bytes were never rehydrated (e.g. after a failed screen-state
+        # restore), so it calls update_message_content with image_data=None.
+        service.update_message_content(
+            message_id=message_id,
+            content="edited",
+            image_data=None,
+            image_mime_type=None,
+        )
+
+        message = db_instance.get_message_by_id(message_id)
+        assert message["content"] == "edited"
+        assert message["image_data"] == b"\x89PNG-bytes"
+        assert message["image_mime_type"] == "image/png"
+
+    def test_update_message_content_with_new_image_data_replaces_persisted_image(
+        self, db_instance: CharactersRAGDB
+    ):
+        """Passing real image bytes must still update the persisted image."""
+        service = ChatPersistenceService(db_instance)
+        conversation_id = service.create_conversation(assistant_kind="persona", assistant_id="planner")
+
+        message_id = db_instance.add_message({
+            "id": "msg-with-image-2",
+            "conversation_id": conversation_id,
+            "sender": "user",
+            "content": "original",
+            "image_data": b"\x89PNG-old-bytes",
+            "image_mime_type": "image/png",
+            "client_id": db_instance.client_id,
+        })
+
+        service.update_message_content(
+            message_id=message_id,
+            content="edited",
+            image_data=b"\x89PNG-new-bytes",
+            image_mime_type="image/png",
+        )
+
+        message = db_instance.get_message_by_id(message_id)
+        assert message["content"] == "edited"
+        assert message["image_data"] == b"\x89PNG-new-bytes"
+        assert message["image_mime_type"] == "image/png"
+
     def test_save_history_soft_deletes_messages_removed_from_resave(self, db_instance: CharactersRAGDB):
         service = ChatPersistenceService(db_instance)
         conversation_id = service.create_conversation(assistant_kind="persona", assistant_id="planner")
