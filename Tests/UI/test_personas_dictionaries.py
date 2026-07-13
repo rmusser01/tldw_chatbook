@@ -409,6 +409,7 @@ class DetailHarnessApp(App):
     def on_dictionary_entry_delete_requested(self, m): self.messages.append(m)
     def on_dictionary_entries_reorder_requested(self, m): self.messages.append(m)
     def on_dictionary_settings_save_requested(self, m): self.messages.append(m)
+    def on_dictionary_settings_edited(self, m): self.messages.append(m)
 
 
 class TestDictionaryDetailWidget:
@@ -474,3 +475,23 @@ class TestDictionaryDetailWidget:
             saves = [m for m in app.messages if isinstance(m, DictionarySettingsSaveRequested)]
             assert saves and saves[0].payload["name"] == "Renamed"
             assert saves[0].payload["max_tokens"] == 1000
+
+    async def test_settings_edited_fires_only_on_real_user_change(self):
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_dictionary_detail import (
+            DictionarySettingsEdited,
+        )
+
+        app = DetailHarnessApp()
+        async with app.run_test() as pilot:
+            widget = app.query_one(PersonasDictionaryDetailWidget)
+            await pilot.pause()
+            record = FakeDictScopeService([make_dict_record(1)])._summary(make_dict_record(1))
+            widget.load_dictionary(record)
+            await pilot.pause()
+            await pilot.pause()
+            edited = [m for m in app.messages if isinstance(m, DictionarySettingsEdited)]
+            assert edited == []  # mount + programmatic load fire nothing
+            app.query_one("#personas-dict-name", Input).value = "User typed this"
+            await pilot.pause()
+            edited = [m for m in app.messages if isinstance(m, DictionarySettingsEdited)]
+            assert len(edited) >= 1  # a real user change fires

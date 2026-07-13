@@ -86,7 +86,7 @@ class PersonasDictionaryDetailWidget(Vertical):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._entries: list[dict] = []
-        self._loading = False  # suppress dirty events while programmatically filling fields
+        self._loaded_settings: dict | None = None  # last-loaded settings snapshot; dirty = value diff
 
     # ----- compose -----
 
@@ -132,25 +132,18 @@ class PersonasDictionaryDetailWidget(Vertical):
 
     def load_dictionary(self, record: dict) -> None:
         """Fill settings + entries from a get_dictionary()/summary dict."""
-        self._loading = True
-        try:
-            self.query_one("#personas-dict-name", Input).value = str(record.get("name") or "")
-            self.query_one("#personas-dict-description", TextArea).text = str(record.get("description") or "")
-            strategy = str(record.get("strategy") or "sorted_evenly")
-            if strategy in STRATEGIES:
-                self.query_one("#personas-dict-strategy", Select).value = strategy
-            self.query_one("#personas-dict-max-tokens", Input).value = str(record.get("max_tokens") or 1000)
-            self.query_one("#personas-dict-enabled", Switch).value = bool(
-                record.get("enabled", record.get("is_active", True))
-            )
-        finally:
-            self.call_after_refresh(self._reset_loading_flag)
+        self.query_one("#personas-dict-name", Input).value = str(record.get("name") or "")
+        self.query_one("#personas-dict-description", TextArea).text = str(record.get("description") or "")
+        strategy = str(record.get("strategy") or "sorted_evenly")
+        if strategy in STRATEGIES:
+            self.query_one("#personas-dict-strategy", Select).value = strategy
+        self.query_one("#personas-dict-max-tokens", Input).value = str(record.get("max_tokens") or 1000)
+        self.query_one("#personas-dict-enabled", Switch).value = bool(
+            record.get("enabled", record.get("is_active", True))
+        )
         self.update_entries(list(record.get("entries") or []))
         self.query_one("#personas-dict-status", Static).update("")
-
-    def _reset_loading_flag(self) -> None:
-        """Reset _loading after refresh to suppress Select.Changed if it fires."""
-        self._loading = False
+        self._loaded_settings = self.settings_payload()
 
     def update_entries(self, entries: list[dict]) -> None:
         """Re-render the entries table from a fresh service response."""
@@ -172,6 +165,7 @@ class PersonasDictionaryDetailWidget(Vertical):
 
     def clear(self) -> None:
         self._entries = []
+        self._loaded_settings = None
         self.query_one("#personas-dict-entries-table", DataTable).clear()
 
     @property
@@ -244,19 +238,15 @@ class PersonasDictionaryDetailWidget(Vertical):
         entry = next((e for e in self._entries if str(e.get("id")) == entry_id), None)
         if entry is None:
             return
-        self._loading = True
-        try:
-            self.query_one("#personas-dict-entry-pattern", Input).value = str(entry.get("pattern") or "")
-            self.query_one("#personas-dict-entry-replacement", TextArea).text = str(entry.get("replacement") or "")
-            self.query_one("#personas-dict-entry-regex", Switch).value = entry.get("type") == "regex"
-            probability = entry.get("probability")
-            self.query_one("#personas-dict-entry-probability", Input).value = str(
-                round(float(probability if probability is not None else 1.0) * 100)
-            )
-            self.query_one("#personas-dict-entry-group", Input).value = str(entry.get("group") or "")
-            self.query_one("#personas-dict-entry-max-repl", Input).value = str(entry.get("max_replacements") or 1)
-        finally:
-            self._loading = False
+        self.query_one("#personas-dict-entry-pattern", Input).value = str(entry.get("pattern") or "")
+        self.query_one("#personas-dict-entry-replacement", TextArea).text = str(entry.get("replacement") or "")
+        self.query_one("#personas-dict-entry-regex", Switch).value = entry.get("type") == "regex"
+        probability = entry.get("probability")
+        self.query_one("#personas-dict-entry-probability", Input).value = str(
+            round(float(probability if probability is not None else 1.0) * 100)
+        )
+        self.query_one("#personas-dict-entry-group", Input).value = str(entry.get("group") or "")
+        self.query_one("#personas-dict-entry-max-repl", Input).value = str(entry.get("max_replacements") or 1)
 
     @on(Button.Pressed, "#personas-dict-entry-add")
     def _add_pressed(self, event: Button.Pressed) -> None:
@@ -319,7 +309,9 @@ class PersonasDictionaryDetailWidget(Vertical):
     @on(Select.Changed, "#personas-dict-strategy")
     @on(Switch.Changed, "#personas-dict-enabled")
     def _settings_edited(self, event: Message) -> None:
-        if not self._loading:
+        if self._loaded_settings is None:
+            return  # nothing loaded yet - mount-time Changed noise
+        if self.settings_payload() != self._loaded_settings:
             self.post_message(DictionarySettingsEdited())
 
 
