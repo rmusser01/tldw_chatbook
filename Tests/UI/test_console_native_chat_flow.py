@@ -6136,3 +6136,421 @@ async def test_switcher_rename_choice_chains_to_rename_modal():
         await pilot.pause(0.3)
         assert host.screen_stack[-1].__class__.__name__ == "ConsoleRenameSessionModal"
         await pilot.press("escape")
+
+
+def test_insert_file_segment_collapses_with_custom_label():
+    composer = ConsoleComposerBar()
+    composer.insert_file_segment("file body text", "📄 notes.md · 4 KB")
+
+    assert composer.draft_text() == "file body text"
+    assert composer._display_draft_text() == "📄 notes.md · 4 KB"
+
+
+def test_insert_file_segment_appends_after_typed_draft():
+    composer = ConsoleComposerBar()
+    composer.insert_text("see attached: ")
+    composer.insert_file_segment("file body", "📄 a.md · 9 B")
+
+    assert composer.draft_text() == "see attached: file body"
+    assert composer._display_draft_text() == "see attached: 📄 a.md · 9 B"
+
+
+def test_paste_collapse_label_still_defaults_to_character_count():
+    composer = ConsoleComposerBar(paste_collapse_threshold=5)
+    composer.insert_pasted_text("0123456789")
+
+    assert composer._display_draft_text() == "Pasted Text: 10 Characters"
+
+
+@pytest.mark.asyncio
+async def test_attachment_indicator_visibility_follows_label():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+        composer.set_pending_attachment_label("photo.png · 240 KB")
+        await pilot.pause()
+        indicator = console.query_one("#console-attachment-indicator", Static)
+        clear_button = console.query_one("#console-clear-attachment", Button)
+        assert "photo.png" in str(indicator.renderable)
+        assert indicator.styles.display != "none"
+        assert clear_button.styles.display != "none"
+
+        composer.set_pending_attachment_label(None)
+        await pilot.pause()
+        assert indicator.styles.display == "none"
+        assert clear_button.styles.display == "none"
+
+
+@pytest.mark.asyncio
+async def test_console_attachment_worker_stages_image_and_inlines_text(tmp_path):
+    from PIL import Image as PILImage
+
+    image_path = tmp_path / "photo.png"
+    PILImage.new("RGB", (4, 4), color=(0, 100, 0)).save(image_path, format="PNG")
+    text_path = tmp_path / "notes.md"
+    text_path.write_text("# heading\nbody")
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        import tldw_chatbook.Chat.attachment_core as attachment_core
+        # Test files live in tmp_path, outside $HOME — widen the safety root.
+        original = attachment_core.load_processed_file
+
+        async def _rooted(file_path, *, allowed_root=None):
+            return await original(file_path, allowed_root=str(tmp_path))
+
+        attachment_core.load_processed_file = _rooted
+        try:
+            await console._process_console_attachment(str(image_path))
+            await pilot.pause()
+            store = console._ensure_console_chat_store()
+            session_id = store.active_session_id
+            pending = store.pending_attachment(session_id)
+            assert pending is not None and pending.file_type == "image"
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+            assert composer._pending_attachment_label is not None
+
+            await console._process_console_attachment(str(text_path))
+            await pilot.pause()
+            assert "body" in composer.draft_text()
+            assert "notes.md" in composer._display_draft_text()
+        finally:
+            attachment_core.load_processed_file = original
+
+
+def _staged_image_attachment():
+    from tldw_chatbook.Chat.attachment_core import PendingAttachment
+
+    return PendingAttachment(
+        file_path="/tmp/photo.png",
+        display_name="photo.png",
+        file_type="image",
+        insert_mode="attachment",
+        data=b"\x89PNG-bytes",
+        mime_type="image/png",
+        original_size=11,
+        processed_size=11,
+    )
+
+
+@pytest.mark.asyncio
+async def test_pending_image_on_non_vision_model_blocks_send(monkeypatch):
+    import tldw_chatbook.Chat.attachment_core as attachment_core
+
+    monkeypatch.setattr(attachment_core, "is_vision_capable", lambda p, m: False)
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.set_pending_attachment(session.id, _staged_image_attachment())
+
+        reason = console._console_send_blocked_reason()
+        assert "can't accept images" in reason
+
+
+@pytest.mark.asyncio
+async def test_pending_image_on_vision_model_does_not_block(monkeypatch):
+    import tldw_chatbook.Chat.attachment_core as attachment_core
+
+    monkeypatch.setattr(attachment_core, "is_vision_capable", lambda p, m: True)
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.set_pending_attachment(session.id, _staged_image_attachment())
+
+        assert console._console_attachment_blocked_reason() == ""
+
+
+def test_resume_hydrates_image_messages_including_image_only_rows():
+    """Verify resuming a saved conversation keeps image-only rows and their bytes."""
+    screen = ChatScreen(_build_test_app())
+    tree = {
+        "conversation": {"title": "Saved", "workspace_id": None},
+        "root_threads": [
+            {
+                "id": "m-1",
+                "sender": "user",
+                "content": "",
+                "image_data": b"\x89PNG-bytes",
+                "image_mime_type": "image/png",
+                "children": [
+                    {
+                        "id": "m-2",
+                        "sender": "assistant",
+                        "content": "a red square",
+                        "children": [],
+                    }
+                ],
+            }
+        ],
+    }
+
+    messages = screen._console_messages_from_conversation_tree(tree)
+
+    assert len(messages) == 2
+    assert messages[0].image_data == b"\x89PNG-bytes"
+    assert messages[0].image_mime_type == "image/png"
+    assert messages[0].content == ""
+    assert messages[1].content == "a red square"
+
+
+def test_console_message_serialization_carries_image_metadata_not_bytes():
+    """Verify screen-state snapshots carry image metadata but never raw bytes."""
+    from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
+
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="look",
+        image_data=b"\x89PNG-bytes",
+        image_mime_type="image/png",
+        attachment_label="photo.png · 11 B",
+    )
+
+    payload = ChatScreen._serialize_console_message(message)
+
+    assert payload["image_mime_type"] == "image/png"
+    assert payload["attachment_label"] == "photo.png · 11 B"
+    assert "image_data" not in payload
+
+    restored = ChatScreen._restore_console_message(payload)
+
+    assert restored is not None
+    assert restored.image_mime_type == "image/png"
+    assert restored.attachment_label == "photo.png · 11 B"
+    assert restored.image_data is None
+
+
+@pytest.mark.asyncio
+async def test_save_console_message_image_writes_file(tmp_path, monkeypatch):
+    """Verify the save-image worker writes the message's image bytes to disk."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        monkeypatch.setattr(
+            "tldw_chatbook.UI.Screens.chat_screen.get_cli_setting",
+            lambda section, key, default=None: str(tmp_path)
+            if (section, key) == ("chat.images", "save_location")
+            else default,
+        )
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="pic",
+            image_data=b"\x89PNG-bytes",
+            image_mime_type="image/png",
+        )
+
+        await console._save_console_message_image(message.id)
+
+        saved = list(tmp_path.glob("console_image_*.png"))
+        assert len(saved) == 1
+        assert saved[0].read_bytes() == b"\x89PNG-bytes"
+
+
+@pytest.mark.asyncio
+async def test_save_console_message_image_disambiguates_filename_collision(tmp_path, monkeypatch):
+    """Verify the save-image worker never silently overwrites a prior save."""
+    import datetime as datetime_module
+
+    class _FixedDateTime(datetime_module.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 1, 1, 12, 0, 0)
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        monkeypatch.setattr(
+            "tldw_chatbook.UI.Screens.chat_screen.get_cli_setting",
+            lambda section, key, default=None: str(tmp_path)
+            if (section, key) == ("chat.images", "save_location")
+            else default,
+        )
+        # The save-image worker imports `datetime.datetime` locally on each
+        # call, so freezing the clock here forces both saves below to compute
+        # the same base filename and deterministically exercise the
+        # collision-disambiguation loop.
+        monkeypatch.setattr(datetime_module, "datetime", _FixedDateTime)
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="pic",
+            image_data=b"\x89PNG-bytes",
+            image_mime_type="image/png",
+        )
+
+        await console._save_console_message_image(message.id)
+        await console._save_console_message_image(message.id)
+
+        saved = sorted(tmp_path.glob("console_image_*.png"))
+        assert len(saved) == 2
+        assert saved[0].name != saved[1].name
+        assert all(path.read_bytes() == b"\x89PNG-bytes" for path in saved)
+
+
+def test_rehydrate_console_message_image_refetches_bytes_from_db():
+    """Verify restore rehydration refetches bytes screen-state serialization drops.
+
+    Regression test: `_restore_console_message` intentionally restores metadata
+    only (no bytes in screen state), but the controller's payload builder only
+    attaches an image when `message.image_data is not None`. Without rehydration
+    a message that survives a Console navigate-away/navigate-back round trip
+    still shows its chip (metadata-only) but the model never sees the image
+    again.
+    """
+    from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
+
+    screen = ChatScreen(_build_test_app())
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="",
+        image_mime_type="image/png",
+        persisted_message_id="msg-123",
+    )
+    screen.app_instance.chachanotes_db = Mock(
+        get_message_by_id=Mock(
+            return_value={"image_data": b"\x89PNG-bytes", "image_mime_type": "image/png"}
+        )
+    )
+
+    screen._rehydrate_console_message_image(message)
+
+    assert message.image_data == b"\x89PNG-bytes"
+    assert message.image_mime_type == "image/png"
+    screen.app_instance.chachanotes_db.get_message_by_id.assert_called_once_with("msg-123")
+
+
+def test_rehydrate_console_message_image_degrades_gracefully_on_db_failure():
+    """Verify a DB failure during restore rehydration leaves the message metadata-only."""
+    from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
+
+    screen = ChatScreen(_build_test_app())
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="",
+        image_mime_type="image/png",
+        persisted_message_id="msg-123",
+    )
+    screen.app_instance.chachanotes_db = Mock(
+        get_message_by_id=Mock(side_effect=Exception("db offline"))
+    )
+
+    screen._rehydrate_console_message_image(message)  # must not raise
+
+    assert message.image_data is None
+    assert message.image_mime_type == "image/png"
+
+
+def test_restore_native_console_state_rehydrates_image_bytes_end_to_end():
+    """Verify the full restore path rehydrates bytes for a persisted image message."""
+    screen = ChatScreen(_build_test_app())
+    screen.app_instance.chachanotes_db = Mock(
+        get_message_by_id=Mock(
+            return_value={"image_data": b"\x89PNG-bytes", "image_mime_type": "image/png"}
+        )
+    )
+    payload = {
+        "version": "1.0",
+        "active_session_id": "session-1",
+        "sessions": [
+            {
+                "id": "session-1",
+                "title": "Saved",
+                "workspace_id": None,
+                "persisted_conversation_id": None,
+                "draft": "",
+                "settings": None,
+                "updated_at": None,
+            }
+        ],
+        "messages_by_session": {
+            "session-1": [
+                {
+                    "role": "user",
+                    "content": "",
+                    "id": "m-1",
+                    "status": "complete",
+                    "persisted_message_id": "msg-123",
+                    "image_mime_type": "image/png",
+                    "attachment_label": "photo.png · 11 B",
+                }
+            ]
+        },
+    }
+
+    screen._restore_native_console_state(payload)
+
+    store = screen._ensure_console_chat_store()
+    restored = store.messages_for_session("session-1")
+    assert len(restored) == 1
+    assert restored[0].image_data == b"\x89PNG-bytes"
+    assert restored[0].image_mime_type == "image/png"
+
+
+@pytest.mark.asyncio
+async def test_clear_attachment_button_resyncs_composer_blocked_state(monkeypatch):
+    """Verify clicking Clear on a staged image resyncs the composer's blocked visuals.
+
+    Regression test: `_process_console_attachment` calls `_sync_console_control_bar()`
+    after staging, so the composer immediately reflects the "can't accept images"
+    block. `handle_console_clear_attachment` used to skip that sync, leaving the
+    composer showing a stale blocked-send state (and tooltip) after the
+    attachment was removed via the ✕ button.
+    """
+    import tldw_chatbook.Chat.attachment_core as attachment_core
+
+    monkeypatch.setattr(attachment_core, "is_vision_capable", lambda p, m: False)
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.set_pending_attachment(session.id, _staged_image_attachment())
+        # Mirror the sync `_process_console_attachment` performs right after
+        # staging, so the composer starts in the same blocked state a real
+        # attach would leave behind.
+        console._sync_console_control_bar()
+        await pilot.pause()
+
+        send_button = console.query_one("#console-send-message", Button)
+        assert composer._send_blocked is True
+        assert send_button.tooltip and "can't accept images" in send_button.tooltip
+
+        await pilot.click("#console-clear-attachment")
+        await pilot.pause()
+
+        assert store.pending_attachment(session.id) is None
+        assert composer._send_blocked is False
+        assert not send_button.tooltip or "can't accept images" not in send_button.tooltip

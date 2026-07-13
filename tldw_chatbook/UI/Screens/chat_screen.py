@@ -3,6 +3,7 @@
 from collections.abc import Mapping
 from dataclasses import asdict, replace
 from datetime import datetime
+import asyncio
 import inspect
 import os
 from pathlib import Path
@@ -13,6 +14,7 @@ import uuid
 
 import toml
 from loguru import logger
+from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
@@ -121,6 +123,7 @@ from ...config import (
     coerce_int_setting,
     delete_settings_from_cli_config,
     get_cli_providers_and_models,
+    get_cli_setting,
     load_settings,
     save_setting_to_cli_config,
     save_settings_to_cli_config,
@@ -2142,7 +2145,11 @@ class ChatScreen(BaseAppScreen):
         messages: list[ConsoleChatMessage] = []
         for row in self._iter_console_tree_messages(tree.get("root_threads")):
             content = str(row.get("content") or "")
-            if not content:
+            raw_image = row.get("image_data")
+            image_data = bytes(raw_image) if isinstance(raw_image, (bytes, bytearray)) else None
+            raw_mime = row.get("image_mime_type")
+            image_mime_type = str(raw_mime) if raw_mime else None
+            if not content and image_data is None:
                 continue
             persisted_message_id = row.get("id")
             messages.append(
@@ -2155,6 +2162,8 @@ class ChatScreen(BaseAppScreen):
                         if persisted_message_id is not None
                         else None
                     ),
+                    image_data=image_data,
+                    image_mime_type=image_mime_type,
                 )
             )
         return messages
@@ -5623,6 +5632,8 @@ class ChatScreen(BaseAppScreen):
             "persisted_message_id": message.persisted_message_id,
             "feedback": message.feedback,
             "variants": cls._serialize_console_variants(message.variants),
+            "image_mime_type": getattr(message, "image_mime_type", None),
+            "attachment_label": getattr(message, "attachment_label", None),
         }
 
     @classmethod
@@ -5657,6 +5668,16 @@ class ChatScreen(BaseAppScreen):
             ),
             variants=cls._restore_console_variants(payload.get("variants")),
             feedback=feedback,  # type: ignore[arg-type]
+            image_mime_type=(
+                str(payload["image_mime_type"])
+                if payload.get("image_mime_type")
+                else None
+            ),
+            attachment_label=(
+                str(payload["attachment_label"])
+                if payload.get("attachment_label")
+                else None
+            ),
         )
 
     def _serialize_native_console_state(self) -> dict[str, Any] | None:
@@ -5750,6 +5771,7 @@ class ChatScreen(BaseAppScreen):
                 message = self._restore_console_message(raw_message)
                 if message is None:
                     continue
+                self._rehydrate_console_message_image(message)
                 restored_messages_by_session[session.id].append(message)
 
         active_session_id = payload.get("active_session_id")
@@ -5761,7 +5783,42 @@ class ChatScreen(BaseAppScreen):
         )
         self._console_visible_draft_session_id = None
         self._last_native_transcript_refresh_key = None
-    
+
+    def _rehydrate_console_message_image(self, message: ConsoleChatMessage) -> None:
+        """Refill image bytes dropped by screen-state restore (metadata-only).
+
+        Screen-state restore only carries image metadata (mime type + label),
+        never raw bytes, so a restored message that still points at an image
+        has no bytes for the provider payload builder to attach even though
+        its chip renders from metadata alone. Refetch the bytes from the
+        ChaChaNotes DB using the message's persisted id; on any failure leave
+        the message metadata-only so the chip still renders (graceful
+        degradation) instead of raising.
+        """
+        if message.image_data is not None:
+            return
+        if not message.image_mime_type or not message.persisted_message_id:
+            return
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        try:
+            row = (
+                db.get_message_by_id(message.persisted_message_id)
+                if db is not None
+                else None
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Console restore image rehydration DB lookup failed."
+            )
+            return
+        if not row:
+            return
+        image_data = row.get("image_data")
+        if image_data is None:
+            return
+        message.image_data = image_data
+        message.image_mime_type = row.get("image_mime_type") or message.image_mime_type
+
     def save_state(self) -> Dict[str, Any]:
         """
         Save comprehensive chat state.
@@ -6450,6 +6507,36 @@ class ChatScreen(BaseAppScreen):
             return
         composer.clear_draft()
 
+    def _console_pending_image_attachment(self):
+        """Return the active session's staged image attachment, if any."""
+        store = self._console_chat_store
+        if store is None or store.active_session_id is None:
+            return None
+        try:
+            pending = store.pending_attachment(store.active_session_id)
+        except KeyError:
+            return None
+        if (
+            pending is None
+            or pending.insert_mode != "attachment"
+            or pending.file_type != "image"
+            or pending.data is None
+        ):
+            return None
+        return pending
+
+    def _console_attachment_blocked_reason(self) -> str:
+        """Return blocked-send copy when a staged image can't reach the model."""
+        from tldw_chatbook.Chat.attachment_core import vision_block_reason
+
+        if self._console_pending_image_attachment() is None:
+            return ""
+        effective_settings, _readiness = self._active_console_settings_readiness()
+        return (
+            vision_block_reason(effective_settings.provider, effective_settings.model)
+            or ""
+        )
+
     def _console_send_blocked_reason(self) -> str:
         """Return a user-facing reason if Console send cannot safely run."""
         pending_launch = self._consume_pending_console_launch()
@@ -6463,6 +6550,9 @@ class ChatScreen(BaseAppScreen):
         _readiness_settings, readiness = self._active_console_settings_readiness()
         if not readiness.native_send_supported:
             return f"Console send blocked: {readiness.detail}"
+        attachment_reason = self._console_attachment_blocked_reason()
+        if attachment_reason:
+            return attachment_reason
         return ""
 
     async def handle_console_send_message(self, event: Button.Pressed) -> None:
@@ -6477,7 +6567,7 @@ class ChatScreen(BaseAppScreen):
             draft = composer.draft_text()
         except QueryError:
             draft = ""
-        if not draft.strip():
+        if not draft.strip() and self._console_pending_image_attachment() is None:
             self._focus_console_composer_if_needed(force=True)
             return
         self._dismiss_console_guidance()
@@ -6516,28 +6606,111 @@ class ChatScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#console-attach-context")
     async def handle_console_attach_context(self, event: Button.Pressed) -> None:
-        """Route the Console attach affordance through the active chat session adapter."""
+        """Open the native Console file picker and stage the selected attachment."""
         await self._handle_console_attach_context(event)
 
     @on(Button.Pressed, "#console-staged-context-attach")
     async def handle_console_staged_context_attach(self, event: Button.Pressed) -> None:
-        """Route the staged-context empty-state attach action through the same adapter."""
+        """Open the native Console file picker from the staged-context empty state."""
         await self._handle_console_attach_context(event)
 
     async def _handle_console_attach_context(self, event: Button.Pressed) -> None:
-        """Route Console attach actions through the active chat session adapter."""
+        """Open the native Console file picker and stage the selected attachment."""
         event.stop()
-        session = self._get_active_chat_session()
-        if session is None:
-            self.app_instance.notify("No active Console chat session is available.", severity="error")
+        from fnmatch import fnmatch
+
+        from tldw_chatbook.Chat.attachment_core import ATTACHMENT_FILTER_SPECS
+        from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
+
+        def create_filter(patterns: str):
+            pattern_list = patterns.split(";")
+
+            def filter_func(path: Path) -> bool:
+                return any(fnmatch(path.name, pattern) for pattern in pattern_list)
+
+            return filter_func
+
+        file_filters = Filters(
+            *[(label, create_filter(patterns)) for label, patterns in ATTACHMENT_FILTER_SPECS],
+            ("All Files", lambda path: True),
+        )
+
+        def on_file_selected(file_path: Optional[Path]) -> None:
+            if file_path:
+                self.run_worker(
+                    self._process_console_attachment(str(file_path)),
+                    exclusive=True,
+                    group="console-attachment",
+                )
+
+        await self.app.push_screen(
+            EnhancedFileOpen(
+                location=".",
+                title="Select File to Attach",
+                filters=file_filters,
+                context="chat_images",
+            ),
+            callback=on_file_selected,
+        )
+
+    async def _process_console_attachment(self, file_path: str) -> None:
+        """Process a picked file and route it into the native Console composer."""
+        from tldw_chatbook.Chat.attachment_core import process_attachment_path
+
+        try:
+            attachment = await asyncio.to_thread(
+                lambda: asyncio.run(process_attachment_path(file_path))
+            )
+        except Exception as exc:
+            logger.error(f"Console attachment processing failed for {file_path}: {exc}")
+            self.app_instance.notify(
+                str(exc) or "Failed to process attachment.", severity="error"
+            )
             return
-        handler = getattr(session, "handle_attach_button", None)
-        if not callable(handler):
-            self.app_instance.notify("Console attachment is unavailable for this session.", severity="warning")
-            return
-        result = handler(event)
-        if inspect.isawaitable(result):
-            await result
+        composer = self._console_composer_or_none()
+        if attachment.insert_mode == "inline":
+            if composer is None or not attachment.text_content:
+                self.app_instance.notify(
+                    "Nothing to insert from this file.", severity="warning"
+                )
+                return
+            composer.insert_file_segment(
+                attachment.text_content, f"📄 {attachment.label}"
+            )
+            self.app_instance.notify(
+                f"{escape_markup(attachment.display_name)} content inserted"
+            )
+        else:
+            store = self._ensure_console_chat_store()
+            session = store.ensure_session(
+                workspace_id=store.workspace_context.active_workspace_id
+            )
+            store.set_pending_attachment(session.id, attachment)
+            if composer is not None:
+                composer.set_pending_attachment_label(attachment.label)
+            self.app_instance.notify(f"{escape_markup(attachment.display_name)} attached")
+        self._sync_console_control_bar()
+
+    @on(Button.Pressed, "#console-clear-attachment")
+    def handle_console_clear_attachment(self, event: Button.Pressed) -> None:
+        """Remove the pending native Console attachment."""
+        event.stop()
+        store = self._ensure_console_chat_store()
+        had_pending_attachment = False
+        if store.active_session_id is not None:
+            try:
+                had_pending_attachment = (
+                    store.pending_attachment(store.active_session_id) is not None
+                )
+                store.clear_pending_attachment(store.active_session_id)
+            except KeyError:
+                had_pending_attachment = False
+        composer = self._console_composer_or_none()
+        if composer is not None:
+            composer.set_pending_attachment_label(None)
+        if had_pending_attachment:
+            self.app_instance.notify("Attachment cleared")
+        self._sync_console_control_bar()
 
     @on(Button.Pressed, "#console-save-chatbook")
     def handle_console_save_chatbook(self, event: Button.Pressed) -> None:
@@ -6696,6 +6869,13 @@ class ChatScreen(BaseAppScreen):
             await self._sync_native_console_chat_ui()
             self.app_instance.notify(result.visible_copy, severity="information")
             return True
+        if action_id == "save-image" and result.status == "completed":
+            self.run_worker(
+                self._save_console_message_image(message_id),
+                exclusive=True,
+                group="console-save-image",
+            )
+            return True
         if action_id == "delete" and result.status == "completed":
             if self._pending_console_delete_message_id != message_id:
                 self._pending_console_delete_message_id = message_id
@@ -6790,6 +6970,77 @@ class ChatScreen(BaseAppScreen):
         """Return the active Console conversation title for save-as derivations."""
         session = self._active_native_console_session()
         return str(getattr(session, "title", "") or "").strip()
+
+    async def _save_console_message_image(self, message_id: str) -> None:
+        """Write a Console message's image to the configured save location."""
+        import mimetypes as _mimetypes
+        from datetime import datetime as _datetime
+
+        store = self._ensure_console_chat_store()
+        try:
+            message = store.get_message(message_id)
+        except KeyError:
+            self.app_instance.notify(
+                "Console message no longer exists.", severity="warning"
+            )
+            return
+        image_data = message.image_data
+        mime_type = message.image_mime_type
+        if image_data is None and message.persisted_message_id is not None:
+            db = getattr(self.app_instance, "chachanotes_db", None)
+            persisted_message_id = message.persisted_message_id
+
+            def _fetch_persisted_row() -> Optional[dict]:
+                try:
+                    return (
+                        db.get_message_by_id(persisted_message_id)
+                        if db is not None
+                        else None
+                    )
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        "Console save-image DB fallback lookup failed."
+                    )
+                    return None
+
+            row = await asyncio.to_thread(_fetch_persisted_row)
+            if row:
+                image_data = row.get("image_data")
+                mime_type = row.get("image_mime_type") or mime_type
+        if not image_data:
+            self.app_instance.notify(
+                "No image data available for this message.", severity="warning"
+            )
+            return
+
+        def _write_image_to_disk() -> Path:
+            from tldw_chatbook.Utils.path_validation import validate_path_simple
+
+            save_location = validate_path_simple(
+                os.path.expanduser(
+                    get_cli_setting("chat.images", "save_location", "~/Downloads")
+                )
+            )
+            save_location.mkdir(parents=True, exist_ok=True)
+            extension = _mimetypes.guess_extension(mime_type or "image/png") or ".png"
+            base_name = f"console_image_{_datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            target = save_location / f"{base_name}{extension}"
+            counter = 1
+            while target.exists():
+                target = save_location / f"{base_name}_{counter}{extension}"
+                counter += 1
+            target.write_bytes(bytes(image_data))
+            return target
+
+        try:
+            target = await asyncio.to_thread(_write_image_to_disk)
+        except Exception as exc:
+            logger.opt(exception=True).warning("Console save-image write failed.")
+            self.app_instance.notify(
+                f"Could not save image: {escape_markup(str(exc))}", severity="error"
+            )
+            return
+        self.app_instance.notify(f"Image saved to {target}")
 
     async def _save_console_message_as_note(self, message_id: str) -> None:
         """Persist one selected Console message as a local Note."""
@@ -7076,6 +7327,7 @@ class ChatScreen(BaseAppScreen):
             ("console-message-action-variant-previous-", "variant-previous"),
             ("console-message-action-variant-next-", "variant-next"),
             ("console-message-action-save-as-", "save-as"),
+            ("console-message-action-save-image-", "save-image"),
             ("console-message-action-regenerate-", "regenerate"),
             ("console-message-action-continue-", "continue"),
             ("console-message-action-delete-", "delete"),
@@ -7283,15 +7535,26 @@ class ChatScreen(BaseAppScreen):
             run_active = bool(getattr(run_state, "is_stop_allowed", False))
             send_blocked = not bool(getattr(run_state, "is_send_allowed", True))
         setup_blocked_reason = self._console_setup_blocked_reason()
-        send_blocked = send_blocked or bool(setup_blocked_reason)
+        attachment_blocked_reason = self._console_attachment_blocked_reason()
+        send_blocked = (
+            send_blocked
+            or bool(setup_blocked_reason)
+            or bool(attachment_blocked_reason)
+        )
+
+        pending = self._console_pending_image_attachment()
 
         composer.sync_action_state(
-            has_draft=bool(composer.draft_text().strip()),
+            has_draft=bool(composer.draft_text().strip()) or pending is not None,
             run_active=run_active,
             can_save_chatbook=can_save_chatbook,
             send_blocked=send_blocked,
-            setup_blocked_reason=setup_blocked_reason,
+            setup_blocked_reason=setup_blocked_reason or attachment_blocked_reason,
         )
+        # sync_action_state resets the attach button's tooltip to generic copy
+        # (console_composer_bar.py L303); apply the pending-attachment label
+        # after, not before, so "Attached: ..." wins over the generic tooltip.
+        composer.set_pending_attachment_label(pending.label if pending else None)
 
     def _hide_console_legacy_chat_inputs(self) -> None:
         """Keep Console on a single native composer surface."""

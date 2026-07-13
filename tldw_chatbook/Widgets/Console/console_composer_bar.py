@@ -36,6 +36,7 @@ class _DraftSegment:
 
     text: str
     collapse_state: _CollapseState = "literal"
+    label: str | None = None
 
 
 @dataclass(frozen=True)
@@ -98,6 +99,7 @@ class ConsoleComposerBar(Horizontal):
         self._send_blocked = False
         self._setup_blocked_reason = ""
         self._can_save_chatbook = False
+        self._pending_attachment_label: str | None = None
         self._suppress_next_draft_click = False
         self._draft_selection_all = False
         self._cursor_visible = True
@@ -149,6 +151,8 @@ class ConsoleComposerBar(Horizontal):
     def _segment_display_text(segment: _DraftSegment) -> str:
         """Return display text for a single draft segment."""
         if segment.collapse_state == "collapsed":
+            if segment.label:
+                return segment.label
             return f"Pasted Text: {len(segment.text)} Characters"
         if segment.collapse_state == "confirm":
             return "Unfurl?"
@@ -727,6 +731,34 @@ class ConsoleComposerBar(Horizontal):
         self._sync_interaction_classes()
         self._sync_current_action_state()
 
+    def insert_file_segment(self, text: str, label: str) -> None:
+        """Append inlined file content as a labeled, display-collapsed segment.
+
+        Args:
+            text: Full file text that becomes part of the canonical draft.
+            label: Display-only token shown in place of the text (e.g.
+                ``"📄 notes.md · 4 KB"``).
+        """
+        if not text:
+            self._sync_interaction_classes()
+            self._sync_current_action_state()
+            return
+        if not self._segments_initialized:
+            existing = self.draft_text()
+            self._segments = [_DraftSegment(existing)] if existing else []
+            self._segments_initialized = True
+        if self._draft_selection_all:
+            self._segments = []
+            self._draft_selection_all = False
+        self._reset_pending_unfurl_state()
+        self._segments.append(
+            _DraftSegment(text, collapse_state="collapsed", label=label)
+        )
+        self._sync_hidden_input()
+        self._refresh_visible_draft()
+        self._sync_interaction_classes()
+        self._sync_current_action_state()
+
     def delete_left(self) -> None:
         """Delete the last draft character for simple terminal-style editing."""
         if self._draft_selection_all:
@@ -1106,6 +1138,47 @@ class ConsoleComposerBar(Horizontal):
         except NoMatches:
             return
 
+    def set_pending_attachment_label(self, label: str | None) -> None:
+        """Show or clear the composer's pending-attachment indicator.
+
+        Args:
+            label: User-facing attachment label (e.g. ``"photo.png · 184 B"``)
+                to display next to the actions, or None to hide the indicator,
+                the clear button, and restore the Attach button label.
+        """
+        normalized = label.strip() if label else None
+        self._pending_attachment_label = normalized
+        try:
+            indicator = self.query_one("#console-attachment-indicator", Static)
+            clear_button = self.query_one("#console-clear-attachment", Button)
+            attach_button = self.query_one("#console-attach-context", Button)
+            actions = self.query_one("#console-composer-actions", Horizontal)
+        except NoMatches:
+            return
+        if normalized:
+            indicator.update(escape(f"📎 {normalized}"))
+            indicator.styles.display = "block"
+            indicator.styles.width = "auto"
+            indicator.styles.max_width = 28
+            clear_button.styles.display = "block"
+            actions.styles.width = 42
+            actions.styles.min_width = 42
+            actions.styles.max_width = 42
+            attach_button.label = "📎✓"
+            attach_button.tooltip = f"Attached: {escape(normalized)}. Press to replace."
+        else:
+            indicator.update("")
+            indicator.styles.display = "none"
+            indicator.styles.width = 0
+            clear_button.styles.display = "none"
+            actions.styles.width = 37
+            actions.styles.min_width = 37
+            actions.styles.max_width = 37
+            attach_button.label = "Attach"
+            attach_button.tooltip = (
+                "Attach files or context through the active Console session."
+            )
+
     def compose(self) -> ComposeResult:
         title = Static("Composer:", id="console-composer-title", classes="destination-section")
         title.styles.width = 10
@@ -1131,6 +1204,16 @@ class ConsoleComposerBar(Horizontal):
         recovery.styles.height = 0
         recovery.styles.min_height = 0
         yield recovery
+        attachment_indicator = Static(
+            "",
+            id="console-attachment-indicator",
+            classes="console-attachment-indicator",
+        )
+        attachment_indicator.styles.display = "none"
+        attachment_indicator.styles.width = 0
+        attachment_indicator.styles.min_width = 0
+        attachment_indicator.styles.height = 1
+        yield attachment_indicator
         command_input = Input(
             value="",
             id="console-command-input",
@@ -1203,6 +1286,15 @@ class ConsoleComposerBar(Horizontal):
                 classes="destination-action-button console-attach-button",
                 tooltip="Attach files or context through the active Console session.",
             )
+            clear_attachment = self._bounded_button(
+                "✕",
+                width=4,
+                id="console-clear-attachment",
+                classes="destination-action-button console-clear-attachment-button",
+                tooltip="Remove the pending attachment.",
+            )
+            clear_attachment.styles.display = "none"
+            yield clear_attachment
             yield self._bounded_button(
                 "Save",
                 width=8,
