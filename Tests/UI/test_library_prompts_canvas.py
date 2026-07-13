@@ -142,6 +142,36 @@ async def test_prompts_canvas_escapes_bracket_titles_verbatim():
 
 
 @pytest.mark.asyncio
+async def test_prompts_canvas_escapes_secondary_line_markup_and_unmatched_close_tag():
+    """The row's secondary line (``details`` -- the prompt description) must
+    be escaped exactly like the name is. Unescaped, a description containing
+    ``[wip]`` is silently swallowed by Rich markup parsing, and an unmatched
+    closing tag like ``[/]`` raises a ``MarkupError`` that crashes the ENTIRE
+    list render (every row gone) -- not just this one row's label. This must
+    render cleanly and keep the bracketed text literal."""
+    state = PromptsListState(
+        rows=(
+            # "[/]" appears before any opening tag, so Rich's markup parser
+            # treats it as an unmatched closing tag (MarkupError) rather
+            # than a tag pair that quietly swallows its contents -- this is
+            # the crash class the fix must prevent, not just the "silently
+            # swallowed" class covered by "[wip]" alone.
+            PromptListRow(
+                prompt_id=1, name="Draft plan", secondary="[/] notes [wip] · 2h"
+            ),
+        ),
+        count=1,
+        sort="newest",
+    )
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        button = pilot.app.query_one("#library-prompt-row-1", Button)
+        label_text = str(button.label)
+        assert "[wip]" in label_text
+        assert "[/]" in label_text
+
+
+@pytest.mark.asyncio
 async def test_prompts_canvas_toolbar_is_one_horizontal_row():
     """sort/Import share a single ``ds-toolbar`` Horizontal parent -- proven
     structurally (shared parentage), not via region/geometry (the bare

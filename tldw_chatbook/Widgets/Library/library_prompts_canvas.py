@@ -167,13 +167,17 @@ class LibraryPromptsListCanvas(Vertical):
         with Vertical(id="library-prompts-list"):
             for row in state.rows:
                 # Button labels are parsed as Rich markup: escape the
-                # user-supplied name so "[draft] Q3 plan [wip]" renders
-                # verbatim instead of eating bracketed segments as tags (or
-                # crashing on an unmatched closing tag) -- same fix class as
-                # the notes list row / search-history Button labels.
+                # user-supplied name AND secondary line (details/description)
+                # so "[draft] Q3 plan [wip]" renders verbatim instead of
+                # eating bracketed segments as tags (or crashing on an
+                # unmatched closing tag) -- same fix class as the notes list
+                # row / search-history Button labels. The secondary line is
+                # equally user-controlled (the prompt's free-text
+                # description) and must be escaped too, not just the name.
                 name = escape_markup(row.name)
+                secondary = escape_markup(row.secondary) if row.secondary else ""
                 button = Button(
-                    f"{name}\n{row.secondary}" if row.secondary else name,
+                    f"{name}\n{secondary}" if secondary else name,
                     id=f"library-prompt-row-{row.prompt_id}",
                     classes="library-prompt-row",
                     compact=True,
