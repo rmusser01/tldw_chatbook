@@ -44,6 +44,8 @@ def _make_mock_app() -> Mock:
 
 @pytest.mark.asyncio
 async def test_successful_prompt_import_invokes_success_callback():
+    """A successful prompt import dispatches process_prompt_import_success,
+    which writes the results summary to the status area."""
     app = _make_mock_app()
     results = [{"status": "success", "file_path": "p.json", "prompt_name": "P", "message": "ok"}]
     with patch("tldw_chatbook.Event_Handlers.prompt_ingest_events.prompts_db_initialized", return_value=True), \
@@ -59,6 +61,9 @@ async def test_successful_prompt_import_invokes_success_callback():
 
 @pytest.mark.asyncio
 async def test_failed_prompt_import_invokes_failure_callback_and_reraises():
+    """A catastrophic prompt import failure dispatches
+    process_prompt_import_failure (an error-severity toast) and re-raises so
+    Textual still records the worker error."""
     app = _make_mock_app()
     with patch("tldw_chatbook.Event_Handlers.prompt_ingest_events.prompts_db_initialized", return_value=True), \
          patch("tldw_chatbook.Event_Handlers.prompt_ingest_events.import_prompts_from_files",

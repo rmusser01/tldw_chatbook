@@ -15,7 +15,7 @@ from tldw_chatbook.Event_Handlers.character_ingest_events import (
 )
 
 
-class _BoomList:
+class BoomList:
     """Truthy (passes the trigger's `if not …` guard) but raises on iteration,
     so `import_worker_char` fails at the loop -- the only way to exercise the
     catastrophic-failure path, since the worker swallows per-file errors."""
@@ -58,6 +58,8 @@ def _make_mock_app(*, selected) -> Mock:
 
 @pytest.mark.asyncio
 async def test_successful_character_import_invokes_success_callback():
+    """A successful character import dispatches on_import_success_char, which
+    writes the results summary and sets the chat filter-populated flag."""
     app = _make_mock_app(selected=[Path("c.png")])
     with patch("tldw_chatbook.Event_Handlers.character_ingest_events.ccl.import_and_save_character_from_file",
                return_value=123), \
@@ -73,7 +75,9 @@ async def test_successful_character_import_invokes_success_callback():
 
 @pytest.mark.asyncio
 async def test_failed_character_import_invokes_failure_callback_and_reraises():
-    app = _make_mock_app(selected=_BoomList())
+    """A catastrophic character import failure dispatches on_import_failure_char
+    (an error-severity toast) and re-raises so Textual records the worker error."""
+    app = _make_mock_app(selected=BoomList())
     await handle_ingest_characters_import_now_button_pressed(app, Button.Pressed(Mock(spec=Button)))
     with pytest.raises(RuntimeError):
         await app._captured_worker["callable"]()
