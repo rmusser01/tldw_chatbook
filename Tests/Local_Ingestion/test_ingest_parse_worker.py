@@ -220,6 +220,36 @@ def test_persist_writes_payload_and_returns_media_id(tmp_path: Path) -> None:
     assert row["type"] == "plaintext"
 
 
+def test_persist_url_payload_writes_article_row_no_filesystem() -> None:
+    """A URL-source payload (media_type=article, canonical url, URL string as
+    file_path) persists to a media row without any filesystem access -- the
+    payload's file_path is a URL that is not a real file, and persist never
+    stats/opens it (it only forwards url/content/etc. to the DB)."""
+    payload = {
+        "file_type": "article",
+        "media_type": "article",
+        "title": "Kept article",
+        "content": "Extracted article body.",
+        "keywords": [],
+        "url": "https://example.com/post",
+        "analysis_content": "",
+        "author": "Unknown",
+        "chunks": None,
+        "chunk_options": None,
+        "file_path": "https://example.com/post",  # a URL, NOT a real file -> never accessed
+    }
+
+    db = MediaDatabase(":memory:", client_id="test-url-persist")
+    media_id, media_uuid, message = persist_parsed_media(payload, db)
+
+    assert isinstance(media_id, int)
+    assert isinstance(media_uuid, str) and media_uuid
+    row = db.get_media_by_id(media_id)
+    assert row is not None
+    assert row["url"] == "https://example.com/post"
+    assert row["type"] == "article"
+
+
 def test_persist_db_failure_is_wrapped_as_file_ingestion_error(tmp_path: Path) -> None:
     source = tmp_path / "note.txt"
     source.write_text("content", encoding="utf-8")
