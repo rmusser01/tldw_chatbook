@@ -1499,6 +1499,9 @@ class PersonasScreen(BaseAppScreen):
         elif message.action == "duplicate":
             if self.state.active_mode == "dictionaries":
                 await self._run_guarded(self._duplicate_selected_dictionary)
+        elif message.action == "toggle_enabled":
+            if self.state.active_mode == "dictionaries" and message.entity_id:
+                await self._toggle_dictionary_enabled(message.entity_id)
         # Delete and the rest are wired in follow-up tasks.
 
     async def _begin_create_character(self) -> None:
@@ -1627,6 +1630,35 @@ class PersonasScreen(BaseAppScreen):
                 )
         await self._render_dictionary_rows(query="")
         await self._select_dictionary(str(record.get("id")), str(record.get("name") or name))
+
+    async def _toggle_dictionary_enabled(self, entity_id: str) -> None:
+        """Flip a dictionary's enabled flag from the rail (space on the row)."""
+        service = self._dictionary_scope_service()
+        if service is None:
+            return
+        record = next(
+            (r for r in self._dictionaries_cache if str(r.get("id")) == str(entity_id)), None
+        )
+        if record is None:
+            return
+        target = not bool(record.get("enabled", record.get("is_active", True)))
+        try:
+            updated = await service.update_dictionary(
+                int(entity_id), {"enabled": target}, mode="local"
+            )
+        except Exception as exc:
+            logger.opt(exception=True).warning(f"Could not toggle dictionary {entity_id}.")
+            self._notify(f"Toggle failed: {exc}", "error")
+            return
+        if str(self.state.selected_entity_id) == str(entity_id):
+            raw_version = updated.get("version")
+            self._selected_dictionary_version = int(raw_version) if raw_version is not None else None
+            self.query_one(PersonasDictionaryDetailWidget).load_dictionary(updated)
+        await self._render_dictionary_rows(query=self.state.search_query)
+        if self.state.selected_entity_id:
+            self.query_one(PersonasLibraryPane).mark_active_row(
+                "dictionary", self.state.selected_entity_id
+            )
 
     @on(EditPersonaRequested)
     async def _handle_persona_edit_requested(self, message: EditPersonaRequested) -> None:
@@ -2087,7 +2119,7 @@ class PersonasScreen(BaseAppScreen):
         """Validate the selection and launch the delete-confirm dialog worker."""
         kind = self.state.selected_entity_kind
         entity_id = str(self.state.selected_entity_id or "")
-        if not entity_id or kind not in ("character", "persona_profile"):
+        if not entity_id or kind not in ("character", "persona_profile", "dictionary"):
             # The inspector disables Delete without a selection; defensive.
             self._notify("Select a saved item before deleting.", "warning")
             return
@@ -2100,6 +2132,15 @@ class PersonasScreen(BaseAppScreen):
                 self._notify("Character data is not loaded yet.", "warning")
                 return
             version: int | None = int(record.get("version") or 1)
+        elif kind == "dictionary":
+            record = next(
+                (r for r in self._dictionaries_cache if str(r.get("id")) == entity_id), None
+            )
+            if record is None:
+                self._notify("Dictionary data is not loaded yet.", "warning")
+                return
+            raw_version = record.get("version")
+            version = int(raw_version) if raw_version is not None else None
         else:
             record = await self._fetch_profile_record(entity_id)
             raw_version = record.get("version")
@@ -2164,6 +2205,32 @@ class PersonasScreen(BaseAppScreen):
                 # return (e.g. stubbed/alternate backends) the same way.
                 self._notify(conflict_copy.format(noun="character"), "error")
                 return
+        elif kind == "dictionary":
+            service = self._dictionary_scope_service()
+            if service is None:
+                self._notify("Dictionaries service is not configured.", "error")
+                return
+            try:
+                await service.delete_dictionary(
+                    int(entity_id), mode="local", expected_version=version
+                )
+            except ConflictError:
+                self._notify(conflict_copy.format(noun="dictionary"), "error")
+                return
+            except Exception as exc:
+                logger.opt(exception=True).error(f"Error deleting dictionary {entity_id}: {exc}")
+                self._notify(f"Delete failed: {exc}", "error")
+                return
+            self.state.clear_selection()
+            self.state.has_unsaved_changes = False
+            self._selected_dictionary_version = None
+            self.query_one(PersonasDictionaryDetailWidget).clear()
+            self._show_center(None)
+            await self.query_one(PersonasInspectorPane).clear_selection()
+            await self._render_dictionary_rows(query=self.state.search_query)
+            self._update_title()
+            self._update_status_row()
+            return
         else:
             service = getattr(self.app_instance, "character_persona_scope_service", None)
             if service is None or not hasattr(service, "delete_persona_profile"):

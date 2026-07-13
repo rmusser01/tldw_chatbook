@@ -54,6 +54,10 @@ class PersonasLibraryPane(Vertical):
     guards stay quiet while the user browses.
     """
 
+    BINDINGS = [
+        ("space", "toggle_highlighted", "Toggle on/off"),
+    ]
+
     # Structure only: colors come from the app stylesheet
     # (.console-action-subdued rows, ListView ListItem.--highlight, and
     # ListItem.personas-library-row.is-active in the bundle).
@@ -311,6 +315,21 @@ class PersonasLibraryPane(Vertical):
     def _duplicate_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         self.post_message(PersonaActionRequested(action="duplicate"))
+
+    def action_toggle_highlighted(self) -> None:
+        """Space on a highlighted dictionary row requests an enable-toggle."""
+        list_view = self.query_one("#personas-library-rows", ListView)
+        index = list_view.index
+        if index is None or not 0 <= index < len(list_view.children):
+            return
+        row = self._row_lookup.get(str(list_view.children[index].id or ""))
+        if row is None or row.kind != "dictionary":
+            return
+        self.post_message(
+            PersonaActionRequested(
+                action="toggle_enabled", entity_kind=row.kind, entity_id=row.item_id
+            )
+        )
 
 
 __all__ = [

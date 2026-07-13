@@ -800,3 +800,70 @@ class TestDictionaryNewDuplicate:
             # Verify the screen selected the new copy (not orphaned)
             assert screen.state.selected_entity_name == "Medical Abbrev (copy)", \
                 f"Screen should have selected the copy despite update failure, but selected {screen.state.selected_entity_name}"
+
+
+class TestDictionaryToggleDelete:
+    async def _select_first(self, pilot, screen):
+        rows = screen.query_one("#personas-library-rows", ListView)
+        rows.index = 0
+        rows.action_select_cursor()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+    async def test_space_toggles_enabled_and_meta(self, mock_app_instance, stub_characters, fake_dict_service):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _enter_dictionaries(pilot)
+            rows = screen.query_one("#personas-library-rows", ListView)
+            rows.focus()
+            rows.index = 0
+            await pilot.press("space")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert fake_dict_service.records[1]["enabled"] is False
+            metas = [
+                str(s.renderable)
+                for r in screen.query_one("#personas-library-rows", ListView).children
+                for s in r.query(".personas-library-row-meta").results()
+            ]
+            assert "2 entries · off" in metas
+
+    async def test_delete_confirms_then_removes(self, mock_app_instance, stub_characters, fake_dict_service, monkeypatch):
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_dictionary_detail import (
+            PersonasDictionaryDetailWidget,
+        )
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+
+            async def _fake_confirm(name):
+                return True
+
+            monkeypatch.setattr(screen, "_confirm_delete", _fake_confirm)
+            await pilot.click("#personas-delete")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert 1 not in fake_dict_service.records
+            assert screen.query_one(PersonasDictionaryDetailWidget).display is False
+            assert screen.state.selected_entity_id is None
+
+    async def test_delete_cancelled_keeps_record(self, mock_app_instance, stub_characters, fake_dict_service, monkeypatch):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+
+            async def _fake_confirm(name):
+                return False
+
+            monkeypatch.setattr(screen, "_confirm_delete", _fake_confirm)
+            await pilot.click("#personas-delete")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert 1 in fake_dict_service.records

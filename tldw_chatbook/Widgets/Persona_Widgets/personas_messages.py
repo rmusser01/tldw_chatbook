@@ -27,6 +27,7 @@ PersonaAction = Literal[
     "import",
     "export",
     "duplicate",
+    "toggle_enabled",
     "attach_to_console",
     "start_chat",
     "save",
