@@ -454,6 +454,28 @@ class TestDictionaryDetailWidget:
             error = app.query_one("#personas-dict-entry-error", Static)
             assert "pattern" in str(error.renderable).lower()
 
+    async def test_form_payload_rejects_out_of_range_probability(self):
+        """Validate-don't-clamp: 150 is refused, not silently coerced to 100."""
+        app = DetailHarnessApp()
+        async with app.run_test() as pilot:
+            widget = app.query_one(PersonasDictionaryDetailWidget)
+            app.query_one("#personas-dict-entry-pattern", Input).value = "ASAP"
+            app.query_one("#personas-dict-entry-probability", Input).value = "150"
+            assert widget.form_payload() is None
+            error = app.query_one("#personas-dict-entry-error", Static)
+            assert "0-100" in str(error.renderable)
+
+    async def test_form_payload_rejects_non_positive_max_replacements(self):
+        """Validate-don't-clamp: 0 is refused, not silently coerced to 1."""
+        app = DetailHarnessApp()
+        async with app.run_test() as pilot:
+            widget = app.query_one(PersonasDictionaryDetailWidget)
+            app.query_one("#personas-dict-entry-pattern", Input).value = "ASAP"
+            app.query_one("#personas-dict-entry-max-repl", Input).value = "0"
+            assert widget.form_payload() is None
+            error = app.query_one("#personas-dict-entry-error", Static)
+            assert "positive" in str(error.renderable).lower()
+
     async def test_add_button_posts_message(self):
         app = DetailHarnessApp()
         async with app.run_test() as pilot:
@@ -732,6 +754,29 @@ class TestDictionarySettings:
             await pilot.pause()
             assert screen.state.has_unsaved_changes is True
             assert "- unsaved" in str(screen.query_one("#personas-title", Static).renderable)
+
+    async def test_reverting_edit_clears_dirty_flag(self, mock_app_instance, stub_characters, fake_dict_service):
+        """Transition-based dirty signaling: editing back to the loaded value
+        must clear has_unsaved_changes, not just leave it stuck True."""
+        from textual.widgets import TabbedContent
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            tabs = screen.query_one("#personas-dict-tabs", TabbedContent)
+            tabs.active = "personas-dict-tab-settings"
+            await pilot.pause()
+            name_input = screen.query_one("#personas-dict-name", Input)
+            original = name_input.value
+            name_input.value = "Half-renamed"
+            await pilot.pause()
+            assert screen.state.has_unsaved_changes is True
+            assert "- unsaved" in str(screen.query_one("#personas-title", Static).renderable)
+            name_input.value = original
+            await pilot.pause()
+            assert screen.state.has_unsaved_changes is False
+            assert "- unsaved" not in str(screen.query_one("#personas-title", Static).renderable)
 
     async def test_conflict_surfaces_status_not_crash(self, mock_app_instance, stub_characters, fake_dict_service):
         from textual.widgets import TabbedContent

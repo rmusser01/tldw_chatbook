@@ -18,7 +18,16 @@ _TOKEN_RE = re.compile(r"(\s+)")
 
 def word_diff(original: str, processed: str) -> tuple[Text, Text]:
     """Word-level diff: removals styled 'strike dim' in the original, additions
-    'bold underline' in the processed text. Theme-safe (no colors)."""
+    'bold underline' in the processed text. Theme-safe (no colors).
+
+    Args:
+        original: The sample text before dictionary substitution.
+        processed: The sample text after dictionary substitution.
+
+    Returns:
+        A ``(original, processed)`` pair of Rich ``Text`` objects with the
+        changed spans styled for display; unchanged spans carry no style.
+    """
     left = Text()
     right = Text()
     a = _TOKEN_RE.split(original)

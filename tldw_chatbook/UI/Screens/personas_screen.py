@@ -1143,8 +1143,8 @@ class PersonasScreen(BaseAppScreen):
         message.stop()
         if self.state.selected_entity_kind != "dictionary":
             return
-        if not self.state.has_unsaved_changes:
-            self.state.has_unsaved_changes = True
+        if self.state.has_unsaved_changes != message.is_dirty:
+            self.state.has_unsaved_changes = message.is_dirty
             self._update_title()
             self._sync_inspector_console_actions()
 
@@ -1205,7 +1205,6 @@ class PersonasScreen(BaseAppScreen):
             return False
         detail = self.query_one(PersonasDictionaryDetailWidget)
         try:
-            response = await service.list_entries(int(entity_id), mode="local")
             record = await service.get_dictionary(int(entity_id), mode="local")
         except Exception as exc:
             logger.opt(exception=True).warning(f"Could not reload dictionary {entity_id} entries.")
@@ -1213,7 +1212,7 @@ class PersonasScreen(BaseAppScreen):
             return False
         raw_version = record.get("version")
         self._selected_dictionary_version = int(raw_version) if raw_version is not None else None
-        detail.update_entries(list(response.get("entries") or []))
+        detail.update_entries(list(record.get("entries") or []))
         await self._render_dictionary_rows(query=self.state.search_query)
         self.query_one(PersonasLibraryPane).mark_active_row("dictionary", entity_id)
         return True

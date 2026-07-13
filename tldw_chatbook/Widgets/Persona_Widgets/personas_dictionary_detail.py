@@ -55,7 +55,11 @@ class DictionarySettingsSaveRequested(Message):
 
 
 class DictionarySettingsEdited(Message):
-    """A settings field changed (dirty marker); no payload."""
+    """The settings dirty state transitioned (either direction)."""
+
+    def __init__(self, is_dirty: bool) -> None:
+        super().__init__()
+        self.is_dirty = is_dirty
 
 
 class PersonasDictionaryDetailWidget(Vertical):
@@ -87,6 +91,7 @@ class PersonasDictionaryDetailWidget(Vertical):
         super().__init__(**kwargs)
         self._entries: list[dict] = []
         self._loaded_settings: dict | None = None  # last-loaded settings snapshot; dirty = value diff
+        self._last_dirty_sent: bool = False  # last dirty state posted via DictionarySettingsEdited
 
     # ----- compose -----
 
@@ -131,7 +136,15 @@ class PersonasDictionaryDetailWidget(Vertical):
     # ----- public API -----
 
     def load_dictionary(self, record: dict) -> None:
-        """Fill settings + entries from a get_dictionary()/summary dict."""
+        """Fill settings + entries from a get_dictionary()/summary dict.
+
+        Args:
+            record: A normalized ``get_dictionary()`` (or list-summary) dict
+                with name/description/strategy/max_tokens/enabled and entries.
+
+        Returns:
+            None.
+        """
         self.query_one("#personas-dict-name", Input).value = str(record.get("name") or "")
         self.query_one("#personas-dict-description", TextArea).text = str(record.get("description") or "")
         strategy = str(record.get("strategy") or "sorted_evenly")
@@ -144,6 +157,7 @@ class PersonasDictionaryDetailWidget(Vertical):
         self.update_entries(list(record.get("entries") or []))
         self.query_one("#personas-dict-status", Static).update("")
         self._loaded_settings = self.settings_payload()
+        self._last_dirty_sent = False
 
     def update_entries(self, entries: list[dict]) -> None:
         """Re-render the entries table from a fresh service response."""
@@ -172,10 +186,12 @@ class PersonasDictionaryDetailWidget(Vertical):
         self.query_one("#personas-dict-enabled", Switch).value = bool(enabled)
         if self._loaded_settings is not None:
             self._loaded_settings["enabled"] = bool(enabled)
+        self._sync_dirty_state()
 
     def clear(self) -> None:
         self._entries = []
         self._loaded_settings = None
+        self._last_dirty_sent = False
         self.query_one("#personas-dict-entries-table", DataTable).clear()
 
     @property
@@ -201,15 +217,19 @@ class PersonasDictionaryDetailWidget(Vertical):
             return None
         raw_prob = self.query_one("#personas-dict-entry-probability", Input).value.strip() or "100"
         try:
-            prob_pct = max(0, min(100, int(raw_prob)))
+            prob_pct = int(raw_prob)
+            if not 0 <= prob_pct <= 100:
+                raise ValueError
         except ValueError:
             error.update("Probability must be a whole number 0-100.")
             return None
         raw_max = self.query_one("#personas-dict-entry-max-repl", Input).value.strip() or "1"
         try:
-            max_repl = max(1, int(raw_max))
+            max_repl = int(raw_max)
+            if max_repl < 1:
+                raise ValueError
         except ValueError:
-            error.update("Max replacements must be a whole number.")
+            error.update("Max replacements must be a positive whole number.")
             return None
         error.update("")
         group = self.query_one("#personas-dict-entry-group", Input).value.strip()
@@ -328,16 +348,28 @@ class PersonasDictionaryDetailWidget(Vertical):
         event.stop()
         self.post_message(DictionarySettingsSaveRequested(self.settings_payload()))
 
+    def _sync_dirty_state(self) -> None:
+        """Recompute dirty state and post ``DictionarySettingsEdited`` on transitions.
+
+        Shared by user-driven field edits (``_settings_edited``) and
+        externally-applied changes (``apply_enabled``) so both post exactly
+        once per True/False transition instead of re-announcing a state the
+        screen already knows about.
+        """
+        if self._loaded_settings is None:
+            return  # nothing loaded yet - mount-time Changed noise
+        is_dirty = self.settings_payload() != self._loaded_settings
+        if is_dirty != self._last_dirty_sent:
+            self._last_dirty_sent = is_dirty
+            self.post_message(DictionarySettingsEdited(is_dirty))
+
     @on(Input.Changed, "#personas-dict-name")
     @on(Input.Changed, "#personas-dict-max-tokens")
     @on(TextArea.Changed, "#personas-dict-description")
     @on(Select.Changed, "#personas-dict-strategy")
     @on(Switch.Changed, "#personas-dict-enabled")
     def _settings_edited(self, event: Message) -> None:
-        if self._loaded_settings is None:
-            return  # nothing loaded yet - mount-time Changed noise
-        if self.settings_payload() != self._loaded_settings:
-            self.post_message(DictionarySettingsEdited())
+        self._sync_dirty_state()
 
 
 __all__ = [
