@@ -361,7 +361,8 @@ class TestWorkbenchShell:
             assert screen.state.active_mode == "dictionaries"
             placeholder = screen.query_one("#personas-mode-placeholder", Static)
             assert placeholder.display is True
-            assert "not available yet" in str(placeholder.renderable)
+            # Roleplay P0 copy: planned modes read "Coming soon" with a purpose line.
+            assert "Coming soon" in str(placeholder.renderable)
             assert "is-active" in screen.query_one("#personas-mode-dictionaries", Button).classes
 
     async def test_mode_chips_are_self_explaining_and_mark_coming_soon(self, mock_app_instance, stub_characters):
