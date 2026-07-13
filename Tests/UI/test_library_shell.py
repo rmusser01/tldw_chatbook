@@ -208,6 +208,82 @@ async def _wait_for_selector(screen, pilot, selector, *, attempts=120):
     )
 
 
+async def _wait_for_condition(pilot, predicate, *, timeout=15.0, message, interval=0.02) -> None:
+    """Await until ``predicate()`` is truthy, or raise once ``timeout`` wall-clock seconds elapse.
+
+    A deadline (not a fixed iteration count) so the wait survives CPU contention
+    yet returns the instant the condition is met. ``message`` may be a string or a
+    zero-arg callable (evaluated at raise time, so dynamic diagnostics report the
+    stuck state).
+
+    The predicate is checked FIRST each iteration -- before the deadline test and
+    before pausing -- so it is evaluated at least once (even at ``timeout=0``) and
+    is always given a final chance after a ``pause`` that overshoots the deadline
+    under contention (which is exactly when a state transition it is waiting for
+    may have just landed).
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        if predicate():
+            return
+        if time.monotonic() >= deadline:
+            break
+        await pilot.pause(interval)
+    raise AssertionError(message() if callable(message) else message)
+
+
+class _FakePilot:
+    """Minimal pilot stand-in for unit-testing _wait_for_condition (pause is a no-op, but counted)."""
+
+    def __init__(self) -> None:
+        self.pause_calls = 0
+
+    async def pause(self, delay: float = 0) -> None:
+        self.pause_calls += 1
+        return None
+
+
+@pytest.mark.asyncio
+async def test__wait_for_condition_returns_immediately_when_true() -> None:
+    """An already-true predicate returns on the first check, without ever pausing."""
+    calls = {"n": 0}
+
+    def pred() -> bool:
+        calls["n"] += 1
+        return True
+
+    pilot = _FakePilot()
+    await _wait_for_condition(pilot, pred, message="must not raise")
+    assert calls["n"] == 1  # checked once...
+    assert pilot.pause_calls == 0  # ...and returned before ever pausing
+
+
+@pytest.mark.asyncio
+async def test__wait_for_condition_checks_predicate_before_raising() -> None:
+    """The predicate is checked at least once before the deadline is enforced, so a
+    condition that is already satisfied returns even when the deadline has elapsed
+    (guards against a false timeout when a pause overshoots the deadline)."""
+    pilot = _FakePilot()
+    await _wait_for_condition(pilot, lambda: True, timeout=0.0, message="must not raise")
+    assert pilot.pause_calls == 0
+
+
+@pytest.mark.asyncio
+async def test__wait_for_condition_raises_with_message_on_timeout() -> None:
+    """A never-true predicate raises AssertionError carrying the given message on timeout."""
+    with pytest.raises(AssertionError, match="boom"):
+        await _wait_for_condition(_FakePilot(), lambda: False, timeout=0.05, message="boom")
+
+
+@pytest.mark.asyncio
+async def test__wait_for_condition_evaluates_callable_message_at_raise() -> None:
+    """A callable message is evaluated at raise time (so dynamic diagnostics report the stuck state)."""
+    with pytest.raises(AssertionError, match="dynamic 42"):
+        await _wait_for_condition(
+            _FakePilot(), lambda: False, timeout=0.05, message=lambda: f"dynamic {6 * 7}"
+        )
+
+
 def _two_conversations():
     return [
         {
@@ -1415,12 +1491,11 @@ async def test_library_shell_rail_search_submit_aborts_on_note_conflict():
         await pilot.pause()
 
         screen.query_one("#library-note-save").press()
-        for _ in range(150):
-            if screen._library_note_autosave_state == "conflict":
-                break
-            await pilot.pause(0.02)
-        else:
-            raise AssertionError("The version conflict was never reached.")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_note_autosave_state == "conflict",
+            message="The version conflict was never reached.",
+        )
 
         history_before = screen._library_search_history
         search_input = screen.query_one("#library-search-input", Input)
@@ -5831,12 +5906,11 @@ async def test_library_shell_note_conflict_shows_overwrite_reload_and_keeps_user
         await pilot.pause()
 
         screen.query_one("#library-note-save").press()
-        for _ in range(150):
-            if screen._library_note_autosave_state == "conflict":
-                break
-            await pilot.pause(0.02)
-        else:
-            raise AssertionError("The version conflict was never reached.")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_note_autosave_state == "conflict",
+            message="The version conflict was never reached.",
+        )
 
         assert screen.query("#library-note-conflict-overwrite")
         assert screen.query("#library-note-conflict-reload")
@@ -5879,12 +5953,11 @@ async def test_library_shell_note_conflict_during_preview_reads_live_text():
         _bump_note_version_externally(service, "n-1")  # now stored at v3; screen still has v2
 
         screen.query_one("#library-note-save").press()
-        for _ in range(150):
-            if screen._library_note_autosave_state == "conflict":
-                break
-            await pilot.pause(0.02)
-        else:
-            raise AssertionError("The version conflict was never reached.")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_note_autosave_state == "conflict",
+            message="The version conflict was never reached.",
+        )
 
         # The conflict UI always shows the live TextArea, never the
         # read-only Markdown preview, regardless of the Preview flag.
@@ -5896,12 +5969,11 @@ async def test_library_shell_note_conflict_during_preview_reads_live_text():
 
         calls_before_second_save = len(service.save_calls)
         screen.query_one("#library-note-save").press()
-        for _ in range(150):
-            if len(service.save_calls) > calls_before_second_save:
-                break
-            await pilot.pause(0.02)
-        else:
-            raise AssertionError("The second Save press never called the seam.")
+        await _wait_for_condition(
+            pilot,
+            lambda: len(service.save_calls) > calls_before_second_save,
+            message="The second Save press never called the seam.",
+        )
         # Give the resulting conflict recompose a few cycles to settle.
         for _ in range(10):
             await pilot.pause(0.02)
@@ -5937,20 +6009,18 @@ async def test_library_shell_note_conflict_overwrite_resaves_with_fresh_version(
         await pilot.pause()
 
         screen.query_one("#library-note-save").press()
-        for _ in range(150):
-            if screen._library_note_autosave_state == "conflict":
-                break
-            await pilot.pause(0.02)
-        else:
-            raise AssertionError("The version conflict was never reached.")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_note_autosave_state == "conflict",
+            message="The version conflict was never reached.",
+        )
 
         (await _wait_for_selector(screen, pilot, "#library-note-conflict-overwrite")).press()
-        for _ in range(150):
-            if screen._library_note_autosave_state == "saved":
-                break
-            await pilot.pause(0.02)
-        else:
-            raise AssertionError("Overwrite never completed.")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_note_autosave_state == "saved",
+            message="Overwrite never completed.",
+        )
 
         assert not screen.query("#library-note-conflict-overwrite")
         stored = next(note for note in service.notes if note["id"] == "n-1")
@@ -5982,23 +6052,21 @@ async def test_library_shell_note_conflict_reload_discards_local_edits():
         await pilot.pause()
 
         screen.query_one("#library-note-save").press()
-        for _ in range(150):
-            if screen._library_note_autosave_state == "conflict":
-                break
-            await pilot.pause(0.02)
-        else:
-            raise AssertionError("The version conflict was never reached.")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_note_autosave_state == "conflict",
+            message="The version conflict was never reached.",
+        )
 
         (await _wait_for_selector(screen, pilot, "#library-note-conflict-reload")).press()
-        for _ in range(150):
-            if (
+        await _wait_for_condition(
+            pilot,
+            lambda: (
                 screen._library_note_autosave_state == "idle"
                 and screen._library_notes_view == "editor"
-            ):
-                break
-            await pilot.pause(0.02)
-        else:
-            raise AssertionError("Reload never completed.")
+            ),
+            message="Reload never completed.",
+        )
 
         assert not screen.query("#library-note-conflict-reload")
         assert screen.query_one("#library-note-body", TextArea).text == "Server-side content"
@@ -6029,28 +6097,26 @@ async def test_library_shell_note_conflict_reload_falls_back_to_list_when_note_m
         await pilot.pause()
 
         screen.query_one("#library-note-save").press()
-        for _ in range(150):
-            if screen._library_note_autosave_state == "conflict":
-                break
-            await pilot.pause(0.02)
-        else:
-            raise AssertionError("The version conflict was never reached.")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_note_autosave_state == "conflict",
+            message="The version conflict was never reached.",
+        )
 
         # The note is now gone entirely (not just bumped again) before
         # Reload's silent re-fetch runs.
         _remove_note_externally(service, "n-1")
 
         (await _wait_for_selector(screen, pilot, "#library-note-conflict-reload")).press()
-        for _ in range(150):
-            if screen._library_notes_view == "list":
-                break
-            await pilot.pause(0.02)
-        else:
-            raise AssertionError(
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_notes_view == "list",
+            message=lambda: (
                 "Reload never fell back to the list view for a missing note "
                 f"(stuck: view={screen._library_notes_view!r}, "
                 f"autosave_state={screen._library_note_autosave_state!r})."
-            )
+            ),
+        )
 
         assert screen._selected_note_id == ""
         assert screen._library_note_detail is None
@@ -6081,26 +6147,24 @@ async def test_library_shell_note_conflict_overwrite_falls_back_to_list_when_not
         await pilot.pause()
 
         screen.query_one("#library-note-save").press()
-        for _ in range(150):
-            if screen._library_note_autosave_state == "conflict":
-                break
-            await pilot.pause(0.02)
-        else:
-            raise AssertionError("The version conflict was never reached.")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_note_autosave_state == "conflict",
+            message="The version conflict was never reached.",
+        )
 
         _remove_note_externally(service, "n-1")
 
         (await _wait_for_selector(screen, pilot, "#library-note-conflict-overwrite")).press()
-        for _ in range(150):
-            if screen._library_notes_view == "list":
-                break
-            await pilot.pause(0.02)
-        else:
-            raise AssertionError(
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_notes_view == "list",
+            message=lambda: (
                 "Overwrite never fell back to the list view for a missing note "
                 f"(stuck: view={screen._library_notes_view!r}, "
                 f"autosave_state={screen._library_note_autosave_state!r})."
-            )
+            ),
+        )
 
         assert screen._selected_note_id == ""
         assert screen._library_note_detail is None
