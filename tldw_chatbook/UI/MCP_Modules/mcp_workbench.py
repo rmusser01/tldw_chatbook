@@ -60,16 +60,15 @@ _LEGACY_SECTIONS = [
 
 
 class _AdvancedSectionShim:
-    """Shields the inspector's legacy Advanced pane from local-source scoping.
+    """Shields the inspector's legacy Advanced pane from one local-source shape gap.
 
-    Phase 1 scoping (see the deviation note above): the control-plane surface
-    only exposes local-source data through source-scoped listing, not a
-    dict-per-section contract — so `load_section()` can come back as a bare
-    list regardless of which section the legacy Advanced pane asked for. The
-    renderers in `unified_mcp_sections.py` all assume a Mapping, and
+    `UnifiedMCPControlPlaneService.load_section()` returns a dict for every
+    section except local-source "external_servers", which comes back as a
+    bare list (mirroring `LocalMCPControlService.get_external_servers()`).
+    The renderers in `unified_mcp_sections.py` all assume a Mapping, and
     `MCPInspector.set_service_context()`/`on_select_changed()` schedule the
     section load as a worker with Textual's default `exit_on_error=True` —
-    an unhandled shape mismatch (or a raised exception) there would crash the
+    that one shape mismatch (or a raised exception) there would crash the
     whole app, not just the Advanced pane. Normalize and fail closed here
     instead, at the integration seam this task owns, without touching
     mcp_inspector.py.
@@ -89,24 +88,13 @@ class _AdvancedSectionShim:
             return {"source": "local", "section": section or "overview", "error": str(exc)}
         if isinstance(payload, dict):
             return payload
-        if isinstance(payload, list):
-            if section == "external_servers":
-                # render_external_servers_section reads this key as a list.
-                return {"source": "local", "section": section, "external_servers": payload}
-            # Any other section (notably "overview", eagerly loaded on
-            # mount) only has counts available from this source-scoped
-            # listing; mirror LocalMCPControlService.get_overview()'s shape
-            # so render_overview_section's `dict(...)` calls stay safe.
-            return {
-                "source": "local",
-                "section": section or "overview",
-                "external_servers": {
-                    "profiles": len(payload),
-                    "discovery_snapshots": sum(
-                        1 for item in payload if isinstance(item, dict) and item.get("discovery_snapshot")
-                    ),
-                },
-            }
+        if isinstance(payload, list) and section == "external_servers":
+            # UnifiedMCPControlPlaneService.load_section() only returns a
+            # bare list for the local-source "external_servers" section
+            # (LocalMCPControlService.get_external_servers()); every other
+            # section already comes back as a dict. render_external_servers_section
+            # reads this key as a list.
+            return {"source": "local", "section": section, "external_servers": payload}
         return {"source": "local", "section": section or "overview"}
 
 
@@ -135,11 +123,24 @@ class MCPWorkbench(Container):
     def __init__(self, app_instance: Any = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._app_instance = app_instance
-        self.active_mode = "servers"
+        self._active_mode = "servers"
         self._source = "local"
         self._selected_server_key: str | None = None
+        self._scope: str = "personal"
+        self._scope_ref: str | None = None
         self._snapshots: list[ReadinessSnapshot] = []
         self._pending_view_state: dict[str, Any] | None = None
+        # Guards the post-mount restore race: `on_mount` awaits `reload()`
+        # inline, but a caller (e.g. the destination screen) can call
+        # `set_initial_view_state()` while that reload is still in flight.
+        # Without this flag, the reload's own `_sync_children()` and a
+        # concurrently scheduled restore worker can race to write
+        # `_source`/`_selected_server_key`/`_scope`/`_scope_ref` last.
+        self._reloading: bool = False
+
+    @property
+    def active_mode(self) -> str:
+        return self._active_mode
 
     @property
     def app_instance(self) -> Any:
@@ -160,9 +161,9 @@ class MCPWorkbench(Container):
                 snapshots=[],
                 selected_server_key=None,
                 scope_options=[("Personal", "personal")],
-                scope_value="personal",
+                scope_value=self._scope,
                 scope_ref_options=[],
-                scope_ref_value=None,
+                scope_ref_value=self._scope_ref,
                 id="mcp-hub-rail",
                 classes="destination-workbench-pane",
             )
@@ -185,27 +186,42 @@ class MCPWorkbench(Container):
 
     async def on_mount(self) -> None:
         await self.reload()
-        if self._pending_view_state:
-            await self._apply_view_state(self._pending_view_state)
-            self._pending_view_state = None
 
     # -- data loading ---------------------------------------------------------
 
     async def reload(self) -> None:
-        service = self._service()
-        if service is not None:
-            try:
-                context = await service.load_context()
-                self._source = context.selected_source or "local"
-            except Exception as exc:
-                logger.warning(f"MCP workbench context load failed: {exc}")
-        self._snapshots = await self._collect_snapshots()
-        self._sync_children()
-        inspector = self.query_one(MCPInspector)
-        inspector.set_service_context(
-            _AdvancedSectionShim(service) if service is not None else None,
-            _LEGACY_SECTIONS,
-        )
+        self._reloading = True
+        try:
+            service = self._service()
+            if service is not None:
+                try:
+                    context = await service.load_context()
+                    self._source = context.selected_source or "local"
+                    if (
+                        self._source == "server"
+                        and context.selected_active_server_id
+                        and self._selected_server_key is None
+                    ):
+                        self._selected_server_key = f"server:{context.selected_active_server_id}"
+                    if context.selected_scope is not None:
+                        self._scope = context.selected_scope
+                    if context.selected_scope_ref is not None:
+                        self._scope_ref = context.selected_scope_ref
+                except Exception as exc:
+                    logger.warning(f"MCP workbench context load failed: {exc}")
+            self._snapshots = await self._collect_snapshots()
+            self._sync_children()
+            inspector = self.query_one(MCPInspector)
+            inspector.set_service_context(
+                _AdvancedSectionShim(service) if service is not None else None,
+                _LEGACY_SECTIONS,
+            )
+        finally:
+            self._reloading = False
+        # Consume any view state that arrived while this reload was in
+        # flight (see `set_initial_view_state()`), so it is applied exactly
+        # once and always after this reload's own `_sync_children()`.
+        await self._consume_pending_view_state()
 
     async def _collect_snapshots(self) -> list[ReadinessSnapshot]:
         snapshots: list[ReadinessSnapshot] = []
@@ -250,9 +266,9 @@ class MCPWorkbench(Container):
             snapshots=self._snapshots,
             selected_server_key=self._selected_server_key,
             scope_options=[("Personal", "personal")],
-            scope_value="personal",
+            scope_value=self._scope,
             scope_ref_options=[],
-            scope_ref_value=None,
+            scope_ref_value=self._scope_ref,
         )
         canvas = self.query_one(MCPServersMode)
         canvas.update_overview(self._snapshots)
@@ -265,7 +281,7 @@ class MCPWorkbench(Container):
     def set_mode(self, mode: str) -> None:
         if mode not in MCP_HUB_MODES:
             mode = "servers"
-        self.active_mode = mode
+        self._active_mode = mode
         self.query_one(ContentSwitcher).current = f"mcp-mode-canvas-{mode}"
 
     def get_view_state(self) -> dict[str, Any]:
@@ -273,21 +289,33 @@ class MCPWorkbench(Container):
             "mode": self.active_mode,
             "source": self._source,
             "selected_server_key": self._selected_server_key,
-            "scope": "personal",
-            "scope_ref": None,
+            "scope": self._scope,
+            "scope_ref": self._scope_ref,
         }
 
     def set_initial_view_state(self, state: dict[str, Any] | None) -> None:
         if not state:
             return
         if self.is_mounted:
-            self.run_worker(
-                self._apply_view_state(dict(state)),
-                group="mcp-workbench-restore",
-                exclusive=True,
-            )
+            # Always stash the latest requested state so a reload already in
+            # flight (see `reload()`) can pick it up when it finishes,
+            # instead of racing it with a worker started here.
+            self._pending_view_state = dict(state)
+            if not self._reloading:
+                self.run_worker(
+                    self._consume_pending_view_state(),
+                    group="mcp-workbench-restore",
+                    exclusive=True,
+                )
         else:
             self._pending_view_state = dict(state)
+
+    async def _consume_pending_view_state(self) -> None:
+        """Apply `_pending_view_state` exactly once, then clear it."""
+        state = self._pending_view_state
+        self._pending_view_state = None
+        if state:
+            await self._apply_view_state(state)
 
     async def _apply_view_state(self, state: dict[str, Any]) -> None:
         # Tolerant restore: unknown keys ignored; legacy panel shape accepted.
@@ -298,6 +326,12 @@ class MCPWorkbench(Container):
         server_key = state.get("selected_server_key")
         if isinstance(server_key, str) and self._snapshot_for(server_key) is not None:
             self._selected_server_key = server_key
+        scope = state.get("scope") or state.get("selected_scope")
+        if isinstance(scope, str) and scope:
+            self._scope = scope
+        scope_ref = state.get("scope_ref") if "scope_ref" in state else state.get("selected_scope_ref")
+        if scope_ref is not None:
+            self._scope_ref = str(scope_ref)
         self._sync_children()
 
     # -- event wiring -----------------------------------------------------------
@@ -342,6 +376,9 @@ class MCPWorkbench(Container):
                 await service.select_scope(event.scope, event.scope_ref)
             except Exception as exc:
                 logger.warning(f"MCP scope selection failed: {exc}")
+        self._scope = event.scope
+        self._scope_ref = event.scope_ref
+        self._sync_children()
 
     def on_mcp_servers_mode_server_row_selected(
         self, event: MCPServersMode.ServerRowSelected
