@@ -53,11 +53,14 @@ class AgentService:
 
     def __init__(self, db: AgentRunsDB, registry: ToolCatalogRegistry,
                  chat_call: Callable | None = None,
-                 clock: Callable[[], float] = time.monotonic) -> None:
+                 clock: Callable[[], float] = time.monotonic,
+                 on_step: Callable[[AgentStep, str], None] | None = None
+                 ) -> None:
         self.db = db
         self.registry = registry
         self.chat_call = chat_call or _default_chat_call()
         self.clock = clock
+        self._on_step = on_step
 
     # -- internals -------------------------------------------------------
 
@@ -201,6 +204,8 @@ class AgentService:
             load_schemas=load_schemas,
             should_cancel=should_cancel,
             clock=self.clock,
+            on_step=((lambda s: self._on_step(s, agent_kind))
+                     if self._on_step is not None else (lambda s: None)),
         )
         try:
             outcome = run_agent_loop(config, messages, active, deps)

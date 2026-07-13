@@ -179,6 +179,7 @@ class LoopDeps:
     load_schemas: Callable[[list], list]
     should_cancel: Callable[[], bool]
     clock: Callable[[], float]
+    on_step: Callable[[AgentStep], None] = lambda step: None
 
 
 def _catalog_lines(entries: list) -> str:
@@ -224,6 +225,13 @@ def run_agent_loop(config: AgentConfig, initial_messages: list[dict],
     def add(kind: str, **kw) -> AgentStep:
         step = AgentStep(index=len(steps), kind=kind, **kw)
         steps.append(step)
+        # The hook drives live UI only (see LoopDeps.on_step docstring);
+        # durability comes from the service's end-of-run persist, so a
+        # raising callback must never abort or corrupt the run itself.
+        try:
+            deps.on_step(step)
+        except Exception:  # noqa: BLE001 — best-effort UI notification only
+            pass
         return step
 
     while True:
