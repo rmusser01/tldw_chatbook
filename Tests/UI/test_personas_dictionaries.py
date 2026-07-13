@@ -705,3 +705,57 @@ class TestDictionarySettings:
             await pilot.pause()
             status = screen.query_one("#personas-dict-status", Static)
             assert "changed since it was loaded" in str(status.renderable)
+
+
+class TestDictionaryNewDuplicate:
+    async def _select_first(self, pilot, screen):
+        rows = screen.query_one("#personas-library-rows", ListView)
+        rows.index = 0
+        rows.action_select_cursor()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+    async def test_new_creates_disambiguated_and_selects(self, mock_app_instance, stub_characters, fake_dict_service):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await pilot.click("#personas-library-new")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            names = [r["name"] for r in fake_dict_service.records.values()]
+            assert "Untitled dictionary" in names
+            assert screen.state.selected_entity_name == "Untitled dictionary"
+            # Second New must disambiguate against the first.
+            await pilot.click("#personas-library-new")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            names = [r["name"] for r in fake_dict_service.records.values()]
+            assert "Untitled dictionary 2" in names
+
+    async def test_duplicate_copies_entries_and_strategy(self, mock_app_instance, stub_characters, fake_dict_service):
+        fake_dict_service.records[1]["strategy"] = "character_lore_first"
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            await pilot.click("#personas-library-duplicate")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            copy_rec = next(r for r in fake_dict_service.records.values() if r["name"] == "Medical Abbrev (copy)")
+            assert [e["pattern"] for e in copy_rec["entries"]] == ["BP", "HR"]
+            # create_dictionary ignores strategy - the follow-up update must set it.
+            assert copy_rec["strategy"] == "character_lore_first"
+
+    async def test_duplicate_button_hidden_outside_dictionaries(self, mock_app_instance, stub_characters, fake_dict_service):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _mounted(pilot)
+            dup = screen.query_one("#personas-library-duplicate", Button)
+            assert dup.display is False  # characters mode
+            await pilot.click("#personas-mode-dictionaries")
+            await pilot.pause()
+            assert dup.display is True

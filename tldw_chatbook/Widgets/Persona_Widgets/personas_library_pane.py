@@ -91,6 +91,10 @@ class PersonasLibraryPane(Vertical):
         self._row_lookup: dict[str, LibraryRow] = {}
         self._import_visible: bool = True
 
+    def on_mount(self) -> None:
+        """Initialize button visibility for default characters mode."""
+        self.query_one("#personas-library-duplicate", Button).display = False
+
     def compose(self) -> ComposeResult:
         """Compose the Library pane header, search controls, and rows.
 
@@ -126,13 +130,20 @@ class PersonasLibraryPane(Vertical):
                 tooltip="Import a character card (PNG or JSON).",
                 classes="console-action-secondary",
             )
+            yield Button(
+                "Duplicate",
+                id="personas-library-duplicate",
+                tooltip="Duplicate the selected dictionary.",
+                classes="console-action-secondary",
+            )
         yield ListView(id="personas-library-rows")
         yield Static("", id="personas-library-count", classes="destination-purpose")
 
     def set_mode(self, mode: str) -> None:
-        """Show Import only where it applies (Characters mode)."""
+        """Show Import only where it applies (Characters mode); Duplicate is dictionaries-only."""
         self._import_visible = mode == "characters"
         self.query_one("#personas-library-import", Button).display = self._import_visible
+        self.query_one("#personas-library-duplicate", Button).display = mode == "dictionaries"
 
     async def update_rows(
         self,
@@ -295,6 +306,11 @@ class PersonasLibraryPane(Vertical):
     def _import_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         self.post_message(PersonaActionRequested(action="import"))
+
+    @on(Button.Pressed, "#personas-library-duplicate")
+    def _duplicate_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(PersonaActionRequested(action="duplicate"))
 
 
 __all__ = [

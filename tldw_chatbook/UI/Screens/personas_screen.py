@@ -14,7 +14,7 @@ from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
 from textual.css.query import QueryError
 from textual.timer import Timer
-from textual.widgets import Button, Input, ListView, Static, TextArea
+from textual.widgets import Button, Input, ListView, Static, TabbedContent, TextArea
 
 from ...Character_Chat.Character_Chat_Lib import (
     export_character_card_to_json,
@@ -1487,6 +1487,8 @@ class PersonasScreen(BaseAppScreen):
                 await self._run_guarded(self._begin_create_character)
             elif self.state.active_mode == "personas":
                 await self._run_guarded(self._begin_create_profile)
+            elif self.state.active_mode == "dictionaries":
+                await self._run_guarded(self._begin_create_dictionary)
             # Creation in the remaining modes is wired in follow-up tasks.
         elif message.action == "import":
             # Character-card import only; the library pane hides the Import
@@ -1494,6 +1496,9 @@ class PersonasScreen(BaseAppScreen):
             if self.state.active_mode != "characters":
                 return
             await self._run_guarded(self._open_import_dialog)
+        elif message.action == "duplicate":
+            if self.state.active_mode == "dictionaries":
+                await self._run_guarded(self._duplicate_selected_dictionary)
         # Delete and the rest are wired in follow-up tasks.
 
     async def _begin_create_character(self) -> None:
@@ -1526,6 +1531,95 @@ class PersonasScreen(BaseAppScreen):
         await inspector.clear_selection()
         inspector.show_validation_editing()
         self.call_after_refresh(self._focus_editor_name)
+
+    def _unique_dictionary_name(self, base: str) -> str:
+        """Disambiguate against the loaded list (name column is UNIQUE)."""
+        existing = {str(r.get("name") or "") for r in self._dictionaries_cache}
+        if base not in existing:
+            return base
+        suffix = 2
+        while f"{base} {suffix}" in existing:
+            suffix += 1
+        return f"{base} {suffix}"
+
+    async def _begin_create_dictionary(self) -> None:
+        service = self._dictionary_scope_service()
+        if service is None:
+            self._notify("Dictionaries service is not configured.", "error")
+            return
+        name = self._unique_dictionary_name("Untitled dictionary")
+        try:
+            record = await service.create_dictionary({"name": name}, mode="local")
+        except ConflictError:
+            self._notify("A dictionary with that name already exists.", "error")
+            return
+        except Exception as exc:
+            logger.opt(exception=True).warning("Could not create a dictionary.")
+            self._notify(f"Create failed: {exc}", "error")
+            return
+        await self._render_dictionary_rows(query="")
+        await self._select_dictionary(str(record.get("id")), str(record.get("name") or name))
+        # Land the user in Settings to rename immediately.
+        try:
+            self.query_one("#personas-dict-tabs", TabbedContent).active = "personas-dict-tab-settings"
+            self.query_one("#personas-dict-name", Input).focus()
+        except QueryError:
+            pass
+
+    async def _duplicate_selected_dictionary(self) -> None:
+        service = self._dictionary_scope_service()
+        entity_id = self.state.selected_entity_id
+        if service is None or self.state.selected_entity_kind != "dictionary" or not entity_id:
+            self._notify("Select a dictionary to duplicate.", "warning")
+            return
+        try:
+            source = await service.get_dictionary(int(entity_id), mode="local")
+        except Exception as exc:
+            logger.opt(exception=True).warning(f"Could not load dictionary {entity_id} to duplicate.")
+            self._notify(f"Duplicate failed: {exc}", "error")
+            return
+        base = f"{source.get('name') or 'Dictionary'} (copy)"
+        existing = {str(r.get("name") or "") for r in self._dictionaries_cache}
+        name = base
+        suffix = 2
+        while name in existing:
+            name = f"{source.get('name') or 'Dictionary'} (copy {suffix})"
+            suffix += 1
+        payload = {
+            "name": name,
+            "description": source.get("description") or "",
+            "max_tokens": source.get("max_tokens") or 1000,
+            "enabled": bool(source.get("enabled", source.get("is_active", True))),
+            "entries": [
+                {
+                    "pattern": e.get("pattern"),
+                    "replacement": e.get("replacement"),
+                    "probability": e.get("probability"),
+                    "group": e.get("group"),
+                    "timed_effects": e.get("timed_effects"),
+                    "max_replacements": e.get("max_replacements"),
+                    "type": e.get("type"),
+                }
+                for e in source.get("entries") or []
+            ],
+        }
+        try:
+            record = await service.create_dictionary(payload, mode="local")
+            # create_dictionary ignores strategy (column default); set it after.
+            source_strategy = str(source.get("strategy") or "sorted_evenly")
+            if source_strategy != "sorted_evenly":
+                record = await service.update_dictionary(
+                    int(record["id"]), {"strategy": source_strategy}, mode="local"
+                )
+        except ConflictError:
+            self._notify("A dictionary with that name already exists.", "error")
+            return
+        except Exception as exc:
+            logger.opt(exception=True).warning("Could not duplicate the dictionary.")
+            self._notify(f"Duplicate failed: {exc}", "error")
+            return
+        await self._render_dictionary_rows(query="")
+        await self._select_dictionary(str(record.get("id")), str(record.get("name") or name))
 
     @on(EditPersonaRequested)
     async def _handle_persona_edit_requested(self, message: EditPersonaRequested) -> None:
