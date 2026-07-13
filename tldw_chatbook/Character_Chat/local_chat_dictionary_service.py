@@ -247,10 +247,16 @@ class LocalChatDictionaryService:
         normalized["source"] = "local"
         normalized["is_active"] = bool(normalized.get("enabled", True))
         normalized["default_token_budget"] = normalized.get("max_tokens")
+        raw_entries = normalized.get("entries") or []
+        # list_chat_dictionaries() supplies entry_count directly (cheap SQL
+        # count) without materializing entries; get/load paths populate
+        # entries in full, so derive the count from them when absent.
+        entry_count = normalized.get("entry_count")
         normalized["entries"] = [
             _entry_to_response(entry, dictionary_id=dictionary_id, index=index)
-            for index, entry in enumerate(normalized.get("entries") or [])
+            for index, entry in enumerate(raw_entries)
         ]
+        normalized["entry_count"] = int(entry_count) if entry_count is not None else len(normalized["entries"])
         return normalized
 
     def _load_required_dictionary(self, dictionary_id: int) -> dict[str, Any]:

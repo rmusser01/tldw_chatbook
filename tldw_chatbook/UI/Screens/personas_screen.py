@@ -14,7 +14,7 @@ from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
 from textual.css.query import QueryError
 from textual.timer import Timer
-from textual.widgets import Button, Input, ListView, Static, TextArea
+from textual.widgets import Button, Input, ListView, Static, TabbedContent, TextArea
 
 from ...Character_Chat.Character_Chat_Lib import (
     export_character_card_to_json,
@@ -60,6 +60,19 @@ from ...Widgets.Persona_Widgets.personas_pane_messages import (
     PreviewReplyRequested,
     PreviewResetRequested,
 )
+from ...Widgets.Persona_Widgets.personas_dictionary_detail import (
+    DictionaryEntriesReorderRequested,
+    DictionaryEntryAddRequested,
+    DictionaryEntryDeleteRequested,
+    DictionaryEntryUpdateRequested,
+    DictionarySettingsEdited,
+    DictionarySettingsSaveRequested,
+    PersonasDictionaryDetailWidget,
+)
+from ...Widgets.Persona_Widgets.personas_dictionary_tryit import (
+    DictionaryTryItRunRequested,
+    PersonasDictionaryTryItWidget,
+)
 from ...Widgets.Persona_Widgets.personas_preview_pane import PersonasPreviewPane
 from ...Widgets.Persona_Widgets.personas_state import MODE_LABELS, PersonasWorkbenchState
 from ...Widgets.workbench_focus import WorkbenchPaneTarget, focus_relative_workbench_pane
@@ -95,11 +108,10 @@ _MODE_DESCRIPTORS: dict[str, str] = {
 
 #: Modes genuinely coming to Roleplay — their chips carry the "· soon" marker.
 #: Departing modes (prompts) are deliberately excluded: they are leaving, not arriving.
-_COMING_SOON_MODES: frozenset[str] = frozenset({"dictionaries", "lore"})
+_COMING_SOON_MODES: frozenset[str] = frozenset({"lore"})
 
 #: Placeholder body per not-yet-built (or departing) mode; generic fallback for others.
 _MODE_PLACEHOLDER_BODY: dict[str, str] = {
-    "dictionaries": "Dictionaries — author text find/replace rules for your chats. Coming soon.",
     "lore": "Lore — build world facts that get injected when keywords appear. Coming soon.",
     "prompts": "Prompts are moving to the Library — you'll manage them there.",
 }
@@ -119,6 +131,7 @@ PERSONAS_INSPECTOR_RAIL_HANDLE_WIDTH = 11
 
 #: Center-area widgets toggled by ``_show_center``.
 _CENTER_VIEW_IDS: tuple[str, ...] = (
+    "#personas-dictionary-detail",
     "#ccp-character-card-view",
     "#ccp-character-editor-view",
     "#ccp-persona-card-view",
@@ -343,6 +356,8 @@ class PersonasScreen(BaseAppScreen):
         self._profile_save_inflight: bool = False
         self._characters: list[dict] = []
         self._profiles: list[dict] = []
+        self._dictionaries_cache: list[dict] = []
+        self._selected_dictionary_version: int | None = None
         self._profile_lookup_recovery_state: DestinationRecoveryState | None = None
         self._search_debounce_timer: Timer | None = None
         # Serializes library renders: the pane's update_rows has two
@@ -435,9 +450,13 @@ class PersonasScreen(BaseAppScreen):
                                 "Open in Library",
                                 id="personas-conversation-open-library",
                             )
+                        yield PersonasDictionaryDetailWidget(id="personas-dictionary-detail")
                         yield PersonasConversationTranscriptWidget()
-                        yield Static(self._mode_placeholder_text("dictionaries"), id="personas-mode-placeholder")
+                        yield Static(self._mode_placeholder_text("lore"), id="personas-mode-placeholder")
                     yield PersonasPreviewPane(id="personas-preview-pane")
+                    tryit = PersonasDictionaryTryItWidget(id="personas-dict-tryit")
+                    tryit.display = False
+                    yield tryit
 
                 inspector_pane = PersonasInspectorPane(
                     id="personas-inspector-pane",
@@ -789,6 +808,11 @@ class PersonasScreen(BaseAppScreen):
                 )
             except Exception:
                 logger.opt(exception=True).warning("Could not re-render profile rows after search.")
+        elif mode == "dictionaries":
+            try:
+                await self._render_dictionary_rows(query=query)
+            except Exception:
+                logger.opt(exception=True).warning("Could not re-render dictionary rows after search.")
 
     def _profile_record(self, item_id: str | None) -> dict | None:
         if item_id is None:
@@ -830,6 +854,54 @@ class PersonasScreen(BaseAppScreen):
         if not isinstance(record, dict):
             return fallback, False
         return dict(record), True
+
+    def _dictionary_scope_service(self) -> Any:
+        """The app-level dictionaries scope service, or None when absent."""
+        return getattr(self.app_instance, "chat_dictionary_scope_service", None)
+
+    @staticmethod
+    def _dictionary_row(record: dict) -> LibraryRow:
+        # list_dictionaries() ships a cheap entry_count instead of populated
+        # entries; fall back to len(entries) for any caller (e.g. the get
+        # path) that only sets the latter.
+        count = record.get("entry_count")
+        if count is None:
+            count = len(record.get("entries") or [])
+        state = "on" if record.get("enabled", record.get("is_active", True)) else "off"
+        return LibraryRow(
+            item_id=str(record.get("id")),
+            kind="dictionary",
+            name=str(record.get("name") or "Unnamed"),
+            meta=f"{count} entries · {state}",
+        )
+
+    async def _render_dictionary_rows(self, query: str = "") -> None:
+        """Fetch and render dictionary rows; degrade to recovery copy on failure."""
+        library = self.query_one(PersonasLibraryPane)
+        service = self._dictionary_scope_service()
+        if service is None:
+            await library.update_rows(
+                (), total=0, noun="dictionaries",
+                recovery_copy="Dictionaries are unavailable: the service is not configured.",
+            )
+            return
+        try:
+            response = await service.list_dictionaries(mode="local", include_inactive=True)
+            records = list(response.get("dictionaries") or [])
+        except Exception:
+            logger.opt(exception=True).warning("Could not list chat dictionaries.")
+            await library.update_rows(
+                (), total=0, noun="dictionaries",
+                recovery_copy="Dictionaries could not be loaded.\nSwitch modes and back to retry.",
+            )
+            return
+        self._dictionaries_cache = records
+        needle = query.strip().lower()
+        visible = [r for r in records if needle in str(r.get("name", "")).lower()] if needle else records
+        rows = tuple(self._dictionary_row(r) for r in visible)
+        await library.update_rows(
+            rows, total=len(records), noun="dictionaries", filtered=bool(needle),
+        )
 
     # ===== Mode switching =====
 
@@ -884,6 +956,12 @@ class PersonasScreen(BaseAppScreen):
         self.query_one("#personas-purpose", Static).update(self._mode_descriptor_text(mode))
         library = self.query_one(PersonasLibraryPane)
         library.set_mode(mode)
+        is_dictionaries = mode == "dictionaries"
+        self.query_one(PersonasPreviewPane).display = not is_dictionaries
+        tryit = self.query_one(PersonasDictionaryTryItWidget)
+        tryit.display = is_dictionaries
+        if is_dictionaries:
+            tryit.set_ready(False, "Select a dictionary to preview substitutions.")
         # clear_selection empties the conversations panel; drop the caches too.
         self.conversations.reset()
         await self.preview.reset("")
@@ -896,6 +974,9 @@ class PersonasScreen(BaseAppScreen):
             await library.update_rows((), total=0, noun="persona profiles")
             self._show_center(None)
             self._refresh_profile_rows_worker()
+        elif mode == "dictionaries":
+            await self._render_dictionary_rows()
+            self._show_center(None)
         else:
             await library.update_rows((), total=0, noun=MODE_LABELS.get(mode, mode).lower())
             self.query_one("#personas-mode-placeholder", Static).update(self._mode_placeholder_text(mode))
@@ -915,6 +996,8 @@ class PersonasScreen(BaseAppScreen):
         if self._edit_mode == "edit":
             name = self.state.selected_entity_name or "item"
             return f"{base} | Editing {name}{suffix}"
+        if self.state.has_unsaved_changes and self.state.selected_entity_name:
+            return f"{base} | {self.state.selected_entity_name}{suffix}"
         return f"{base} | Ready"
 
     def _mode_descriptor_text(self, mode: str) -> str:
@@ -960,7 +1043,11 @@ class PersonasScreen(BaseAppScreen):
             await self._run_guarded(
                 lambda: self._select_profile(message.entity_id, message.entity_name)
             )
-        # Prompts, dictionaries, and lore are wired in follow-up tasks.
+        elif message.entity_kind == "dictionary":
+            await self._run_guarded(
+                lambda: self._select_dictionary(message.entity_id, message.entity_name)
+            )
+        # Prompts and lore are wired in follow-up tasks.
 
     async def _select_character(self, entity_id: str, entity_name: str) -> None:
         self.state.select_entity(
@@ -1017,6 +1104,207 @@ class PersonasScreen(BaseAppScreen):
         await inspector.show_conversations(())
         # Profiles have no first_message concept; start the preview empty.
         await self.preview.reset("")
+
+    async def _select_dictionary(self, entity_id: str, entity_name: str) -> None:
+        """Load one dictionary into the center detail; inspector shows the selection."""
+        service = self._dictionary_scope_service()
+        if service is None:
+            self._notify("Dictionaries service is not configured.", "error")
+            return
+        try:
+            record = await service.get_dictionary(int(entity_id), mode="local")
+        except Exception as exc:
+            logger.opt(exception=True).warning(f"Could not load dictionary {entity_id}.")
+            self._notify(f"Could not load dictionary: {exc}", "error")
+            return
+        self._edit_mode = "view"
+        self.state.has_unsaved_changes = False
+        raw_version = record.get("version")
+        self._selected_dictionary_version = int(raw_version) if raw_version is not None else None
+        self.state.select_entity(
+            entity_kind="dictionary", entity_id=entity_id, entity_name=entity_name
+        )
+        detail = self.query_one(PersonasDictionaryDetailWidget)
+        detail.load_dictionary(record)
+        self._show_center("#personas-dictionary-detail")
+        library = self.query_one(PersonasLibraryPane)
+        library.mark_active_row("dictionary", entity_id)
+        inspector = self.query_one(PersonasInspectorPane)
+        inspector.show_selection(name=entity_name, kind="dictionary", authority="Local")
+        self.query_one(PersonasDictionaryTryItWidget).set_ready(
+            True, "Run the preview to see what this dictionary changes."
+        )
+        self._sync_inspector_console_actions()
+        self._update_title()
+        self._update_status_row()
+
+    @on(DictionarySettingsEdited)
+    def _handle_dictionary_settings_edited(self, message: DictionarySettingsEdited) -> None:
+        message.stop()
+        if self.state.selected_entity_kind != "dictionary":
+            return
+        if self.state.has_unsaved_changes != message.is_dirty:
+            self.state.has_unsaved_changes = message.is_dirty
+            self._update_title()
+            self._sync_inspector_console_actions()
+
+    @on(DictionarySettingsSaveRequested)
+    async def _handle_dictionary_settings_save(self, message: DictionarySettingsSaveRequested) -> None:
+        message.stop()
+        if self.state.selected_entity_kind != "dictionary" or not self.state.selected_entity_id:
+            return
+        detail = self.query_one(PersonasDictionaryDetailWidget)
+        payload = dict(message.payload)
+        if not payload.get("name"):
+            detail.set_status("A name is required.")
+            return
+        service = self._dictionary_scope_service()
+        if service is None:
+            self._notify("Dictionaries service is not configured.", "error")
+            return
+        entity_id = self.state.selected_entity_id
+        try:
+            record = await service.update_dictionary(
+                int(entity_id), payload, mode="local",
+                expected_version=self._selected_dictionary_version,
+            )
+        except ConflictError:
+            detail.set_status(
+                "Save failed: the dictionary changed since it was loaded. Reselect and try again."
+            )
+            return
+        except Exception as exc:
+            logger.opt(exception=True).warning(f"Could not save dictionary {entity_id}.")
+            detail.set_status(f"Save failed: {exc}")
+            return
+        raw_version = record.get("version")
+        self._selected_dictionary_version = int(raw_version) if raw_version is not None else None
+        self.state.has_unsaved_changes = False
+        self.state.selected_entity_name = str(record.get("name") or "")
+        self.query_one(PersonasInspectorPane).show_selection(
+            name=self.state.selected_entity_name, kind="dictionary", authority="Local"
+        )
+        detail.load_dictionary(record)
+        detail.set_status("Saved.")
+        self._update_title()
+        await self._render_dictionary_rows(query=self.state.search_query)
+        self.query_one(PersonasLibraryPane).mark_active_row("dictionary", entity_id)
+        self._sync_inspector_console_actions()
+
+    async def _reload_selected_dictionary_entries(self) -> bool:
+        """Re-fetch entries + version after a mutation (positional ids shift).
+
+        Returns:
+            True on success; False on an internal failure path (already
+            surfaced via ``detail.set_status``), so callers know not to
+            clobber that status with a blanket "".
+        """
+        entity_id = self.state.selected_entity_id
+        service = self._dictionary_scope_service()
+        if service is None or self.state.selected_entity_kind != "dictionary" or not entity_id:
+            return False
+        detail = self.query_one(PersonasDictionaryDetailWidget)
+        try:
+            record = await service.get_dictionary(int(entity_id), mode="local")
+        except Exception as exc:
+            logger.opt(exception=True).warning(f"Could not reload dictionary {entity_id} entries.")
+            detail.set_status(f"Reload failed: {exc}")
+            return False
+        raw_version = record.get("version")
+        self._selected_dictionary_version = int(raw_version) if raw_version is not None else None
+        detail.update_entries(list(record.get("entries") or []))
+        await self._render_dictionary_rows(query=self.state.search_query)
+        self.query_one(PersonasLibraryPane).mark_active_row("dictionary", entity_id)
+        return True
+
+    async def _run_dictionary_entry_op(self, op: Callable[[Any], Awaitable[Any]], failure: str) -> None:
+        """One guarded service mutation + the mandatory entries reload."""
+        service = self._dictionary_scope_service()
+        detail = self.query_one(PersonasDictionaryDetailWidget)
+        if service is None or self.state.selected_entity_kind != "dictionary":
+            return
+        try:
+            await op(service)
+        except ConflictError:
+            detail.set_status(
+                "Change failed: the dictionary changed since it was loaded. Reselect and try again."
+            )
+            return
+        except Exception as exc:
+            logger.opt(exception=True).warning(failure)
+            detail.set_status(f"{failure}: {exc}")
+            return
+        if await self._reload_selected_dictionary_entries():
+            detail.set_status("")
+        # else: the reload already set its own "Reload failed: ..." status -
+        # blanking it here would silently hide that failure from the user.
+
+    @on(DictionaryEntryAddRequested)
+    async def _handle_dictionary_entry_add(self, message: DictionaryEntryAddRequested) -> None:
+        message.stop()
+        entity_id = self.state.selected_entity_id
+        if not entity_id:
+            return
+        await self._run_dictionary_entry_op(
+            lambda service: service.add_entry(int(entity_id), message.payload, mode="local"),
+            "Could not add the entry",
+        )
+
+    @on(DictionaryEntryUpdateRequested)
+    async def _handle_dictionary_entry_update(self, message: DictionaryEntryUpdateRequested) -> None:
+        message.stop()
+        await self._run_dictionary_entry_op(
+            lambda service: service.update_entry(message.entry_id, message.payload, mode="local"),
+            "Could not update the entry",
+        )
+
+    @on(DictionaryEntryDeleteRequested)
+    async def _handle_dictionary_entry_delete(self, message: DictionaryEntryDeleteRequested) -> None:
+        message.stop()
+        await self._run_dictionary_entry_op(
+            lambda service: service.delete_entry(message.entry_id, mode="local"),
+            "Could not delete the entry",
+        )
+
+    @on(DictionaryEntriesReorderRequested)
+    async def _handle_dictionary_entries_reorder(self, message: DictionaryEntriesReorderRequested) -> None:
+        message.stop()
+        entity_id = self.state.selected_entity_id
+        if not entity_id:
+            return
+        await self._run_dictionary_entry_op(
+            lambda service: service.reorder_entries(
+                int(entity_id), {"entry_ids": list(message.entry_ids)}, mode="local"
+            ),
+            "Could not reorder entries",
+        )
+
+    @on(DictionaryTryItRunRequested)
+    async def _handle_dictionary_tryit_run(self, message: DictionaryTryItRunRequested) -> None:
+        message.stop()
+        tryit = self.query_one(PersonasDictionaryTryItWidget)
+        entity_id = self.state.selected_entity_id
+        service = self._dictionary_scope_service()
+        if service is None or self.state.selected_entity_kind != "dictionary" or not entity_id:
+            tryit.show_error("Select a dictionary first.")
+            return
+        record = next(
+            (r for r in self._dictionaries_cache if str(r.get("id")) == str(entity_id)), None
+        )
+        token_budget = int((record or {}).get("max_tokens") or 1000)
+        try:
+            response = await service.process_text(
+                {"text": message.text, "dictionary_id": int(entity_id), "token_budget": token_budget},
+                mode="local",
+            )
+        except Exception as exc:
+            logger.opt(exception=True).warning(f"Try-it preview failed for dictionary {entity_id}.")
+            tryit.show_error(f"Couldn't run the preview: {exc}")
+            return
+        tryit.render_result(
+            str(response.get("text") or message.text),
+            str(response.get("processed_text") or ""),
+        )
 
     # ===== Saved conversations =====
 
@@ -1119,6 +1407,8 @@ class PersonasScreen(BaseAppScreen):
             return "unsaved edits"
         if not self.state.selected_entity_id:
             return "select an item"
+        if self.state.selected_entity_kind == "dictionary":
+            return "attach arrives in a later update"
         if self.state.selected_entity_kind not in ("character", "persona_profile"):
             return "select a character or persona"
         return "unavailable"
@@ -1256,6 +1546,8 @@ class PersonasScreen(BaseAppScreen):
                 await self._run_guarded(self._begin_create_character)
             elif self.state.active_mode == "personas":
                 await self._run_guarded(self._begin_create_profile)
+            elif self.state.active_mode == "dictionaries":
+                await self._run_guarded(self._begin_create_dictionary)
             # Creation in the remaining modes is wired in follow-up tasks.
         elif message.action == "import":
             # Character-card import only; the library pane hides the Import
@@ -1263,6 +1555,12 @@ class PersonasScreen(BaseAppScreen):
             if self.state.active_mode != "characters":
                 return
             await self._run_guarded(self._open_import_dialog)
+        elif message.action == "duplicate":
+            if self.state.active_mode == "dictionaries":
+                await self._run_guarded(self._duplicate_selected_dictionary)
+        elif message.action == "toggle_enabled":
+            if self.state.active_mode == "dictionaries" and message.entity_id:
+                await self._toggle_dictionary_enabled(message.entity_id)
         # Delete and the rest are wired in follow-up tasks.
 
     async def _begin_create_character(self) -> None:
@@ -1295,6 +1593,140 @@ class PersonasScreen(BaseAppScreen):
         await inspector.clear_selection()
         inspector.show_validation_editing()
         self.call_after_refresh(self._focus_editor_name)
+
+    def _unique_dictionary_name(self, base: str) -> str:
+        """Disambiguate against the loaded list (name column is UNIQUE)."""
+        existing = {str(r.get("name") or "") for r in self._dictionaries_cache}
+        if base not in existing:
+            return base
+        suffix = 2
+        while f"{base} {suffix}" in existing:
+            suffix += 1
+        return f"{base} {suffix}"
+
+    async def _begin_create_dictionary(self) -> None:
+        service = self._dictionary_scope_service()
+        if service is None:
+            self._notify("Dictionaries service is not configured.", "error")
+            return
+        name = self._unique_dictionary_name("Untitled dictionary")
+        try:
+            record = await service.create_dictionary({"name": name}, mode="local")
+        except ConflictError:
+            self._notify("A dictionary with that name already exists.", "error")
+            return
+        except Exception as exc:
+            logger.opt(exception=True).warning("Could not create a dictionary.")
+            self._notify(f"Create failed: {exc}", "error")
+            return
+        await self._render_dictionary_rows(query="")
+        await self._select_dictionary(str(record.get("id")), str(record.get("name") or name))
+        # Land the user in Settings to rename immediately.
+        try:
+            self.query_one("#personas-dict-tabs", TabbedContent).active = "personas-dict-tab-settings"
+            self.query_one("#personas-dict-name", Input).focus()
+        except QueryError:
+            pass
+
+    async def _duplicate_selected_dictionary(self) -> None:
+        service = self._dictionary_scope_service()
+        entity_id = self.state.selected_entity_id
+        if service is None or self.state.selected_entity_kind != "dictionary" or not entity_id:
+            self._notify("Select a dictionary to duplicate.", "warning")
+            return
+        try:
+            source = await service.get_dictionary(int(entity_id), mode="local")
+        except Exception as exc:
+            logger.opt(exception=True).warning(f"Could not load dictionary {entity_id} to duplicate.")
+            self._notify(f"Duplicate failed: {exc}", "error")
+            return
+        base = f"{source.get('name') or 'Dictionary'} (copy)"
+        existing = {str(r.get("name") or "") for r in self._dictionaries_cache}
+        name = base
+        suffix = 2
+        while name in existing:
+            name = f"{source.get('name') or 'Dictionary'} (copy {suffix})"
+            suffix += 1
+        payload = {
+            "name": name,
+            "description": source.get("description") or "",
+            "max_tokens": source.get("max_tokens") or 1000,
+            "enabled": bool(source.get("enabled", source.get("is_active", True))),
+            "entries": [
+                {
+                    "pattern": e.get("pattern"),
+                    "replacement": e.get("replacement"),
+                    "probability": e.get("probability"),
+                    "group": e.get("group"),
+                    "timed_effects": e.get("timed_effects"),
+                    "max_replacements": e.get("max_replacements"),
+                    "type": e.get("type"),
+                }
+                for e in source.get("entries") or []
+            ],
+        }
+        try:
+            record = await service.create_dictionary(payload, mode="local")
+        except ConflictError:
+            self._notify("A dictionary with that name already exists.", "error")
+            return
+        except Exception as exc:
+            logger.opt(exception=True).warning("Could not duplicate the dictionary.")
+            self._notify(f"Duplicate failed: {exc}", "error")
+            return
+        # create_dictionary ignores strategy (column default); set it after.
+        source_strategy = str(source.get("strategy") or "sorted_evenly")
+        if source_strategy != "sorted_evenly":
+            try:
+                record = await service.update_dictionary(
+                    int(record["id"]), {"strategy": source_strategy}, mode="local"
+                )
+            except Exception as exc:
+                logger.opt(exception=True).warning("Could not copy the strategy onto the duplicate.")
+                self._notify(
+                    f"Duplicated, but the strategy could not be copied ({exc}). Set it in Settings.",
+                    "warning",
+                )
+        await self._render_dictionary_rows(query="")
+        await self._select_dictionary(str(record.get("id")), str(record.get("name") or name))
+
+    async def _toggle_dictionary_enabled(self, entity_id: str) -> None:
+        """Flip a dictionary's enabled flag from the rail (space on the row)."""
+        service = self._dictionary_scope_service()
+        if service is None:
+            return
+        record = next(
+            (r for r in self._dictionaries_cache if str(r.get("id")) == str(entity_id)), None
+        )
+        if record is None:
+            return
+        target = not bool(record.get("enabled", record.get("is_active", True)))
+        try:
+            # expected_version is deliberately omitted: this write only ever
+            # sets the enabled column, so last-write-wins is safe for a
+            # boolean flip (no risk of clobbering an unrelated field edit).
+            updated = await service.update_dictionary(
+                int(entity_id), {"enabled": target}, mode="local"
+            )
+        except Exception as exc:
+            logger.opt(exception=True).warning(f"Could not toggle dictionary {entity_id}.")
+            self._notify(f"Toggle failed: {exc}", "error")
+            return
+        is_selected = str(self.state.selected_entity_id) == str(entity_id)
+        if is_selected:
+            raw_version = updated.get("version")
+            self._selected_dictionary_version = int(raw_version) if raw_version is not None else None
+            self.query_one(PersonasDictionaryDetailWidget).apply_enabled(
+                bool(updated.get("enabled", updated.get("is_active", True)))
+            )
+        await self._render_dictionary_rows(query=self.state.search_query)
+        library = self.query_one(PersonasLibraryPane)
+        if self.state.selected_entity_id:
+            library.mark_active_row("dictionary", self.state.selected_entity_id)
+        if not is_selected:
+            # The user was browsing an unselected row; keep the cursor there
+            # instead of letting the selected-row re-mark above steal it.
+            library.highlight_row("dictionary", entity_id)
 
     @on(EditPersonaRequested)
     async def _handle_persona_edit_requested(self, message: EditPersonaRequested) -> None:
@@ -1755,7 +2187,7 @@ class PersonasScreen(BaseAppScreen):
         """Validate the selection and launch the delete-confirm dialog worker."""
         kind = self.state.selected_entity_kind
         entity_id = str(self.state.selected_entity_id or "")
-        if not entity_id or kind not in ("character", "persona_profile"):
+        if not entity_id or kind not in ("character", "persona_profile", "dictionary"):
             # The inspector disables Delete without a selection; defensive.
             self._notify("Select a saved item before deleting.", "warning")
             return
@@ -1768,6 +2200,15 @@ class PersonasScreen(BaseAppScreen):
                 self._notify("Character data is not loaded yet.", "warning")
                 return
             version: int | None = int(record.get("version") or 1)
+        elif kind == "dictionary":
+            record = next(
+                (r for r in self._dictionaries_cache if str(r.get("id")) == entity_id), None
+            )
+            if record is None:
+                self._notify("Dictionary data is not loaded yet.", "warning")
+                return
+            raw_version = record.get("version")
+            version = int(raw_version) if raw_version is not None else None
         else:
             record = await self._fetch_profile_record(entity_id)
             raw_version = record.get("version")
@@ -1832,6 +2273,36 @@ class PersonasScreen(BaseAppScreen):
                 # return (e.g. stubbed/alternate backends) the same way.
                 self._notify(conflict_copy.format(noun="character"), "error")
                 return
+        elif kind == "dictionary":
+            # No staleness re-check here (unlike _after_delete's character/
+            # persona worker-hop path): the delete-confirm dialog is modal,
+            # so mode/selection cannot change beneath this synchronous branch.
+            service = self._dictionary_scope_service()
+            if service is None:
+                self._notify("Dictionaries service is not configured.", "error")
+                return
+            try:
+                await service.delete_dictionary(
+                    int(entity_id), mode="local", expected_version=version
+                )
+            except ConflictError:
+                self._notify(conflict_copy.format(noun="dictionary"), "error")
+                return
+            except Exception as exc:
+                logger.opt(exception=True).error(f"Error deleting dictionary {entity_id}: {exc}")
+                self._notify(f"Delete failed: {exc}", "error")
+                return
+            self.state.clear_selection()
+            self.state.has_unsaved_changes = False
+            self._selected_dictionary_version = None
+            self.query_one(PersonasDictionaryDetailWidget).clear()
+            self._show_center(None)
+            self.query_one(PersonasDictionaryTryItWidget).set_ready(False, "Select a dictionary to preview substitutions.")
+            await self.query_one(PersonasInspectorPane).clear_selection()
+            await self._render_dictionary_rows(query=self.state.search_query)
+            self._update_title()
+            self._update_status_row()
+            return
         else:
             service = getattr(self.app_instance, "character_persona_scope_service", None)
             if service is None or not hasattr(service, "delete_persona_profile"):

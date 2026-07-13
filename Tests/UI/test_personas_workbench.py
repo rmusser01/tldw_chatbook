@@ -385,17 +385,17 @@ class TestWorkbenchShell:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
-            dict_chip = screen.query_one("#personas-mode-dictionaries", Button)
-            assert dict_chip.tooltip == "Dictionaries — text find/replace rules."   # meaning, not "switch to…"
-            assert "soon" in str(dict_chip.label).lower()                            # planned marker
+            lore_chip = screen.query_one("#personas-mode-lore", Button)
+            assert lore_chip.tooltip == "Lore — world facts injected on keywords."
+            assert "soon" in str(lore_chip.label).lower()
             char_chip = screen.query_one("#personas-mode-characters", Button)
-            assert "soon" not in str(char_chip.label).lower()                        # built modes unmarked
+            assert "soon" not in str(char_chip.label).lower()
 
     async def test_coming_soon_mode_shows_inviting_copy(self, mock_app_instance, stub_characters):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
-            await screen._apply_mode("dictionaries")
+            await screen._apply_mode("lore")
             await pilot.pause()
             body = str(screen.query_one("#personas-mode-placeholder", Static).renderable)
             assert "coming soon" in body.lower()
