@@ -31,6 +31,15 @@ _ACTION_LABELS: dict[HubAction, str] = {
     HubAction.OPEN_AUDIT: "Open audit",
 }
 
+# Tooltips for the actions that have first-class UI in Phase 1 (_WIRED_ACTIONS).
+# Every rendered action button must explain its outcome -- disabled buttons get
+# a tooltip below; these cover the wired, enabled ones.
+_WIRED_ACTION_TOOLTIPS: dict[HubAction, str] = {
+    HubAction.VIEW_DETAILS: "Show this server's detail view in Servers mode.",
+    HubAction.OPEN_TOOL_CATALOG: "Switch to Tools mode.",
+    HubAction.OPEN_AUDIT: "Switch to Audit mode.",
+}
+
 
 def _is_blank(value: Any) -> bool:
     """Whether a Select value means "nothing selected".
@@ -143,6 +152,8 @@ class MCPInspector(Vertical):
             if action not in _WIRED_ACTIONS:
                 button.disabled = True
                 button.tooltip = "Available in a later phase — use Advanced below."
+            else:
+                button.tooltip = _WIRED_ACTION_TOOLTIPS.get(action, _ACTION_LABELS[action])
             actions.mount(button)
 
     # -- advanced escape hatch -----------------------------------------------

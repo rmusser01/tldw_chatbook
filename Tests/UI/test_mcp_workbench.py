@@ -272,3 +272,16 @@ def test_mcp_hub_modes_registry_is_complete():
     assert list(MCP_HUB_MODES) == ["servers", "tools", "permissions", "audit"]
     for spec in MCP_HUB_MODES.values():
         assert spec["label"] and spec["button_id"].startswith("mcp-mode-")
+
+
+@pytest.mark.asyncio
+async def test_workbench_panes_have_nonzero_geometry():
+    app = WorkbenchApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        for selector in ("#mcp-hub-rail", "#mcp-hub-canvas", "#mcp-hub-inspector"):
+            widget = app.query_one(selector)
+            assert widget.size.width > 0, f"{selector} has zero width"
+            assert widget.size.height > 0, f"{selector} has zero height"
+        table = app.query_one("#mcp-servers-table")
+        assert table.size.height > 0, "servers table clipped to zero height"

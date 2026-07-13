@@ -74,6 +74,11 @@ async def test_readiness_block_shows_state_message_and_action_buttons():
         # connect: not wired in Phase 1 -> disabled; view_details: wired -> enabled
         assert buttons["mcp-inspector-action-connect"].disabled
         assert not buttons["mcp-inspector-action-view_details"].disabled
+        # Every rendered action button -- wired or not -- must explain its
+        # outcome via a tooltip (destination-wide "every button explains
+        # itself" contract; wired buttons previously had none).
+        for button in buttons.values():
+            assert button.tooltip, f"{button.id} has no tooltip"
 
 
 @pytest.mark.asyncio

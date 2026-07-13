@@ -3963,3 +3963,52 @@ ListItem.personas-library-row.is-active.-highlight {
     border: dashed $ds-grid-line;
     color: $ds-text-muted;
 }
+
+/* --- MCP Hub (Phase 1 workbench) ------------------------------------- */
+
+#mcp-mode-strip Button.mcp-mode-chip {
+    width: auto;
+    min-width: 10;
+    height: 1;
+    padding: 0 1;
+    border: none;
+}
+
+#mcp-mode-strip .mcp-mode-chip.is-active {
+    text-style: bold underline;
+}
+
+#mcp-hub-rail {
+    width: 3fr;
+    min-width: 24;
+}
+
+#mcp-hub-rail .mcp-rail-heading {
+    height: 1;
+    min-height: 1;
+    margin-top: 1;
+}
+
+#mcp-hub-rail Button.mcp-rail-row.is-active {
+    text-style: bold;
+}
+
+#mcp-hub-canvas {
+    width: 5fr;
+    min-width: 38;
+}
+
+#mcp-hub-inspector {
+    width: 3fr;
+    min-width: 28;
+}
+
+#mcp-overview-summary,
+#mcp-detail-title {
+    height: 1;
+    min-height: 1;
+}
+
+#mcp-overview-callouts .ds-recovery-callout {
+    margin-top: 1;
+}
