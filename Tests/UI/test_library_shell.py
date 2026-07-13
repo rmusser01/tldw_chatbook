@@ -225,9 +225,13 @@ async def _wait_for_condition(pilot, predicate, *, timeout=15.0, message, interv
 
 
 class _FakePilot:
-    """Minimal pilot stand-in for unit-testing _wait_for_condition (pause is a no-op)."""
+    """Minimal pilot stand-in for unit-testing _wait_for_condition (pause is a no-op, but counted)."""
+
+    def __init__(self) -> None:
+        self.pause_calls = 0
 
     async def pause(self, delay: float = 0) -> None:
+        self.pause_calls += 1
         return None
 
 
@@ -239,8 +243,10 @@ async def test__wait_for_condition_returns_immediately_when_true():
         calls["n"] += 1
         return True
 
-    await _wait_for_condition(_FakePilot(), pred, message="must not raise")
-    assert calls["n"] == 1  # checked once, returned without pausing
+    pilot = _FakePilot()
+    await _wait_for_condition(pilot, pred, message="must not raise")
+    assert calls["n"] == 1  # checked once...
+    assert pilot.pause_calls == 0  # ...and returned before ever pausing
 
 
 @pytest.mark.asyncio
