@@ -10,7 +10,10 @@ module, Task 2).
 
 from __future__ import annotations
 
+import os
+import re
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -180,3 +183,219 @@ def aggregate_summary(snapshots: list[ReadinessSnapshot]) -> str:
     ]
     suffix = f" — {', '.join(problems)}" if problems else ""
     return f"{ready} of {total} servers ready{suffix}."
+
+
+BUILTIN_SERVER_KEY = "builtin:tldw_chatbook"
+BUILTIN_CLIENT_SNIPPET = (
+    '{\n'
+    '  "mcpServers": {\n'
+    '    "tldw_chatbook": {\n'
+    '      "command": "python3",\n'
+    '      "args": ["-m", "tldw_chatbook.MCP"]\n'
+    '    }\n'
+    '  }\n'
+    '}'
+)
+
+_PLACEHOLDER_RE = re.compile(r"^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$")
+
+
+def env_placeholder_names(env_placeholders: Mapping[str, str]) -> list[str]:
+    """Extract the environment-variable names referenced by $NAME/${NAME} values."""
+    names: list[str] = []
+    for raw in env_placeholders.values():
+        match = _PLACEHOLDER_RE.match(str(raw).strip())
+        if match:
+            names.append(match.group(1))
+    return names
+
+
+def _snapshot_counts(snapshot: Mapping[str, Any] | None) -> tuple[int | None, int | None, int | None]:
+    if not snapshot:
+        return None, None, None
+    return (
+        len(snapshot.get("tools") or []),
+        len(snapshot.get("resources") or []),
+        len(snapshot.get("prompts") or []),
+    )
+
+
+def local_profile_readiness(
+    record: dict[str, Any],
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> ReadinessSnapshot:
+    """Derive readiness for one LocalMCPControlService.get_external_servers() item.
+
+    Durable signals: discovery_snapshot presence and env placeholders vs the
+    environment. Ephemeral: is_connected. needs_attention/checking/stale-by-age
+    require persisted attempt tracking that does not exist yet (Phase 2+).
+    """
+    env = os.environ if environ is None else environ
+    profile_id = str(record.get("profile_id") or "unknown")
+    placeholders = dict(record.get("env_placeholders") or {})
+    snapshot = record.get("discovery_snapshot")
+    is_connected = bool(record.get("is_connected"))
+
+    reasons: list[ReasonCode] = []
+    missing = [name for name in env_placeholder_names(placeholders) if name not in env]
+    if missing:
+        reasons.append(ReasonCode.AUTH_MISSING)
+    tool_count, resource_count, prompt_count = _snapshot_counts(snapshot)
+    if snapshot is None:
+        reasons.append(ReasonCode.DISCOVERY_NOT_RUN)
+    else:
+        if (tool_count or 0) == 0 and (resource_count or 0) == 0 and (prompt_count or 0) == 0:
+            reasons.append(ReasonCode.NO_TOOLS_RETURNED)
+        if not is_connected:
+            reasons.append(ReasonCode.RUNTIME_UNAVAILABLE)
+
+    reason_tuple = tuple(reasons)
+    state = resolve_state(reason_tuple)
+    if missing:
+        message = f"Missing environment variables: {', '.join(missing)}."
+    elif snapshot is None:
+        message = "Not validated yet — connect or test to discover tools."
+    elif not is_connected:
+        message = f"{tool_count or 0} tools discovered; not currently connected."
+    else:
+        message = f"Connected — {tool_count or 0} tools available."
+
+    return ReadinessSnapshot(
+        server_key=f"local:{profile_id}",
+        label=profile_id,
+        source="local",
+        state=state,
+        reasons=reason_tuple,
+        message=message,
+        tool_count=tool_count,
+        resource_count=resource_count,
+        prompt_count=prompt_count,
+        transport="stdio",
+        auth_display=f"env ({len(placeholders)})" if placeholders else "none",
+        scope_display="Personal",
+        is_connected=is_connected,
+        detail={
+            "command": record.get("command"),
+            "args": list(record.get("args") or []),
+            "env_placeholders": placeholders,
+            "missing_env": missing,
+            "discovery_snapshot": snapshot,
+        },
+    )
+
+
+def server_target_readiness(target: Any) -> ReadinessSnapshot:
+    """Derive readiness for a configured tldw_server target (connection level)."""
+    server_id = str(getattr(target, "server_id", "unknown"))
+    label = str(getattr(target, "label", server_id))
+    reachability = getattr(target, "last_known_reachability", None)
+    auth_state = getattr(target, "last_known_auth_state", None)
+
+    reasons: list[ReasonCode] = []
+    if reachability == "unreachable":
+        reasons.append(ReasonCode.UNREACHABLE)
+    if auth_state in ("auth_required", "session_invalid"):
+        reasons.append(ReasonCode.AUTH_MISSING)
+    if reachability in (None, "unknown") and not reasons:
+        reasons.append(ReasonCode.DISCOVERY_NOT_RUN)
+
+    reason_tuple = tuple(reasons)
+    state = resolve_state(reason_tuple)
+    if state is ReadinessState.READY:
+        message = "Reachable and authenticated."
+    elif ReasonCode.UNREACHABLE in reason_tuple:
+        message = "Server unreachable at last check."
+    elif ReasonCode.AUTH_MISSING in reason_tuple:
+        message = "Authentication required — sign in to this server."
+    else:
+        message = "Not checked yet — open the server to probe it."
+
+    return ReadinessSnapshot(
+        server_key=f"server:{server_id}",
+        label=label,
+        source="server",
+        state=state,
+        reasons=reason_tuple,
+        message=message,
+        transport="http",
+        auth_display=str(getattr(target, "auth_mode", "api_key")),
+        scope_display="—",
+        detail={"base_url": getattr(target, "base_url", None)},
+    )
+
+
+_VALID_REASON_VALUES = {code.value for code in ReasonCode}
+
+
+def server_external_record_readiness(record: dict[str, Any], *, server_id: str) -> ReadinessSnapshot:
+    """Normalize a raw /mcp/hub external-server record (pass-through dict).
+
+    Readiness fields are backend-owned and not guaranteed; unknown or missing
+    vocabulary degrades to discovery_not_run with an honest message rather
+    than inventing a state.
+    """
+    external_id = str(record.get("server_id") or record.get("id") or record.get("name") or "unknown")
+    label = str(record.get("name") or external_id)
+    raw_reasons = record.get("reason_codes") or []
+    reasons = tuple(
+        ReasonCode(value) for value in raw_reasons if isinstance(value, str) and value in _VALID_REASON_VALUES
+    )
+    reported = bool(reasons) or isinstance(record.get("display_state"), str)
+    if not reasons and not reported:
+        reasons = (ReasonCode.DISCOVERY_NOT_RUN,)
+        message = "Readiness not reported by the server — validate to check."
+    else:
+        message = str(record.get("status_message") or "Reported by server.")
+
+    tool_count = record.get("tool_count")
+    if tool_count is None and isinstance(record.get("tools"), list):
+        tool_count = len(record["tools"])
+
+    return ReadinessSnapshot(
+        server_key=f"server:{server_id}/{external_id}",
+        label=label,
+        source="server",
+        state=resolve_state(reasons),
+        reasons=reasons,
+        message=message,
+        tool_count=tool_count if isinstance(tool_count, int) else None,
+        transport=str(record.get("transport") or "stdio"),
+        auth_display=str(record.get("credential_state") or "—"),
+        scope_display=str(record.get("owner_scope_type") or "—"),
+        detail={"raw": record},
+    )
+
+
+def builtin_readiness(
+    *,
+    enabled: bool,
+    expose_tools: bool = True,
+    expose_resources: bool = True,
+    expose_prompts: bool = True,
+) -> ReadinessSnapshot:
+    """Readiness for chatbook's own MCP server (stdio-only; started by clients
+    via `python -m tldw_chatbook.MCP`, never in-process)."""
+    if enabled:
+        reasons: tuple[ReasonCode, ...] = ()
+        message = "Served over stdio when an MCP client launches chatbook."
+    else:
+        reasons = (ReasonCode.NOT_CONFIGURED,)
+        message = "Disabled in config ([mcp].enabled = false)."
+    return ReadinessSnapshot(
+        server_key=BUILTIN_SERVER_KEY,
+        label="tldw_chatbook (built-in)",
+        source="builtin",
+        state=resolve_state(reasons),
+        reasons=reasons,
+        message=message,
+        transport="stdio",
+        auth_display="none",
+        scope_display="—",
+        detail={
+            "expose_tools": expose_tools,
+            "expose_resources": expose_resources,
+            "expose_prompts": expose_prompts,
+            "client_snippet": BUILTIN_CLIENT_SNIPPET,
+        },
+    )
