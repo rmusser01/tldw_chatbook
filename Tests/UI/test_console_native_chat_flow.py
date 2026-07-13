@@ -6675,3 +6675,84 @@ async def test_clear_attachment_button_resyncs_composer_blocked_state(monkeypatc
         assert store.pending_attachment(session.id) is None
         assert composer._send_blocked is False
         assert not send_button.tooltip or "can't accept images" not in send_button.tooltip
+
+
+@pytest.mark.asyncio
+async def test_image_message_gets_inline_row_after_prep_and_toggle_cycles():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    # Pin the session default so the pixels -> graphics -> hidden -> pixels
+    # cycle below is deterministic; leaving this on "auto" resolves from the
+    # host terminal's TERM/TERM_PROGRAM env vars (see resolve_default_mode),
+    # which varies across dev machines and CI.
+    app.app_config["chat"] = {"images": {"default_render_mode": "pixels"}}
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        from io import BytesIO
+
+        from PIL import Image as PILImage
+
+        buffer = BytesIO()
+        PILImage.new("RGB", (32, 32), (200, 10, 10)).save(buffer, format="PNG")
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="look at this",
+            image_data=buffer.getvalue(),
+            image_mime_type="image/png",
+        )
+        await console._sync_native_console_chat_ui()
+        # Prep runs in a worker; wait for the image row to appear.
+        for _ in range(80):
+            if console.query(f"#console-image-{message.id}"):
+                break
+            await pilot.pause(0.05)
+        assert console.query(f"#console-image-{message.id}"), "image row never appeared"
+
+        # Toggle: pixels -> graphics (widget swaps, still present)
+        console._handle_console_toggle_image_view(message.id)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+        assert console.query(f"#console-image-{message.id}")
+
+        # Toggle: graphics -> hidden (row disappears)
+        console._handle_console_toggle_image_view(message.id)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+        assert not console.query(f"#console-image-{message.id}")
+
+        # Toggle: hidden -> pixels (row returns)
+        console._handle_console_toggle_image_view(message.id)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+        assert console.query(f"#console-image-{message.id}")
+
+
+def test_image_view_modes_ride_screen_state_allowlist_and_prune_stale():
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="pic",
+        image_data=b"\x89PNG-bytes",
+        image_mime_type="image/png",
+    )
+    state, _cache = screen._ensure_console_image_view()
+    state.restore({message.id: "hidden", "stale-id": "graphics"})
+
+    payload = screen._serialize_native_console_state()
+    assert payload is not None
+    # Live override survives; the stale one is pruned at serialize time.
+    assert payload["image_view_modes"] == {message.id: "hidden"}
+
+    fresh = ChatScreen(app)
+    fresh._restore_native_console_state(payload)
+    fresh_state, _ = fresh._ensure_console_image_view()
+    assert fresh_state.serialize() == {message.id: "hidden"}
