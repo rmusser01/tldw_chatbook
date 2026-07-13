@@ -69,6 +69,10 @@ from ...Widgets.Persona_Widgets.personas_dictionary_detail import (
     DictionarySettingsSaveRequested,
     PersonasDictionaryDetailWidget,
 )
+from ...Widgets.Persona_Widgets.personas_dictionary_tryit import (
+    DictionaryTryItRunRequested,
+    PersonasDictionaryTryItWidget,
+)
 from ...Widgets.Persona_Widgets.personas_preview_pane import PersonasPreviewPane
 from ...Widgets.Persona_Widgets.personas_state import MODE_LABELS, PersonasWorkbenchState
 from ...Widgets.workbench_focus import WorkbenchPaneTarget, focus_relative_workbench_pane
@@ -450,6 +454,9 @@ class PersonasScreen(BaseAppScreen):
                         yield PersonasConversationTranscriptWidget()
                         yield Static(self._mode_placeholder_text("lore"), id="personas-mode-placeholder")
                     yield PersonasPreviewPane(id="personas-preview-pane")
+                    tryit = PersonasDictionaryTryItWidget(id="personas-dict-tryit")
+                    tryit.display = False
+                    yield tryit
 
                 inspector_pane = PersonasInspectorPane(
                     id="personas-inspector-pane",
@@ -944,6 +951,12 @@ class PersonasScreen(BaseAppScreen):
         self.query_one("#personas-purpose", Static).update(self._mode_descriptor_text(mode))
         library = self.query_one(PersonasLibraryPane)
         library.set_mode(mode)
+        is_dictionaries = mode == "dictionaries"
+        self.query_one(PersonasPreviewPane).display = not is_dictionaries
+        tryit = self.query_one(PersonasDictionaryTryItWidget)
+        tryit.display = is_dictionaries
+        if is_dictionaries:
+            tryit.set_ready(False, "Select a dictionary to preview substitutions.")
         # clear_selection empties the conversations panel; drop the caches too.
         self.conversations.reset()
         await self.preview.reset("")
@@ -1113,6 +1126,9 @@ class PersonasScreen(BaseAppScreen):
         library.mark_active_row("dictionary", entity_id)
         inspector = self.query_one(PersonasInspectorPane)
         inspector.show_selection(name=entity_name, kind="Dictionary", authority="Local")
+        self.query_one(PersonasDictionaryTryItWidget).set_ready(
+            True, "Run the preview to see what this dictionary changes."
+        )
         self._sync_inspector_console_actions()
         self._update_title()
         self._update_status_row()
@@ -1245,6 +1261,33 @@ class PersonasScreen(BaseAppScreen):
                 int(entity_id), {"entry_ids": list(message.entry_ids)}, mode="local"
             ),
             "Could not reorder entries",
+        )
+
+    @on(DictionaryTryItRunRequested)
+    async def _handle_dictionary_tryit_run(self, message: DictionaryTryItRunRequested) -> None:
+        message.stop()
+        tryit = self.query_one(PersonasDictionaryTryItWidget)
+        entity_id = self.state.selected_entity_id
+        service = self._dictionary_scope_service()
+        if service is None or self.state.selected_entity_kind != "dictionary" or not entity_id:
+            tryit.show_error("Select a dictionary first.")
+            return
+        record = next(
+            (r for r in self._dictionaries_cache if str(r.get("id")) == str(entity_id)), None
+        )
+        token_budget = int((record or {}).get("max_tokens") or 1000)
+        try:
+            response = await service.process_text(
+                {"text": message.text, "dictionary_id": int(entity_id), "token_budget": token_budget},
+                mode="local",
+            )
+        except Exception as exc:
+            logger.opt(exception=True).warning(f"Try-it preview failed for dictionary {entity_id}.")
+            tryit.show_error(f"Couldn't run the preview: {exc}")
+            return
+        tryit.render_result(
+            str(response.get("text") or message.text),
+            str(response.get("processed_text") or ""),
         )
 
     # ===== Saved conversations =====
@@ -2232,6 +2275,7 @@ class PersonasScreen(BaseAppScreen):
             self._selected_dictionary_version = None
             self.query_one(PersonasDictionaryDetailWidget).clear()
             self._show_center(None)
+            self.query_one(PersonasDictionaryTryItWidget).set_ready(False, "Select a dictionary to preview substitutions.")
             await self.query_one(PersonasInspectorPane).clear_selection()
             await self._render_dictionary_rows(query=self.state.search_query)
             self._update_title()

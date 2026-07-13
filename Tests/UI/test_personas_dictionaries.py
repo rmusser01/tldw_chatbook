@@ -919,3 +919,88 @@ class TestDictionaryToggleDelete:
             assert screen.query_one("#personas-dict-name", Input).value == "Half-renamed"
             assert screen.state.has_unsaved_changes is True
             assert screen.query_one("#personas-dict-enabled", Switch).value is False
+
+
+class TestDictionaryTryIt:
+    async def _select_first(self, pilot, screen):
+        rows = screen.query_one("#personas-library-rows", ListView)
+        rows.index = 0
+        rows.action_select_cursor()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+    def test_word_diff_marks_changes(self):
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_dictionary_tryit import word_diff
+
+        original, processed = word_diff("check BP now", "check blood pressure now")
+        assert "BP" in original.plain and "blood pressure" in processed.plain
+        assert any(span.style == "strike dim" for span in original.spans)
+        assert any(span.style == "bold underline" for span in processed.spans)
+
+    def test_word_diff_no_changes_has_no_spans(self):
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_dictionary_tryit import word_diff
+
+        original, processed = word_diff("same text", "same text")
+        assert not original.spans and not processed.spans
+
+    async def test_run_renders_diff(self, mock_app_instance, stub_characters, fake_dict_service):
+        from textual.widgets import TextArea
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_dictionary_tryit import (
+            PersonasDictionaryTryItWidget,
+        )
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            tryit = screen.query_one(PersonasDictionaryTryItWidget)
+            assert tryit.display is True
+            run = screen.query_one("#personas-dict-tryit-run", Button)
+            assert run.disabled is True  # nothing selected yet
+            await self._select_first(pilot, screen)
+            assert run.disabled is False
+            screen.query_one("#personas-dict-tryit-sample", TextArea).text = "check BP now"
+            await pilot.click("#personas-dict-tryit-run")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            processed = screen.query_one("#personas-dict-tryit-processed", Static)
+            assert "blood pressure" in str(processed.renderable)
+            # token_budget rode along from the dict's max_tokens.
+            run_calls = [c for c in fake_dict_service.calls if c[0] == "process"]
+            assert run_calls
+
+    async def test_no_differences_state(self, mock_app_instance, stub_characters, fake_dict_service):
+        from textual.widgets import TextArea
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            screen.query_one("#personas-dict-tryit-sample", TextArea).text = "no matches here"
+            await pilot.click("#personas-dict-tryit-run")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            status = screen.query_one("#personas-dict-tryit-status", Static)
+            assert "No differences" in str(status.renderable)
+
+    async def test_preview_pane_swapped_by_mode(self, mock_app_instance, stub_characters, fake_dict_service):
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import PersonasPreviewPane
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_dictionary_tryit import (
+            PersonasDictionaryTryItWidget,
+        )
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            assert screen.query_one(PersonasDictionaryTryItWidget).display is False
+            assert screen.query_one(PersonasPreviewPane).display is True
+            await pilot.click("#personas-mode-dictionaries")
+            await pilot.pause()
+            assert screen.query_one(PersonasDictionaryTryItWidget).display is True
+            assert screen.query_one(PersonasPreviewPane).display is False
+            await pilot.click("#personas-mode-characters")
+            await pilot.pause()
+            assert screen.query_one(PersonasDictionaryTryItWidget).display is False
+            assert screen.query_one(PersonasPreviewPane).display is True
