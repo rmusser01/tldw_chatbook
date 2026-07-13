@@ -95,11 +95,10 @@ _MODE_DESCRIPTORS: dict[str, str] = {
 
 #: Modes genuinely coming to Roleplay — their chips carry the "· soon" marker.
 #: Departing modes (prompts) are deliberately excluded: they are leaving, not arriving.
-_COMING_SOON_MODES: frozenset[str] = frozenset({"dictionaries", "lore"})
+_COMING_SOON_MODES: frozenset[str] = frozenset({"lore"})
 
 #: Placeholder body per not-yet-built (or departing) mode; generic fallback for others.
 _MODE_PLACEHOLDER_BODY: dict[str, str] = {
-    "dictionaries": "Dictionaries — author text find/replace rules for your chats. Coming soon.",
     "lore": "Lore — build world facts that get injected when keywords appear. Coming soon.",
     "prompts": "Prompts are moving to the Library — you'll manage them there.",
 }
@@ -343,6 +342,7 @@ class PersonasScreen(BaseAppScreen):
         self._profile_save_inflight: bool = False
         self._characters: list[dict] = []
         self._profiles: list[dict] = []
+        self._dictionaries_cache: list[dict] = []
         self._profile_lookup_recovery_state: DestinationRecoveryState | None = None
         self._search_debounce_timer: Timer | None = None
         # Serializes library renders: the pane's update_rows has two
@@ -436,7 +436,7 @@ class PersonasScreen(BaseAppScreen):
                                 id="personas-conversation-open-library",
                             )
                         yield PersonasConversationTranscriptWidget()
-                        yield Static(self._mode_placeholder_text("dictionaries"), id="personas-mode-placeholder")
+                        yield Static(self._mode_placeholder_text("lore"), id="personas-mode-placeholder")
                     yield PersonasPreviewPane(id="personas-preview-pane")
 
                 inspector_pane = PersonasInspectorPane(
@@ -789,6 +789,11 @@ class PersonasScreen(BaseAppScreen):
                 )
             except Exception:
                 logger.opt(exception=True).warning("Could not re-render profile rows after search.")
+        elif mode == "dictionaries":
+            try:
+                await self._render_dictionary_rows(query=query)
+            except Exception:
+                logger.opt(exception=True).warning("Could not re-render dictionary rows after search.")
 
     def _profile_record(self, item_id: str | None) -> dict | None:
         if item_id is None:
@@ -830,6 +835,49 @@ class PersonasScreen(BaseAppScreen):
         if not isinstance(record, dict):
             return fallback, False
         return dict(record), True
+
+    def _dictionary_scope_service(self) -> Any:
+        """The app-level dictionaries scope service, or None when absent."""
+        return getattr(self.app_instance, "chat_dictionary_scope_service", None)
+
+    @staticmethod
+    def _dictionary_row(record: dict) -> LibraryRow:
+        entries = record.get("entries") or []
+        state = "on" if record.get("enabled", record.get("is_active", True)) else "off"
+        return LibraryRow(
+            item_id=str(record.get("id")),
+            kind="dictionary",
+            name=str(record.get("name") or "Unnamed"),
+            meta=f"{len(entries)} entries · {state}",
+        )
+
+    async def _render_dictionary_rows(self, query: str = "") -> None:
+        """Fetch and render dictionary rows; degrade to recovery copy on failure."""
+        library = self.query_one(PersonasLibraryPane)
+        service = self._dictionary_scope_service()
+        if service is None:
+            await library.update_rows(
+                (), total=0, noun="dictionaries",
+                recovery_copy="Dictionaries are unavailable: the service is not configured.",
+            )
+            return
+        try:
+            response = await service.list_dictionaries(mode="local", include_inactive=True)
+            records = list(response.get("dictionaries") or [])
+        except Exception:
+            logger.opt(exception=True).warning("Could not list chat dictionaries.")
+            await library.update_rows(
+                (), total=0, noun="dictionaries",
+                recovery_copy="Dictionaries could not be loaded.\nSwitch modes and back to retry.",
+            )
+            return
+        self._dictionaries_cache = records
+        needle = query.strip().lower()
+        visible = [r for r in records if needle in str(r.get("name", "")).lower()] if needle else records
+        rows = tuple(self._dictionary_row(r) for r in visible)
+        await library.update_rows(
+            rows, total=len(records), noun="dictionaries", filtered=bool(needle),
+        )
 
     # ===== Mode switching =====
 
@@ -896,6 +944,9 @@ class PersonasScreen(BaseAppScreen):
             await library.update_rows((), total=0, noun="persona profiles")
             self._show_center(None)
             self._refresh_profile_rows_worker()
+        elif mode == "dictionaries":
+            await self._render_dictionary_rows()
+            self._show_center(None)
         else:
             await library.update_rows((), total=0, noun=MODE_LABELS.get(mode, mode).lower())
             self.query_one("#personas-mode-placeholder", Static).update(self._mode_placeholder_text(mode))

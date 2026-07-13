@@ -338,3 +338,51 @@ class TestLibraryMetaRows:
             assert row.region.height >= 2
             meta = row.query_one(".personas-library-row-meta", Static)
             assert meta.region.height >= 1
+
+
+class TestDictionariesList:
+    async def test_mode_lists_dictionaries_with_meta(self, mock_app_instance, stub_characters, fake_dict_service):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _enter_dictionaries(pilot)
+            rows = screen.query_one("#personas-library-rows", ListView).children
+            texts = [str(s.renderable) for r in rows for s in r.query(Static).results()]
+            assert "Medical Abbrev" in texts and "2 entries · on" in texts
+            # Disabled dictionaries must still be listed (include_inactive=True).
+            assert "Chat-Speak" in texts and "0 entries · off" in texts
+            # No placeholder: the mode is live.
+            assert screen.query_one("#personas-mode-placeholder", Static).display is False
+
+    async def test_list_requests_inactive_records(self, mock_app_instance, stub_characters, fake_dict_service):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            await _enter_dictionaries(pilot)
+            list_calls = [c for c in fake_dict_service.calls if c[0] == "list"]
+            assert list_calls and list_calls[-1][1].get("include_inactive") is True
+
+    async def test_search_filters_by_name(self, mock_app_instance, stub_characters, fake_dict_service):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _enter_dictionaries(pilot)
+            search = screen.query_one("#personas-library-search", Input)
+            search.value = "medic"
+            await pilot.pause(0.4)  # debounce
+            rows = screen.query_one("#personas-library-rows", ListView).children
+            names = [str(r.query(Static).first().renderable) for r in rows]
+            assert names == ["Medical Abbrev"]
+
+    async def test_dictionaries_chip_no_longer_coming_soon(self, mock_app_instance, stub_characters, fake_dict_service):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            chip = screen.query_one("#personas-mode-dictionaries", Button)
+            assert "soon" not in str(chip.label).lower()
+
+    async def test_empty_state_prompts_create(self, mock_app_instance, stub_characters):
+        service = FakeDictScopeService([])
+        mock_app_instance.chat_dictionary_scope_service = service
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _enter_dictionaries(pilot)
+            empty = screen.query_one("#personas-library-empty", Static)
+            assert "No dictionaries yet" in str(empty.renderable)
