@@ -617,6 +617,30 @@ class TestDictionaryEntries:
             await pilot.pause()
             assert fake_dict_service.records[1]["entries"][1]["pattern"] == "HRV"
 
+    async def test_move_down_sends_full_order_and_reorders(self, mock_app_instance, stub_characters, fake_dict_service):
+        from textual.widgets import DataTable
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            table = screen.query_one("#personas-dict-entries-table", DataTable)
+            table.move_cursor(row=0)
+            await pilot.click("#personas-dict-entry-down")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            # Pins the move-to-front backend semantics: the FULL id list, in
+            # the desired final order, was sent - selected+remainder then
+            # yields exactly that order.
+            reorders = [c for c in fake_dict_service.calls if c[0] == "reorder"]
+            assert reorders and reorders[-1][2] == [
+                "local:chat_dictionary_entry:1:1",
+                "local:chat_dictionary_entry:1:0",
+            ]
+            assert [e["pattern"] for e in fake_dict_service.records[1]["entries"]] == ["HR", "BP"]
+            assert str(table.get_cell_at((0, 0))) == "HR"
+
 
 class TestDictionarySettings:
     async def _select_first(self, pilot, screen):

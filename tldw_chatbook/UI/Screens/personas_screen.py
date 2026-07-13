@@ -1234,6 +1234,19 @@ class PersonasScreen(BaseAppScreen):
             "Could not delete the entry",
         )
 
+    @on(DictionaryEntriesReorderRequested)
+    async def _handle_dictionary_entries_reorder(self, message: DictionaryEntriesReorderRequested) -> None:
+        message.stop()
+        entity_id = self.state.selected_entity_id
+        if not entity_id:
+            return
+        await self._run_dictionary_entry_op(
+            lambda service: service.reorder_entries(
+                int(entity_id), {"entry_ids": list(message.entry_ids)}, mode="local"
+            ),
+            "Could not reorder entries",
+        )
+
     # ===== Saved conversations =====
 
     def _character_db(self) -> Any:
