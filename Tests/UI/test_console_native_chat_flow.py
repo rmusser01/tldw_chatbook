@@ -6136,3 +6136,51 @@ async def test_switcher_rename_choice_chains_to_rename_modal():
         await pilot.pause(0.3)
         assert host.screen_stack[-1].__class__.__name__ == "ConsoleRenameSessionModal"
         await pilot.press("escape")
+
+
+def test_insert_file_segment_collapses_with_custom_label():
+    composer = ConsoleComposerBar()
+    composer.insert_file_segment("file body text", "📄 notes.md · 4 KB")
+
+    assert composer.draft_text() == "file body text"
+    assert composer._display_draft_text() == "📄 notes.md · 4 KB"
+
+
+def test_insert_file_segment_appends_after_typed_draft():
+    composer = ConsoleComposerBar()
+    composer.insert_text("see attached: ")
+    composer.insert_file_segment("file body", "📄 a.md · 9 B")
+
+    assert composer.draft_text() == "see attached: file body"
+    assert composer._display_draft_text() == "see attached: 📄 a.md · 9 B"
+
+
+def test_paste_collapse_label_still_defaults_to_character_count():
+    composer = ConsoleComposerBar(paste_collapse_threshold=5)
+    composer.insert_pasted_text("0123456789")
+
+    assert composer._display_draft_text() == "Pasted Text: 10 Characters"
+
+
+@pytest.mark.asyncio
+async def test_attachment_indicator_visibility_follows_label():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+        composer.set_pending_attachment_label("photo.png · 240 KB")
+        await pilot.pause()
+        indicator = console.query_one("#console-attachment-indicator", Static)
+        clear_button = console.query_one("#console-clear-attachment", Button)
+        assert "photo.png" in str(indicator.renderable)
+        assert indicator.styles.display != "none"
+        assert clear_button.styles.display != "none"
+
+        composer.set_pending_attachment_label(None)
+        await pilot.pause()
+        assert indicator.styles.display == "none"
+        assert clear_button.styles.display == "none"
