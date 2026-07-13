@@ -50,6 +50,8 @@ The design is built on what the code **actually** does today, not the digest's a
 - **`space` is unbound** across the personas widgets and screen (and not a ListView default binding) — free for the enable-toggle.
 - `_handle_entity_selected` currently ignores `entity_kind="dictionary"` with an explicit "wired in follow-up tasks" comment — the new branch is a clean `elif`.
 - `update_dictionary` accepts `name/description/content/strategy/max_tokens/enabled/entries` (plus `is_active`/`default_token_budget` aliases); `expected_version` is a keyword passed through the scope service's `**kwargs`.
+- **`list_dictionaries` defaults to `include_inactive=False`** — a disabled dictionary silently vanishes from the default listing (a toggled-off row would disappear). The UI must always pass `include_inactive=True`. The response key is `"dictionaries"`, not `"items"`.
+- The screen already binds `ctrl+enter` → `personas_attach`; Try-it's widget-scoped `ctrl+enter` binding shadows it only while focus is inside Try-it (intended precedence).
 
 ## Data flow
 
