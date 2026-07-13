@@ -14,7 +14,7 @@ from textual.events import Click, Key
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
-from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
+from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
 from tldw_chatbook.Chat.console_message_actions import ConsoleMessageAction, ConsoleMessageActionService
 from tldw_chatbook.Chat.console_onboarding_state import (
     CONSOLE_QUIET_EMPTY_COPY,
@@ -172,6 +172,11 @@ class ConsoleTranscriptMessage(Static):
         classes = "console-transcript-message"
         if selected:
             classes = f"{classes} console-transcript-message-selected"
+        role = message.role
+        if role is ConsoleMessageRole.TOOL:
+            classes = f"{classes} console-transcript-message-tool"
+        elif role is ConsoleMessageRole.SYSTEM:
+            classes = f"{classes} console-transcript-message-system"
         super().__init__(
             _message_render_text(message, selected=selected),
             id=f"console-message-{message.id}",

@@ -2504,6 +2504,15 @@ ConsoleSystemPromptModal {
     text-style: bold underline;
 }
 
+.console-transcript-message-tool {
+    color: $ds-text-muted;
+    text-style: dim italic;
+}
+
+.console-transcript-message-system {
+    color: $ds-text-muted;
+}
+
 .console-transcript-action-row {
     height: 3;
     min-height: 3;
