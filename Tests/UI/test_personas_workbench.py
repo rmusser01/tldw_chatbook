@@ -359,8 +359,28 @@ class TestWorkbenchShell:
             assert screen.state.active_mode == "prompts"
             placeholder = screen.query_one("#personas-mode-placeholder", Static)
             assert placeholder.display is True
-            assert "not available yet" in str(placeholder.renderable)
+            assert "coming soon" in str(placeholder.renderable).lower()
             assert "is-active" in screen.query_one("#personas-mode-prompts", Button).classes
+
+    async def test_mode_chips_are_self_explaining_and_mark_coming_soon(self, mock_app_instance, stub_characters):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            dict_chip = screen.query_one("#personas-mode-dictionaries", Button)
+            assert dict_chip.tooltip == "Dictionaries — text find/replace rules."   # meaning, not "switch to…"
+            assert "soon" in str(dict_chip.label).lower()                            # planned marker
+            char_chip = screen.query_one("#personas-mode-characters", Button)
+            assert "soon" not in str(char_chip.label).lower()                        # built modes unmarked
+
+    async def test_coming_soon_mode_shows_inviting_copy(self, mock_app_instance, stub_characters):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await screen._apply_mode("dictionaries")
+            await pilot.pause()
+            body = str(screen.query_one("#personas-mode-placeholder", Static).renderable)
+            assert "coming soon" in body.lower()
+            assert "not available yet" not in body.lower()
 
     async def test_title_reframed_to_roleplay_keeps_state_suffix(self, mock_app_instance, stub_characters):
         app = PersonasTestApp(mock_app_instance)
