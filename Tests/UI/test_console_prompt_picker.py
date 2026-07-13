@@ -247,6 +247,125 @@ async def test_bracket_name_renders_escaped() -> None:
         assert "[draft] Q3 plan [wip]" in row.label.plain
 
 
+@pytest.mark.asyncio
+async def test_keyboard_nav_survives_a_blocked_row_click() -> None:
+    """Reviewer finding: clicking a row (the apply-system BLOCK-REFUSAL click
+    is the only row interaction that keeps the modal open) must not strand
+    real DOM focus on that row's Button. If it did, Enter would re-trigger
+    the *stale focused* row's own built-in ``enter -> press`` binding instead
+    of the row the synthetic highlight has since moved to via Down -- a
+    silent desync between what's visually highlighted and what Enter
+    actually selects."""
+    app = ModalHarness()
+    blocked = _record(local_id=1, name="Alpha", system_prompt="")
+    unblocked = _record(local_id=2, name="Beta", system_prompt="You are helpful.")
+    fake_search = FakePromptSearch([blocked, unblocked])
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        await app.push_screen(
+            ConsolePromptPickerModal(
+                mode=MODE_APPLY_SYSTEM,
+                initial_query="",
+                prompt_search=fake_search,
+            ),
+            callback=app.capture,
+        )
+        await pilot.pause()
+        await _wait_for_search(pilot)
+
+        # Block-refusal click: modal stays open, but (pre-fix) strands real
+        # focus on row 1's Button.
+        await pilot.click(f"#{ROW_ID_PREFIX}1")
+        await pilot.pause()
+        assert app.dismissed_with == "not-called"
+
+        # Down moves the synthetic highlight onto row 2 (Beta, unblocked).
+        await pilot.press("down")
+        await pilot.pause()
+
+        # Enter must select the now-highlighted row (Beta) -- not silently
+        # re-press whatever row last held stale DOM focus.
+        await pilot.press("enter")
+        await pilot.pause()
+
+    assert app.dismissed_with == unblocked
+
+
+@pytest.mark.asyncio
+async def test_typing_still_filters_after_a_blocked_row_click() -> None:
+    """Reviewer finding: after the same block-refusal click above, typed
+    characters must keep reaching the filter Input (pre-fix, focus is
+    stranded on the clicked row's Button, so keystrokes go nowhere and
+    prompt_search is never called again)."""
+    app = ModalHarness()
+    blocked = _record(local_id=3, name="No System", system_prompt="")
+    fake_search = FakePromptSearch([blocked])
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        await app.push_screen(
+            ConsolePromptPickerModal(
+                mode=MODE_APPLY_SYSTEM,
+                initial_query="",
+                prompt_search=fake_search,
+            ),
+            callback=app.capture,
+        )
+        await pilot.pause()
+        await _wait_for_search(pilot)
+        assert fake_search.calls == [""]
+
+        await pilot.click(f"#{ROW_ID_PREFIX}3")
+        await pilot.pause()
+        assert app.dismissed_with == "not-called"
+
+        filter_input = app.screen.query_one(f"#{FILTER_INPUT_ID}", Input)
+        assert filter_input.has_focus, "filter Input must regain focus after a blocked-row refusal"
+
+        await pilot.press("x")
+        await pilot.pause()
+        assert filter_input.value == "x"
+
+        await _wait_for_search(pilot)
+        assert fake_search.calls == ["", "x"]
+
+
+@pytest.mark.asyncio
+async def test_composite_string_id_falls_back_to_index_and_is_selectable() -> None:
+    """Reviewer finding: a record whose only id is a composite string (e.g.
+    the Task 6 normalization's ``"local:prompt:7"``) with no ``local_id``
+    must not crash the render worker with Textual's ``BadIdentifier`` (colon
+    is an illegal widget-id character) -- the row's DOM id must fall back to
+    something legal (its index), while the record itself stays selectable."""
+    app = ModalHarness()
+    record = {
+        "id": "local:prompt:7",
+        "name": "Composite Id Only",
+        "system_prompt": "You are helpful.",
+        "user_prompt": "Do the thing.",
+        "keywords": [],
+    }
+    fake_search = FakePromptSearch([record])
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        await app.push_screen(
+            ConsolePromptPickerModal(
+                mode=MODE_INSERT,
+                initial_query="",
+                prompt_search=fake_search,
+            ),
+            callback=app.capture,
+        )
+        await pilot.pause()
+        await _wait_for_search(pilot)  # Must not raise WorkerFailed/BadIdentifier.
+
+        row = app.screen.query_one(f"#{ROW_ID_PREFIX}0", Button)
+        assert "Composite Id Only" in str(row.label)
+
+        await pilot.press("enter")
+
+    assert app.dismissed_with == record
+
+
 def test_prompt_picker_css_blocks_pinned_in_source_and_bundle() -> None:
     """The prompt-picker ids/classes must be styled in BOTH the module source
     (``_agentic_terminal.tcss``) and the generated bundle

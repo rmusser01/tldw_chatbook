@@ -16,6 +16,17 @@ itself, so the codebase's established idiom is listening for the bubbled
 message rather than intercepting the key). Esc dismisses with ``None`` via the
 inherited ``ModalScreen`` binding pattern used by every sibling Console modal.
 
+Row ``Button`` widgets and the results ``VerticalScroll`` are both
+``can_focus = False``: real DOM focus must never land on a row. If it did, Up/Down would
+still visually nudge the highlight (``on_key`` below intercepts those
+unconditionally, ahead of any widget's own ``BINDINGS``), but Enter would
+instead re-trigger *that stale focused row's own* built-in ``enter -> press``
+binding rather than the currently-highlighted one -- silently desyncing
+"what's highlighted" from "what Enter selects" the moment a row is ever
+clicked. Keeping the ``Input`` as the sole focusable/focused widget avoids the
+whole class of desync; every row (re)render and every blocked-row refusal
+explicitly refocuses it via ``_focus_filter_input``.
+
 Note: this screen only dismisses; the CALLER is responsible for returning
 focus to the Console composer afterwards (mirrors how ``ConsoleSettingsModal``
 and ``ConsoleSaveAsModal`` leave focus restoration to their callers).
@@ -120,14 +131,24 @@ class ConsolePromptPickerModal(ModalScreen[Optional[Mapping[str, object]]]):
             reason = Static("", id=REASON_STATIC_ID, markup=False)
             reason.display = False
             yield reason
-            with VerticalScroll(id=RESULTS_CONTAINER_ID):
+            with VerticalScroll(id=RESULTS_CONTAINER_ID, can_focus=False):
                 yield Static(EMPTY_STORE_COPY, id=EMPTY_STATIC_ID, markup=False)
 
     def on_mount(self) -> None:
-        self.query_one(f"#{FILTER_INPUT_ID}", Input).focus()
+        self._focus_filter_input()
         # The initial (possibly ambiguous-command-prefilled) query populates
         # the list right away -- only edits made *after* opening debounce.
         self._trigger_search(self._initial_query, debounce=False)
+
+    def _focus_filter_input(self) -> None:
+        # Keyboard-first invariant: the filter Input must keep DOM focus for
+        # the *whole* session, or Up/Down and typed characters stop reaching
+        # it (row Buttons are can_focus=False precisely so a click/Tab can
+        # never strand focus on them instead -- see module docstring).
+        try:
+            self.query_one(f"#{FILTER_INPUT_ID}", Input).focus()
+        except (NoMatches, QueryError):
+            pass
 
     def action_dismiss_picker(self) -> None:
         self.dismiss(None)
@@ -224,20 +245,40 @@ class ConsolePromptPickerModal(ModalScreen[Optional[Mapping[str, object]]]):
             self._build_row_button(index, record) for index, record in enumerate(self._results)
         )
         self._sync_highlight()
+        # Rows may have just been (re)mounted; the filter Input must keep
+        # focus regardless (see _focus_filter_input's docstring).
+        self._focus_filter_input()
 
     def _build_row_button(self, index: int, record: Mapping[str, object]) -> Button:
         name = escape_markup(str(record.get("name") or "Untitled prompt"))
         blocked = self._is_blocked(record)
         label = f"{name}{NO_SYSTEM_PART_SUFFIX}" if blocked else name
         button = Button(label, id=self._row_id(record, index), classes=ROW_CLASS)
+        # Non-focusable: a click/Tab must never strand real DOM focus on a
+        # row. If it did, Up/Down would still nudge the synthetic highlight
+        # (ModalScreen.on_key intercepts those unconditionally), but Enter
+        # would instead re-trigger *this* Button's own built-in
+        # `enter -> press` binding on whatever row last happened to hold
+        # focus -- silently desynced from the visually highlighted row. The
+        # filter Input stays the single source of truth for both real focus
+        # and Enter-to-select (via Input.Submitted -> _select_highlighted).
+        button.can_focus = False
         button.set_class(blocked, ROW_BLOCKED_CLASS)
         return button
 
     def _row_id(self, record: Mapping[str, object], index: int) -> str:
-        for key in ("local_id", "id"):
-            value = record.get(key)
-            if value not in (None, ""):
-                return f"{ROW_ID_PREFIX}{value}"
+        # The widget DOM id only needs to be unique + a legal Textual
+        # identifier -- it is NOT the record's own key. `record["id"]` can be
+        # a caller-composite string like "local:prompt:7" (colon is illegal
+        # in a Textual id and raises BadIdentifier at Button construction,
+        # crashing the render worker). Only the raw int `local_id` (this
+        # codebase's own row-id convention) is safe to use verbatim; anything
+        # else falls back to the row's index, which is always unique and
+        # legal within a single render pass. The actual record stays looked
+        # up by this same key in `_row_pressed`, so selection is unaffected.
+        local_id = record.get("local_id")
+        if isinstance(local_id, int) and not isinstance(local_id, bool):
+            return f"{ROW_ID_PREFIX}{local_id}"
         return f"{ROW_ID_PREFIX}{index}"
 
     def _is_blocked(self, record: Mapping[str, object]) -> bool:
@@ -271,6 +312,10 @@ class ConsolePromptPickerModal(ModalScreen[Optional[Mapping[str, object]]]):
     def _select_record(self, record: Mapping[str, object]) -> None:
         if self._is_blocked(record):
             self._show_reason(NO_SYSTEM_PART_REASON)
+            # A blocked-row click/press keeps the modal open; refocus the
+            # filter Input so Up/Down + typing both keep working afterwards
+            # (see _focus_filter_input's docstring).
+            self._focus_filter_input()
             return
         self._cancel_search_debounce()
         self.dismiss(record)
