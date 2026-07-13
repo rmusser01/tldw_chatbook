@@ -365,8 +365,22 @@ async def handle_ingest_characters_import_now_button_pressed(app: 'TldwCli', eve
 
         app.notify(f"Character import CRITICALLY failed: {error}", severity="error", timeout=10)
 
+    async def _run_char_import_worker_and_dispatch():
+        # Task 172: the file_operations worker group has no worker-state
+        # handler, so on_import_success_char/on_import_failure_char were never
+        # invoked. This worker is a plain coroutine (no thread=True), so it
+        # runs on the main event loop -- dispatching the callbacks directly
+        # here (as T167 did for notes) is safe.
+        try:
+            results = await import_worker_char()
+        except Exception as e:
+            on_import_failure_char(e)
+            raise
+        on_import_success_char(results)
+        return results
+
     app.run_worker(
-        import_worker_char,
+        _run_char_import_worker_and_dispatch,
         name="character_import_worker",
         group="file_operations",
         description="Importing selected character files."
