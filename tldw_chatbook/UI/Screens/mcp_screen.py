@@ -34,7 +34,10 @@ class MCPScreen(BaseAppScreen):
     DEFAULT_CSS = """
     Button.mcp-mode-chip {
         width: auto;
-        min-width: 8;
+        /* min-width kept in lockstep with the higher-specificity app-bundle
+        rule (#mcp-mode-strip Button.mcp-mode-chip, _agentic_terminal.tcss);
+        divergence here would silently lose to the bundle. */
+        min-width: 10;
         height: 1;
         min-height: 1;
         padding: 0 1;

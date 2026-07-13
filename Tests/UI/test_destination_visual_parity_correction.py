@@ -1244,6 +1244,27 @@ async def test_operational_loading_states_preserve_workbench_geometry(
         )
 
 
+def _assert_advanced_run_reachable(screen) -> None:
+    """The Advanced "Run Action" button is mounted, enabled, and focusable.
+
+    #mcp-adv-run is the direct successor of the retired
+    #unified-mcp-action-run, but unlike its predecessor it is NOT an
+    always-visible column action: the inspector's Advanced escape hatch is a
+    scrollable section, and in the default loaded state the rendered section
+    content pushes the run button below the scroll fold (verified — an
+    in-viewport assertion on it fails at both 140x42 and 100x32). The
+    genuinely visible primary action is the rail row; this asserts the
+    Advanced runner's surviving contract instead: present, enabled, and
+    focusable (focus auto-scrolls it into view, which
+    test_tab_order_reaches_visible_primary_action[mcp-*] exercises
+    end-to-end).
+    """
+    adv_run = screen.query_one("#mcp-adv-run", Button)
+    assert not adv_run.disabled, "#mcp-adv-run is disabled in the default state"
+    assert _is_effectively_displayed(adv_run), "#mcp-adv-run is not displayed"
+    assert adv_run.can_focus, "#mcp-adv-run is not focusable"
+
+
 @pytest.mark.asyncio
 async def test_mcp_uses_visible_server_detail_readiness_layout_without_overflow():
     """Realigned from the retired `UnifiedMCPPanel` 3-column embed.
@@ -1266,10 +1287,11 @@ async def test_mcp_uses_visible_server_detail_readiness_layout_without_overflow(
             workbench="#mcp-hub-workbench",
             strip="#mcp-mode-strip",
             panes=("#mcp-hub-rail", "#mcp-hub-canvas", "#mcp-hub-inspector"),
-            actions=("#mcp-rail-row-0", "#mcp-adv-run"),
+            actions=("#mcp-rail-row-0",),
             height=42,
             min_pane_rows=30,
         )
+        _assert_advanced_run_reachable(screen)
 
 
 @pytest.mark.asyncio
@@ -1292,9 +1314,10 @@ async def test_mcp_unavailable_or_local_default_state_keeps_workbench_geometry()
             workbench="#mcp-hub-workbench",
             strip="#mcp-mode-strip",
             panes=("#mcp-hub-rail", "#mcp-hub-canvas", "#mcp-hub-inspector"),
-            actions=("#mcp-rail-row-0", "#mcp-adv-run"),
+            actions=("#mcp-rail-row-0",),
             height=42,
         )
+        _assert_advanced_run_reachable(screen)
         _assert_marker_inside_container(
             screen,
             "#mcp-overview-summary",
@@ -1333,7 +1356,7 @@ async def test_mcp_forced_loading_state_stays_inside_workbench(monkeypatch):
             workbench="#mcp-hub-workbench",
             strip="#mcp-mode-strip",
             panes=("#mcp-hub-rail", "#mcp-hub-canvas", "#mcp-hub-inspector"),
-            actions=("#mcp-rail-row-0", "#mcp-adv-run"),
+            actions=("#mcp-adv-run",),
             height=42,
         )
         _assert_marker_inside_container(
@@ -1588,13 +1611,16 @@ COMPACT_DESTINATION_CONTRACTS = {
         # rail/canvas/inspector `MCPWorkbench` triad, mounted as
         # #mcp-hub-workbench. Same intent -- rail (server list) as "object",
         # canvas (server detail/overview) as "detail" -- verified against the
-        # new landmarks. The always-visible rail rows (Library precedent) and
-        # the Advanced "Run Action" button are the surviving wired actions.
+        # new landmarks. The compact-viewport visible action is the
+        # always-visible rail row: #mcp-adv-run (successor of the retired
+        # #unified-mcp-action-run) sits below the inspector's Advanced scroll
+        # fold at 100x32 (verified), and is covered by
+        # _assert_advanced_run_reachable + the tab-order test instead.
         "identity": "#mcp-title",
         "workbench": "#mcp-hub-workbench",
         "object": "#mcp-hub-rail",
         "detail": "#mcp-hub-canvas",
-        "actions": ("#mcp-rail-row-0", "#mcp-adv-run"),
+        "actions": ("#mcp-rail-row-0",),
     },
     "acp": {
         "identity": "#acp-title",
@@ -1688,10 +1714,9 @@ VISIBLE_FOCUS_TARGETS = {
     "schedules": {"schedules-follow-in-console"},
     "workflows": {"workflows-launch-in-console"},
     # #unified-mcp-action-run is retired with the `UnifiedMCPPanel` embed
-    # (Task 8); the always-visible rail rows (Library precedent) and the
-    # workbench inspector's Advanced "Run Action" button are the surviving
-    # wired, tab-focusable primary actions.
-    "mcp": {"mcp-rail-row-0", "mcp-adv-run"},
+    # (Task 8); its direct successor is #mcp-adv-run, the workbench
+    # inspector's Advanced "Run Action" button.
+    "mcp": {"mcp-adv-run"},
     "acp": {"acp-follow-in-console", "acp-launch-agent"},
     "skills": {"skills-import-skill", "skills-attach-to-console"},
     "settings": {"settings-open-appearance"},
