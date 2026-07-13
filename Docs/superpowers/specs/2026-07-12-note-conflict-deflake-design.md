@@ -38,8 +38,10 @@ async def _wait_for_condition(pilot, predicate, *, timeout=15.0, message, interv
         if predicate():
             return
         await pilot.pause(interval)
-    raise AssertionError(message)
+    raise AssertionError(message() if callable(message) else message)
 ```
+
+`message` accepts a plain string OR a zero-arg callable. Two of the conflict loops raise an **f-string diagnostic** that interpolates the *stuck* screen state at timeout (`view=…, autosave_state=…`); those pass `message=lambda: f"…"` so the interpolation happens at raise time, not call time. The other ten pass their original plain-string message.
 
 This mirrors the original loop **exactly** — check the predicate first, return the instant it is truthy (no extra settle pause — the loops `break` without one), otherwise `await pilot.pause(interval)` and re-check — with the only change being a wall-clock deadline in place of the fixed iteration count. (Unlike `_wait_for_selector`, which does a trailing `pilot.pause()` to settle the widget it returns, a state-poll returns nothing to settle, so no trailing pause is added — keeping the conversion behavior-identical.)
 
