@@ -270,7 +270,17 @@ class ConsoleChatStore:
         return session
 
     def pending_attachment(self, session_id: str) -> PendingAttachment | None:
-        """Return the staged, not-yet-sent attachment for a session."""
+        """Return the staged, not-yet-sent attachment for a session.
+
+        Args:
+            session_id: Native Console session ID.
+
+        Returns:
+            The staged attachment, or None when nothing is staged.
+
+        Raises:
+            KeyError: If the session is unknown.
+        """
         return self._session_or_raise(session_id).pending_attachment
 
     def set_pending_attachment(
@@ -278,13 +288,34 @@ class ConsoleChatStore:
         session_id: str,
         attachment: PendingAttachment,
     ) -> ConsoleChatSession:
-        """Stage an attachment on a session, replacing any previous one."""
+        """Stage an attachment on a session, replacing any previous one.
+
+        Args:
+            session_id: Native Console session ID.
+            attachment: Processed attachment to stage for the next send.
+
+        Returns:
+            The updated session.
+
+        Raises:
+            KeyError: If the session is unknown.
+        """
         session = self._session_or_raise(session_id)
         session.pending_attachment = attachment
         return session
 
     def clear_pending_attachment(self, session_id: str) -> ConsoleChatSession:
-        """Remove the staged attachment from a session."""
+        """Remove the staged attachment from a session.
+
+        Args:
+            session_id: Native Console session ID.
+
+        Returns:
+            The updated session.
+
+        Raises:
+            KeyError: If the session is unknown.
+        """
         session = self._session_or_raise(session_id)
         session.pending_attachment = None
         return session

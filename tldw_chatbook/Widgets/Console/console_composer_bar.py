@@ -1139,7 +1139,13 @@ class ConsoleComposerBar(Horizontal):
             return
 
     def set_pending_attachment_label(self, label: str | None) -> None:
-        """Show or clear the composer's pending-attachment indicator."""
+        """Show or clear the composer's pending-attachment indicator.
+
+        Args:
+            label: User-facing attachment label (e.g. ``"photo.png · 184 B"``)
+                to display next to the actions, or None to hide the indicator,
+                the clear button, and restore the Attach button label.
+        """
         normalized = label.strip() if label else None
         self._pending_attachment_label = normalized
         try:

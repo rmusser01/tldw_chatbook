@@ -71,7 +71,21 @@ async def load_processed_file(
     *,
     allowed_root: str | None = None,
 ) -> ProcessedFile:
-    """Validate and process a file attachment (moved intact from ChatAttachmentHandler)."""
+    """Validate and process a file attachment (moved intact from ChatAttachmentHandler).
+
+    Args:
+        file_path: Path to the file to validate and process.
+        allowed_root: Directory the file must live under; defaults to the
+            user's home directory.
+
+    Returns:
+        The registry's ProcessedFile for the dispatched handler.
+
+    Raises:
+        ValueError: If the path is outside the allowed root or the file
+            exceeds MAX_ATTACHMENT_BYTES.
+        FileNotFoundError: If the file does not exist.
+    """
     root = allowed_root or os.path.expanduser("~")
     logger.info(f"Processing file attachment: {file_path}")
     if not is_safe_path(file_path, root):
@@ -92,7 +106,22 @@ async def process_attachment_path(
     *,
     allowed_root: str | None = None,
 ) -> PendingAttachment:
-    """Validate, process, and normalize a file into a PendingAttachment."""
+    """Validate, process, and normalize a file into a PendingAttachment.
+
+    Args:
+        file_path: Path to the file to attach.
+        allowed_root: Directory the file must live under; defaults to the
+            user's home directory.
+
+    Returns:
+        A PendingAttachment carrying either binary attachment data (image
+        files) or inline text content (text/code/data files).
+
+    Raises:
+        ValueError: If the path is outside the allowed root, the file is
+            too large, or the format is unsupported by its handler.
+        FileNotFoundError: If the file does not exist.
+    """
     processed = await load_processed_file(file_path, allowed_root=allowed_root)
     data = processed.attachment_data
     return PendingAttachment(
@@ -109,7 +138,17 @@ async def process_attachment_path(
 
 
 def vision_block_reason(provider: str, model: str | None) -> str | None:
-    """Return user-facing blocked-send copy when the model can't accept images."""
+    """Return user-facing blocked-send copy when the model can't accept images.
+
+    Args:
+        provider: Provider key for the capability lookup (e.g. "llama_cpp").
+        model: Selected model identifier, or None when no model is chosen.
+
+    Returns:
+        None when the model is vision-capable; otherwise the blocked-send
+        copy, which names the model and the [model_capabilities.models]
+        config override escape hatch.
+    """
     if model and is_vision_capable(provider, model):
         return None
     model_label = model or "the selected model"
@@ -121,7 +160,16 @@ def vision_block_reason(provider: str, model: str | None) -> str | None:
 
 
 def max_history_images(provider: str, model: str | None) -> int:
-    """Return how many recent session images to resend for this model."""
+    """Return how many recent session images to resend for this model.
+
+    Args:
+        provider: Provider key for the capability lookup.
+        model: Selected model identifier, or None when no model is chosen.
+
+    Returns:
+        The model's max_images capability when present and positive,
+        otherwise DEFAULT_MAX_HISTORY_IMAGES.
+    """
     if not model:
         return DEFAULT_MAX_HISTORY_IMAGES
     capabilities = _get_capabilities_registry().get_model_capabilities(provider, model)
@@ -136,7 +184,17 @@ def image_content_parts(
     image_data: bytes,
     mime_type: str,
 ) -> list[dict[str, Any]]:
-    """Build OpenAI-style multimodal content parts with a base64 data URL."""
+    """Build OpenAI-style multimodal content parts with a base64 data URL.
+
+    Args:
+        text: Message text; emitted as a leading text part when non-empty.
+        image_data: Raw image bytes to encode.
+        mime_type: MIME type used in the data URL (e.g. "image/png").
+
+    Returns:
+        Content-part dicts: an optional {"type": "text"} part followed by
+        one {"type": "image_url"} part with a data URL.
+    """
     encoded = base64.b64encode(image_data).decode("ascii")
     parts: list[dict[str, Any]] = []
     if text:

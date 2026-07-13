@@ -6702,9 +6702,9 @@ class ChatScreen(BaseAppScreen):
                 had_pending_attachment = (
                     store.pending_attachment(store.active_session_id) is not None
                 )
+                store.clear_pending_attachment(store.active_session_id)
             except KeyError:
                 had_pending_attachment = False
-            store.clear_pending_attachment(store.active_session_id)
         composer = self._console_composer_or_none()
         if composer is not None:
             composer.set_pending_attachment_label(None)
@@ -7014,7 +7014,9 @@ class ChatScreen(BaseAppScreen):
             return
 
         def _write_image_to_disk() -> Path:
-            save_location = Path(
+            from tldw_chatbook.Utils.path_validation import validate_path_simple
+
+            save_location = validate_path_simple(
                 os.path.expanduser(
                     get_cli_setting("chat.images", "save_location", "~/Downloads")
                 )
