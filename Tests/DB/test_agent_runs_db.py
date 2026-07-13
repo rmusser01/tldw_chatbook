@@ -80,3 +80,44 @@ def test_sql_is_parameterized_against_quotes(db):
     run_id = db.create_run(conversation_id="c''; DROP TABLE agent_runs;--",
                            agent_kind="primary", task="a 'quoted' task")
     assert db.get_run(run_id)["task"] == "a 'quoted' task"
+
+
+# --- G2: writes must take the write lock up front (BEGIN IMMEDIATE), not
+# lazily (plain BEGIN / deferred), to avoid the two-reader-upgrade-deadlock
+# hazard when multiple workers write concurrently. ---
+
+def test_transaction_begins_immediate_not_deferred(db, monkeypatch):
+    # sqlite3.Connection is a C type — can't monkeypatch .execute on it —
+    # so use the module-supported trace callback to observe every SQL
+    # statement actually sent to SQLite on the transaction() connection.
+    calls = []
+    original_get_connection = type(db)._get_connection
+
+    def spy_get_connection(self):
+        conn = original_get_connection(self)
+        conn.set_trace_callback(calls.append)
+        return conn
+
+    monkeypatch.setattr(type(db), "_get_connection", spy_get_connection)
+    with db.transaction() as conn:
+        conn.execute("SELECT 1")
+    begin_calls = [c for c in calls if c.strip().upper().startswith("BEGIN")]
+    assert begin_calls == ["BEGIN IMMEDIATE"]
+
+
+# --- Q3: list_runs pagination. ---
+
+def test_list_runs_limit_returns_newest_only(db):
+    for _ in range(3):
+        db.create_run(conversation_id="c", agent_kind="primary")
+    full = db.list_runs("c")
+    limited = db.list_runs("c", limit=1)
+    assert len(limited) == 1
+    assert limited[0]["id"] == full[0]["id"]
+
+
+def test_list_runs_default_limit_preserves_behavior(db):
+    for _ in range(3):
+        db.create_run(conversation_id="c", agent_kind="primary")
+    assert len(db.list_runs("c")) == 3
+    assert len(db.list_runs("c", limit=None)) == 3

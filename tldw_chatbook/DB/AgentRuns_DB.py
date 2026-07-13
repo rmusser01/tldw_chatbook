@@ -37,13 +37,36 @@ class AgentRunsDB(BaseDB):
 
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
+        """Yield a fresh read connection, closed on exit.
+
+        Yields:
+            A ``sqlite3.Connection`` scoped to this ``with`` block; every
+            caller gets its own connection (no shared/cached state).
+        """
         with closing(self._get_connection()) as conn:
             yield conn
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
+        """Yield a write connection inside an immediate transaction.
+
+        Uses ``BEGIN IMMEDIATE`` (not the deferred default ``BEGIN``) so
+        the write lock is acquired up front: with multiple workers writing
+        concurrently (e.g. a primary run and its sub-agent runs), a
+        deferred transaction that reads then writes can hit a lock-upgrade
+        conflict between two readers; acquiring the write lock immediately
+        avoids that class of failure.
+
+        Yields:
+            A ``sqlite3.Connection`` with a write transaction already
+            started.
+
+        Raises:
+            Exception: Re-raised after rolling back, on any error inside
+                the ``with`` block. On clean exit the transaction commits.
+        """
         with closing(self._get_connection()) as conn:
-            conn.execute("BEGIN")
+            conn.execute("BEGIN IMMEDIATE")
             try:
                 yield conn
             except Exception:
@@ -95,6 +118,20 @@ class AgentRunsDB(BaseDB):
     def create_run(self, *, conversation_id: str, agent_kind: str,
                    task: str | None = None, parent_run_id: str | None = None,
                    budget: dict | None = None) -> str:
+        """Create a new run record in ``running`` status.
+
+        Args:
+            conversation_id: The owning Console conversation's id.
+            agent_kind: ``"primary"`` or ``"subagent"``.
+            task: The sub-agent's task text; ``None`` for a primary run.
+            parent_run_id: The parent run's id for a sub-agent; ``None``
+                for a primary run.
+            budget: The run's ``RunBudget`` serialized to a dict, stored
+                as JSON for later inspection; ``None`` if not recorded.
+
+        Returns:
+            The newly created run's id (a hex UUID4).
+        """
         run_id = uuid.uuid4().hex
         now = _now_iso()
         with self.transaction() as conn:
@@ -110,6 +147,16 @@ class AgentRunsDB(BaseDB):
         return run_id
 
     def append_steps(self, run_id: str, steps: list[dict]) -> None:
+        """Append step records to a run's step log.
+
+        Args:
+            run_id: The run to append to.
+            steps: Serialized ``AgentStep`` dicts, appended in order after
+                any steps already recorded.
+
+        Raises:
+            KeyError: If ``run_id`` does not exist.
+        """
         with self.transaction() as conn:
             row = conn.execute(
                 "SELECT steps FROM agent_runs WHERE id = ?",
@@ -125,6 +172,17 @@ class AgentRunsDB(BaseDB):
 
     def set_status(self, run_id: str, status: str,
                    result: str | None = None) -> None:
+        """Update a run's terminal (or in-progress) status.
+
+        Args:
+            run_id: The run to update.
+            status: The new status (e.g. ``"done"``, ``"stuck"``,
+                ``"error"``, ``"cancelled"``, ``"superseded"``).
+            result: The final answer text (primary) or sub-agent result
+                text; when ``None`` the existing ``result`` column is left
+                unchanged (``COALESCE``), so a status-only update never
+                clobbers a previously recorded result.
+        """
         with self.transaction() as conn:
             conn.execute(
                 "UPDATE agent_runs SET status = ?, "
@@ -132,6 +190,15 @@ class AgentRunsDB(BaseDB):
                 (status, result, _now_iso(), run_id))
 
     def get_run(self, run_id: str) -> dict | None:
+        """Fetch one run record.
+
+        Args:
+            run_id: The run to fetch.
+
+        Returns:
+            The run as a dict (``steps``/``budget`` JSON-decoded), or
+            ``None`` if ``run_id`` does not exist.
+        """
         with self.connection() as conn:
             row = conn.execute(
                 "SELECT * FROM agent_runs WHERE id = ?",
@@ -139,17 +206,44 @@ class AgentRunsDB(BaseDB):
         return self._row_to_dict(row) if row else None
 
     def list_runs(self, conversation_id: str,
-                  include_superseded: bool = True) -> list[dict]:
+                  include_superseded: bool = True,
+                  limit: int | None = None) -> list[dict]:
+        """List a conversation's run records, newest first.
+
+        Args:
+            conversation_id: The conversation to list runs for.
+            include_superseded: When ``False``, excludes runs whose
+                status is ``"superseded"``.
+            limit: When set, caps the result to the ``limit`` most recent
+                runs (``ORDER BY created_at DESC, id DESC``). ``None``
+                (the default) returns every matching run, preserving prior
+                behavior.
+
+        Returns:
+            The matching runs as dicts, newest first.
+        """
         query = "SELECT * FROM agent_runs WHERE conversation_id = ?"
         params: list = [conversation_id]
         if not include_superseded:
             query += " AND status != 'superseded'"
         query += " ORDER BY created_at DESC, id DESC"
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
         with self.connection() as conn:
             rows = conn.execute(query, params).fetchall()
         return [self._row_to_dict(r) for r in rows]
 
     def count_subagent_runs(self, conversation_id: str) -> int:
+        """Count a conversation's sub-agent runs (all statuses, historical).
+
+        Args:
+            conversation_id: The conversation to count sub-agent runs for.
+
+        Returns:
+            The number of runs with ``agent_kind == "subagent"`` for that
+            conversation, regardless of status.
+        """
         with self.connection() as conn:
             row = conn.execute(
                 "SELECT COUNT(*) AS n FROM agent_runs "
@@ -158,6 +252,18 @@ class AgentRunsDB(BaseDB):
         return int(row["n"])
 
     def supersede_run_tree(self, run_id: str) -> int:
+        """Mark a run and its direct children ``superseded``.
+
+        Args:
+            run_id: The run whose tree (itself + rows with
+                ``parent_run_id == run_id``) should be marked superseded.
+                Used by retry/regenerate to retire a prior attempt while
+                keeping it for drill-in history.
+
+        Returns:
+            The number of rows updated (the run itself plus its direct
+            sub-agent children).
+        """
         with self.transaction() as conn:
             cursor = conn.execute(
                 "UPDATE agent_runs SET status = 'superseded', "
