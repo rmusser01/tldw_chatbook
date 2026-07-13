@@ -31,7 +31,9 @@ llama.cpp @ `127.0.0.1:9099`, model `Qwen3.6-27B-Uncensored-…-Q8_K_P.gguf`.
   with the draft preserved (Enter-again armed).
 - `D-02-enter-again-sent-2026-07-12.png` — pressing Enter again sends the literal text as a normal
   **`User  /frobnicate the widget`** message (composer cleared, conversation titled from it) — the
-  `/usr/bin/…`-style escape hatch works.
+  `/usr/bin/…`-style escape hatch works. (The `Assistant` row is blank in this frame because the
+  screenshot fired ~1.6 s after Enter, before the slow 27B *thinking* model produced its first
+  token — a capture-timing artifact, not a failed send; see the G-series below for completed sends.)
 - `E-01-system-editor-modal-2026-07-12.png` — bare `/system` opens the **Edit system prompt** modal:
   scope line **`Applies to this session.`**, full TextArea, `Name` field, `Save to Library`, and
   `Clear · Cancel · Apply` actions.
@@ -40,7 +42,23 @@ llama.cpp @ `127.0.0.1:9099`, model `Qwen3.6-27B-Uncensored-…-Q8_K_P.gguf`.
   (byte-exact), rail still `System: none` (session unchanged), draft preserved.
 - `smoke-01-initial-2026-07-12.png` — baseline Console with the new `System: none` rail line.
 
-## Real send — the applied system prompt reaches the provider
+## Completed live sends (end-to-end in the served UI)
+
+- `G-03-plain-send-completes-2026-07-12.png` — a plain send: **`User  Reply with exactly: PONG`** →
+  **`Assistant  PONG`** rendered in the transcript and persisted to the DB. Proves the Console send
+  worker completes against real llama.cpp (the earlier blank-`Assistant` frames were shot too soon
+  for the slow thinking model, not broken sends).
+- `G-01-system-applied-before-send-2026-07-12.png` — `/system Shouty assistant` applied; rail shows
+  **`System: Always reply in ALL CAPITAL LETTERS. D…`**.
+- `G-02-completed-send-obeys-system-2026-07-12.png` — with that system prompt applied, asking
+  **`What is the capital of Japan?`** yields **`Assistant  TOKYO`** — all-caps and direct, i.e. the
+  model visibly obeyed the applied session system prompt. This is the end-to-end UI proof: apply via
+  `/system` → rail preview → send → model obeys → answer renders. (A reasoning-heavy system prompt
+  like "answer in exactly three words" makes this thinking model deliberate for 60 s+, which is why
+  the all-caps prompt was chosen for a fast, unambiguous capture; the request-capture below uses the
+  three-word prompt.)
+
+## Real send — the applied system prompt reaches the provider (on the wire)
 
 `provider-request-with-system-message-2026-07-12.json` is the **actual provider request body**
 captured off the wire (a logging proxy in front of llama.cpp) for a send made with
