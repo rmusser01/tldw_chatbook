@@ -67,6 +67,11 @@ class ConsoleMessageActionService:
         ("variant-next", ">"),
     )
     _FAILED_RETRY_ACTIONS: tuple[tuple[str, str], ...] = (("retry", "Try"),)
+    _SAVE_IMAGE_ACTIONS: tuple[tuple[str, str], ...] = (("save-image", "Save Image"),)
+
+    @staticmethod
+    def _has_image(message: ConsoleChatMessage) -> bool:
+        return message.image_data is not None or bool(message.image_mime_type)
 
     def __init__(
         self,
@@ -93,6 +98,8 @@ class ConsoleMessageActionService:
         completed_actions = list(self._COMPLETED_ACTIONS)
         if message.variants is not None:
             completed_actions = self._base_actions_with(self._VARIANT_NAV_ACTIONS)
+        if self._has_image(message):
+            completed_actions = completed_actions + list(self._SAVE_IMAGE_ACTIONS)
         if message.status == "failed":
             return [
                 ConsoleMessageAction(action_id, label)
@@ -219,6 +226,13 @@ class ConsoleMessageActionService:
                 visible_copy="Continuing from selected message.",
                 target_message_id=message.id,
                 target_content=target_content,
+            )
+        if action_id == "save-image":
+            return ConsoleActionResult(
+                action_id=action_id,
+                status="completed",
+                visible_copy="Saving image to disk.",
+                target_message_id=message.id,
             )
         return ConsoleActionResult(
             action_id=action_id,

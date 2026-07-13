@@ -121,6 +121,7 @@ from ...config import (
     coerce_int_setting,
     delete_settings_from_cli_config,
     get_cli_providers_and_models,
+    get_cli_setting,
     load_settings,
     save_setting_to_cli_config,
     save_settings_to_cli_config,
@@ -6824,6 +6825,9 @@ class ChatScreen(BaseAppScreen):
             await self._sync_native_console_chat_ui()
             self.app_instance.notify(result.visible_copy, severity="information")
             return True
+        if action_id == "save-image" and result.status == "completed":
+            self.run_worker(self._save_console_message_image(message_id), exclusive=True)
+            return True
         if action_id == "delete" and result.status == "completed":
             if self._pending_console_delete_message_id != message_id:
                 self._pending_console_delete_message_id = message_id
@@ -6918,6 +6922,50 @@ class ChatScreen(BaseAppScreen):
         """Return the active Console conversation title for save-as derivations."""
         session = self._active_native_console_session()
         return str(getattr(session, "title", "") or "").strip()
+
+    async def _save_console_message_image(self, message_id: str) -> None:
+        """Write a Console message's image to the configured save location."""
+        import mimetypes as _mimetypes
+        from datetime import datetime as _datetime
+
+        store = self._ensure_console_chat_store()
+        try:
+            message = store.get_message(message_id)
+        except KeyError:
+            self.app_instance.notify(
+                "Console message no longer exists.", severity="warning"
+            )
+            return
+        image_data = message.image_data
+        mime_type = message.image_mime_type
+        if image_data is None and message.persisted_message_id is not None:
+            db = getattr(self.app_instance, "chachanotes_db", None)
+            row = (
+                db.get_message_by_id(message.persisted_message_id)
+                if db is not None
+                else None
+            )
+            if row:
+                image_data = row.get("image_data")
+                mime_type = row.get("image_mime_type") or mime_type
+        if not image_data:
+            self.app_instance.notify(
+                "No image data available for this message.", severity="warning"
+            )
+            return
+        save_location = Path(
+            os.path.expanduser(
+                get_cli_setting("chat.images", "save_location", "~/Downloads")
+            )
+        )
+        save_location.mkdir(parents=True, exist_ok=True)
+        extension = _mimetypes.guess_extension(mime_type or "image/png") or ".png"
+        target = (
+            save_location
+            / f"console_image_{_datetime.now().strftime('%Y%m%d_%H%M%S')}{extension}"
+        )
+        target.write_bytes(bytes(image_data))
+        self.app_instance.notify(f"Image saved to {target}")
 
     async def _save_console_message_as_note(self, message_id: str) -> None:
         """Persist one selected Console message as a local Note."""
@@ -7204,6 +7252,7 @@ class ChatScreen(BaseAppScreen):
             ("console-message-action-variant-previous-", "variant-previous"),
             ("console-message-action-variant-next-", "variant-next"),
             ("console-message-action-save-as-", "save-as"),
+            ("console-message-action-save-image-", "save-image"),
             ("console-message-action-regenerate-", "regenerate"),
             ("console-message-action-continue-", "continue"),
             ("console-message-action-delete-", "delete"),

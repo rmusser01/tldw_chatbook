@@ -84,6 +84,14 @@ def _is_generating_placeholder_body(message: ConsoleChatMessage, body: str) -> b
     return message.status == "streaming" and body == CONSOLE_GENERATING_PLACEHOLDER
 
 
+def _message_image_chip(message: ConsoleChatMessage) -> str | None:
+    """Return the placeholder chip line for a message carrying an image."""
+    if message.image_data is None and not message.image_mime_type:
+        return None
+    label = message.attachment_label or message.image_mime_type or "image"
+    return f"🖼 {label}"
+
+
 def _message_render_text(message: ConsoleChatMessage, *, selected: bool) -> Content:
     """Return the compact transcript row renderable for a message.
 
@@ -102,6 +110,9 @@ def _message_render_text(message: ConsoleChatMessage, *, selected: bool) -> Cont
     """
     role_label = _message_role_label(message)
     body = _message_body(message)
+    chip = _message_image_chip(message)
+    if chip:
+        body = f"{body}\n{chip}" if body else chip
     body_part: tuple[str, str] | str = body
     if _is_generating_placeholder_body(message, body):
         body_part = (body, "dim")

@@ -6336,3 +6336,35 @@ def test_console_message_serialization_carries_image_metadata_not_bytes():
     assert restored.image_mime_type == "image/png"
     assert restored.attachment_label == "photo.png · 11 B"
     assert restored.image_data is None
+
+
+@pytest.mark.asyncio
+async def test_save_console_message_image_writes_file(tmp_path, monkeypatch):
+    """Verify the save-image worker writes the message's image bytes to disk."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        monkeypatch.setattr(
+            "tldw_chatbook.UI.Screens.chat_screen.get_cli_setting",
+            lambda section, key, default=None: str(tmp_path)
+            if (section, key) == ("chat.images", "save_location")
+            else default,
+        )
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="pic",
+            image_data=b"\x89PNG-bytes",
+            image_mime_type="image/png",
+        )
+
+        await console._save_console_message_image(message.id)
+
+        saved = list(tmp_path.glob("console_image_*.png"))
+        assert len(saved) == 1
+        assert saved[0].read_bytes() == b"\x89PNG-bytes"
