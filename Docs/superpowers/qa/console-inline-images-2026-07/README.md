@@ -74,11 +74,26 @@ screen state"). Real streamed sends to a live model; no fixtures.
    the same transcript while the first (gradient) is **hidden**: the first shows
    chip-only, the second renders inline in pixels. Proves **per-message** view
    state.
+7. **config-regular-default.png** — **live proof that `[chat.images].**
+   **default_render_mode` now drives the default** (config-shape defect fixed in
+   **5b2a7e26**). Fresh app process, isolated HOME config set to
+   `default_render_mode = "regular"`, TERM neutralised to `xterm` (so terminal
+   `auto` would resolve to **pixels/colour** — see Defect 1). The resumed
+   "Describe this" gradient re-preps from DB and renders inline in **graphics**
+   mode **by default, with no manual toggle** — the monochrome dithered
+   half-cell look, **pixel-identical to `toggle-graphics.png` (#2)** and clearly
+   distinct from the full-colour `inline-pixels-default.png` (#1). The config,
+   not the terminal, decided the mode. Sanity cross-check under the same
+   isolated HOME + neutral TERM: `resolve_default_mode(load_settings())` →
+   `graphics` while terminal-only `get_image_render_mode("auto")` → `pixels`
+   (terminal_type `xterm`).
 
 ## Observations / defects
 
-1. **DEFECT (P2) — `[chat.images].default_render_mode` and `terminal_overrides`
-   are silently ignored in the running app.** `resolve_default_mode`
+1. **DEFECT (P2) — FIXED in 5b2a7e26 (live-proven by capture #7,
+   `config-regular-default.png`).** Originally: `[chat.images].default_render_mode`
+   and `terminal_overrides` were silently ignored in the running app.
+   `resolve_default_mode`
    (`Chat/console_image_view.py`) reads `app_instance.app_config`, but the app
    sets `app_config = load_settings()` (`app.py:2431`), whose return nests the
    raw TOML under `COMPREHENSIVE_CONFIG_RAW` and exposes **no top-level `chat`
@@ -94,6 +109,14 @@ screen state"). Real streamed sends to a live model; no fixtures.
    config value would NOT change it. Non-blocking — the observable default is
    still pixels — but the headline "these config keys now actually work" claim
    is not true through `app_config` as wired.
+   **FIX (5b2a7e26):** `console_image_view._chat_images_config` now reads
+   `[chat.images]` through the live `COMPREHENSIVE_CONFIG_RAW` shape (falling
+   back to the plain-dict shape), so the configured value is honored.
+   **Live proof (capture #7):** with `default_render_mode = "regular"` and TERM
+   neutralised to `xterm` (so `auto` would pick pixels/colour), the resumed
+   gradient renders inline in **graphics by default with no toggle** — matching
+   `toggle-graphics.png` and unlike the colour `inline-pixels-default.png`. The
+   config, not the terminal, now drives the default.
 2. **Related — `[api_endpoints].llama_cpp` is likewise ignored.** The Console
    provider gateway reads `api_settings.llama_cpp.api_url` (not `[api_endpoints]`),
    and only `api_settings` survives into the normalised `app_config`. Seeding
