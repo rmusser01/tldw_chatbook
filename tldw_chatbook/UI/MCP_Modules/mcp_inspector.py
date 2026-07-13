@@ -128,12 +128,23 @@ class MCPInspector(Vertical):
 
     # -- readiness block -----------------------------------------------------
 
-    def update_readiness(self, snapshot: ReadinessSnapshot | None) -> None:
+    async def update_readiness(self, snapshot: ReadinessSnapshot | None) -> None:
+        """Rebuild the action-button list for the given snapshot.
+
+        Awaited end to end (remove, then mount) within a single call so
+        Textual's per-widget message pump cannot interleave two rebuilds:
+        selecting a second server before the first's `remove_children()`
+        has actually pruned its buttons from the DOM previously raced a
+        `mount()` of a same-id button (`view_details` is in almost every
+        reason's action set) into `DuplicateIds`, crashing the whole app.
+        Mirrors the fix in `console_session_switcher_modal.py`
+        (`_refresh_results`) for the same bug class.
+        """
         self._snapshot = snapshot
         state = self.query_one("#mcp-inspector-state", Static)
         message = self.query_one("#mcp-inspector-message", Static)
         actions = self.query_one("#mcp-inspector-actions", Vertical)
-        actions.remove_children()
+        await actions.remove_children()
         if snapshot is None:
             state.update("Select a server to see its readiness.")
             message.update("")
@@ -142,6 +153,7 @@ class MCPInspector(Vertical):
         reason = snapshot.primary_reason
         reason_suffix = f" [{reason.value}]" if reason else ""
         message.update(f"{snapshot.message}{reason_suffix}")
+        buttons = []
         for action in snapshot.allowed_actions:
             button = Button(
                 _ACTION_LABELS[action],
@@ -154,7 +166,9 @@ class MCPInspector(Vertical):
                 button.tooltip = "Available in a later phase — use Advanced below."
             else:
                 button.tooltip = _WIRED_ACTION_TOOLTIPS.get(action, _ACTION_LABELS[action])
-            actions.mount(button)
+            buttons.append(button)
+        if buttons:
+            await actions.mount_all(buttons)
 
     # -- advanced escape hatch -----------------------------------------------
 

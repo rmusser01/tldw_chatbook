@@ -5,7 +5,7 @@ from dataclasses import replace
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import ContentSwitcher, Static
+from textual.widgets import ContentSwitcher, Select, Static
 
 from tldw_chatbook.MCP.unified_control_models import UnifiedMCPContext
 from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCP_RAIL_ROW_PREFIX, MCPRail
@@ -443,3 +443,90 @@ async def test_apply_view_state_scope_ref_present_none_clears_existing_value():
         )
         await pilot.pause()
         assert workbench.get_view_state()["scope_ref"] is None
+
+
+# -- P1: Advanced > External Servers must not leak unredacted secrets -------
+#
+# `render_external_servers_section()` (legacy renderer, frozen) keys local
+# records by "name", which local profile dicts never have (they use
+# "profile_id") -- so it falls back to printing the FULL RAW DICT per entry,
+# CLI args and env values included. `_AdvancedSectionShim.load_section()` is
+# the seam this surface owns: it must redact each record (via
+# `redact_mapping`/`redact_args`) before the payload ever reaches the frozen
+# renderer, on both the bare-list local-source normalization path and any
+# dict payload that already carries an `external_servers` list.
+
+
+class SecretLeakHubService:
+    """Local-source service whose `external_servers` records carry a
+    secret-looking CLI arg (`--api-key sk-qa-test-redact-0001`), mirroring
+    what QA saw leak through the Advanced pane."""
+
+    SECRET_VALUE = "sk-qa-test-redact-0001"
+
+    def __init__(self) -> None:
+        self.context = UnifiedMCPContext(selected_source="local", selected_section="overview")
+
+    async def load_context(self):
+        return self.context
+
+    async def select_source(self, source):
+        self.context = replace(self.context, selected_source=source)
+        return self.context
+
+    async def select_server_target(self, server_id):
+        return self.context
+
+    async def select_scope(self, scope, scope_ref=None):
+        return self.context
+
+    async def select_section(self, section):
+        return self.context
+
+    async def load_section(self, section=None):
+        effective_section = section or self.context.selected_section or "overview"
+        if effective_section == "external_servers":
+            return [
+                {
+                    "profile_id": "leaky",
+                    "command": "npx",
+                    "args": ["--api-key", self.SECRET_VALUE, "--verbose"],
+                    "env_placeholders": {},
+                    "discovery_snapshot": {"tools": [{"name": "a"}], "resources": [], "prompts": []},
+                    "is_connected": True,
+                }
+            ]
+        return {"source": "local", "section": effective_section}
+
+    def available_actions(self):
+        return []
+
+    async def run_action(self, action_name, payload):
+        return {"ok": True}
+
+
+class SecretLeakApp(App):
+    def __init__(self) -> None:
+        super().__init__()
+        self.unified_mcp_service = SecretLeakHubService()
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+@pytest.mark.asyncio
+async def test_advanced_external_servers_section_redacts_secret_args():
+    app = SecretLeakApp()
+    async with app.run_test(size=(120, 60)) as pilot:
+        await pilot.pause()
+        section_select = app.query_one("#mcp-adv-section-select", Select)
+        section_select.value = "external_servers"
+        await pilot.pause()
+        await pilot.pause()
+
+        rendered = str(app.query_one("#mcp-adv-content", Static).renderable)
+        assert SecretLeakHubService.SECRET_VALUE not in rendered, (
+            f"secret arg leaked into Advanced > External Servers: {rendered!r}"
+        )
+        # Non-secret fields must still render -- this isn't just an empty pane.
+        assert "npx" in rendered

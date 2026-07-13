@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from loguru import logger
@@ -19,6 +20,7 @@ from tldw_chatbook.MCP.readiness import (
     local_profile_readiness,
     server_target_readiness,
 )
+from tldw_chatbook.MCP.redaction import redact_args, redact_mapping
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
 from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCPRail
 from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
@@ -64,8 +66,37 @@ _LEGACY_SECTIONS = [
 ]
 
 
+def _redact_external_server_record(record: Any) -> Any:
+    """Redact one external-server record before it can reach the legacy
+    Advanced renderer (frozen `render_external_servers_section()` in
+    unified_mcp_sections.py).
+
+    That renderer keys local records by "name", which local profile dicts
+    never have (they use "profile_id"), so its `item.get(key) or item`
+    fallback prints the FULL RAW DICT per entry -- CLI args and env values
+    included -- whenever the key doesn't match. Non-Mapping records (already
+    a shape the renderer can't consume sensibly) pass through unchanged.
+    """
+    if not isinstance(record, Mapping):
+        return record
+    record = dict(record)
+    args = record.get("args")
+    if isinstance(args, (list, tuple)):
+        # redact_args handles `--api-key VALUE` / `key=value` CLI-arg shapes
+        # that redact_mapping's generic key-based redaction below doesn't
+        # reach (args is a plain list of strings, not a mapping).
+        record["args"] = redact_args([str(a) for a in args])
+    return redact_mapping(record)
+
+
+def _redact_external_servers_list(records: Any) -> Any:
+    if not isinstance(records, list):
+        return records
+    return [_redact_external_server_record(r) for r in records]
+
+
 class _AdvancedSectionShim:
-    """Shields the inspector's legacy Advanced pane from one local-source shape gap.
+    """Shields the inspector's legacy Advanced pane from two local-source gaps.
 
     `UnifiedMCPControlPlaneService.load_section()` returns a dict for every
     section except local-source "external_servers", which comes back as a
@@ -77,6 +108,13 @@ class _AdvancedSectionShim:
     whole app, not just the Advanced pane. Normalize and fail closed here
     instead, at the integration seam this task owns, without touching
     mcp_inspector.py.
+
+    Second gap: `render_external_servers_section()` (also frozen) keys
+    records by "name", which local profile dicts never have -- its fallback
+    then prints each FULL RAW DICT, secrets included (CLI args, env values).
+    Records are redacted here, at this same seam, before the renderer ever
+    sees them -- on both the bare-list local path and any dict payload that
+    already carries an "external_servers" list (the server-source shape).
     """
 
     def __init__(self, service: Any) -> None:
@@ -92,6 +130,11 @@ class _AdvancedSectionShim:
             logger.warning(f"MCP workbench advanced section load failed: {exc}")
             return {"source": "local", "section": section or "overview", "error": str(exc)}
         if isinstance(payload, dict):
+            if isinstance(payload.get("external_servers"), list):
+                payload = dict(payload)
+                payload["external_servers"] = _redact_external_servers_list(
+                    payload["external_servers"]
+                )
             return payload
         if isinstance(payload, list) and section == "external_servers":
             # UnifiedMCPControlPlaneService.load_section() only returns a
@@ -99,7 +142,11 @@ class _AdvancedSectionShim:
             # (LocalMCPControlService.get_external_servers()); every other
             # section already comes back as a dict. render_external_servers_section
             # reads this key as a list.
-            return {"source": "local", "section": section, "external_servers": payload}
+            return {
+                "source": "local",
+                "section": section,
+                "external_servers": _redact_external_servers_list(payload),
+            }
         return {"source": "local", "section": section or "overview"}
 
 
@@ -229,7 +276,7 @@ class MCPWorkbench(Container):
                 except Exception as exc:
                     logger.warning(f"MCP workbench context load failed: {exc}")
             self._snapshots = await self._collect_snapshots()
-            self._sync_children()
+            await self._sync_children()
             inspector = self.query_one(MCPInspector)
             inspector.set_service_context(
                 _AdvancedSectionShim(service) if service is not None else None,
@@ -278,7 +325,16 @@ class MCPWorkbench(Container):
                 return snap
         return None
 
-    def _sync_children(self) -> None:
+    async def _sync_children(self) -> None:
+        """Push current state into the rail/canvas/inspector children.
+
+        Awaited end to end -- `MCPInspector.update_readiness()` must fully
+        finish its remove+mount cycle (see mcp_inspector.py) before this
+        coroutine returns, so that Textual's message pump cannot dequeue a
+        second selection event and start another `_sync_children()` call
+        while the first's inspector refresh is still settling
+        (`DuplicateIds` regression; see test_mcp_inspector.py).
+        """
         rail = self.query_one(MCPRail)
         rail.sync_state(
             source=self._source,
@@ -293,7 +349,7 @@ class MCPWorkbench(Container):
         canvas.update_overview(self._snapshots)
         selected = self._snapshot_for(self._selected_server_key)
         canvas.show_detail(selected)
-        self.query_one(MCPInspector).update_readiness(selected)
+        await self.query_one(MCPInspector).update_readiness(selected)
 
     # -- modes & view state ---------------------------------------------------
 
@@ -370,7 +426,7 @@ class MCPWorkbench(Container):
             raw_scope_ref = _UNSET
         if raw_scope_ref is not _UNSET:
             self._scope_ref = None if raw_scope_ref is None else str(raw_scope_ref)
-        self._sync_children()
+        await self._sync_children()
 
     # -- event wiring -----------------------------------------------------------
 
@@ -384,7 +440,7 @@ class MCPWorkbench(Container):
         self._source = source
         self._selected_server_key = None
         self._snapshots = await self._collect_snapshots()
-        self._sync_children()
+        await self._sync_children()
 
     async def on_mcp_rail_source_changed(self, event: MCPRail.SourceChanged) -> None:
         event.stop()
@@ -404,7 +460,7 @@ class MCPWorkbench(Container):
                 await service.select_server_target(event.server_key.split(":", 1)[1])
             except Exception as exc:
                 logger.warning(f"MCP server target selection failed: {exc}")
-        self._sync_children()
+        await self._sync_children()
 
     async def on_mcp_rail_scope_changed(self, event: MCPRail.ScopeChanged) -> None:
         event.stop()
@@ -429,21 +485,21 @@ class MCPWorkbench(Container):
         # rail -> remount its Selects -> another mount-echo -> another
         # ScopeChanged, which is exactly the storm this handler used to feed.
 
-    def on_mcp_servers_mode_server_row_selected(
+    async def on_mcp_servers_mode_server_row_selected(
         self, event: MCPServersMode.ServerRowSelected
     ) -> None:
         event.stop()
         self._selected_server_key = event.server_key
-        self._sync_children()
+        await self._sync_children()
 
-    def on_mcp_inspector_hub_action_requested(
+    async def on_mcp_inspector_hub_action_requested(
         self, event: MCPInspector.HubActionRequested
     ) -> None:
         event.stop()
         if event.action is HubAction.VIEW_DETAILS and event.server_key:
             self._selected_server_key = event.server_key
             self.set_mode("servers")
-            self._sync_children()
+            await self._sync_children()
         elif event.action is HubAction.OPEN_TOOL_CATALOG:
             self.set_mode("tools")
         elif event.action is HubAction.OPEN_AUDIT:

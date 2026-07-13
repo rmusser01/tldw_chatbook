@@ -61,12 +61,20 @@ def _stale_snap() -> ReadinessSnapshot:
     )
 
 
+def _ready_snap() -> ReadinessSnapshot:
+    return ReadinessSnapshot(
+        server_key="local:notes", label="notes", source="local",
+        state=ReadinessState.READY, reasons=(),
+        message="Connected — 4 tools available.",
+    )
+
+
 @pytest.mark.asyncio
 async def test_readiness_block_shows_state_message_and_action_buttons():
     app = InspectorApp()
     async with app.run_test() as pilot:
         inspector = app.query_one(MCPInspector)
-        inspector.update_readiness(_stale_snap())
+        await inspector.update_readiness(_stale_snap())
         await pilot.pause()
         badge = str(app.query_one("#mcp-inspector-state", Static).renderable)
         assert "Stale" in badge
@@ -86,13 +94,53 @@ async def test_wired_action_posts_hub_action_requested():
     app = InspectorApp()
     async with app.run_test() as pilot:
         inspector = app.query_one(MCPInspector)
-        inspector.update_readiness(_stale_snap())
+        await inspector.update_readiness(_stale_snap())
         await pilot.pause()
         await pilot.click("#mcp-inspector-action-view_details")
         await pilot.pause()
         assert app.events
         assert app.events[-1].action is HubAction.VIEW_DETAILS
         assert app.events[-1].server_key == "local:docs"
+
+
+# -- P0: DuplicateIds race on back-to-back readiness updates ----------------
+#
+# `update_readiness()` rebuilds the action-button list by calling
+# `remove_children()` then `mount()`. Before the fix, neither call was
+# awaited, so a second `update_readiness()` invocation that starts before the
+# first's `remove_children()` has actually pruned its buttons from the DOM
+# tries to mount a same-id button (both snapshots below include
+# `view_details`, as almost every readiness reason does) while the old one is
+# still registered -- Textual raises `DuplicateIds` and the whole app
+# crashes. Selecting a second server in Servers mode reproduces this on any
+# two-click session. The regression test below drives two updates back to
+# back with NO intervening `pilot.pause()` -- the only way to prove the
+# remove+mount cycle is now fully serialized within one awaited call, rather
+# than merely "usually fast enough in practice".
+@pytest.mark.asyncio
+async def test_second_update_readiness_does_not_duplicate_action_ids():
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.update_readiness(_stale_snap())
+        # No pilot.pause() here: the second call must start (and its own
+        # remove+mount cycle must fully resolve) before this coroutine
+        # returns, exactly like a second rail click arriving while the
+        # first selection's inspector refresh is still settling.
+        await inspector.update_readiness(_ready_snap())
+        await pilot.pause()
+
+        buttons = list(app.query("Button.mcp-inspector-action"))
+        ids = [b.id for b in buttons]
+        assert len(ids) == len(set(ids)), f"duplicate action button ids: {ids}"
+
+        expected_ids = {
+            f"mcp-inspector-action-{action.value}" for action in _ready_snap().allowed_actions
+        }
+        assert set(ids) == expected_ids, (
+            f"actions container should hold exactly the second snapshot's "
+            f"buttons; got {set(ids)!r}, expected {expected_ids!r}"
+        )
 
 
 @pytest.mark.asyncio
