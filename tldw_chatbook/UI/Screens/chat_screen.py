@@ -36,6 +36,19 @@ from .settings_config_models import SettingsCategoryId
 from ...Chat.chat_conversation_service import derive_conversation_title
 from ...Chat.chat_persistence_service import ChatPersistenceService
 from ...Chat.console_chat_controller import ConsoleChatController
+from ...Chat.console_command_grammar import (
+    KIND_COMMAND,
+    KIND_FALLBACK,
+    KIND_NOT_COMMAND,
+    KIND_UNKNOWN,
+    PROMPT_COMMAND_HANDLER_ID,
+    PROMPT_COMMAND_NAME,
+    SYSTEM_COMMAND_HANDLER_ID,
+    SYSTEM_COMMAND_NAME,
+    CommandParse,
+    ConsoleCommandRegistry,
+    default_console_registry,
+)
 from ...Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
     DEFAULT_CONSOLE_SESSION_TITLE,
@@ -1079,6 +1092,8 @@ class ChatScreen(BaseAppScreen):
         self._console_visible_draft_session_id: str | None = None
         self._console_provider_gateway: Any | None = None
         self._console_chat_controller: ConsoleChatController | None = None
+        self._console_command_registry: ConsoleCommandRegistry = default_console_registry()
+        self._console_unknown_send_armed: str | None = None
         self._console_message_action_service = ConsoleMessageActionService()
         self._console_model_option_warnings: dict[tuple[str, str], str] = {}
         self._last_console_action: ConsoleActionResult | None = None
@@ -6476,11 +6491,43 @@ class ChatScreen(BaseAppScreen):
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
             draft = composer.draft_text()
         except QueryError:
+            composer = None
             draft = ""
         if not draft.strip():
             self._focus_console_composer_if_needed(force=True)
             return
         self._dismiss_console_guidance()
+
+        # Command parsing runs before any readiness/blocked gating: a
+        # recognized command dispatch (or an unknown-command hint) never
+        # sends, so it must work even while Send is blocked. Draft text
+        # carrying any real paste-originated segment (regardless of its
+        # current collapse/confirm/expanded display state) is never treated
+        # as command input -- Task 9's grammar module deliberately leaves
+        # that gating to the caller, since only the composer knows the real
+        # segment state.
+        if composer is not None and not composer.has_paste_segments():
+            parse = self._console_command_registry.parse(draft)
+        else:
+            parse = CommandParse(kind=KIND_NOT_COMMAND)
+
+        if parse.kind in (KIND_COMMAND, KIND_FALLBACK):
+            self._console_unknown_send_armed = None
+            await self._dispatch_console_command(parse)
+            return
+
+        if parse.kind == KIND_UNKNOWN:
+            if self._console_unknown_send_armed == draft:
+                # Second consecutive Enter on the *same* unmodified draft:
+                # disarm and fall through to a normal send below.
+                self._console_unknown_send_armed = None
+            else:
+                self._console_unknown_send_armed = draft
+                await self._append_native_console_system_message(
+                    self._console_unknown_command_hint(parse.name)
+                )
+                return
+
         if blocked_reason := self._console_send_blocked_reason():
             setup_blocked_reason = self._console_setup_blocked_reason()
             if setup_blocked_reason and not blocked_reason.startswith(
@@ -6501,6 +6548,72 @@ class ChatScreen(BaseAppScreen):
             self.app_instance.notify("A Console run is already running.", severity="warning")
             return
         self.run_worker(self._submit_console_native_draft(draft), exclusive=True)
+
+    _CONSOLE_COMMAND_NAME_TO_HANDLER_ID = {
+        PROMPT_COMMAND_NAME: PROMPT_COMMAND_HANDLER_ID,
+        SYSTEM_COMMAND_NAME: SYSTEM_COMMAND_HANDLER_ID,
+    }
+
+    @staticmethod
+    def _console_unknown_command_hint(name: str) -> str:
+        """Return the fixed Enter-again hint copy for an unrecognized `/name` draft."""
+        return (
+            f"Unknown command /{name} — available: /prompt, /system. "
+            "Press Enter again to send as text."
+        )
+
+    async def _dispatch_console_command(self, parse: CommandParse) -> None:
+        """Dispatch a parsed Console slash command to its (stub) handler.
+
+        A ``handler_id`` that resolves to nothing (an unrecognized command
+        name, or a future fallback-resolver result this dispatch map does not
+        yet know about) is consumed silently: nothing is sent and the draft
+        is left untouched. Only ``/prompt`` and ``/system`` resolve today;
+        Tasks 12/14 replace the stub bodies below with real behavior.
+        """
+        handler_id = self._CONSOLE_COMMAND_NAME_TO_HANDLER_ID.get(parse.name)
+        dispatch_map = {
+            "insert-prompt": self._console_command_insert_prompt,
+            "apply-system": self._console_command_apply_system,
+        }
+        handler = dispatch_map.get(handler_id)
+        if handler is None:
+            return
+        await handler(parse)
+
+    async def _console_command_insert_prompt(self, parse: CommandParse) -> None:
+        """Stub handler for the `/prompt` Console command.
+
+        Replaced by Task 12, which wires this to the Library Prompts picker.
+        """
+        self.app_instance.notify(
+            "Prompt insertion is not wired yet.",
+            severity="warning",
+        )
+
+    async def _console_command_apply_system(self, parse: CommandParse) -> None:
+        """Stub handler for the `/system` Console command.
+
+        Replaced by Task 14, which wires this to applying a saved system prompt.
+        """
+        self.app_instance.notify(
+            "System-message application is not wired yet.",
+            severity="warning",
+        )
+
+    @on(Input.Changed, "#console-command-input")
+    def _on_console_composer_draft_changed(self, event: Input.Changed) -> None:
+        """Disarm the unknown-command Enter-again escape on any draft edit.
+
+        ``ConsoleComposerBar`` keeps a hidden compatibility ``Input`` synced to
+        the canonical draft text on every segment mutation (typing, pasting,
+        backspace, clear, ``load_draft``); its reactive ``value`` posts this
+        `Changed` message whenever that text actually changes. Any such edit
+        must invalidate a pending unknown-command arm -- otherwise a user
+        could edit away from an armed unknown draft and back to the exact
+        same text and have a *second*, unrelated Enter silently send it.
+        """
+        self._console_unknown_send_armed = None
 
     async def handle_console_stop_generation(self, event: Button.Pressed) -> None:
         """Route the Console stop action through native run control."""

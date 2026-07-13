@@ -785,6 +785,21 @@ class ConsoleComposerBar(Horizontal):
         """
         return any(segment.collapse_state == "confirm" for segment in self._segments)
 
+    def has_paste_segments(self) -> bool:
+        """Return whether the draft contains any paste-originated segment.
+
+        A segment keeps its paste provenance (``"collapsed"``, ``"confirm"``,
+        or ``"expanded"``) for as long as it exists, even once fully unfurled
+        -- an "expanded" segment renders identically to typed literal text, so
+        display-string inspection cannot distinguish the two. Callers that
+        must not treat pasted content as command input (for example, Console
+        slash-command parsing) should gate on this real segment state instead.
+
+        Returns:
+            True when at least one segment originated from a paste event.
+        """
+        return any(segment.collapse_state != "literal" for segment in self._segments)
+
     def suppress_next_draft_click(self) -> None:
         """Suppress the synthesized Click that may follow terminal mouse events."""
         self._suppress_next_draft_click = True
