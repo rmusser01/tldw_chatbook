@@ -113,7 +113,8 @@ class MCPInspector(Vertical):
             yield Label("Payload (JSON)", classes="form-label")
             yield TextArea("{}", id="mcp-adv-payload")
             yield Button("Run Action", id="mcp-adv-run", classes="console-action-primary",
-                         compact=True)
+                         compact=True,
+                         tooltip="Run the selected legacy control-plane action with this JSON payload.")
             yield Static("", id="mcp-adv-result", classes="ds-field-row", markup=False)
 
     # -- readiness block -----------------------------------------------------

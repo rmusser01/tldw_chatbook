@@ -81,3 +81,64 @@ async def test_rail_hides_scope_section_for_local_source():
     app = RailApp()
     async with app.run_test() as pilot:
         assert not list(app.query("#mcp-rail-scope"))
+
+
+class RailScopeMismatchApp(App):
+    """Reproduces a restored legacy scope ('team') outside Phase 1's Personal-only options."""
+
+    def compose(self) -> ComposeResult:
+        yield MCPRail(
+            source="server",
+            snapshots=[],
+            selected_server_key=None,
+            scope_options=[("Personal", "personal")],
+            scope_value="team",
+            scope_ref_options=[],
+            scope_ref_value="21",
+            id="mcp-rail",
+        )
+
+
+@pytest.mark.asyncio
+async def test_rail_clamps_scope_value_not_in_options_instead_of_crashing():
+    """Restoring a legacy scope not among Phase 1's options must not crash the Select.
+
+    Regression test: MCPRail.compose() used to pass a restored `scope_value`
+    (e.g. "team") straight through to the scope Select's `value=`, which
+    raises `InvalidSelectValueError` when that value isn't among the
+    Select's options (Phase 1 only offers Personal). The rail's DISPLAY
+    should clamp to the first available option; state tracking of the true
+    restored scope lives in the workbench, not the rail.
+    """
+    app = RailScopeMismatchApp()
+    async with app.run_test() as pilot:
+        select = app.query_one("#mcp-rail-scope-select", Select)
+        assert select.value == "personal"
+        ref_select = app.query_one("#mcp-rail-scope-ref", Select)
+        assert ref_select.value is Select.BLANK
+
+
+class RailScopeRefMismatchApp(App):
+    """Reproduces a restored scope-ref value absent from real (non-empty) scope-ref options."""
+
+    def compose(self) -> ComposeResult:
+        yield MCPRail(
+            source="server",
+            snapshots=[],
+            selected_server_key=None,
+            scope_options=[("Personal", "personal"), ("Team", "team")],
+            scope_value="team",
+            scope_ref_options=[("Org 9", "9")],
+            scope_ref_value="21",
+            id="mcp-rail",
+        )
+
+
+@pytest.mark.asyncio
+async def test_rail_clamps_scope_ref_value_not_in_options_to_no_selection():
+    app = RailScopeRefMismatchApp()
+    async with app.run_test() as pilot:
+        select = app.query_one("#mcp-rail-scope-select", Select)
+        assert select.value == "team"  # present among options — no clamp needed here
+        ref_select = app.query_one("#mcp-rail-scope-ref", Select)
+        assert ref_select.value is Select.NULL

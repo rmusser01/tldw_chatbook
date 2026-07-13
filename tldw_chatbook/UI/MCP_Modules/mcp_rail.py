@@ -123,6 +123,7 @@ class MCPRail(Vertical):
             classes="mcp-rail-row console-action-subdued",
             compact=True,
         )
+        all_row.tooltip = "Show every server in the overview table."
         all_row.set_class(self.selected_server_key is None, "is-active")
         yield all_row
         for index, snap in enumerate(self.snapshots, start=1):
@@ -138,11 +139,26 @@ class MCPRail(Vertical):
         if self.source == "server":
             with Vertical(id="mcp-rail-scope"):
                 yield Label("Scope", classes="form-label")
+                # Phase 1 only ever offers Personal-scope options here; later
+                # phases will supply the real option list (team/org scopes,
+                # etc.). The workbench keeps tracking the true restored scope
+                # in its own state (see MCPWorkbench.get_view_state()) — this
+                # clamp only protects the rail's DISPLAY from a restored
+                # value (e.g. legacy "team" state) that isn't among the
+                # options actually offered, which would otherwise raise
+                # InvalidSelectValueError.
+                scope_options = self.scope_options or [("Personal", "personal")]
+                scope_option_values = [value for _, value in scope_options]
+                scope_value = (
+                    self.scope_value
+                    if self.scope_value in scope_option_values
+                    else scope_option_values[0]
+                )
                 yield Select(
-                    self.scope_options or [("Personal", "personal")],
+                    scope_options,
                     id="mcp-rail-scope-select",
                     allow_blank=False,
-                    value=self.scope_value,
+                    value=scope_value,
                 )
                 yield Label("Scope Entity", classes="form-label")
                 # NOTE: `Select.BLANK` is not a real Select sentinel in this
@@ -155,7 +171,13 @@ class MCPRail(Vertical):
                 # `allow_blank=True` (the default) actually accepts.
                 if self.scope_ref_options:
                     ref_options = self.scope_ref_options
-                    ref_value = self.scope_ref_value if self.scope_ref_value else Select.NULL
+                    ref_option_values = [value for _, value in ref_options]
+                    if self.scope_ref_value and self.scope_ref_value in ref_option_values:
+                        ref_value = self.scope_ref_value
+                    else:
+                        # Restored/stale value not among the offered scope-ref
+                        # options (or no value at all) — no selection.
+                        ref_value = Select.NULL
                 else:
                     ref_options = [("No scope entities", Select.BLANK)]
                     ref_value = Select.BLANK

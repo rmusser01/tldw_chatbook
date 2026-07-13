@@ -64,6 +64,7 @@ class MCPServersMode(Vertical):
                     id="mcp-detail-copy-snippet",
                     classes="console-action-secondary",
                     compact=True,
+                    tooltip="Copy this built-in server's client config snippet to the clipboard.",
                 )
 
     def on_mount(self) -> None:
