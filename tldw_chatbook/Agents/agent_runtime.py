@@ -29,6 +29,13 @@ def parse_fenced_tool_call(text: str) -> ToolCall | None:
     newline = after.find("\n")
     if newline == -1:
         return None
+    # The character right after FENCE_OPEN must end the tag line (only
+    # whitespace may follow before the newline). Otherwise this is a
+    # look-alike tag such as ```tool_calls or ```tool_call_schema, not a
+    # real fence, and must not be parsed as a tool call.
+    tag_line_rest = after[:newline]
+    if tag_line_rest.strip():
+        return None
     body_and_rest = after[newline + 1:]
     close = body_and_rest.find(_FENCE_CLOSE)
     if close == -1:
@@ -52,14 +59,20 @@ def split_visible_text_and_tool_call(text: str) -> tuple[str, ToolCall | None]:
 
     No fence, or a fence that does not parse → the full text stays visible
     and the call is None.
+
+    A look-alike tag (```tool_calls, ```tool_call_schema, ...) that merely
+    starts with FENCE_OPEN does not parse, so scan forward past it to see
+    if a real fence follows later in the text.
     """
-    idx = text.find(FENCE_OPEN)
-    if idx == -1:
-        return text, None
-    call = parse_fenced_tool_call(text[idx:])
-    if call is None:
-        return text, None
-    return text[:idx].rstrip(), call
+    start = 0
+    while True:
+        idx = text.find(FENCE_OPEN, start)
+        if idx == -1:
+            return text, None
+        call = parse_fenced_tool_call(text[idx:])
+        if call is not None:
+            return text[:idx].rstrip(), call
+        start = idx + len(FENCE_OPEN)
 
 
 def stream_prefix_verdict(prefix: str) -> str:
@@ -68,7 +81,23 @@ def stream_prefix_verdict(prefix: str) -> str:
     if not stripped:
         return STREAM_UNDECIDED
     if stripped.startswith(FENCE_OPEN):
-        return STREAM_TOOL_CALL
+        # Matching FENCE_OPEN alone is not decisive: the stream could still
+        # grow into a look-alike tag like ```tool_calls or
+        # ```tool_call_schema. Only a clean line boundary (whitespace then
+        # newline) after FENCE_OPEN confirms a real tool-call fence.
+        after = stripped[len(FENCE_OPEN):]
+        if not after:
+            return STREAM_UNDECIDED
+        i = 0
+        while i < len(after) and after[i] in (" ", "\t"):
+            i += 1
+        if i == len(after):
+            # Nothing but trailing spaces so far — could still become a
+            # newline (tool_call) or more characters (look-alike tag).
+            return STREAM_UNDECIDED
+        if after[i] in ("\n", "\r"):
+            return STREAM_TOOL_CALL
+        return STREAM_TEXT
     if FENCE_OPEN.startswith(stripped):
         return STREAM_UNDECIDED
     return STREAM_TEXT
