@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from loguru import logger
 from textual.app import ComposeResult
 from textual.containers import Vertical, VerticalScroll
 from textual.message import Message
@@ -183,16 +184,29 @@ class MCPInspector(Vertical):
             payload.text = self._action_templates.get(options[0][1], "{}")
 
     def _action_allowed(self, descriptor: dict[str, Any]) -> bool:
-        """Mirror the legacy panel's policy gate; permissive when seams absent."""
+        """Mirror the legacy panel's policy gate; permissive only when seams absent.
+
+        Two distinct cases:
+        - Seams absent (no callable gate/override): permissive by design -
+          this is the test-fake/degraded path where policy enforcement isn't
+          wired up at all.
+        - Seams present but the gate call raises: fail closed. A runtime
+          error must never silently expose an action that policy might
+          forbid, so we log and deny rather than swallow and allow.
+        """
         gate = getattr(self.app, "require_ui_action_allowed", None)
         override = getattr(self._service, "runtime_state_override", None)
         if not callable(gate) or not callable(override):
             return True
+        action_id = str(descriptor.get("action_id") or "")
         try:
-            decision = gate(action_id=str(descriptor.get("action_id") or ""),
-                            runtime_state_override=override())
-        except Exception:
-            return True
+            decision = gate(action_id=action_id, runtime_state_override=override())
+        except Exception as exc:
+            logger.warning(
+                f"MCPInspector: policy gate raised for action_id={action_id!r}; "
+                f"failing closed: {exc}"
+            )
+            return False
         return bool(getattr(decision, "allowed", True))
 
     async def _load_advanced_section(self, section: str) -> None:

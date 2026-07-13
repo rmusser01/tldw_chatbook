@@ -118,3 +118,82 @@ async def test_advanced_runner_reports_invalid_json_without_crashing():
         await pilot.pause()
         assert app.service.action_calls == []
         assert "Invalid JSON" in str(app.query_one("#mcp-adv-result", Static).renderable)
+
+
+class GatedAdvService(FakeAdvService):
+    """Fake advanced service exposing the runtime_state_override seam.
+
+    Combined with an app that defines `require_ui_action_allowed`, this makes
+    both policy-gate seams present so `MCPInspector._action_allowed` actually
+    invokes the gate instead of short-circuiting to permissive.
+    """
+
+    def runtime_state_override(self):
+        return object()  # the gate fakes below ignore the value
+
+
+class GatedInspectorApp(App):
+    """Like InspectorApp, but with a real (callable) policy-gate seam.
+
+    `gate` is invoked as `gate(action_id, runtime_state_override)` in place of
+    `app.require_ui_action_allowed(...)`.
+    """
+
+    def __init__(self, gate) -> None:
+        super().__init__()
+        self.service = GatedAdvService()
+        self._gate = gate
+
+    def compose(self) -> ComposeResult:
+        yield MCPInspector(id="mcp-inspector")
+
+    def on_mount(self) -> None:
+        inspector = self.query_one(MCPInspector)
+        inspector.set_service_context(self.service, [("Overview", "overview")])
+
+    def require_ui_action_allowed(self, *, action_id: str, runtime_state_override):
+        return self._gate(action_id, runtime_state_override)
+
+
+class _Decision:
+    def __init__(self, allowed: bool) -> None:
+        self.allowed = allowed
+
+
+@pytest.mark.asyncio
+async def test_gate_exception_fails_closed_action_not_offered():
+    """A raising policy gate must hide the action, not expose it (fail closed)."""
+
+    def _raise(action_id, runtime_state_override):
+        raise RuntimeError("policy engine unavailable")
+
+    app = GatedInspectorApp(_raise)
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.pause()
+        select = app.query_one("#mcp-adv-action-select", Select)
+        # No allowed descriptors survive -> the select falls back to its
+        # empty state (disabled, blank value) exactly like the
+        # zero-descriptors case in _refresh_advanced_actions.
+        assert select.disabled
+        assert select.value is Select.BLANK
+        offered_values = [value for _, value in select._options]
+        assert "profile.connect" not in offered_values
+
+
+@pytest.mark.asyncio
+async def test_gate_denied_decision_filters_action():
+    """A gate that returns allowed=False must filter the action out.
+
+    This exercises the policy-denied branch already present in
+    `_action_allowed` before this fix; included here as coverage, not RED
+    evidence for the fail-open bug (it may already pass against current
+    code).
+    """
+    app = GatedInspectorApp(lambda action_id, runtime_state_override: _Decision(False))
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.pause()
+        select = app.query_one("#mcp-adv-action-select", Select)
+        assert select.disabled
+        assert select.value is Select.BLANK
+        offered_values = [value for _, value in select._options]
+        assert "profile.connect" not in offered_values
