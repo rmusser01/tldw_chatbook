@@ -667,3 +667,28 @@ def test_save_image_action_only_offered_for_image_messages():
     result = service.dispatch("save-image", with_image)
     assert result.status == "completed"
     assert result.visible_copy == "Saving image to disk."
+
+
+def test_image_chip_falls_back_to_mime_and_size_without_label():
+    from tldw_chatbook.Widgets.Console.console_transcript import _message_render_text
+
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="",
+        image_data=b"x" * 2048,
+        image_mime_type="image/png",
+    )
+    rendered = _message_render_text(message, selected=False)
+    assert "🖼 image/png · 2 KB" in rendered.plain
+
+
+def test_image_chip_metadata_only_keeps_bare_mime():
+    from tldw_chatbook.Widgets.Console.console_transcript import _message_render_text
+
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="look",
+        image_mime_type="image/png",
+    )
+    rendered = _message_render_text(message, selected=False)
+    assert "🖼 image/png" in rendered.plain
