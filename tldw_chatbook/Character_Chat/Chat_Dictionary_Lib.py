@@ -9,6 +9,7 @@ import random
 import re
 import sqlite3
 import warnings
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Any, Tuple, Set
@@ -500,6 +501,281 @@ def apply_replacement_once(text: str, entry: ChatDictionary) -> Tuple[str, int]:
     return replaced_text, replaced_count
 
 
+@dataclass
+class DictionaryEntryDiagnostic:
+    """One matched entry's outcome in the substitution pipeline.
+
+    Args:
+        input_index: Position of the entry in the caller-provided list.
+        pattern: The entry's raw key (slash-delimited for regex entries).
+        status: ``"fired"``, ``"skipped:<stage>"``, or ``"no_replacement"``.
+        replacements: Number of replacements this entry performed.
+        token_cost: Approximate token cost of the entry's content.
+        applied_order: 0-based position in the post-strategy application
+            sequence for entries that reached the replacement loop, else None.
+        content_preview: The first 40 characters of the entry's content.
+    """
+
+    input_index: int
+    pattern: str
+    status: str
+    replacements: int = 0
+    token_cost: int = 0
+    applied_order: Optional[int] = None
+    content_preview: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Returns the record as a plain JSON-safe dict."""
+        return {
+            "input_index": self.input_index,
+            "pattern": self.pattern,
+            "status": self.status,
+            "replacements": self.replacements,
+            "token_cost": self.token_cost,
+            "applied_order": self.applied_order,
+            "content_preview": self.content_preview,
+        }
+
+
+@dataclass
+class DictionaryProcessDiagnostics:
+    """Aggregate diagnostics for one substitution run.
+
+    Totals maintain the invariant ``matched == fired + skipped`` —
+    ``no_replacement`` entries count as skipped. ``tokens_used`` is
+    budget-stage accounting: the summed cost of entries that survived the
+    token-budget stage (including no_replacement survivors), and
+    ``budget_exceeded`` is truncation-derived (at least one matched entry
+    was dropped at the budget stage).
+    """
+
+    entries: List[DictionaryEntryDiagnostic] = field(default_factory=list)
+    matched: int = 0
+    fired: int = 0
+    skipped: int = 0
+    total_replacements: int = 0
+    tokens_used: int = 0
+    token_budget: int = 0
+    budget_exceeded: bool = False
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Returns the diagnostics as a plain JSON-safe dict."""
+        return {
+            "entries": [record.to_dict() for record in self.entries],
+            "matched": self.matched,
+            "fired": self.fired,
+            "skipped": self.skipped,
+            "total_replacements": self.total_replacements,
+            "tokens_used": self.tokens_used,
+            "token_budget": self.token_budget,
+            "budget_exceeded": self.budget_exceeded,
+        }
+
+
+def process_user_input_with_diagnostics(
+    user_input: str,
+    entries: List[ChatDictionary],
+    max_tokens: int = 5000,
+    strategy: str = "sorted_evenly"
+) -> Tuple[str, DictionaryProcessDiagnostics]:
+    """Runs the substitution pipeline and reports per-entry diagnostics.
+
+    Identical behavior to :func:`process_user_input` (which now wraps this
+    function); diagnostics are collected purely from stage-boundary diffs,
+    so no pipeline stage behaves differently.
+
+    Args:
+        user_input: The text input from the user.
+        entries: A list of ``ChatDictionary`` objects to apply.
+        max_tokens: The maximum token budget for applied entries' content.
+        strategy: The sorting strategy for entries before replacement.
+
+    Returns:
+        A ``(processed_text, diagnostics)`` tuple. On critical pipeline
+        failure the original input is returned with whatever diagnostics
+        were collected before the failure.
+    """
+    current_time = datetime.now()
+    original_input_for_fallback = user_input
+    temp_user_input = user_input
+
+    diagnostics = DictionaryProcessDiagnostics(token_budget=max_tokens)
+    # First-wins for pathological duplicate objects in the input list.
+    index_by_id: Dict[int, int] = {}
+    for input_index, candidate in enumerate(entries):
+        index_by_id.setdefault(id(candidate), input_index)
+    matched_snapshot: List[ChatDictionary] = []
+    skip_reason_by_id: Dict[int, str] = {}
+    replacements_by_id: Dict[int, int] = {}
+    applied_order_by_id: Dict[int, int] = {}
+    budget_survivor_ids: Set[int] = set()
+
+    def _record_stage_drops(
+        before: List[ChatDictionary], after: List[ChatDictionary], stage: str
+    ) -> None:
+        surviving = {id(e) for e in after}
+        for candidate in before:
+            if id(candidate) not in surviving and id(candidate) not in skip_reason_by_id:
+                skip_reason_by_id[id(candidate)] = f"skipped:{stage}"
+
+    def _finalize() -> None:
+        for candidate in matched_snapshot:
+            entry_id = id(candidate)
+            replacements = replacements_by_id.get(entry_id, 0)
+            if entry_id in skip_reason_by_id:
+                status = skip_reason_by_id[entry_id]
+            elif replacements > 0:
+                status = "fired"
+            else:
+                status = "no_replacement"
+            diagnostics.entries.append(
+                DictionaryEntryDiagnostic(
+                    input_index=index_by_id.get(entry_id, -1),
+                    pattern=str(candidate.raw_key),
+                    status=status,
+                    replacements=replacements,
+                    token_cost=calculate_token_usage([candidate]),
+                    applied_order=applied_order_by_id.get(entry_id),
+                    content_preview=str(candidate.content or "")[:40],
+                )
+            )
+        diagnostics.matched = len(matched_snapshot)
+        diagnostics.fired = sum(1 for r in diagnostics.entries if r.status == "fired")
+        diagnostics.skipped = diagnostics.matched - diagnostics.fired
+        diagnostics.total_replacements = sum(r.replacements for r in diagnostics.entries)
+        # Budget-stage accounting: survivors of the budget stage, including
+        # no_replacement survivors (they consumed budget without firing).
+        diagnostics.tokens_used = sum(
+            calculate_token_usage([candidate])
+            for candidate in matched_snapshot
+            if id(candidate) in budget_survivor_ids
+        )
+
+    try:
+        # 1. Match entries  (verbatim from the original body)
+        logging.debug(f"Chat Dictionary: Initial matching for: {user_input[:100]}")
+        try:
+            valid_initial_entries = [e for e in entries if isinstance(e, ChatDictionary)]
+            if len(valid_initial_entries) != len(entries):
+                logging.warning("Some provided entries were not ChatDictionary instances and were skipped.")
+            matched_entries = match_whole_words(valid_initial_entries, user_input)
+        except re.error as e:
+            log_counter("chat_dict_regex_error", labels={"key": "compilation_phase"})
+            logging.error(f"Invalid regex pattern during initial matching. Error: {str(e)}")
+            matched_entries = []
+        except Exception as e_match:
+            log_counter("chat_dict_match_error")
+            logging.error(f"Error during initial matching: {str(e_match)}", exc_info=True)
+            matched_entries = []
+
+        matched_snapshot = list(matched_entries)                     # ADDED
+        logging.debug(f"Matched entries after initial filtering: {[e.raw_key for e in matched_entries]}")
+
+        # 2. Group scoring (verbatim try/except, with a before-list diff)
+        stage_before = list(matched_entries)                          # ADDED
+        try:
+            logging.debug(f"Chat Dictionary: Applying group scoring for {len(matched_entries)} entries")
+            matched_entries = group_scoring(matched_entries)
+        except Exception as e_gs:
+            log_counter("chat_dict_group_scoring_error")
+            logging.error(f"Error in group scoring: {str(e_gs)}")
+            matched_entries = []
+        _record_stage_drops(stage_before, matched_entries, "group_scoring")   # ADDED
+
+        # 3. Probability filter (same pattern)
+        stage_before = list(matched_entries)                          # ADDED
+        try:
+            logging.debug(f"Chat Dictionary: Filtering by probability for {len(matched_entries)} entries")
+            matched_entries = filter_by_probability(matched_entries)
+        except Exception as e_prob:
+            log_counter("chat_dict_probability_error")
+            logging.error(f"Error in probability filtering: {str(e_prob)}")
+            matched_entries = []
+        _record_stage_drops(stage_before, matched_entries, "probability")     # ADDED
+
+        # 4. Timed effects (same pattern around the original loop)
+        stage_before = list(matched_entries)                          # ADDED
+        active_timed_entries = []
+        try:
+            logging.debug("Chat Dictionary: Applying timed effects")
+            for entry in matched_entries:
+                if apply_timed_effects(entry, current_time):
+                    active_timed_entries.append(entry)
+            matched_entries = active_timed_entries
+        except Exception as e_time:
+            log_counter("chat_dict_timed_effects_error")
+            logging.error(f"Error applying timed effects: {str(e_time)}")
+            matched_entries = []
+        _record_stage_drops(stage_before, matched_entries, "timed_effects")   # ADDED
+
+        # 5. Token budget (same pattern; truncation drives budget_exceeded)
+        stage_before = list(matched_entries)                          # ADDED
+        try:
+            logging.debug(f"Chat Dictionary: Enforcing token budget for {len(matched_entries)} entries")
+            matched_entries = enforce_token_budget(matched_entries, max_tokens)
+        except TokenBudgetExceededWarning as e:
+            log_counter("chat_dict_token_limit")
+            logging.warning(str(e))
+            matched_entries = []
+        except Exception as e_budget:
+            log_counter("chat_dict_token_budget_error")
+            logging.error(f"Error enforcing token budget: {str(e_budget)}")
+            matched_entries = []
+        _record_stage_drops(stage_before, matched_entries, "token_budget")    # ADDED
+        budget_survivor_ids = {id(e) for e in matched_entries}               # ADDED
+        diagnostics.budget_exceeded = len(matched_entries) != len(stage_before)  # ADDED
+
+        # Alert (dead code in practice — preserved verbatim, not used for diagnostics)
+        try:
+            alert_token_budget_exceeded(matched_entries, max_tokens)
+        except Exception as e_alert:
+            log_counter("chat_dict_token_alert_error")
+            logging.error(f"Error in token budget alert: {str(e_alert)}")
+
+        # 6. Strategy sort (sort-only; drops are only possible via its except)
+        stage_before = list(matched_entries)                          # ADDED
+        try:
+            logging.debug("Chat Dictionary: Applying replacement strategy")
+            matched_entries = apply_strategy(matched_entries, strategy)
+        except Exception as e_strategy:
+            log_counter("chat_dict_strategy_error")
+            logging.error(f"Error applying strategy: {str(e_strategy)}")
+            matched_entries = []
+        _record_stage_drops(stage_before, matched_entries, "strategy_error")  # ADDED (defensive)
+
+        # 7. Replacements (verbatim loop + order/count recording)
+        for applied_position, entry in enumerate(matched_entries):    # ADDED enumerate
+            applied_order_by_id[id(entry)] = applied_position         # ADDED
+            try:
+                logging.debug("Chat Dictionary: Applying replacements")
+                replacements_done_for_this_entry = 0
+                current_max_replacements = entry.max_replacements
+                while current_max_replacements > 0:
+                    temp_user_input, replaced_count = apply_replacement_once(temp_user_input, entry)
+                    if replaced_count > 0:
+                        replacements_done_for_this_entry += 1
+                        current_max_replacements -= 1
+                        entry.last_triggered = current_time
+                    else:
+                        break
+                if replacements_done_for_this_entry > 0:
+                    logging.debug(f"Replaced {replacements_done_for_this_entry} occurrences of '{entry.raw_key}'")
+                replacements_by_id[id(entry)] = replacements_done_for_this_entry  # ADDED
+            except Exception as e_replace:
+                log_counter("chat_dict_replacement_error", labels={"key": entry.raw_key})
+                logging.error(f"Error applying replacement for entry {entry.raw_key}: {str(e_replace)}", exc_info=True)
+                continue
+
+    except Exception as e_crit:
+        log_counter("chat_dict_processing_error")
+        logging.error(f"Critical error in process_user_input: {str(e_crit)}", exc_info=True)
+        _finalize()                                                   # ADDED
+        return original_input_for_fallback, diagnostics               # CHANGED (tuple)
+
+    _finalize()                                                       # ADDED
+    return temp_user_input, diagnostics                               # CHANGED (tuple)
+
+
 def process_user_input(
     user_input: str,
     entries: List[ChatDictionary],
@@ -535,129 +811,12 @@ def process_user_input(
     Returns:
         The processed user input string after all applicable transformations.
         Returns the original input if critical errors occur.
+        Diagnostics-aware callers should use process_user_input_with_diagnostics.
     """
-    current_time = datetime.now()
-    original_input_for_fallback = user_input # Save for critical error case
-    temp_user_input = user_input
-
-    try:
-        # 1. Match entries (uses refined match_whole_words for strings)
-        logging.debug(f"Chat Dictionary: Initial matching for: {user_input[:100]}")
-        # The original `entry.matches()` is a simple check. `match_whole_words` is more robust.
-        # The original `process_user_input` had `entry.matches(user_input)` then later `match_whole_words`.
-        # Consolidating to `match_whole_words` as the primary matching mechanism.
-        try:
-            # Ensure entries are ChatDictionary instances
-            valid_initial_entries = [e for e in entries if isinstance(e, ChatDictionary)]
-            if len(valid_initial_entries) != len(entries):
-                logging.warning("Some provided entries were not ChatDictionary instances and were skipped.")
-
-            matched_entries = match_whole_words(valid_initial_entries, user_input)
-        except re.error as e:
-            log_counter("chat_dict_regex_error", labels={"key": "compilation_phase"}) # Generic key
-            logging.error(f"Invalid regex pattern during initial matching. Error: {str(e)}")
-            matched_entries = []
-        except Exception as e_match:
-            log_counter("chat_dict_match_error")
-            logging.error(f"Error during initial matching: {str(e_match)}", exc_info=True)
-            matched_entries = []
-
-
-        logging.debug(f"Matched entries after initial filtering: {[e.raw_key for e in matched_entries]}")
-
-        # 2. Apply group scoring
-        try:
-            logging.debug(f"Chat Dictionary: Applying group scoring for {len(matched_entries)} entries")
-            matched_entries = group_scoring(matched_entries)
-        except Exception as e_gs: # More specific exception if defined (ChatProcessingError)
-            log_counter("chat_dict_group_scoring_error")
-            logging.error(f"Error in group scoring: {str(e_gs)}")
-            matched_entries = []  # Fallback to empty list
-
-        # 3. Apply probability filter
-        try:
-            logging.debug(f"Chat Dictionary: Filtering by probability for {len(matched_entries)} entries")
-            matched_entries = filter_by_probability(matched_entries)
-        except Exception as e_prob:
-            log_counter("chat_dict_probability_error")
-            logging.error(f"Error in probability filtering: {str(e_prob)}")
-            matched_entries = []  # Fallback to empty list
-
-        # 4. Apply timed effects (filter out those not ready)
-        # And update last_triggered for those that *will* be used
-        active_timed_entries = []
-        try:
-            logging.debug("Chat Dictionary: Applying timed effects")
-            for entry in matched_entries:
-                if apply_timed_effects(entry, current_time): # Checks if eligible
-                    active_timed_entries.append(entry)
-            matched_entries = active_timed_entries
-        except Exception as e_time:
-            log_counter("chat_dict_timed_effects_error")
-            logging.error(f"Error applying timed effects: {str(e_time)}")
-            matched_entries = []  # Fallback to empty list
-
-        # 5. Enforce token budget
-        try:
-            logging.debug(f"Chat Dictionary: Enforcing token budget for {len(matched_entries)} entries")
-            matched_entries = enforce_token_budget(matched_entries, max_tokens)
-        except TokenBudgetExceededWarning as e:
-            log_counter("chat_dict_token_limit")
-            logging.warning(str(e))
-            matched_entries = []  # Fallback to empty list
-        except Exception as e_budget:
-            log_counter("chat_dict_token_budget_error")
-            logging.error(f"Error enforcing token budget: {str(e_budget)}")
-            matched_entries = []  # Fallback to empty list
-
-        # Alert if token budget exceeded
-        try:
-            alert_token_budget_exceeded(matched_entries, max_tokens)
-        except Exception as e_alert:
-            log_counter("chat_dict_token_alert_error")
-            logging.error(f"Error in token budget alert: {str(e_alert)}")
-
-        # Apply replacement strategy
-        try:
-            logging.debug("Chat Dictionary: Applying replacement strategy")
-            matched_entries = apply_strategy(matched_entries, strategy)
-        except Exception as e_strategy:
-            log_counter("chat_dict_strategy_error")
-            logging.error(f"Error applying strategy: {str(e_strategy)}")
-            matched_entries = []  # Fallback to empty list
-
-        # Generate output with single replacement per match
-        for entry in matched_entries:
-            try:
-                logging.debug("Chat Dictionary: Applying replacements")
-                # Use a copy of max_replacements for this run if needed, or modify original for state
-                replacements_done_for_this_entry = 0
-                # Original code had `entry.max_replacements > 0` check outside loop.
-                # If multiple replacements are allowed by one entry definition:
-                current_max_replacements = entry.max_replacements # Use current value
-                while current_max_replacements > 0:
-                    temp_user_input, replaced_count = apply_replacement_once(temp_user_input, entry)
-                    if replaced_count > 0:
-                        replacements_done_for_this_entry += 1
-                        current_max_replacements -= 1
-                        # Update last_triggered for entries that actually made a replacement
-                        entry.last_triggered = current_time
-                    else:
-                        break # No more matches for this key
-                if replacements_done_for_this_entry > 0:
-                     logging.debug(f"Replaced {replacements_done_for_this_entry} occurrences of '{entry.raw_key}'")
-
-            except Exception as e_replace:
-                log_counter("chat_dict_replacement_error", labels={"key": entry.raw_key})
-                logging.error(f"Error applying replacement for entry {entry.raw_key}: {str(e_replace)}", exc_info=True)
-                continue
-
-    except Exception as e_crit: # Catch-all for ChatProcessingError or other unexpected issues
-        log_counter("chat_dict_processing_error")
-        logging.error(f"Critical error in process_user_input: {str(e_crit)}", exc_info=True)
-        return original_input_for_fallback # Return original input on critical failure
-
-    return temp_user_input
+    processed_text, _diagnostics = process_user_input_with_diagnostics(
+        user_input, entries, max_tokens=max_tokens, strategy=strategy
+    )
+    return processed_text
 
 
 #######################################################################################################################
