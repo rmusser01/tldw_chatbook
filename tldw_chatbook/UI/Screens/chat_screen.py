@@ -1113,6 +1113,7 @@ class ChatScreen(BaseAppScreen):
         self._console_control_model: Optional[Any] = None
         self._console_library_rag_query = ""
         self._console_chat_store: ConsoleChatStore | None = None
+        self._console_agent_bridge: Any | None = None
         self._console_rail_prune_dispatched = False
         self._console_workspace_conversation_query = ""
         self._console_workspace_conversation_search_timer: Any | None = None
@@ -1888,6 +1889,39 @@ class ChatScreen(BaseAppScreen):
             )
         return self._console_chat_store
 
+    def _ensure_console_agent_bridge(self) -> Any:
+        """Return the native Console agent bridge, creating it lazily.
+
+        Returns ``None`` (no agent runtime) when there is no durable
+        ChaChaNotes DB to key the sibling ``AgentRunsDB`` file off of (e.g. an
+        in-memory test harness) -- callers fall back to the legacy direct
+        stream in that case regardless of the config gate.
+        """
+        if self._console_agent_bridge is not None:
+            return self._console_agent_bridge
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        db_path = getattr(db, "db_path", None) if db is not None else None
+        if not db_path or str(db_path) == ":memory:":
+            self._console_agent_bridge = None
+            return None
+        from pathlib import Path
+
+        from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+        runs_db = AgentRunsDB(Path(db_path).parent / "agent_runs.db")
+        self._console_agent_bridge = ConsoleAgentBridge(
+            agent_runs_db=runs_db,
+            store=self._ensure_console_chat_store(),
+            provider_gateway=self._ensure_console_provider_gateway(),
+        )
+        return self._console_agent_bridge
+
+    def _console_agent_runtime_enabled(self) -> bool:
+        """Return whether ``[console] agent_runtime`` gates in the agent loop (default on)."""
+        value = self._console_config().get("agent_runtime", True)
+        return bool(value) if isinstance(value, (bool, int)) else True
+
     def _ensure_console_provider_gateway(self) -> Any:
         """Return the native Console provider gateway with a test injection seam."""
         if self._console_provider_gateway is None:
@@ -1929,6 +1963,8 @@ class ChatScreen(BaseAppScreen):
                 thinking_budget_tokens=selection.thinking_budget_tokens,
                 streaming=selection.streaming,
                 system_prompt=selection.system_prompt,
+                agent_bridge=self._ensure_console_agent_bridge(),
+                agent_runtime_enabled=self._console_agent_runtime_enabled(),
             )
         self._console_chat_controller.on_submission_accepted = (
             self._on_console_submission_accepted

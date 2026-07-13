@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any, Callable, Protocol
+from typing import TYPE_CHECKING, Any, Callable, Protocol
 
 from tldw_chatbook.Chat.attachment_core import (
     image_content_parts,
@@ -24,6 +24,9 @@ from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleCha
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 from tldw_chatbook.model_capabilities import is_vision_capable
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 
 
 MAX_CONSOLE_DRAFT_LENGTH = 100_000
@@ -111,6 +114,8 @@ class ConsoleChatController:
         thinking_budget_tokens: int | None = None,
         streaming: bool = True,
         system_prompt: str | None = None,
+        agent_bridge: "ConsoleAgentBridge | None" = None,
+        agent_runtime_enabled: bool = True,
     ) -> None:
         self.store = store
         self.provider_gateway = provider_gateway
@@ -133,6 +138,8 @@ class ConsoleChatController:
         self.thinking_budget_tokens = thinking_budget_tokens
         self.streaming = streaming
         self.system_prompt = system_prompt
+        self._agent_bridge = agent_bridge
+        self._agent_runtime_enabled = agent_runtime_enabled
         self.run_state = ConsoleRunState()
         self.run_state_history: list[ConsoleRunStatus] = [self.run_state.status]
         #: Optional owner hook invoked once a submit is accepted (user message
@@ -604,6 +611,14 @@ class ConsoleChatController:
         prepare_retry: bool = False,
         variant_mode: bool = False,
     ) -> ConsoleSubmitResult:
+        if self._agent_runtime_enabled and self._agent_bridge is not None:
+            return await self._run_agent_reply(
+                resolution=resolution,
+                provider_messages=provider_messages,
+                assistant_message_id=assistant_message_id,
+                prepare_retry=prepare_retry,
+                variant_mode=variant_mode,
+            )
         self._active_assistant_message_id = assistant_message_id
         self._active_stream_task = asyncio.current_task()
         self._stop_requested = False
@@ -713,6 +728,110 @@ class ConsoleChatController:
                 self._active_assistant_message_id = None
                 self._active_stream_task = None
                 self._stop_requested = False
+
+    async def _run_agent_reply(
+        self,
+        *,
+        resolution: Any,
+        provider_messages: list[dict[str, Any]],
+        assistant_message_id: str,
+        prepare_retry: bool,
+        variant_mode: bool,
+    ) -> ConsoleSubmitResult:
+        """Run the agent loop as the reply engine, streaming into the target row."""
+        self._active_assistant_message_id = assistant_message_id
+        self._active_stream_task = asyncio.current_task()
+        self._stop_requested = False
+        self._set_run_state(ConsoleRunState(ConsoleRunStatus.STREAMING, "Agent running."))
+        try:
+            session_id = self.store.session_id_for_message(assistant_message_id)
+        except KeyError:
+            return self._session_closed_result()
+        if variant_mode:
+            self.store.begin_variant_stream(assistant_message_id)
+        elif prepare_retry:
+            self.store.prepare_message_retry(assistant_message_id)
+
+        # Split the leading session system message off the payload; the
+        # agent config carries it (composed with the operating prompt).
+        session_system_prompt = ""
+        agent_messages = list(provider_messages)
+        if agent_messages and agent_messages[0].get("role") == ConsoleMessageRole.SYSTEM.value:
+            session_system_prompt = str(agent_messages[0].get("content", ""))
+            agent_messages = agent_messages[1:]
+
+        conversation_id = self._agent_conversation_id(session_id)
+        should_cancel = lambda: self._stop_requested  # noqa: E731 — tiny closure
+
+        try:
+            outcome = await asyncio.to_thread(
+                self._agent_bridge.run_reply,
+                conversation_id=conversation_id,
+                session_id=session_id,
+                resolution=resolution,
+                assistant_message_id=assistant_message_id,
+                model=self.model or self.configured_model or "",
+                session_system_prompt=session_system_prompt,
+                agent_messages=agent_messages,
+                should_cancel=should_cancel,
+                supersede_previous=bool(prepare_retry or variant_mode),
+            )
+        except asyncio.CancelledError:
+            if self._stop_requested:
+                try:
+                    stopped = self._mark_stream_stopped(
+                        assistant_message_id, visible_copy="Response stopped.")
+                except KeyError:
+                    return self._session_closed_result()
+                return ConsoleSubmitResult(True, True, stopped.content)
+            raise
+        finally:
+            if self._active_stream_task is asyncio.current_task():
+                self._active_assistant_message_id = None
+                self._active_stream_task = None
+                self._stop_requested = False
+
+        return self._finalize_agent_reply(
+            assistant_message_id, session_id, outcome, variant_mode=variant_mode)
+
+    def _agent_conversation_id(self, session_id: str) -> str:
+        """Return the durable id the run store is keyed by (persisted id when set)."""
+        for session in self.store.sessions():
+            if session.id == session_id:
+                return session.persisted_conversation_id or session_id
+        return session_id
+
+    def _finalize_agent_reply(
+        self, assistant_message_id: str, session_id: str, outcome: Any,
+        *, variant_mode: bool,
+    ) -> ConsoleSubmitResult:
+        from tldw_chatbook.Agents.agent_models import RUN_CANCELLED, RUN_DONE
+
+        if outcome.status == RUN_CANCELLED:
+            try:
+                stopped = self._mark_stream_stopped(
+                    assistant_message_id, visible_copy="Response stopped.")
+            except KeyError:
+                return self._session_closed_result()
+            return ConsoleSubmitResult(True, True, stopped.content)
+        try:
+            message = self.store.get_message(assistant_message_id)
+            if not message.content.strip() and outcome.status != RUN_DONE:
+                # Tool-only/stuck/error ended with no visible answer; surface status.
+                self.store.append_stream_chunk(
+                    assistant_message_id, f"[agent {outcome.status}]")
+            if variant_mode:
+                completed = self.store.finalize_variant_stream(assistant_message_id)
+            else:
+                completed = self.store.mark_message_complete(assistant_message_id)
+        except KeyError:
+            return self._session_closed_result()
+        status = (ConsoleRunStatus.COMPLETED if outcome.status == RUN_DONE
+                  else ConsoleRunStatus.FAILED)
+        copy = ("Response complete." if outcome.status == RUN_DONE
+                else f"Agent run {outcome.status}.")
+        self._set_run_state(ConsoleRunState(status, copy))
+        return ConsoleSubmitResult(True, True, completed.content)
 
     def _leading_system_message(self) -> list[dict[str, str]]:
         """Return a single-item system message list when a system prompt is set.
