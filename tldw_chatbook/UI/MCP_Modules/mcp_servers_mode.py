@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Vertical, VerticalScroll
 from textual.message import Message
@@ -14,7 +15,7 @@ from tldw_chatbook.MCP.readiness import (
     ReadinessState,
     aggregate_summary,
 )
-from tldw_chatbook.MCP.redaction import redact_args
+from tldw_chatbook.MCP.redaction import redact_args, redact_url
 
 _TABLE_COLUMNS = ("Name", "Transport", "Status", "Tools", "Auth", "Scope")
 
@@ -82,15 +83,36 @@ class MCPServersMode(Vertical):
         summary.update(aggregate_summary(self._snapshots))
         table = self.query_one("#mcp-servers-table", DataTable)
         table.clear()
+        seen_keys: set[str] = set()
         for snap in self._snapshots:
+            row_key = snap.server_key
+            if row_key in seen_keys:
+                # Two malformed records can both fall back to the same
+                # server_key (e.g. two local profiles missing profile_id
+                # both become "local:unknown" -- see
+                # local_profile_readiness()). DataTable.add_row(key=...)
+                # raises DuplicateKey for a repeat; de-dupe with a suffix
+                # instead of crashing the whole canvas over bad data.
+                suffix = 2
+                candidate = f"{row_key}#{suffix}"
+                while candidate in seen_keys:
+                    suffix += 1
+                    candidate = f"{row_key}#{suffix}"
+                row_key = candidate
+            seen_keys.add(row_key)
             table.add_row(
-                snap.label,
+                # label/auth_display/scope_display are user-controlled
+                # (local profile ids, server-reported names) and DataTable
+                # parses plain str cells as Rich markup -- wrap in Text so a
+                # value like "[/bold]docs" can't crash the app
+                # (MarkupError) and "[red]x[/red]" can't inject styling.
+                Text(snap.label),
                 snap.transport,
                 snap.badge_text(),
                 "—" if snap.tool_count is None else str(snap.tool_count),
-                snap.auth_display,
-                snap.scope_display,
-                key=snap.server_key,
+                Text(snap.auth_display),
+                Text(snap.scope_display),
+                key=row_key,
             )
         callouts = self.query_one("#mcp-overview-callouts", Vertical)
         callouts.remove_children()
@@ -139,7 +161,8 @@ class MCPServersMode(Vertical):
                 suffix = f": {names}" if names else ""
                 lines.append(f"{kind.title()} · {len(items)}{suffix}")
         elif snapshot.source == "server":
-            lines.append(f"Base URL · {detail.get('base_url') or '—'}")
+            base_url = str(detail.get("base_url") or "")
+            lines.append(f"Base URL · {redact_url(base_url) if base_url else '—'}")
             lines.append(f"Auth · {snapshot.auth_display}")
             lines.append("External server records: see Advanced ▸ External Servers.")
         else:  # builtin

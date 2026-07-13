@@ -185,6 +185,194 @@ async def test_gate_exception_fails_closed_action_not_offered():
         assert "profile.connect" not in offered_values
 
 
+class SectionAwareFakeService:
+    """Mirrors `UnifiedMCPControlPlaneService` semantics: `available_actions()`
+    depends on the section that `load_section()` last selected -- Phase 1's
+    governance/inventory/advanced actions only exist once the matching
+    section has actually been loaded."""
+
+    def __init__(self) -> None:
+        self.section = "overview"  # fresh-context default
+        self.run_calls: list[tuple[str, dict]] = []
+
+    async def load_section(self, section=None):
+        self.section = section or self.section
+        return {"source": "local", "section": self.section}
+
+    def available_actions(self):
+        if self.section == "external_servers":
+            return [
+                {
+                    "name": "profile.connect",
+                    "label": "Connect Profile",
+                    "action_id": "x",
+                    "payload_template": '{"profile_id":"demo"}',
+                }
+            ]
+        if self.section == "governance":
+            return [
+                {
+                    "name": "governance_rule.save",
+                    "label": "Save Governance Rule",
+                    "action_id": "y",
+                    "payload_template": "{}",
+                }
+            ]
+        return []  # overview / inventory-not-modeled etc.
+
+    async def run_action(self, action_name, payload):
+        self.run_calls.append((action_name, dict(payload or {})))
+        return {"ok": True}
+
+
+class SectionAwareInspectorApp(App):
+    def __init__(self) -> None:
+        super().__init__()
+        self.service = SectionAwareFakeService()
+
+    def compose(self) -> ComposeResult:
+        yield MCPInspector(id="insp")
+
+    def on_mount(self) -> None:
+        self.query_one(MCPInspector).set_service_context(
+            self.service,
+            [
+                ("Overview", "overview"),
+                ("External Servers", "external_servers"),
+                ("Governance", "governance"),
+            ],
+        )
+
+
+@pytest.mark.asyncio
+async def test_advanced_actions_follow_section_changes():
+    """C2 regression: switching the Advanced section must re-derive actions.
+
+    Before the fix, `available_actions()` was only consulted once, in
+    `set_service_context()`. Changing the Advanced section only reloaded the
+    rendered content, leaving governance/inventory/advanced actions
+    (governance_rule.save, runtime.access.preview, resource.read,
+    prompt.get, ...) permanently unreachable -- a capability regression vs
+    the legacy panel, which re-synced actions per section.
+    """
+    app = SectionAwareInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        action_select = app.query_one("#mcp-adv-action-select", Select)
+        run_btn = app.query_one("#mcp-adv-run", Button)
+        # Fresh-context default section ("overview") has zero descriptors.
+        assert action_select.disabled
+        assert action_select.value is Select.BLANK
+        assert run_btn.disabled
+
+        section_select = app.query_one("#mcp-adv-section-select", Select)
+        section_select.value = "governance"
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.service.section == "governance"
+        assert action_select.value == "governance_rule.save", (
+            f"stale actions: {action_select.value!r} (disabled={action_select.disabled})"
+        )
+        assert not action_select.disabled
+        assert not run_btn.disabled
+
+
+@pytest.mark.asyncio
+async def test_advanced_actions_zero_descriptor_section_resets_payload_to_empty_object():
+    """C2 fix detail: switching to a zero-descriptor section must reset the
+    payload TextArea to "{}" (legacy panel behavior), not leave a stale
+    template from whatever action was previously selected."""
+    app = SectionAwareInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        section_select = app.query_one("#mcp-adv-section-select", Select)
+        payload = app.query_one("#mcp-adv-payload", TextArea)
+
+        section_select.value = "governance"
+        await pilot.pause()
+        await pilot.pause()
+        assert "{}" == payload.text  # governance_rule.save's own template
+
+        payload.text = "not empty"
+        section_select.value = "overview"
+        await pilot.pause()
+        await pilot.pause()
+
+        action_select = app.query_one("#mcp-adv-action-select", Select)
+        assert action_select.disabled
+        assert action_select.value is Select.BLANK
+        assert payload.text == "{}"
+
+
+class OverlappingActionsService:
+    """Two sections that share one action name (by design, not by accident)
+    -- used to prove the action re-derivation preserves selection instead of
+    always resetting to the new section's first option."""
+
+    def __init__(self) -> None:
+        self.section = "overview"
+
+    async def load_section(self, section=None):
+        self.section = section or self.section
+        return {"source": "local", "section": self.section}
+
+    def available_actions(self):
+        if self.section == "alpha":
+            return [
+                {"name": "action.a", "label": "Action A", "action_id": "a", "payload_template": "{}"},
+                {"name": "action.shared", "label": "Shared Action", "action_id": "shared",
+                 "payload_template": '{"x":1}'},
+            ]
+        if self.section == "beta":
+            return [
+                {"name": "action.shared", "label": "Shared Action", "action_id": "shared",
+                 "payload_template": '{"x":1}'},
+                {"name": "action.b", "label": "Action B", "action_id": "b", "payload_template": "{}"},
+            ]
+        return []
+
+    async def run_action(self, action_name, payload):
+        return {"ok": True}
+
+
+class OverlappingActionsApp(App):
+    def __init__(self) -> None:
+        super().__init__()
+        self.service = OverlappingActionsService()
+
+    def compose(self) -> ComposeResult:
+        yield MCPInspector(id="insp")
+
+    def on_mount(self) -> None:
+        self.query_one(MCPInspector).set_service_context(
+            self.service, [("Alpha", "alpha"), ("Beta", "beta")]
+        )
+
+
+@pytest.mark.asyncio
+async def test_advanced_action_selection_preserved_across_section_switch_when_still_valid():
+    """C2 fix detail: legacy parity -- if the currently selected action name
+    is still offered by the new section's descriptor set, keep it selected
+    instead of resetting to the new section's first option."""
+    app = OverlappingActionsApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        action_select = app.query_one("#mcp-adv-action-select", Select)
+        action_select.value = "action.shared"
+        await pilot.pause()
+
+        section_select = app.query_one("#mcp-adv-section-select", Select)
+        section_select.value = "beta"
+        await pilot.pause()
+        await pilot.pause()
+
+        assert action_select.value == "action.shared"
+
+
 @pytest.mark.asyncio
 async def test_gate_denied_decision_filters_action():
     """A gate that returns allowed=False must filter the action out.

@@ -83,14 +83,17 @@ class MCPScreen(BaseAppScreen):
         legacy = self.state_data.get("unified_mcp_view_state")
         return legacy if isinstance(legacy, dict) else None
 
+    def _sync_mode_chips(self, active_mode: str) -> None:
+        for candidate, spec in MCP_HUB_MODES.items():
+            chips = list(self.query(f"#{spec['button_id']}"))
+            if chips:
+                chips[0].set_class(candidate == active_mode, "is-active")
+
     def _activate_mode(self, mode: str) -> None:
         if self.workbench is None:
             return
         self.workbench.set_mode(mode)
-        for candidate, spec in MCP_HUB_MODES.items():
-            chips = list(self.query(f"#{spec['button_id']}"))
-            if chips:
-                chips[0].set_class(candidate == self.workbench.active_mode, "is-active")
+        self._sync_mode_chips(self.workbench.active_mode)
 
     def action_mcp_mode(self, mode: str) -> None:
         self._activate_mode(mode)
@@ -101,6 +104,10 @@ class MCPScreen(BaseAppScreen):
             return
         event.stop()
         self._activate_mode(mode)
+
+    def on_mcp_workbench_mode_restored(self, event: MCPWorkbench.ModeRestored) -> None:
+        event.stop()
+        self._sync_mode_chips(event.mode)
 
     def save_state(self) -> dict[str, Any]:
         state = super().save_state()

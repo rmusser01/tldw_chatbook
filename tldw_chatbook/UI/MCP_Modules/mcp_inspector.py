@@ -173,6 +173,11 @@ class MCPInspector(Vertical):
         action_select = self.query_one("#mcp-adv-action-select", Select)
         payload = self.query_one("#mcp-adv-payload", TextArea)
         run_button = self.query_one("#mcp-adv-run", Button)
+        # Legacy-parity: keep the current action selected across a section
+        # switch when it's still offered by the new section's descriptor
+        # set, instead of always resetting to the new section's first
+        # option.
+        previous_value = None if _is_blank(action_select.value) else action_select.value
         descriptors = []
         if self._service is not None:
             loader = getattr(self._service, "available_actions", None)
@@ -187,13 +192,18 @@ class MCPInspector(Vertical):
                 action_select.value = Select.BLANK
                 action_select.disabled = True
                 run_button.disabled = True
+                # Legacy behavior: a section with nothing to run resets the
+                # payload editor rather than leaving a stale template behind.
+                payload.text = "{}"
                 return
             options = [(str(d["label"]), str(d["name"])) for d in descriptors]
+            option_values = [value for _, value in options]
+            selected = previous_value if previous_value in option_values else options[0][1]
             action_select.set_options(options)
-            action_select.value = options[0][1]
+            action_select.value = selected
             action_select.disabled = False
             run_button.disabled = False
-            payload.text = self._action_templates.get(options[0][1], "{}")
+            payload.text = self._action_templates.get(selected, "{}")
 
     def _action_allowed(self, descriptor: dict[str, Any]) -> bool:
         """Mirror the legacy panel's policy gate; permissive only when seams absent.
@@ -228,6 +238,13 @@ class MCPInspector(Vertical):
         self.query_one("#mcp-adv-content", Static).update(
             render_unified_mcp_section(section, payload)
         )
+        # C2: available_actions() is section-dependent (mirrors the legacy
+        # panel, unified_mcp_panel.py). `load_section()` above is what
+        # actually moves the service's notion of "current section" forward,
+        # so re-derive the action list only now that it reflects the section
+        # this call just loaded -- otherwise governance/inventory/advanced
+        # actions stay permanently unreachable after the first section.
+        self._refresh_advanced_actions()
 
     def on_select_changed(self, event: Select.Changed) -> None:
         select_id = event.select.id or ""

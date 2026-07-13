@@ -60,7 +60,16 @@ def redact_mapping(data: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def redact_args(args: Sequence[str]) -> list[str]:
-    """Redact CLI arg values: `--api-key VALUE` pairs and `key=value` forms."""
+    """Redact CLI arg values: `--api-key VALUE` pairs and `key=value` forms.
+
+    Known residual leak: if the VALUE following a secret flag itself starts
+    with "-" (e.g. `--api-key -9f...`, or any secret token that happens to
+    start with a hyphen), it is treated as a new flag rather than the
+    previous flag's value, and is re-evaluated and appended unredacted
+    instead of being replaced with REDACTED. Only genuine `--flag value`
+    pairs where the value does not start with "-" are covered by the
+    flag-then-value branch below.
+    """
     redacted: list[str] = []
     previous_was_secret_flag = False
     for arg in args:

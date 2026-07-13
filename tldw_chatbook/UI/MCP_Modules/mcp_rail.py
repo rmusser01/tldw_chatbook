@@ -86,6 +86,17 @@ class MCPRail(Vertical):
         self.scope_ref_options = scope_ref_options
         self.scope_ref_value = scope_ref_value
         self._row_keys: list[str | None] = []
+        # The value each scope/scope-ref Select was actually constructed
+        # with on the most recent compose() (post-clamp — see compose()'s
+        # own clamping comments). Textual 8.2.7 posts a `Select.Changed` for
+        # a Select's own constructor value as part of mounting it; these let
+        # `on_select_changed()` recognize and drop that mount-echo instead of
+        # forwarding it as a real user-driven ScopeChanged (mirrors the
+        # `mcp-rail-source` guard below, which compares against `self.source`
+        # directly because that select's displayed value never needs
+        # clamping).
+        self._displayed_scope_value: str | None = None
+        self._displayed_scope_ref_value: Any = None
 
     def sync_state(
         self,
@@ -154,6 +165,7 @@ class MCPRail(Vertical):
                     if self.scope_value in scope_option_values
                     else scope_option_values[0]
                 )
+                self._displayed_scope_value = scope_value
                 yield Select(
                     scope_options,
                     id="mcp-rail-scope-select",
@@ -181,12 +193,18 @@ class MCPRail(Vertical):
                 else:
                     ref_options = [("No scope entities", Select.BLANK)]
                     ref_value = Select.BLANK
+                self._displayed_scope_ref_value = ref_value
                 yield Select(
                     ref_options,
                     id="mcp-rail-scope-ref",
                     value=ref_value,
                     disabled=not self.scope_ref_options,
                 )
+        else:
+            # No scope selects rendered for this source -- nothing to guard
+            # a mount-echo against until the next compose().
+            self._displayed_scope_value = None
+            self._displayed_scope_ref_value = None
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""
@@ -205,9 +223,19 @@ class MCPRail(Vertical):
                 self.post_message(self.SourceChanged(str(event.value)))
         elif select_id == "mcp-rail-scope-select":
             event.stop()
+            # Mount-echo guard (C1): the value this Select was actually
+            # constructed with (post-clamp) at the last compose(). Comparing
+            # against `self.scope_value` directly would miss this — that
+            # attribute holds the true, un-clamped tracked scope, which can
+            # differ from what was actually displayed/selected.
+            if event.value == self._displayed_scope_value:
+                return
             self.post_message(self.ScopeChanged(str(event.value), None))
         elif select_id == "mcp-rail-scope-ref":
             event.stop()
+            # Same mount-echo guard as above, for the scope-ref select.
+            if event.value == self._displayed_scope_ref_value:
+                return
             # Both our synthetic placeholder sentinel (Select.BLANK, used when
             # there are no ref options) and the auto-added blank row
             # (Select.NULL, present whenever allow_blank=True) mean "no

@@ -2438,6 +2438,35 @@ async def test_mcp_destination_restores_unified_mcp_view_state_after_mount(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_mcp_destination_mode_chip_syncs_to_restored_mode():
+    """I2 regression: chips are composed with Servers active and are only
+    otherwise kept in sync by `MCPScreen._activate_mode()` (a click or
+    keybinding). A restore that changes the active mode (e.g. a saved
+    `mode: "tools"`) must also sync the chip highlight -- otherwise the
+    Tools canvas renders under a highlighted Servers chip.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(
+        app,
+        "mcp",
+        restored_state={"mcp_hub_view_state": {"mode": "tools"}},
+    )
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        workbench = screen.query_one(MCPWorkbench)
+
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and workbench.active_mode != "tools":
+            await pilot.pause(0.01)
+
+        assert workbench.active_mode == "tools"
+        tools_chip = screen.query_one("#mcp-mode-tools", Button)
+        servers_chip = screen.query_one("#mcp-mode-servers", Button)
+        assert tools_chip.has_class("is-active")
+        assert not servers_chip.has_class("is-active")
+
+
+@pytest.mark.asyncio
 async def test_mcp_destination_runtime_refresh_uses_exclusive_worker(monkeypatch):
     """Runtime backend changes refresh the workbench via a named, exclusive worker.
 

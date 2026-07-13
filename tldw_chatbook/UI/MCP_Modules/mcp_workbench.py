@@ -8,6 +8,7 @@ from typing import Any
 from loguru import logger
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
+from textual.message import Message
 from textual.widgets import ContentSwitcher, Static
 
 from tldw_chatbook.config import get_cli_setting
@@ -21,6 +22,10 @@ from tldw_chatbook.MCP.readiness import (
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
 from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCPRail
 from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
+
+# Sentinel distinguishing "key absent from a restore blob" from "key present
+# with value None" -- see `_apply_view_state()`'s scope_ref handling.
+_UNSET: Any = object()
 
 MCP_HUB_MODES: dict[str, dict[str, str]] = {
     "servers": {"label": "Servers", "button_id": "mcp-mode-servers", "placeholder": ""},
@@ -100,6 +105,16 @@ class _AdvancedSectionShim:
 
 class MCPWorkbench(Container):
     """Assembles the Phase 1 MCP Hub. Read-only over the control-plane service."""
+
+    class ModeRestored(Message, namespace="mcp_workbench"):
+        """Posted when a restore (`set_initial_view_state`) changes the
+        active mode, so the hosting screen can keep its mode-chip highlight
+        in sync (chips are only otherwise updated by `_activate_mode()`,
+        i.e. a click or keybinding)."""
+
+        def __init__(self, mode: str) -> None:
+            super().__init__()
+            self.mode = mode
 
     DEFAULT_CSS = """
     MCPWorkbench {
@@ -322,16 +337,33 @@ class MCPWorkbench(Container):
         source = state.get("source") or state.get("selected_source")
         if source in ("local", "server") and source != self._source:
             await self._switch_source(str(source))
+        previous_mode = self._active_mode
         self.set_mode(str(state.get("mode") or "servers"))
+        if self._active_mode != previous_mode:
+            # I2: chips are composed with Servers active and are otherwise
+            # only kept in sync by `MCPScreen._activate_mode()` (a click or
+            # keybinding). Without this, a restored non-"servers" mode
+            # renders the right canvas under a highlighted Servers chip.
+            self.post_message(self.ModeRestored(self._active_mode))
         server_key = state.get("selected_server_key")
         if isinstance(server_key, str) and self._snapshot_for(server_key) is not None:
             self._selected_server_key = server_key
         scope = state.get("scope") or state.get("selected_scope")
         if isinstance(scope, str) and scope:
             self._scope = scope
-        scope_ref = state.get("scope_ref") if "scope_ref" in state else state.get("selected_scope_ref")
-        if scope_ref is not None:
-            self._scope_ref = str(scope_ref)
+        # T7 carry-over: distinguish "key absent" (keep the current
+        # scope_ref untouched) from "key present with value None" (an
+        # explicit clear). `dict.get(key, _UNSET)` is required here because
+        # `state.get("scope_ref")` alone can't tell "absent" from
+        # "present-but-None" apart -- both return None.
+        if "scope_ref" in state:
+            raw_scope_ref = state["scope_ref"]
+        elif "selected_scope_ref" in state:
+            raw_scope_ref = state["selected_scope_ref"]
+        else:
+            raw_scope_ref = _UNSET
+        if raw_scope_ref is not _UNSET:
+            self._scope_ref = None if raw_scope_ref is None else str(raw_scope_ref)
         self._sync_children()
 
     # -- event wiring -----------------------------------------------------------
@@ -370,6 +402,13 @@ class MCPWorkbench(Container):
 
     async def on_mcp_rail_scope_changed(self, event: MCPRail.ScopeChanged) -> None:
         event.stop()
+        # C1 defense in depth: a no-op ScopeChanged (already-tracked scope +
+        # scope_ref) must not round-trip to the service or resync children.
+        # The primary fix is the rail's own mount-echo guard (mcp_rail.py),
+        # but this dedup means a stray duplicate here can't self-sustain a
+        # recompose storm even if some future caller posts one.
+        if (event.scope, event.scope_ref) == (self._scope, self._scope_ref):
+            return
         service = self._service()
         if service is not None:
             try:
@@ -378,7 +417,11 @@ class MCPWorkbench(Container):
                 logger.warning(f"MCP scope selection failed: {exc}")
         self._scope = event.scope
         self._scope_ref = event.scope_ref
-        self._sync_children()
+        # No `_sync_children()` here: nothing scope-dependent renders in
+        # Phase 1 (the rail's scope selects reflect it purely from the last
+        # explicit sync_state() call), and resyncing would recompose the
+        # rail -> remount its Selects -> another mount-echo -> another
+        # ScopeChanged, which is exactly the storm this handler used to feed.
 
     def on_mcp_servers_mode_server_row_selected(
         self, event: MCPServersMode.ServerRowSelected

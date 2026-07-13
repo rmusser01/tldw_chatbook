@@ -285,3 +285,161 @@ async def test_workbench_panes_have_nonzero_geometry():
             assert widget.size.height > 0, f"{selector} has zero height"
         table = app.query_one("#mcp-servers-table")
         assert table.size.height > 0, "servers table clipped to zero height"
+
+
+# -- C1: scope-event storm on Server source --------------------------------
+#
+# Textual 8.2.7 posts a `Select.Changed` for a `Select`'s own constructor
+# value as part of mounting it. `MCPRail`'s source select guards this
+# mount-echo (`on_select_changed` only forwards when the new value differs
+# from `self.source`); the scope and scope-ref selects did not. Because
+# `MCPWorkbench._sync_children()` recomposes the rail (new Select instances,
+# new mount echoes) and `on_mcp_rail_scope_changed()` used to call
+# `_sync_children()` unconditionally, an unguarded echo self-sustained an
+# unbounded recompose storm: recompose -> echo -> ScopeChanged ->
+# service.select_scope() + `_sync_children()` -> recompose -> echo -> ...
+
+
+class ScopeTrackingTarget:
+    server_id = "main"
+    label = "Main Server"
+    base_url = "https://example.test"
+    auth_mode = "api_key"
+    last_known_reachability = "reachable"
+    last_known_auth_state = "authenticated"
+
+
+class ScopeTrackingTargetStore:
+    def list_targets(self):
+        return [ScopeTrackingTarget()]
+
+
+class ScopeTrackingHubService:
+    """Like `FakeHubService`, but records every `select_scope()` call."""
+
+    def __init__(self, *, selected_scope: str) -> None:
+        self.target_store = ScopeTrackingTargetStore()
+        self.context = UnifiedMCPContext(selected_source="server", selected_scope=selected_scope)
+        self.select_scope_calls: list[tuple[object, object]] = []
+
+    async def load_context(self):
+        return self.context
+
+    async def select_source(self, source):
+        self.context = replace(self.context, selected_source=source)
+        return self.context
+
+    async def select_server_target(self, server_id):
+        self.context = replace(self.context, selected_active_server_id=server_id)
+        return self.context
+
+    async def select_scope(self, scope, scope_ref=None):
+        self.select_scope_calls.append((scope, scope_ref))
+        self.context = replace(self.context, selected_scope=scope, selected_scope_ref=scope_ref)
+        return self.context
+
+    async def select_section(self, section):
+        return self.context
+
+    async def load_section(self, section=None):
+        return {"external_servers": [], "source": "server", "section": section}
+
+    def available_actions(self):
+        return []
+
+    async def run_action(self, action_name, payload):
+        return {"ok": True}
+
+
+class ScopeTrackingApp(App):
+    def __init__(self, *, selected_scope: str) -> None:
+        super().__init__()
+        self.unified_mcp_service = ScopeTrackingHubService(selected_scope=selected_scope)
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("selected_scope", ["team", "personal"])
+async def test_server_source_scope_mount_does_not_storm_select_scope_calls(selected_scope):
+    """C1 regression: mounting on Server source must not spam select_scope().
+
+    Covers both halves called out in review: a restored scope outside
+    Phase 1's Personal-only rail options ("team", which the rail's display
+    clamps to "personal") and the in-options default ("personal", which
+    needs no clamp but was never guarded either).
+    """
+    app = ScopeTrackingApp(selected_scope=selected_scope)
+    async with app.run_test() as pilot:
+        svc = app.unified_mcp_service
+        counts = []
+        for _ in range(8):
+            await pilot.pause(0.05)
+            counts.append(len(svc.select_scope_calls))
+        assert all(c == 0 for c in counts), (
+            f"select_scope storm at mount (scope={selected_scope!r}): "
+            f"{counts} calls={svc.select_scope_calls}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_workbench_dedupes_identical_scope_changed_events():
+    """C1 fix (b), defense in depth: a repeat ScopeChanged with the same
+    (scope, scope_ref) as the workbench's already-tracked state must not
+    call service.select_scope() again.
+    """
+    app = ScopeTrackingApp(selected_scope="personal")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        rail = app.query_one(MCPRail)
+        svc = app.unified_mcp_service
+        svc.select_scope_calls.clear()
+
+        rail.post_message(MCPRail.ScopeChanged("team", "21"))
+        await pilot.pause()
+        rail.post_message(MCPRail.ScopeChanged("team", "21"))
+        await pilot.pause()
+
+        assert svc.select_scope_calls == [("team", "21")]
+
+
+# -- T7 carry-over: scope_ref key-absent vs key-present-None ----------------
+
+
+@pytest.mark.asyncio
+async def test_apply_view_state_scope_ref_key_absent_keeps_existing_value():
+    """A restore blob with no scope_ref/selected_scope_ref key at all must
+    not clobber the currently tracked scope_ref."""
+    app = WorkbenchApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        rail = app.query_one(MCPRail)
+        rail.post_message(MCPRail.ScopeChanged("team", "21"))
+        await pilot.pause()
+        assert workbench.get_view_state()["scope_ref"] == "21"
+
+        workbench.set_initial_view_state({"mode": "servers", "source": "local", "scope": "team"})
+        await pilot.pause()
+        assert workbench.get_view_state()["scope_ref"] == "21"
+
+
+@pytest.mark.asyncio
+async def test_apply_view_state_scope_ref_present_none_clears_existing_value():
+    """An explicit `scope_ref: None` key must clear the stale scope_ref
+    rather than being treated the same as the key being absent."""
+    app = WorkbenchApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        rail = app.query_one(MCPRail)
+        rail.post_message(MCPRail.ScopeChanged("team", "21"))
+        await pilot.pause()
+        assert workbench.get_view_state()["scope_ref"] == "21"
+
+        workbench.set_initial_view_state(
+            {"mode": "servers", "source": "local", "scope": "team", "scope_ref": None}
+        )
+        await pilot.pause()
+        assert workbench.get_view_state()["scope_ref"] is None

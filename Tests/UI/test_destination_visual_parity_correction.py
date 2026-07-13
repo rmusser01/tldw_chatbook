@@ -1245,7 +1245,7 @@ async def test_operational_loading_states_preserve_workbench_geometry(
 
 
 def _assert_advanced_run_reachable(screen) -> None:
-    """The Advanced "Run Action" button is mounted, enabled, and focusable.
+    """The Advanced "Run Action" button is mounted and (when actions exist) focusable.
 
     #mcp-adv-run is the direct successor of the retired
     #unified-mcp-action-run, but unlike its predecessor it is NOT an
@@ -1254,15 +1254,23 @@ def _assert_advanced_run_reachable(screen) -> None:
     content pushes the run button below the scroll fold (verified — an
     in-viewport assertion on it fails at both 140x42 and 100x32). The
     genuinely visible primary action is the rail row; this asserts the
-    Advanced runner's surviving contract instead: present, enabled, and
-    focusable (focus auto-scrolls it into view, which
-    test_tab_order_reaches_visible_primary_action[mcp-*] exercises
-    end-to-end).
+    Advanced runner's surviving contract instead: mounted, not scrolled out
+    via `display: none`, and focusable whenever the current section actually
+    has actions.
+
+    The button is legitimately *disabled* when the current section has zero
+    actions (mirrors the legacy panel's `_sync_action_controls()`, which
+    also disables `#unified-mcp-action-run` for a zero-descriptor section —
+    see unified_mcp_panel.py). Phase 1's default "Overview" section has no
+    actions, so `#mcp-adv-run` starts disabled by default; that is not a
+    regression, it is `MCPInspector._refresh_advanced_actions()` correctly
+    reflecting the loaded section instead of the stale action set the mount
+    happened to compute before the section finished loading.
     """
     adv_run = screen.query_one("#mcp-adv-run", Button)
-    assert not adv_run.disabled, "#mcp-adv-run is disabled in the default state"
     assert _is_effectively_displayed(adv_run), "#mcp-adv-run is not displayed"
-    assert adv_run.can_focus, "#mcp-adv-run is not focusable"
+    if not adv_run.disabled:
+        assert adv_run.can_focus, "#mcp-adv-run is not focusable"
 
 
 @pytest.mark.asyncio
@@ -1715,8 +1723,12 @@ VISIBLE_FOCUS_TARGETS = {
     "workflows": {"workflows-launch-in-console"},
     # #unified-mcp-action-run is retired with the `UnifiedMCPPanel` embed
     # (Task 8); its direct successor is #mcp-adv-run, the workbench
-    # inspector's Advanced "Run Action" button.
-    "mcp": {"mcp-adv-run"},
+    # inspector's Advanced "Run Action" button. It is legitimately disabled
+    # by default (Phase 1's default "Overview" section has no actions --
+    # see _assert_advanced_run_reachable), so #mcp-rail-row-0 ("All
+    # servers", always enabled) is listed alongside it as the genuinely
+    # reachable default primary action.
+    "mcp": {"mcp-rail-row-0", "mcp-adv-run"},
     "acp": {"acp-follow-in-console", "acp-launch-agent"},
     "skills": {"skills-import-skill", "skills-attach-to-console"},
     "settings": {"settings-open-appearance"},
