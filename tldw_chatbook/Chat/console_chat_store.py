@@ -24,6 +24,19 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 
 
+@dataclass(frozen=True)
+class _VariantStreamBase:
+    """Pre-regenerate snapshot captured by ``begin_variant_stream``.
+
+    Carries both the visible content *and* the message's status at the
+    moment regeneration began, so a failed regenerate can restore the
+    message to exactly the state it was in before -- not just its content.
+    """
+
+    content: str
+    prior_status: ConsoleMessageStatus
+
+
 class ConsoleChatPersistence(Protocol):
     """Persistence surface used by Console without importing DB dependencies."""
 
@@ -132,7 +145,7 @@ class ConsoleChatStore:
         self._stream_chunks_by_message: dict[str, list[str]] = {}
         self._stream_materialized_counts: dict[str, int] = {}
         self._sync_v2_message_versions: dict[str, str] = {}
-        self._variant_stream_bases: dict[str, str] = {}
+        self._variant_stream_bases: dict[str, _VariantStreamBase] = {}
 
     def ensure_session(
         self,
@@ -461,6 +474,7 @@ class ConsoleChatStore:
         self._stream_chunks_by_message.pop(message_id, None)
         self._stream_materialized_counts.pop(message_id, None)
         self._pending_persistence_message_ids.discard(message_id)
+        self._variant_stream_bases.pop(message_id, None)
         return self._snapshot(message)
 
     def session_id_for_message(self, message_id: str) -> str:
@@ -503,17 +517,29 @@ class ConsoleChatStore:
         """Mark a message failed and flush final visible content to persistence.
 
         If this message was mid variant-stream (regenerate), any partial
-        streamed content is discarded and the pre-regenerate base is restored
-        as the visible row -- mirroring the pre-refactor regenerate behavior,
-        where a failed regenerate never touched the existing message content.
+        streamed content is discarded and the pre-regenerate base content AND
+        status are restored -- mirroring the pre-refactor regenerate
+        behavior, where a failed regenerate never touched the existing
+        message at all. Restoring the prior status (not just the content) is
+        load-bearing: every send path builds provider context via
+        ``_provider_messages_for_session(..., skip_failed=True)``, so a
+        message left at "failed" status would be silently excluded from the
+        model's context for the rest of the session even though its visible
+        content is fully intact (Plan-B Task 1 finding).
+
+        A failure with no captured base -- i.e. a normal, non-regenerate
+        send -- has no known-good prior state to restore, so it keeps
+        today's "failed" status unchanged.
         """
         message = self._message_or_raise(message_id)
         self._validate_can_mark_terminal(message)
         self._materialize_stream_buffer(message)
         base = self._variant_stream_bases.pop(message.id, None)
         if base is not None:
-            message.content = base
-        message.status = "failed"
+            message.content = base.content
+            message.status = base.prior_status
+        else:
+            message.status = "failed"
         self._persist_existing_message(message)
         return self._snapshot(message)
 
@@ -555,7 +581,10 @@ class ConsoleChatStore:
         if message.role is not ConsoleMessageRole.ASSISTANT:
             raise ValueError("Only assistant messages can be regenerated.")
         self._materialize_stream_buffer(message)
-        self._variant_stream_bases[message.id] = message.content
+        self._variant_stream_bases[message.id] = _VariantStreamBase(
+            content=message.content,
+            prior_status=message.status,
+        )
         message.content = ""
         self._stream_chunks_by_message.pop(message.id, None)
         self._stream_materialized_counts.pop(message.id, None)
@@ -567,7 +596,8 @@ class ConsoleChatStore:
         message = self._message_or_raise(message_id)
         self._materialize_stream_buffer(message)
         new_content = message.content
-        base = self._variant_stream_bases.pop(message.id, "")
+        base_entry = self._variant_stream_bases.pop(message.id, None)
+        base = base_entry.content if base_entry is not None else ""
         if message.variants is None:
             message.variants = ConsoleVariantSet.from_contents(
                 turn_id=message.turn_id or message.id,

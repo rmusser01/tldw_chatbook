@@ -54,6 +54,24 @@ def test_store_deletes_message_from_transcript():
         store.get_message(message.id)
 
 
+def test_delete_message_clears_orphaned_variant_stream_base():
+    """A message deleted mid-regenerate (stopped, then deleted) must not
+    leave a stale entry in _variant_stream_bases -- Plan-B Task 1 Minor
+    finding (console_chat_store.py delete_message previously popped the
+    stream-chunk maps but not this one)."""
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="answer")
+    store.begin_variant_stream(message.id)
+    store.mark_message_stopped(message.id)
+
+    assert message.id in store._variant_stream_bases
+
+    store.delete_message(message.id)
+
+    assert message.id not in store._variant_stream_bases
+
+
 def test_store_updates_message_content():
     store = ConsoleChatStore()
     session = store.ensure_session()
@@ -623,6 +641,47 @@ def test_store_does_not_enqueue_failed_assistant_final_content():
     store.mark_message_failed(assistant.id)
 
     assert sync_producer.enqueued == []
+
+
+def test_mark_message_failed_restores_prior_status_when_variant_base_present():
+    """Plan-B Task 1 finding: a zero-chunk (empty-stream) regenerate of a
+    previously-complete message must restore that prior status, not flip to
+    "failed" -- every send path builds provider context with skip_failed=True
+    (see console_chat_controller._provider_messages_for_session), so a wrong
+    "failed" status here would silently drop an otherwise-good turn from the
+    model's context for the rest of the session. Pre-refactor, a failed
+    regenerate was a pure no-op on the existing message."""
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="original"
+    )
+    assert message.status == "complete"
+
+    store.begin_variant_stream(message.id)
+    # Zero-chunk stream: no append_stream_chunk calls before failure.
+    failed = store.mark_message_failed(message.id)
+
+    assert failed.status == "complete"
+    assert failed.content == "original"
+    assert message.id not in store._variant_stream_bases
+
+
+def test_mark_message_failed_without_variant_base_still_marks_failed():
+    """A normal (non-regenerate) send failure keeps today's "failed" status;
+    only the variant-regenerate path has a known-good prior state to
+    restore."""
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    store.append_stream_chunk(assistant.id, "partial")
+
+    failed = store.mark_message_failed(assistant.id)
+
+    assert failed.status == "failed"
+    assert failed.content == "partial"
 
 
 def test_store_persists_chat_when_sync_enqueue_fails():

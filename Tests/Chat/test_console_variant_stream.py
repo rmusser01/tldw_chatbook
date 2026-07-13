@@ -81,3 +81,37 @@ async def test_regenerate_delegates_and_streams_incrementally():
     assert [v.content for v in message.variants.variants] == [
         "original", "Paris is the answer."]
     assert message.variants.selected_index == 1
+
+
+@pytest.mark.asyncio
+async def test_regenerate_empty_stream_restores_prior_status_and_keeps_context():
+    """Plan-B Task 1 finding: a zero-chunk (empty-stream) regenerate of a
+    previously-COMPLETE assistant message must not end up excluded from the
+    model's context for the rest of the session. Every send path builds
+    provider context via `_provider_messages_for_session(..., skip_failed=
+    True)`; pre-refactor, a failed regenerate was a pure no-op, so this
+    turn stayed "complete" and stayed in context. The regression: `mark_
+    message_failed` was restoring the base CONTENT but flipping status to
+    "failed", which silently drops the turn from context on every later
+    send/regenerate/retry in this session even though the visible content
+    is fully intact.
+    """
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+    store, session, mid = _store_with_answer()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=_ScriptedGateway([]),  # zero chunks: empty stream
+        provider="llama_cpp",
+        model="test-model",
+    )
+
+    result = await controller.regenerate_message(mid)
+
+    assert result.accepted is True
+    message = store.get_message(mid)
+    assert message.status == "complete"
+    assert message.content == "original"
+
+    provider_messages = controller._provider_messages_for_session(session.id)
+    assert {"role": "assistant", "content": "original"} in provider_messages
