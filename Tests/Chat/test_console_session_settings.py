@@ -795,3 +795,52 @@ def test_model_section_line_truncates_long_local_model_names():
         provider_row="Provider: openai",
     )
     assert build_console_model_section_lines(short)[0] == "openai / gpt-4o"
+
+
+def test_context_estimate_counts_system_prompt_tokens():
+    """Task 14: the estimate must count a system prompt's own tokens too."""
+    without_system = build_console_context_estimate(
+        messages=[{"role": "user", "content": "hello"}],
+        provider="openai",
+        model="gpt-3.5-turbo",
+    )
+    with_system = build_console_context_estimate(
+        messages=[{"role": "user", "content": "hello"}],
+        provider="openai",
+        model="gpt-3.5-turbo",
+        system_prompt="Answer using only formal English, citing sources.",
+    )
+    assert with_system.used_tokens is not None
+    assert without_system.used_tokens is not None
+    assert with_system.used_tokens > without_system.used_tokens
+
+
+def test_rail_system_line_none_state_for_blank_or_missing_prompt():
+    from tldw_chatbook.Chat.console_session_settings import build_console_rail_system_line
+
+    assert build_console_rail_system_line(None) == "System: none"
+    assert build_console_rail_system_line("   ") == "System: none"
+
+
+def test_rail_system_line_shows_preview_for_set_prompt():
+    from tldw_chatbook.Chat.console_session_settings import build_console_rail_system_line
+
+    assert build_console_rail_system_line("Be terse.") == "System: Be terse."
+
+
+def test_rail_system_line_collapses_multiline_and_truncates_long_prompts():
+    """Mirrors the task-186 model-line fix: a long/multi-line system prompt
+    must collapse to one line AND truncate in the text itself, not rely on
+    CSS ellipsis alone, or it silently word-wraps onto a hidden second row."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        CONSOLE_RAIL_SYSTEM_PREVIEW_MAX_CHARS,
+        build_console_rail_system_line,
+    )
+
+    multiline_prompt = "Line one.\nLine two continues on and on and on and on."
+    line = build_console_rail_system_line(multiline_prompt)
+    assert "\n" not in line
+    assert line.startswith("System: Line one. Line two")
+    assert line.endswith("…")
+    preview = line.removeprefix("System: ")
+    assert len(preview) <= CONSOLE_RAIL_SYSTEM_PREVIEW_MAX_CHARS

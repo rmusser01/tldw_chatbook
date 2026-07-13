@@ -68,6 +68,7 @@ from ...Chat.console_session_settings import (
     ConsoleSettingsSummaryState,
     build_console_context_estimate,
     build_console_model_section_lines,
+    build_console_rail_system_line,
     build_default_console_session_settings,
     build_console_settings_readiness,
     build_console_settings_summary_state,
@@ -138,6 +139,7 @@ from ...config import (
     save_setting_to_cli_config,
     save_settings_to_cli_config,
 )
+from ...Library.library_prompts_state import classify_prompt_save_error
 from ...Library.library_rag_service import (
     LibraryRagSearchRequest,
     run_library_rag_search,
@@ -185,7 +187,11 @@ from ...Widgets.Console.console_model_popover import (
     CONSOLE_POPOVER_OPEN_FULL_SETTINGS,
     ConsoleModelPopover,
 )
-from ...Widgets.Console.console_prompt_picker_modal import ConsolePromptPickerModal
+from ...Widgets.Console.console_prompt_picker_modal import (
+    MODE_APPLY_SYSTEM as CONSOLE_PROMPT_PICKER_MODE_APPLY_SYSTEM,
+    ConsolePromptPickerModal,
+)
+from ...Widgets.Console.console_system_prompt_modal import ConsoleSystemPromptModal
 from ...Widgets.Console.console_setup_modal import (
     CONSOLE_SETUP_MODAL_DETECTED_WORKBENCH_ACTION,
 )
@@ -235,6 +241,19 @@ CONSOLE_FRAME_BORDER = ("solid", CONSOLE_FRAME_COLOR)
 CONSOLE_QUIET_FRAME_BORDER = ("none", CONSOLE_FRAME_COLOR)
 CONSOLE_START_HERE_COPY = ""
 CONSOLE_ACTION_HINTS_COPY = ""
+# Mirrors `library_screen.LIBRARY_PROMPT_SAVE_STATUS_COPY` verbatim: the
+# Console `/system` editor's "Save to Library" action is always a brand-new
+# prompt CREATE (never an update to an existing one, unlike the Library
+# prompt editor's own save flow), but the outcome copy the user sees must
+# read identically either way -- duplicated here rather than imported across
+# screens to avoid a Screen-to-Screen import.
+CONSOLE_SYSTEM_PROMPT_SAVE_STATUS_COPY = {
+    "ok": "Saved.",
+    "name-in-use": "Name already in use — pick another or open the existing prompt.",
+    "soft-deleted-name": "A deleted prompt holds this name — restore it or choose another.",
+    "error": "Couldn't save this prompt. Try again.",
+}
+CONSOLE_SYSTEM_PROMPT_NO_SYSTEM_PART_TEMPLATE = 'Prompt "{name}" has no system part.'
 CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL = "Set up provider"
 CONSOLE_PROVIDER_ACTION_ARROW = " ---------------------->"
 NATIVE_CONSOLE_STATE_VERSION = "1.0"
@@ -924,6 +943,25 @@ class ChatScreen(BaseAppScreen):
             return
         self.run_worker(self._open_console_settings(), exclusive=False)
 
+    def action_open_console_prompt_insert(self) -> None:
+        """Open the `/prompt` insert picker from the command palette ("Insert prompt…").
+
+        Mirrors bare `/prompt` (no args): opens the picker to browse rather
+        than attempting a meaningless empty-name resolution.
+        """
+        if self._console_setup_modal_blocking():
+            return
+        self.run_worker(
+            self._open_console_prompt_picker_for_insert(""),
+            exclusive=False,
+        )
+
+    def action_open_console_system_prompt_editor(self) -> None:
+        """Open the system prompt editor from the command palette ("Edit system prompt")."""
+        if self._console_setup_modal_blocking():
+            return
+        self.run_worker(self._open_console_system_prompt_editor(), exclusive=False)
+
     async def action_jump_console_tab(self, number: int) -> None:
         """Jump directly to the Nth native Console session tab (Alt+1..9).
 
@@ -1565,6 +1603,7 @@ class ChatScreen(BaseAppScreen):
             staged_source_count=len(workspace_context.staged_sources),
             staged_context_summary=staged_context_state.summary,
             max_tokens_response=settings.max_tokens,
+            system_prompt=settings.system_prompt,
         )
 
     def _build_console_settings_summary_state(self) -> ConsoleSettingsSummaryState:
@@ -1575,6 +1614,30 @@ class ChatScreen(BaseAppScreen):
             self._active_console_settings_context_estimate(),
             readiness,
         )
+
+    def _console_rail_system_line_state(self) -> tuple[str, bool]:
+        """Return the Model rail's ``System: <preview>`` line text + dim flag.
+
+        Args: none.
+
+        Returns:
+            Tuple of ``(line_text, is_dim)`` -- ``is_dim`` is ``True`` for
+            the unset ``"System: none"`` sentinel state.
+        """
+        settings = self._ensure_active_console_session_settings()
+        line_text = build_console_rail_system_line(settings.system_prompt)
+        is_dim = not str(settings.system_prompt or "").strip()
+        return line_text, is_dim
+
+    def _sync_console_rail_system_line(self) -> None:
+        """Targeted update of the mounted rail ``System:`` line, no recompose."""
+        line_text, is_dim = self._console_rail_system_line_state()
+        try:
+            system_line = self.query_one("#console-rail-system-line", Static)
+        except (NoMatches, QueryError):
+            return
+        system_line.update(line_text)
+        system_line.set_class(is_dim, "console-rail-system-line-dim")
 
     def _sync_console_settings_summary(self) -> None:
         """Refresh the mounted Console settings summary surfaces if present."""
@@ -1591,6 +1654,7 @@ class ChatScreen(BaseAppScreen):
             self.query_one("#console-model-section-line2", Static).update(model_line2)
         except (NoMatches, QueryError):
             pass
+        self._sync_console_rail_system_line()
 
     def _current_console_workspace_context(self) -> ConsoleWorkspaceContext:
         """Return explicit workspace policy context for native Console sends."""
@@ -5362,6 +5426,24 @@ class ChatScreen(BaseAppScreen):
                             line2.styles.text_wrap = "nowrap"
                             line2.styles.text_overflow = "ellipsis"
                             yield line2
+                            system_line_text, system_line_dim = (
+                                self._console_rail_system_line_state()
+                            )
+                            system_line = Static(
+                                system_line_text,
+                                id="console-rail-system-line",
+                                markup=False,
+                            )
+                            # Same one-row clipping hazard as the model line
+                            # above (task-186): nowrap + ellipsis so a long
+                            # system prompt truncates visibly instead of
+                            # word-wrapping onto a hidden second row.
+                            system_line.styles.text_wrap = "nowrap"
+                            system_line.styles.text_overflow = "ellipsis"
+                            system_line.set_class(
+                                system_line_dim, "console-rail-system-line-dim"
+                            )
+                            yield system_line
                             configure = Button(
                                 "Configure",
                                 id="console-model-section-configure",
@@ -6823,13 +6905,158 @@ class ChatScreen(BaseAppScreen):
             self._focus_console_composer_if_needed(force=True)
 
     async def _console_command_apply_system(self, parse: CommandParse) -> None:
-        """Stub handler for the `/system` Console command.
+        """Resolve and apply a saved prompt's ``system_prompt`` for `/system`.
 
-        Replaced by Task 14, which wires this to applying a saved system prompt.
+        Bare `/system` (no args) opens the system prompt editor modal seeded
+        with the active session's current system prompt. With args,
+        resolution mirrors `/prompt` (Task 12): exact case-insensitive name
+        match over a bounded search page, else a unique case-insensitive
+        name-prefix match; a resolved match with a blank ``system_prompt``
+        shows an inline transcript error (the session is left unchanged)
+        rather than silently clearing it, since that is very likely not what
+        the user meant by naming that specific prompt. 0 or 2+ matches at
+        either stage fall back to the apply-system picker mode (Task 11),
+        prefilled with the typed args.
         """
-        self.app_instance.notify(
-            "System-message application is not wired yet.",
-            severity="warning",
+        args = parse.args.strip()
+        if not args:
+            await self._open_console_system_prompt_editor()
+            return
+        resolved = await self._resolve_console_prompt_by_name(args)
+        if resolved is not None:
+            system_prompt = str(resolved.get("system_prompt") or "").strip()
+            if not system_prompt:
+                name = str(resolved.get("name") or args)
+                await self._append_native_console_system_message(
+                    CONSOLE_SYSTEM_PROMPT_NO_SYSTEM_PART_TEMPLATE.format(name=name)
+                )
+                return
+            self._apply_console_session_system_prompt(system_prompt)
+            return
+        await self._open_console_prompt_picker_for_apply_system(args)
+
+    async def _open_console_prompt_picker_for_apply_system(self, initial_query: str) -> None:
+        """Open the prompt picker in apply-system mode for `/system`.
+
+        Rows without a ``system_prompt`` render dimmed and refuse selection
+        (``ConsolePromptPickerModal``'s own ``MODE_APPLY_SYSTEM`` behavior,
+        Task 11) -- this caller only needs to apply whatever record the
+        picker actually dismisses with.
+        """
+
+        def _apply_picker_choice(record: Optional[Mapping[str, Any]]) -> None:
+            self._focus_console_composer_if_needed(force=True)
+            if record is None:
+                return
+            system_prompt = str(record.get("system_prompt") or "").strip()
+            if not system_prompt:
+                return
+            self._apply_console_session_system_prompt(system_prompt)
+
+        self.app.push_screen(
+            ConsolePromptPickerModal(
+                mode=CONSOLE_PROMPT_PICKER_MODE_APPLY_SYSTEM,
+                initial_query=initial_query,
+                prompt_search=self._console_prompt_search,
+            ),
+            callback=_apply_picker_choice,
+        )
+
+    def _apply_console_session_system_prompt(self, system_prompt: Optional[str]) -> None:
+        """Apply (or, for a blank/``None`` value, clear) the active session's
+        system prompt, persisting the change if the conversation is already
+        saved (Task 13's ``ConsoleChatStore.set_session_system_prompt``), and
+        refresh the rail preview + context-estimate surfaces in place.
+        """
+        self._ensure_active_console_session_settings()
+        store = self._ensure_console_chat_store()
+        session_id = store.active_session_id
+        if session_id is None:
+            return
+        store.set_session_system_prompt(session_id, system_prompt)
+        self._sync_console_chat_core_state()
+        self._sync_console_settings_summary()
+
+    async def _open_console_system_prompt_editor(self) -> None:
+        """Open the system prompt editor modal for the active Console session."""
+        settings = self._ensure_active_console_session_settings()
+
+        def _apply_modal_result(result: Optional[str]) -> None:
+            self._focus_console_composer_if_needed(force=True)
+            if result is None:
+                return
+            self._apply_console_session_system_prompt(result)
+
+        self.app.push_screen(
+            ConsoleSystemPromptModal(
+                system_prompt=settings.system_prompt,
+                save_to_library=self._save_console_system_prompt_to_library,
+            ),
+            callback=_apply_modal_result,
+        )
+
+    async def _save_console_system_prompt_to_library(self, name: str, text: str) -> str:
+        """Save the system-prompt editor's text as a brand-new Library prompt.
+
+        Always a CREATE (the Console `/system` editor never edits an
+        existing Library prompt): pre-checks the name for a collision the
+        same way ``library_screen._save_library_prompt``'s own create path
+        does, so a genuine duplicate is classified via
+        ``classify_prompt_save_error`` -- with ``exc=None`` and a manually
+        built message -- rather than racing the DB's raw ``ConflictError``,
+        and reports the SAME outcome copy that screen's own save flow shows.
+
+        Args:
+            name: Name for the new Library prompt.
+            text: The prompt's ``system_prompt`` body (the modal's current
+                editor text).
+
+        Returns:
+            User-facing outcome copy to display inline in the modal.
+        """
+        name = name.strip()
+        if not name:
+            return "Enter a name to save this system prompt to Library."
+        text = text.strip()
+        if not text:
+            return "Enter a system prompt to save."
+        service = getattr(self.app_instance, "prompt_scope_service", None)
+        get_prompt = getattr(service, "get_prompt", None)
+        save_prompt = getattr(service, "save_prompt", None)
+        if not callable(get_prompt) or not callable(save_prompt):
+            return CONSOLE_SYSTEM_PROMPT_SAVE_STATUS_COPY["error"]
+        try:
+            candidate = await get_prompt(
+                mode="local", prompt_identifier=name, include_deleted=True
+            )
+        except Exception:
+            candidate = None
+        if isinstance(candidate, Mapping) and candidate:
+            if candidate.get("deleted"):
+                outcome = classify_prompt_save_error(
+                    None, f"Prompt '{name}' exists but is soft-deleted.", None
+                )
+            else:
+                outcome = classify_prompt_save_error(
+                    None, f"Prompt '{name}' already exists.", None
+                )
+            return CONSOLE_SYSTEM_PROMPT_SAVE_STATUS_COPY.get(
+                outcome, CONSOLE_SYSTEM_PROMPT_SAVE_STATUS_COPY["error"]
+            )
+        try:
+            result = await save_prompt(mode="local", name=name, system_prompt=text, user_prompt="")
+        except Exception as exc:
+            logger.opt(exception=True).warning(
+                f"Console system-prompt save-to-library failed for name {name!r}."
+            )
+            outcome = classify_prompt_save_error(None, str(exc), exc)
+            return CONSOLE_SYSTEM_PROMPT_SAVE_STATUS_COPY.get(
+                outcome, CONSOLE_SYSTEM_PROMPT_SAVE_STATUS_COPY["error"]
+            )
+        result_id = result.get("local_id") if isinstance(result, Mapping) else (1 if result else None)
+        outcome = classify_prompt_save_error(result_id, "", None)
+        return CONSOLE_SYSTEM_PROMPT_SAVE_STATUS_COPY.get(
+            outcome, CONSOLE_SYSTEM_PROMPT_SAVE_STATUS_COPY["error"]
         )
 
     @on(Input.Changed, "#console-command-input")
@@ -7793,6 +8020,10 @@ class ChatScreen(BaseAppScreen):
         """Reset pending paste unfurl confirmation when clicking outside the token."""
         target = getattr(event, "widget", None) or getattr(event, "control", None)
         if getattr(target, "id", None) == "console-command-visible-text":
+            return
+        if getattr(target, "id", None) == "console-rail-system-line":
+            event.stop()
+            self.run_worker(self._open_console_system_prompt_editor(), exclusive=False)
             return
         try:
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)

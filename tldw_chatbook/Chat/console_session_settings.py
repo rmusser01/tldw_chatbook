@@ -259,6 +259,36 @@ def build_console_model_section_lines(
     return f"{provider} / {model}", " · ".join(detail_parts)
 
 
+CONSOLE_RAIL_SYSTEM_PREVIEW_MAX_CHARS = 40
+CONSOLE_RAIL_SYSTEM_NONE_LINE = "System: none"
+
+
+def _collapse_system_prompt_preview_whitespace(text: str) -> str:
+    """Collapse a (possibly multi-line) system prompt onto a single rail row."""
+    return " ".join(text.split())
+
+
+def build_console_rail_system_line(system_prompt: str | None) -> str:
+    """Build the Model rail-section ``System: <preview>`` line.
+
+    Mirrors ``build_console_model_section_lines``'s long-value handling
+    (task-186): the rail line is clipped to one row, so a long or
+    multi-line system prompt must be collapsed to a single line AND
+    truncated in the text itself -- not left to CSS ``text-overflow:
+    ellipsis`` alone -- or it silently word-wraps onto the hidden second
+    row. An unset (``None``/blank) system prompt renders the dim
+    ``"System: none"`` sentinel line instead.
+    """
+    normalized = str(system_prompt or "").strip()
+    if not normalized:
+        return CONSOLE_RAIL_SYSTEM_NONE_LINE
+    preview = _truncate_model_section_value(
+        _collapse_system_prompt_preview_whitespace(normalized),
+        CONSOLE_RAIL_SYSTEM_PREVIEW_MAX_CHARS,
+    )
+    return f"System: {preview}"
+
+
 def build_console_provider_options(
     providers_models: Mapping[str, Sequence[str]],
 ) -> list[ConsoleSettingsOption]:
