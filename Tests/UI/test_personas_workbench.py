@@ -147,7 +147,7 @@ class TestWorkbenchShell:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             title = screen.query_one("#personas-title", Static)
-            assert "Personas" in str(title.renderable)
+            assert "Roleplay" in str(title.renderable)
             assert "ds-destination-header" in title.classes
             assert screen.query_one("#personas-mode-strip")
             assert screen.query_one("#personas-library-pane")
@@ -361,6 +361,28 @@ class TestWorkbenchShell:
             assert placeholder.display is True
             assert "not available yet" in str(placeholder.renderable)
             assert "is-active" in screen.query_one("#personas-mode-prompts", Button).classes
+
+    async def test_title_reframed_to_roleplay_keeps_state_suffix(self, mock_app_instance, stub_characters):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            assert str(screen.query_one("#personas-title", Static).renderable).startswith("Roleplay")
+            # dynamic suffix still appends in create mode
+            screen._edit_mode = "create"
+            screen._update_title()
+            await pilot.pause()
+            title = str(screen.query_one("#personas-title", Static).renderable)
+            assert title.startswith("Roleplay") and "New character" in title
+
+    async def test_purpose_shows_active_mode_descriptor_and_updates_on_switch(self, mock_app_instance, stub_characters):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            purpose = screen.query_one("#personas-purpose", Static)
+            assert "who the AI plays" in str(purpose.renderable)   # characters is the default mode
+            await screen._apply_mode("personas")
+            await pilot.pause()
+            assert "who you are" in str(screen.query_one("#personas-purpose", Static).renderable)
 
 
 class TestCharacterSelectionAndEdit:
@@ -4053,7 +4075,7 @@ class TestDirtyTracking:
             # already carries "Source: Local").
             assert (
                 str(title.renderable)
-                == "Personas | Behavior profiles for chat and agents | Ready"
+                == "Roleplay | Author the pieces that shape a chat | Ready"
             )
 
     async def test_active_row_gets_unsaved_badge(

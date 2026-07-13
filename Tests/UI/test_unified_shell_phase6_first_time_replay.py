@@ -157,10 +157,10 @@ async def test_first_time_shell_replay_exposes_home_console_and_orientation_path
                     "personas",
                     "PersonasScreen",
                     (
-                        "Personas",
-                        "Behavior profiles for chat and agents",
-                        "characters, personas, prompts, dictionaries, and lore",
-                        "Attach to Console",
+                        "Roleplay",
+                        "Author the pieces that shape a chat",
+                        "Characters",
+                        "Lore",
                     ),
                 ),
                 (

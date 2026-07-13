@@ -84,6 +84,14 @@ logger = logger.bind(module="PersonasScreen")
 #: excluded until import/export is wired as an action rather than a mode.
 MODE_CHIP_ORDER: tuple[str, ...] = ("characters", "personas", "prompts", "dictionaries", "lore")
 
+#: One-line "what this mode is" copy, shown under the title and as chip tooltips.
+_MODE_DESCRIPTORS: dict[str, str] = {
+    "characters": "Characters — who the AI plays.",
+    "personas": "Personas — who you are.",
+    "dictionaries": "Dictionaries — text find/replace rules.",
+    "lore": "Lore — world facts injected on keywords.",
+}
+
 PLACEHOLDER_COPY = "This mode is not available yet. Characters and Personas are the supported modes."
 PERSONAS_SEARCH_DEBOUNCE_SECONDS = 0.2
 PERSONAS_AVATAR_IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif"})
@@ -353,8 +361,7 @@ class PersonasScreen(BaseAppScreen):
                 classes="ds-destination-header",
             )
             yield Static(
-                "Create and manage behavior profiles - characters, personas, prompts, "
-                "dictionaries, and lore - and attach them to Console.",
+                self._mode_descriptor_text(self.state.active_mode),
                 id="personas-purpose",
                 classes="destination-purpose",
             )
@@ -860,6 +867,7 @@ class PersonasScreen(BaseAppScreen):
                 chip_mode == mode, "is-active"
             )
         self.query_one("#personas-status-row", Static).update(self._status_row_text())
+        self.query_one("#personas-purpose", Static).update(self._mode_descriptor_text(mode))
         library = self.query_one(PersonasLibraryPane)
         library.set_mode(mode)
         # clear_selection empties the conversations panel; drop the caches too.
@@ -884,7 +892,7 @@ class PersonasScreen(BaseAppScreen):
         "Local" deliberately stays out of the title - the status row directly
         below already says "Source: Local" (de-dup, P3-15).
         """
-        base = "Personas | Behavior profiles for chat and agents"
+        base = "Roleplay | Author the pieces that shape a chat"
         suffix = " - unsaved" if self.state.has_unsaved_changes else ""
         if self._edit_mode == "create":
             noun = "persona" if self.state.active_mode == "personas" else "character"
@@ -893,6 +901,10 @@ class PersonasScreen(BaseAppScreen):
             name = self.state.selected_entity_name or "item"
             return f"{base} | Editing {name}{suffix}"
         return f"{base} | Ready"
+
+    def _mode_descriptor_text(self, mode: str) -> str:
+        """The visible one-line meaning of a mode (falls back for un-described modes)."""
+        return _MODE_DESCRIPTORS.get(mode, MODE_LABELS.get(mode, mode))
 
     def _update_title(self) -> None:
         """Refresh the header line; tolerate updates racing teardown."""
