@@ -8,7 +8,7 @@
 
 | Decision | Choice |
 |---|---|
-| Default behavior | Inline by default, honoring existing `[chat.images].default_render_mode` (`auto`/`pixels`/`regular`) + `[chat.images.terminal_overrides]`, exactly like legacy chat. No new config keys. |
+| Default behavior | Inline by default, honoring existing `[chat.images].default_render_mode` (`auto`/`pixels`/`regular`) + `[chat.images.terminal_overrides]`. No new config keys. **Honesty note (verified):** legacy chat *defines* these keys (and the Settings UI edits them) but never reads them — `ChatMessageEnhanced.pixel_mode` hardcodes graphics-first — and `terminal_utils.detect_terminal_capabilities()` currently has zero consumers. Console's `resolve_default_mode` becomes the first real consumer of all three, giving the existing Settings controls their first actual effect. |
 | Chip fate | Chip line stays in the message row (metadata + fallback); the rendered image is an additive row below it. Plain-text exports unchanged. |
 | Toggle cycle | Per-message three-state: `pixels` → `graphics` → `hidden` → … starting from the config-resolved mode. |
 | View persistence | Screen-state only: override map rides the existing serialization allowlist (JSON-safe strings), survives screen switches, resets on relaunch. |
@@ -23,7 +23,7 @@ The terminal-graphics mode is called **`graphics`**, not "TGP": `textual_image.w
 ### New pure module — `tldw_chatbook/Chat/console_image_view.py`
 
 - `ConsoleImageViewMode = Literal["pixels", "graphics", "hidden"]`
-- `resolve_default_mode(app_config) -> Literal["pixels", "graphics"]` — maps `default_render_mode` through `terminal_utils.detect_terminal_capabilities()` + `terminal_overrides`. `regular` → `graphics`.
+- `resolve_default_mode(app_config) -> Literal["pixels", "graphics"]` — resolution semantics (defined here, since no prior consumer exists to mirror): explicit `default_render_mode = "pixels"`/`"regular"` wins outright (`regular` → `graphics`); `"auto"` consults `detect_terminal_capabilities()` for the terminal name/flags, then `terminal_overrides[<terminal>]` if present, else `terminal_overrides["default"]` (shipped defaults: kitty/wezterm/iterm2 → `regular`, default → `pixels`); unknown/missing values fall back to `pixels` (safest everywhere). |
 - `next_view_mode(current) -> ConsoleImageViewMode` — the three-state cycle.
 - `ConsoleImageViewState` — per-message overrides (only non-default entries); `serialize() -> dict[str, str]` / `restore(payload)`; `prune(live_message_ids)` drops stale entries (called at serialize time).
 - `ConsoleImageRenderCache` — bounded cache of prepared images:
@@ -34,11 +34,11 @@ The terminal-graphics mode is called **`graphics`**, not "TGP": `textual_image.w
 
 ### Transcript — `tldw_chatbook/Widgets/Console/console_transcript.py`
 
-- `_TranscriptRow` gains kind `"image"`, key `image:{message_id}`, emitted directly after the message row when: message has an image, resolved mode ≠ `hidden`, and a prepared cache entry exists.
+- `_TranscriptRow` gains kind `"image"`, key `image:{message_id}`, emitted directly after the message row when: message has an image, resolved mode ≠ `hidden`, and a prepared cache entry exists. Row order for a selected image message is message → image → actions → action-help (legacy reading order: text, then its image, then controls). Consequence to watch in QA: the action row (including Toggle View) sits below a potentially tall image.
 - Signature: `("image", message_id, mode, prepared_flag)` — streaming reconcile ticks never rebuild image rows; toggling mode changes the signature and swaps the widget.
 - Row widget: `pixels` → `Static(pixels_renderable)`; `graphics` → `textual_image.widget.Image(prepared_pil)` behind a guarded import (import failure → pixels). Build errors → log + no image row (chip remains).
 - The transcript stays dumb: the screen supplies a prebuilt `{message_id: ConsoleImageRowSpec}` map (mode + renderable/PIL) via a setter alongside `set_messages`. Unmounted unit-test builds without descriptors produce no image rows. (Verified: `Static(Pixels)` and `Image(pil)` both construct safely unmounted, so this is defense-in-depth, not a correctness requirement.)
-- Image rows are excluded from plain-text export paths.
+- Image rows are excluded from plain-text export paths — structurally free: `to_plain_text()` (console_transcript.py:440) iterates messages and action labels, never row widgets; the chip line already carries the attachment into plain text.
 
 ### Toggle View action
 
