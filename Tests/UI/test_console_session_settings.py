@@ -3960,6 +3960,44 @@ def test_console_stale_default_refresh_respects_user_marked_settings() -> None:
     assert refreshed.source == "derived"
 
 
+def test_console_stale_default_refresh_preserves_applied_system_prompt() -> None:
+    """Final-review Finding 3: the stale-default refresh must not silently
+    discard an already-applied `/system` prompt.
+
+    `set_session_system_prompt` (Task 13) keeps ``source == "derived"`` and
+    adds no message, so a message-less session where the user ran
+    `/system <name>` while its default provider was blocked (e.g. an empty
+    OpenAI API key) -- then later fixed the provider in Settings -- used to
+    have its applied ``system_prompt`` clobbered by ``fresh_defaults`` on the
+    very next settings read, since defaults never seed ``system_prompt``.
+    """
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "local-model"}
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:9099", "model": "local-model"},
+        "openai": {"api_key": ""},
+    }
+    console = ChatScreen(app)
+    store = console._ensure_console_chat_store()
+    session = store.ensure_session()
+
+    # Blocked derived defaults (openai, no key) -- as if snapshotted on a
+    # fresh, never-configured session -- with a `/system` prompt applied
+    # before any message was sent.
+    stale_derived_with_system_prompt = ConsoleSessionSettings(
+        provider="openai", model="gpt-4o", system_prompt="Be concise."
+    )
+    store.replace_session_settings(session.id, stale_derived_with_system_prompt)
+
+    refreshed = console._ensure_active_console_session_settings()
+
+    assert refreshed.provider == "llama_cpp", "the provider/model default refresh must still happen"
+    assert refreshed.system_prompt == "Be concise."
+    # The store itself must carry the preserved prompt forward too, not just
+    # the returned snapshot.
+    assert store.session_settings(session.id).system_prompt == "Be concise."
+
+
 # --- task-188/191: provider display names + Discover models -----------------
 
 

@@ -1557,6 +1557,16 @@ class ChatScreen(BaseAppScreen):
         )
         if not fresh_readiness.native_send_supported:
             return settings
+        if settings.system_prompt:
+            # Carry forward an already-applied `/system` prompt across this
+            # config-driven refresh -- it is explicit user intent, not part
+            # of the provider/model "default" this refresh re-derives.
+            # `fresh_defaults.system_prompt` is always ``None`` (defaults
+            # never seed it), so without this guard a message-less session
+            # where the user ran `/system` before fixing a blocked provider
+            # in Settings would have its applied system prompt silently
+            # discarded on the very next settings read.
+            fresh_defaults = replace(fresh_defaults, system_prompt=settings.system_prompt)
         store.replace_session_settings(session.id, fresh_defaults)
         return fresh_defaults
 
