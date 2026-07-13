@@ -5769,6 +5769,7 @@ class ChatScreen(BaseAppScreen):
                 message = self._restore_console_message(raw_message)
                 if message is None:
                     continue
+                self._rehydrate_console_message_image(message)
                 restored_messages_by_session[session.id].append(message)
 
         active_session_id = payload.get("active_session_id")
@@ -5780,7 +5781,42 @@ class ChatScreen(BaseAppScreen):
         )
         self._console_visible_draft_session_id = None
         self._last_native_transcript_refresh_key = None
-    
+
+    def _rehydrate_console_message_image(self, message: ConsoleChatMessage) -> None:
+        """Refill image bytes dropped by screen-state restore (metadata-only).
+
+        Screen-state restore only carries image metadata (mime type + label),
+        never raw bytes, so a restored message that still points at an image
+        has no bytes for the provider payload builder to attach even though
+        its chip renders from metadata alone. Refetch the bytes from the
+        ChaChaNotes DB using the message's persisted id; on any failure leave
+        the message metadata-only so the chip still renders (graceful
+        degradation) instead of raising.
+        """
+        if message.image_data is not None:
+            return
+        if not message.image_mime_type or not message.persisted_message_id:
+            return
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        try:
+            row = (
+                db.get_message_by_id(message.persisted_message_id)
+                if db is not None
+                else None
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Console restore image rehydration DB lookup failed."
+            )
+            return
+        if not row:
+            return
+        image_data = row.get("image_data")
+        if image_data is None:
+            return
+        message.image_data = image_data
+        message.image_mime_type = row.get("image_mime_type") or message.image_mime_type
+
     def save_state(self) -> Dict[str, Any]:
         """
         Save comprehensive chat state.
@@ -6602,6 +6638,7 @@ class ChatScreen(BaseAppScreen):
                 self.run_worker(
                     self._process_console_attachment(str(file_path)),
                     exclusive=True,
+                    group="console-attachment",
                 )
 
         await self.app.push_screen(
@@ -6667,6 +6704,7 @@ class ChatScreen(BaseAppScreen):
             composer.set_pending_attachment_label(None)
         if had_pending_attachment:
             self.app_instance.notify("Attachment cleared")
+        self._sync_console_control_bar()
 
     @on(Button.Pressed, "#console-save-chatbook")
     def handle_console_save_chatbook(self, event: Button.Pressed) -> None:
@@ -6826,7 +6864,11 @@ class ChatScreen(BaseAppScreen):
             self.app_instance.notify(result.visible_copy, severity="information")
             return True
         if action_id == "save-image" and result.status == "completed":
-            self.run_worker(self._save_console_message_image(message_id), exclusive=True)
+            self.run_worker(
+                self._save_console_message_image(message_id),
+                exclusive=True,
+                group="console-save-image",
+            )
             return True
         if action_id == "delete" and result.status == "completed":
             if self._pending_console_delete_message_id != message_id:
