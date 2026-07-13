@@ -1,0 +1,14 @@
+{
+  "model": "Qwen3.6-27B-Uncensored-HauhauCS-Aggressive-Q8_K_P.gguf",
+  "stream": false,
+  "messages": [
+    {
+      "role": "system",
+      "content": "You must answer every question in exactly three words. Never more, never fewer."
+    },
+    {
+      "role": "user",
+      "content": "What is the capital of Japan?"
+    }
+  ]
+}
