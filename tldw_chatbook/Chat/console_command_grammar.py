@@ -156,7 +156,12 @@ class ConsoleCommandRegistry:
 
 
 def default_console_registry() -> ConsoleCommandRegistry:
-    """Build the default registry with the built-in ``/prompt`` and ``/system`` commands."""
+    """Build the default registry with the built-in ``/prompt`` and ``/system`` commands.
+
+    Returns:
+        A new `ConsoleCommandRegistry` with `PROMPT_COMMAND_NAME` and
+        `SYSTEM_COMMAND_NAME` registered and no fallback resolvers.
+    """
     registry = ConsoleCommandRegistry()
     registry.register(
         ConsoleCommand(

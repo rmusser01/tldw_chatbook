@@ -78,6 +78,7 @@ class ConsoleSystemPromptModal(ModalScreen[Optional[str]]):
         self._save_to_library = save_to_library
 
     def compose(self) -> ComposeResult:
+        """Build the editor's text area, name/save row, and action buttons."""
         with Vertical(id=MODAL_ID):
             yield Static("Edit system prompt", classes="console-modal-header")
             yield Static(
@@ -110,12 +111,14 @@ class ConsoleSystemPromptModal(ModalScreen[Optional[str]]):
                 yield Button("Apply", id=APPLY_BUTTON_ID, variant="primary")
 
     def on_mount(self) -> None:
+        """Focus the system prompt text area so editing can start immediately."""
         try:
             self.query_one(f"#{TEXT_AREA_ID}", TextArea).focus()
         except (NoMatches, QueryError):
             pass
 
     def action_dismiss_editor(self) -> None:
+        """Dismiss with ``None`` (no change), bound to the Escape key."""
         self.dismiss(None)
 
     @on(Button.Pressed, f"#{CANCEL_BUTTON_ID}")

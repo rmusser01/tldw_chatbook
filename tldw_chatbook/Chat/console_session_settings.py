@@ -278,6 +278,18 @@ def build_console_rail_system_line(system_prompt: str | None) -> str:
     ellipsis`` alone -- or it silently word-wraps onto the hidden second
     row. An unset (``None``/blank) system prompt renders the dim
     ``"System: none"`` sentinel line instead.
+
+    Args:
+        system_prompt: The session's current system prompt text, or
+            ``None``/blank when unset. This is a display-only preview --
+            the value is collapsed/truncated here but never mutated in
+            storage or in the provider payload.
+
+    Returns:
+        ``"System: none"`` when ``system_prompt`` is ``None`` or blank;
+        otherwise ``"System: <preview>"`` with the prompt collapsed to a
+        single line and truncated to
+        ``CONSOLE_RAIL_SYSTEM_PREVIEW_MAX_CHARS`` characters.
     """
     normalized = str(system_prompt or "").strip()
     if not normalized:
