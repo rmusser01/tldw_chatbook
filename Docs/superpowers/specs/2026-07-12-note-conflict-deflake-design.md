@@ -36,13 +36,14 @@ async def _wait_for_condition(pilot, predicate, *, timeout=15.0, message, interv
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if predicate():
-            await pilot.pause()
             return
         await pilot.pause(interval)
     raise AssertionError(message)
 ```
 
-Why a deadline (not "bump `range(150)` → `range(1000)`"): a wall-clock deadline decouples the budget from *iterations × per-pause-time* (which is itself unpredictable under contention), returns the instant the condition is met (so the isolation case stays fast), and replaces a magic number with an intention-revealing call. This is the condition-based-waiting pattern the debugging playbook prescribes. `15.0s` is generous enough for a starved worker yet bounded.
+This mirrors the original loop **exactly** — check the predicate first, return the instant it is truthy (no extra settle pause — the loops `break` without one), otherwise `await pilot.pause(interval)` and re-check — with the only change being a wall-clock deadline in place of the fixed iteration count. (Unlike `_wait_for_selector`, which does a trailing `pilot.pause()` to settle the widget it returns, a state-poll returns nothing to settle, so no trailing pause is added — keeping the conversion behavior-identical.)
+
+Why a deadline (not "bump `range(150)` → `range(1000)`"): a wall-clock deadline decouples the budget from *iterations × per-pause-time* (which is itself unpredictable under contention), returns the instant the condition is met (so the isolation case stays fast), and replaces a magic number with an intention-revealing call. This is the condition-based-waiting pattern the debugging playbook prescribes. `15.0s` is generous enough for a starved worker yet bounded. Baseline: all 7 note-conflict tests currently pass in isolation, so this is a pure refactor over known-green tests.
 
 Then mechanically replace each conflict-family condition-poll loop:
 ```python
