@@ -356,14 +356,16 @@ class TestWorkbenchShell:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
-            await pilot.click("#personas-mode-dictionaries")
+            # Lore is the one remaining planned mode: dictionaries shipped in
+            # Roleplay P1a and prompts are retired to the Library (Task 7).
+            await pilot.click("#personas-mode-lore")
             await pilot.pause()
-            assert screen.state.active_mode == "dictionaries"
+            assert screen.state.active_mode == "lore"
             placeholder = screen.query_one("#personas-mode-placeholder", Static)
             assert placeholder.display is True
             # Roleplay P0 copy: planned modes read "Coming soon" with a purpose line.
             assert "Coming soon" in str(placeholder.renderable)
-            assert "is-active" in screen.query_one("#personas-mode-dictionaries", Button).classes
+            assert "is-active" in screen.query_one("#personas-mode-lore", Button).classes
 
     async def test_mode_chips_are_self_explaining_and_mark_coming_soon(self, mock_app_instance, stub_characters):
         app = PersonasTestApp(mock_app_instance)
