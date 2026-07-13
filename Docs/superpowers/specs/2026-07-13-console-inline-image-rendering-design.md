@@ -59,7 +59,7 @@ Message with image bytes arrives (send, resume, or restore-rehydration) → sync
 
 - Prep failure (corrupt bytes): log with message id, negative-cache the id (avoid re-prep loops), chip remains.
 - `graphics` mode under non-graphics terminals (incl. textual-serve): `textual_image` auto-negotiates down to halfcell/unicode — acceptable, matches legacy "regular".
-- Very wide images: pixels renderable capped at 80 cols (legacy parity) keeps rows inside the viewport; graphics widget manages its own size.
+- Image sizing (live-verified hazard): `textual_image.widget.Image` scales up to fill its container's width — unconstrained in the transcript it would render even tiny images ~180 cols wide. Graphics rows therefore get explicit style caps: `max-width: 80` cells (matching the pixels-mode cap) and `max-height: 40` rows. Pixels renderable is already capped at 80 cols × 40 lines (legacy parity).
 - Session close: `evict_session` + view-state prune prevents unbounded growth.
 
 ## Testing
