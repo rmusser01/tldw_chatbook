@@ -165,3 +165,38 @@ def test_cache_pending_ids_and_session_eviction():
 
     cache.evict_session({"m-done"})
     assert cache.get_pil("m-done") is None
+
+
+def test_resolve_default_mode_reads_live_app_config_shape(monkeypatch):
+    """The real app nests raw TOML under COMPREHENSIVE_CONFIG_RAW (config.py:1326)."""
+    import tldw_chatbook.Chat.console_image_view as civ
+
+    monkeypatch.setattr(
+        civ, "detect_terminal_capabilities", lambda: {"terminal_type": "unknown"}
+    )
+    live_shape = {
+        "APP_MODE_STR": "single",
+        "COMPREHENSIVE_CONFIG_RAW": {
+            "chat": {"images": {"default_render_mode": "regular"}}
+        },
+    }
+    assert resolve_default_mode(live_shape) == "graphics"
+
+
+def test_resolve_default_mode_live_shape_terminal_override(monkeypatch):
+    import tldw_chatbook.Chat.console_image_view as civ
+
+    monkeypatch.setattr(
+        civ, "detect_terminal_capabilities", lambda: {"terminal_type": "kitty"}
+    )
+    live_shape = {
+        "COMPREHENSIVE_CONFIG_RAW": {
+            "chat": {
+                "images": {
+                    "default_render_mode": "auto",
+                    "terminal_overrides": {"kitty": "regular", "default": "pixels"},
+                }
+            }
+        }
+    }
+    assert resolve_default_mode(live_shape) == "graphics"

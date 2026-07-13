@@ -52,7 +52,12 @@ def next_view_mode(current: ConsoleImageViewMode) -> ConsoleImageViewMode:
 
 
 def _chat_images_config(app_config: Mapping[str, Any]) -> Mapping[str, Any]:
-    chat = app_config.get("chat") if isinstance(app_config, Mapping) else None
+    if not isinstance(app_config, Mapping):
+        return {}
+    # Same both-shapes handling as config.resolve_tldw_api_config: the live app_config nests raw TOML under COMPREHENSIVE_CONFIG_RAW.
+    raw = app_config.get("COMPREHENSIVE_CONFIG_RAW")
+    source = raw if isinstance(raw, Mapping) else app_config
+    chat = source.get("chat")
     images = chat.get("images") if isinstance(chat, Mapping) else None
     return images if isinstance(images, Mapping) else {}
 
