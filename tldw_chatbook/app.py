@@ -2445,6 +2445,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         self.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
         self.pending_chat_handoff: Optional[ChatHandoffPayload] = None
         self.pending_console_launch: Optional[ConsoleLiveWorkLaunch | Dict[str, Any]] = None
+        self.pending_console_prompt_insert: Optional[str] = None
         self.pending_study_scope_context: Optional[StudyScopeContext] = None
         self.pending_study_initial_section: Optional[str] = None
         self.pending_notes_workspace_context: Optional[Dict[str, Any]] = None
@@ -2761,6 +2762,26 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             return
 
         self.pending_chat_handoff = payload
+        self.post_message(NavigateToScreen(TAB_CHAT))
+
+    def stage_console_prompt_insert(self, text: str) -> None:
+        """Stage a resolved Library prompt body for the Console composer and navigate there.
+
+        ``ChatHandoffPayload``-free direct route (Task 12): Library's prompt
+        editor "Use in Console" action only ever needs to land plain text
+        into the Console draft -- appended onto whatever the user was
+        already composing, never replacing it -- so this deliberately skips
+        ``open_chat_with_handoff``'s richer RAG-evidence-aware staging
+        machinery. Mirrors that method's stage-then-navigate shape, but the
+        payload is a bare string and there is no tabs-enabled gate: whether
+        the insert actually lands is decided by ``ChatScreen`` once it
+        consumes this field (it alone owns Console's provider/model
+        readiness state).
+
+        Args:
+            text: The prompt's ``user_prompt`` body to insert.
+        """
+        self.pending_console_prompt_insert = text
         self.post_message(NavigateToScreen(TAB_CHAT))
 
     def open_console_for_live_work(

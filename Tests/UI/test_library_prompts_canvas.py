@@ -29,7 +29,9 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, Input, Static, TextArea
 
+from tldw_chatbook.Constants import TAB_CHAT
 from tldw_chatbook.DB.Prompts_DB import ConflictError, PromptsDatabase
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.Library.library_prompts_state import (
     PromptEditorState,
     PromptListRow,
@@ -2126,3 +2128,136 @@ async def test_library_prompts_import_browse_button_fills_path_input(tmp_path):
 
         assert push_calls and isinstance(push_calls[0], FileOpen)
         assert screen.query_one("#library-prompts-import-path", Input).value == str(picked_file)
+
+
+# ---------------------------------------------------------------------------
+# Task 12: editor "Use in Console" -- ChatHandoffPayload-free direct route
+# (stages a bare string via ``TldwCli.stage_console_prompt_insert`` and
+# navigates to Chat; ChatScreen itself owns append-vs-replace and the
+# provider-setup-blocked gate, tested in ``test_console_command_composer.py``).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_insert_console_stages_live_user_prompt_and_navigates(tmp_path):
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Summarize",
+        author="Alice",
+        details="A summarizer",
+        system_prompt="You are concise.",
+        user_prompt="Summarize: {text}",
+        keywords=["writing"],
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        assert screen._library_prompt_dirty is False
+
+        # ``app`` (the plain ``TldwCli`` built by ``_build_test_app``) is a
+        # data/logic container here, never itself run as the active Textual
+        # App (``host``/``LibraryHarness`` is) -- so a real ``post_message``
+        # would queue into a message pump that is never started, and
+        # ``host.seen_routes`` would never observe it. Spying on
+        # ``post_message`` directly (mirrors
+        # ``test_chat_first_handoffs.py``'s ``open_chat_with_handoff``
+        # coverage) proves the navigation intent without depending on that
+        # unrelated plumbing.
+        post_message_spy = Mock(wraps=app.post_message)
+        app.post_message = post_message_spy
+
+        screen.query_one("#library-prompt-insert-console", Button).press()
+        await pilot.pause()
+
+        assert app.pending_console_prompt_insert == "Summarize: {text}"
+        posted = post_message_spy.call_args.args[0]
+        assert isinstance(posted, NavigateToScreen)
+        assert posted.screen_name == TAB_CHAT
+        # The source prompt itself is never touched by this action.
+        assert screen._library_prompts_view == "editor"
+        assert screen._selected_prompt_id == prompt_id
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_insert_console_refuses_while_dirty(tmp_path):
+    """An unsaved in-progress edit refuses the action outright (rather than
+    staging text that a vetoed navigation would later fire unexpectedly on
+    some unrelated future Console visit) -- the prompt is never lost either
+    way, since the edit simply stays in the still-open editor."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Summarize",
+        author="",
+        details="",
+        system_prompt="",
+        user_prompt="Summarize: {text}",
+        keywords=[],
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+
+        screen.query_one("#library-prompt-user", TextArea).text = "Hello {name}"
+        await pilot.pause()
+        assert screen._library_prompt_dirty is True
+
+        notify_spy = Mock()
+        app.notify = notify_spy
+        post_message_spy = Mock(wraps=app.post_message)
+        app.post_message = post_message_spy
+        screen.query_one("#library-prompt-insert-console", Button).press()
+        await pilot.pause()
+
+        notify_spy.assert_called_once_with(
+            "Save your changes before using this prompt in Console.", severity="warning"
+        )
+        assert app.pending_console_prompt_insert is None
+        post_message_spy.assert_not_called()
+        assert screen.query_one("#library-prompt-user", TextArea).text == "Hello {name}"
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_insert_console_notifies_when_user_prompt_is_empty(tmp_path):
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="System Only",
+        author="",
+        details="",
+        system_prompt="You are helpful.",
+        user_prompt="",
+        keywords=[],
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+
+        notify_spy = Mock()
+        app.notify = notify_spy
+        post_message_spy = Mock(wraps=app.post_message)
+        app.post_message = post_message_spy
+        screen.query_one("#library-prompt-insert-console", Button).press()
+        await pilot.pause()
+
+        notify_spy.assert_called_once_with(
+            "This prompt has no user prompt text to insert.", severity="warning"
+        )
+        assert app.pending_console_prompt_insert is None
+        post_message_spy.assert_not_called()

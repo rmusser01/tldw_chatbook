@@ -727,6 +727,21 @@ class ConsoleComposerBar(Horizontal):
         self._sync_interaction_classes()
         self._sync_current_action_state()
 
+    def insert_text_as_paste(self, text: str) -> None:
+        """Insert ``text`` through the same path a real OS paste event uses.
+
+        Thin, clearly-named public entry point for programmatic insertions
+        (the Console `/prompt` command and Library's "Use in Console"
+        handoff, Task 12) that must behave exactly like a user pasting the
+        same text -- collapsing into a stateful token display when it
+        exceeds the paste-collapse threshold, unlike ``insert_text``, which
+        always inserts as small literal text regardless of size.
+
+        Args:
+            text: Text to insert as if it had just been pasted.
+        """
+        self.insert_pasted_text(text)
+
     def delete_left(self) -> None:
         """Delete the last draft character for simple terminal-style editing."""
         if self._draft_selection_all:

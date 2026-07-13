@@ -6876,6 +6876,62 @@ class LibraryScreen(BaseAppScreen):
         """
         return not self._library_prompt_dirty
 
+    @on(Button.Pressed, "#library-prompt-insert-console")
+    def handle_library_prompt_insert_console(self, event: Button.Pressed) -> None:
+        """Stage the open prompt's live User prompt text for Console and navigate there.
+
+        ChatHandoffPayload-free direct route (Task 12): unlike this screen's
+        other "Use in Console" actions (notes/media/conversations, which
+        stage a richer, RAG-evidence-aware ``ChatHandoffPayload``), a prompt
+        only ever needs to hand a bare string to the Console composer --
+        appended onto whatever draft already exists there, never replacing
+        it (``TldwCli.stage_console_prompt_insert``).
+
+        Reads the editor's LIVE (possibly-unsaved) User prompt text,
+        mirroring Save's own field read -- what you currently see in the
+        editor is what gets inserted. Refuses while the editor has an
+        unsaved edit: navigating away would otherwise be vetoed by
+        ``_flush_library_prompt_save`` (leaving a staged insert to fire
+        unexpectedly on some later, unrelated Console visit) -- the same
+        "resolve the dirty edit first" rule Back/rail-row selection already
+        enforce.
+
+        Args:
+            event: Button press event emitted by the editor's "Use in
+                Console" action.
+        """
+        event.stop()
+        notify = getattr(self.app_instance, "notify", None)
+        if self._library_prompts_view != "editor":
+            return
+        if self._library_prompt_dirty:
+            if callable(notify):
+                notify(
+                    "Save your changes before using this prompt in Console.",
+                    severity="warning",
+                )
+            return
+        fields = self._read_library_prompt_editor_fields()
+        if fields is None:
+            return
+        _name, _author, _details, _system_prompt, raw_user_prompt, _keywords_text = fields
+        user_prompt = self._sanitize_note_content(
+            raw_user_prompt, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS
+        )
+        if not user_prompt.strip():
+            if callable(notify):
+                notify(
+                    "This prompt has no user prompt text to insert.",
+                    severity="warning",
+                )
+            return
+        stage = getattr(self.app_instance, "stage_console_prompt_insert", None)
+        if not callable(stage):
+            if callable(notify):
+                notify("Console insert is unavailable.", severity="warning")
+            return
+        stage(user_prompt)
+
     @on(Button.Pressed, "#library-prompt-back")
     async def handle_library_prompt_back(self, event: Button.Pressed) -> None:
         """Return the Library prompts canvas from the editor to its list view.

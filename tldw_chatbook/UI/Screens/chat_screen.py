@@ -185,6 +185,7 @@ from ...Widgets.Console.console_model_popover import (
     CONSOLE_POPOVER_OPEN_FULL_SETTINGS,
     ConsoleModelPopover,
 )
+from ...Widgets.Console.console_prompt_picker_modal import ConsolePromptPickerModal
 from ...Widgets.Console.console_setup_modal import (
     CONSOLE_SETUP_MODAL_DETECTED_WORKBENCH_ACTION,
 )
@@ -5530,6 +5531,14 @@ class ChatScreen(BaseAppScreen):
         self.set_timer(0.1, self._restore_collapsible_states)
         self.set_timer(0.05, self.sync_task_resume_state)
         self.set_timer(0.15, self._consume_pending_chat_handoff)
+        # Mirrors the handoff timer above: the native composer is not
+        # guaranteed to exist in the DOM yet at this exact point (it can
+        # still be settling in immediately after mount, same reason every
+        # composer-touching test here awaits `_wait_for_selector` first) --
+        # firing this immediately risked a silent, unrecoverable miss (the
+        # pending field is cleared on first read, so a `QueryError` here
+        # would have thrown the staged text away with nothing left to retry).
+        self.set_timer(0.15, self._consume_pending_console_prompt_insert)
         self.call_after_refresh(self._sync_native_console_chat_ui)
         self.call_after_refresh(self._restore_console_workbench_focus)
         self.set_timer(0.2, self._restore_console_workbench_focus)
@@ -6563,13 +6572,12 @@ class ChatScreen(BaseAppScreen):
         )
 
     async def _dispatch_console_command(self, parse: CommandParse) -> None:
-        """Dispatch a parsed Console slash command to its (stub) handler.
+        """Dispatch a parsed Console slash command to its handler.
 
         A ``handler_id`` that resolves to nothing (an unrecognized command
         name, or a future fallback-resolver result this dispatch map does not
         yet know about) is consumed silently: nothing is sent and the draft
-        is left untouched. Only ``/prompt`` and ``/system`` resolve today;
-        Tasks 12/14 replace the stub bodies below with real behavior.
+        is left untouched. Only ``/prompt`` and ``/system`` resolve today.
         """
         handler_id = self._CONSOLE_COMMAND_NAME_TO_HANDLER_ID.get(parse.name)
         dispatch_map = {
@@ -6581,15 +6589,198 @@ class ChatScreen(BaseAppScreen):
             return
         await handler(parse)
 
-    async def _console_command_insert_prompt(self, parse: CommandParse) -> None:
-        """Stub handler for the `/prompt` Console command.
+    # Bounded prompt-search page size for `/prompt` resolution and the
+    # picker's own search callable -- mirrors Task 11's picker contract
+    # (PromptScopeService.search_prompts, FTS-ranked, <= 25 rows).
+    _CONSOLE_PROMPT_SEARCH_LIMIT = 25
 
-        Replaced by Task 12, which wires this to the Library Prompts picker.
+    _LIBRARY_PROMPT_INSERT_BLOCKED_COPY = "Finish provider setup to insert prompts."
+
+    async def _console_command_insert_prompt(self, parse: CommandParse) -> None:
+        """Resolve and insert a saved prompt's ``user_prompt`` for `/prompt`.
+
+        Resolution order (brief): exact case-insensitive name match over a
+        bounded search page; else a unique case-insensitive name-prefix
+        match over that same page; else (no args, 0 matches, or an
+        ambiguous 2+ match at either stage) open the picker prefilled with
+        the typed args. A resolved match REPLACES the composer draft
+        wholesale (the draft IS the `/prompt ...` command being replaced by
+        its result) via paste semantics, so an oversized body still
+        collapses to a token exactly like a real paste would.
         """
-        self.app_instance.notify(
-            "Prompt insertion is not wired yet.",
-            severity="warning",
+        query = parse.args.strip()
+        resolved = await self._resolve_console_prompt_by_name(query) if query else None
+        if resolved is not None:
+            self._insert_prompt_text_into_composer(
+                str(resolved.get("user_prompt") or ""), replace=True
+            )
+            return
+        await self._open_console_prompt_picker_for_insert(query)
+
+    @staticmethod
+    def _console_prompt_prefix_fts_query(text: str) -> str:
+        """Build an FTS5 phrase-prefix MATCH expression for ``text``.
+
+        Plain FTS5 MATCH requires a full token, which would defeat both the
+        `/prompt` prefix-match resolution stage (a query like "Summ" would
+        never match a stored name "Summarize") and a picker that is supposed
+        to filter results as the user is still mid-word. Quoting the whole
+        query as a phrase with a trailing ``*`` makes FTS5 match names whose
+        tokens *start with* the typed text instead -- a prefix match trivially
+        covers an exact match too, so one query shape serves both. Embedded
+        quotes are doubled per FTS5 string-literal escaping (mirrors
+        ``library_fts_query._quote_fts_term``), so user text can never break
+        out of the quoted phrase to inject MATCH operators.
+        """
+        escaped = text.replace('"', '""')
+        return f'"{escaped}"*'
+
+    async def _console_prompt_search(self, query: str) -> list:
+        """Bounded FTS prompt search bound to the active scope service.
+
+        Shared by `/prompt` resolution and the picker's ``prompt_search``
+        callable so both always read a fresh page rather than any cached
+        boot-time snapshot.
+        """
+        service = getattr(self.app_instance, "prompt_scope_service", None)
+        search_prompts = getattr(service, "search_prompts", None)
+        if not callable(search_prompts):
+            return []
+        stripped_query = query.strip()
+        fts_kwargs = (
+            {"fts_match_query": self._console_prompt_prefix_fts_query(stripped_query)}
+            if stripped_query
+            else {}
         )
+        try:
+            return await search_prompts(
+                mode="local",
+                query=query,
+                limit=self._CONSOLE_PROMPT_SEARCH_LIMIT,
+                **fts_kwargs,
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Console prompt search failed for query {query!r}."
+            )
+            return []
+
+    async def _resolve_console_prompt_by_name(self, query: str) -> Optional[Mapping[str, Any]]:
+        """Resolve `/prompt <name>` to a single prompt record, or ``None``.
+
+        ``None`` means the caller should fall back to the picker: no
+        candidates, an ambiguous (2+) exact case-insensitive name match, or
+        no/ambiguous unique prefix match either.
+        """
+        candidates = await self._console_prompt_search(query)
+        normalized_query = query.strip().casefold()
+        exact_matches = [
+            record
+            for record in candidates
+            if str(record.get("name") or "").strip().casefold() == normalized_query
+        ]
+        if len(exact_matches) == 1:
+            return exact_matches[0]
+        if len(exact_matches) > 1:
+            return None
+        prefix_matches = [
+            record
+            for record in candidates
+            if str(record.get("name") or "").strip().casefold().startswith(normalized_query)
+        ]
+        if len(prefix_matches) == 1:
+            return prefix_matches[0]
+        return None
+
+    async def _open_console_prompt_picker_for_insert(self, initial_query: str) -> None:
+        """Open the prompt picker for `/prompt`, inserting whatever is chosen."""
+
+        def _apply_picker_choice(record: Optional[Mapping[str, Any]]) -> None:
+            self._focus_console_composer_if_needed(force=True)
+            if record is None:
+                return
+            self._insert_prompt_text_into_composer(
+                str(record.get("user_prompt") or ""), replace=True
+            )
+
+        self.app.push_screen(
+            ConsolePromptPickerModal(
+                mode="insert",
+                initial_query=initial_query,
+                prompt_search=self._console_prompt_search,
+            ),
+            callback=_apply_picker_choice,
+        )
+
+    def _insert_prompt_text_into_composer(self, text: str, *, replace: bool) -> bool:
+        """Insert resolved prompt text into the Console composer via paste semantics.
+
+        Args:
+            text: The prompt's ``user_prompt`` body to insert.
+            replace: ``True`` replaces the whole draft wholesale (the
+                `/prompt` command's own draft IS the command being replaced
+                by its result). ``False`` appends onto whatever draft
+                already exists (Library's "Use in Console" handoff) -- an
+                already-empty draft still gets a clean insert with no
+                separator, but existing draft text is never clobbered.
+
+        Returns:
+            ``True`` when the composer widget was found and the insert
+            applied, ``False`` when no native composer is mounted.
+        """
+        try:
+            composer = self.query_one("#console-native-composer", ConsoleComposerBar)
+        except QueryError:
+            return False
+        if replace:
+            composer.clear_draft()
+        elif composer.draft_text():
+            # Appending onto an existing draft must never mash the two
+            # payloads together with no boundary between them.
+            composer.insert_text("\n")
+        composer.insert_text_as_paste(text)
+        return True
+
+    async def _consume_pending_console_prompt_insert(self) -> None:
+        """Consume a Library "Use in Console" staged prompt body, if any.
+
+        Mirrors ``_consume_pending_chat_handoff``'s stage-then-consume
+        shape, but the staged payload is a bare string appended into the
+        composer -- never a ``ChatHandoffPayload``. Gated on the same
+        first-run provider/model setup readiness the composer's own Send
+        button uses: unlike the in-composer `/prompt` command (which Task
+        10 deliberately lets run even while Send is blocked, since
+        composing is not sending), this cross-screen hop is an unattended
+        action the user did not consciously type into this composer, so a
+        blocked first-run state gets an honest toast instead of a silent
+        insert -- the draft is left untouched and nothing about the source
+        Library prompt is touched either.
+        """
+        pending = getattr(self.app_instance, "pending_console_prompt_insert", None)
+        if pending is None:
+            return
+        text = pending if isinstance(pending, str) else str(pending)
+        if not text.strip():
+            self.app_instance.pending_console_prompt_insert = None
+            return
+        if self._console_setup_blocked_reason():
+            # A persistent state, not a mount-timing race -- always safe to
+            # consume+notify here regardless of whether the composer widget
+            # itself has finished mounting yet.
+            self.app_instance.pending_console_prompt_insert = None
+            self.app_instance.notify(
+                self._LIBRARY_PROMPT_INSERT_BLOCKED_COPY,
+                severity="warning",
+            )
+            return
+        # Only clear the staged field once the insert has actually landed --
+        # if the native composer has not finished mounting yet (a transient
+        # race the 0.15s mount-time delay above should normally avoid), leave
+        # it pending for a later mount/resume to retry rather than silently
+        # discarding it.
+        if self._insert_prompt_text_into_composer(text, replace=False):
+            self.app_instance.pending_console_prompt_insert = None
+            self._focus_console_composer_if_needed(force=True)
 
     async def _console_command_apply_system(self, parse: CommandParse) -> None:
         """Stub handler for the `/system` Console command.
@@ -8450,6 +8641,15 @@ class ChatScreen(BaseAppScreen):
         self._sync_console_transcript_guidance()
         self.sync_task_resume_state()
         self._register_console_footer_shortcuts()
+        # Delayed exactly like the `on_mount` consumption below: firing this
+        # immediately would race the native sync pass's own active-session
+        # draft load (`_sync_native_console_chat_ui`, scheduled via
+        # `call_after_refresh` in `on_mount` and reachable again from several
+        # resume-adjacent paths) -- that pass unconditionally reloads the
+        # composer from the session's stored (empty, for a first-touched
+        # session) draft the first time it sees a session change, which would
+        # silently wipe out an insert that landed first.
+        self.set_timer(0.15, self._consume_pending_console_prompt_insert)
         self.call_after_refresh(self._restore_console_workbench_focus)
         # Note: BaseAppScreen doesn't have on_screen_resume, so no super() call
 
