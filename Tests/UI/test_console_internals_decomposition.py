@@ -2897,18 +2897,8 @@ async def test_console_empty_staged_context_exposes_attach_action():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
-    class FakeSession:
-        def __init__(self) -> None:
-            self.attach_events = []
-
-        def handle_attach_button(self, event) -> None:
-            self.attach_events.append(event)
-
-    fake_session = FakeSession()
-
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
-        console._get_active_chat_session = lambda: fake_session
         await _wait_for_selector(console, pilot, "#console-staged-context-attach")
 
         summary = console.query_one("#console-staged-context-summary", Static)
@@ -2920,10 +2910,26 @@ async def test_console_empty_staged_context_exposes_attach_action():
         assert attach_button.compact is True
         assert "Attach sources." not in tray_text
 
+        pushed_screens = []
+        original_push_screen = console.app.push_screen
+
+        def _spy_push_screen(screen, *args, **kwargs):
+            pushed_screens.append(screen)
+            return original_push_screen(screen, *args, **kwargs)
+
+        console.app.push_screen = _spy_push_screen
+
         await pilot.click("#console-staged-context-attach")
         await pilot.pause()
 
-        assert len(fake_session.attach_events) == 1
+        from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen
+
+        assert len(pushed_screens) == 1
+        assert isinstance(pushed_screens[0], EnhancedFileOpen)
+
+        console.app.push_screen = original_push_screen
+        await pilot.press("escape")
+        await pilot.pause()
 
 
 @pytest.mark.asyncio

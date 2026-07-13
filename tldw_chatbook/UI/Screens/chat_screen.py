@@ -6530,7 +6530,7 @@ class ChatScreen(BaseAppScreen):
         from fnmatch import fnmatch
 
         from tldw_chatbook.Chat.attachment_core import ATTACHMENT_FILTER_SPECS
-        from tldw_chatbook.Widgets.enhanced_file_picker import FileOpen, Filters
+        from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
 
         def create_filter(patterns: str):
             pattern_list = patterns.split(";")
@@ -6553,10 +6553,11 @@ class ChatScreen(BaseAppScreen):
                 )
 
         await self.app.push_screen(
-            FileOpen(
+            EnhancedFileOpen(
                 location=".",
                 title="Select File to Attach",
                 filters=file_filters,
+                context="chat_images",
             ),
             callback=on_file_selected,
         )
@@ -6600,12 +6601,20 @@ class ChatScreen(BaseAppScreen):
         """Remove the pending native Console attachment."""
         event.stop()
         store = self._ensure_console_chat_store()
+        had_pending_attachment = False
         if store.active_session_id is not None:
+            try:
+                had_pending_attachment = (
+                    store.pending_attachment(store.active_session_id) is not None
+                )
+            except KeyError:
+                had_pending_attachment = False
             store.clear_pending_attachment(store.active_session_id)
         composer = self._console_composer_or_none()
         if composer is not None:
             composer.set_pending_attachment_label(None)
-        self.app_instance.notify("Attachment cleared")
+        if had_pending_attachment:
+            self.app_instance.notify("Attachment cleared")
 
     @on(Button.Pressed, "#console-save-chatbook")
     def handle_console_save_chatbook(self, event: Button.Pressed) -> None:
