@@ -6,6 +6,7 @@ import ipaddress
 import time
 from typing import Union, Optional
 from pathlib import Path
+from urllib.parse import urlparse
 from ..Metrics.metrics_logger import log_counter, log_histogram
 
 
@@ -111,16 +112,16 @@ def validate_url(url: str) -> bool:
         })
         return False
     
-    # Basic URL pattern
-    pattern = re.compile(
-        r'^https?://'  # http:// or https://
-        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'  # domain...
-        r'localhost|'  # localhost...
-        r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # ...or ip
-        r'(?::\d+)?'  # optional port
-        r'(?:/?|[/?]\S+)$', re.IGNORECASE)
-    
-    result = bool(pattern.match(url))
+    if any(c.isspace() for c in url):
+        # A valid URL contains no raw whitespace (spaces are %-encoded).
+        result = False
+    else:
+        try:
+            parsed = urlparse(url)
+            _ = parsed.port  # raises ValueError on a malformed/out-of-range port
+            result = parsed.scheme in ("http", "https") and bool(parsed.hostname)
+        except ValueError:
+            result = False
     
     # Log result
     duration = time.time() - start_time
