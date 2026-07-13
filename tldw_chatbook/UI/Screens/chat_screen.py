@@ -6773,6 +6773,22 @@ class ChatScreen(BaseAppScreen):
                 severity="warning",
             )
             return
+        # Settle the active-session draft tracking BEFORE inserting so this
+        # consumption is self-guarding no matter which lifecycle hook
+        # (`on_mount`, `on_screen_resume`, or any other resume-adjacent path)
+        # scheduled it. If a session switch races ahead of us,
+        # `_console_visible_draft_session_id` can be stale relative to the
+        # store's active session; a *later* `_sync_native_console_chat_ui`
+        # pass would then unconditionally reload the composer from that
+        # newly-active session's stored draft, silently discarding the
+        # insert below (the pending field is already cleared once the
+        # insert lands, so there is no retry). Calling this here -- and
+        # nowhere between here and the insert, so the two run atomically
+        # within this event-loop turn -- settles the tracker onto the
+        # current active session first, so any subsequent sync pass takes
+        # the no-op fast path instead of clobbering what we're about to
+        # insert.
+        self._sync_console_session_draft()
         # Only clear the staged field once the insert has actually landed --
         # if the native composer has not finished mounting yet (a transient
         # race the 0.15s mount-time delay above should normally avoid), leave
@@ -8641,14 +8657,15 @@ class ChatScreen(BaseAppScreen):
         self._sync_console_transcript_guidance()
         self.sync_task_resume_state()
         self._register_console_footer_shortcuts()
-        # Delayed exactly like the `on_mount` consumption below: firing this
-        # immediately would race the native sync pass's own active-session
-        # draft load (`_sync_native_console_chat_ui`, scheduled via
-        # `call_after_refresh` in `on_mount` and reachable again from several
-        # resume-adjacent paths) -- that pass unconditionally reloads the
-        # composer from the session's stored (empty, for a first-touched
-        # session) draft the first time it sees a session change, which would
-        # silently wipe out an insert that landed first.
+        # Delayed exactly like the `on_mount` consumption below, to give the
+        # native composer a chance to finish mounting on first navigation to
+        # this screen. Unlike `on_mount`, nothing here schedules an
+        # equivalent `_sync_native_console_chat_ui` pass ahead of this timer,
+        # so this call site cannot rely on timing to avoid the active-session
+        # draft-load wipe race described on `_consume_pending_console_prompt_insert`
+        # -- that method settles `_console_visible_draft_session_id` itself,
+        # immediately before inserting, so the insert is self-guarding
+        # regardless of which lifecycle hook scheduled it.
         self.set_timer(0.15, self._consume_pending_console_prompt_insert)
         self.call_after_refresh(self._restore_console_workbench_focus)
         # Note: BaseAppScreen doesn't have on_screen_resume, so no super() call

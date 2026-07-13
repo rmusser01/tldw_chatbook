@@ -598,6 +598,88 @@ async def test_console_pending_prompt_insert_is_consumed_automatically_on_mount(
 
 
 @pytest.mark.asyncio
+async def test_console_pending_prompt_insert_is_consumed_automatically_on_resume():
+    """Same as the ``on_mount`` variant above, but exercises the real
+    ``on_screen_resume`` timer path -- the finding this regression guards
+    against is specific to resume, where (unlike ``on_mount``) nothing
+    schedules an equivalent ``_sync_native_console_chat_ui`` pass ahead of
+    the 0.15s consumption timer."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+        app.pending_console_prompt_insert = "staged on resume"
+        console.on_screen_resume()
+
+        for _ in range(40):
+            if composer.draft_text() == "staged on resume":
+                break
+            await pilot.pause(0.05)
+
+        assert composer.draft_text() == "staged on resume"
+        assert app.pending_console_prompt_insert is None
+
+
+@pytest.mark.asyncio
+async def test_console_resume_triggered_prompt_insert_survives_stale_session_switch():
+    """Regression for the resume wipe-race: if a session switch races ahead
+    of a resume-triggered insert, ``_console_visible_draft_session_id`` can
+    be stale relative to the store's active session when the insert's own
+    0.15s timer fires. Without the fix, a *later* call to
+    ``_sync_console_session_draft`` (as several real call sites make, e.g.
+    the periodic transcript poller or any other action routed through
+    ``_sync_native_console_chat_ui``) would then unconditionally reload the
+    composer from the newly-active session's stale stored draft, silently
+    discarding the insert -- with no retry, since the pending field is
+    already cleared once the insert lands. This must not happen: the insert
+    consumption itself has to settle the draft tracker before inserting, so
+    a later sync pass is a no-op instead of a clobber."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+        store = console._ensure_console_chat_store()
+        first_session = store.ensure_session()
+        # Let the mount-time sync pass settle the visible-draft tracker onto
+        # the first session before simulating a session switch that races
+        # ahead of the not-yet-fired resume consumption below.
+        await pilot.pause(0.1)
+        assert console._console_visible_draft_session_id == first_session.id
+
+        second_session = store.create_session(title="Second")
+        store.set_session_draft(second_session.id, "stale leftover draft")
+        assert store.active_session_id == second_session.id
+        # The tracker has NOT caught up with the switch yet -- this is the
+        # exact staleness the finding describes.
+        assert console._console_visible_draft_session_id == first_session.id
+
+        app.pending_console_prompt_insert = "resume-triggered insert"
+        console.on_screen_resume()
+        await pilot.pause(0.25)  # past the 0.15s consumption timer
+
+        assert app.pending_console_prompt_insert is None
+        assert "resume-triggered insert" in composer.draft_text()
+
+        # Simulate a later, unrelated sync pass -- any of several real call
+        # sites (periodic transcript polling, another send/stop cycle, a
+        # settings-modal callback) route through this same method. It must
+        # not retroactively wipe the insert by reloading the stale draft.
+        console._sync_console_session_draft()
+        assert "resume-triggered insert" in composer.draft_text()
+        assert console._console_visible_draft_session_id == second_session.id
+
+
+@pytest.mark.asyncio
 async def test_console_consumes_pending_prompt_insert_empty_draft_is_clean_insert():
     """An empty composer draft gets a clean insert -- no separator noise."""
     app = _build_test_app()
