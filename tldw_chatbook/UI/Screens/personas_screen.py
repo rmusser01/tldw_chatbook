@@ -1167,6 +1167,73 @@ class PersonasScreen(BaseAppScreen):
         self.query_one(PersonasLibraryPane).mark_active_row("dictionary", entity_id)
         self._sync_inspector_console_actions()
 
+    async def _reload_selected_dictionary_entries(self) -> None:
+        """Re-fetch entries + version after a mutation (positional ids shift)."""
+        entity_id = self.state.selected_entity_id
+        service = self._dictionary_scope_service()
+        if service is None or self.state.selected_entity_kind != "dictionary" or not entity_id:
+            return
+        detail = self.query_one(PersonasDictionaryDetailWidget)
+        try:
+            response = await service.list_entries(int(entity_id), mode="local")
+            record = await service.get_dictionary(int(entity_id), mode="local")
+        except Exception as exc:
+            logger.opt(exception=True).warning(f"Could not reload dictionary {entity_id} entries.")
+            detail.set_status(f"Reload failed: {exc}")
+            return
+        raw_version = record.get("version")
+        self._selected_dictionary_version = int(raw_version) if raw_version is not None else None
+        detail.update_entries(list(response.get("entries") or []))
+        await self._render_dictionary_rows(query=self.state.search_query)
+        self.query_one(PersonasLibraryPane).mark_active_row("dictionary", entity_id)
+
+    async def _run_dictionary_entry_op(self, op: Callable[[Any], Awaitable[Any]], failure: str) -> None:
+        """One guarded service mutation + the mandatory entries reload."""
+        service = self._dictionary_scope_service()
+        detail = self.query_one(PersonasDictionaryDetailWidget)
+        if service is None or self.state.selected_entity_kind != "dictionary":
+            return
+        try:
+            await op(service)
+        except ConflictError:
+            detail.set_status(
+                "Change failed: the dictionary changed since it was loaded. Reselect and try again."
+            )
+            return
+        except Exception as exc:
+            logger.opt(exception=True).warning(failure)
+            detail.set_status(f"{failure}: {exc}")
+            return
+        await self._reload_selected_dictionary_entries()
+        detail.set_status("")
+
+    @on(DictionaryEntryAddRequested)
+    async def _handle_dictionary_entry_add(self, message: DictionaryEntryAddRequested) -> None:
+        message.stop()
+        entity_id = self.state.selected_entity_id
+        if not entity_id:
+            return
+        await self._run_dictionary_entry_op(
+            lambda service: service.add_entry(int(entity_id), message.payload, mode="local"),
+            "Could not add the entry",
+        )
+
+    @on(DictionaryEntryUpdateRequested)
+    async def _handle_dictionary_entry_update(self, message: DictionaryEntryUpdateRequested) -> None:
+        message.stop()
+        await self._run_dictionary_entry_op(
+            lambda service: service.update_entry(message.entry_id, message.payload, mode="local"),
+            "Could not update the entry",
+        )
+
+    @on(DictionaryEntryDeleteRequested)
+    async def _handle_dictionary_entry_delete(self, message: DictionaryEntryDeleteRequested) -> None:
+        message.stop()
+        await self._run_dictionary_entry_op(
+            lambda service: service.delete_entry(message.entry_id, mode="local"),
+            "Could not delete the entry",
+        )
+
     # ===== Saved conversations =====
 
     def _character_db(self) -> Any:

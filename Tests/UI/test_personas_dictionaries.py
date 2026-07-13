@@ -549,6 +549,75 @@ class TestDictionarySelection:
             assert screen.query_one(PersonasDictionaryDetailWidget).display is False
 
 
+class TestDictionaryEntries:
+    async def _select_first(self, pilot, screen):
+        rows = screen.query_one("#personas-library-rows", ListView)
+        rows.index = 0
+        rows.action_select_cursor()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+    async def test_add_entry_roundtrip(self, mock_app_instance, stub_characters, fake_dict_service):
+        from textual.widgets import DataTable, TextArea
+
+        app = PersonasTestApp(mock_app_instance)
+        # Default 80x24 clips the entry-form button row off-screen (the Add
+        # button's center lands at y=24), so pilot.click would miss it.
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            screen.query_one("#personas-dict-entry-pattern", Input).value = "ASAP"
+            screen.query_one("#personas-dict-entry-replacement", TextArea).text = "as soon as possible"
+            await pilot.click("#personas-dict-entry-add")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert len(fake_dict_service.records[1]["entries"]) == 3
+            table = screen.query_one("#personas-dict-entries-table", DataTable)
+            assert table.row_count == 3
+            # Row meta refreshed too.
+            rows = screen.query_one("#personas-library-rows", ListView).children
+            metas = [str(s.renderable) for r in rows for s in r.query(".personas-library-row-meta").results()]
+            assert "3 entries · on" in metas
+
+    async def test_delete_entry_reindexes(self, mock_app_instance, stub_characters, fake_dict_service):
+        from textual.widgets import DataTable
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            table = screen.query_one("#personas-dict-entries-table", DataTable)
+            table.move_cursor(row=0)
+            await pilot.click("#personas-dict-entry-delete")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert [e["pattern"] for e in fake_dict_service.records[1]["entries"]] == ["HR"]
+            assert table.row_count == 1
+            # Positional ids re-derived after reload: remaining row is index 0.
+            detail = screen.query_one("#personas-dictionary-detail")
+            assert detail.entry_ids_in_order() == ["local:chat_dictionary_entry:1:0"]
+
+    async def test_update_entry_persists(self, mock_app_instance, stub_characters, fake_dict_service):
+        from textual.widgets import DataTable, TextArea
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            table = screen.query_one("#personas-dict-entries-table", DataTable)
+            table.move_cursor(row=1)
+            screen.query_one("#personas-dict-entry-pattern", Input).value = "HRV"
+            screen.query_one("#personas-dict-entry-replacement", TextArea).text = "heart rate variability"
+            await pilot.click("#personas-dict-entry-update")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert fake_dict_service.records[1]["entries"][1]["pattern"] == "HRV"
+
+
 class TestDictionarySettings:
     async def _select_first(self, pilot, screen):
         rows = screen.query_one("#personas-library-rows", ListView)
