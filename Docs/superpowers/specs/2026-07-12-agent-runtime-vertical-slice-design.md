@@ -50,7 +50,7 @@ and MCP (task-201) later register as tool providers through one interface define
 
 - `Agents/agent_models.py` — **pure** dataclasses, no Textual/DB/IO: `AgentConfig`,
   `ToolCatalogEntry`, `AgentStep`, `SubAgentSession`, `RunBudget`, `RunStatus`
-  (`running|done|error|stuck|cancelled`).
+  (`running|done|error|stuck|cancelled|superseded`).
 - `Agents/agent_runtime.py` — the **pure control loop**. Given injected callables
   (`call_model`, `list_catalog`, `load_schema`, `invoke_tool`, `spawn`, `should_cancel`), it drives
   *think → (disclose/call tools) → observe → repeat* until a terminal state or a budget trip. No
@@ -97,10 +97,11 @@ active set is capped (budget) so disclosure can't balloon context.
 
 **Small-catalog shortcut (important for the slice):** forcing `find_tools`→`load_tools`→invoke for a
 handful of built-in tools is 3 wasted round-trips — painful on a slow local model. So when the total
-catalog is **≤ a threshold** (default 8), all tools are disclosed **directly** into the active set
-and the find/load dance is skipped; progressive disclosure engages only once the catalog exceeds the
-threshold (i.e. once MCP/Skills add many tools). The slice thus proves the mechanism *and* stays
-snappy.
+catalog is **≤ a threshold** (default 8), all tools are disclosed **directly** into the active set,
+and `find_tools`/`load_tools` are **not offered at all** (offering them would just tempt the model
+into wasted turns) — the core set shrinks to `spawn_subagent` plus the disclosed tools. Progressive
+disclosure engages only once the catalog exceeds the threshold (i.e. once MCP/Skills add many
+tools). The slice thus proves the mechanism *and* stays snappy.
 
 ## Runtime loop, tool-calling, and the fallback protocol
 
@@ -123,6 +124,20 @@ partial JSON → treated as plain output, never a crash). If neither native call
 block appear, the output is treated as a final answer (graceful degradation — the slice still
 produces a response on a tool-incapable model).
 
+**Streaming × tool-detection policy** (these otherwise conflict — a turn isn't known to be final
+until the loop has seen whether it contains tool calls):
+
+- **Fallback protocol:** the fence is REQUIRED to be the *first* thing in the response. The runtime
+  sniffs the first non-whitespace tokens of the stream: fence → the whole turn buffers as a tool
+  call (nothing streams to the transcript); no fence → the rest streams to the transcript exactly
+  like today. A disobedient mid-stream fence truncates the visible text at the fence start and
+  treats the remainder as the tool call.
+- **Native path:** structured tool-call deltas never hit the transcript; text deltas stream; a turn
+  ending in tool calls folds any streamed preamble into the step log.
+
+Net effect: the no-tool case streams like today; tool turns render as step markers, never as
+half-streamed prose that gets retracted.
+
 ## Console send path — the agent loop as reply engine
 
 Agent-capability is the default, so the loop **replaces the "produce the assistant reply" step** of
@@ -130,12 +145,17 @@ the Console send path — it does not add a parallel mode. The outer shell is un
 persisting the user message, auto-titling, and the rail all stay; only the inner "call the provider
 once" step becomes "run the agent loop." Consequences:
 
-- A no-tool message → one provider call, streamed exactly like today.
-- **Retry / regenerate / continue** re-run the loop (they already re-generate the reply).
+- A no-tool message → one provider call, streamed exactly like today (see the streaming ×
+  tool-detection policy above).
+- **Retry / regenerate / continue** re-run the loop (they already re-generate the reply). The
+  replaced reply's run record — and any sub-agent runs under it — is marked **`superseded`** (kept
+  for drill-in history, never deleted); the new attempt gets a fresh run record.
 - **RAG context and staged context** feed the loop's *initial* message history (the same place they
   inject today); deeper loop-integration (e.g. a retrieval tool) is a follow-up.
-- **Turn model:** one active run per conversation. While a run is in flight the composer is busy
-  (as during a stream today) and **Stop** cancels; a second message waits for the run to finish.
+- **Turn model:** one active run per conversation; runs in *different* conversations (session tabs)
+  may execute concurrently — the DB write serialization below covers that. While a run is in flight
+  the composer is busy (as during a stream today) and **Stop** cancels; a second message waits for
+  the run to finish.
 - Every `AgentConfig` defaults to the conversation's session model + the default agent system
   prompt + the built-in tools — no per-conversation setup.
 
@@ -154,8 +174,11 @@ agent-capable everywhere.
 - **Sequential** execution (parallel sub-agents are a follow-up).
 - **Fan-out + budgets:** `RunBudget(max_steps, max_wall_seconds, max_subagents, max_active_tools,
   max_subagent_result_chars)` bounds every run; the parent enforces `max_subagents` per
-  conversation-run. **Slice defaults are deliberately tight** (e.g. `max_subagents`=2, low
-  `max_steps`) so a run on the local 27B model completes in a demoable time.
+  conversation-run. A child's budget = **min(child defaults, the parent's remaining budget)** — the
+  parent's wall-clock keeps ticking while a sub-agent runs sequentially, so a child can never
+  outlive (or silently consume) the whole parent budget. **Slice defaults are deliberately tight**
+  (e.g. `max_subagents`=2, low `max_steps`) so a run on the local 27B model completes in a demoable
+  time.
 
 ## Stuck, error, and cancellation
 
@@ -166,7 +189,10 @@ agent-capable everywhere.
   spawn returns an error result to the parent and never corrupts the parent run.
 - **cancel** := a hard user **Stop** that cancels the whole tree (primary + any running sub-agent)
   via `should_cancel`; the run runs as a Textual background worker so the UI never blocks; state is
-  persisted as `cancelled`.
+  persisted as `cancelled`. **Honest latency:** the flag is checked at step and stream-chunk
+  boundaries — a blocking non-streaming provider call in flight completes (or times out) before the
+  cancel lands; the UI shows "stopping…" until it does. No new steps, tool calls, or spawns start
+  after Stop.
 
 ## Concurrency + persistence model
 
@@ -200,11 +226,15 @@ per agent**, primary and sub-agent alike:
   `AgentStep`), `result` (sub-agent result text), `budget` (JSON), `created_at`, `updated_at`.
 - `AgentStep`: `index`, `kind` (`model|tool_call|tool_result|spawn|error`), `summary`, `tool_name`,
   `args`, `result`, timestamps.
-- `[N Sub-Agents]` count = rows where `conversation_id = X AND agent_kind = 'subagent'`.
+- `[N Sub-Agents]` count = rows where `conversation_id = X AND agent_kind = 'subagent'` — a
+  **historical** count by design (includes done/error/cancelled/superseded); the expanded rows'
+  status glyphs distinguish them.
 - Drill-in = load a sub-agent run record and render its `steps`.
 
 The primary agent's **user-facing** messages remain normal Console conversation messages; its
-**internal** tool/spawn steps live in its run record (and as compact inline markers).
+**internal** tool/spawn steps live in its run record (and as compact inline markers). **Resume:** on
+conversation load, inline markers and the rail re-derive from the run store — agent activity
+survives an app restart without being persisted as conversation messages.
 
 ## Console UI
 
@@ -231,9 +261,12 @@ The primary agent's **user-facing** messages remain normal Console conversation 
 - **Pure (`agent_runtime`):** fake `call_model`/tool/`spawn`/`should_cancel` callables — plain
   answer (no tools); tool-call loop; disclosure (`find_tools`→`load_tools`→invoke); spawn→result;
   budget→`stuck`; loop-detection→`stuck`; tool-error captured; cancel mid-run. Fallback-protocol
-  parser: native calls vs text `tool_call` block vs neither.
+  parser: native calls vs text `tool_call` block vs neither; **fence-sniff streaming policy**
+  (leading fence buffers, no-fence streams, mid-stream fence truncates-and-converts).
 - **Service (real `AgentRunsDB`):** run persisted; sub-agent run linked via `parent_run_id`; status
-  transitions; permission gate blocks a non-allowed/undisclosed tool; fan-out cap enforced.
+  transitions; **regenerate marks the prior run + its sub-agents `superseded`**; permission gate
+  blocks a non-allowed/undisclosed tool; fan-out cap enforced; child budget clamped to the parent's
+  remainder; **resume re-derives markers/rail from the store**.
 - **UI (real App + `run_test`):** `[N Sub-Agents]` count node; rail shows status + sub-agent list;
   drill-in renders a sub-agent session; Stop cancels; escaped names.
 - **Live gate (served, 2050×1240):** a real agent conversation where the primary calls a built-in
