@@ -486,27 +486,12 @@ class ConsoleChatController:
             before_message_id=message_id,
         )
         self._ensure_user_continuation_instruction(provider_messages)
-        self._set_run_state(ConsoleRunState(ConsoleRunStatus.STREAMING, "Regenerating response."))
-        chunks: list[str] = []
-        try:
-            async for chunk in self.provider_gateway.stream_chat(resolution, provider_messages):
-                if chunk:
-                    chunks.append(chunk)
-        except Exception as exc:
-            visible_copy = f"Provider stream failed: {describe_stream_failure(exc)}"
-            self._append_failure_system_row(session_id, visible_copy)
-            self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
-            return ConsoleSubmitResult(True, True, visible_copy)
-
-        content = "".join(chunks)
-        if not content:
-            visible_copy = "Provider stream ended without content."
-            self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
-            return ConsoleSubmitResult(True, True, visible_copy)
-
-        updated = self.store.add_variant(message_id, content)
-        self._set_run_state(ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response regenerated."))
-        return ConsoleSubmitResult(True, True, updated.content)
+        return await self._stream_assistant_response(
+            resolution=resolution,
+            provider_messages=provider_messages,
+            assistant_message_id=message_id,
+            variant_mode=True,
+        )
 
     def _provider_selection(self) -> ConsoleProviderSelection:
         return ConsoleProviderSelection(
@@ -617,10 +602,13 @@ class ConsoleChatController:
         provider_messages: list[dict[str, str]],
         assistant_message_id: str,
         prepare_retry: bool = False,
+        variant_mode: bool = False,
     ) -> ConsoleSubmitResult:
         self._active_assistant_message_id = assistant_message_id
         self._active_stream_task = asyncio.current_task()
         self._stop_requested = False
+        if variant_mode:
+            self.store.begin_variant_stream(assistant_message_id)
         self._set_run_state(ConsoleRunState(ConsoleRunStatus.STREAMING, "Streaming response."))
         retry_prepared = False
         emitted_content = False
@@ -677,7 +665,10 @@ class ConsoleChatController:
                         return self._session_closed_result()
                 return ConsoleSubmitResult(True, True, failed.content)
             try:
-                completed = self.store.mark_message_complete(assistant_message_id)
+                if variant_mode:
+                    completed = self.store.finalize_variant_stream(assistant_message_id)
+                else:
+                    completed = self.store.mark_message_complete(assistant_message_id)
             except KeyError:
                 return self._session_closed_result()
             self._set_run_state(

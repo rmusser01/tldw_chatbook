@@ -132,6 +132,7 @@ class ConsoleChatStore:
         self._stream_chunks_by_message: dict[str, list[str]] = {}
         self._stream_materialized_counts: dict[str, int] = {}
         self._sync_v2_message_versions: dict[str, str] = {}
+        self._variant_stream_bases: dict[str, str] = {}
 
     def ensure_session(
         self,
@@ -499,10 +500,19 @@ class ConsoleChatStore:
         return self._snapshot(message)
 
     def mark_message_failed(self, message_id: str) -> ConsoleChatMessage:
-        """Mark a message failed and flush final visible content to persistence."""
+        """Mark a message failed and flush final visible content to persistence.
+
+        If this message was mid variant-stream (regenerate), any partial
+        streamed content is discarded and the pre-regenerate base is restored
+        as the visible row -- mirroring the pre-refactor regenerate behavior,
+        where a failed regenerate never touched the existing message content.
+        """
         message = self._message_or_raise(message_id)
         self._validate_can_mark_terminal(message)
         self._materialize_stream_buffer(message)
+        base = self._variant_stream_bases.pop(message.id, None)
+        if base is not None:
+            message.content = base
         message.status = "failed"
         self._persist_existing_message(message)
         return self._snapshot(message)
@@ -536,6 +546,39 @@ class ConsoleChatStore:
             message.variants.variants.append(ConsoleVariant(content=content))
             message.variants.selected_index = len(message.variants.variants) - 1
         message.content = message.variants.current.content
+        self._persist_existing_message(message)
+        return self._snapshot(message)
+
+    def begin_variant_stream(self, message_id: str) -> ConsoleChatMessage:
+        """Snapshot current content as the base and reset the buffer for a new variant."""
+        message = self._message_or_raise(message_id)
+        if message.role is not ConsoleMessageRole.ASSISTANT:
+            raise ValueError("Only assistant messages can be regenerated.")
+        self._materialize_stream_buffer(message)
+        self._variant_stream_bases[message.id] = message.content
+        message.content = ""
+        self._stream_chunks_by_message.pop(message.id, None)
+        self._stream_materialized_counts.pop(message.id, None)
+        message.status = "streaming"
+        return self._snapshot(message)
+
+    def finalize_variant_stream(self, message_id: str) -> ConsoleChatMessage:
+        """Store the streamed buffer as a new selected variant beside the snapshot base."""
+        message = self._message_or_raise(message_id)
+        self._materialize_stream_buffer(message)
+        new_content = message.content
+        base = self._variant_stream_bases.pop(message.id, "")
+        if message.variants is None:
+            message.variants = ConsoleVariantSet.from_contents(
+                turn_id=message.turn_id or message.id,
+                contents=[base, new_content],
+                selected_index=1,
+            )
+        else:
+            message.variants.variants.append(ConsoleVariant(content=new_content))
+            message.variants.selected_index = len(message.variants.variants) - 1
+        message.content = message.variants.current.content
+        message.status = "complete"
         self._persist_existing_message(message)
         return self._snapshot(message)
 
