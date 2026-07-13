@@ -4,6 +4,11 @@ TASK-215. Worktree `console-inline-images-215` @ **fd3f0972**
 ("feat(console): wire inline image rendering — prep worker, toggle handler,
 screen state"). Real streamed sends to a live model; no fixtures.
 
+**Provenance**: captures 1–6 were taken at **fd3f0972**; capture 7 (the
+config-driven default-mode proof) was taken after the follow-up fix, at
+**5b2a7e26** ("fix(console): read `[chat.images]` through the live
+`app_config` shape").
+
 ## Rig
 
 - **Serve**: `textual_serve.Server` running `python -m tldw_chatbook.app` from

@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 import re
 from types import SimpleNamespace
-from typing import Any, Dict, Iterable, Optional, TYPE_CHECKING
+from typing import Any, Dict, Iterable, Literal, Optional, TYPE_CHECKING
 import uuid
 
 import toml
@@ -120,6 +120,7 @@ from ...Chat.console_live_work import (
 )
 from ...Chat.console_glyphs import GLYPH_COLLAPSE_LEFT, GLYPH_COLLAPSE_RIGHT
 from ...Chat.console_image_view import (
+    IMAGE_CACHE_MAX_ENTRIES,
     ConsoleImageRenderCache,
     ConsoleImageRowSpec,
     ConsoleImageViewState,
@@ -1145,7 +1146,7 @@ class ChatScreen(BaseAppScreen):
         self._console_unknown_send_armed: str | None = None
         self._console_image_view_state: ConsoleImageViewState | None = None
         self._console_image_cache: ConsoleImageRenderCache | None = None
-        self._console_image_default_mode: str | None = None
+        self._console_image_default_mode: Literal["pixels", "graphics"] | None = None
         self._console_message_action_service = ConsoleMessageActionService()
         self._console_model_option_warnings: dict[tuple[str, str], str] = {}
         self._last_console_action: ConsoleActionResult | None = None
@@ -1912,14 +1913,25 @@ class ChatScreen(BaseAppScreen):
             )
         return self._console_image_view_state, self._console_image_cache
 
+    def _recent_console_image_messages(self, messages) -> list[Any]:
+        """Return the most recent image-bearing messages, bounded to cache capacity.
+
+        Mirrors the provider payload's most-recent-N image policy
+        (``_provider_message_payloads``'s ``image_ids[-image_budget:]``).
+        """
+        # Bound the working set to the cache capacity so prep can never evict
+        # what the transcript still shows (churn guard).
+        image_messages = [
+            message for message in messages if getattr(message, "image_data", None) is not None
+        ]
+        return image_messages[-IMAGE_CACHE_MAX_ENTRIES:]
+
     def _build_console_image_specs(self, messages) -> dict[str, ConsoleImageRowSpec]:
         """Build image-row payloads for prepared, non-hidden image messages."""
         state, cache = self._ensure_console_image_view()
         default_mode = self._console_image_default_mode
         specs: dict[str, ConsoleImageRowSpec] = {}
-        for message in messages:
-            if getattr(message, "image_data", None) is None:
-                continue
+        for message in self._recent_console_image_messages(messages):
             mode = state.mode_for(message.id, default=default_mode)
             if mode == "hidden":
                 continue
@@ -6551,7 +6563,10 @@ class ChatScreen(BaseAppScreen):
             image_specs = self._build_console_image_specs(messages)
             transcript.set_image_specs(image_specs)
             _state, cache = self._ensure_console_image_view()
-            pending_images = cache.pending_ids(messages)
+            # Same bounded subset as `_build_console_image_specs` — computing
+            # pending work over the full transcript would prep messages the
+            # LRU cache immediately evicts again (churn guard).
+            pending_images = cache.pending_ids(self._recent_console_image_messages(messages))
             if pending_images:
                 self.run_worker(
                     self._prep_console_images(pending_images),

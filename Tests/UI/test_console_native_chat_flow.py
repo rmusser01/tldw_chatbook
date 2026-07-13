@@ -26,6 +26,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunStatus,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from tldw_chatbook.Chat.console_image_view import IMAGE_CACHE_MAX_ENTRIES
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -6756,3 +6757,69 @@ def test_image_view_modes_ride_screen_state_allowlist_and_prune_stale():
     fresh._restore_native_console_state(payload)
     fresh_state, _ = fresh._ensure_console_image_view()
     assert fresh_state.serialize() == {message.id: "hidden"}
+
+
+def test_console_image_prep_bounded_to_cache_capacity_avoids_churn():
+    """Regression: prep must never chase more images than the cache can hold.
+
+    Before this fix, the sync path computed `cache.pending_ids(messages)`
+    over the FULL session while `ConsoleImageRenderCache` is LRU-bounded at
+    `IMAGE_CACHE_MAX_ENTRIES`. With more image messages than the cache holds,
+    each sync would prep an older message, evict the newest one to make room,
+    and the next sync would re-prep the evicted one — an infinite decode +
+    refresh churn. `_build_console_image_specs` (and the sync-site pending
+    computation) must bound their working set to the most-recent-N
+    image-bearing messages so the working set can never exceed cache
+    capacity.
+    """
+    from io import BytesIO
+
+    from PIL import Image as PILImage
+
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+
+    total_images = IMAGE_CACHE_MAX_ENTRIES + 3
+    messages = []
+    for index in range(total_images):
+        buffer = BytesIO()
+        PILImage.new("RGB", (4, 4), (index % 256, 20, 30)).save(buffer, format="PNG")
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content=f"pic {index}",
+            image_data=buffer.getvalue(),
+            image_mime_type="image/png",
+        )
+        messages.append(message)
+
+    _state, cache = screen._ensure_console_image_view()
+    recent = screen._recent_console_image_messages(messages)
+    most_recent_ids = [m.id for m in messages[-IMAGE_CACHE_MAX_ENTRIES:]]
+    assert len(recent) == IMAGE_CACHE_MAX_ENTRIES
+    assert [m.id for m in recent] == most_recent_ids
+
+    # Prepare exactly the bounded (most-recent) subset via the cache
+    # directly, mirroring what the fixed sync-site prep kick does.
+    for message_id, image_data in cache.pending_ids(recent):
+        cache.prepare(message_id, image_data)
+
+    # (a) + (b): specs are bounded to cache capacity and are the most recent
+    # image messages — older messages were never prepared, so they can never
+    # appear here regardless of how many messages the session holds.
+    specs = screen._build_console_image_specs(messages)
+    assert len(specs) <= IMAGE_CACHE_MAX_ENTRIES
+    assert set(specs) == set(most_recent_ids)
+
+    # The older, out-of-window messages were never touched by prep.
+    older_ids = [m.id for m in messages[: -IMAGE_CACHE_MAX_ENTRIES]]
+    assert older_ids  # sanity: the test actually exceeds cache capacity
+    for older_id in older_ids:
+        assert cache.get_pil(older_id) is None
+
+    # (c) No churn: recomputing pending over the same bounded subset finds
+    # nothing left to prepare — the working set converges instead of
+    # flapping between decode and eviction.
+    assert cache.pending_ids(screen._recent_console_image_messages(messages)) == []

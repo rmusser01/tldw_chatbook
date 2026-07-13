@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Iterable, Literal, Mapping
 
 from loguru import logger
+from PIL import Image as PILImage
 from rich_pixels import Pixels
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -17,7 +18,11 @@ from textual.widget import Widget
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
-from tldw_chatbook.Chat.console_image_view import ConsoleImageRowSpec
+from tldw_chatbook.Chat.console_image_view import (
+    PIXELS_MAX_COLS,
+    PIXELS_MAX_LINES,
+    ConsoleImageRowSpec,
+)
 from tldw_chatbook.Chat.console_message_actions import ConsoleMessageAction, ConsoleMessageActionService
 from tldw_chatbook.Chat.console_onboarding_state import (
     CONSOLE_QUIET_EMPTY_COPY,
@@ -749,7 +754,15 @@ class ConsoleTranscript(VerticalScroll):
         if widget is None:
             pixels = spec.pixels
             if pixels is None and spec.pil is not None:
-                pixels = Pixels.from_image(spec.pil)
+                # Graphics import failed and nothing was cached: thumbnail a
+                # copy before building, mirroring the cache's bounded build
+                # (`ConsoleImageRenderCache.get_pixels`) so this fallback
+                # never runs `Pixels.from_image` on the full ≤1024px image.
+                scaled = spec.pil.copy()
+                scaled.thumbnail(
+                    (PIXELS_MAX_COLS, PIXELS_MAX_LINES * 2), PILImage.Resampling.LANCZOS
+                )
+                pixels = Pixels.from_image(scaled)
             widget = Static(
                 pixels if pixels is not None else "",
                 id=f"console-image-{spec.message_id}",

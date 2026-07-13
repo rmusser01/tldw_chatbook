@@ -190,6 +190,10 @@ class ConsoleImageRenderCache:
 
     ``prepare`` is synchronous CPU work (PIL decode + LANCZOS downscale) —
     callers must run it off the event loop (``asyncio.to_thread``).
+
+    Thread model: ``prepare`` runs in a worker thread while the event loop
+    reads concurrently; safety relies on per-operation dict/set atomicity
+    under the GIL — keep mutations to single container ops.
     """
 
     def __init__(self, *, max_entries: int = IMAGE_CACHE_MAX_ENTRIES) -> None:
