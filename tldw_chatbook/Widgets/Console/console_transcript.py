@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Iterable, Literal
+from typing import Iterable, Literal, Mapping
 
+from loguru import logger
+from rich_pixels import Pixels
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.content import Content
@@ -15,6 +17,7 @@ from textual.widget import Widget
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
+from tldw_chatbook.Chat.console_image_view import ConsoleImageRowSpec
 from tldw_chatbook.Chat.console_message_actions import ConsoleMessageAction, ConsoleMessageActionService
 from tldw_chatbook.Chat.console_onboarding_state import (
     CONSOLE_QUIET_EMPTY_COPY,
@@ -152,7 +155,7 @@ def _message_render_text(message: ConsoleChatMessage, *, selected: bool) -> Cont
 @dataclass(frozen=True)
 class _TranscriptRow:
     key: str
-    kind: Literal["rule", "message", "actions", "action-help", "empty"]
+    kind: Literal["rule", "message", "image", "actions", "action-help", "empty"]
     signature: tuple
     message: ConsoleChatMessage | None = None
     selected: bool = False
@@ -160,6 +163,7 @@ class _TranscriptRow:
     action_label: str = EMPTY_TRANSCRIPT_PROVIDER_ACTION_LABEL
     action_tooltip: str = EMPTY_TRANSCRIPT_PROVIDER_ACTION_TOOLTIP
     card_state: ConsoleSetupCardState | None = None
+    image_spec: "ConsoleImageRowSpec | None" = None
 
 
 class ConsoleTranscriptMessage(Static):
@@ -346,6 +350,7 @@ class ConsoleTranscript(VerticalScroll):
         self._row_widgets: dict[str, Widget] = {}
         self._row_signatures: dict[str, tuple] = {}
         self._row_build_counts: dict[str, int] = {}
+        self._image_specs: dict[str, ConsoleImageRowSpec] = {}
 
     def compose(self) -> ComposeResult:
         self._row_widgets.clear()
@@ -363,6 +368,16 @@ class ConsoleTranscript(VerticalScroll):
         message_ids = {message.id for message in self._messages}
         if self.selected_message_id not in message_ids:
             self.selected_message_id = None
+
+    def set_image_specs(self, specs: Mapping[str, ConsoleImageRowSpec]) -> None:
+        """Replace the prebuilt inline-image row payloads keyed by message ID.
+
+        Args:
+            specs: Mapping of message ID to its prepared image-row payload.
+                Messages absent from the mapping render no image row (covers
+                hidden mode, unprepared cache, and metadata-only messages).
+        """
+        self._image_specs = dict(specs)
 
     def sync_empty_state(
         self,
@@ -584,6 +599,17 @@ class ConsoleTranscript(VerticalScroll):
                     selected=selected,
                 )
             )
+            image_spec = self._image_specs.get(message.id)
+            if image_spec is not None:
+                rows.append(
+                    _TranscriptRow(
+                        key=f"image:{message.id}",
+                        kind="image",
+                        signature=("image", message.id, image_spec.mode),
+                        message=message,
+                        image_spec=image_spec,
+                    )
+                )
             if selected:
                 rows.append(
                     _TranscriptRow(
@@ -700,9 +726,37 @@ class ConsoleTranscript(VerticalScroll):
             )
         if row.kind == "message" and row.message is not None:
             return ConsoleTranscriptMessage(row.message, selected=row.selected)
+        if row.kind == "image" and row.image_spec is not None:
+            return self._image_row_widget(row.image_spec)
         if row.kind == "actions" and row.message is not None:
             return self._action_row(row.message)
         raise ValueError(f"Unsupported transcript row: {row}")
+
+    def _image_row_widget(self, spec: ConsoleImageRowSpec) -> Widget:
+        """Build the mounted widget for one inline-image row."""
+        widget: Widget | None = None
+        if spec.mode == "graphics" and spec.pil is not None:
+            try:
+                from textual_image.widget import Image as _GraphicsImage
+
+                widget = _GraphicsImage(spec.pil, id=f"console-image-{spec.message_id}")
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "textual-image unavailable; falling back to pixels row."
+                )
+                widget = None
+        if widget is None:
+            pixels = spec.pixels
+            if pixels is None and spec.pil is not None:
+                pixels = Pixels.from_image(spec.pil)
+            widget = Static(
+                pixels if pixels is not None else "",
+                id=f"console-image-{spec.message_id}",
+            )
+        widget.add_class("console-transcript-image")
+        widget.styles.max_width = 80
+        widget.styles.max_height = 40
+        return widget
 
     def _update_row_widget(self, widget: Widget, row: _TranscriptRow) -> Widget:
         if row.kind == "message" and row.message is not None and isinstance(widget, ConsoleTranscriptMessage):

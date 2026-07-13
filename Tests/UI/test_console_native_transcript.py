@@ -692,3 +692,123 @@ def test_image_chip_metadata_only_keeps_bare_mime():
     )
     rendered = _message_render_text(message, selected=False)
     assert "🖼 image/png" in rendered.plain
+
+
+def _image_row_spec(message_id: str, mode: str = "pixels"):
+    from PIL import Image as PILImage
+    from rich_pixels import Pixels
+
+    from tldw_chatbook.Chat.console_image_view import ConsoleImageRowSpec
+
+    pil = PILImage.new("RGB", (16, 16), (10, 120, 40))
+    return ConsoleImageRowSpec(
+        message_id=message_id,
+        mode=mode,
+        pixels=Pixels.from_image(pil) if mode == "pixels" else None,
+        pil=pil if mode == "graphics" else None,
+    )
+
+
+def test_transcript_emits_image_row_when_spec_present():
+    transcript = ConsoleTranscript()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="look",
+        image_data=b"\x89PNG-bytes",
+        image_mime_type="image/png",
+    )
+    transcript.set_messages([message])
+    transcript.set_image_specs({message.id: _image_row_spec(message.id)})
+
+    rows = transcript._transcript_rows()
+    kinds = [row.kind for row in rows]
+    assert "image" in kinds
+    image_row = next(row for row in rows if row.kind == "image")
+    assert image_row.key == f"image:{message.id}"
+    assert image_row.signature == ("image", message.id, "pixels")
+    # Order: message row immediately precedes its image row.
+    message_index = kinds.index("message")
+    assert kinds[message_index + 1] == "image"
+
+
+def test_transcript_omits_image_row_without_spec_or_when_hidden():
+    transcript = ConsoleTranscript()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="look",
+        image_data=b"\x89PNG-bytes",
+        image_mime_type="image/png",
+    )
+    transcript.set_messages([message])
+    # No specs set at all -> no image rows (unmounted-test posture).
+    assert all(row.kind != "image" for row in transcript._transcript_rows())
+    # Hidden mode is expressed by the screen simply omitting the spec.
+    transcript.set_image_specs({})
+    assert all(row.kind != "image" for row in transcript._transcript_rows())
+
+
+def test_image_row_signature_stable_across_streaming_ticks():
+    transcript = ConsoleTranscript()
+    user = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="look",
+        image_data=b"\x89PNG-bytes",
+        image_mime_type="image/png",
+    )
+    assistant = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="", status="streaming"
+    )
+    transcript.set_messages([user, assistant])
+    transcript.set_image_specs({user.id: _image_row_spec(user.id)})
+
+    first = next(r for r in transcript._transcript_rows() if r.kind == "image")
+    assistant.content = "more streamed text"
+    transcript.set_messages([user, assistant])
+    second = next(r for r in transcript._transcript_rows() if r.kind == "image")
+    assert first.signature == second.signature
+
+
+def test_image_row_widget_builds_for_both_modes():
+    transcript = ConsoleTranscript()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="look",
+        image_data=b"\x89PNG-bytes",
+        image_mime_type="image/png",
+    )
+    transcript.set_messages([message])
+
+    transcript.set_image_specs({message.id: _image_row_spec(message.id, "pixels")})
+    pixels_row = next(r for r in transcript._transcript_rows() if r.kind == "image")
+    pixels_widget = transcript._build_row_widget(pixels_row, track=False)
+    assert pixels_widget.id == f"console-image-{message.id}"
+
+    transcript.set_image_specs({message.id: _image_row_spec(message.id, "graphics")})
+    graphics_row = next(r for r in transcript._transcript_rows() if r.kind == "image")
+    graphics_widget = transcript._build_row_widget(graphics_row, track=False)
+    assert graphics_widget.id == f"console-image-{message.id}"
+    assert graphics_widget.styles.max_width.value == 80
+    assert graphics_widget.styles.max_height.value == 40
+
+
+def test_image_row_rebuild_tracked_on_mode_change():
+    transcript = ConsoleTranscript()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="look",
+        image_data=b"\x89PNG-bytes",
+        image_mime_type="image/png",
+    )
+    transcript.set_messages([message])
+    transcript.set_image_specs({message.id: _image_row_spec(message.id, "pixels")})
+    rows = transcript._transcript_rows()
+    image_row = next(r for r in rows if r.kind == "image")
+    widget = transcript._build_row_widget(image_row, track=True)
+    assert transcript.row_build_counts()[f"image:{message.id}"] == 1
+
+    transcript.set_image_specs({message.id: _image_row_spec(message.id, "graphics")})
+    new_row = next(r for r in transcript._transcript_rows() if r.kind == "image")
+    assert new_row.signature != image_row.signature
+    updated = transcript._update_row_widget(widget, new_row)
+    assert updated is not widget
+    assert transcript.row_build_counts()[f"image:{message.id}"] == 2
