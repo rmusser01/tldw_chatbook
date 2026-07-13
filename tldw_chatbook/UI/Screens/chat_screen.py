@@ -2004,6 +2004,30 @@ class ChatScreen(BaseAppScreen):
                 self._console_chat_controller.thinking_budget_tokens = selection.thinking_budget_tokens
                 self._console_chat_controller.streaming = selection.streaming
                 self._console_chat_controller.system_prompt = selection.system_prompt
+            # The `[console] agent_runtime` kill-switch and the agent
+            # bridge were previously read only once, at controller
+            # construction (Plan-B Task 6 Important 3) -- toggling the
+            # config afterward had no effect until the whole screen (and
+            # controller) was torn down and rebuilt. Refresh both here,
+            # every time provider selection refreshes, so the gate takes
+            # effect on the very next send.
+            update_agent_runtime = getattr(
+                self._console_chat_controller,
+                "update_agent_runtime",
+                None,
+            )
+            if callable(update_agent_runtime):
+                update_agent_runtime(
+                    enabled=self._console_agent_runtime_enabled(),
+                    bridge=self._ensure_console_agent_bridge(),
+                )
+            else:
+                self._console_chat_controller._agent_runtime_enabled = (
+                    self._console_agent_runtime_enabled()
+                )
+                self._console_chat_controller._agent_bridge = (
+                    self._ensure_console_agent_bridge()
+                )
         return selection
 
     def _activate_console_session_for_workspace(self, workspace_id: str) -> None:
