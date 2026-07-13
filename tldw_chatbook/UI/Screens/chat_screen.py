@@ -6940,11 +6940,17 @@ class ChatScreen(BaseAppScreen):
         mime_type = message.image_mime_type
         if image_data is None and message.persisted_message_id is not None:
             db = getattr(self.app_instance, "chachanotes_db", None)
-            row = (
-                db.get_message_by_id(message.persisted_message_id)
-                if db is not None
-                else None
-            )
+            try:
+                row = (
+                    db.get_message_by_id(message.persisted_message_id)
+                    if db is not None
+                    else None
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Console save-image DB fallback lookup failed."
+                )
+                row = None
             if row:
                 image_data = row.get("image_data")
                 mime_type = row.get("image_mime_type") or mime_type
@@ -6953,18 +6959,25 @@ class ChatScreen(BaseAppScreen):
                 "No image data available for this message.", severity="warning"
             )
             return
-        save_location = Path(
-            os.path.expanduser(
-                get_cli_setting("chat.images", "save_location", "~/Downloads")
+        try:
+            save_location = Path(
+                os.path.expanduser(
+                    get_cli_setting("chat.images", "save_location", "~/Downloads")
+                )
             )
-        )
-        save_location.mkdir(parents=True, exist_ok=True)
-        extension = _mimetypes.guess_extension(mime_type or "image/png") or ".png"
-        target = (
-            save_location
-            / f"console_image_{_datetime.now().strftime('%Y%m%d_%H%M%S')}{extension}"
-        )
-        target.write_bytes(bytes(image_data))
+            save_location.mkdir(parents=True, exist_ok=True)
+            extension = _mimetypes.guess_extension(mime_type or "image/png") or ".png"
+            base_name = f"console_image_{_datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            target = save_location / f"{base_name}{extension}"
+            counter = 1
+            while target.exists():
+                target = save_location / f"{base_name}_{counter}{extension}"
+                counter += 1
+            target.write_bytes(bytes(image_data))
+        except Exception as exc:
+            logger.opt(exception=True).warning("Console save-image write failed.")
+            self.app_instance.notify(f"Could not save image: {exc}", severity="error")
+            return
         self.app_instance.notify(f"Image saved to {target}")
 
     async def _save_console_message_as_note(self, message_id: str) -> None:

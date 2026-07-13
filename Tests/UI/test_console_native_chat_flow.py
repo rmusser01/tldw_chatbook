@@ -6368,3 +6368,49 @@ async def test_save_console_message_image_writes_file(tmp_path, monkeypatch):
         saved = list(tmp_path.glob("console_image_*.png"))
         assert len(saved) == 1
         assert saved[0].read_bytes() == b"\x89PNG-bytes"
+
+
+@pytest.mark.asyncio
+async def test_save_console_message_image_disambiguates_filename_collision(tmp_path, monkeypatch):
+    """Verify the save-image worker never silently overwrites a prior save."""
+    import datetime as datetime_module
+
+    class _FixedDateTime(datetime_module.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 1, 1, 12, 0, 0)
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        monkeypatch.setattr(
+            "tldw_chatbook.UI.Screens.chat_screen.get_cli_setting",
+            lambda section, key, default=None: str(tmp_path)
+            if (section, key) == ("chat.images", "save_location")
+            else default,
+        )
+        # The save-image worker imports `datetime.datetime` locally on each
+        # call, so freezing the clock here forces both saves below to compute
+        # the same base filename and deterministically exercise the
+        # collision-disambiguation loop.
+        monkeypatch.setattr(datetime_module, "datetime", _FixedDateTime)
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="pic",
+            image_data=b"\x89PNG-bytes",
+            image_mime_type="image/png",
+        )
+
+        await console._save_console_message_image(message.id)
+        await console._save_console_message_image(message.id)
+
+        saved = sorted(tmp_path.glob("console_image_*.png"))
+        assert len(saved) == 2
+        assert saved[0].name != saved[1].name
+        assert all(path.read_bytes() == b"\x89PNG-bytes" for path in saved)

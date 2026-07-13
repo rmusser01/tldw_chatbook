@@ -35,6 +35,7 @@ _ACTION_TOOLTIPS = {
     "copy": "Copy this message to the clipboard.",
     "edit": "Edit this message before continuing the thread.",
     "save-as": "Choose a destination for this message, such as Chatbook or Note.",
+    "save-image": "Save image to disk.",
     "retry": "Retry the failed response.",
     "regenerate": "Generate another assistant variant for this turn.",
     "continue": "Continue and extend the selected message.",
