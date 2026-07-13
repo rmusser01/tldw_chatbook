@@ -68,6 +68,40 @@ class TestURLValidation:
         ]
         # These might fail with basic regex, which is acceptable for security
 
+    def test_loosened_urls_now_accepted(self):
+        """URLs the old TLD/IPv6/IDN-blind regex wrongly rejected must now validate."""
+        for url in [
+            "https://blog.example.software/post",   # long TLD (>6 chars)
+            "https://[::1]/x",                       # IPv6 literal host
+            "https://münchen.de/p",                  # IDN (Unicode host)
+            "https://foo",                           # single-label host (internal/docker)
+        ]:
+            assert validate_url(url) is True, f"URL should now be valid: {url}"
+
+    def test_whitespace_and_bad_ports_rejected(self):
+        """Raw whitespace and malformed/out-of-range ports are rejected."""
+        for url in [
+            "http://exam ple.com",                   # space in host
+            "https://example.com\t/x",               # tab
+            "https://example.com:foo/",              # non-integer port
+            "https://example.com:99999999999/x",     # out-of-range port
+        ]:
+            assert validate_url(url) is False, f"URL should be invalid: {url}"
+
+    def test_security_hardening_rejected(self):
+        """urlparse is lenient about these; the hardening rejects them (as the
+        old regex did): backslash hosts (\\-vs-/ parser-discrepancy SSRF),
+        malformed dotted hosts, and credential-bearing URLs (secret leakage)."""
+        for url in [
+            "https://example.com\\path",             # backslash (browsers normalise \\->/)
+            "https://..",                            # bare dots
+            "https://.example.com",                  # leading-dot host
+            "https://example..com",                  # consecutive-dot host
+            "https://user:pass@example.com/path",    # embedded credentials
+            "https://user@example.com/path",         # embedded username
+        ]:
+            assert validate_url(url) is False, f"URL should be invalid: {url}"
+
 
 class TestTextInputValidation:
     """Test text input validation and sanitization."""

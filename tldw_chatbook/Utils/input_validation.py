@@ -4,8 +4,10 @@ Input validation utilities for secure user input handling.
 import re
 import ipaddress
 import time
-from typing import Union, Optional
 from pathlib import Path
+from typing import Union, Optional
+from urllib.parse import urlparse
+
 from ..Metrics.metrics_logger import log_counter, log_histogram
 
 
@@ -101,26 +103,52 @@ def validate_port(port: Union[str, int]) -> bool:
 
 
 def validate_url(url: str) -> bool:
-    """Basic URL validation."""
+    """Validate an http/https URL by scheme and host.
+
+    Uses ``urllib.parse`` (so long TLDs, IPv6 literals, IDN/Unicode hosts, IPs,
+    and localhost all validate) but rejects inputs that ``urlparse`` is too
+    lenient about: raw whitespace, backslashes (browsers normalise ``\\``→``/``,
+    a parser-discrepancy SSRF vector), embedded credentials (``user:pass@host``,
+    which would carry secrets into logged/forwarded URLs), and malformed hosts
+    (leading/consecutive dots) or ports. Only ``http``/``https`` schemes pass.
+
+    Args:
+        url: The candidate URL string.
+
+    Returns:
+        ``True`` if ``url`` is a well-formed http/https URL with a valid host
+        and no whitespace/backslashes/credentials/malformed host or port;
+        ``False`` otherwise (never raises).
+    """
     start_time = time.time()
     log_counter("input_validation_url_attempt")
-    
+
     if not url or len(url) > 2000:
         log_counter("input_validation_url_invalid", labels={
             "reason": "empty" if not url else "too_long"
         })
         return False
-    
-    # Basic URL pattern
-    pattern = re.compile(
-        r'^https?://'  # http:// or https://
-        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'  # domain...
-        r'localhost|'  # localhost...
-        r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # ...or ip
-        r'(?::\d+)?'  # optional port
-        r'(?:/?|[/?]\S+)$', re.IGNORECASE)
-    
-    result = bool(pattern.match(url))
+
+    if any(c.isspace() for c in url) or "\\" in url:
+        # A valid URL has no raw whitespace (spaces are %-encoded) and no
+        # backslashes (which HTTP clients may normalise to "/", enabling
+        # parser-discrepancy SSRF/open-redirect bypasses).
+        result = False
+    else:
+        try:
+            parsed = urlparse(url)
+            _ = parsed.port  # raises ValueError on a malformed/out-of-range port
+            hostname = parsed.hostname
+            result = (
+                parsed.scheme in ("http", "https")
+                and bool(hostname)
+                and not hostname.startswith(".")   # reject ".example.com" / ".."
+                and ".." not in hostname            # reject "example..com"
+                and parsed.username is None         # reject embedded credentials
+                and parsed.password is None
+            )
+        except ValueError:
+            result = False
     
     # Log result
     duration = time.time() - start_time
