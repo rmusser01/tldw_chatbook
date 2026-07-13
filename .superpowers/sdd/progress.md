@@ -79,3 +79,7 @@ Task 6: complete (commit 541e03ff; review Approved first pass — all 6 binding 
 Final whole-branch review (opus): APPROVE WITH FIXES — 0 Critical/High, 1 Medium (F1 gate-vs-active-cap desync, repro-confirmed, dormant in slice) FIXED commit 15167461 + verified by reviewer (60 tests). Residual Minor F1-b (duplicate re-load desync: loop active list vs disclosed set dedupe) DEFERRED to task-201/200 gate w/ T3b (loop-side dedupe, no signature change) — documented in plan-a-final-review.md addendum. Minor triage: 3 drop / 5 defer / 0 block. Plan-B handoff MUSTs recorded: populate allowed_tools (fail-closed default), UI markup-escaping, worker thread (asyncio.run in provider), optional on_step hook.
 LIVE SMOKE (informal, not a gate): AgentService vs REAL llama.cpp Qwen-27B — model emitted a perfectly-formed fence FIRST TRY, real calculator executed (379*6421=2433559 correct), result fed back, final answer, persisted done, 4 steps, 44s. Fence-first text protocol validated against the actual QA model.
 PLAN A COMPLETE: 6 tasks + 2 fix waves, 60 tests green, commits 45c4107e..15167461 on claude/agent-runtime-spec.
+
+---
+# Plan B phase [2026-07-13]: #620 + #623 both MERGED into dev (also #621 attachments, #622 roleplay P1a landed in parallel).
+# Branch claude/agent-runtime-plan-b off origin/dev 844b2720. Scout report: .superpowers/sdd/plan-b-scout.md
