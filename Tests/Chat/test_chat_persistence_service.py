@@ -310,6 +310,66 @@ class TestChatPersistenceService:
         assert conversation["assistant_kind"] == assistant_kind
         assert conversation["assistant_id"] == assistant_id
 
+    def test_create_conversation_persists_system_prompt(self, db_instance: CharactersRAGDB):
+        service = ChatPersistenceService(db_instance)
+
+        conversation_id = service.create_conversation(
+            assistant_kind="generic",
+            assistant_id="console",
+            conversation_title="Console chat",
+            system_prompt="Answer as a pirate.",
+        )
+
+        conversation = db_instance.get_conversation_by_id(conversation_id)
+        assert conversation["system_prompt"] == "Answer as a pirate."
+
+    def test_create_conversation_defaults_system_prompt_to_none(self, db_instance: CharactersRAGDB):
+        service = ChatPersistenceService(db_instance)
+
+        conversation_id = service.create_conversation(
+            assistant_kind="generic",
+            assistant_id="console",
+            conversation_title="Console chat without prompt",
+        )
+
+        conversation = db_instance.get_conversation_by_id(conversation_id)
+        assert conversation["system_prompt"] is None
+
+    def test_update_conversation_system_prompt_round_trips_through_real_db(
+        self, db_instance: CharactersRAGDB
+    ):
+        service = ChatPersistenceService(db_instance)
+        conversation_id = service.create_conversation(
+            assistant_kind="generic",
+            assistant_id="console",
+            conversation_title="Console chat",
+        )
+
+        result = service.update_conversation_system_prompt(
+            conversation_id=conversation_id,
+            system_prompt="Be terse and cite sources.",
+        )
+
+        assert result is True
+        reloaded = db_instance.get_conversation_by_id(conversation_id)
+        assert reloaded["system_prompt"] == "Be terse and cite sources."
+
+        # A second, independent read (simulating a fresh load/reopen) sees
+        # the same persisted value.
+        reloaded_again = db_instance.get_conversation_by_id(conversation_id)
+        assert reloaded_again["system_prompt"] == "Be terse and cite sources."
+
+    def test_update_conversation_system_prompt_raises_for_missing_conversation(
+        self, db_instance: CharactersRAGDB
+    ):
+        service = ChatPersistenceService(db_instance)
+
+        with pytest.raises(ValueError, match="not found"):
+            service.update_conversation_system_prompt(
+                conversation_id="missing-conversation",
+                system_prompt="Anything",
+            )
+
     def test_workspace_conversation_requires_existing_workspace(
         self,
         db_instance: CharactersRAGDB,

@@ -160,6 +160,12 @@ class ConsoleSessionSettings:
     streaming: bool = True
     persona_label: str = "General"
     character_label: str = ""
+    #: Optional per-session system prompt prepended as the first provider
+    #: message on every native Console send (submit/retry/regenerate/continue).
+    #: Defaults to ``None`` (native Console sends no system message unless a
+    #: user explicitly sets one for this session) -- it is never seeded from
+    #: ``[chat_defaults].system_prompt``.
+    system_prompt: str | None = None
     #: Provenance of this snapshot: ``"derived"`` for config-derived defaults
     #: (refreshable when config changes while the session is unused) vs
     #: ``"user"`` for explicit user selections (never auto-replaced).
@@ -251,6 +257,48 @@ def build_console_model_section_lines(
     transport = str(summary.transport_row or "").strip()
     detail_parts = [part for part in (sampling, context, transport) if part]
     return f"{provider} / {model}", " · ".join(detail_parts)
+
+
+CONSOLE_RAIL_SYSTEM_PREVIEW_MAX_CHARS = 40
+CONSOLE_RAIL_SYSTEM_NONE_LINE = "System: none"
+
+
+def _collapse_system_prompt_preview_whitespace(text: str) -> str:
+    """Collapse a (possibly multi-line) system prompt onto a single rail row."""
+    return " ".join(text.split())
+
+
+def build_console_rail_system_line(system_prompt: str | None) -> str:
+    """Build the Model rail-section ``System: <preview>`` line.
+
+    Mirrors ``build_console_model_section_lines``'s long-value handling
+    (task-186): the rail line is clipped to one row, so a long or
+    multi-line system prompt must be collapsed to a single line AND
+    truncated in the text itself -- not left to CSS ``text-overflow:
+    ellipsis`` alone -- or it silently word-wraps onto the hidden second
+    row. An unset (``None``/blank) system prompt renders the dim
+    ``"System: none"`` sentinel line instead.
+
+    Args:
+        system_prompt: The session's current system prompt text, or
+            ``None``/blank when unset. This is a display-only preview --
+            the value is collapsed/truncated here but never mutated in
+            storage or in the provider payload.
+
+    Returns:
+        ``"System: none"`` when ``system_prompt`` is ``None`` or blank;
+        otherwise ``"System: <preview>"`` with the prompt collapsed to a
+        single line and truncated to
+        ``CONSOLE_RAIL_SYSTEM_PREVIEW_MAX_CHARS`` characters.
+    """
+    normalized = str(system_prompt or "").strip()
+    if not normalized:
+        return CONSOLE_RAIL_SYSTEM_NONE_LINE
+    preview = _truncate_model_section_value(
+        _collapse_system_prompt_preview_whitespace(normalized),
+        CONSOLE_RAIL_SYSTEM_PREVIEW_MAX_CHARS,
+    )
+    return f"System: {preview}"
 
 
 def build_console_provider_options(

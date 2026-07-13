@@ -96,6 +96,38 @@ def test_default_settings_prefers_chat_defaults_and_provider_config() -> None:
     assert settings.max_tokens == 2048
 
 
+def test_console_session_settings_system_prompt_defaults_to_none() -> None:
+    """Native Console session settings carry no system prompt by default."""
+    settings = ConsoleSessionSettings(provider="llama_cpp")
+
+    assert settings.system_prompt is None
+
+
+def test_default_settings_never_seeds_system_prompt_from_chat_defaults() -> None:
+    """``build_default_console_session_settings`` must never seed a system prompt.
+
+    This is an explicit product decision (not an oversight): the native
+    Console sends no system message until a user sets one for a session, even
+    when ``[chat_defaults]`` carries a ``system_prompt`` key used by other
+    (non-Console) chat surfaces.
+    """
+    config = {
+        "chat_defaults": {
+            "provider": "llama_cpp",
+            "model": "chat-default",
+            "system_prompt": "You are a helpful assistant.",
+        },
+    }
+
+    settings = build_default_console_session_settings(
+        app_config=config,
+        provider="llama_cpp",
+        model=None,
+    )
+
+    assert settings.system_prompt is None
+
+
 def test_default_settings_uses_api_base_for_llamacpp_base_url() -> None:
     settings = build_default_console_session_settings(
         {
@@ -763,3 +795,52 @@ def test_model_section_line_truncates_long_local_model_names():
         provider_row="Provider: openai",
     )
     assert build_console_model_section_lines(short)[0] == "openai / gpt-4o"
+
+
+def test_context_estimate_counts_system_prompt_tokens():
+    """Task 14: the estimate must count a system prompt's own tokens too."""
+    without_system = build_console_context_estimate(
+        messages=[{"role": "user", "content": "hello"}],
+        provider="openai",
+        model="gpt-3.5-turbo",
+    )
+    with_system = build_console_context_estimate(
+        messages=[{"role": "user", "content": "hello"}],
+        provider="openai",
+        model="gpt-3.5-turbo",
+        system_prompt="Answer using only formal English, citing sources.",
+    )
+    assert with_system.used_tokens is not None
+    assert without_system.used_tokens is not None
+    assert with_system.used_tokens > without_system.used_tokens
+
+
+def test_rail_system_line_none_state_for_blank_or_missing_prompt():
+    from tldw_chatbook.Chat.console_session_settings import build_console_rail_system_line
+
+    assert build_console_rail_system_line(None) == "System: none"
+    assert build_console_rail_system_line("   ") == "System: none"
+
+
+def test_rail_system_line_shows_preview_for_set_prompt():
+    from tldw_chatbook.Chat.console_session_settings import build_console_rail_system_line
+
+    assert build_console_rail_system_line("Be terse.") == "System: Be terse."
+
+
+def test_rail_system_line_collapses_multiline_and_truncates_long_prompts():
+    """Mirrors the task-186 model-line fix: a long/multi-line system prompt
+    must collapse to one line AND truncate in the text itself, not rely on
+    CSS ellipsis alone, or it silently word-wraps onto a hidden second row."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        CONSOLE_RAIL_SYSTEM_PREVIEW_MAX_CHARS,
+        build_console_rail_system_line,
+    )
+
+    multiline_prompt = "Line one.\nLine two continues on and on and on and on."
+    line = build_console_rail_system_line(multiline_prompt)
+    assert "\n" not in line
+    assert line.startswith("System: Line one. Line two")
+    assert line.endswith("…")
+    preview = line.removeprefix("System: ")
+    assert len(preview) <= CONSOLE_RAIL_SYSTEM_PREVIEW_MAX_CHARS

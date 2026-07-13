@@ -49,6 +49,7 @@ class ChatPersistenceService:
         scope_type: Optional[str] = None,
         workspace_id: Optional[str] = None,
         conversation_title: Optional[str] = None,
+        system_prompt: Optional[str] = None,
     ) -> str:
         safe_workspace_id = self._require_workspace_scope(
             scope_type=scope_type,
@@ -71,6 +72,7 @@ class ChatPersistenceService:
             "scope_type": scope_type,
             "workspace_id": safe_workspace_id if safe_workspace_id is not None else workspace_id,
             "title": title,
+            "system_prompt": system_prompt,
             "client_id": self.db.client_id,
         })
         if safe_workspace_id is not None:
@@ -177,6 +179,36 @@ class ChatPersistenceService:
                 "Failed to soft-delete workspace conversation after membership link failure",
             )
             raise
+
+    def update_conversation_system_prompt(
+        self,
+        *,
+        conversation_id: str,
+        system_prompt: Optional[str],
+    ) -> bool:
+        """Update the persisted system prompt for an existing conversation.
+
+        Args:
+            conversation_id: UUID of the conversation to update.
+            system_prompt: New system prompt text, or ``None``/blank to clear it.
+
+        Returns:
+            True if the update was applied.
+
+        Raises:
+            ValueError: If the conversation cannot be found.
+        """
+        current_conversation = self.db.get_conversation_by_id(conversation_id)
+        if not current_conversation:
+            raise ValueError(f"Conversation {conversation_id} not found")
+
+        return bool(
+            self.db.update_conversation(
+                conversation_id,
+                {"system_prompt": system_prompt},
+                expected_version=current_conversation["version"],
+            )
+        )
 
     def update_message_content(
         self,

@@ -184,6 +184,74 @@ class TestDBInitialization:
         with pytest.raises(CharactersRAGDBError, match=expected_message_part):
             CharactersRAGDB(db_path, client_id)
 
+    def test_fresh_db_creates_conversations_system_prompt_column_at_v18(self, db_path, client_id):
+        db = CharactersRAGDB(db_path, client_id)
+        conn = db.get_connection()
+
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(conversations)").fetchall()}
+        assert "system_prompt" in columns
+
+        version_row = conn.execute(
+            "SELECT version FROM db_schema_version WHERE schema_name = ?",
+            (db._SCHEMA_NAME,),
+        ).fetchone()
+        assert version_row["version"] == 18
+        db.close_connection()
+
+    def test_conversations_migrate_from_v17_to_v18_adds_system_prompt_column(self, db_path, client_id):
+        db = CharactersRAGDB(db_path, client_id)
+        conn = db.get_connection()
+
+        # Simulate a v17-shaped DB: drop the sync triggers that reference the
+        # new column (SQLite refuses to drop a column referenced by a
+        # trigger), drop the column itself, then roll the recorded schema
+        # version back to 17 so re-opening replays the V17->V18 migration.
+        conn.execute("DROP TRIGGER IF EXISTS conversations_sync_create")
+        conn.execute("DROP TRIGGER IF EXISTS conversations_sync_update")
+        conn.execute("DROP TRIGGER IF EXISTS conversations_sync_delete")
+        conn.execute("DROP TRIGGER IF EXISTS conversations_sync_undelete")
+        conn.execute("ALTER TABLE conversations DROP COLUMN system_prompt")
+        conn.execute(
+            "UPDATE db_schema_version SET version = 17 WHERE schema_name = ?",
+            (db._SCHEMA_NAME,),
+        )
+        conn.commit()
+        db.close_connection()
+
+        migrated = CharactersRAGDB(db_path, client_id)
+        migrated_conn = migrated.get_connection()
+
+        version_row = migrated_conn.execute(
+            "SELECT version FROM db_schema_version WHERE schema_name = ?",
+            (migrated._SCHEMA_NAME,),
+        ).fetchone()
+        assert version_row["version"] == 18
+
+        columns = {row["name"] for row in migrated_conn.execute("PRAGMA table_info(conversations)").fetchall()}
+        assert "system_prompt" in columns
+
+        # The redefined sync trigger must fire (and include the new column)
+        # on a system_prompt-only update.
+        char_id = migrated.add_character_card(_create_sample_card_data("MigrationCheck"))
+        conv_id = migrated.add_conversation({"character_id": char_id, "title": "Migration check"})
+        before_log_count = migrated_conn.execute(
+            "SELECT COUNT(*) AS n FROM sync_log WHERE entity = 'conversations' AND entity_id = ?",
+            (conv_id,),
+        ).fetchone()["n"]
+        current = migrated.get_conversation_by_id(conv_id)
+        migrated.update_conversation(
+            conv_id,
+            {"system_prompt": "Migrated prompt."},
+            expected_version=current["version"],
+        )
+        after_log_count = migrated_conn.execute(
+            "SELECT COUNT(*) AS n FROM sync_log WHERE entity = 'conversations' AND entity_id = ?",
+            (conv_id,),
+        ).fetchone()["n"]
+        assert after_log_count == before_log_count + 1
+        assert migrated.get_conversation_by_id(conv_id)["system_prompt"] == "Migrated prompt."
+        migrated.close_connection()
+
 
 class TestCharacterCards:
     def test_add_character_card(self, db_instance: CharactersRAGDB):
@@ -378,6 +446,78 @@ class TestConversationsAndMessages:
         # Verify FTS state after update
         assert len(db_instance.search_conversations_by_title(updated_title)) == 1
         assert len(db_instance.search_conversations_by_title(initial_title)) == 0, "FTS should not find the old title"
+
+    def test_add_conversation_defaults_system_prompt_to_none(self, db_instance: CharactersRAGDB, char_id):
+        conv_id = db_instance.add_conversation({"character_id": char_id, "title": "NoSystemPrompt"})
+
+        retrieved = db_instance.get_conversation_by_id(conv_id)
+        assert retrieved["system_prompt"] is None
+
+    def test_add_conversation_persists_system_prompt(self, db_instance: CharactersRAGDB, char_id):
+        conv_id = db_instance.add_conversation({
+            "character_id": char_id,
+            "title": "WithSystemPrompt",
+            "system_prompt": "  Be concise.  ",
+        })
+
+        retrieved = db_instance.get_conversation_by_id(conv_id)
+        assert retrieved["system_prompt"] == "Be concise."
+
+    def test_update_conversation_sets_system_prompt_and_bumps_version(
+        self, db_instance: CharactersRAGDB, char_id
+    ):
+        conv_id = db_instance.add_conversation({"character_id": char_id, "title": "UpdateSystemPrompt"})
+        original = db_instance.get_conversation_by_id(conv_id)
+
+        result = db_instance.update_conversation(
+            conv_id,
+            {"system_prompt": "Speak like a pirate."},
+            expected_version=original["version"],
+        )
+
+        assert result is True
+        updated = db_instance.get_conversation_by_id(conv_id)
+        assert updated["system_prompt"] == "Speak like a pirate."
+        assert updated["version"] == original["version"] + 1
+
+    def test_update_conversation_clears_system_prompt_with_none(
+        self, db_instance: CharactersRAGDB, char_id
+    ):
+        conv_id = db_instance.add_conversation({
+            "character_id": char_id,
+            "title": "ClearSystemPrompt",
+            "system_prompt": "Initial prompt.",
+        })
+        original = db_instance.get_conversation_by_id(conv_id)
+
+        db_instance.update_conversation(
+            conv_id,
+            {"system_prompt": None},
+            expected_version=original["version"],
+        )
+
+        updated = db_instance.get_conversation_by_id(conv_id)
+        assert updated["system_prompt"] is None
+
+    def test_update_conversation_preserves_system_prompt_when_untouched(
+        self, db_instance: CharactersRAGDB, char_id
+    ):
+        conv_id = db_instance.add_conversation({
+            "character_id": char_id,
+            "title": "PreserveSystemPrompt",
+            "system_prompt": "Keep me around.",
+        })
+        original = db_instance.get_conversation_by_id(conv_id)
+
+        db_instance.update_conversation(
+            conv_id,
+            {"title": "PreserveSystemPromptRenamed"},
+            expected_version=original["version"],
+        )
+
+        updated = db_instance.get_conversation_by_id(conv_id)
+        assert updated["title"] == "PreserveSystemPromptRenamed"
+        assert updated["system_prompt"] == "Keep me around."
 
     def test_soft_delete_conversation_and_fts(self, db_instance: CharactersRAGDB, char_id):
         conv_title_for_delete_test = "DeleteConvForFTS"

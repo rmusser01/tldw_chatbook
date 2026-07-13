@@ -9,9 +9,22 @@ LIBRARY_CANVAS_LANDING_COPY = "Search, pick a content type, or ingest something 
 LIBRARY_ROW_BROWSE_CONVERSATIONS = "browse-conversations"
 LIBRARY_ROW_BROWSE_MEDIA = "browse-media"
 LIBRARY_ROW_BROWSE_NOTES = "browse-notes"
+# Value follows the sibling "browse-*" convention: the rail widget renders
+# the row's DOM id as LIBRARY_RAIL_ROW_PREFIX ("library-row-") + row_id,
+# i.e. "#library-row-browse-prompts" -- the id the task brief names.
+LIBRARY_ROW_BROWSE_PROMPTS = "browse-prompts"
 LIBRARY_ROW_BROWSE_SEARCH = "browse-search"
 LIBRARY_ROW_BROWSE_COLLECTIONS = "browse-collections"
 LIBRARY_ROW_CREATE_NOTE = "create-note"
+# Task 8b D1: "New prompt" -- unlike LIBRARY_ROW_CREATE_NOTE (its own
+# "notes-create" canvas kind, a landing chooser of Blank/template rows),
+# this row's target_id is "prompts" itself: it reuses the SAME canvas kind
+# Browse > Prompts targets. The screen distinguishes "opened via Browse" vs
+# "opened via New prompt" by view/selection state
+# (`_library_prompts_view == "editor"` plus a `prompt_id=None` sentinel),
+# not by a separate canvas kind -- see library_screen.py's
+# `_enter_library_prompt_create_editor`.
+LIBRARY_ROW_CREATE_PROMPT = "create-prompt"
 LIBRARY_ROW_INGEST_MEDIA = "ingest-import-media"
 LIBRARY_ROW_INGEST_EXPORT = "ingest-export"
 
@@ -68,6 +81,8 @@ class LibraryShellInput:
     conversations_known: bool = True
     notes_count: int | None = None
     notes_known: bool = True
+    prompts_count: int | None = None
+    prompts_known: bool = True
     collections_count: int | None = None
     collections_known: bool = True
     runtime_source: str = "local"
@@ -135,6 +150,20 @@ def build_library_shell_state(
             count_known=state.notes_known,
         ),
         LibraryRailRow(
+            # Row click resolves target_id "prompts" as its canvas_kind
+            # below; the screen's compose_content (Task 3) renders
+            # LibraryPromptsListCanvas for that kind -- no registry change
+            # needed here, the row -> canvas_kind mapping already existed
+            # from Task 1.
+            row_id=LIBRARY_ROW_BROWSE_PROMPTS,
+            section_id="browse",
+            title="Prompts",
+            target_kind="canvas",
+            target_id="prompts",
+            count=state.prompts_count,
+            count_known=state.prompts_known,
+        ),
+        LibraryRailRow(
             row_id=LIBRARY_ROW_BROWSE_COLLECTIONS,
             section_id="browse",
             title="Collections",
@@ -161,6 +190,15 @@ def build_library_shell_state(
             title="New note",
             target_kind="canvas",
             target_id="notes-create",
+            count=None,
+            count_known=True,
+        ),
+        LibraryRailRow(
+            row_id=LIBRARY_ROW_CREATE_PROMPT,
+            section_id="create",
+            title="New prompt",
+            target_kind="canvas",
+            target_id="prompts",
             count=None,
             count_known=True,
         ),

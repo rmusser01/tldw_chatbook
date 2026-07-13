@@ -2439,6 +2439,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         self.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
         self.pending_chat_handoff: Optional[ChatHandoffPayload] = None
         self.pending_console_launch: Optional[ConsoleLiveWorkLaunch | Dict[str, Any]] = None
+        self.pending_console_prompt_insert: Optional[str] = None
         self.pending_study_scope_context: Optional[StudyScopeContext] = None
         self.pending_study_initial_section: Optional[str] = None
         self.pending_notes_workspace_context: Optional[Dict[str, Any]] = None
@@ -2755,6 +2756,26 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             return
 
         self.pending_chat_handoff = payload
+        self.post_message(NavigateToScreen(TAB_CHAT))
+
+    def stage_console_prompt_insert(self, text: str) -> None:
+        """Stage a resolved Library prompt body for the Console composer and navigate there.
+
+        ``ChatHandoffPayload``-free direct route (Task 12): Library's prompt
+        editor "Use in Console" action only ever needs to land plain text
+        into the Console draft -- appended onto whatever the user was
+        already composing, never replacing it -- so this deliberately skips
+        ``open_chat_with_handoff``'s richer RAG-evidence-aware staging
+        machinery. Mirrors that method's stage-then-navigate shape, but the
+        payload is a bare string and there is no tabs-enabled gate: whether
+        the insert actually lands is decided by ``ChatScreen`` once it
+        consumes this field (it alone owns Console's provider/model
+        readiness state).
+
+        Args:
+            text: The prompt's ``user_prompt`` body to insert.
+        """
+        self.pending_console_prompt_insert = text
         self.post_message(NavigateToScreen(TAB_CHAT))
 
     def open_console_for_live_work(
@@ -4473,6 +4494,17 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         """Normalize navigation aliases to a routed screen id and canonical current_tab value."""
         return resolve_screen_target(target)
 
+    # Legacy alias routes that need a default Library nav-context applied
+    # when navigated to directly (bare ``NavigateToScreen(route)``, no
+    # explicit context supplied). Mirrors how ``open_notes_workspace`` builds
+    # ``{LIBRARY_NAV_CONTEXT_MODE: "notes"}`` for the retired standalone
+    # Notes tab -- except "prompts" (the retired Personas "prompts" mode
+    # chip, Task 7) has no dedicated re-entry action to carry that context,
+    # so the bare alias route itself must supply it here.
+    _LEGACY_ROUTE_LIBRARY_NAV_CONTEXT: dict[str, dict[str, str]] = {
+        "prompts": {LIBRARY_NAV_CONTEXT_MODE: "prompts"},
+    }
+
     def _create_navigation_screen(self, screen_name: str, screen_class: type):
         """Build a FRESH screen instance for every navigation.
 
@@ -4508,7 +4540,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             destination.destination_id
             for destination in SHELL_DESTINATION_ORDER
         }
-        legacy_aliases = {"conversation", "llm", "subscription", "subscriptions", "tools_settings", "notes"}
+        legacy_aliases = {"conversation", "llm", "subscription", "subscriptions", "tools_settings", "notes", "prompts"}
         return set(ALL_TABS) | shell_routes | legacy_aliases
 
     def _normalize_initial_tab_from_config(self, configured_route: str | None) -> str:
@@ -4611,6 +4643,10 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                         logger.error(f"Error restoring screen state: {e}")
 
             navigation_context = getattr(message, "screen_context", {}) or {}
+            if not navigation_context:
+                navigation_context = self._LEGACY_ROUTE_LIBRARY_NAV_CONTEXT.get(
+                    requested_screen, {}
+                )
             if navigation_context and hasattr(new_screen, "apply_navigation_context"):
                 try:
                     result = new_screen.apply_navigation_context(navigation_context)

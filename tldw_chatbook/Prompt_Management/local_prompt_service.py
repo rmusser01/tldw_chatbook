@@ -99,6 +99,27 @@ class LocalPromptService:
         )
         return prompts
 
+    async def count_prompts(self) -> int:
+        """Count all non-deleted local prompts.
+
+        Mirrors ``list_prompts`` above: a direct, un-offloaded call into
+        the interop layer (this service's methods are all thin synchronous
+        wrappers, not backed by a thread pool), fetching a single row
+        (``per_page=1``) purely to read the paginated response's exact
+        total rather than materializing a full page.
+
+        Returns:
+            The exact number of non-deleted prompts, taken from
+            ``PromptsDatabase.list_prompts``'s ``total_items`` (the fourth
+            element of its return tuple).
+        """
+        _prompts, _total_pages, _current_page, total_items = self.interop.list_prompts(
+            page=1,
+            per_page=1,
+            include_deleted=False,
+        )
+        return int(total_items)
+
     async def create_prompt(
         self,
         *,

@@ -110,6 +110,7 @@ class ConsoleChatController:
         thinking_effort: str | None = None,
         thinking_budget_tokens: int | None = None,
         streaming: bool = True,
+        system_prompt: str | None = None,
     ) -> None:
         self.store = store
         self.provider_gateway = provider_gateway
@@ -131,6 +132,7 @@ class ConsoleChatController:
         self.thinking_effort = thinking_effort
         self.thinking_budget_tokens = thinking_budget_tokens
         self.streaming = streaming
+        self.system_prompt = system_prompt
         self.run_state = ConsoleRunState()
         self.run_state_history: list[ConsoleRunStatus] = [self.run_state.status]
         #: Optional owner hook invoked once a submit is accepted (user message
@@ -253,6 +255,7 @@ class ConsoleChatController:
             self.thinking_effort,
             self.thinking_budget_tokens,
             self.streaming,
+            self.system_prompt,
         )
         self.provider = selection.provider
         self.model = selection.explicit_model
@@ -272,6 +275,7 @@ class ConsoleChatController:
         self.thinking_effort = selection.thinking_effort
         self.thinking_budget_tokens = selection.thinking_budget_tokens
         self.streaming = selection.streaming
+        self.system_prompt = selection.system_prompt
         current_selection = (
             self.provider,
             self.model,
@@ -291,6 +295,7 @@ class ConsoleChatController:
             self.thinking_effort,
             self.thinking_budget_tokens,
             self.streaming,
+            self.system_prompt,
         )
         if current_selection != previous_selection:
             self._clear_terminal_run_state()
@@ -523,6 +528,7 @@ class ConsoleChatController:
             thinking_effort=self.thinking_effort,
             thinking_budget_tokens=self.thinking_budget_tokens,
             streaming=self.streaming,
+            system_prompt=self.system_prompt,
             workspace_context=self.store.workspace_context,
         )
 
@@ -717,6 +723,24 @@ class ConsoleChatController:
                 self._active_stream_task = None
                 self._stop_requested = False
 
+    def _leading_system_message(self) -> list[dict[str, str]]:
+        """Return a single-item system message list when a system prompt is set.
+
+        Applies to every native Console send path (submit, retry, regenerate,
+        continue) since they all build their provider payload by prepending
+        this to the transcript-derived messages. Blank/whitespace-only prompts
+        are treated as "no system prompt" (native Console default stays silent
+        unless a user has explicitly set one for this session) -- ``strip()``
+        is used ONLY for that emptiness check. The message content itself is
+        ``self.system_prompt`` verbatim: leading/trailing whitespace and
+        internal formatting (blank lines, indentation) are never altered, so
+        a formatting-sensitive prompt reaches the provider unchanged.
+        """
+        raw_system_prompt = self.system_prompt
+        if not isinstance(raw_system_prompt, str) or not raw_system_prompt.strip():
+            return []
+        return [{"role": ConsoleMessageRole.SYSTEM.value, "content": raw_system_prompt}]
+
     def _provider_messages_for_session(
         self,
         session_id: str,
@@ -728,7 +752,9 @@ class ConsoleChatController:
             if message.id == before_message_id:
                 break
             collected.append(message)
-        return self._provider_message_payloads(collected, skip_failed=True)
+        return self._leading_system_message() + self._provider_message_payloads(
+            collected, skip_failed=True
+        )
 
     def _provider_messages_through_message(
         self,
@@ -740,7 +766,7 @@ class ConsoleChatController:
             collected.append(message)
             if message.id == message_id:
                 break
-        return self._provider_message_payloads(
+        return self._leading_system_message() + self._provider_message_payloads(
             collected, skip_failed=False, use_variant_content=True
         )
 

@@ -23,6 +23,7 @@ from tldw_chatbook.Constants import (
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 from tldw_chatbook.Library.library_ingest_jobs import (
     IngestJobState,
     LibraryIngestJob,
@@ -40,6 +41,7 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
     LIBRARY_ROW_BROWSE_MEDIA,
     LIBRARY_ROW_BROWSE_NOTES,
+    LIBRARY_ROW_BROWSE_PROMPTS,
     LIBRARY_ROW_BROWSE_SEARCH,
     LIBRARY_ROW_CREATE_NOTE,
     LIBRARY_ROW_INGEST_EXPORT,
@@ -48,6 +50,10 @@ from tldw_chatbook.Library.library_shell_state import (
 from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingService
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.Media.media_reading_scope_service import MediaReadingScopeService
+from tldw_chatbook.Prompt_Management.prompt_scope_service import (
+    LocalPromptService,
+    PromptScopeService,
+)
 from tldw_chatbook.Study_Interop.local_quiz_service import LocalQuizService
 from tldw_chatbook.Study_Interop.local_study_service import LocalStudyService
 from tldw_chatbook.Study_Interop.quiz_scope_service import QuizScopeService
@@ -56,6 +62,7 @@ from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, FileSave
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library.library_ingest_canvas import LibraryIngestCanvas
+from tldw_chatbook.Widgets.Library.library_rail import LIBRARY_RAIL_ROW_PREFIX
 from Tests.UI.test_destination_shells import (
     StaticLibraryConversationScopeService,
     StaticLibraryMediaScopeService,
@@ -4571,6 +4578,61 @@ async def test_library_shell_notes_rail_badge_degrades_without_count_seam():
         assert "(2+)" in rail_label
 
 
+class _FakePromptScopeService:
+    """Minimal prompt-scope fake exposing only the ``count_prompts`` seam
+    under test -- same spirit as ``_FakeStudyScopeService``/
+    ``_FakeQuizScopeService`` below for study/quiz counts, mirroring the
+    real ``PromptScopeService.count_prompts(mode="local")`` shape without
+    going through the local/server routing."""
+
+    def __init__(self, *, count):
+        self._count = count
+        self.count_calls = []
+
+    async def count_prompts(self, *, mode="local", **kwargs):
+        self.count_calls.append({"mode": mode, **kwargs})
+        return self._count
+
+
+@pytest.mark.asyncio
+async def test_library_shell_prompts_rail_row_shows_exact_count():
+    """The Browse rail renders a ``Prompts (2)`` row -- id
+    ``LIBRARY_ROW_BROWSE_PROMPTS`` -- once ``count_prompts`` is wired into
+    the Library screen's local-source snapshot fetch (Task 1). Row
+    selection renders the Task 3 list canvas: this fake only exposes
+    ``count_prompts`` (no ``list_prompts``), so the page-records fetch is
+    skipped entirely (guarded by ``callable(list_prompts)``) and the canvas
+    renders its empty state rather than erroring."""
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesListScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.prompt_scope_service = _FakePromptScopeService(count=2)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        # Literal DOM id pinned on purpose (mirrors the notes badge test's
+        # literal "#library-row-browse-notes" query): the rendered id is
+        # the rail-row contract downstream tasks target, so a drift in
+        # either the prefix or the row-id constant must fail loudly here.
+        button = screen.query_one("#library-row-browse-prompts", Button)
+        assert button.id == f"{LIBRARY_RAIL_ROW_PREFIX}{LIBRARY_ROW_BROWSE_PROMPTS}"
+        assert button.row_id == LIBRARY_ROW_BROWSE_PROMPTS
+        rail_label = str(button.label)
+        assert "Prompts (2)" in rail_label
+
+        button.press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
+        assert screen.query_one("#library-prompts-canvas")
+        assert screen.query_one("#library-prompts-empty")
+    assert app.prompt_scope_service.count_calls
+
+
 class _FakeStudyScopeService:
     """Minimal study-scope fake exposing only the count seams under test.
 
@@ -7994,6 +8056,73 @@ async def test_library_shell_search_result_open_media_switches_to_viewer():
             call["media_id"] == "media-1"
             for call in app.media_reading_scope_service.detail_calls
         )
+
+
+@pytest.mark.asyncio
+async def test_library_shell_search_result_open_prompt_lands_in_editor(tmp_path):
+    """Pressing Open on a prompt evidence result jumps straight to that
+    prompt's in-canvas editor (Task 6), selecting the Prompts rail row --
+    mirroring the note/media Open-path tests above. The row's `source_id`
+    must be the raw int prompt id (never the scope-service's composite
+    "local:prompt:<n>" envelope id, see `normalize_prompt_record`) for
+    `_open_library_item_by_id` to resolve it via `get_prompt`.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    # File-backed, not ":memory:": `_refresh_library_prompt_detail` isolates
+    # its `get_prompt` call onto a worker thread, and an in-memory SQLite
+    # connection is thread-local (same guard other Library seams use).
+    prompts_db = PromptsDatabase(tmp_path / "prompts.db", client_id="library-open-path-test")
+    prompt_id, _uuid, _msg = prompts_db.add_prompt(
+        name="Summarize",
+        author="Alice",
+        details="A summarizer",
+        system_prompt="You are concise.",
+        user_prompt="Summarize: {text}",
+    )
+    app.prompt_scope_service = PromptScopeService(
+        local_service=LocalPromptService(prompts_db),
+        server_service=None,
+    )
+    service = _StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "source_id": str(prompt_id),
+                    "title": "Summarize",
+                    "snippet": "Summarize: {text}",
+                    "provenance": {"source_type": "prompt"},
+                }
+            ]
+        }
+    )
+    app.library_rag_search_service = service
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _run_library_search_and_wait_for_open_result(screen, pilot, "summarize")
+
+            screen.query_one("#library-rag-open-result-0").press()
+            await _wait_for_selector(screen, pilot, "#library-prompt-name")
+            for _ in range(120):
+                if (
+                    screen._selected_prompt_id == prompt_id
+                    and screen._library_prompts_view == "editor"
+                ):
+                    break
+                await pilot.pause(0.02)
+            else:
+                raise AssertionError("Open never landed on the prompt editor.")
+            await pilot.pause()
+
+            assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
+            name_input = screen.query_one("#library-prompt-name", Input)
+            assert name_input.value == "Summarize"
+    finally:
+        prompts_db.close_connection()
 
 
 @pytest.mark.asyncio

@@ -68,7 +68,6 @@ def test_eval_dialogs_dataset_filters_are_callable():
         "tldw_chatbook/Widgets/transcription_history_viewer.py",
         "tldw_chatbook/UI/CCP_Modules/ccp_character_handler.py",
         "tldw_chatbook/UI/CCP_Modules/ccp_dictionary_handler.py",
-        "tldw_chatbook/UI/CCP_Modules/ccp_prompt_handler.py",
         "tldw_chatbook/UI/Screens/personas_screen.py",
     ],
 )

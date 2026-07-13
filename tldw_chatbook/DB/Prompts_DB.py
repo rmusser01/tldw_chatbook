@@ -1555,8 +1555,12 @@ class PromptsDatabase:
 
                 results_data = []
                 if total_items > 0:
-                    # Select desired fields, e.g., id, name, uuid, author
-                    query = f"""SELECT id, name, uuid, author, last_modified FROM Prompts
+                    # `details` (Task 8b D2): the Library list canvas's
+                    # secondary line/filter need the prompt's description
+                    # without an N+1 per-row `fetch_keywords_for_prompt`-
+                    # style fetch for a whole page -- this is a single extra
+                    # TEXT column on the same query, not a second query.
+                    query = f"""SELECT id, name, uuid, author, details, last_modified FROM Prompts
                                 {where_clause} ORDER BY last_modified DESC, id DESC
                                 LIMIT ? OFFSET ?"""
                     cursor.execute(query, (per_page, offset))
@@ -1648,8 +1652,27 @@ class PromptsDatabase:
                        search_fields: Optional[List[str]] = None,  # e.g. ['name', 'details', 'keywords']
                        page: int = 1,
                        results_per_page: int = 20,
-                       include_deleted: bool = False
+                       include_deleted: bool = False,
+                       fts_match_query: Optional[str] = None,
                        ) -> Tuple[List[Dict[str, Any]], int]:
+        """Searches prompts using FTS.
+
+        Args:
+            search_query: Plain user search text. Also used verbatim as the
+                MATCH clause against ``prompts_fts``/``prompt_keywords_fts``
+                when ``fts_match_query`` is not provided.
+            search_fields: Fields to search; defaults to the standard text
+                fields when ``search_query`` is set.
+            page: 1-indexed page number.
+            results_per_page: Page size.
+            include_deleted: Whether to include soft-deleted prompts.
+            fts_match_query: Optional pre-built FTS5 MATCH expression (e.g.
+                Library keyword search's plural/singular-widened query,
+                see ``library_fts_query.build_fts_match_query``) that
+                overrides the MATCH clause built from ``search_query``.
+                When omitted, ``search_query`` keeps its legacy behavior
+                unchanged.
+        """
         start_time = time.time()
         
         if page < 1: raise ValueError("Page must be >= 1")
@@ -1675,11 +1698,15 @@ class PromptsDatabase:
         if search_query and search_fields:
             matching_prompt_ids = set()
             text_search_fields = {"name", "author", "details", "system_prompt", "user_prompt"}
+            # Forward the caller-built MATCH expression only when provided
+            # so existing callers/test fakes without the parameter keep the
+            # legacy raw-`search_query` MATCH behavior unchanged.
+            effective_match_query = fts_match_query if fts_match_query else search_query
 
             # Search in prompt text fields
             if any(field in text_search_fields for field in search_fields):
                 try:
-                    cursor = self.execute_query("SELECT rowid FROM prompts_fts WHERE prompts_fts MATCH ?", (search_query,))
+                    cursor = self.execute_query("SELECT rowid FROM prompts_fts WHERE prompts_fts MATCH ?", (effective_match_query,))
                     matching_prompt_ids.update(row['rowid'] for row in cursor.fetchall())
                 except sqlite3.Error as e:
                     logging.opt(exception=True).error(f"FTS search on prompts failed: {e}")
@@ -1690,7 +1717,7 @@ class PromptsDatabase:
             if "keywords" in search_fields:
                 try:
                     # 1. Find keyword IDs matching the query
-                    kw_cursor = self.execute_query("SELECT rowid FROM prompt_keywords_fts WHERE prompt_keywords_fts MATCH ?", (search_query,))
+                    kw_cursor = self.execute_query("SELECT rowid FROM prompt_keywords_fts WHERE prompt_keywords_fts MATCH ?", (effective_match_query,))
                     matching_keyword_ids = {row['rowid'] for row in kw_cursor.fetchall()}
 
                     # 2. Find prompt IDs linked to those keywords

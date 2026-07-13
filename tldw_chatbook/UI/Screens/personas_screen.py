@@ -95,7 +95,10 @@ logger = logger.bind(module="PersonasScreen")
 
 #: Modes rendered as chips in the strip; "import_export" is intentionally
 #: excluded until import/export is wired as an action rather than a mode.
-MODE_CHIP_ORDER: tuple[str, ...] = ("characters", "personas", "prompts", "dictionaries", "lore")
+#: "prompts" is retired (Task 7): prompt management now lives entirely
+#: inside Library (see the "prompts" route alias in ``screen_registry`` and
+#: ``shell_destinations``), so it is no longer offered as a Personas mode.
+MODE_CHIP_ORDER: tuple[str, ...] = ("characters", "personas", "dictionaries", "lore")
 
 #: One-line "what this mode is" copy, shown under the title and as chip tooltips.
 _MODE_DESCRIPTORS: dict[str, str] = {
@@ -142,7 +145,7 @@ _CENTER_VIEW_IDS: tuple[str, ...] = (
 
 
 class PersonasScreen(BaseAppScreen):
-    """Characters, personas, prompts, dictionaries, and behavior profiles."""
+    """Characters, personas, dictionaries, and behavior profiles."""
 
     #: Page size above which the loaded list may be truncated and FTS is used
     #: instead of filtering the in-memory list. Must stay in sync with the
@@ -1047,7 +1050,9 @@ class PersonasScreen(BaseAppScreen):
             await self._run_guarded(
                 lambda: self._select_dictionary(message.entity_id, message.entity_name)
             )
-        # Prompts and lore are wired in follow-up tasks.
+        # Lore is wired in a follow-up task. Prompts are not: prompt
+        # management is retired from Personas and lives entirely inside
+        # Library (Task 7).
 
     async def _select_character(self, entity_id: str, entity_name: str) -> None:
         self.state.select_entity(

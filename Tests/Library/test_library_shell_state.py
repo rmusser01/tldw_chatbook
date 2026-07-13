@@ -2,6 +2,8 @@ import pytest
 
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP,
+    LIBRARY_ROW_BROWSE_PROMPTS,
+    LIBRARY_ROW_CREATE_PROMPT,
     LIBRARY_ROW_INGEST_EXPORT,
     LibraryShellInput,
     build_library_shell_state,
@@ -11,31 +13,36 @@ from tldw_chatbook.Library.library_shell_state import (
 def test_shell_sections_rows_and_targets_are_fixed():
     shell = build_library_shell_state(LibraryShellInput(
         media_count=17, conversations_count=128, notes_count=42, collections_count=5,
+        prompts_count=9,
     ))
     assert shell.header_line == "Library | Local"
     assert [s.section_id for s in shell.sections] == ["browse", "create", "ingest"]
     assert [s.title for s in shell.sections] == ["Browse", "Create", "Import / Export"]
     browse = shell.sections[0]
     assert [r.row_id for r in browse.rows] == [
-        "browse-media", "browse-conversations", "browse-notes", "browse-collections",
-        "browse-search",
+        "browse-media", "browse-conversations", "browse-notes", LIBRARY_ROW_BROWSE_PROMPTS,
+        "browse-collections", "browse-search",
     ]
     assert [r.title for r in browse.rows] == [
-        "Media", "Conversations", "Notes", "Collections", "Search / RAG"
+        "Media", "Conversations", "Notes", "Prompts", "Collections", "Search / RAG"
     ]
-    assert browse.rows[4].target_kind == "canvas" and browse.rows[4].target_id == "search"
-    assert browse.rows[4].count is None
-    assert browse.rows[3].target_kind == "canvas" and browse.rows[3].target_id == "collections"
+    assert browse.rows[5].target_kind == "canvas" and browse.rows[5].target_id == "search"
+    assert browse.rows[5].count is None
+    assert browse.rows[4].target_kind == "canvas" and browse.rows[4].target_id == "collections"
     conv = browse.rows[1]
     assert (conv.target_kind, conv.target_id, conv.count) == ("canvas", "conversations", 128)
     media = browse.rows[0]
     assert (media.target_kind, media.target_id) == ("canvas", "media")
     notes = browse.rows[2]
     assert (notes.target_kind, notes.target_id, notes.count) == ("canvas", "notes", 42)
+    prompts = browse.rows[3]
+    assert (prompts.target_kind, prompts.target_id, prompts.count) == ("canvas", "prompts", 9)
     create_ids = [r.row_id for r in shell.sections[1].rows]
-    assert create_ids == ["create-note", "create-study", "create-flashcards", "create-quizzes"]
+    assert create_ids == [
+        "create-note", LIBRARY_ROW_CREATE_PROMPT, "create-study", "create-flashcards", "create-quizzes",
+    ]
     assert [r.title for r in shell.sections[1].rows] == [
-        "New note", "Study decks", "Flashcards", "Quizzes"
+        "New note", "New prompt", "Study decks", "Flashcards", "Quizzes"
     ]
     assert (shell.sections[1].rows[0].target_kind, shell.sections[1].rows[0].target_id) == (
         "canvas", "notes-create",
@@ -123,6 +130,27 @@ def test_browse_notes_row_targets_notes_canvas():
     assert shell.selected_row_id == "browse-notes"
 
 
+def test_browse_prompts_row_targets_prompts_canvas():
+    # Task 1 (count seam + rail row): the row is inert-but-selectable --
+    # canvas_kind resolves to "prompts" via the generic "canvas" target_kind
+    # branch, but the screen has no dedicated "prompts" render branch yet,
+    # so it falls through to the placeholder-empty canvas (a later task
+    # adds the real list canvas).
+    shell = build_library_shell_state(
+        LibraryShellInput(prompts_count=9), selected_row_id=LIBRARY_ROW_BROWSE_PROMPTS
+    )
+    prompts_row = next(
+        r
+        for section in shell.sections
+        for r in section.rows
+        if r.row_id == LIBRARY_ROW_BROWSE_PROMPTS
+    )
+    assert prompts_row.target_kind == "canvas"
+    assert prompts_row.target_id == "prompts"
+    assert (shell.canvas_kind, shell.canvas_target) == ("prompts", "")
+    assert shell.selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
+
+
 def test_create_note_row_targets_notes_create_canvas():
     shell = build_library_shell_state(LibraryShellInput(), selected_row_id="create-note")
     row = next(
@@ -132,6 +160,22 @@ def test_create_note_row_targets_notes_create_canvas():
     assert row.target_id == "notes-create"
     assert (shell.canvas_kind, shell.canvas_target) == ("notes-create", "")
     assert shell.selected_row_id == "create-note"
+
+
+def test_create_prompt_row_targets_prompts_canvas():
+    # Task 8b D1: the "New prompt" row reuses the SAME canvas kind
+    # ("prompts") Browse > Prompts targets -- the screen distinguishes the
+    # two by view state (`_library_prompts_view`), not by a separate canvas
+    # kind, mirroring the brief's "a `prompts` editor view ... prompt_id=None
+    # sentinel" design.
+    shell = build_library_shell_state(LibraryShellInput(), selected_row_id=LIBRARY_ROW_CREATE_PROMPT)
+    row = next(
+        r for section in shell.sections for r in section.rows if r.row_id == LIBRARY_ROW_CREATE_PROMPT
+    )
+    assert row.target_kind == "canvas"
+    assert row.target_id == "prompts"
+    assert (shell.canvas_kind, shell.canvas_target) == ("prompts", "")
+    assert shell.selected_row_id == LIBRARY_ROW_CREATE_PROMPT
 
 
 def test_unknown_rows_resolve_to_empty_canvas():

@@ -297,10 +297,17 @@ class FakePersistence:
         self.created_conversations = []
         self.created_messages = []
         self.updated_messages = []
+        self.updated_system_prompts = []
 
     def create_conversation(self, **kwargs):
         self.created_conversations.append(kwargs)
         return "conv-1"
+
+    def update_conversation_system_prompt(self, *, conversation_id, system_prompt):
+        self.updated_system_prompts.append(
+            {"conversation_id": conversation_id, "system_prompt": system_prompt}
+        )
+        return True
 
     def create_message(
         self,
@@ -390,6 +397,132 @@ def test_store_can_persist_user_and_assistant_messages_through_adapter():
     assert persistence.created_messages[0]["content"] == "hello"
     assert persistence.created_messages[0]["image_data"] is None
     assert persistence.created_messages[0]["image_mime_type"] is None
+
+
+def test_persist_session_if_needed_passes_system_prompt_from_settings():
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session(
+        title="Chat 1",
+        settings=ConsoleSessionSettings(provider="llama_cpp", system_prompt="Be terse."),
+    )
+
+    store.persist_session_if_needed(session.id)
+
+    assert persistence.created_conversations[0]["system_prompt"] == "Be terse."
+
+
+def test_persist_session_if_needed_passes_none_system_prompt_without_settings():
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session(title="Chat 1")
+
+    store.persist_session_if_needed(session.id)
+
+    assert persistence.created_conversations[0]["system_prompt"] is None
+
+
+def test_set_session_system_prompt_updates_settings_without_persisting_when_unsaved():
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session(
+        title="Chat 1",
+        settings=ConsoleSessionSettings(provider="llama_cpp"),
+    )
+
+    updated, persisted = store.set_session_system_prompt(session.id, "New system prompt")
+
+    assert updated.settings.system_prompt == "New system prompt"
+    assert persisted is True
+    assert persistence.updated_system_prompts == []
+    assert persistence.created_conversations == []
+
+
+def test_set_session_system_prompt_persists_change_when_conversation_already_saved():
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session(
+        title="Chat 1",
+        settings=ConsoleSessionSettings(provider="llama_cpp"),
+    )
+    store.persist_session_if_needed(session.id)
+
+    updated, persisted = store.set_session_system_prompt(session.id, "Answer in French.")
+
+    assert updated.settings.system_prompt == "Answer in French."
+    assert persisted is True
+    assert persistence.updated_system_prompts == [
+        {"conversation_id": "conv-1", "system_prompt": "Answer in French."}
+    ]
+
+
+def test_set_session_system_prompt_preserves_formatting_verbatim():
+    """Only blank/whitespace-only text is treated as "no system prompt";
+    leading whitespace and internal formatting (e.g. a blank line between
+    paragraphs) must survive into storage unchanged rather than being
+    stripped."""
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session(
+        title="Chat 1",
+        settings=ConsoleSessionSettings(provider="llama_cpp"),
+    )
+    store.persist_session_if_needed(session.id)
+    formatted_prompt = "  line1\n\n  line2  "
+
+    updated, persisted = store.set_session_system_prompt(session.id, formatted_prompt)
+
+    assert updated.settings.system_prompt == formatted_prompt
+    assert persisted is True
+    assert persistence.updated_system_prompts == [
+        {"conversation_id": "conv-1", "system_prompt": formatted_prompt}
+    ]
+
+
+def test_set_session_system_prompt_normalizes_blank_to_none():
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session(
+        title="Chat 1",
+        settings=ConsoleSessionSettings(provider="llama_cpp", system_prompt="Old prompt"),
+    )
+    store.persist_session_if_needed(session.id)
+
+    updated, persisted = store.set_session_system_prompt(session.id, "   ")
+
+    assert updated.settings.system_prompt is None
+    assert persisted is True
+    assert persistence.updated_system_prompts == [
+        {"conversation_id": "conv-1", "system_prompt": None}
+    ]
+
+
+def test_set_session_system_prompt_survives_persistence_failure():
+    """A persistence error (e.g. the conversation was deleted, or a DB
+    conflict) must not escape `set_session_system_prompt`, and the
+    in-memory session keeps the applied value (this store's existing
+    convention: mutations are not rolled back when the durable write that
+    follows them fails); the caller gets `persisted=False` back so it can
+    surface the failure honestly instead of assuming the change was saved.
+    """
+
+    class RaisingPersistence(FakePersistence):
+        def update_conversation_system_prompt(self, *, conversation_id, system_prompt):
+            raise RuntimeError("conversation vanished")
+
+    persistence = RaisingPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session(
+        title="Chat 1",
+        settings=ConsoleSessionSettings(provider="llama_cpp"),
+    )
+    store.persist_session_if_needed(session.id)
+
+    updated, persisted = store.set_session_system_prompt(session.id, "New prompt")
+
+    assert persisted is False
+    assert updated.settings.system_prompt == "New prompt"
+    assert store.session_settings(session.id).system_prompt == "New prompt"
 
 
 def test_store_enqueues_chat_sync_after_user_message_is_durable():
@@ -670,6 +803,37 @@ def test_store_persists_default_workspace_chat_without_runtime_access(tmp_path):
         assert persisted_message["content"] == "default workspace chat remains usable"
         assert [item.item_id for item in workspace_conversations] == [conversation_id]
         assert registry.list_runtime_bindings(DEFAULT_WORKSPACE_ID) == ()
+    finally:
+        db.close()
+
+
+def test_store_system_prompt_round_trips_through_real_chat_persistence_service(tmp_path):
+    """Persistence round-trip: create, apply a system prompt, reload from the real DB.
+
+    Covers the Task 0 persistence seam end to end: creating a conversation
+    with a session-level system prompt, then changing it once the
+    conversation is already saved (the update path Task 0 flagged as
+    missing), then reading the raw DB row back -- independent of any
+    in-memory store state -- to confirm the change is truly durable.
+    """
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        session = store.ensure_session(
+            title="Chat 1",
+            settings=ConsoleSessionSettings(provider="llama_cpp", system_prompt="Be terse."),
+        )
+
+        conversation_id = store.persist_session_if_needed(session.id)
+        assert db.get_conversation_by_id(conversation_id)["system_prompt"] == "Be terse."
+
+        store.set_session_system_prompt(session.id, "Answer only in French.")
+
+        # Read straight from the DB (not through the in-memory store) to
+        # confirm the update is durable, the way a reload/reopen would see it.
+        reloaded = db.get_conversation_by_id(conversation_id)
+        assert reloaded["system_prompt"] == "Answer only in French."
+        assert store.session_settings(session.id).system_prompt == "Answer only in French."
     finally:
         db.close()
 

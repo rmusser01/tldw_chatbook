@@ -346,40 +346,26 @@ class TestWorkbenchShell:
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             assert "Personas: 1" in str(status.renderable)
-            await pilot.click("#personas-mode-prompts")
+            # "prompts" is retired from the Personas mode strip (Task 7):
+            # "dictionaries" is the next still-unwired placeholder mode.
+            await pilot.click("#personas-mode-dictionaries")
             await pilot.pause()
-            assert "Mode: Prompts" in str(status.renderable)
+            assert "Mode: Dictionaries" in str(status.renderable)
 
     async def test_placeholder_modes_show_placeholder_panel(self, mock_app_instance, stub_characters):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
-            await pilot.click("#personas-mode-prompts")
+            # Lore is the one remaining planned mode: dictionaries shipped in
+            # Roleplay P1a and prompts are retired to the Library (Task 7).
+            await pilot.click("#personas-mode-lore")
             await pilot.pause()
-            assert screen.state.active_mode == "prompts"
+            assert screen.state.active_mode == "lore"
             placeholder = screen.query_one("#personas-mode-placeholder", Static)
             assert placeholder.display is True
-            # Prompts is departing to the Library — its copy is honest about that,
-            # never a "coming soon" that implies it is arriving in Roleplay.
-            body = str(placeholder.renderable).lower()
-            assert "library" in body
-            assert "coming soon" not in body
-            assert "is-active" in screen.query_one("#personas-mode-prompts", Button).classes
-
-    async def test_prompts_chip_reads_as_departing_not_coming_soon(self, mock_app_instance, stub_characters):
-        app = PersonasTestApp(mock_app_instance)
-        async with app.run_test() as pilot:
-            screen = await _mounted(pilot)
-            prompts_chip = screen.query_one("#personas-mode-prompts", Button)
-            # Departing mode: honest descriptor tooltip, never the bare fallback label…
-            assert prompts_chip.tooltip == "Prompts — moving to the Library."
-            # …and no "· soon" marker (it is leaving, not arriving).
-            assert "soon" not in str(prompts_chip.label).lower()
-            # Selecting it surfaces the same honest descriptor in the visible purpose line.
-            await screen._apply_mode("prompts")
-            await pilot.pause()
-            purpose = str(screen.query_one("#personas-purpose", Static).renderable)
-            assert purpose == "Prompts — moving to the Library."
+            # Roleplay P0 copy: planned modes read "Coming soon" with a purpose line.
+            assert "Coming soon" in str(placeholder.renderable)
+            assert "is-active" in screen.query_one("#personas-mode-lore", Button).classes
 
     async def test_mode_chips_are_self_explaining_and_mark_coming_soon(self, mock_app_instance, stub_characters):
         app = PersonasTestApp(mock_app_instance)
@@ -3914,9 +3900,11 @@ class TestKeyboardInteraction:
             await pilot.pause()
             assert screen.state.active_mode == "personas"
             # ]/[ cycle through the strip order from the active mode.
+            # "prompts" is retired from the strip (Task 7), so "dictionaries"
+            # is next after "personas".
             await pilot.press("right_square_bracket")
             await pilot.pause()
-            assert screen.state.active_mode == "prompts"
+            assert screen.state.active_mode == "dictionaries"
             await pilot.press("left_square_bracket")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()

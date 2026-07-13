@@ -300,6 +300,156 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     color: $ds-text-primary;
 }
 
+ConsolePromptPickerModal {
+    align: center middle;
+}
+
+#console-prompt-picker-modal {
+    width: 76;
+    max-width: 95%;
+    height: auto;
+    max-height: 85%;
+    border: round $ds-grid-line;
+    background: $ds-surface-panel;
+    padding: 1 2;
+}
+
+#console-prompt-picker-filter {
+    height: 3;
+    min-height: 3;
+    margin: 0 0 1 0;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#console-prompt-picker-filter:focus {
+    border: tall $ds-input-focus-accent;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+}
+
+#console-prompt-picker-results {
+    height: auto;
+    max-height: 20;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size: 1 1;
+}
+
+.console-prompt-picker-row {
+    width: 100%;
+    height: auto;
+    min-height: 3;
+    margin: 0 0 1 0;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+.console-prompt-picker-row-highlighted {
+    border: tall $ds-action-focus;
+    background: $ds-input-focus-bg;
+    text-style: bold;
+}
+
+.console-prompt-picker-row-blocked {
+    color: $ds-text-muted;
+}
+
+#console-prompt-picker-reason {
+    height: auto;
+    min-height: 1;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    background: $ds-status-error 10%;
+    color: $ds-text-primary;
+}
+
+#console-prompt-picker-empty {
+    height: auto;
+    margin: 1 0;
+    color: $ds-text-muted;
+}
+
+ConsoleSystemPromptModal {
+    align: center middle;
+}
+
+#console-system-prompt-modal {
+    width: 84;
+    max-width: 95%;
+    height: 32;
+    max-height: 90%;
+    border: round $ds-grid-line;
+    background: $ds-surface-panel;
+    padding: 1 2;
+}
+
+.console-system-prompt-row {
+    height: auto;
+    min-height: 1;
+    margin: 0 0 1 0;
+}
+
+.console-system-prompt-label {
+    width: 8;
+    min-width: 8;
+    max-width: 8;
+    height: 1;
+    min-height: 1;
+    content-align: left middle;
+}
+
+#console-system-prompt-scope {
+    color: $ds-text-muted;
+}
+
+#console-system-prompt-text {
+    width: 100%;
+    height: 1fr;
+    min-height: 10;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#console-system-prompt-text:focus {
+    border: tall $ds-input-focus-accent;
+    background: $ds-input-focus-bg;
+}
+
+#console-system-prompt-name {
+    width: 1fr;
+    min-width: 0;
+    height: 3;
+    min-height: 3;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#console-system-prompt-save-status {
+    color: $ds-text-muted;
+}
+
+.console-system-prompt-actions {
+    height: 3;
+    min-height: 3;
+    align-horizontal: right;
+}
+
+#console-system-prompt-clear,
+#console-system-prompt-cancel,
+#console-system-prompt-apply {
+    width: 12;
+    min-width: 12;
+    height: 3;
+    min-height: 3;
+}
+
 #home-dashboard,
 #console-shell,
 #library-shell,
@@ -715,6 +865,23 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     color: $ds-text-primary;
 }
 
+/* Same look as .library-notes-row: prompts list rows (library_prompts_canvas.py). */
+.library-prompt-row {
+    width: 100%;
+    min-width: 0;
+    height: 2;
+    min-height: 2;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    text-align: left;
+    content-align: left middle;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+    border: none;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
 /* "From a template" group label: separates the primary Blank note action
    from the template rows (same top-rule section grammar as the media
    viewer's Content/Analysis/Highlights headers). */
@@ -794,6 +961,73 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     color: $ds-text-muted;
 }
 
+/* Prompts list canvas (library_prompts_canvas.py): same look as the notes
+   list's header/filter/empty siblings above -- visual parity, not a
+   separate design. */
+#library-prompts-header {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    content-align: left middle;
+}
+
+#library-prompts-filter {
+    width: 100%;
+    height: 3;
+    min-height: 3;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#library-prompts-filter:focus {
+    border: tall $ds-input-focus-accent;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+#library-prompts-empty {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    margin: 0 0 1 0;
+    color: $ds-text-muted;
+}
+
+/* Toolbar Import… row (library_prompts_canvas.py, Task 5): the path Input
+   matches the filter box's field look; the outcome line is muted like the
+   editor's save-status Static. */
+#library-prompts-import-path {
+    width: 100%;
+    height: 3;
+    min-height: 3;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#library-prompts-import-path:focus {
+    border: tall $ds-input-focus-accent;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+#library-prompts-import-status {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    margin: 0 0 1 0;
+    color: $ds-text-muted;
+}
+
 #library-notes-create-header {
     width: 100%;
     min-width: 0;
@@ -861,6 +1095,79 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
 
 #library-note-conflict-copy,
 #library-note-delete-confirm-copy {
+    width: 100%;
+    height: auto;
+    color: $ds-text-muted;
+    margin: 0 0 1 0;
+}
+
+/* Prompt editor (library_prompts_canvas.py): same field/meta/conflict look
+   as the note editor's siblings above -- visual parity, not a separate
+   design. Name/Author/Details/Keywords are single-line Inputs; System
+   prompt/User prompt are the bounded TextAreas below. */
+#library-prompt-name,
+#library-prompt-author,
+#library-prompt-details,
+#library-prompt-keywords {
+    width: 100%;
+    height: 3;
+    min-height: 3;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#library-prompt-name:focus,
+#library-prompt-author:focus,
+#library-prompt-details:focus,
+#library-prompt-keywords:focus {
+    border: tall $ds-input-focus-accent;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+/* Dim one-line field labels above each Input/TextArea -- the prompt editor
+   has several ambiguous text fields (unlike the note editor's single body),
+   so each needs its own caption; muted like the note editor's meta line. */
+.library-prompt-field-label {
+    width: 100%;
+    height: auto;
+    color: $ds-text-muted;
+}
+
+/* One-line dim hint under the System prompt/User prompt labels (Task 8c
+   U7): explains the two-part prompt model to a new user. Same muted tier
+   as .library-prompt-field-label above; the trailing margin separates it
+   from the TextArea beneath it. */
+.library-prompt-field-hint {
+    width: 100%;
+    height: auto;
+    color: $ds-text-muted;
+    margin: 0 0 1 0;
+}
+
+/* Bounded editors: same floor/ceiling as #library-note-body so System/User
+   prompt stay compact instead of ballooning to fill the canvas. */
+#library-prompt-system,
+#library-prompt-user {
+    height: auto;
+    min-height: 6;
+    max-height: 14;
+    margin: 0 0 1 0;
+}
+
+#library-prompt-meta {
+    width: 100%;
+    color: $ds-text-muted;
+    margin: 0 0 1 0;
+}
+
+#library-prompt-conflict-copy,
+#library-prompt-save-status {
     width: 100%;
     height: auto;
     color: $ds-text-muted;
@@ -1793,6 +2100,15 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
 
 .console-model-section-line {
     height: 1;
+    color: $ds-text-muted;
+}
+
+#console-rail-system-line {
+    height: 1;
+    color: $ds-text-primary;
+}
+
+#console-rail-system-line.console-rail-system-line-dim {
     color: $ds-text-muted;
 }
 

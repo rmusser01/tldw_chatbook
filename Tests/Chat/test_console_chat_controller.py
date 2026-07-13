@@ -259,6 +259,7 @@ def test_update_provider_selection_updates_all_selection_fields() -> None:
         thinking_effort="low",
         thinking_budget_tokens=2048,
         streaming=False,
+        system_prompt="Session system prompt.",
     )
 
     controller.update_provider_selection(selection)
@@ -281,6 +282,7 @@ def test_update_provider_selection_updates_all_selection_fields() -> None:
     assert controller.thinking_effort == "low"
     assert controller.thinking_budget_tokens == 2048
     assert controller.streaming is False
+    assert controller.system_prompt == "Session system prompt."
     assert controller._provider_selection().seed == 99
     assert controller._provider_selection().reasoning_effort == "high"
     assert controller._provider_selection().thinking_budget_tokens == 2048
@@ -364,6 +366,65 @@ async def test_submit_draft_sanitizes_user_text_before_storage_and_provider_send
 
 
 @pytest.mark.asyncio
+async def test_submit_draft_prepends_system_prompt_message():
+    """Native Console submit prepends a session's system prompt when set."""
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        system_prompt="Answer only in French.",
+    )
+
+    result = await controller.submit_draft("hello")
+
+    assert result.accepted is True
+    assert gateway.messages_seen == [
+        {"role": "system", "content": "Answer only in French."},
+        {"role": "user", "content": "hello"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_submit_draft_omits_system_message_when_prompt_is_blank():
+    """A whitespace-only system prompt is treated as no system prompt."""
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        system_prompt="   ",
+    )
+
+    await controller.submit_draft("hello")
+
+    assert gateway.messages_seen == [{"role": "user", "content": "hello"}]
+
+
+@pytest.mark.asyncio
+async def test_submit_draft_preserves_system_prompt_formatting_verbatim():
+    """`strip()` is used only to decide "is this blank" -- the system
+    message content sent to the provider must be the prompt exactly as
+    set, leading/trailing whitespace and internal blank lines included."""
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    formatted_prompt = "  line1\n\n  line2  "
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        system_prompt=formatted_prompt,
+    )
+
+    result = await controller.submit_draft("hello")
+
+    assert result.accepted is True
+    assert gateway.messages_seen == [
+        {"role": "system", "content": formatted_prompt},
+        {"role": "user", "content": "hello"},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_controller_provider_selection_includes_sampling_settings() -> None:
     gateway = CapturingGateway()
     store = ConsoleChatStore()
@@ -378,6 +439,7 @@ async def test_controller_provider_selection_includes_sampling_settings() -> Non
         top_k=20,
         max_tokens=300,
         streaming=False,
+        system_prompt="Session system prompt.",
     )
 
     await controller.submit_draft("hello")
@@ -388,6 +450,7 @@ async def test_controller_provider_selection_includes_sampling_settings() -> Non
     assert gateway.selection.top_k == 20
     assert gateway.selection.max_tokens == 300
     assert gateway.selection.streaming is False
+    assert gateway.selection.system_prompt == "Session system prompt."
 
 
 @pytest.mark.asyncio
@@ -788,7 +851,11 @@ async def test_retry_failed_message_records_retrying_then_streaming_transition()
 async def test_retry_failed_continuation_message_ends_provider_payload_with_user_instruction():
     store = ConsoleChatStore()
     gateway = RecordingStreamingGateway()
-    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        system_prompt="Answer only in French.",
+    )
     session = store.ensure_session()
     store.append_message(
         session.id,
@@ -812,6 +879,7 @@ async def test_retry_failed_continuation_message_ends_provider_payload_with_user
 
     assert result.accepted is True
     assert gateway.messages_seen == [
+        {"role": "system", "content": "Answer only in French."},
         {"role": "user", "content": "Prompt"},
         {"role": "assistant", "content": "Seed"},
         {"role": "user", "content": "Continue and extend the selected message."},
@@ -909,7 +977,11 @@ async def test_continue_from_message_streams_new_assistant_turn_after_selected_m
 async def test_continue_from_assistant_message_ends_provider_payload_with_user_instruction():
     store = ConsoleChatStore()
     gateway = RecordingStreamingGateway()
-    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        system_prompt="Answer only in French.",
+    )
     session = store.ensure_session()
     store.append_message(
         session.id,
@@ -926,6 +998,7 @@ async def test_continue_from_assistant_message_ends_provider_payload_with_user_i
 
     assert result.accepted is True
     assert gateway.messages_seen == [
+        {"role": "system", "content": "Answer only in French."},
         {"role": "user", "content": "Prompt"},
         {"role": "assistant", "content": "Seed"},
         {"role": "user", "content": "Continue and extend the selected message."},
@@ -973,7 +1046,11 @@ async def test_regenerate_message_streams_new_selected_variant():
 async def test_regenerate_continuation_message_ends_provider_payload_with_user_instruction():
     store = ConsoleChatStore()
     gateway = RecordingStreamingGateway()
-    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        system_prompt="Answer only in French.",
+    )
     session = store.ensure_session()
     store.append_message(
         session.id,
@@ -995,6 +1072,7 @@ async def test_regenerate_continuation_message_ends_provider_payload_with_user_i
 
     assert result.accepted is True
     assert gateway.messages_seen == [
+        {"role": "system", "content": "Answer only in French."},
         {"role": "user", "content": "Prompt"},
         {"role": "assistant", "content": "Seed"},
         {"role": "user", "content": "Continue and extend the selected message."},

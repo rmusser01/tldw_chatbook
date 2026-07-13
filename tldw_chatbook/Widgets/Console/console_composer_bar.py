@@ -731,6 +731,21 @@ class ConsoleComposerBar(Horizontal):
         self._sync_interaction_classes()
         self._sync_current_action_state()
 
+    def insert_text_as_paste(self, text: str) -> None:
+        """Insert ``text`` through the same path a real OS paste event uses.
+
+        Thin, clearly-named public entry point for programmatic insertions
+        (the Console `/prompt` command and Library's "Use in Console"
+        handoff, Task 12) that must behave exactly like a user pasting the
+        same text -- collapsing into a stateful token display when it
+        exceeds the paste-collapse threshold, unlike ``insert_text``, which
+        always inserts as small literal text regardless of size.
+
+        Args:
+            text: Text to insert as if it had just been pasted.
+        """
+        self.insert_pasted_text(text)
+
     def insert_file_segment(self, text: str, label: str) -> None:
         """Append inlined file content as a labeled, display-collapsed segment.
 
@@ -816,6 +831,21 @@ class ConsoleComposerBar(Horizontal):
             True when at least one pasted segment is showing the `Unfurl?` prompt.
         """
         return any(segment.collapse_state == "confirm" for segment in self._segments)
+
+    def has_paste_segments(self) -> bool:
+        """Return whether the draft contains any paste-originated segment.
+
+        A segment keeps its paste provenance (``"collapsed"``, ``"confirm"``,
+        or ``"expanded"``) for as long as it exists, even once fully unfurled
+        -- an "expanded" segment renders identically to typed literal text, so
+        display-string inspection cannot distinguish the two. Callers that
+        must not treat pasted content as command input (for example, Console
+        slash-command parsing) should gate on this real segment state instead.
+
+        Returns:
+            True when at least one segment originated from a paste event.
+        """
+        return any(segment.collapse_state != "literal" for segment in self._segments)
 
     def suppress_next_draft_click(self) -> None:
         """Suppress the synthesized Click that may follow terminal mouse events."""
