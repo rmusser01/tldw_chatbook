@@ -170,3 +170,98 @@ def test_cancel_lands_at_step_boundary():
                ModelTurn(text="never")],
               cancel=lambda: next(flags, True))
     assert out.status == RUN_CANCELLED
+
+
+# --- G1/Q9: load_tools `ids` coercion must never crash and must not
+# char-split a bare string id. ---
+
+def test_load_tools_ids_null_does_not_crash_and_reports_no_valid_tools():
+    seen_ids = []
+
+    def load_schemas(ids):
+        seen_ids.append(ids)
+        return []
+
+    deps = make_deps([ModelTurn(text=fence("load_tools", {"ids": None})),
+                      ModelTurn(text="done")])
+    deps.load_schemas = load_schemas
+    out = run_agent_loop(CFG, [{"role": "user", "content": "hi"}], [], deps)
+    assert seen_ids == [[]]                    # coerced to empty list, no crash
+    assert out.status == RUN_DONE and out.final_text == "done"
+    result_steps = [s for s in out.steps if s.kind == STEP_TOOL_RESULT]
+    assert result_steps[0].result == "ERROR: No valid tools found to load"
+
+
+def test_load_tools_ids_as_bare_string_loads_that_one_tool():
+    seen_ids = []
+
+    def load_schemas(ids):
+        seen_ids.append(ids)
+        return [CALC]
+
+    deps = make_deps([ModelTurn(text=fence(
+        "load_tools", {"ids": "builtin:calculator"})),
+        ModelTurn(text="done")])
+    deps.load_schemas = load_schemas
+    out = run_agent_loop(CFG, [{"role": "user", "content": "hi"}], [], deps)
+    assert seen_ids == [["builtin:calculator"]]  # not char-split
+    assert out.status == RUN_DONE
+
+
+# --- G5: load_tools must distinguish "all ids invalid" from "valid but
+# no room". ---
+
+def test_load_tools_all_invalid_ids_reports_no_valid_tools_not_no_room():
+    deps = make_deps([ModelTurn(text=fence("load_tools", {"ids": ["nope"]})),
+                      ModelTurn(text="done")])
+    deps.load_schemas = lambda ids: []
+    out = run_agent_loop(CFG, [{"role": "user", "content": "hi"}], [], deps)
+    result_steps = [s for s in out.steps if s.kind == STEP_TOOL_RESULT]
+    assert result_steps[0].result == "ERROR: No valid tools found to load"
+
+
+def test_load_tools_out_of_room_still_says_no_room():
+    turns = [ModelTurn(text=fence("load_tools",
+                                  {"ids": ["builtin:calculator"]})),
+             ModelTurn(text="done")]
+    out = run(turns, active=[CALC],
+              config=AgentConfig(model="m", system_prompt="s",
+                                 allowed_tools=("calculator",),
+                                 budget=RunBudget(max_active_tools=1)))
+    result_steps = [s for s in out.steps if s.kind == STEP_TOOL_RESULT]
+    assert result_steps[0].result == "no room"
+
+
+# --- G4: an empty spawn task must be refused with no budget consumption
+# and no STEP_SPAWN. ---
+
+def test_spawn_empty_task_is_refused_without_budget_consumption():
+    calls = []
+    turns = [ModelTurn(text=fence(SPAWN_TOOL_NAME, {"task": "   "})),
+             ModelTurn(text="done")]
+    out = run(turns, spawn=lambda t: calls.append(t) or ToolResult(
+        ok=True, content="x"))
+    assert calls == []
+    assert out.subagents_spawned == 0
+    assert [s for s in out.steps if s.kind == STEP_SPAWN] == []
+    result_steps = [s for s in out.steps if s.kind == STEP_TOOL_RESULT]
+    assert "Task description cannot be empty" in result_steps[0].result
+
+
+# --- Q6: spawn must be refused up front when not in allowed_tools, before
+# ever dispatching to deps.spawn. ---
+
+def test_spawn_not_in_allowed_tools_is_refused_before_dispatch():
+    calls = []
+    turns = [ModelTurn(text=fence(SPAWN_TOOL_NAME, {"task": "do it"})),
+             ModelTurn(text="done")]
+    cfg = AgentConfig(model="m", system_prompt="s",
+                      allowed_tools=("calculator",))   # no spawn permission
+    out = run(turns, config=cfg,
+              spawn=lambda t: calls.append(t) or ToolResult(
+                  ok=True, content="x"))
+    assert calls == []
+    assert out.subagents_spawned == 0
+    assert [s for s in out.steps if s.kind == STEP_SPAWN] == []
+    result_steps = [s for s in out.steps if s.kind == STEP_TOOL_RESULT]
+    assert "Tool not permitted: spawn_subagent" in result_steps[0].result
