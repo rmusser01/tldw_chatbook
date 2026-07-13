@@ -3989,7 +3989,16 @@ ListItem.personas-library-row.is-active.-highlight {
     margin-top: 1;
 }
 
+/* Override border away from the generic `.is-active` rule (`border: round
+   $ds-action-focus`, earlier in this sheet). Button.mcp-rail-row rows are
+   fixed at height 1 (see MCPRail.DEFAULT_CSS); a round border needs at
+   least 2 lines to render, so on a height-1 button it consumes the row's
+   only line and the content area collapses to height 0 -- the label never
+   renders, leaving a blank bordered box for the selected row. Mirrors the
+   sibling `.mcp-mode-chip.is-active` rule below (and MCPScreen.DEFAULT_CSS's
+   copy of it), which already carries this same `border: none` override. */
 #mcp-hub-rail Button.mcp-rail-row.is-active {
+    border: none;
     text-style: bold;
 }
 
