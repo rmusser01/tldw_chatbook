@@ -3,6 +3,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from tldw_chatbook.Chat import console_chat_controller as controller_module
+from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
@@ -1141,3 +1143,107 @@ async def test_regenerate_failure_adds_system_row_without_touching_variants():
     assert system_row.role is ConsoleMessageRole.SYSTEM
     assert "regen exploded" in system_row.content
     assert controller.run_state.status is ConsoleRunStatus.FAILED
+
+
+def _pending_image(name="photo.png", data=b"\x89PNG-bytes"):
+    return PendingAttachment(
+        file_path=f"/tmp/{name}",
+        display_name=name,
+        file_type="image",
+        insert_mode="attachment",
+        data=data,
+        mime_type="image/png",
+        original_size=len(data),
+        processed_size=len(data),
+    )
+
+
+def test_submit_draft_sends_image_parts_when_vision_capable(monkeypatch):
+    monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: True)
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway, model="vision-model")
+    session = store.ensure_session()
+    store.set_pending_attachment(session.id, _pending_image())
+
+    result = asyncio.run(controller.submit_draft("what is this?"))
+
+    assert result.accepted
+    user_payload = gateway.messages_seen[-1]
+    assert user_payload["role"] == "user"
+    assert isinstance(user_payload["content"], list)
+    assert user_payload["content"][0] == {"type": "text", "text": "what is this?"}
+    assert user_payload["content"][1]["image_url"]["url"].startswith("data:image/png;base64,")
+    assert store.pending_attachment(session.id) is None  # consumed on send
+
+
+def test_submit_draft_blocks_pending_image_on_non_vision_model(monkeypatch):
+    monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: False)
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=RecordingStreamingGateway(), model="text-model"
+    )
+    session = store.ensure_session()
+    store.set_pending_attachment(session.id, _pending_image())
+
+    result = asyncio.run(controller.submit_draft("look at this"))
+
+    assert not result.accepted
+    assert "can't accept images" in result.visible_copy
+    assert store.pending_attachment(session.id) is not None  # kept for model switch
+
+
+def test_image_only_draft_is_sendable(monkeypatch):
+    monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: True)
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway, model="vision-model")
+    session = store.ensure_session()
+    store.set_pending_attachment(session.id, _pending_image())
+
+    result = asyncio.run(controller.submit_draft(""))
+
+    assert result.accepted
+    user_payload = gateway.messages_seen[-1]
+    assert [part["type"] for part in user_payload["content"]] == ["image_url"]
+
+
+def test_history_images_capped_to_most_recent(monkeypatch):
+    monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: True)
+    monkeypatch.setattr(controller_module, "max_history_images", lambda p, m: 1)
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway, model="vision-model")
+    session = store.ensure_session()
+    store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="first",
+        image_data=b"img-1", image_mime_type="image/png",
+    )
+    store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="second",
+        image_data=b"img-2", image_mime_type="image/png",
+    )
+
+    asyncio.run(controller.submit_draft("and now?"))
+
+    contents = [m["content"] for m in gateway.messages_seen if m["role"] == "user"]
+    assert contents[0] == "first"           # over budget → text only
+    assert isinstance(contents[1], list)    # most recent image kept
+    assert contents[2] == "and now?"
+
+
+def test_non_vision_history_stays_plain_strings(monkeypatch):
+    monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: False)
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway, model="text-model")
+    session = store.ensure_session()
+    store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="had an image",
+        image_data=b"img-1", image_mime_type="image/png",
+    )
+
+    asyncio.run(controller.submit_draft("plain follow-up"))
+
+    for message in gateway.messages_seen:
+        assert isinstance(message["content"], str)
