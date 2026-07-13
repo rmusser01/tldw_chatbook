@@ -84,19 +84,6 @@ class PersonasLibraryPane(Vertical):
         text-wrap: wrap;
         text-overflow: clip;
     }
-
-    PersonasLibraryPane #personas-library-rows ListItem.personas-library-row.personas-library-row-tall {
-        height: 2 !important;
-        min-height: 2 !important;
-    }
-
-    PersonasLibraryPane #personas-library-rows ListItem.personas-library-row.personas-library-row-tall Vertical {
-        height: 2 !important;
-    }
-
-    PersonasLibraryPane #personas-library-rows ListItem.personas-library-row.personas-library-row-tall Static {
-        height: 1 !important;
-    }
     """
 
     def __init__(self, **kwargs) -> None:
@@ -228,6 +215,9 @@ class PersonasLibraryPane(Vertical):
                     id=dom_id,
                     classes=classes,
                 )
+                # Inline override, not CSS: app-level .console-action-subdued pins height:1 and
+                # Textual ranks app CSS above widget DEFAULT_CSS regardless of specificity/!important;
+                # inline styles beat both.
                 item.styles.height = 2
                 items.append(item)
             else:
