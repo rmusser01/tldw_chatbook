@@ -7,6 +7,14 @@ fallback-resolver hook reserved for future extensions (for example, a Skills
 feature routing bare ``/skill-name`` drafts that do not match a built-in
 command). Callers own all UI wiring, readiness gating, and paste-token
 bookkeeping; this module only ever sees a plain draft-text string.
+
+Paste-token gating is entirely the caller's responsibility: the composer's
+canonical ``draft_text()`` (the text this module parses) never contains
+display-only paste markers such as "Pasted Text: " or "Unfurl?" — those are
+rendered only by the composer's UI-only display representation. A caller
+that wants to suppress command parsing while a paste is staged must gate on
+its own paste-segment state *before* calling :meth:`ConsoleCommandRegistry.parse`,
+not by scanning the draft text for marker substrings.
 """
 
 from __future__ import annotations
@@ -21,13 +29,6 @@ KIND_COMMAND = "command"
 KIND_FALLBACK = "fallback"
 KIND_UNKNOWN = "unknown"
 KIND_NOT_COMMAND = "not-command"
-
-# Display-only markers rendered by ConsoleComposerBar._segment_display_text
-# in place of a collapsed ("Pasted Text: N Characters") or armed-confirm
-# ("Unfurl?") paste segment. Duplicated here as literal strings (rather than
-# imported) because that widget module pulls in Textual, which this pure
-# grammar module must never depend on.
-_PASTE_TOKEN_MARKERS: tuple[str, ...] = ("Pasted Text: ", "Unfurl?")
 
 PROMPT_COMMAND_NAME = "prompt"
 PROMPT_COMMAND_ARGUMENT_HINT = "[name]"
@@ -66,11 +67,6 @@ class CommandParse:
     kind: str
     name: str = ""
     args: str = ""
-
-
-def _contains_paste_token_marker(text: str) -> bool:
-    """Return whether ``text`` embeds a collapsed/confirm paste display marker."""
-    return any(marker in text for marker in _PASTE_TOKEN_MARKERS)
 
 
 def _split_leading_token(text: str) -> tuple[str, str]:
@@ -130,16 +126,14 @@ class ConsoleCommandRegistry:
 
         Returns:
             `not-command` when ``draft_text`` does not start with
-            `COMMAND_PREFIX`, or embeds a paste-token display marker.
-            Otherwise the leading whitespace-delimited token (minus its
-            slash) is matched case-insensitively against registered command
-            names (`command`); failing that, each fallback resolver is
-            offered the word and remainder (`fallback`); failing that,
-            `unknown` with `name` set to the word.
+            `COMMAND_PREFIX`. Otherwise the leading whitespace-delimited
+            token (minus its slash) is matched case-insensitively against
+            registered command names (`command`); failing that, each
+            fallback resolver is offered the word and remainder
+            (`fallback`); failing that, `unknown` with `name` set to the
+            word.
         """
-        if not draft_text.startswith(COMMAND_PREFIX) or _contains_paste_token_marker(
-            draft_text
-        ):
+        if not draft_text.startswith(COMMAND_PREFIX):
             return CommandParse(kind=KIND_NOT_COMMAND)
 
         token, rest = _split_leading_token(draft_text)

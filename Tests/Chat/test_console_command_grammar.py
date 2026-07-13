@@ -44,19 +44,6 @@ def test_bare_system_command_has_empty_args():
     assert registry.parse("/system") == CommandParse("command", "system", "")
 
 
-def test_draft_containing_a_paste_token_marker_is_not_command_even_with_leading_slash():
-    # A caller could hand this module the composer's canonical draft text
-    # while a large paste is staged; if the draft happens to carry the
-    # composer's collapsed-paste display marker, treat the whole draft as
-    # not-command per the grammar rule, regardless of the leading slash.
-    registry = default_console_registry()
-
-    assert registry.parse("/prompt Pasted Text: 512 Characters") == CommandParse(
-        "not-command"
-    )
-    assert registry.parse("/prompt Unfurl? more text") == CommandParse("not-command")
-
-
 def test_fallback_resolver_claiming_a_word_wins_over_unknown():
     registry = default_console_registry()
 
