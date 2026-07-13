@@ -812,20 +812,25 @@ def list_chat_dictionaries(
     """
     try:
         cursor = db.get_connection().cursor()
+        # entry_count is a cheap computed column (JSON1 json_array_length) so
+        # the rail meta can show a real count without parsing every entry
+        # into a ChatDictionary object here. save_chat_dictionary always
+        # json.dumps()s entries_json, so a plain COALESCE-to-'[]' is safe.
         query = """
-            SELECT id, name, description, strategy, max_tokens, enabled, 
-                   created_at, last_modified, client_id, version
-            FROM chat_dictionaries 
+            SELECT id, name, description, strategy, max_tokens, enabled,
+                   created_at, last_modified, client_id, version,
+                   json_array_length(COALESCE(entries_json, '[]')) AS entry_count
+            FROM chat_dictionaries
             WHERE deleted = 0
         """
-        
+
         if not include_disabled:
             query += " AND enabled = 1"
-            
+
         query += " ORDER BY name LIMIT ? OFFSET ?"
-        
+
         cursor.execute(query, (limit, offset))
-        
+
         dictionaries = []
         for row in cursor.fetchall():
             dictionaries.append({
@@ -840,6 +845,7 @@ def list_chat_dictionaries(
                 'client_id': row[8],
                 'version': row[9],
                 'entries': [],
+                'entry_count': int(row[10] or 0),
             })
             
         return dictionaries

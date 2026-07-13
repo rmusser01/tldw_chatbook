@@ -861,13 +861,18 @@ class PersonasScreen(BaseAppScreen):
 
     @staticmethod
     def _dictionary_row(record: dict) -> LibraryRow:
-        entries = record.get("entries") or []
+        # list_dictionaries() ships a cheap entry_count instead of populated
+        # entries; fall back to len(entries) for any caller (e.g. the get
+        # path) that only sets the latter.
+        count = record.get("entry_count")
+        if count is None:
+            count = len(record.get("entries") or [])
         state = "on" if record.get("enabled", record.get("is_active", True)) else "off"
         return LibraryRow(
             item_id=str(record.get("id")),
             kind="dictionary",
             name=str(record.get("name") or "Unnamed"),
-            meta=f"{len(entries)} entries · {state}",
+            meta=f"{count} entries · {state}",
         )
 
     async def _render_dictionary_rows(self, query: str = "") -> None:
@@ -1125,7 +1130,7 @@ class PersonasScreen(BaseAppScreen):
         library = self.query_one(PersonasLibraryPane)
         library.mark_active_row("dictionary", entity_id)
         inspector = self.query_one(PersonasInspectorPane)
-        inspector.show_selection(name=entity_name, kind="Dictionary", authority="Local")
+        inspector.show_selection(name=entity_name, kind="dictionary", authority="Local")
         self.query_one(PersonasDictionaryTryItWidget).set_ready(
             True, "Run the preview to see what this dictionary changes."
         )
@@ -1177,7 +1182,7 @@ class PersonasScreen(BaseAppScreen):
         self.state.has_unsaved_changes = False
         self.state.selected_entity_name = str(record.get("name") or "")
         self.query_one(PersonasInspectorPane).show_selection(
-            name=self.state.selected_entity_name, kind="Dictionary", authority="Local"
+            name=self.state.selected_entity_name, kind="dictionary", authority="Local"
         )
         detail.load_dictionary(record)
         detail.set_status("Saved.")
@@ -2270,6 +2275,9 @@ class PersonasScreen(BaseAppScreen):
                 self._notify(conflict_copy.format(noun="character"), "error")
                 return
         elif kind == "dictionary":
+            # No staleness re-check here (unlike _after_delete's character/
+            # persona worker-hop path): the delete-confirm dialog is modal,
+            # so mode/selection cannot change beneath this synchronous branch.
             service = self._dictionary_scope_service()
             if service is None:
                 self._notify("Dictionaries service is not configured.", "error")

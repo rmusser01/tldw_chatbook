@@ -54,12 +54,20 @@ class FakeDictScopeService:
             self.records[int(record["id"])] = copy.deepcopy(record)
         self._next_id = max(self.records, default=0) + 1
 
-    def _summary(self, record: dict) -> dict:
+    def _summary(self, record: dict, *, for_list: bool = False) -> dict:
         out = copy.deepcopy(record)
-        out["entries"] = [
-            _entry_response(int(record["id"]), i, e)
-            for i, e in enumerate(record.get("entries") or [])
-        ]
+        true_entries = record.get("entries") or []
+        if for_list:
+            # Mirrors the real list_chat_dictionaries(): entries stay empty
+            # (list stays O(1) per row) but entry_count reports the truth,
+            # same as list_chat_dictionaries()'s json_array_length column.
+            out["entries"] = []
+        else:
+            out["entries"] = [
+                _entry_response(int(record["id"]), i, e)
+                for i, e in enumerate(true_entries)
+            ]
+        out["entry_count"] = len(true_entries)
         out["is_active"] = bool(record.get("enabled", True))
         return out
 
@@ -69,7 +77,7 @@ class FakeDictScopeService:
         # Real local list drops disabled records unless include_inactive=True.
         include_inactive = bool(kwargs.get("include_inactive", False))
         items = [
-            self._summary(r)
+            self._summary(r, for_list=True)
             for r in self.records.values()
             if include_inactive or r.get("enabled", True)
         ]
@@ -522,7 +530,7 @@ class TestDictionarySelection:
             assert "Medical Abbrev" in str(
                 inspector.query_one("#personas-selected-name", Static).renderable
             )
-            assert "Dictionary" in str(
+            assert "dictionary" in str(
                 inspector.query_one("#personas-selected-kind", Static).renderable
             )
             assert screen.state.selected_entity_kind == "dictionary"
@@ -968,7 +976,7 @@ class TestDictionaryTryIt:
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
-    def test_word_diff_marks_changes(self):
+    async def test_word_diff_marks_changes(self):
         from tldw_chatbook.Widgets.Persona_Widgets.personas_dictionary_tryit import word_diff
 
         original, processed = word_diff("check BP now", "check blood pressure now")
@@ -976,7 +984,7 @@ class TestDictionaryTryIt:
         assert any(span.style == "strike dim" for span in original.spans)
         assert any(span.style == "bold underline" for span in processed.spans)
 
-    def test_word_diff_no_changes_has_no_spans(self):
+    async def test_word_diff_no_changes_has_no_spans(self):
         from tldw_chatbook.Widgets.Persona_Widgets.personas_dictionary_tryit import word_diff
 
         original, processed = word_diff("same text", "same text")

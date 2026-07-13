@@ -46,6 +46,38 @@ def test_local_chat_dictionary_service_routes_core_crud(dictionary_db):
     assert service.get_dictionary(created["id"]) is None
 
 
+def test_list_dictionaries_reports_entry_count_without_inflating_entries(dictionary_db):
+    """The rail meta relies on list_dictionaries() reporting a real entry
+    count without paying to materialize every entry's ChatDictionary object.
+
+    Regression for PR #622 finding 1: list_chat_dictionaries() used to
+    hardcode 'entries': [] with no way for callers to learn the true count,
+    so the rail always rendered "0 entries" no matter what was saved.
+    """
+    service = LocalChatDictionaryService(dictionary_db)
+
+    created = service.create_dictionary(
+        {
+            "name": "Entry Count Lore",
+            "entries": [
+                {"pattern": "BP", "replacement": "blood pressure"},
+                {"pattern": "HR", "replacement": "heart rate"},
+            ],
+        }
+    )
+    assert created["entry_count"] == 2
+
+    listed = service.list_dictionaries(include_inactive=True)
+    record = next(r for r in listed["dictionaries"] if r["id"] == created["id"])
+    assert record["entry_count"] == 2
+    # List path stays cheap: entries themselves are not materialized here.
+    assert record["entries"] == []
+
+    detail = service.get_dictionary(created["id"])
+    assert detail["entry_count"] == 2
+    assert len(detail["entries"]) == 2
+
+
 def test_local_chat_dictionary_service_imports_exports_and_processes_markdown(dictionary_db):
     service = LocalChatDictionaryService(dictionary_db)
 
