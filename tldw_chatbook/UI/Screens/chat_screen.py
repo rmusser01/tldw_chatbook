@@ -6516,28 +6516,96 @@ class ChatScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#console-attach-context")
     async def handle_console_attach_context(self, event: Button.Pressed) -> None:
-        """Route the Console attach affordance through the active chat session adapter."""
+        """Open the native Console file picker and stage the selected attachment."""
         await self._handle_console_attach_context(event)
 
     @on(Button.Pressed, "#console-staged-context-attach")
     async def handle_console_staged_context_attach(self, event: Button.Pressed) -> None:
-        """Route the staged-context empty-state attach action through the same adapter."""
+        """Open the native Console file picker from the staged-context empty state."""
         await self._handle_console_attach_context(event)
 
     async def _handle_console_attach_context(self, event: Button.Pressed) -> None:
-        """Route Console attach actions through the active chat session adapter."""
+        """Open the native Console file picker and stage the selected attachment."""
         event.stop()
-        session = self._get_active_chat_session()
-        if session is None:
-            self.app_instance.notify("No active Console chat session is available.", severity="error")
+        from fnmatch import fnmatch
+
+        from tldw_chatbook.Chat.attachment_core import ATTACHMENT_FILTER_SPECS
+        from tldw_chatbook.Widgets.enhanced_file_picker import FileOpen, Filters
+
+        def create_filter(patterns: str):
+            pattern_list = patterns.split(";")
+
+            def filter_func(path: Path) -> bool:
+                return any(fnmatch(path.name, pattern) for pattern in pattern_list)
+
+            return filter_func
+
+        file_filters = Filters(
+            *[(label, create_filter(patterns)) for label, patterns in ATTACHMENT_FILTER_SPECS],
+            ("All Files", lambda path: True),
+        )
+
+        def on_file_selected(file_path: Optional[Path]) -> None:
+            if file_path:
+                self.run_worker(
+                    self._process_console_attachment(str(file_path)),
+                    exclusive=True,
+                )
+
+        await self.app.push_screen(
+            FileOpen(
+                location=".",
+                title="Select File to Attach",
+                filters=file_filters,
+            ),
+            callback=on_file_selected,
+        )
+
+    async def _process_console_attachment(self, file_path: str) -> None:
+        """Process a picked file and route it into the native Console composer."""
+        from tldw_chatbook.Chat.attachment_core import process_attachment_path
+
+        try:
+            attachment = await process_attachment_path(file_path)
+        except Exception as exc:
+            logger.error(f"Console attachment processing failed for {file_path}: {exc}")
+            self.app_instance.notify(
+                str(exc) or "Failed to process attachment.", severity="error"
+            )
             return
-        handler = getattr(session, "handle_attach_button", None)
-        if not callable(handler):
-            self.app_instance.notify("Console attachment is unavailable for this session.", severity="warning")
-            return
-        result = handler(event)
-        if inspect.isawaitable(result):
-            await result
+        composer = self._console_composer_or_none()
+        if attachment.insert_mode == "inline":
+            if composer is None or not attachment.text_content:
+                self.app_instance.notify(
+                    "Nothing to insert from this file.", severity="warning"
+                )
+                return
+            composer.insert_file_segment(
+                attachment.text_content, f"📄 {attachment.label}"
+            )
+            self.app_instance.notify(f"{attachment.display_name} content inserted")
+        else:
+            store = self._ensure_console_chat_store()
+            session = store.ensure_session(
+                workspace_id=store.workspace_context.active_workspace_id
+            )
+            store.set_pending_attachment(session.id, attachment)
+            if composer is not None:
+                composer.set_pending_attachment_label(attachment.label)
+            self.app_instance.notify(f"{attachment.display_name} attached")
+        self._sync_console_control_bar()
+
+    @on(Button.Pressed, "#console-clear-attachment")
+    def handle_console_clear_attachment(self, event: Button.Pressed) -> None:
+        """Remove the pending native Console attachment."""
+        event.stop()
+        store = self._ensure_console_chat_store()
+        if store.active_session_id is not None:
+            store.clear_pending_attachment(store.active_session_id)
+        composer = self._console_composer_or_none()
+        if composer is not None:
+            composer.set_pending_attachment_label(None)
+        self.app_instance.notify("Attachment cleared")
 
     @on(Button.Pressed, "#console-save-chatbook")
     def handle_console_save_chatbook(self, event: Button.Pressed) -> None:

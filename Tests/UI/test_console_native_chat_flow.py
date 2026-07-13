@@ -6184,3 +6184,44 @@ async def test_attachment_indicator_visibility_follows_label():
         await pilot.pause()
         assert indicator.styles.display == "none"
         assert clear_button.styles.display == "none"
+
+
+@pytest.mark.asyncio
+async def test_console_attachment_worker_stages_image_and_inlines_text(tmp_path):
+    from PIL import Image as PILImage
+
+    image_path = tmp_path / "photo.png"
+    PILImage.new("RGB", (4, 4), color=(0, 100, 0)).save(image_path, format="PNG")
+    text_path = tmp_path / "notes.md"
+    text_path.write_text("# heading\nbody")
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        import tldw_chatbook.Chat.attachment_core as attachment_core
+        # Test files live in tmp_path, outside $HOME — widen the safety root.
+        original = attachment_core.load_processed_file
+
+        async def _rooted(file_path, *, allowed_root=None):
+            return await original(file_path, allowed_root=str(tmp_path))
+
+        attachment_core.load_processed_file = _rooted
+        try:
+            await console._process_console_attachment(str(image_path))
+            await pilot.pause()
+            store = console._ensure_console_chat_store()
+            session_id = store.active_session_id
+            pending = store.pending_attachment(session_id)
+            assert pending is not None and pending.file_type == "image"
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+            assert composer._pending_attachment_label is not None
+
+            await console._process_console_attachment(str(text_path))
+            await pilot.pause()
+            assert "body" in composer.draft_text()
+            assert "notes.md" in composer._display_draft_text()
+        finally:
+            attachment_core.load_processed_file = original
