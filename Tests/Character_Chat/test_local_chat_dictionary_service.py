@@ -1,7 +1,7 @@
 import pytest
 
 from tldw_chatbook.Character_Chat.local_chat_dictionary_service import LocalChatDictionaryService
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 
 
 @pytest.fixture
@@ -44,6 +44,38 @@ def test_local_chat_dictionary_service_routes_core_crud(dictionary_db):
     assert listed["dictionaries"][0]["id"] == created["id"]
     assert deleted == {"status": "deleted", "dictionary_id": created["id"], "source": "local"}
     assert service.get_dictionary(created["id"]) is None
+
+
+def test_list_dictionaries_reports_entry_count_without_inflating_entries(dictionary_db):
+    """The rail meta relies on list_dictionaries() reporting a real entry
+    count without paying to materialize every entry's ChatDictionary object.
+
+    Regression for PR #622 finding 1: list_chat_dictionaries() used to
+    hardcode 'entries': [] with no way for callers to learn the true count,
+    so the rail always rendered "0 entries" no matter what was saved.
+    """
+    service = LocalChatDictionaryService(dictionary_db)
+
+    created = service.create_dictionary(
+        {
+            "name": "Entry Count Lore",
+            "entries": [
+                {"pattern": "BP", "replacement": "blood pressure"},
+                {"pattern": "HR", "replacement": "heart rate"},
+            ],
+        }
+    )
+    assert created["entry_count"] == 2
+
+    listed = service.list_dictionaries(include_inactive=True)
+    record = next(r for r in listed["dictionaries"] if r["id"] == created["id"])
+    assert record["entry_count"] == 2
+    # List path stays cheap: entries themselves are not materialized here.
+    assert record["entries"] == []
+
+    detail = service.get_dictionary(created["id"])
+    assert detail["entry_count"] == 2
+    assert len(detail["entries"]) == 2
 
 
 def test_local_chat_dictionary_service_imports_exports_and_processes_markdown(dictionary_db):
@@ -137,6 +169,26 @@ def test_local_chat_dictionary_service_records_activity_versions_and_reverts(dic
     assert reverted["name"] == "Versioned Lore"
     assert reverted["reverted_to_revision"] == 1
     assert reloaded.list_versions(created["id"], limit=10)["total"] == 3
+
+
+def test_local_chat_dictionary_service_update_raises_conflict_error_on_stale_version(dictionary_db):
+    service = LocalChatDictionaryService(dictionary_db)
+    dictionary = service.create_dictionary({"name": "Conflict Lore"})
+
+    with pytest.raises(ConflictError):
+        service.update_dictionary(
+            dictionary["id"],
+            {"name": "Conflict Lore v2"},
+            expected_version=dictionary["version"] + 1,
+        )
+
+
+def test_local_chat_dictionary_service_delete_raises_conflict_error_on_stale_version(dictionary_db):
+    service = LocalChatDictionaryService(dictionary_db)
+    dictionary = service.create_dictionary({"name": "Conflict Lore Delete"})
+
+    with pytest.raises(ConflictError):
+        service.delete_dictionary(dictionary["id"], expected_version=dictionary["version"] + 1)
 
 
 def test_local_chat_dictionary_service_repairs_legacy_fts_trigger_before_delete(dictionary_db):
