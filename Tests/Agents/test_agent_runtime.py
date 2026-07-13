@@ -172,6 +172,17 @@ def test_cancel_lands_at_step_boundary():
     assert out.status == RUN_CANCELLED
 
 
+def test_cancel_recognized_after_final_answer_with_no_tool_call():
+    # Finding B: a Stop that lands mid a plain final answer (no tool call to
+    # dispatch) must not be silently downgraded to "done" -- the loop only
+    # re-polls should_cancel at step/tool-call boundaries, and a no-tool-call
+    # turn used to return RUN_DONE immediately without one more recheck.
+    flags = iter([False, True])
+    out = run([ModelTurn(text="Tokyo.")], cancel=lambda: next(flags, True))
+    assert out.status == RUN_CANCELLED
+    assert out.final_text == "Tokyo."
+
+
 # --- G1/Q9: load_tools `ids` coercion must never crash and must not
 # char-split a bare string id. ---
 

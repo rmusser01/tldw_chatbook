@@ -67,13 +67,27 @@ class AgentLiveSnapshot:
 
 
 class _StreamingModelAdapter:
-    """chat_call-compatible adapter that streams the PRIMARY final turn live.
+    """chat_call-compatible adapter that streams every PRIMARY turn live.
 
     AgentService calls it as ``chat_call(api_endpoint=…, messages_payload=…,
     streaming=False, model=…)`` and expects a
     ``{"choices":[{"message":{"content": <full text>}}]}`` response. Sub-agent
     turns (leading system content == SUBAGENT_SYSTEM_PROMPT) are streamed to a
     throwaway gate and never touch the transcript.
+
+    Every non-sealed primary turn streams live to the store as it arrives —
+    not just the final answer — since the gate cannot know in advance
+    whether a given turn will end up being a tool call or the final answer:
+    a well-behaved fence-first tool call never streams anything (the gate
+    seals from the first token), but a disobedient turn that emits prose
+    before a mid-stream fence has already forwarded that prose to the store
+    by the time the completed turn is classified as a tool call. When that
+    happens, this adapter resets the message's streamed content back to
+    empty once the turn is confirmed to carry a tool call (see
+    ``ConsoleChatStore.reset_stream_content``), so the leaked prose — already
+    preserved in that turn's ``STEP_MODEL`` step log — does not survive to
+    garble the next turn's chunks on the same message (Plan-B Task 5
+    Finding A).
 
     ``should_cancel`` is polled once per received chunk, AFTER it has been fed
     to the gate and (for the primary) flushed to the store — never before.
@@ -99,21 +113,36 @@ class _StreamingModelAdapter:
                   streaming=False, **_ignored) -> dict:
         is_subagent = self._is_subagent(messages_payload)
         gate = StreamGate()
+        any_streamed = False
 
         async def _consume() -> None:
+            nonlocal any_streamed
             async for chunk in self._gateway.stream_chat(self._resolution, messages_payload):
                 visible = gate.feed(chunk)
                 if visible and not is_subagent:
                     self._store.append_stream_chunk(self._assistant_message_id, visible)
+                    any_streamed = True
                 if self._should_cancel():
                     break
             tail = gate.flush_tail()
             if tail and not is_subagent:
                 self._store.append_stream_chunk(self._assistant_message_id, tail)
+                any_streamed = True
 
         # The service runs on a worker thread with no running loop → asyncio.run
         # is safe (same pattern as BuiltinToolProvider bridging async tools).
         asyncio.run(_consume())
+        if any_streamed and not is_subagent:
+            # Finding A: this turn leaked prose to the store before it was
+            # known to be a tool call (a well-behaved fence-first tool call
+            # never streams anything, so any_streamed stays False and this
+            # never fires for the common case). Now that the full buffer is
+            # in and the authoritative parse is available, discard that
+            # leaked prose so it doesn't survive to garble the next turn's
+            # chunks on the same message.
+            _visible, tool_call = gate.result()
+            if tool_call is not None:
+                self._store.reset_stream_content(self._assistant_message_id)
         return {"choices": [{"message": {"content": gate.full_text}}]}
 
     @staticmethod

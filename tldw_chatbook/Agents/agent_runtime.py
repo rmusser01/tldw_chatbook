@@ -252,6 +252,16 @@ def run_agent_loop(config: AgentConfig, initial_messages: list[dict],
         if not calls:
             _visible, fenced = split_visible_text_and_tool_call(turn.text)
             if fenced is None:
+                # A Stop can land while this (tool-call-free) turn was still
+                # streaming. There is no further step/tool-call boundary
+                # ahead for a plain final answer, so this is the last chance
+                # to recheck should_cancel before reporting "done" — without
+                # this, a cancellation that lands mid-final-answer would be
+                # silently downgraded to a normal completed run.
+                if deps.should_cancel():
+                    return RunOutcome(RUN_CANCELLED, steps,
+                                      final_text=turn.text,
+                                      subagents_spawned=spawned)
                 return RunOutcome(RUN_DONE, steps, final_text=turn.text,
                                   subagents_spawned=spawned)
             calls = [fenced]

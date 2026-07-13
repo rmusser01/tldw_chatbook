@@ -125,6 +125,25 @@ def test_store_buffers_stream_chunks_until_messages_are_materialized():
     assert materialized.status == "streaming"
 
 
+def test_reset_stream_content_discards_leaked_prose_but_keeps_streaming_status():
+    """Plan-B Task 5 Finding A: once a streamed turn is classified as a tool
+    call, any prose already streamed to the store for it must be discarded
+    so the next turn's chunks start clean instead of concatenating onto
+    already-flushed leaked prose."""
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+
+    store.append_stream_chunk(message.id, "Let me check that for you.")
+    reset = store.reset_stream_content(message.id)
+    assert reset.content == ""
+    assert reset.status == "streaming"
+
+    store.append_stream_chunk(message.id, "42.")
+    materialized = store.get_message(message.id)
+    assert materialized.content == "42."
+
+
 def test_store_tracks_active_workspace_context():
     context = ConsoleWorkspaceContext(active_workspace_id="workspace-a")
     store = ConsoleChatStore(workspace_context=context)

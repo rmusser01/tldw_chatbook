@@ -495,6 +495,41 @@ class ConsoleChatStore:
         message.status = "streaming"
         return self._snapshot(message)
 
+    def reset_stream_content(self, message_id: str) -> ConsoleChatMessage:
+        """Discard streamed content once a turn is reclassified as a tool call.
+
+        A disobedient model can stream prose before finally emitting a tool
+        fence; the streaming adapter forwards that prose live, before the
+        turn is known to be a tool call rather than a final answer. Once the
+        loop classifies the completed turn as a tool call, the leaked prose
+        already lives in that turn's ``STEP_MODEL`` step summary/log -- its
+        rightful home -- so it is discarded here rather than left to
+        concatenate onto the real final answer's chunks on the next turn
+        (Plan-B Task 5 Finding A). The message is kept in the ``streaming``
+        status (not reset to ``pending``) so the next turn's chunks continue
+        to append normally via ``append_stream_chunk``.
+
+        Args:
+            message_id: Native Console message ID whose streamed content
+                (buffered chunks and materialized ``content``) should be
+                discarded.
+
+        Returns:
+            A snapshot of the now-empty, still-streaming message.
+
+        Raises:
+            KeyError: If the message is unknown.
+            ValueError: If the message is not an assistant message.
+        """
+        message = self._message_or_raise(message_id)
+        if message.role is not ConsoleMessageRole.ASSISTANT:
+            raise ValueError("Only assistant messages can reset stream content.")
+        message.content = ""
+        self._stream_chunks_by_message.pop(message.id, None)
+        self._stream_materialized_counts.pop(message.id, None)
+        message.status = "streaming"
+        return self._snapshot(message)
+
     def mark_message_complete(self, message_id: str) -> ConsoleChatMessage:
         """Mark a message complete and flush final visible content to persistence."""
         message = self._message_or_raise(message_id)

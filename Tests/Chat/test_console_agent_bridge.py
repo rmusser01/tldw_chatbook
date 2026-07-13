@@ -86,6 +86,24 @@ def test_tool_turn_renders_a_tool_marker_not_prose(tmp_path):
     assert store.get_message(aid).content == "It is 42."
 
 
+def test_leaked_prose_before_disobedient_fence_is_reset_not_garbled(tmp_path):
+    # Finding A repro: a disobedient turn streams prose live, THEN a tool
+    # fence, in the same response. The gate has already forwarded the prose
+    # to the store by the time the loop classifies the turn as a tool call.
+    # That leaked prose must not survive to garble the real final answer
+    # that streams onto the same assistant message afterward.
+    scripts = [
+        ["Let me check that ", "for you.\n```tool_call\n",
+         '{"name": "calculator", "arguments": {"expression": "6*7"}}\n```'],
+        ["42."],
+    ]
+    bridge, _db, store, session, aid = _bridge(tmp_path, scripts)
+    outcome = _run(bridge, store, session, aid)
+    assert outcome.status == "done"
+    assert outcome.final_text == "42."
+    assert store.get_message(aid).content == "42."
+
+
 def test_spawn_renders_marker_and_persists_linked_subagent(tmp_path):
     scripts = [
         [_fence("spawn_subagent", {"task": "compute 1+1"})],  # primary turn 1
@@ -124,3 +142,18 @@ def test_stop_persists_cancelled(tmp_path):
     outcome = _run(bridge, store, session, aid, should_cancel=lambda: next(flags, True))
     assert outcome.status == "cancelled"
     assert db.list_runs("conv-1")[0]["status"] == "cancelled"
+
+
+def test_stop_mid_final_answer_persists_cancelled_and_store_agrees(tmp_path):
+    # Finding B: a Stop that lands mid a plain final-answer stream (no tool
+    # call to dispatch) must not be downgraded to "done" -- the outcome
+    # status, the persisted AgentRunsDB row, and the store's own streamed
+    # content must all agree that the run was cancelled.
+    scripts = [["Par", "tial", " answer."]]
+    bridge, db, store, session, aid = _bridge(tmp_path, scripts)
+    flags = iter([False, True])
+    outcome = _run(bridge, store, session, aid,
+                   should_cancel=lambda: next(flags, True))
+    assert outcome.status == "cancelled"
+    assert db.list_runs("conv-1")[0]["status"] == "cancelled"
+    assert store.get_message(aid).content == outcome.final_text
