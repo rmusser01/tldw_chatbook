@@ -812,3 +812,24 @@ def test_image_row_rebuild_tracked_on_mode_change():
     updated = transcript._update_row_widget(widget, new_row)
     assert updated is not widget
     assert transcript.row_build_counts()[f"image:{message.id}"] == 2
+
+
+def test_toggle_image_view_action_offered_and_dispatched_for_image_messages():
+    service = ConsoleMessageActionService()
+    plain = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="text")
+    with_image = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="pic",
+        image_data=b"\x89PNG-bytes",
+        image_mime_type="image/png",
+    )
+    plain_ids = [action.action_id for action in service.available_actions(plain)]
+    image_ids = [action.action_id for action in service.available_actions(with_image)]
+    assert "toggle-image-view" not in plain_ids
+    assert "toggle-image-view" in image_ids
+    assert image_ids.index("toggle-image-view") < image_ids.index("save-image")
+
+    result = service.dispatch("toggle-image-view", with_image)
+    assert result.status == "completed"
+    assert result.visible_copy == "Toggled image view."
+    assert result.target_message_id == with_image.id

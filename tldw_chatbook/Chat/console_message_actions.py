@@ -67,6 +67,7 @@ class ConsoleMessageActionService:
         ("variant-next", ">"),
     )
     _FAILED_RETRY_ACTIONS: tuple[tuple[str, str], ...] = (("retry", "Try"),)
+    _IMAGE_VIEW_ACTIONS: tuple[tuple[str, str], ...] = (("toggle-image-view", "View"),)
     _SAVE_IMAGE_ACTIONS: tuple[tuple[str, str], ...] = (("save-image", "Save Image"),)
 
     @staticmethod
@@ -99,7 +100,11 @@ class ConsoleMessageActionService:
         if message.variants is not None:
             completed_actions = self._base_actions_with(self._VARIANT_NAV_ACTIONS)
         if self._has_image(message):
-            completed_actions = completed_actions + list(self._SAVE_IMAGE_ACTIONS)
+            completed_actions = (
+                completed_actions
+                + list(self._IMAGE_VIEW_ACTIONS)
+                + list(self._SAVE_IMAGE_ACTIONS)
+            )
         if message.status == "failed":
             return [
                 ConsoleMessageAction(action_id, label)
@@ -226,6 +231,13 @@ class ConsoleMessageActionService:
                 visible_copy="Continuing from selected message.",
                 target_message_id=message.id,
                 target_content=target_content,
+            )
+        if action_id == "toggle-image-view":
+            return ConsoleActionResult(
+                action_id=action_id,
+                status="completed",
+                visible_copy="Toggled image view.",
+                target_message_id=message.id,
             )
         if action_id == "save-image":
             return ConsoleActionResult(
