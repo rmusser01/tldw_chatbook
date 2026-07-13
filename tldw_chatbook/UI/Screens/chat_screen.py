@@ -6912,11 +6912,16 @@ class ChatScreen(BaseAppScreen):
         resolution mirrors `/prompt` (Task 12): exact case-insensitive name
         match over a bounded search page, else a unique case-insensitive
         name-prefix match; a resolved match with a blank ``system_prompt``
-        shows an inline transcript error (the session is left unchanged)
-        rather than silently clearing it, since that is very likely not what
-        the user meant by naming that specific prompt. 0 or 2+ matches at
-        either stage fall back to the apply-system picker mode (Task 11),
-        prefilled with the typed args.
+        shows an inline transcript error (the session is left unchanged,
+        and the draft is deliberately left in place so the user can correct
+        it) rather than silently clearing it, since that is very likely not
+        what the user meant by naming that specific prompt. A resolved match
+        WITH a system part applies it and clears the `/system <name>`
+        command text from the composer -- mirrors `/prompt`'s successful
+        insert always replacing its own draft (Task 12) -- so a handled
+        command never leaves its own invocation text behind. 0 or 2+
+        matches at either stage fall back to the apply-system picker mode
+        (Task 11), prefilled with the typed args.
         """
         args = parse.args.strip()
         if not args:
@@ -6932,8 +6937,24 @@ class ChatScreen(BaseAppScreen):
                 )
                 return
             self._apply_console_session_system_prompt(system_prompt)
+            self._clear_console_composer_draft()
             return
         await self._open_console_prompt_picker_for_apply_system(args)
+
+    def _clear_console_composer_draft(self) -> None:
+        """Clear the native Console composer's draft text, if mounted.
+
+        Shared by any handled-command success path that applies a side
+        effect (rather than inserting replacement text) but must still not
+        leave its own invocation text sitting in the composer afterward --
+        e.g. a successful named `/system <name>` apply. `/prompt`'s
+        equivalent success path instead replaces the draft with the
+        resolved prompt body via ``_insert_prompt_text_into_composer``,
+        which already clears via the same ``clear_draft()`` seam.
+        """
+        composer = self._console_composer_or_none()
+        if composer is not None:
+            composer.clear_draft()
 
     async def _open_console_prompt_picker_for_apply_system(self, initial_query: str) -> None:
         """Open the prompt picker in apply-system mode for `/system`.

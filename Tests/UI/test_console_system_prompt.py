@@ -273,6 +273,11 @@ async def test_console_system_command_unique_name_applies_and_updates_rail_previ
         settings = console._ensure_active_console_session_settings()
         assert settings.system_prompt == "Answer tersely."
         assert _rail_system_line_text(console) == "System: Answer tersely."
+        # Finding 2 (final review): a successful named `/system` apply must
+        # clear its own invocation text from the composer -- mirrors
+        # `/prompt`'s successful-insert draft-replace behavior -- instead of
+        # leaving "/system Terse" sitting in the composer after Enter.
+        assert composer.draft_text() == ""
 
 
 @pytest.mark.asyncio
@@ -336,6 +341,11 @@ async def test_console_system_command_empty_system_part_shows_exact_inline_error
         settings = console._ensure_active_console_session_settings()
         assert settings.system_prompt is None
         assert _rail_system_line_text(console) == "System: none"
+        # Finding 2 (final review): the empty-system-part ERROR path must
+        # NOT clear the draft -- the session is unchanged, and leaving the
+        # text lets the user correct it (only the direct-named SUCCESS path
+        # clears).
+        assert composer.draft_text() == "/system NoSystem"
 
 
 @pytest.mark.asyncio
