@@ -318,6 +318,52 @@ only cosmetic artifact seen, and it recurred exactly as previously
 characterized (momentary, content-accurate, not a regression from
 `f900e7a9`).
 
+## Fixed-defect re-capture (2026-07-13, commit `530cf9df`)
+
+Verified in every capture above and re-checked directly in the two flows
+that select a rail row: the SELECTED left-rail row (`Button.mcp-rail-row`
+with `.is-active` — e.g. "All servers" or a selected server) rendered as a
+**blank, blue-bordered box** with no visible label. Non-selected rows
+rendered fine.
+
+**Root cause**: `Button.mcp-rail-row` is fixed at `height: 1` (see
+`MCPRail.DEFAULT_CSS`), but the generic `.is-active` rule in
+`_agentic_terminal.tcss` sets `border: round $ds-action-focus`. A round
+border needs at least 2 lines to render; on a height-1 button it consumed
+the row's only line, collapsing the label's content area to height 0. The
+more-specific `#mcp-hub-rail Button.mcp-rail-row.is-active` rule already
+existed but only set `text-style: bold`, so it never overrode `border` and
+the generic rule's border kept winning. The sibling `.mcp-mode-chip.is-active`
+rule (`MCPScreen.DEFAULT_CSS` and its bundle mirror) already carries the
+correct `border: none` override for the same height-1 hazard and never had
+this bug — that's what the fix mirrors.
+
+**Fix** (`530cf9df`): add `border: none;` to
+`#mcp-hub-rail Button.mcp-rail-row.is-active` in `_agentic_terminal.tcss`,
+rebuilt `tldw_cli_modular.tcss`. No new colors/tokens — the row still uses
+`.console-action-subdued`'s existing `color`/`background`, now with
+`text-style: bold` actually visible instead of hidden behind a border that
+ate the whole row.
+
+Re-captured all three affected screenshots live (same textual-serve +
+Playwright/bundled-Chromium-over-CDP methodology, same isolated HOME,
+2050×1240), replacing the originals in place:
+
+- `mcp-servers-overview-mixed-2026-07-13.png` — the default-selected "All
+  servers" row now shows its bold label instead of an empty bordered box.
+- `mcp-local-profile-detail-docs-server-2026-07-13.png` — selecting
+  `docs-server` keeps its rail label visible/bold; canvas detail (redacted
+  command, Env/Tools/Resources) unaffected/unchanged.
+- `mcp-builtin-server-detail-2026-07-13.png` — selecting
+  `tldw_chatbook (built-in)` keeps its rail label visible/bold; canvas
+  detail (Ready badge, stdio line, Copy client config) unaffected/unchanged.
+
+Also added a regression test,
+`Tests/UI/test_mcp_rail.py::test_rail_active_row_label_is_not_blank_with_bundled_css`,
+which mounts `MCPRail` under an `App` loading the real bundled stylesheet
+and asserts the active row's border is empty, its height stays >= 1, and
+its rendered label text is non-empty.
+
 ## Isolated HOME
 
 Left on disk at **`/private/tmp/tldw-qa-mcp-hub-20260713`** (config +
