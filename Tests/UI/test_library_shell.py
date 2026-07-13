@@ -208,18 +208,26 @@ async def _wait_for_selector(screen, pilot, selector, *, attempts=120):
     )
 
 
-async def _wait_for_condition(pilot, predicate, *, timeout=15.0, message, interval=0.02):
+async def _wait_for_condition(pilot, predicate, *, timeout=15.0, message, interval=0.02) -> None:
     """Await until ``predicate()`` is truthy, or raise once ``timeout`` wall-clock seconds elapse.
 
     A deadline (not a fixed iteration count) so the wait survives CPU contention
     yet returns the instant the condition is met. ``message`` may be a string or a
     zero-arg callable (evaluated at raise time, so dynamic diagnostics report the
     stuck state).
+
+    The predicate is checked FIRST each iteration -- before the deadline test and
+    before pausing -- so it is evaluated at least once (even at ``timeout=0``) and
+    is always given a final chance after a ``pause`` that overshoots the deadline
+    under contention (which is exactly when a state transition it is waiting for
+    may have just landed).
     """
     deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
+    while True:
         if predicate():
             return
+        if time.monotonic() >= deadline:
+            break
         await pilot.pause(interval)
     raise AssertionError(message() if callable(message) else message)
 
@@ -236,7 +244,8 @@ class _FakePilot:
 
 
 @pytest.mark.asyncio
-async def test__wait_for_condition_returns_immediately_when_true():
+async def test__wait_for_condition_returns_immediately_when_true() -> None:
+    """An already-true predicate returns on the first check, without ever pausing."""
     calls = {"n": 0}
 
     def pred() -> bool:
@@ -250,13 +259,25 @@ async def test__wait_for_condition_returns_immediately_when_true():
 
 
 @pytest.mark.asyncio
-async def test__wait_for_condition_raises_with_message_on_timeout():
+async def test__wait_for_condition_checks_predicate_before_raising() -> None:
+    """The predicate is checked at least once before the deadline is enforced, so a
+    condition that is already satisfied returns even when the deadline has elapsed
+    (guards against a false timeout when a pause overshoots the deadline)."""
+    pilot = _FakePilot()
+    await _wait_for_condition(pilot, lambda: True, timeout=0.0, message="must not raise")
+    assert pilot.pause_calls == 0
+
+
+@pytest.mark.asyncio
+async def test__wait_for_condition_raises_with_message_on_timeout() -> None:
+    """A never-true predicate raises AssertionError carrying the given message on timeout."""
     with pytest.raises(AssertionError, match="boom"):
         await _wait_for_condition(_FakePilot(), lambda: False, timeout=0.05, message="boom")
 
 
 @pytest.mark.asyncio
-async def test__wait_for_condition_evaluates_callable_message_at_raise():
+async def test__wait_for_condition_evaluates_callable_message_at_raise() -> None:
+    """A callable message is evaluated at raise time (so dynamic diagnostics report the stuck state)."""
     with pytest.raises(AssertionError, match="dynamic 42"):
         await _wait_for_condition(
             _FakePilot(), lambda: False, timeout=0.05, message=lambda: f"dynamic {6 * 7}"

@@ -18,7 +18,7 @@
 - **Test command** (venv, isolated HOME):
   ```
   HOME=/private/tmp/tldw-chatbook-test-home XDG_DATA_HOME=/private/tmp/tldw-chatbook-test-home/.local/share \
-    /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest <target> \
+    .venv/bin/python -m pytest <target> \
     -q -p no:cacheprovider -o addopts="" --timeout=300 --timeout-method=thread
   ```
 
@@ -71,7 +71,7 @@ async def test__wait_for_condition_evaluates_callable_message_at_raise():
 Run:
 ```
 HOME=/private/tmp/tldw-chatbook-test-home XDG_DATA_HOME=/private/tmp/tldw-chatbook-test-home/.local/share \
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest \
+  .venv/bin/python -m pytest \
   "Tests/UI/test_library_shell.py::test__wait_for_condition_returns_immediately_when_true" \
   "Tests/UI/test_library_shell.py::test__wait_for_condition_raises_with_message_on_timeout" \
   "Tests/UI/test_library_shell.py::test__wait_for_condition_evaluates_callable_message_at_raise" \
@@ -147,7 +147,7 @@ Verify no conflict-family fixed-iteration loop remains: `grep -nE 'for _ in rang
 Run:
 ```
 HOME=/private/tmp/tldw-chatbook-test-home XDG_DATA_HOME=/private/tmp/tldw-chatbook-test-home/.local/share \
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest \
+  .venv/bin/python -m pytest \
   "Tests/UI/test_library_shell.py" -k "note_conflict or _wait_for_condition" \
   -q -p no:cacheprovider -o addopts="" --timeout=300 --timeout-method=thread
 ```
@@ -176,7 +176,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ```
 HOME=/private/tmp/tldw-chatbook-test-home XDG_DATA_HOME=/private/tmp/tldw-chatbook-test-home/.local/share \
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest \
+  .venv/bin/python -m pytest \
   "Tests/UI/test_library_shell.py" -k "note_conflict or _wait_for_condition" \
   -q -p no:cacheprovider -o addopts="" --timeout=300 --timeout-method=thread
 ```
