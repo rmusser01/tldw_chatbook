@@ -84,7 +84,26 @@ logger = logger.bind(module="PersonasScreen")
 #: excluded until import/export is wired as an action rather than a mode.
 MODE_CHIP_ORDER: tuple[str, ...] = ("characters", "personas", "prompts", "dictionaries", "lore")
 
-PLACEHOLDER_COPY = "This mode is not available yet. Characters and Personas are the supported modes."
+#: One-line "what this mode is" copy, shown under the title and as chip tooltips.
+_MODE_DESCRIPTORS: dict[str, str] = {
+    "characters": "Characters — who the AI plays.",
+    "personas": "Personas — who you are.",
+    "prompts": "Prompts — moving to the Library.",
+    "dictionaries": "Dictionaries — text find/replace rules.",
+    "lore": "Lore — world facts injected on keywords.",
+}
+
+#: Modes genuinely coming to Roleplay — their chips carry the "· soon" marker.
+#: Departing modes (prompts) are deliberately excluded: they are leaving, not arriving.
+_COMING_SOON_MODES: frozenset[str] = frozenset({"dictionaries", "lore"})
+
+#: Placeholder body per not-yet-built (or departing) mode; generic fallback for others.
+_MODE_PLACEHOLDER_BODY: dict[str, str] = {
+    "dictionaries": "Dictionaries — author text find/replace rules for your chats. Coming soon.",
+    "lore": "Lore — build world facts that get injected when keywords appear. Coming soon.",
+    "prompts": "Prompts are moving to the Library — you'll manage them there.",
+}
+_PLACEHOLDER_FALLBACK = "This mode is coming soon."
 PERSONAS_SEARCH_DEBOUNCE_SECONDS = 0.2
 PERSONAS_AVATAR_IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif"})
 PERSONAS_AVATAR_IMAGE_SUFFIX_COPY = "PNG, JPG, JPEG, WEBP, or GIF"
@@ -144,7 +163,7 @@ class PersonasScreen(BaseAppScreen):
             Binding(
                 f"ctrl+{index + 1}",
                 f"personas_mode('{mode}')",
-                MODE_LABELS[mode],
+                MODE_LABELS.get(mode, mode),
                 show=False,
             )
             for index, mode in enumerate(MODE_CHIP_ORDER)
@@ -353,8 +372,7 @@ class PersonasScreen(BaseAppScreen):
                 classes="ds-destination-header",
             )
             yield Static(
-                "Create and manage behavior profiles - characters, personas, prompts, "
-                "dictionaries, and lore - and attach them to Console.",
+                self._mode_descriptor_text(self.state.active_mode),
                 id="personas-purpose",
                 classes="destination-purpose",
             )
@@ -369,11 +387,14 @@ class PersonasScreen(BaseAppScreen):
                     classes = "personas-mode-chip"
                     if mode == self.state.active_mode:
                         classes = f"{classes} is-active"
+                    label = MODE_LABELS.get(mode, mode)
+                    if mode in _COMING_SOON_MODES:
+                        label = f"{label} · soon"
                     yield Button(
-                        MODE_LABELS[mode],
+                        label,
                         id=f"personas-mode-{mode}",
                         classes=classes,
-                        tooltip=f"Switch the workbench to {MODE_LABELS[mode]}.",
+                        tooltip=self._mode_descriptor_text(mode),
                     )
             with Horizontal(id="personas-workbench", classes="ds-panel destination-workbench"):
                 library_handle = ConsoleRailHandle(
@@ -415,7 +436,7 @@ class PersonasScreen(BaseAppScreen):
                                 id="personas-conversation-open-library",
                             )
                         yield PersonasConversationTranscriptWidget()
-                        yield Static(PLACEHOLDER_COPY, id="personas-mode-placeholder")
+                        yield Static(self._mode_placeholder_text("dictionaries"), id="personas-mode-placeholder")
                     yield PersonasPreviewPane(id="personas-preview-pane")
 
                 inspector_pane = PersonasInspectorPane(
@@ -860,6 +881,7 @@ class PersonasScreen(BaseAppScreen):
                 chip_mode == mode, "is-active"
             )
         self.query_one("#personas-status-row", Static).update(self._status_row_text())
+        self.query_one("#personas-purpose", Static).update(self._mode_descriptor_text(mode))
         library = self.query_one(PersonasLibraryPane)
         library.set_mode(mode)
         # clear_selection empties the conversations panel; drop the caches too.
@@ -875,7 +897,8 @@ class PersonasScreen(BaseAppScreen):
             self._show_center(None)
             self._refresh_profile_rows_worker()
         else:
-            await library.update_rows((), total=0, noun=MODE_LABELS[mode].lower())
+            await library.update_rows((), total=0, noun=MODE_LABELS.get(mode, mode).lower())
+            self.query_one("#personas-mode-placeholder", Static).update(self._mode_placeholder_text(mode))
             self._show_center("#personas-mode-placeholder")
 
     def _title_text(self) -> str:
@@ -884,7 +907,7 @@ class PersonasScreen(BaseAppScreen):
         "Local" deliberately stays out of the title - the status row directly
         below already says "Source: Local" (de-dup, P3-15).
         """
-        base = "Personas | Behavior profiles for chat and agents"
+        base = "Roleplay | Author the pieces that shape a chat"
         suffix = " - unsaved" if self.state.has_unsaved_changes else ""
         if self._edit_mode == "create":
             noun = "persona" if self.state.active_mode == "personas" else "character"
@@ -893,6 +916,14 @@ class PersonasScreen(BaseAppScreen):
             name = self.state.selected_entity_name or "item"
             return f"{base} | Editing {name}{suffix}"
         return f"{base} | Ready"
+
+    def _mode_descriptor_text(self, mode: str) -> str:
+        """The visible one-line meaning of a mode (falls back for un-described modes)."""
+        return _MODE_DESCRIPTORS.get(mode, MODE_LABELS.get(mode, mode))
+
+    def _mode_placeholder_text(self, mode: str) -> str:
+        """The inviting placeholder body for a not-yet-built (or departing) mode."""
+        return _MODE_PLACEHOLDER_BODY.get(mode, _PLACEHOLDER_FALLBACK)
 
     def _update_title(self) -> None:
         """Refresh the header line; tolerate updates racing teardown."""
@@ -907,7 +938,7 @@ class PersonasScreen(BaseAppScreen):
             return f"Characters: {len(self._characters)} | Source: Local | Attachments: Console"
         if mode == "personas":
             return f"Personas: {len(self._profiles)} | Source: Local | Attachments: Console"
-        return f"Mode: {MODE_LABELS[mode]} | Source: Local | Attachments: Console"
+        return f"Mode: {MODE_LABELS.get(mode, mode)} | Source: Local | Attachments: Console"
 
     def _update_status_row(self) -> None:
         """Refresh the status row text; tolerate refreshes racing teardown."""

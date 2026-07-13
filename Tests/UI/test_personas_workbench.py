@@ -147,7 +147,7 @@ class TestWorkbenchShell:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             title = screen.query_one("#personas-title", Static)
-            assert "Personas" in str(title.renderable)
+            assert "Roleplay" in str(title.renderable)
             assert "ds-destination-header" in title.classes
             assert screen.query_one("#personas-mode-strip")
             assert screen.query_one("#personas-library-pane")
@@ -359,8 +359,69 @@ class TestWorkbenchShell:
             assert screen.state.active_mode == "prompts"
             placeholder = screen.query_one("#personas-mode-placeholder", Static)
             assert placeholder.display is True
-            assert "not available yet" in str(placeholder.renderable)
+            # Prompts is departing to the Library — its copy is honest about that,
+            # never a "coming soon" that implies it is arriving in Roleplay.
+            body = str(placeholder.renderable).lower()
+            assert "library" in body
+            assert "coming soon" not in body
             assert "is-active" in screen.query_one("#personas-mode-prompts", Button).classes
+
+    async def test_prompts_chip_reads_as_departing_not_coming_soon(self, mock_app_instance, stub_characters):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            prompts_chip = screen.query_one("#personas-mode-prompts", Button)
+            # Departing mode: honest descriptor tooltip, never the bare fallback label…
+            assert prompts_chip.tooltip == "Prompts — moving to the Library."
+            # …and no "· soon" marker (it is leaving, not arriving).
+            assert "soon" not in str(prompts_chip.label).lower()
+            # Selecting it surfaces the same honest descriptor in the visible purpose line.
+            await screen._apply_mode("prompts")
+            await pilot.pause()
+            purpose = str(screen.query_one("#personas-purpose", Static).renderable)
+            assert purpose == "Prompts — moving to the Library."
+
+    async def test_mode_chips_are_self_explaining_and_mark_coming_soon(self, mock_app_instance, stub_characters):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            dict_chip = screen.query_one("#personas-mode-dictionaries", Button)
+            assert dict_chip.tooltip == "Dictionaries — text find/replace rules."   # meaning, not "switch to…"
+            assert "soon" in str(dict_chip.label).lower()                            # planned marker
+            char_chip = screen.query_one("#personas-mode-characters", Button)
+            assert "soon" not in str(char_chip.label).lower()                        # built modes unmarked
+
+    async def test_coming_soon_mode_shows_inviting_copy(self, mock_app_instance, stub_characters):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await screen._apply_mode("dictionaries")
+            await pilot.pause()
+            body = str(screen.query_one("#personas-mode-placeholder", Static).renderable)
+            assert "coming soon" in body.lower()
+            assert "not available yet" not in body.lower()
+
+    async def test_title_reframed_to_roleplay_keeps_state_suffix(self, mock_app_instance, stub_characters):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            assert str(screen.query_one("#personas-title", Static).renderable).startswith("Roleplay")
+            # dynamic suffix still appends in create mode
+            screen._edit_mode = "create"
+            screen._update_title()
+            await pilot.pause()
+            title = str(screen.query_one("#personas-title", Static).renderable)
+            assert title.startswith("Roleplay") and "New character" in title
+
+    async def test_purpose_shows_active_mode_descriptor_and_updates_on_switch(self, mock_app_instance, stub_characters):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            purpose = screen.query_one("#personas-purpose", Static)
+            assert "who the AI plays" in str(purpose.renderable)   # characters is the default mode
+            await screen._apply_mode("personas")
+            await pilot.pause()
+            assert "who you are" in str(screen.query_one("#personas-purpose", Static).renderable)
 
 
 class TestCharacterSelectionAndEdit:
@@ -4053,7 +4114,7 @@ class TestDirtyTracking:
             # already carries "Source: Local").
             assert (
                 str(title.renderable)
-                == "Personas | Behavior profiles for chat and agents | Ready"
+                == "Roleplay | Author the pieces that shape a chat | Ready"
             )
 
     async def test_active_row_gets_unsaved_badge(
