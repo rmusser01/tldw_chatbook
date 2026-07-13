@@ -934,7 +934,10 @@ def update_chat_dictionary(
         conn.commit()
         logger.info(f"Updated chat dictionary {dict_id}")
         return True
-        
+
+    except ConflictError:
+        db.get_connection().rollback()
+        raise
     except Exception as e:
         logger.opt(exception=True).error(f"Error updating chat dictionary {dict_id}: {e}")
         db.get_connection().rollback()
@@ -981,7 +984,10 @@ def delete_chat_dictionary(
         db.get_connection().commit()
         logger.info(f"Deleted chat dictionary {dict_id}")
         return True
-        
+
+    except ConflictError:
+        db.get_connection().rollback()
+        raise
     except Exception as e:
         logger.opt(exception=True).error(f"Error deleting chat dictionary {dict_id}: {e}")
         db.get_connection().rollback()

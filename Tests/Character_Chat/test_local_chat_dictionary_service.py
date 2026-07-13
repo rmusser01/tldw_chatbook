@@ -1,7 +1,7 @@
 import pytest
 
 from tldw_chatbook.Character_Chat.local_chat_dictionary_service import LocalChatDictionaryService
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 
 
 @pytest.fixture
@@ -137,6 +137,26 @@ def test_local_chat_dictionary_service_records_activity_versions_and_reverts(dic
     assert reverted["name"] == "Versioned Lore"
     assert reverted["reverted_to_revision"] == 1
     assert reloaded.list_versions(created["id"], limit=10)["total"] == 3
+
+
+def test_local_chat_dictionary_service_update_raises_conflict_error_on_stale_version(dictionary_db):
+    service = LocalChatDictionaryService(dictionary_db)
+    dictionary = service.create_dictionary({"name": "Conflict Lore"})
+
+    with pytest.raises(ConflictError):
+        service.update_dictionary(
+            dictionary["id"],
+            {"name": "Conflict Lore v2"},
+            expected_version=dictionary["version"] + 1,
+        )
+
+
+def test_local_chat_dictionary_service_delete_raises_conflict_error_on_stale_version(dictionary_db):
+    service = LocalChatDictionaryService(dictionary_db)
+    dictionary = service.create_dictionary({"name": "Conflict Lore Delete"})
+
+    with pytest.raises(ConflictError):
+        service.delete_dictionary(dictionary["id"], expected_version=dictionary["version"] + 1)
 
 
 def test_local_chat_dictionary_service_repairs_legacy_fts_trigger_before_delete(dictionary_db):
