@@ -6,10 +6,18 @@ from typing import Any
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Input, ListItem, ListView, Static
+from textual.widgets import Button, DataTable, Input, ListItem, ListView, Select, Static, Switch, TextArea
 
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
+from tldw_chatbook.Widgets.Persona_Widgets.personas_dictionary_detail import (
+    DictionaryEntryAddRequested,
+    DictionaryEntryDeleteRequested,
+    DictionaryEntriesReorderRequested,
+    DictionaryEntryUpdateRequested,
+    DictionarySettingsSaveRequested,
+    PersonasDictionaryDetailWidget,
+)
 from tldw_chatbook.Widgets.Persona_Widgets.personas_library_pane import (
     LibraryRow,
     PersonasLibraryPane,
@@ -386,3 +394,83 @@ class TestDictionariesList:
             screen = await _enter_dictionaries(pilot)
             empty = screen.query_one("#personas-library-empty", Static)
             assert "No dictionaries yet" in str(empty.renderable)
+
+
+class DetailHarnessApp(App):
+    def __init__(self):
+        super().__init__()
+        self.messages = []
+
+    def compose(self):
+        yield PersonasDictionaryDetailWidget(id="personas-dictionary-detail")
+
+    def on_dictionary_entry_add_requested(self, m): self.messages.append(m)
+    def on_dictionary_entry_update_requested(self, m): self.messages.append(m)
+    def on_dictionary_entry_delete_requested(self, m): self.messages.append(m)
+    def on_dictionary_entries_reorder_requested(self, m): self.messages.append(m)
+    def on_dictionary_settings_save_requested(self, m): self.messages.append(m)
+
+
+class TestDictionaryDetailWidget:
+    async def test_load_populates_settings_and_entries(self):
+        app = DetailHarnessApp()
+        async with app.run_test() as pilot:
+            widget = app.query_one(PersonasDictionaryDetailWidget)
+            record = FakeDictScopeService([make_dict_record(1)])._summary(make_dict_record(1))
+            widget.load_dictionary(record)
+            await pilot.pause()
+            assert app.query_one("#personas-dict-name", Input).value == "Medical Abbrev"
+            table = app.query_one("#personas-dict-entries-table", DataTable)
+            assert table.row_count == 2
+            assert app.query_one("#personas-dict-max-tokens", Input).value == "1000"
+            assert app.query_one("#personas-dict-enabled", Switch).value is True
+
+    async def test_form_payload_converts_probability_percent(self):
+        app = DetailHarnessApp()
+        async with app.run_test() as pilot:
+            widget = app.query_one(PersonasDictionaryDetailWidget)
+            app.query_one("#personas-dict-entry-pattern", Input).value = "ASAP"
+            app.query_one("#personas-dict-entry-probability", Input).value = "85"
+            payload = widget.form_payload()
+            assert payload["pattern"] == "ASAP"
+            assert payload["probability"] == pytest.approx(0.85)
+            assert payload["type"] == "literal"
+
+    async def test_form_payload_requires_pattern(self):
+        app = DetailHarnessApp()
+        async with app.run_test() as pilot:
+            widget = app.query_one(PersonasDictionaryDetailWidget)
+            app.query_one("#personas-dict-entry-pattern", Input).value = "  "
+            assert widget.form_payload() is None
+            error = app.query_one("#personas-dict-entry-error", Static)
+            assert "pattern" in str(error.renderable).lower()
+
+    async def test_add_button_posts_message(self):
+        app = DetailHarnessApp()
+        async with app.run_test() as pilot:
+            app.query_one("#personas-dict-entry-pattern", Input).value = "BP"
+            app.query_one("#personas-dict-entry-replacement", TextArea).text = "blood pressure"
+            await pilot.click("#personas-dict-entry-add")
+            await pilot.pause()
+            adds = [m for m in app.messages if isinstance(m, DictionaryEntryAddRequested)]
+            assert adds and adds[0].payload["pattern"] == "BP"
+
+    async def test_settings_save_posts_payload(self):
+        app = DetailHarnessApp()
+        async with app.run_test() as pilot:
+            widget = app.query_one(PersonasDictionaryDetailWidget)
+            record = FakeDictScopeService([make_dict_record(1)])._summary(make_dict_record(1))
+            widget.load_dictionary(record)
+            await pilot.pause()
+            # Switch to Settings tab to make the save button clickable
+            from textual.widgets import TabbedContent
+            tabs = app.query_one("#personas-dict-tabs", TabbedContent)
+            tabs.active = "personas-dict-tab-settings"
+            await pilot.pause()
+            app.query_one("#personas-dict-name", Input).value = "Renamed"
+            await pilot.pause()
+            await pilot.click("#personas-dict-settings-save")
+            await pilot.pause()
+            saves = [m for m in app.messages if isinstance(m, DictionarySettingsSaveRequested)]
+            assert saves and saves[0].payload["name"] == "Renamed"
+            assert saves[0].payload["max_tokens"] == 1000
