@@ -1,15 +1,19 @@
 # Tests/UI/test_mcp_inspector.py
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
+from typing import Any
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Select, Static, TextArea
+from textual.widgets import Button, Collapsible, Select, Static, TextArea
 
 import tldw_chatbook
+import tldw_chatbook.UI.MCP_Modules.mcp_inspector as mcp_inspector_module
 from tldw_chatbook.MCP.readiness import (
     REASON_LABELS,
+    STATE_CSS_CLASSES,
     HubAction,
     ReadinessSnapshot,
     ReadinessState,
@@ -18,6 +22,26 @@ from tldw_chatbook.MCP.readiness import (
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
 
 _BUNDLED_CSS_PATH = str(Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss")
+
+
+@pytest.fixture(autouse=True)
+def _default_advanced_open(monkeypatch):
+    """T12: keep the Advanced disclosure expanded, and never touch the real
+    user config file, for every test in this module that isn't specifically
+    exercising the collapsed-by-default / persistence behavior itself.
+
+    `MCPInspector.compose()` reads `mcp.hub_state.advanced_open` via this
+    module's `get_cli_setting` at mount time; without this fixture every
+    test here would hit the developer's real `~/.config/tldw_cli/config.toml`
+    (non-deterministic) and the pre-T12 tests that `pilot.click` into the
+    Advanced pane (e.g. `test_advanced_runner_runs_action_with_template_
+    payload`) would fail outright once collapsed-by-default lands, since a
+    collapsed `Collapsible`'s contents are `display: none` (not clickable).
+    Individual tests below override this locally via their own
+    `monkeypatch.setattr(...)` call, which wins over this fixture's.
+    """
+    monkeypatch.setattr(mcp_inspector_module, "get_cli_setting", lambda *a, **k: True)
+    monkeypatch.setattr(mcp_inspector_module, "save_setting_to_cli_config", lambda *a, **k: True)
 
 
 class FakeAdvService:
@@ -67,6 +91,21 @@ def _stale_snap() -> ReadinessSnapshot:
     )
 
 
+def _stale_server_snap() -> ReadinessSnapshot:
+    """Same RUNTIME_UNAVAILABLE reason as `_stale_snap()`, but server-source.
+
+    T5 only wires CONNECT/VALIDATE/REFRESH_DISCOVERY for local-source
+    snapshots (the workbench can only run the typed T2 lifecycle methods
+    against local profiles) -- a server-source server with the same reason
+    keeps those actions disabled, pointed at Advanced instead.
+    """
+    return ReadinessSnapshot(
+        server_key="server:main/docs", label="docs", source="server",
+        state=ReadinessState.STALE, reasons=(ReasonCode.RUNTIME_UNAVAILABLE,),
+        message="2 tools discovered; not currently connected.",
+    )
+
+
 def _ready_snap() -> ReadinessSnapshot:
     return ReadinessSnapshot(
         server_key="local:notes", label="notes", source="local",
@@ -85,14 +124,47 @@ async def test_readiness_block_shows_state_message_and_action_buttons():
         badge = str(app.query_one("#mcp-inspector-state", Static).renderable)
         assert "Stale" in badge
         buttons = {b.id: b for b in app.query("Button.mcp-inspector-action")}
-        # connect: not wired in Phase 1 -> disabled; view_details: wired -> enabled
-        assert buttons["mcp-inspector-action-connect"].disabled
+        # T5: connect is wired for local-source snapshots (was disabled in
+        # Phase 1); view_details was already wired in Phase 1.
+        assert not buttons["mcp-inspector-action-connect"].disabled
         assert not buttons["mcp-inspector-action-view_details"].disabled
         # Every rendered action button -- wired or not -- must explain its
         # outcome via a tooltip (destination-wide "every button explains
         # itself" contract; wired buttons previously had none).
         for button in buttons.values():
             assert button.tooltip, f"{button.id} has no tooltip"
+
+        # T5: the same lifecycle action on a server-source snapshot stays
+        # disabled -- it's managed server-side, not from this local-lifecycle
+        # pane -- with a distinct "use Advanced" tooltip.
+        await inspector.update_readiness(_stale_server_snap())
+        await pilot.pause()
+        server_connect = app.query_one("#mcp-inspector-action-connect", Button)
+        assert server_connect.disabled
+        assert "server" in (server_connect.tooltip or "").lower()
+
+
+# -- Task 11: status color class on the readiness badge ----------------------
+
+
+@pytest.mark.asyncio
+async def test_readiness_badge_carries_and_swaps_state_css_class():
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.update_readiness(_stale_snap())
+        await pilot.pause()
+        badge = app.query_one("#mcp-inspector-state", Static)
+        assert STATE_CSS_CLASSES[ReadinessState.STALE] in badge.classes
+
+        await inspector.update_readiness(_ready_snap())
+        await pilot.pause()
+        assert STATE_CSS_CLASSES[ReadinessState.READY] in badge.classes
+        assert STATE_CSS_CLASSES[ReadinessState.STALE] not in badge.classes
+
+        await inspector.update_readiness(None)
+        await pilot.pause()
+        assert STATE_CSS_CLASSES[ReadinessState.READY] not in badge.classes
 
 
 # -- A2: disabled action buttons must stay legible ---------------------------
@@ -126,7 +198,10 @@ async def test_disabled_action_buttons_stay_legible_with_bundled_css():
     app = InspectorAppWithBundledCSS()
     async with app.run_test(size=(100, 60)) as pilot:
         inspector = app.query_one(MCPInspector)
-        await inspector.update_readiness(_stale_snap())
+        # T5 wires CONNECT for local-source snapshots -- use the
+        # server-source variant here so this button is still disabled and
+        # the legibility contract under test still has something to check.
+        await inspector.update_readiness(_stale_server_snap())
         await pilot.pause()
         connect_button = app.query_one("#mcp-inspector-action-connect", Button)
         assert connect_button.disabled
@@ -136,6 +211,42 @@ async def test_disabled_action_buttons_stay_legible_with_bundled_css():
         assert connect_button.styles.opacity == 1.0
         # Tooltip must survive (A2 explicitly keeps existing tooltips).
         assert connect_button.tooltip
+
+
+# -- A3: inspector action stack is left-aligned -------------------------------
+
+
+@pytest.mark.asyncio
+async def test_inspector_action_buttons_are_left_aligned_with_bundled_css():
+    """A3: Button defaults BOTH `text-align` and `content-align` to center
+    (see Textual's own Button.DEFAULT_CSS -- the same lesson already
+    documented on `Button.mcp-rail-row` in MCPRail.DEFAULT_CSS and
+    `Button.mcp-callout` in _agentic_terminal.tcss). `Button.mcp-inspector-
+    action` must override both, or the inspector's action stack (Connect/
+    Check readiness/Edit config/... and the lone Cancel button during an
+    in-flight lifecycle op) renders each label centered in its full-width
+    row instead of left-aligned like every other action list in the hub.
+    """
+    app = InspectorAppWithBundledCSS()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.update_readiness(_stale_snap())
+        await pilot.pause()
+        action_button = app.query_one("#mcp-inspector-action-view_details", Button)
+        assert action_button.styles.text_align == "left"
+        assert action_button.styles.content_align_horizontal == "left"
+
+        # The lone Cancel button shown during an in-flight (CHECKING)
+        # lifecycle op carries the same class (T5) -- must resolve the same.
+        checking_snap = ReadinessSnapshot(
+            server_key="local:docs", label="docs", source="local",
+            state=ReadinessState.CHECKING, reasons=(), message="Connecting…",
+        )
+        await inspector.update_readiness(checking_snap)
+        await pilot.pause()
+        cancel_button = app.query_one("#mcp-inspector-cancel", Button)
+        assert cancel_button.styles.text_align == "left"
+        assert cancel_button.styles.content_align_horizontal == "left"
 
 
 # -- A3/A5: humanized reason copy, no raw reason codes -----------------------
@@ -539,3 +650,201 @@ async def test_gate_denied_decision_filters_action():
         assert select.value is Select.BLANK
         offered_values = [value for _, value in select._options]
         assert "profile.connect" not in offered_values
+
+
+# -- Task 4: serialized readiness refresh + zero-descriptor Advanced hint ---
+
+
+@pytest.mark.asyncio
+async def test_concurrent_refreshes_serialize_and_last_writer_wins():
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        inspector = app.query_one(MCPInspector)
+        first = _stale_snap()
+        second = ReadinessSnapshot(
+            server_key="local:web", label="web", source="local",
+            state=ReadinessState.READY, reasons=(), message="Connected.",
+        )
+        await asyncio.gather(
+            inspector.update_readiness(first),
+            inspector.update_readiness(second),
+        )
+        await pilot.pause()
+        buttons = list(app.query("Button.mcp-inspector-action"))
+        assert buttons, "actions must render"
+        # last writer wins exactly once: READY action set, no duplicates
+        ids = [b.id for b in buttons]
+        assert len(ids) == len(set(ids))
+        assert inspector._snapshot.server_key == "local:web"
+
+
+@pytest.mark.asyncio
+async def test_zero_descriptor_sections_show_guidance_hint():
+    app = InspectorApp()  # FakeAdvService returns one action; override to none
+    app.service.available_actions = lambda: []
+    async with app.run_test() as pilot:
+        inspector = app.query_one(MCPInspector)
+        inspector.set_service_context(app.service, [("Overview", "overview")])
+        await pilot.pause()
+        hint = app.query_one("#mcp-adv-empty-hint", Static)
+        assert hint.display
+        assert "Inventory" in str(hint.renderable)
+
+
+# -- Task 12: Advanced disclosure (Collapsible) + object label --------------
+
+
+@pytest.mark.asyncio
+async def test_advanced_collapsible_starts_collapsed_by_default(monkeypatch):
+    """No persisted preference (fresh install) -> collapsed on mount."""
+    monkeypatch.setattr(mcp_inspector_module, "get_cli_setting", lambda *a, **k: False)
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        collapsible = app.query_one("#mcp-adv-collapsible", Collapsible)
+        assert collapsible.collapsed is True
+
+
+@pytest.mark.asyncio
+async def test_advanced_collapsible_starts_expanded_when_persisted_open(monkeypatch):
+    monkeypatch.setattr(mcp_inspector_module, "get_cli_setting", lambda *a, **k: True)
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        collapsible = app.query_one("#mcp-adv-collapsible", Collapsible)
+        assert collapsible.collapsed is False
+
+
+@pytest.mark.asyncio
+async def test_advanced_collapsible_toggle_persists_state(monkeypatch):
+    """Expanding the disclosure must persist `advanced_open=True` via
+    `save_setting_to_cli_config("mcp.hub_state", "advanced_open", True)`,
+    per the task interface's exact call-signature contract."""
+    monkeypatch.setattr(mcp_inspector_module, "get_cli_setting", lambda *a, **k: False)
+    save_calls: list[tuple[str, str, Any]] = []
+
+    def fake_save(section, key, value):
+        save_calls.append((section, key, value))
+        return True
+
+    monkeypatch.setattr(mcp_inspector_module, "save_setting_to_cli_config", fake_save)
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        collapsible = app.query_one("#mcp-adv-collapsible", Collapsible)
+        assert collapsible.collapsed is True
+
+        collapsible.collapsed = False
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert ("mcp.hub_state", "advanced_open", True) in save_calls
+
+
+@pytest.mark.asyncio
+async def test_mount_with_persisted_open_does_not_write_config(monkeypatch):
+    """Review fix (T12): `Collapsible(collapsed=False)` posts one spurious
+    Toggled during mount with zero user interaction (`collapsed` is
+    `reactive(True, init=False)`, so constructing it expanded differs from
+    the reactive default and fires the watcher -- the same documented quirk
+    as library_screen.py's `sync_library_ingest_advanced_open`, whose
+    handler is a harmless in-memory sync; ours writes the config file to
+    disk). Mounting with the preference already open must therefore produce
+    ZERO save calls; only a real toggle afterwards persists -- exactly once.
+    """
+    monkeypatch.setattr(mcp_inspector_module, "get_cli_setting", lambda *a, **k: True)
+    save_calls: list[tuple[str, str, Any]] = []
+
+    def fake_save(section, key, value):
+        save_calls.append((section, key, value))
+        return True
+
+    monkeypatch.setattr(mcp_inspector_module, "save_setting_to_cli_config", fake_save)
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert save_calls == [], (
+            f"mount alone must not write the config; got {save_calls!r}"
+        )
+
+        collapsible = app.query_one("#mcp-adv-collapsible", Collapsible)
+        collapsible.collapsed = True
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert save_calls == [("mcp.hub_state", "advanced_open", False)]
+
+
+@pytest.mark.asyncio
+async def test_advanced_collapsible_recollapse_persists_false(monkeypatch):
+    monkeypatch.setattr(mcp_inspector_module, "get_cli_setting", lambda *a, **k: True)
+    save_calls: list[tuple[str, str, Any]] = []
+
+    def fake_save(section, key, value):
+        save_calls.append((section, key, value))
+        return True
+
+    monkeypatch.setattr(mcp_inspector_module, "save_setting_to_cli_config", fake_save)
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        collapsible = app.query_one("#mcp-adv-collapsible", Collapsible)
+        assert collapsible.collapsed is False
+
+        collapsible.collapsed = True
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert ("mcp.hub_state", "advanced_open", False) in save_calls
+
+
+@pytest.mark.asyncio
+async def test_advanced_object_label_defaults_to_local_control_plane():
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        label = app.query_one("#mcp-adv-object", Static)
+        assert str(label.renderable) == "Showing: Local control plane"
+
+
+@pytest.mark.asyncio
+async def test_advanced_object_label_reflects_server_source_and_target():
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        inspector = app.query_one(MCPInspector)
+        inspector.set_service_context(
+            app.service, [("Overview", "overview")],
+            source="server", target_label="Main Server",
+        )
+        await pilot.pause()
+        label = app.query_one("#mcp-adv-object", Static)
+        assert str(label.renderable) == "Showing: server Main Server"
+
+
+@pytest.mark.asyncio
+async def test_advanced_content_cleared_synchronously_on_rebind():
+    """A rebind (`set_service_context()` called again -- e.g. on a workbench
+    source/target switch) must blank the previous section's rendered dump
+    SYNCHRONOUSLY, before the reload worker even starts, so a stale object's
+    facts can never linger on screen even for one frame (UX-inputs
+    acceptance)."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        content = app.query_one("#mcp-adv-content", Static)
+        assert str(content.renderable), "sanity: overview section rendered something"
+
+        inspector = app.query_one(MCPInspector)
+        inspector.set_service_context(
+            app.service, [("Overview", "overview")],
+            source="server", target_label="Other Server",
+        )
+        # No pilot.pause() here: the clear must be visible before the
+        # reload worker this call schedules has had any chance to run.
+        assert str(content.renderable) == ""
