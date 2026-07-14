@@ -1355,8 +1355,12 @@ class TestDictionaryValidationPanel:
             add = screen.query_one("#personas-dict-entry-add", Button)
             add.scroll_visible(animate=False)
             await pilot.pause()
-            region = add.region
-            assert region.height > 0 and region.width > 0  # rendered, reachable
+            container_region = scroll.region
+            add_region = add.region
+            # The button's row must actually land inside the scroll container's
+            # visible viewport — a broken scroll leaves it below the container.
+            assert container_region.y <= add_region.y < container_region.y + container_region.height
+            assert scroll.scroll_offset.y > 0  # the scroll genuinely moved
 
 
 class TestTryItDisabledReason:
@@ -1380,3 +1384,76 @@ class TestTryItDisabledReason:
             await pilot.pause()
             nearmiss = str(screen.query_one("#personas-dict-tryit-nearmiss", Static).renderable)
             assert "HR" in nearmiss and "skipped: disabled" in nearmiss
+
+
+class TestDictionaryMalformedProbability:
+    """A malformed ``probability`` (corrupt row, hand-edited DB, etc.) must
+    not crash the widget - the display falls back to 100%."""
+
+    async def _select_first(self, pilot, screen):
+        rows = screen.query_one("#personas-library-rows", ListView)
+        rows.index = 0
+        rows.action_select_cursor()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+    async def test_garbage_probability_does_not_crash_and_falls_back_to_100(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
+        from textual.widgets import DataTable
+
+        fake_dict_service.records[1]["entries"].append(
+            {"pattern": "XYZ", "replacement": "garbage-prob", "probability": "garbage",
+             "group": None, "timed_effects": None, "max_replacements": 1, "type": "literal",
+             "enabled": True, "case_sensitive": False, "priority": 0}
+        )
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)  # must not raise
+            table = screen.query_one("#personas-dict-entries-table", DataTable)
+            assert table.row_count == 3
+            assert "100" in str(table.get_cell_at((2, 3)))
+
+
+class TestDictionaryValidationMarkupSafety:
+    """Rich markup ("[tag]") must never be interpreted in validation-panel
+    option text - both the leading "[code]" marker and any "[" inside a
+    user's own pattern must render literally."""
+
+    async def _select_first(self, pilot, screen):
+        rows = screen.query_one("#personas-library-rows", ListView)
+        rows.index = 0
+        rows.action_select_cursor()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+    async def test_validation_option_renders_markup_inert(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
+        from textual.widgets import OptionList
+
+        fake_dict_service.records[1]["entries"] = [
+            {"pattern": "AB[x]CD", "replacement": "one", "probability": 1.0, "group": None,
+             "timed_effects": None, "max_replacements": 1, "type": "literal",
+             "enabled": True, "case_sensitive": False, "priority": 0},
+            {"pattern": "AB[x]CD", "replacement": "two", "probability": 1.0, "group": None,
+             "timed_effects": None, "max_replacements": 1, "type": "literal",
+             "enabled": True, "case_sensitive": False, "priority": 0},
+        ]
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            panel = screen.query_one("#personas-dict-validation", OptionList)
+            assert panel.option_count == 1  # the duplicate-pattern finding
+            # render_line is OptionList's actual on-screen rendering path -
+            # unlike Option.prompt (which just echoes back whatever was
+            # passed in, str or Text, unchanged), this is what a real user
+            # would see, and is the only place OptionList's markup=True
+            # parsing actually bites.
+            rendered = panel.render_line(0).text
+            assert "duplicate_pattern" in rendered
+            assert "[x]" in rendered

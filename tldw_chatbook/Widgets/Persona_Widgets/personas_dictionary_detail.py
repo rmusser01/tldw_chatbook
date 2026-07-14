@@ -29,6 +29,14 @@ from .personas_dictionary_validation import validate_entries
 STRATEGIES = ("sorted_evenly", "character_lore_first", "global_lore_first")
 
 
+def _prob_pct(value: Any) -> int:
+    """Probability as displayed percent; malformed values fall back to 100."""
+    try:
+        return round(float(value if value is not None else 1.0) * 100)
+    except (TypeError, ValueError):
+        return 100
+
+
 class DictionaryEntryAddRequested(Message):
     def __init__(self, payload: dict) -> None:
         super().__init__()
@@ -183,8 +191,7 @@ class PersonasDictionaryDetailWidget(Vertical):
         table = self.query_one("#personas-dict-entries-table", DataTable)
         table.clear()
         for entry in self._entries:
-            probability = entry.get("probability")
-            prob_pct = round(float(probability if probability is not None else 1.0) * 100)
+            prob_pct = _prob_pct(entry.get("probability"))
             enabled = bool(entry.get("enabled", True))
             style = "dim" if not enabled else ""
             pattern_cell = Text(str(entry.get("pattern") or ""), style=style)
@@ -216,7 +223,9 @@ class PersonasDictionaryDetailWidget(Vertical):
                 (str(e.get("pattern") or "") for e in self._entries if str(e.get("id")) == str(finding.entry_id)),
                 "",
             )
-            panel.add_option(Option(f"[{finding.code}] {pattern} — {finding.message}", id=str(finding.entry_id)))
+            panel.add_option(
+                Option(Text(f"[{finding.code}] {pattern} — {finding.message}"), id=str(finding.entry_id))
+            )
 
     def apply_enabled(self, enabled: bool) -> None:
         """Reflect an externally-toggled enabled flag without touching other fields.
@@ -319,9 +328,8 @@ class PersonasDictionaryDetailWidget(Vertical):
         self.query_one("#personas-dict-entry-pattern", Input).value = str(entry.get("pattern") or "")
         self.query_one("#personas-dict-entry-replacement", TextArea).text = str(entry.get("replacement") or "")
         self.query_one("#personas-dict-entry-regex", Switch).value = entry.get("type") == "regex"
-        probability = entry.get("probability")
         self.query_one("#personas-dict-entry-probability", Input).value = str(
-            round(float(probability if probability is not None else 1.0) * 100)
+            _prob_pct(entry.get("probability"))
         )
         self.query_one("#personas-dict-entry-group", Input).value = str(entry.get("group") or "")
         self.query_one("#personas-dict-entry-max-repl", Input).value = str(entry.get("max_replacements") or 1)

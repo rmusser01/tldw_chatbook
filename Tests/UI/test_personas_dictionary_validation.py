@@ -42,3 +42,9 @@ def test_probability_zero_flagged():
 def test_case_flag_on_regex_flagged():
     findings = validate_entries([_entry("/spo2/i", etype="regex", case_sensitive=True)])
     assert [f.code for f in findings] == ["case_flag_on_regex"]
+
+
+def test_probability_garbage_does_not_crash_and_yields_no_finding():
+    """A malformed probability is neither zero nor a crash - display-layer
+    fallback (not this module) decides what to show for it."""
+    assert validate_entries([_entry("BP", probability="garbage")]) == []

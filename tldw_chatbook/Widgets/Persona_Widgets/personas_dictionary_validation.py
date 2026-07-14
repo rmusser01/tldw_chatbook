@@ -69,7 +69,11 @@ def validate_entries(entries: list[dict]) -> list[ValidationFinding]:
             seen[key] = entry_id
 
         probability = entry.get("probability")
-        if probability is not None and float(probability) == 0.0:
+        try:
+            probability_value = float(probability) if probability is not None else None
+        except (TypeError, ValueError):
+            probability_value = None  # malformed: not zero, no finding; display layer falls back
+        if probability_value is not None and probability_value == 0.0:
             findings.append(ValidationFinding(
                 code="probability_zero", field="probability", entry_id=entry_id,
                 message="Probability 0 means this entry can never fire.",
