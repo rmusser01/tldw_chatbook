@@ -139,7 +139,7 @@ class CharactersRAGDB:
         is_memory_db (bool): True if the database is in-memory.
         db_path_str (str): String representation of the database path for SQLite connection.
     """
-    _CURRENT_SCHEMA_VERSION = 19  # Adds per-conversation metadata (P1e).
+    _CURRENT_SCHEMA_VERSION = 20  # Adds per-conversation metadata (P1e).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -2220,7 +2220,7 @@ UPDATE db_schema_version
    AND version = 17;
 """
 
-    _MIGRATE_V18_TO_V19_SQL = """
+    _MIGRATE_V19_TO_V20_SQL = """
 ALTER TABLE conversations ADD COLUMN metadata TEXT;
 
 DROP TRIGGER IF EXISTS conversations_sync_create;
@@ -2325,9 +2325,9 @@ BEGIN
 END;
 
 UPDATE db_schema_version
-   SET version = 19
+   SET version = 20
  WHERE schema_name = 'rag_char_chat_schema'
-   AND version = 18;
+   AND version = 19;
 """
 
     def __init__(self, db_path: Union[str, Path], client_id: str,
@@ -3226,33 +3226,33 @@ UPDATE db_schema_version
             logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V17→V18] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V17 to V18 for '{self._SCHEMA_NAME}': {e}") from e
 
-    def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
+    def _migrate_from_v19_to_v20(self, conn: sqlite3.Connection):
         """
-        Migrates the database schema from version 18 to version 19.
+        Migrates the database schema from version 19 to version 20.
 
         This migration adds a nullable ``metadata`` column to
         ``conversations`` for storing conversation-specific runtime metadata
         (e.g., active_dictionaries), and redefines the ``conversations_sync_*``
         triggers so edits to the new column are reflected in ``sync_log``.
         """
-        logger.info(f"Migrating schema from V18 to V19 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        logger.info(f"Migrating schema from V19 to V20 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
         try:
-            conn.executescript(self._MIGRATE_V18_TO_V19_SQL)
-            logger.debug(f"[{self._SCHEMA_NAME} V18→V19] Migration script executed.")
+            conn.executescript(self._MIGRATE_V19_TO_V20_SQL)
+            logger.debug(f"[{self._SCHEMA_NAME} V19→V20] Migration script executed.")
 
             final_version = self._get_db_version(conn)
-            if final_version != 19:
+            if final_version != 20:
                 raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V18→V19] Migration version check failed. Expected 19, got: {final_version}"
+                    f"[{self._SCHEMA_NAME} V19→V20] Migration version check failed. Expected 20, got: {final_version}"
                 )
 
-            logger.info(f"[{self._SCHEMA_NAME} V18→V19] Migration completed successfully for DB: {self.db_path_str}.")
+            logger.info(f"[{self._SCHEMA_NAME} V19→V20] Migration completed successfully for DB: {self.db_path_str}.")
         except sqlite3.Error as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V18→V19] Migration failed: {e}")
-            raise SchemaError(f"Migration from V18 to V19 failed for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V19→V20] Migration failed: {e}")
+            raise SchemaError(f"Migration from V19 to V20 failed for '{self._SCHEMA_NAME}': {e}") from e
         except Exception as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V18→V19] Unexpected error during migration: {e}")
-            raise SchemaError(f"Unexpected error migrating from V18 to V19 for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V19→V20] Unexpected error during migration: {e}")
+            raise SchemaError(f"Unexpected error migrating from V19 to V20 for '{self._SCHEMA_NAME}': {e}") from e
 
     def _migrate_from_v7_to_v8(self, conn: sqlite3.Connection):
         """
@@ -3340,7 +3340,7 @@ UPDATE db_schema_version
                     15: self._migrate_from_v15_to_v16,
                     16: self._migrate_from_v16_to_v17,
                     17: self._migrate_from_v17_to_v18,
-                    18: self._migrate_from_v18_to_v19,
+                    19: self._migrate_from_v19_to_v20,
                 }
 
                 if current_db_version == 0:
