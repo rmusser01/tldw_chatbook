@@ -144,7 +144,7 @@ def test_process_attachment_bytes_rejects_corrupt_and_oversized(monkeypatch):
     with _pytest.raises(ValueError, match="not a valid image"):
         asyncio.run(process_attachment_bytes(b"junk", display_name="x.png"))
 
-    monkeypatch.setattr(attachment_core, "MAX_IMAGE_BYTES", 4)
+    monkeypatch.setattr(attachment_core, "max_image_bytes", lambda: 4)
     with _pytest.raises(ValueError, match="too large"):
         asyncio.run(
             process_attachment_bytes(b"12345678", display_name="big.png")
