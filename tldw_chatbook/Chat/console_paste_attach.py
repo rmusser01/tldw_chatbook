@@ -148,6 +148,16 @@ def grab_clipboard_image() -> ClipboardGrab:
         return ClipboardGrab(
             kind="paths", paths=tuple(str(item) for item in grabbed)
         )
-    buffer = BytesIO()
-    grabbed.save(buffer, format="PNG")
+    try:
+        buffer = BytesIO()
+        grabbed.save(buffer, format="PNG")
+    except Exception:
+        # Exotic modes (e.g. CMYK) can refuse PNG encoding; try a safe
+        # RGB conversion before giving up.
+        try:
+            buffer = BytesIO()
+            grabbed.convert("RGB").save(buffer, format="PNG")
+        except Exception:
+            logger.opt(exception=True).warning("Clipboard image PNG encode failed.")
+            return ClipboardGrab(kind="unavailable")
     return ClipboardGrab(kind="image", png_bytes=buffer.getvalue())

@@ -7029,3 +7029,31 @@ async def test_alt_v_unavailable_platform_toasts(monkeypatch):
         store = console._ensure_console_chat_store()
         sid = store.active_session_id
         assert sid is None or store.pending_attachment(sid) is None
+
+
+@pytest.mark.asyncio
+async def test_alt_v_action_is_inert_while_setup_modal_blocks(monkeypatch):
+    import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+
+    grab_calls: list[None] = []
+    monkeypatch.setattr(
+        chat_screen_module,
+        "grab_clipboard_image",
+        lambda: grab_calls.append(None),
+    )
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        monkeypatch.setattr(console, "_console_setup_modal_blocking", lambda: True)
+
+        console.action_paste_clipboard_image()
+        await pilot.pause(0.2)
+
+        assert grab_calls == []
+        store = console._ensure_console_chat_store()
+        sid = store.active_session_id
+        assert sid is None or store.pending_attachment(sid) is None

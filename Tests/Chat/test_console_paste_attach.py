@@ -120,3 +120,25 @@ def test_grab_maps_errors_to_unavailable(monkeypatch):
 
     monkeypatch.setattr(cpa, "_grabclipboard", _boom)
     assert grab_clipboard_image().kind == "unavailable"
+
+
+def test_grab_encodes_cmyk_images_via_rgb_conversion(monkeypatch):
+    monkeypatch.setattr(
+        cpa, "_grabclipboard", lambda: PILImage.new("CMYK", (8, 8))
+    )
+    grab = grab_clipboard_image()
+    assert grab.kind == "image"
+    assert grab.png_bytes is not None
+    assert PILImage.open(BytesIO(grab.png_bytes)).mode == "RGB"
+
+
+def test_grab_maps_unencodable_image_to_unavailable(monkeypatch):
+    class _Unencodable:
+        def save(self, *a, **k):
+            raise OSError("cannot write")
+
+        def convert(self, *a, **k):
+            raise OSError("cannot convert")
+
+    monkeypatch.setattr(cpa, "_grabclipboard", lambda: _Unencodable())
+    assert grab_clipboard_image().kind == "unavailable"

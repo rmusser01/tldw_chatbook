@@ -7419,6 +7419,8 @@ class ChatScreen(BaseAppScreen):
 
     def action_paste_clipboard_image(self) -> None:
         """Grab an image from the OS clipboard into the pending attachment."""
+        if self._console_setup_modal_blocking():
+            return
         self.run_worker(
             self._paste_console_clipboard_image(),
             exclusive=True,
