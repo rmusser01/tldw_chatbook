@@ -130,6 +130,7 @@ PERSONAS_AVATAR_IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp", ".
 PERSONAS_AVATAR_IMAGE_SUFFIX_COPY = "PNG, JPG, JPEG, WEBP, or GIF"
 PERSONAS_AVATAR_MAX_BYTES = 5 * 1024 * 1024
 PERSONAS_AVATAR_MAX_SIZE_COPY = "5 MB"
+PERSONAS_DICTIONARY_IMPORT_MAX_BYTES = 10 * 1024 * 1024
 
 # 80-column terminals need a tighter three-pane split than the default
 # 2:4:2 workbench minimums. Keep this screen-owned so a later rail-collapse
@@ -1243,6 +1244,12 @@ class PersonasScreen(BaseAppScreen):
             return False
 
     async def _dictionary_export_worker(self, fmt: str) -> None:
+        """Export the selected dictionary to a JSON or markdown file.
+
+        Args:
+            fmt: Export format - ``"json"`` for a full-fidelity backup or
+                ``"markdown"`` for a lossy, human-readable summary.
+        """
         try:
             if fmt == "markdown" and not await self._confirm_lossy_markdown_export():
                 return
@@ -1282,6 +1289,9 @@ class PersonasScreen(BaseAppScreen):
                 detail.set_status(f"Export failed: {exc}")
                 return
             detail.set_status(f"Exported to {target}")
+        except Exception as exc:
+            logger.opt(exception=True).error(f"Unexpected error exporting dictionary {fmt!r}.")
+            self._notify(f"Export failed: {exc}", "error")
         finally:
             self._io_dialog_active = False
 
@@ -1372,6 +1382,11 @@ class PersonasScreen(BaseAppScreen):
             return False
 
     async def _dictionary_revert_worker(self, revision: int) -> None:
+        """Confirm, then revert the selected dictionary to a prior version.
+
+        Args:
+            revision: The version number to revert the dictionary to.
+        """
         try:
             if not await self._confirm_dictionary_revert(revision):
                 return
@@ -1399,6 +1414,12 @@ class PersonasScreen(BaseAppScreen):
             await self._render_dictionary_rows(query=self.state.search_query)
             self.query_one(PersonasLibraryPane).mark_active_row("dictionary", entity_id)
             await self._refresh_dictionary_versions()
+        except Exception as exc:
+            # The revert call itself is already guarded above; this covers the
+            # post-revert refresh steps (widget/state updates, row re-render),
+            # which were previously unguarded and could crash the app.
+            logger.opt(exception=True).error(f"Unexpected error reverting to revision {revision}.")
+            self._notify(f"Revert failed: {exc}", "error")
         finally:
             self._io_dialog_active = False
 
@@ -2228,6 +2249,7 @@ class PersonasScreen(BaseAppScreen):
         self.run_worker(self._dictionary_import_dialog_worker(), group="personas-io")
 
     async def _dictionary_import_dialog_worker(self) -> None:
+        """Show the import file picker and hand the chosen path off to import."""
         from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
 
         try:
@@ -2248,16 +2270,35 @@ class PersonasScreen(BaseAppScreen):
                 return
             if file_path:
                 await self._import_dictionary_from_path(str(file_path))
+        except Exception as exc:
+            logger.opt(exception=True).error("Unexpected error in the dictionary import worker.")
+            self._notify(f"Import failed: {exc}", "error")
         finally:
             self._io_dialog_active = False
 
     async def _import_dictionary_from_path(self, path: str) -> None:
-        """Import a dictionary file; on a name conflict, auto-rename and retry."""
+        """Import a dictionary file; on a name conflict, auto-rename and retry.
+
+        Args:
+            path: Filesystem path to the ``.json`` or ``.md``/``.markdown``
+                file to import, as chosen via the file picker.
+        """
         service = self._dictionary_scope_service()
         if service is None:
             self._notify("Dictionaries service is not configured.", "error")
             return
         source = Path(path)
+        try:
+            if source.stat().st_size > PERSONAS_DICTIONARY_IMPORT_MAX_BYTES:
+                self._notify(
+                    f"Import failed: file is larger than "
+                    f"{PERSONAS_DICTIONARY_IMPORT_MAX_BYTES // (1024 * 1024)} MB.",
+                    "error",
+                )
+                return
+        except OSError as exc:
+            self._notify(f"Import failed: {exc}", "error")
+            return
         try:
             text = await asyncio.to_thread(source.read_text, "utf-8")
         except (OSError, UnicodeDecodeError) as exc:
@@ -2268,7 +2309,7 @@ class PersonasScreen(BaseAppScreen):
         if suffix == ".json":
             try:
                 parsed = json.loads(text)
-            except json.JSONDecodeError as exc:
+            except (json.JSONDecodeError, RecursionError, ValueError) as exc:
                 self._notify(f"Import failed: not valid JSON ({exc})", "error")
                 return
             raw = parsed.get("data") if isinstance(parsed, dict) and "data" in parsed else parsed

@@ -1957,3 +1957,48 @@ class TestDictionaryImport:
             await pilot.pause()
             assert len(fake_dict_service.records) == before
             assert any(severity == "error" for _, severity in notifications)
+
+    async def test_import_oversized_file_notifies_no_crash(
+        self, mock_app_instance, stub_characters, fake_dict_service, tmp_path, monkeypatch
+    ):
+        """A huge import file must be rejected before the read - MemoryError
+        from `source.read_text` on a genuinely oversized file is not an
+        OSError, so it would otherwise escape the existing read guard and
+        crash the whole TUI (exit_on_error=True on the default worker).
+        Exercises the guard by lowering the byte ceiling instead of writing
+        a multi-MB fixture."""
+        import tldw_chatbook.UI.Screens.personas_screen as screen_module
+
+        monkeypatch.setattr(screen_module, "PERSONAS_DICTIONARY_IMPORT_MAX_BYTES", 5)
+        source = tmp_path / "toobig.json"
+        source.write_text('{"data": {}}')
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            before = len(fake_dict_service.records)
+            await screen._import_dictionary_from_path(str(source))
+            await pilot.pause()
+            assert len(fake_dict_service.records) == before
+            assert any(
+                "larger than" in message and severity == "error"
+                for message, severity in notifications
+            )
+
+    async def test_import_deeply_nested_json_notifies_no_crash(
+        self, mock_app_instance, stub_characters, fake_dict_service, tmp_path
+    ):
+        """Deeply nested JSON blows the recursive-descent parser's stack -
+        RecursionError is not a JSONDecodeError, so the parse guard must
+        catch it too or the worker crashes the whole TUI."""
+        source = tmp_path / "nested.json"
+        source.write_text("[" * 20000 + "]" * 20000)
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            before = len(fake_dict_service.records)
+            await screen._import_dictionary_from_path(str(source))
+            await pilot.pause()
+            assert len(fake_dict_service.records) == before
+            assert any(severity == "error" for _, severity in notifications)
