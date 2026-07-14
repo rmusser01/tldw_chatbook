@@ -1351,3 +1351,185 @@ def test_injected_http_client_is_never_swapped_across_loops():
 
     assert first == second == id(client)
     asyncio.run(client.aclose())
+
+
+def test_active_http_client_swap_is_mutually_exclusive_across_threads():
+    """PR #629 Fix 1(a) (Gemini HIGH x2 + Qodo-8): the check-and-swap of
+    ``http_client``/``_client_loop`` must be a single atomic critical
+    section guarded by one lock, not two independently-racy reads/writes --
+    otherwise a concurrent caller from another thread/loop can interleave
+    with an in-flight swap and desync the client/loop pair (see the
+    interleaving hammer test below for the crash this produces in
+    practice). Proven deterministically here (no reliance on GIL
+    scheduling luck): thread A is parked *inside* the swap via a
+    monkeypatched, blocking ``_new_owned_http_client``, and thread B's
+    concurrent call must provably fail to complete while A is still in
+    flight -- only completing once A releases and the lock is free."""
+    gateway = ConsoleProviderGateway()
+    original_new_client = ConsoleProviderGateway._new_owned_http_client
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocking_new_client():
+        # Only the FIRST call (thread A's) blocks -- a concurrent second
+        # call (thread B's) that is *not* actually serialized by a lock
+        # would sail straight through this on its own turn and finish its
+        # swap well before thread A ever releases, which is exactly the
+        # unlocked-race behavior this test must catch.
+        if not entered.is_set():
+            entered.set()
+            release.wait(timeout=5)
+        return original_new_client()
+
+    ConsoleProviderGateway._new_owned_http_client = staticmethod(blocking_new_client)
+    loop_a = asyncio.new_event_loop()
+    loop_b = asyncio.new_event_loop()
+    thread_a: threading.Thread | None = None
+    thread_b: threading.Thread | None = None
+    second_done = threading.Event()
+    try:
+        def call_a() -> None:
+            async def go() -> None:
+                gateway._active_http_client()
+            loop_a.run_until_complete(go())
+
+        thread_a = threading.Thread(target=call_a)
+        thread_a.start()
+        assert entered.wait(timeout=5), "thread A must have entered the swap"
+
+        def call_b() -> None:
+            async def go() -> None:
+                gateway._active_http_client()
+            loop_b.run_until_complete(go())
+            second_done.set()
+
+        thread_b = threading.Thread(target=call_b)
+        thread_b.start()
+
+        # Thread A is still parked inside its swap -- give thread B ample
+        # opportunity to race ahead if the swap were not actually
+        # serialized by a lock.
+        premature = second_done.wait(timeout=0.5)
+        assert premature is False, (
+            "a concurrent swap completed while another thread's swap was "
+            "still in flight -- the check-and-swap is not atomic"
+        )
+        assert second_done.wait(timeout=5)
+    finally:
+        # Always unblock thread A and drain both threads before touching
+        # the loops, whether or not the assertions above passed -- an
+        # early failure must not leave a loop "running" (from the other
+        # thread's still-in-flight run_until_complete) when we try to
+        # close it.
+        release.set()
+        if thread_a is not None:
+            thread_a.join(timeout=5)
+        if thread_b is not None:
+            thread_b.join(timeout=5)
+        # Re-wrap in `staticmethod(...)`: plain-function reassignment onto
+        # the class would otherwise bind `self` as an implicit first
+        # argument on the next instance access, breaking every other test
+        # in this module that constructs a gateway afterward.
+        ConsoleProviderGateway._new_owned_http_client = staticmethod(original_new_client)
+        loop_a.close()
+        loop_b.close()
+
+
+def test_first_swap_still_schedules_close_of_the_original_owned_client(monkeypatch):
+    """PR #629 Fix 1(b) (Gemini HIGH + Qodo-8): the very first swap has
+    ``_client_loop`` still ``None`` (there is no previous loop to close the
+    replaced client on), and the old code's ``if stale_loop is not None:``
+    guard skipped scheduling a close entirely in that case -- silently
+    leaking the client created in ``__init__``. The replaced client must
+    always be closed best-effort, even on the first swap."""
+    gateway = ConsoleProviderGateway()
+    original_client = gateway.http_client
+    scheduled: list[tuple[int, object]] = []
+
+    def fake_schedule(client, loop):
+        scheduled.append((id(client), loop))
+
+    monkeypatch.setattr(
+        ConsoleProviderGateway, "_schedule_stale_client_close", staticmethod(fake_schedule)
+    )
+
+    async def touch() -> None:
+        gateway._active_http_client()
+
+    asyncio.run(touch())
+
+    assert scheduled, "the original owned client must be scheduled for close on the first swap too"
+    assert scheduled[0][0] == id(original_client)
+
+
+def test_active_http_client_concurrent_swap_never_leaves_client_bound_to_wrong_loop(
+    local_http_server,
+):
+    """PR #629 Fix 1(a) (Gemini HIGH x2 + Qodo-8): the check-and-swap of
+    ``http_client``/``_client_loop`` was not atomic, so concurrent callers
+    from different threads/loops (e.g. the app loop's readiness probe
+    racing the agent worker thread's per-turn loop) could interleave the
+    read-then-write and leave the client bound to one loop while
+    ``_client_loop`` records a different one -- the next probe on the
+    recorded loop then reuses a client bound elsewhere and crashes with
+    "bound to a different event loop". This hammers many persistent loops
+    (each in its own OS thread, lined up on a barrier every round so they
+    all race the swap concurrently) against the gateway's single owned
+    client and asserts every single real request against a local server
+    succeeds -- a mismatch manifests as a genuine RuntimeError out of
+    httpx/httpcore, not just a stale internal-state assertion."""
+    gateway = ConsoleProviderGateway()
+    thread_count = 6
+    rounds = 20
+    barrier = threading.Barrier(thread_count)
+    loops: list[asyncio.AbstractEventLoop] = []
+    ready_events: list[threading.Event] = []
+    errors: list[BaseException] = []
+    errors_lock = threading.Lock()
+
+    def run_loop_thread(loop: asyncio.AbstractEventLoop, ready: threading.Event) -> None:
+        asyncio.set_event_loop(loop)
+        ready.set()
+        loop.run_forever()
+
+    loop_threads = []
+    for _ in range(thread_count):
+        loop = asyncio.new_event_loop()
+        ready = threading.Event()
+        loops.append(loop)
+        ready_events.append(ready)
+        thread = threading.Thread(target=run_loop_thread, args=(loop, ready), daemon=True)
+        loop_threads.append(thread)
+        thread.start()
+    for ready in ready_events:
+        assert ready.wait(timeout=2)
+
+    def hammer(loop: asyncio.AbstractEventLoop) -> None:
+        for _ in range(rounds):
+            try:
+                barrier.wait(timeout=10)
+            except threading.BrokenBarrierError:
+                return
+            try:
+                future = asyncio.run_coroutine_threadsafe(
+                    gateway._is_reachable(local_http_server), loop
+                )
+                assert future.result(timeout=10) is True
+            except BaseException as exc:  # noqa: BLE001 -- collected, asserted below
+                with errors_lock:
+                    errors.append(exc)
+
+    workers = [
+        threading.Thread(target=hammer, args=(loop,), daemon=True) for loop in loops
+    ]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(timeout=60)
+
+    for loop in loops:
+        loop.call_soon_threadsafe(loop.stop)
+    for thread in loop_threads:
+        thread.join(timeout=2)
+
+    assert errors == []

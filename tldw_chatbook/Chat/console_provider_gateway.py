@@ -302,6 +302,14 @@ class ConsoleProviderGateway:
         self._owns_http_client = http_client is None
         self.http_client = http_client or self._new_owned_http_client()
         self._client_loop: asyncio.AbstractEventLoop | None = None
+        # Guards the check-and-swap in `_active_http_client` as a single
+        # atomic critical section (PR #629 Fix 1(a)): concurrent callers on
+        # different loops/threads -- e.g. the app loop's readiness probe
+        # racing the agent worker thread's per-turn loop -- must never
+        # interleave the read-then-write, which could otherwise desync
+        # `http_client` from `_client_loop` (a client bound to one loop
+        # while the recorded loop is a different one).
+        self._client_lock = threading.Lock()
         self._config_provider = config_provider or (lambda: {})
         self._environ = environ
         self._chat_api_call_fn = chat_api_call_fn
@@ -344,6 +352,19 @@ class ConsoleProviderGateway:
         loop." Recreate the owned client whenever the running loop changes
         so each loop gets its own client; injected clients (tests) are
         trusted to manage their own loop lifecycle and are left untouched.
+
+        The read-check-swap below is guarded by ``_client_lock`` (PR #629
+        Fix 1(a)): without it, two concurrent callers on different
+        loops/threads (the app loop's readiness probe racing the agent
+        worker thread's per-turn loop) can each read the same stale
+        ``(http_client, _client_loop)`` pair before either writes, then
+        both swap -- whichever writer's ``self.http_client`` assignment
+        loses the race ends up paired with the *other* writer's
+        ``self._client_loop`` assignment, leaving the recorded loop and the
+        actual client bound to different loops. The very next probe on the
+        recorded loop then reuses a client bound elsewhere and crashes.
+        Holding the lock across the whole check, creation, and both
+        assignments makes the swap a single atomic step.
         """
         if not self._owns_http_client:
             return self.http_client
@@ -351,14 +372,24 @@ class ConsoleProviderGateway:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return self.http_client
-        if self._client_loop is loop:
-            return self.http_client
-        stale_client, stale_loop = self.http_client, self._client_loop
-        self.http_client = self._new_owned_http_client()
-        self._client_loop = loop
-        if stale_loop is not None:
-            self._schedule_stale_client_close(stale_client, stale_loop)
-        return self.http_client
+        with self._client_lock:
+            if self._client_loop is loop:
+                return self.http_client
+            stale_client, stale_loop = self.http_client, self._client_loop
+            self.http_client = self._new_owned_http_client()
+            self._client_loop = loop
+            active_client = self.http_client
+        # Best-effort close of whatever this swap replaced -- including the
+        # very first swap, where `stale_loop` is still `None` (there is no
+        # previous loop to close it on). A dropped owned client must never
+        # simply leak (PR #629 Fix 1(b)): fall back to closing it on the
+        # loop that just replaced it, which is safe since we are executing
+        # inside that running loop right now. Scheduling the close outside
+        # the lock keeps the critical section itself minimal.
+        self._schedule_stale_client_close(
+            stale_client, stale_loop if stale_loop is not None else loop
+        )
+        return active_client
 
     @staticmethod
     def _schedule_stale_client_close(

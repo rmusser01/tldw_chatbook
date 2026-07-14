@@ -197,15 +197,26 @@ class _StreamingModelAdapter:
     chunk is always accounted for, while still stopping the stream promptly
     (no more chunks are pulled once cancellation is observed) and letting the
     loop's own boundary check catch the cancellation on the next poll.
+
+    ``chat_call`` bridges into async gateway code via the single event
+    ``loop`` passed in at construction — created once by
+    ``ConsoleAgentBridge.run_reply`` and reused for every turn of that run
+    (the tool-call turn(s), any sub-agent turns, and the final-answer turn),
+    rather than a fresh ``asyncio.run()`` per turn (PR #629 Fix 1(c)). A
+    fresh loop per turn meant a fresh loop identity on every single
+    ``chat_call``, which forced the gateway's owned ``httpx.AsyncClient`` to
+    swap (see ``ConsoleProviderGateway._active_http_client``) once per turn
+    instead of at most once per run.
     """
 
     def __init__(self, *, store, provider_gateway, resolution, assistant_message_id,
-                 should_cancel):
+                 should_cancel, loop):
         self._store = store
         self._gateway = provider_gateway
         self._resolution = resolution
         self._assistant_message_id = assistant_message_id
         self._should_cancel = should_cancel
+        self._loop = loop
 
     def chat_call(self, *, messages_payload, model=None, api_endpoint=None,
                   streaming=False, **_ignored) -> dict:
@@ -227,9 +238,12 @@ class _StreamingModelAdapter:
                 self._store.append_stream_chunk(self._assistant_message_id, tail)
                 any_streamed = True
 
-        # The service runs on a worker thread with no running loop → asyncio.run
-        # is safe (same pattern as BuiltinToolProvider bridging async tools).
-        asyncio.run(_consume())
+        # The service runs on a worker thread with no running loop of its
+        # own, so `run_until_complete` on this run's shared loop is safe
+        # here (the loop is never touched concurrently — every chat_call
+        # for this run_reply happens synchronously, one at a time, on this
+        # same thread; see ConsoleAgentBridge.run_reply).
+        self._loop.run_until_complete(_consume())
         if any_streamed and not is_subagent:
             # Finding A: this turn leaked prose to the store before it was
             # known to be a tool call (a well-behaved fence-first tool call
@@ -282,9 +296,20 @@ class ConsoleAgentBridge:
             system_prompt=compose_agent_system_prompt(session_system_prompt),
             allowed_tools=self._allowed_tools,
             budget=RunBudget())
+        # One event loop for the whole run (PR #629 Fix 1(c)): every turn
+        # this run makes -- primary tool-call turns, any sub-agent turns,
+        # and the final-answer turn -- bridges through this same loop via
+        # `_StreamingModelAdapter.chat_call`'s `run_until_complete`, instead
+        # of each turn spinning up (and tearing down) its own loop via
+        # `asyncio.run()`. That per-turn churn forced a client swap on the
+        # gateway's owned httpx client every single turn (see
+        # `ConsoleProviderGateway._active_http_client`); reusing one loop
+        # for the whole run means at most one swap per run.
+        run_loop = asyncio.new_event_loop()
         adapter = _StreamingModelAdapter(
             store=self._store, provider_gateway=self._gateway, resolution=resolution,
-            assistant_message_id=assistant_message_id, should_cancel=should_cancel)
+            assistant_message_id=assistant_message_id, should_cancel=should_cancel,
+            loop=run_loop)
 
         live_steps: list[AgentLiveStep] = []
         subagents: list[SubAgentSummary] = []
@@ -319,10 +344,13 @@ class ConsoleAgentBridge:
 
         supersede_run_id = (
             self._previous_primary_run_id(conversation_id) if supersede_previous else None)
-        _run_id, outcome = service.run_turn(
-            conversation_id=conversation_id, messages=agent_messages, config=config,
-            api_endpoint=str(getattr(resolution, "provider", "") or "agent"),
-            should_cancel=should_cancel, supersede_run_id=supersede_run_id)
+        try:
+            _run_id, outcome = service.run_turn(
+                conversation_id=conversation_id, messages=agent_messages, config=config,
+                api_endpoint=str(getattr(resolution, "provider", "") or "agent"),
+                should_cancel=should_cancel, supersede_run_id=supersede_run_id)
+        finally:
+            run_loop.close()
         self._live[conversation_id] = AgentLiveSnapshot(
             status=outcome.status, step=len(live_steps),
             steps=tuple(live_steps[-5:]), subagents=tuple(subagents))

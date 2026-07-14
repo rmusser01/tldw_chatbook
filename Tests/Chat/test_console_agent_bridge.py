@@ -1,4 +1,5 @@
 """Console agent bridge: streaming, markers, spawn, supersede (fakes only)."""
+import asyncio
 import json
 
 import pytest
@@ -104,6 +105,48 @@ def test_leaked_prose_before_disobedient_fence_is_reset_not_garbled(tmp_path):
     assert outcome.status == "done"
     assert outcome.final_text == "42."
     assert store.get_message(aid).content == "42."
+
+
+def test_multi_turn_run_reuses_one_event_loop_across_chat_call_turns(tmp_path):
+    """PR #629 Fix 1(c) (Gemini HIGH x2 + Qodo-8): ``_StreamingModelAdapter.
+    chat_call`` used to bridge every turn via its own ``asyncio.run()`` --
+    a fresh loop per turn, and therefore (per the gateway's per-loop
+    ``_active_http_client`` swap) a client swap/churn on every single turn
+    of a run. ``run_reply`` must create ONE event loop per invocation and
+    reuse it for every turn -- the tool-call turn and the final-answer turn
+    here -- so at most one swap happens per run."""
+    scripts = [
+        [_fence("calculator", {"expression": "6*7"})],   # turn 1: tool call
+        ["It is ", "42."],                                # turn 2: final answer
+    ]
+    seen_loops = []
+
+    class _LoopSpyGateway(_ChunkGateway):
+        async def stream_chat(self, resolution, messages):
+            seen_loops.append(asyncio.get_running_loop())
+            async for chunk in super().stream_chat(resolution, messages):
+                yield chunk
+
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=_LoopSpyGateway(scripts))
+    outcome = _run(bridge, store, session, assistant.id)
+
+    assert outcome.status == "done"
+    assert len(seen_loops) == 2, "both turns of this run must reach the gateway"
+    assert seen_loops[0] is seen_loops[1], (
+        "every turn of one run_reply invocation must share the same event "
+        "loop -- a fresh loop per turn is exactly the per-turn churn Fix "
+        "1(c) removes"
+    )
+    assert seen_loops[0].is_closed(), (
+        "the run's shared loop must be closed once run_reply returns"
+    )
 
 
 def test_spawn_renders_marker_and_persists_linked_subagent(tmp_path):
