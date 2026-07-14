@@ -2220,6 +2220,8 @@ UPDATE db_schema_version
    AND version = 17;
 """
 
+    # Keep this runner SQL aligned with
+    # tldw_chatbook/DB/migrations/chachanotes_v19_to_v20_conversation_metadata.sql.
     _MIGRATE_V19_TO_V20_SQL = """
 DROP TRIGGER IF EXISTS conversations_sync_create;
 DROP TRIGGER IF EXISTS conversations_sync_update;
