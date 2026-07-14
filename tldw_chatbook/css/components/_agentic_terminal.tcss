@@ -374,6 +374,67 @@ ConsolePromptPickerModal {
     color: $ds-text-muted;
 }
 
+ConsoleSkillPickerModal {
+    align: center middle;
+}
+
+#console-skill-picker-modal {
+    width: 76;
+    max-width: 95%;
+    height: auto;
+    max-height: 85%;
+    border: round $ds-grid-line;
+    background: $ds-surface-panel;
+    padding: 1 2;
+}
+
+#console-skill-picker-filter {
+    height: 3;
+    min-height: 3;
+    margin: 0 0 1 0;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#console-skill-picker-filter:focus {
+    border: tall $ds-input-focus-accent;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+}
+
+#console-skill-picker-results {
+    height: auto;
+    max-height: 20;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size: 1 1;
+}
+
+.console-skill-picker-row {
+    width: 100%;
+    height: auto;
+    min-height: 3;
+    margin: 0 0 1 0;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+.console-skill-picker-row-highlighted {
+    border: tall $ds-action-focus;
+    background: $ds-input-focus-bg;
+    text-style: bold;
+}
+
+#console-skill-picker-empty {
+    height: auto;
+    margin: 1 0;
+    color: $ds-text-muted;
+}
+
 ConsoleSystemPromptModal {
     align: center middle;
 }
