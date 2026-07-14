@@ -2110,3 +2110,34 @@ class TestDictionaryImport:
                 "open Dictionaries" in message and severity == "information"
                 for message, severity in notifications
             )
+
+
+class TestDictionaryAttachmentsTab:
+    async def _select_first(self, pilot, screen):
+        rows = screen.query_one("#personas-library-rows", ListView)
+        rows.index = 0
+        rows.action_select_cursor()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+    async def test_empty_state_when_unattached(self, mock_app_instance, stub_characters, fake_dict_service):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            empty = screen.query_one("#personas-dict-attachments-empty", Static)
+            assert "Not attached" in str(empty.renderable)
+
+    async def test_load_attachments_renders_rows(self, mock_app_instance, stub_characters, fake_dict_service):
+        from textual.widgets import DataTable
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            detail = screen.query_one("#personas-dictionary-detail")
+            detail.load_attachments([{"conversation_id": "c1", "title": "Noir case"}])
+            await pilot.pause()
+            table = screen.query_one("#personas-dict-attachments-table", DataTable)
+            assert table.row_count == 1
+            assert "Noir case" in str(table.get_cell_at((0, 0)))
