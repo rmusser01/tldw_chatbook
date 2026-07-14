@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 from loguru import logger
@@ -15,6 +16,7 @@ from textual.widgets import ContentSwitcher, Static
 from textual.worker import Worker
 
 from tldw_chatbook.config import get_cli_setting
+from tldw_chatbook.MCP.mcp_import import ImportCandidate
 from tldw_chatbook.MCP.readiness import (
     HubAction,
     ReadinessSnapshot,
@@ -25,7 +27,7 @@ from tldw_chatbook.MCP.readiness import (
 )
 from tldw_chatbook.MCP.redaction import redact_args, redact_mapping
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
-from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPProfileForm
+from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel, MCPProfileForm
 from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCPRail
 from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
 
@@ -97,6 +99,31 @@ _LIFECYCLE_PAST_TENSE: dict[str, str] = {
     "refresh": "refreshed",
     "disconnect": "disconnected",
 }
+
+
+def _import_summary(succeeded: list[str], failed: list[tuple[str, str]]) -> str:
+    """One notify-ready sentence covering a whole import batch.
+
+    Every candidate is attempted regardless of an earlier failure (T8: "a
+    failing save produces the summary notify without aborting the rest") --
+    this renders whatever mix of successes/failures resulted into a single
+    toast instead of one per candidate.
+    """
+    parts: list[str] = []
+    if succeeded:
+        parts.append(f"Imported {len(succeeded)}: {', '.join(succeeded)}.")
+    if failed:
+        failed_desc = ", ".join(f"{profile_id} ({error})" for profile_id, error in failed)
+        parts.append(f"Failed {len(failed)}: {failed_desc}.")
+    return " ".join(parts) if parts else "Nothing to import."
+
+
+def _import_severity(succeeded: list[str], failed: list[tuple[str, str]]) -> str:
+    if failed and not succeeded:
+        return "error"
+    if failed:
+        return "warning"
+    return "information"
 
 
 def _redact_external_server_record(record: Any) -> Any:
@@ -243,6 +270,12 @@ class MCPWorkbench(Container):
         # every submit through `run_worker(..., exclusive=True)` let a second
         # click CANCEL the in-flight save mid-write.
         self._profile_save_in_flight: bool = False
+        # T8: True while an mcpServers-import apply worker is in flight. Same
+        # synchronous-registration guard as `_profile_save_in_flight`: set
+        # before the worker is dispatched, cleared in its `finally`, so a
+        # second Import click during a slow batch can't dispatch a second
+        # overlapping apply worker.
+        self._profile_import_in_flight: bool = False
         # T7: True while a profile-delete worker is in flight. Same
         # synchronous-registration guard as `_profile_save_in_flight` above:
         # set before the worker is dispatched, cleared in its `finally`, so
@@ -688,6 +721,15 @@ class MCPWorkbench(Container):
         event.stop()
         await self.query_one(MCPServersMode).show_form(None)
 
+    async def on_mcp_servers_mode_import_servers_requested(
+        self, event: MCPServersMode.ImportServersRequested
+    ) -> None:
+        event.stop()
+        # T8: existing catalog ids drive the panel's overwrite warnings --
+        # `_catalog_records` is kept in sync with `_snapshots` by
+        # `_collect_snapshots()` (Task 6).
+        await self.query_one(MCPServersMode).show_import(set(self._catalog_records))
+
     async def on_mcp_servers_mode_disconnect_requested(
         self, event: MCPServersMode.DisconnectRequested
     ) -> None:
@@ -817,6 +859,97 @@ class MCPWorkbench(Container):
     async def on_mcp_profile_form_cancelled(self, event: MCPProfileForm.Cancelled) -> None:
         event.stop()
         await self.query_one(MCPServersMode).hide_form()
+
+    # -- T8: mcpServers import (paste or file) ---------------------------------
+
+    def _import_panel_or_none(self) -> MCPImportPanel | None:
+        try:
+            return self.query_one(MCPImportPanel)
+        except Exception:
+            return None
+
+    async def on_mcp_import_panel_file_requested(
+        self, event: MCPImportPanel.FileRequested
+    ) -> None:
+        event.stop()
+        from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
+
+        def on_file_selected(file_path: Any) -> None:
+            if file_path:
+                self.run_worker(
+                    self._load_import_file(str(file_path)),
+                    group="mcp-import-file",
+                    exclusive=True,
+                )
+
+        await self.app.push_screen(
+            EnhancedFileOpen(
+                location=".",
+                title="Select MCP config JSON",
+                filters=Filters(("JSON", lambda p: p.suffix.lower() == ".json")),
+                context="mcp_import",
+            ),
+            callback=on_file_selected,
+        )
+
+    async def _load_import_file(self, file_path: str) -> None:
+        try:
+            text = await asyncio.to_thread(Path(file_path).read_text, encoding="utf-8")
+        except OSError as exc:
+            self.app.notify(f"Could not read {file_path}: {exc}", severity="error")
+            return
+        panel = self._import_panel_or_none()
+        if panel is not None:
+            panel.set_file_text(text)
+
+    async def on_mcp_import_panel_cancelled(self, event: MCPImportPanel.Cancelled) -> None:
+        event.stop()
+        await self.query_one(MCPServersMode).hide_form()
+
+    def on_mcp_import_panel_import_requested(
+        self, event: MCPImportPanel.ImportRequested
+    ) -> None:
+        """Dispatch a batch of candidate saves in the background.
+
+        Synchronous (not `async def`), mirroring
+        `on_mcp_profile_form_submit_requested()`: `_profile_import_in_flight`
+        is set here, before dispatch, so a second Import press arriving in
+        the same pump window is reliably swallowed with a warning toast
+        instead of racing the in-flight batch.
+        """
+        event.stop()
+        if self._profile_import_in_flight:
+            self.app.notify("Import already running.", severity="warning")
+            return
+        self._profile_import_in_flight = True
+        self.run_worker(
+            self._apply_import(list(event.candidates)),
+            group="mcp-profile-import",
+            exclusive=True,
+        )
+
+    async def _apply_import(self, candidates: list[ImportCandidate]) -> None:
+        try:
+            service = self._service()
+            if service is None:
+                return
+            succeeded: list[str] = []
+            failed: list[tuple[str, str]] = []
+            for candidate in candidates:
+                try:
+                    await service.save_local_profile(candidate.to_payload())
+                except Exception as exc:
+                    logger.warning(f"MCP import failed for {candidate.profile_id}: {exc}")
+                    failed.append((candidate.profile_id, str(exc)))
+                else:
+                    succeeded.append(candidate.profile_id)
+            self.app.notify(_import_summary(succeeded, failed), severity=_import_severity(succeeded, failed))
+            canvas = self.query_one(MCPServersMode)
+            await canvas.hide_form()
+            self._snapshots = await self._collect_snapshots()
+            await self._sync_children()
+        finally:
+            self._profile_import_in_flight = False
 
     def on_mcp_inspector_cancel_requested(self, event: MCPInspector.CancelRequested) -> None:
         """Cancel an in-flight lifecycle worker.

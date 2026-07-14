@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import replace
+from pathlib import Path
+from typing import Any
 
 import pytest
 from textual.app import App, ComposeResult
@@ -10,7 +13,7 @@ from textual.widgets import Button, ContentSwitcher, Input, Select, Static, Text
 
 from tldw_chatbook.MCP.unified_control_models import UnifiedMCPContext
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
-from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPProfileForm
+from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel, MCPProfileForm
 from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCP_RAIL_ROW_PREFIX, MCPRail
 from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
 from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCP_HUB_MODES, MCPWorkbench
@@ -1178,3 +1181,243 @@ async def test_delete_confirmed_ignores_non_local_server_key():
         await pilot.pause()
         await app.workers.wait_for_complete()
         assert app.unified_mcp_service.delete_calls == []
+
+
+# -- T8: mcpServers import (paste or file) -----------------------------------
+
+
+class ImportHubService(FakeHubService):
+    """Like `FakeHubService`, but wires `save_local_profile()` per-id so a
+    test can make one candidate in a batch fail while the rest succeed
+    (`fail_ids`), and actually grows its catalog on success -- mirrors
+    `ProfileFormHubService` -- so the post-apply reload has something new to
+    show. Seeds one "docs" profile, which doubles as the existing-id fixture
+    for the overwrite-warning path.
+    """
+
+    def __init__(self, *, fail_ids: set[str] | None = None) -> None:
+        super().__init__()
+        self.save_calls: list[dict] = []
+        self._fail_ids = set(fail_ids or ())
+        self._records: list[dict] = [
+            {
+                "profile_id": "docs",
+                "command": "python",
+                "args": [],
+                "env_placeholders": {},
+                "env_literals": {},
+                "discovery_snapshot": {"tools": [{"name": "a"}], "resources": [], "prompts": []},
+                "is_connected": True,
+            }
+        ]
+
+    async def load_section(self, section=None):
+        effective_section = section or self.context.selected_section or "overview"
+        if self.context.selected_source == "local":
+            if effective_section == "external_servers":
+                return list(self._records)
+            return {"source": "local", "section": effective_section}
+        return {"external_servers": [], "source": "server", "section": "external_servers"}
+
+    async def local_external_catalog(self):
+        return list(self._records)
+
+    async def save_local_profile(self, payload):
+        self.save_calls.append(dict(payload))
+        if payload.get("profile_id") in self._fail_ids:
+            raise ValueError(f"{payload.get('profile_id')}: cannot be saved")
+        self._records = [
+            r for r in self._records if r.get("profile_id") != payload.get("profile_id")
+        ] + [dict(payload)]
+        return dict(payload)
+
+
+class ImportApp(App):
+    def __init__(self, *, fail_ids: set[str] | None = None) -> None:
+        super().__init__()
+        self.unified_mcp_service = ImportHubService(fail_ids=fail_ids)
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+@pytest.mark.asyncio
+async def test_import_paste_preview_apply_calls_save_per_candidate_and_closes_panel():
+    app = ImportApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        notifications = _capture_notifications(app)
+        await pilot.click("#mcp-import-server")
+        await pilot.pause()
+        assert app.query_one("#mcp-servers-form").display
+        assert not app.query_one("#mcp-servers-overview").display
+
+        text = json.dumps({"mcpServers": {"web": {"command": "npx", "args": ["-y", "pkg"]}}})
+        app.query_one("#mcp-import-text", TextArea).text = text
+        await pilot.click("#mcp-import-preview")
+        await pilot.pause()
+        assert not app.query_one("#mcp-import-apply", Button).disabled
+
+        await pilot.click("#mcp-import-apply")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert app.unified_mcp_service.save_calls == [
+            {"profile_id": "web", "command": "npx", "args": ["-y", "pkg"],
+             "env_placeholders": {}, "env_literals": {}}
+        ]
+        assert not app.query_one("#mcp-servers-form").display
+        assert app.query_one("#mcp-servers-overview").display
+        assert any("web" in msg for msg, _ in notifications)
+        workbench = app.query_one(MCPWorkbench)
+        keys = {snap.server_key for snap in workbench._snapshots}
+        assert "local:web" in keys
+
+
+@pytest.mark.asyncio
+async def test_import_apply_existing_id_warns_and_overwrites():
+    """The seeded "docs" profile (from FakeHubService.load_section) is the
+    existing-id fixture: previewing an import that reuses "docs" must both
+    warn in the panel and still go through save_local_profile (overwrite).
+    """
+    app = ImportApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.click("#mcp-import-server")
+        await pilot.pause()
+        text = json.dumps({"mcpServers": {"docs": {"command": "python3"}}})
+        app.query_one("#mcp-import-text", TextArea).text = text
+        await pilot.click("#mcp-import-preview")
+        await pilot.pause()
+        body = str(app.query_one("#mcp-import-list Static").renderable)
+        assert "overwrite" in body
+
+        await pilot.click("#mcp-import-apply")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert app.unified_mcp_service.save_calls == [
+            {"profile_id": "docs", "command": "python3", "args": [],
+             "env_placeholders": {}, "env_literals": {}}
+        ]
+
+
+@pytest.mark.asyncio
+async def test_import_apply_failure_produces_summary_notify_without_aborting_rest():
+    app = ImportApp(fail_ids={"bad"})
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        notifications = _capture_notifications(app)
+        await pilot.click("#mcp-import-server")
+        await pilot.pause()
+        text = json.dumps({"mcpServers": {
+            "good": {"command": "npx"},
+            "bad": {"command": "npx"},
+        }})
+        app.query_one("#mcp-import-text", TextArea).text = text
+        await pilot.click("#mcp-import-preview")
+        await pilot.pause()
+
+        await pilot.click("#mcp-import-apply")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        # Both candidates were attempted -- the failure of one did not abort
+        # the batch.
+        attempted_ids = {call["profile_id"] for call in app.unified_mcp_service.save_calls}
+        assert attempted_ids == {"good", "bad"}
+
+        summary = [msg for msg, severity in notifications if "good" in msg or "bad" in msg]
+        assert summary, f"expected a combined summary notify, got: {notifications!r}"
+        assert any("good" in msg and "bad" in msg for msg in summary), (
+            f"expected one summary covering both outcomes, got: {summary!r}"
+        )
+        # Reload picked up the surviving success.
+        workbench = app.query_one(MCPWorkbench)
+        keys = {snap.server_key for snap in workbench._snapshots}
+        assert "local:good" in keys
+        assert "local:bad" not in keys
+
+
+@pytest.mark.asyncio
+async def test_import_double_apply_dispatches_exactly_one_batch():
+    app = ImportApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        notifications = _capture_notifications(app)
+        await pilot.click("#mcp-import-server")
+        await pilot.pause()
+        text = json.dumps({"mcpServers": {"web": {"command": "npx"}}})
+        app.query_one("#mcp-import-text", TextArea).text = text
+        await pilot.click("#mcp-import-preview")
+        await pilot.pause()
+
+        workbench = app.query_one(MCPWorkbench)
+        panel = app.query_one(MCPImportPanel)
+        workbench.on_mcp_import_panel_import_requested(
+            MCPImportPanel.ImportRequested(list(panel._candidates))
+        )
+        workbench.on_mcp_import_panel_import_requested(
+            MCPImportPanel.ImportRequested(list(panel._candidates))
+        )
+        await pilot.pause()
+        assert any(
+            "already running" in msg.lower() and severity == "warning"
+            for msg, severity in notifications
+        ), f"second apply must toast a warning, got: {notifications!r}"
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert len(app.unified_mcp_service.save_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_import_cancel_closes_panel_without_saving():
+    app = ImportApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.click("#mcp-import-server")
+        await pilot.pause()
+        await pilot.click("#mcp-import-cancel")
+        await pilot.pause()
+        assert not app.query_one("#mcp-servers-form").display
+        assert app.query_one("#mcp-servers-overview").display
+        assert app.unified_mcp_service.save_calls == []
+
+
+@pytest.mark.asyncio
+async def test_file_requested_pushes_picker_and_loads_selected_file_into_panel(tmp_path):
+    """Workbench's FileRequested handler pushes EnhancedFileOpen filtered to
+    JSON and, once a file is picked, writes its text into the panel's
+    TextArea (Interfaces: "workbench pushes EnhancedFileOpen(...) and writes
+    the file's text into the TextArea")."""
+    app = ImportApp()
+    config_path = tmp_path / "mcp.json"
+    config_path.write_text(json.dumps({"mcpServers": {"docs": {"command": "npx"}}}))
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.click("#mcp-import-server")
+        await pilot.pause()
+
+        pushed: dict[str, Any] = {}
+
+        async def fake_push_screen(screen, callback=None):
+            pushed["screen"] = screen
+            pushed["title"] = getattr(screen, "title", None)
+            if callback is not None:
+                callback(config_path)
+
+        app.push_screen = fake_push_screen
+
+        panel = app.query_one(MCPImportPanel)
+        panel.post_message(MCPImportPanel.FileRequested())
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert pushed, "expected a file picker to be pushed"
+        assert app.query_one("#mcp-import-text", TextArea).text.strip() == (
+            config_path.read_text().strip()
+        )

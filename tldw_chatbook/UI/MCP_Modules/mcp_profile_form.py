@@ -11,6 +11,8 @@ from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import Button, Input, Static, TextArea
 
+from tldw_chatbook.MCP.mcp_import import ImportCandidate, parse_mcp_servers_json
+
 _ENV_LINE_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
 # Balanced forms only: $VAR or ${VAR}. Unbalanced values ($VAR} / ${VAR)
 # deliberately fall through to the literals path, where the store's own
@@ -135,5 +137,119 @@ class MCPProfileForm(Vertical):
             event.button.disabled = True
             self.post_message(self.SubmitRequested(payload))
         elif event.button.id == "mcp-form-cancel":
+            event.stop()
+            self.post_message(self.Cancelled())
+
+
+class MCPImportPanel(Vertical):
+    """Paste-or-file import of Claude-Desktop-style `mcpServers` JSON.
+
+    Mirrors `MCPProfileForm`'s state-driven-button/single-error-Static
+    structure: Preview parses the pasted/loaded text into candidates (one
+    plain-text Static per candidate under `#mcp-import-list`, `markup=False`
+    so a hostile server name/command can't inject Rich markup -- same
+    defense as the overview table in mcp_servers_mode.py), and only a
+    successful preview arms Import.
+    """
+
+    DEFAULT_CSS = """
+    MCPImportPanel { height: auto; min-height: 0; }
+    #mcp-import-text { height: 8; min-height: 4; }
+    """
+
+    class FileRequested(Message, namespace="mcp_import_panel"):
+        pass
+
+    class ImportRequested(Message, namespace="mcp_import_panel"):
+        def __init__(self, candidates: list[ImportCandidate]) -> None:
+            super().__init__()
+            self.candidates = candidates
+
+    class Cancelled(Message, namespace="mcp_import_panel"):
+        pass
+
+    def __init__(self, *, existing_ids: set[str] | None = None, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._existing_ids = set(existing_ids or ())
+        self._candidates: list[ImportCandidate] = []
+
+    def compose(self) -> ComposeResult:
+        yield Static("Import from mcpServers JSON", classes="destination-section", markup=False)
+        yield Static(
+            "Paste a Claude-Desktop-style {\"mcpServers\": ...} config, or load one from a "
+            "file. Secret-shaped values are never imported as literals -- they become "
+            "placeholders you export before connecting.",
+            classes="ds-field-row", markup=False,
+        )
+        yield TextArea("", id="mcp-import-text")
+        with Horizontal(classes="ds-toolbar"):
+            yield Button("From file…", id="mcp-import-file", classes="console-action-secondary",
+                         compact=True, tooltip="Load mcpServers JSON from a file.")
+            yield Button("Preview", id="mcp-import-preview", classes="console-action-secondary",
+                         compact=True, tooltip="Parse the text and preview the servers it would import.")
+        yield Static("", id="mcp-import-error", classes="ds-field-row", markup=False)
+        yield Vertical(id="mcp-import-list")
+        with Horizontal(classes="ds-toolbar"):
+            apply_button = Button(
+                "Import 0 servers", id="mcp-import-apply", classes="console-action-primary",
+                compact=True, tooltip="Save every previewed candidate as a local profile.",
+            )
+            apply_button.disabled = True
+            yield apply_button
+            yield Button("Cancel", id="mcp-import-cancel", classes="console-action-secondary",
+                         compact=True, tooltip="Discard and close.")
+
+    def set_file_text(self, text: str) -> None:
+        """Populate the paste area from a file the workbench just read."""
+        self.query_one("#mcp-import-text", TextArea).text = text
+
+    async def _preview(self) -> None:
+        text = self.query_one("#mcp-import-text", TextArea).text
+        error = self.query_one("#mcp-import-error", Static)
+        apply_button = self.query_one("#mcp-import-apply", Button)
+        try:
+            candidates = parse_mcp_servers_json(text, existing_ids=self._existing_ids)
+        except ValueError as exc:
+            self._candidates = []
+            error.update(str(exc))
+            apply_button.disabled = True
+            await self._render_candidates()
+            return
+        self._candidates = candidates
+        error.update("")
+        noun = "server" if len(candidates) == 1 else "servers"
+        apply_button.label = f"Import {len(candidates)} {noun}"
+        apply_button.disabled = False
+        await self._render_candidates()
+
+    async def _render_candidates(self) -> None:
+        container = self.query_one("#mcp-import-list", Vertical)
+        await container.remove_children()
+        widgets: list[Static] = []
+        for candidate in self._candidates:
+            lines = [f"{candidate.profile_id} — {candidate.command}"]
+            lines.extend(f"  {warning}" for warning in candidate.warnings)
+            widgets.append(Static("\n".join(lines), classes="ds-field-row", markup=False))
+        if widgets:
+            await container.mount_all(widgets)
+
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        button_id = event.button.id or ""
+        if button_id == "mcp-import-file":
+            event.stop()
+            self.post_message(self.FileRequested())
+        elif button_id == "mcp-import-preview":
+            event.stop()
+            await self._preview()
+        elif button_id == "mcp-import-apply":
+            event.stop()
+            if not self._candidates:
+                return
+            # State-driven, same discipline as MCPProfileForm's Save: disable
+            # so a real second click can't post another ImportRequested --
+            # the workbench's own in-flight guard is the authoritative dedupe.
+            event.button.disabled = True
+            self.post_message(self.ImportRequested(list(self._candidates)))
+        elif button_id == "mcp-import-cancel":
             event.stop()
             self.post_message(self.Cancelled())

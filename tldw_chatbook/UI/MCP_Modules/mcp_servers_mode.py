@@ -19,7 +19,7 @@ from tldw_chatbook.MCP.readiness import (
 )
 from tldw_chatbook.MCP.redaction import redact_args, redact_url
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
-from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPProfileForm
+from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel, MCPProfileForm
 
 _TABLE_COLUMNS = ("Name", "Transport", "Status", "Tools", "Auth", "Scope")
 
@@ -53,6 +53,9 @@ class MCPServersMode(Vertical):
             self.server_key = server_key
 
     class AddServerRequested(Message, namespace="mcp_servers_mode"):
+        pass
+
+    class ImportServersRequested(Message, namespace="mcp_servers_mode"):
         pass
 
     class DisconnectRequested(Message, namespace="mcp_servers_mode"):
@@ -91,13 +94,21 @@ class MCPServersMode(Vertical):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="mcp-servers-overview"):
-            yield Button(
-                "Add server",
-                id="mcp-add-server",
-                classes="console-action-primary",
-                compact=True,
-                tooltip="Create a new local stdio server profile.",
-            )
+            with Horizontal(classes="ds-toolbar"):
+                yield Button(
+                    "Add server",
+                    id="mcp-add-server",
+                    classes="console-action-primary",
+                    compact=True,
+                    tooltip="Create a new local stdio server profile.",
+                )
+                yield Button(
+                    "Import…",
+                    id="mcp-import-server",
+                    classes="console-action-secondary",
+                    compact=True,
+                    tooltip="Import servers from a Claude-Desktop-style mcpServers JSON file or paste.",
+                )
             yield Static("", id="mcp-overview-summary", classes="ds-status-badge", markup=False)
             table = DataTable(id="mcp-servers-table")
             table.cursor_type = "row"
@@ -142,6 +153,20 @@ class MCPServersMode(Vertical):
         await form_container.remove_children()
         form_container.display = False
         self._show_overview_container(self._detail_snapshot is None)
+
+    async def show_import(self, existing_ids: set[str] | None = None) -> None:
+        """Show the mcpServers import panel, hiding overview and detail while it is up.
+
+        Hosted in the same `#mcp-servers-form` container as `show_form()`'s
+        add/edit form -- Servers mode only ever has one of overview/detail/
+        form/import visible at a time, so `hide_form()` also closes this.
+        """
+        self.query_one("#mcp-servers-overview").display = False
+        self.query_one("#mcp-servers-detail").display = False
+        form_container = self.query_one("#mcp-servers-form", Vertical)
+        await form_container.remove_children()
+        await form_container.mount(MCPImportPanel(existing_ids=existing_ids))
+        form_container.display = True
 
     async def update_overview(self, snapshots: list[ReadinessSnapshot]) -> None:
         """Rebuild the overview table, summary, and recovery callouts.
@@ -391,6 +416,10 @@ class MCPServersMode(Vertical):
         if button_id == "mcp-add-server":
             event.stop()
             self.post_message(self.AddServerRequested())
+            return
+        if button_id == "mcp-import-server":
+            event.stop()
+            self.post_message(self.ImportServersRequested())
             return
         if button_id == "mcp-detail-copy-snippet":
             event.stop()

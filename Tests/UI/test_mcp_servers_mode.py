@@ -13,6 +13,7 @@ from tldw_chatbook.MCP.readiness import (
     builtin_readiness,
 )
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
+from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel
 from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
 
 
@@ -41,6 +42,12 @@ class CanvasApp(App):
         self.events.append(event)
 
     def on_mcp_inspector_hub_action_requested(self, event) -> None:
+        self.events.append(event)
+
+    def on_mcp_servers_mode_add_server_requested(self, event) -> None:
+        self.events.append(event)
+
+    def on_mcp_servers_mode_import_servers_requested(self, event) -> None:
         self.events.append(event)
 
 
@@ -432,3 +439,43 @@ async def test_every_detail_toolbar_button_has_a_tooltip():
         for button_id in ("#mcp-detail-delete-confirm", "#mcp-detail-delete-cancel"):
             button = app.query_one(button_id)
             assert button.tooltip, f"{button_id} missing a tooltip"
+
+
+# -- T8: mcpServers import button + show_import() hosting --------------------
+
+
+@pytest.mark.asyncio
+async def test_import_button_posts_import_servers_requested():
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        await pilot.click("#mcp-import-server")
+        await pilot.pause()
+        posted = [e for e in app.events if isinstance(e, MCPServersMode.ImportServersRequested)]
+        assert posted
+
+
+@pytest.mark.asyncio
+async def test_show_import_hides_overview_and_mounts_panel():
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.show_import({"docs"})
+        await pilot.pause()
+        assert not app.query_one("#mcp-servers-overview").display
+        assert app.query_one("#mcp-servers-form").display
+        panel = app.query_one(MCPImportPanel)
+        assert panel._existing_ids == {"docs"}
+
+
+@pytest.mark.asyncio
+async def test_hide_form_closes_import_panel_and_restores_overview():
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.show_import(set())
+        await pilot.pause()
+        await canvas.hide_form()
+        await pilot.pause()
+        assert not list(app.query(MCPImportPanel))
+        assert app.query_one("#mcp-servers-overview").display
+        assert not app.query_one("#mcp-servers-form").display
