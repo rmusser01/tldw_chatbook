@@ -235,27 +235,51 @@ class FakeDictScopeService:
         tokens_used = 0
         budget_exceeded = False
         applied_order = 0
-        for stored_index, entry in enumerate(record["entries"]):
-            pattern = entry.get("pattern") or ""
-            if entry.get("type") == "regex" or not pattern or pattern not in text:
-                continue  # never-matched entries are omitted (real shape)
-            token_cost = len((entry.get("replacement") or "").split())
-            base = {
+
+        def _base(stored_index: int, pattern: str, entry: dict) -> dict:
+            return {
                 "input_index": stored_index,
                 "pattern": pattern,
                 "replacements": 0,
-                "token_cost": token_cost,
+                "token_cost": len((entry.get("replacement") or "").split()),
                 "applied_order": None,
                 "content_preview": (entry.get("replacement") or "")[:40],
                 "entry_id": f"local:chat_dictionary_entry:{record['id']}:{stored_index}",
             }
+
+        # Priority order (higher first), ties broken by original stored
+        # index — mirrors the real engine's within-scope priority sort.
+        ordered = sorted(
+            enumerate(record["entries"]),
+            key=lambda pair: (-int(pair[1].get("priority") or 0), pair[0]),
+        )
+        # Never-matched entries are omitted from diagnostics entirely (real shape).
+        candidates = [
+            (stored_index, entry, entry.get("pattern") or "")
+            for stored_index, entry in ordered
+            if entry.get("type") != "regex"
+            and (entry.get("pattern") or "")
+            and (entry.get("pattern") or "") in text
+        ]
+        for i, (stored_index, entry, pattern) in enumerate(candidates):
+            base = _base(stored_index, pattern, entry)
+            token_cost = base["token_cost"]
+            if not entry.get("enabled", True):
+                diag_entries.append({**base, "status": "skipped:disabled"})
+                continue
             if float(entry.get("probability", 1.0)) == 0.0:
                 diag_entries.append({**base, "status": "skipped:probability"})
                 continue
             if tokens_used + token_cost > token_budget:
                 budget_exceeded = True
                 diag_entries.append({**base, "status": "skipped:token_budget"})
-                continue
+                # Walk-and-stop: everything after the first non-fitting
+                # candidate is unreachable too — mark the rest, then stop.
+                for r_index, r_entry, r_pattern in candidates[i + 1 :]:
+                    diag_entries.append(
+                        {**_base(r_index, r_pattern, r_entry), "status": "skipped:token_budget"}
+                    )
+                break
             tokens_used += token_cost
             count = processed.count(pattern)
             processed = processed.replace(pattern, entry.get("replacement") or "")
@@ -1277,3 +1301,82 @@ class TestDictionaryTryIt:
             # ...and the summary carries the honest unavailable note.
             summary = str(screen.query_one("#personas-dict-tryit-summary", Static).renderable)
             assert "diagnostics unavailable" in summary
+
+
+class TestDictionaryValidationPanel:
+    async def _select_first(self, pilot, screen):
+        rows = screen.query_one("#personas-library-rows", ListView)
+        rows.index = 0
+        rows.action_select_cursor()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+    async def test_findings_listed_and_jump_moves_cursor(self, mock_app_instance, stub_characters, fake_dict_service):
+        from textual.widgets import DataTable, OptionList
+
+        fake_dict_service.records[1]["entries"].append(
+            {"pattern": "BP", "replacement": "dup", "probability": 1.0, "group": None,
+             "timed_effects": None, "max_replacements": 1, "type": "literal",
+             "enabled": True, "case_sensitive": False, "priority": 0}
+        )
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            panel = screen.query_one("#personas-dict-validation", OptionList)
+            assert panel.option_count == 1  # the duplicate BP
+            panel.highlighted = 0
+            panel.action_select()
+            await pilot.pause()
+            table = screen.query_one("#personas-dict-entries-table", DataTable)
+            assert table.cursor_row == 2  # jumped to the duplicate (index 2)
+
+    async def test_panel_clears_on_clean_dictionary(self, mock_app_instance, stub_characters, fake_dict_service):
+        from textual.widgets import OptionList
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            assert screen.query_one("#personas-dict-validation", OptionList).option_count == 0
+
+    async def test_entries_tab_scrolls_buttons_reachable_when_short(self, mock_app_instance, stub_characters, fake_dict_service):
+        """AC5b geometry: at a height that can't fit the whole tab, the scroll
+        container exists and the button row is scrollable into view."""
+        from textual.containers import VerticalScroll
+        from textual.widgets import Button
+
+        app = StyledPersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 34)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            scroll = screen.query_one("#personas-dict-entries-scroll", VerticalScroll)
+            add = screen.query_one("#personas-dict-entry-add", Button)
+            add.scroll_visible(animate=False)
+            await pilot.pause()
+            region = add.region
+            assert region.height > 0 and region.width > 0  # rendered, reachable
+
+
+class TestTryItDisabledReason:
+    async def test_disabled_entry_renders_reason(self, mock_app_instance, stub_characters, fake_dict_service):
+        from textual.widgets import TextArea
+
+        fake_dict_service.records[1]["entries"][1]["enabled"] = False  # HR off
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            rows = screen.query_one("#personas-library-rows", ListView)
+            rows.index = 0
+            rows.action_select_cursor()
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            screen.query_one("#personas-dict-tryit-sample", TextArea).text = "BP and HR"
+            await pilot.click("#personas-dict-tryit-run")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            nearmiss = str(screen.query_one("#personas-dict-tryit-nearmiss", Static).renderable)
+            assert "HR" in nearmiss and "skipped: disabled" in nearmiss

@@ -4,15 +4,17 @@ from __future__ import annotations
 
 from typing import Any
 
+from loguru import logger
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.widgets import (
     Button,
     DataTable,
     Input,
+    OptionList,
     Select,
     Static,
     Switch,
@@ -20,6 +22,9 @@ from textual.widgets import (
     TabPane,
     TextArea,
 )
+from textual.widgets.option_list import Option
+
+from .personas_dictionary_validation import validate_entries
 
 STRATEGIES = ("sorted_evenly", "character_lore_first", "global_lore_first")
 
@@ -71,9 +76,12 @@ class PersonasDictionaryDetailWidget(Vertical):
         height: 1fr;
         min-height: 0;
     }
-    PersonasDictionaryDetailWidget #personas-dict-entries-table {
+    PersonasDictionaryDetailWidget #personas-dict-entries-scroll {
         height: 1fr;
-        min-height: 4;
+    }
+    PersonasDictionaryDetailWidget #personas-dict-entries-table {
+        min-height: 6;
+        max-height: 12;
     }
     PersonasDictionaryDetailWidget .personas-dict-form-row {
         height: auto;
@@ -85,6 +93,10 @@ class PersonasDictionaryDetailWidget(Vertical):
     PersonasDictionaryDetailWidget #personas-dict-entry-error,
     PersonasDictionaryDetailWidget #personas-dict-status {
         height: 1;
+    }
+    PersonasDictionaryDetailWidget #personas-dict-validation {
+        height: auto;
+        max-height: 5;
     }
     """
 
@@ -99,24 +111,26 @@ class PersonasDictionaryDetailWidget(Vertical):
     def compose(self) -> ComposeResult:
         with TabbedContent(id="personas-dict-tabs"):
             with TabPane("Entries", id="personas-dict-tab-entries"):
-                yield DataTable(id="personas-dict-entries-table", cursor_type="row")
-                yield Static("", id="personas-dict-entry-error", markup=False)
-                with Horizontal(classes="personas-dict-form-row"):
-                    yield Input(placeholder="Pattern", id="personas-dict-entry-pattern")
-                    yield Switch(value=False, id="personas-dict-entry-regex", tooltip="Regex pattern")
-                    yield Input(placeholder="Probability %", id="personas-dict-entry-probability", value="100")
-                    yield Input(placeholder="Group", id="personas-dict-entry-group")
-                    yield Input(placeholder="Max repl.", id="personas-dict-entry-max-repl", value="1")
-                    yield Switch(value=True, id="personas-dict-entry-enabled", tooltip="Entry enabled")
-                    yield Switch(value=False, id="personas-dict-entry-case", tooltip="Case-sensitive (literal keys)")
-                    yield Input(placeholder="Priority", id="personas-dict-entry-priority", value="0")
-                yield TextArea(id="personas-dict-entry-replacement")
-                with Horizontal(classes="personas-dict-form-row"):
-                    yield Button("Add", id="personas-dict-entry-add", classes="console-action-secondary")
-                    yield Button("Update", id="personas-dict-entry-update", classes="console-action-secondary")
-                    yield Button("Delete", id="personas-dict-entry-delete", classes="console-action-secondary")
-                    yield Button("Move up", id="personas-dict-entry-up", classes="console-action-secondary")
-                    yield Button("Move down", id="personas-dict-entry-down", classes="console-action-secondary")
+                with VerticalScroll(id="personas-dict-entries-scroll"):
+                    yield DataTable(id="personas-dict-entries-table", cursor_type="row")
+                    yield Static("", id="personas-dict-entry-error", markup=False)
+                    with Horizontal(classes="personas-dict-form-row"):
+                        yield Input(placeholder="Pattern", id="personas-dict-entry-pattern")
+                        yield Switch(value=False, id="personas-dict-entry-regex", tooltip="Regex pattern")
+                        yield Input(placeholder="Probability %", id="personas-dict-entry-probability", value="100")
+                        yield Input(placeholder="Group", id="personas-dict-entry-group")
+                        yield Input(placeholder="Max repl.", id="personas-dict-entry-max-repl", value="1")
+                        yield Switch(value=True, id="personas-dict-entry-enabled", tooltip="Entry enabled")
+                        yield Switch(value=False, id="personas-dict-entry-case", tooltip="Case-sensitive (literal keys)")
+                        yield Input(placeholder="Priority", id="personas-dict-entry-priority", value="0")
+                    yield TextArea(id="personas-dict-entry-replacement")
+                    with Horizontal(classes="personas-dict-form-row"):
+                        yield Button("Add", id="personas-dict-entry-add", classes="console-action-secondary")
+                        yield Button("Update", id="personas-dict-entry-update", classes="console-action-secondary")
+                        yield Button("Delete", id="personas-dict-entry-delete", classes="console-action-secondary")
+                        yield Button("Move up", id="personas-dict-entry-up", classes="console-action-secondary")
+                        yield Button("Move down", id="personas-dict-entry-down", classes="console-action-secondary")
+                    yield OptionList(id="personas-dict-validation")
             with TabPane("Settings", id="personas-dict-tab-settings"):
                 yield Input(placeholder="Name", id="personas-dict-name")
                 yield TextArea(id="personas-dict-description")
@@ -186,6 +200,23 @@ class PersonasDictionaryDetailWidget(Vertical):
                 key=str(entry.get("id")),
             )
         self.query_one("#personas-dict-entry-error", Static).update("")
+        self._refresh_validation()
+
+    def _refresh_validation(self) -> None:
+        """Recompute advisory findings for the current entry list."""
+        panel = self.query_one("#personas-dict-validation", OptionList)
+        panel.clear_options()
+        try:
+            findings = validate_entries(self._entries)
+        except Exception:
+            logger.opt(exception=True).warning("Dictionary validation failed; panel left empty.")
+            return
+        for finding in findings:
+            pattern = next(
+                (str(e.get("pattern") or "") for e in self._entries if str(e.get("id")) == str(finding.entry_id)),
+                "",
+            )
+            panel.add_option(Option(f"[{finding.code}] {pattern} — {finding.message}", id=str(finding.entry_id)))
 
     def apply_enabled(self, enabled: bool) -> None:
         """Reflect an externally-toggled enabled flag without touching other fields.
@@ -314,6 +345,16 @@ class PersonasDictionaryDetailWidget(Vertical):
         event.stop()
         if event.row_key is not None and event.row_key.value is not None:
             self._fill_form_from_entry(str(event.row_key.value))
+
+    @on(OptionList.OptionSelected, "#personas-dict-validation")
+    def _validation_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        entry_id = str(event.option.id or "")
+        ids = self.entry_ids_in_order()
+        if entry_id in ids:
+            table = self.query_one("#personas-dict-entries-table", DataTable)
+            table.move_cursor(row=ids.index(entry_id))
+            self._fill_form_from_entry(entry_id)
 
     @on(Button.Pressed, "#personas-dict-entry-add")
     def _add_pressed(self, event: Button.Pressed) -> None:
