@@ -1733,11 +1733,10 @@ class PersonasScreen(BaseAppScreen):
                 await self._run_guarded(self._begin_create_dictionary)
             # Creation in the remaining modes is wired in follow-up tasks.
         elif message.action == "import":
-            # Character-card import only; the library pane hides the Import
-            # button outside Characters mode, so other modes are a no-op.
-            if self.state.active_mode != "characters":
-                return
-            await self._run_guarded(self._open_import_dialog)
+            if self.state.active_mode == "characters":
+                await self._run_guarded(self._open_import_dialog)
+            elif self.state.active_mode == "dictionaries":
+                await self._run_guarded(self._open_dictionary_import_dialog)
         elif message.action == "duplicate":
             if self.state.active_mode == "dictionaries":
                 await self._run_guarded(self._duplicate_selected_dictionary)
@@ -2216,6 +2215,98 @@ class PersonasScreen(BaseAppScreen):
             self._notify("Character already existed; selected it.", "information")
         else:
             self._notify("Character imported.", "information")
+
+    async def _open_dictionary_import_dialog(self) -> None:
+        """Continuation for the guarded dictionaries-import action."""
+        if self._io_dialog_active:
+            logger.debug("Import/export dialog already active; ignoring import request.")
+            return
+        self._io_dialog_active = True
+        self.run_worker(self._dictionary_import_dialog_worker(), group="personas-io")
+
+    async def _dictionary_import_dialog_worker(self) -> None:
+        from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
+
+        try:
+            picker = EnhancedFileOpen(
+                title="Import Dictionary",
+                filters=Filters(
+                    ("Dictionaries", lambda p: p.suffix.lower() in (".json", ".md", ".markdown")),
+                    ("JSON Files", lambda p: p.suffix.lower() == ".json"),
+                    ("Markdown Files", lambda p: p.suffix.lower() in (".md", ".markdown")),
+                    ("All Files", lambda p: True),
+                ),
+                context="dictionary_import",
+            )
+            try:
+                file_path = await self.app.push_screen_wait(picker)
+            except Exception:
+                logger.opt(exception=True).warning("Could not show the dictionary import dialog.")
+                return
+            if file_path:
+                await self._import_dictionary_from_path(str(file_path))
+        finally:
+            self._io_dialog_active = False
+
+    async def _import_dictionary_from_path(self, path: str) -> None:
+        """Import a dictionary file; on a name conflict, auto-rename and retry."""
+        service = self._dictionary_scope_service()
+        if service is None:
+            self._notify("Dictionaries service is not configured.", "error")
+            return
+        source = Path(path)
+        try:
+            text = await asyncio.to_thread(source.read_text, "utf-8")
+        except OSError as exc:
+            logger.opt(exception=True).warning(f"Could not read import file {path}.")
+            self._notify(f"Import failed: {exc}", "error")
+            return
+        suffix = source.suffix.lower()
+        if suffix == ".json":
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError as exc:
+                self._notify(f"Import failed: not valid JSON ({exc})", "error")
+                return
+            data = dict(parsed.get("data") if isinstance(parsed, dict) and "data" in parsed else parsed)
+            request = {"data": data}
+            def _rename(new_name: str) -> None:
+                data["name"] = new_name          # data.name WINS - mutate it
+            base_name = str(data.get("name") or "Imported Dictionary")
+            importer = service.import_json
+        elif suffix in (".md", ".markdown"):
+            request = {"name": source.stem, "content": text}  # name REQUIRED
+            def _rename(new_name: str) -> None:
+                request["name"] = new_name
+            base_name = source.stem
+            importer = service.import_markdown
+        else:
+            self._notify("Import supports .json and .md files.", "warning")
+            return
+        try:
+            result = await importer(request, mode="local")
+        except ConflictError:
+            renamed = self._unique_dictionary_name(f"{base_name} (imported)")
+            _rename(renamed)
+            try:
+                result = await importer(request, mode="local")
+            except Exception as exc:
+                logger.opt(exception=True).warning("Dictionary import retry failed.")
+                self._notify(f"Import failed: {exc}", "error")
+                return
+            self._notify(f"Name in use - imported as '{renamed}'.", "information")
+        except Exception as exc:
+            logger.opt(exception=True).warning(f"Dictionary import failed for {path}.")
+            self._notify(f"Import failed: {exc}", "error")
+            return
+        await self._render_dictionary_rows(query="")
+        record = None
+        try:
+            record = await service.get_dictionary(int(result["dictionary_id"]), mode="local")
+        except Exception:
+            logger.opt(exception=True).warning("Imported dictionary could not be reloaded.")
+        if record is not None:
+            await self._select_dictionary(str(record.get("id")), str(record.get("name") or ""))
 
     @on(Button.Pressed, "#personas-export-json")
     async def _handle_export_json_pressed(self, event: Button.Pressed) -> None:

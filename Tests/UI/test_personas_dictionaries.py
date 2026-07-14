@@ -389,6 +389,36 @@ class FakeDictScopeService:
         return {"dictionary_id": int(dictionary_id), "name": record["name"],
                 "content": "\n".join(lines) + ("\n" if lines else ""), "source": "local"}
 
+    async def import_json(self, request_data: Any, mode: str = "local") -> dict:
+        payload = dict(request_data)
+        data = dict(payload.get("data") or {})
+        name = data.get("name") or payload.get("name") or "Imported Dictionary"  # data.name WINS
+        created = await self.create_dictionary(
+            {"name": name, "description": data.get("description") or "",
+             "max_tokens": data.get("max_tokens") or 1000,
+             "enabled": bool(data.get("enabled", True)),
+             "entries": data.get("entries") or []}
+        )
+        if (data.get("strategy") or "sorted_evenly") != "sorted_evenly":
+            await self.update_dictionary(created["id"], {"strategy": data["strategy"]})
+        self.calls.append(("import_json", name))
+        return {"dictionary_id": created["id"], "source": "local"}
+
+    async def import_markdown(self, request_data: Any, mode: str = "local") -> dict:
+        payload = dict(request_data)
+        name = payload["name"]  # REQUIRED, like the real service
+        entries = []
+        for line in str(payload.get("content") or "").splitlines():
+            if ":" in line:
+                key, _, value = line.partition(":")
+                entries.append({"pattern": key.strip(), "replacement": value.strip(),
+                                "probability": 1.0, "group": None, "timed_effects": None,
+                                "max_replacements": 1, "type": "literal",
+                                "enabled": True, "case_sensitive": False, "priority": 0})
+        created = await self.create_dictionary({"name": name, "entries": entries})
+        self.calls.append(("import_markdown", name))
+        return {"dictionary_id": created["id"], "source": "local"}
+
 
 def make_dict_record(
     record_id: int = 1,
@@ -1764,3 +1794,80 @@ class TestDictionaryExport:
             files = list((tmp_path / "exports").glob("medical-abbrev-*.md"))
             assert len(files) == 1
             assert "BP: blood pressure" in files[0].read_text()
+
+
+class TestDictionaryImport:
+    async def test_import_button_visible_in_dictionaries_mode(self, mock_app_instance, stub_characters, fake_dict_service):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _enter_dictionaries(pilot)
+            btn = screen.query_one("#personas-library-import", Button)
+            assert btn.display is True
+            assert "dictionary" in str(btn.tooltip).lower()
+
+    async def test_import_json_file_selects_new_dictionary(self, mock_app_instance, stub_characters, fake_dict_service, tmp_path):
+        import json as jsonlib
+
+        payload = {"data": {"name": "Shipped In", "description": "", "content": None,
+                             "entries": [{"pattern": "RR", "replacement": "resp rate",
+                                          "probability": 1.0, "group": None, "timed_effects": None,
+                                          "max_replacements": 1, "type": "literal",
+                                          "enabled": True, "case_sensitive": False, "priority": 0}],
+                             "strategy": "character_lore_first", "max_tokens": 500,
+                             "enabled": True, "version": 3}}
+        source = tmp_path / "shipped.json"
+        source.write_text(jsonlib.dumps(payload))
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await screen._import_dictionary_from_path(str(source))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            names = [r["name"] for r in fake_dict_service.records.values()]
+            assert "Shipped In" in names
+            assert screen.state.selected_entity_name == "Shipped In"
+            imported = next(r for r in fake_dict_service.records.values() if r["name"] == "Shipped In")
+            assert imported["strategy"] == "character_lore_first"
+
+    async def test_import_conflict_renames_and_succeeds(self, mock_app_instance, stub_characters, fake_dict_service, tmp_path):
+        import json as jsonlib
+
+        payload = {"data": {"name": "Medical Abbrev", "description": "", "content": None,
+                             "entries": [], "strategy": "sorted_evenly", "max_tokens": 1000,
+                             "enabled": True, "version": 1}}
+        source = tmp_path / "clash.json"
+        source.write_text(jsonlib.dumps(payload))
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await screen._import_dictionary_from_path(str(source))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            names = [r["name"] for r in fake_dict_service.records.values()]
+            assert "Medical Abbrev (imported)" in names  # data.name mutated, retried
+
+    async def test_import_markdown_uses_filename_stem(self, mock_app_instance, stub_characters, fake_dict_service, tmp_path):
+        source = tmp_path / "field-notes.md"
+        source.write_text("RR: resp rate\n")
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await screen._import_dictionary_from_path(str(source))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            names = [r["name"] for r in fake_dict_service.records.values()]
+            assert "field-notes" in names
+
+    async def test_import_bad_json_creates_nothing(self, mock_app_instance, stub_characters, fake_dict_service, tmp_path):
+        source = tmp_path / "broken.json"
+        source.write_text("{not json")
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            before = len(fake_dict_service.records)
+            await screen._import_dictionary_from_path(str(source))
+            await pilot.pause()
+            assert len(fake_dict_service.records) == before
