@@ -67,6 +67,8 @@ from ...Widgets.Persona_Widgets.personas_dictionary_detail import (
     DictionaryEntryUpdateRequested,
     DictionarySettingsEdited,
     DictionarySettingsSaveRequested,
+    DictionaryVersionRevertRequested,
+    DictionaryVersionViewRequested,
     PersonasDictionaryDetailWidget,
 )
 from ...Widgets.Persona_Widgets.personas_dictionary_tryit import (
@@ -1148,6 +1150,7 @@ class PersonasScreen(BaseAppScreen):
         self._sync_inspector_console_actions()
         self._update_title()
         self._update_status_row()
+        await self._refresh_dictionary_versions()
 
     @on(DictionarySettingsEdited)
     def _handle_dictionary_settings_edited(self, message: DictionarySettingsEdited) -> None:
@@ -1201,6 +1204,7 @@ class PersonasScreen(BaseAppScreen):
         await self._render_dictionary_rows(query=self.state.search_query)
         self.query_one(PersonasLibraryPane).mark_active_row("dictionary", entity_id)
         self._sync_inspector_console_actions()
+        await self._refresh_dictionary_versions()
 
     async def _reload_selected_dictionary_entries(self) -> bool:
         """Re-fetch entries + version after a mutation (positional ids shift).
@@ -1232,7 +1236,92 @@ class PersonasScreen(BaseAppScreen):
         detail.load_statistics(stats, list(record.get("entries") or []))
         await self._render_dictionary_rows(query=self.state.search_query)
         self.query_one(PersonasLibraryPane).mark_active_row("dictionary", entity_id)
+        await self._refresh_dictionary_versions()
         return True
+
+    async def _refresh_dictionary_versions(self) -> None:
+        """Feed the Versions tab for the selected dictionary (best-effort)."""
+        entity_id = self.state.selected_entity_id
+        service = self._dictionary_scope_service()
+        if service is None or self.state.selected_entity_kind != "dictionary" or not entity_id:
+            return
+        detail = self.query_one(PersonasDictionaryDetailWidget)
+        try:
+            response = await service.list_versions(int(entity_id), mode="local")
+        except Exception:
+            logger.opt(exception=True).warning(f"Could not list dictionary {entity_id} versions.")
+            detail.load_versions([])
+            return
+        detail.load_versions(list(response.get("versions") or []))
+
+    @on(DictionaryVersionViewRequested)
+    async def _handle_dictionary_version_view(self, message: DictionaryVersionViewRequested) -> None:
+        message.stop()
+        entity_id = self.state.selected_entity_id
+        service = self._dictionary_scope_service()
+        if service is None or not entity_id:
+            return
+        detail = self.query_one(PersonasDictionaryDetailWidget)
+        try:
+            record = await service.get_version(int(entity_id), message.revision, mode="local")
+        except Exception as exc:
+            logger.opt(exception=True).warning(f"Could not load version {message.revision}.")
+            detail.set_status(f"Could not load version: {exc}")
+            return
+        detail.show_version_snapshot(record)
+
+    @on(DictionaryVersionRevertRequested)
+    async def _handle_dictionary_version_revert(self, message: DictionaryVersionRevertRequested) -> None:
+        message.stop()
+        if self._io_dialog_active:
+            return
+        self._io_dialog_active = True
+        self.run_worker(self._dictionary_revert_worker(message.revision), group="personas-io")
+
+    async def _confirm_dictionary_revert(self, revision: int) -> bool:
+        """True when the user confirmed the revert (worker context required)."""
+        dialog = ConfirmationDialog(
+            title="Revert",
+            message=f"Revert to revision {revision}? Current settings and entries are replaced.",
+            confirm_label="Revert",
+            cancel_label="Cancel",
+        )
+        try:
+            return bool(await self.app.push_screen_wait(dialog))
+        except Exception:
+            logger.opt(exception=True).warning("Could not show the revert confirmation dialog.")
+            return False
+
+    async def _dictionary_revert_worker(self, revision: int) -> None:
+        try:
+            if not await self._confirm_dictionary_revert(revision):
+                return
+            entity_id = self.state.selected_entity_id
+            service = self._dictionary_scope_service()
+            if service is None or not entity_id:
+                return
+            detail = self.query_one(PersonasDictionaryDetailWidget)
+            try:
+                record = await service.revert_version(int(entity_id), revision, mode="local")
+            except ConflictError:
+                detail.set_status(
+                    "Revert failed: the dictionary changed since it was loaded. Reselect and try again."
+                )
+                return
+            except Exception as exc:
+                logger.opt(exception=True).warning(f"Could not revert to revision {revision}.")
+                detail.set_status(f"Revert failed: {exc}")
+                return
+            raw_version = record.get("version")
+            self._selected_dictionary_version = int(raw_version) if raw_version is not None else None
+            self.state.selected_entity_name = str(record.get("name") or "")
+            detail.load_dictionary(record)
+            detail.set_status(f"Reverted to revision {revision}.")
+            await self._render_dictionary_rows(query=self.state.search_query)
+            self.query_one(PersonasLibraryPane).mark_active_row("dictionary", entity_id)
+            await self._refresh_dictionary_versions()
+        finally:
+            self._io_dialog_active = False
 
     async def _run_dictionary_entry_op(self, op: Callable[[Any], Awaitable[Any]], failure: str) -> None:
         """One guarded service mutation + the mandatory entries reload."""

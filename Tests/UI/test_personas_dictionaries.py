@@ -54,6 +54,7 @@ class FakeDictScopeService:
     def __init__(self, records: list[dict] | None = None) -> None:
         self.records: dict[int, dict] = {}
         self.calls: list[tuple] = []
+        self.history: dict[int, list[dict]] = {}
         for record in records or []:
             self.records[int(record["id"])] = copy.deepcopy(record)
         self._next_id = max(self.records, default=0) + 1
@@ -153,6 +154,7 @@ class FakeDictScopeService:
                 for e in payload["entries"] or []
             ]
         record["version"] += 1
+        self._record_version(record, "update")
         self.calls.append(("update", int(dictionary_id), payload))
         return self._summary(record)
 
@@ -231,6 +233,54 @@ class FakeDictScopeService:
             "enabled": bool(record.get("enabled", True)),
             "source": "local",
         }
+
+    def _record_version(self, record: dict, action: str) -> None:
+        history = self.history.setdefault(int(record["id"]), [])
+        entry = {
+            "dictionary_id": int(record["id"]),
+            "revision": int(record["version"]),
+            "action": action,
+            "name": record["name"],
+            "created_at": "2026-07-15T00:00:00Z",
+            "snapshot": copy.deepcopy(
+                {k: record[k] for k in ("id", "name", "description", "strategy",
+                                         "max_tokens", "enabled", "version", "entries")}
+            ),
+        }
+        history[:] = [h for h in history if h["revision"] != entry["revision"]]
+        history.append(entry)
+
+    async def list_versions(self, dictionary_id: int, mode: str = "local", **kwargs: Any) -> dict:
+        self._ensure_baseline(int(dictionary_id))
+        versions = sorted(self.history.get(int(dictionary_id), []), key=lambda h: -h["revision"])
+        return {
+            "dictionary_id": int(dictionary_id),
+            "versions": [{k: h[k] for k in ("dictionary_id", "revision", "action", "name", "created_at")}
+                          for h in versions],
+            "total": len(versions), "limit": 20, "offset": 0, "source": "local",
+        }
+
+    async def get_version(self, dictionary_id: int, revision: int, mode: str = "local") -> dict:
+        self._ensure_baseline(int(dictionary_id))
+        for h in self.history.get(int(dictionary_id), []):
+            if h["revision"] == int(revision):
+                return {**h, "source": "local"}
+        raise ValueError(f"local_chat_dictionary_version_not_found:{revision}")
+
+    async def revert_version(self, dictionary_id: int, revision: int, mode: str = "local") -> dict:
+        target = await self.get_version(dictionary_id, revision)
+        record = self.records[int(dictionary_id)]
+        snapshot = target["snapshot"]
+        for k in ("name", "description", "strategy", "max_tokens", "enabled"):
+            record[k] = snapshot[k]
+        record["entries"] = copy.deepcopy(snapshot["entries"])
+        record["version"] += 1
+        self._record_version(record, "revert")
+        return {**self._summary(record), "reverted_to_revision": int(revision)}
+
+    def _ensure_baseline(self, dictionary_id: int) -> None:
+        if not self.history.get(dictionary_id):
+            self._record_version(self.records[dictionary_id], "baseline")
 
     async def process_text(self, request_data: Any, mode: str = "local") -> dict:
         payload = dict(request_data)
@@ -1537,3 +1587,85 @@ class TestDictionaryStatsTab:
             assert "disabled: 1" in body
             assert "Priority: 0..5" in body
             assert "tokens" in body  # approximate token total line
+
+
+class TestDictionaryVersionsTab:
+    async def _select_first(self, pilot, screen):
+        rows = screen.query_one("#personas-library-rows", ListView)
+        rows.index = 0
+        rows.action_select_cursor()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+    async def test_versions_listed_with_baseline(self, mock_app_instance, stub_characters, fake_dict_service):
+        from textual.widgets import DataTable
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            table = screen.query_one("#personas-dict-versions-table", DataTable)
+            assert table.row_count >= 1
+            assert str(table.get_cell_at((0, 1))) == "baseline"
+
+    async def test_view_shows_snapshot_summary(self, mock_app_instance, stub_characters, fake_dict_service):
+        from textual.widgets import DataTable, TabbedContent
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            screen.query_one("#personas-dict-tabs", TabbedContent).active = "personas-dict-tab-versions"
+            await pilot.pause()
+            screen.query_one("#personas-dict-versions-table", DataTable).move_cursor(row=0)
+            await pilot.click("#personas-dict-version-view")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            snapshot = str(screen.query_one("#personas-dict-version-snapshot", Static).renderable)
+            assert "rev 1" in snapshot and "entries: 2" in snapshot and "sorted_evenly" in snapshot
+
+    async def test_revert_confirms_then_restores(self, mock_app_instance, stub_characters, fake_dict_service, monkeypatch):
+        from textual.widgets import DataTable, TabbedContent
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            # Mutate: rename via settings save to create revision 2.
+            screen.query_one("#personas-dict-tabs", TabbedContent).active = "personas-dict-tab-settings"
+            await pilot.pause()
+            screen.query_one("#personas-dict-name", Input).value = "Renamed"
+            await pilot.click("#personas-dict-settings-save")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert fake_dict_service.records[1]["name"] == "Renamed"
+
+            async def _yes(name):
+                return True
+
+            monkeypatch.setattr(screen, "_confirm_dictionary_revert", _yes)
+            # The Save button still holds focus from the click above; a
+            # DescendantFocus event it triggers is still working through the
+            # message queue and would otherwise re-fire TabPane.Focused ->
+            # TabbedContent._on_tab_pane_focused, snapping .active back to
+            # "personas-dict-tab-settings" on the very next pause. Blur first
+            # so the tab switch below actually sticks.
+            screen.set_focus(None)
+            await pilot.pause()
+            screen.query_one("#personas-dict-tabs", TabbedContent).active = "personas-dict-tab-versions"
+            await pilot.pause()
+            table = screen.query_one("#personas-dict-versions-table", DataTable)
+            # list_versions() sorts newest-first (matching the real local
+            # backend's reverse=True), so after the rename row 0 is revision
+            # 2 ("update") and row 1 is revision 1 (baseline, pre-rename).
+            assert str(table.get_cell_at((1, 1))) == "baseline"
+            table.move_cursor(row=1)  # revision 1 (baseline, pre-rename)
+            await pilot.click("#personas-dict-version-revert")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert fake_dict_service.records[1]["name"] == "Medical Abbrev"  # restored
+            assert screen.query_one("#personas-dict-name", Input).value == "Medical Abbrev"  # detail reloaded
