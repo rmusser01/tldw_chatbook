@@ -361,6 +361,13 @@ class AgentService:
         """
         if supersede_run_id:
             self.db.supersede_run_tree(supersede_run_id)
+        # Per-run scope for the registry's owner-map cache (tool_catalog's
+        # _owner_and_id): reset here, once, at the top of the run tree —
+        # covers the primary turn AND any sub-agents it spawns via
+        # _run_one, since they never call run_turn themselves. The catalog
+        # is listed fresh at this point, so skill CRUD since the last run
+        # is always picked up with no separate invalidation signal needed.
+        self.registry.reset_catalog_cache()
         return self._run_one(
             conversation_id=conversation_id, messages=messages,
             config=config, api_endpoint=api_endpoint,

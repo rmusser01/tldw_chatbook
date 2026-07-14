@@ -184,9 +184,27 @@ class ToolCatalogRegistry:
 
     def __init__(self) -> None:
         self._providers: list[ToolProvider] = []
+        # tool_id -> owning provider, built lazily by _owner_and_id() and
+        # scoped PER RUN (see reset_catalog_cache()). `None` means "not
+        # built yet" and is distinct from an empty-but-built cache.
+        self._owner_cache: dict[str, ToolProvider] | None = None
 
     def register_provider(self, provider: ToolProvider) -> None:
         self._providers.append(provider)
+        # A newly registered provider's tools aren't reflected in any
+        # cache already built — invalidate so the next lookup rebuilds it.
+        self._owner_cache = None
+
+    def reset_catalog_cache(self) -> None:
+        """Drop the owner-map cache; call once at the start of a run.
+
+        Cache scope is PER RUN: the catalog is listed fresh at run start
+        (``AgentService.run_turn`` calls this before dispatching), so any
+        skill CRUD (or other provider mutation) between runs is always
+        picked up. No cross-run invalidation signal is needed beyond this
+        single reset — see the skills spec's Catalog scale section.
+        """
+        self._owner_cache = None
 
     def list_catalog(self) -> list[ToolCatalogEntry]:
         entries: list[ToolCatalogEntry] = []
@@ -202,14 +220,21 @@ class ToolCatalogRegistry:
                 if needle in e.name.lower()
                 or needle in e.one_line_description.lower()]
 
-    def _owner_and_id(self, tool_id: str):
-        # TODO(task-201): cache tool_id -> provider mapping — per-lookup
-        # list_catalog() re-listing becomes N remote calls once a
-        # network-backed provider registers.
+    def _build_owner_cache(self) -> dict[str, ToolProvider]:
+        cache: dict[str, ToolProvider] = {}
         for provider in self._providers:
-            if any(e.id == tool_id for e in provider.list_catalog()):
-                return provider
-        return None
+            for entry in provider.list_catalog():
+                cache.setdefault(entry.id, provider)
+        return cache
+
+    def _owner_and_id(self, tool_id: str):
+        # This is the fix MCP (task-201) also needs: a network-backed
+        # provider must not re-list_catalog() per lookup. The owner map
+        # is built once (lazily, on first lookup) and reused for every
+        # subsequent lookup until reset_catalog_cache() clears it.
+        if self._owner_cache is None:
+            self._owner_cache = self._build_owner_cache()
+        return self._owner_cache.get(tool_id)
 
     def load_schema(self, tool_id: str) -> ToolSchema:
         provider = self._owner_and_id(tool_id)
