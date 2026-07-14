@@ -98,7 +98,7 @@ Validation lint: warn when a secret-looking value appears in `args` (visible in 
 
 **Lifecycle actions** (inspector, readiness-filtered): Connect / Disconnect / Test / Refresh tools / Edit / Delete. Delete confirms and cascades cleanup of that server's tool overrides; audit history is retained. All async ops are per-server workers with explicit timeouts and a visible Cancel during `checking` (stdio connects can hang).
 
-**Built-in chatbook server** (pinned ⌂ row): honest controls only — enable + expose toggles (tools/resources/prompts), transport (stdio/http) + port with an explicit "restart required" pending state where applicable, and **"Copy client config snippet"** (ready-to-paste MCP-client JSON pointing at chatbook) instead of fake connect buttons. Its exposed tools appear read-only in Tools mode.
+**Built-in chatbook server** (pinned ⌂ row): honest controls only — enable + expose toggles (tools/resources/prompts) and **"Copy client config snippet"** (ready-to-paste MCP-client JSON pointing at chatbook) instead of fake connect buttons. *Correction (verified during Phase 1, §17 fact 4):* the built-in server is **stdio-only** — it runs solely when an MCP client launches chatbook via `python -m tldw_chatbook.MCP`, never in-process; the HTTP transport branch raises `NotImplementedError` and no port binding exists, so no transport/port controls are offered until HTTP genuinely ships. Toggle changes show an explicit "applies to the next client launch" note (config is read at server start). Its exposed tools appear read-only in Tools mode.
 
 ## 8. Tools mode
 
