@@ -231,3 +231,52 @@ async def test_raw_mode_collect_arguments_parses_json_and_raises_on_invalid():
         app.query_one("#mcp-schema-raw", TextArea).text = "[1, 2, 3]"
         with pytest.raises(ValueError):
             form.collect_arguments()
+
+
+@pytest.mark.asyncio
+async def test_collect_arguments_raises_for_required_enum_left_unselected():
+    """Required enum property left unselected (Select.NULL) must raise
+    ValueError with exact message."""
+    schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "mode": {"enum": ["fast", "slow"], "description": "Speed mode"},
+        },
+        "required": ["mode"],
+    }
+    app = SchemaFormApp(schema=schema)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        form = app.query_one(MCPSchemaForm)
+
+        # mode Select is unselected (Select.NULL by default since default
+        # is not in the enum choices).
+        select_widget = app.query_one("#mcp-schema-field-0", Select)
+        assert select_widget.value is Select.NULL
+
+        with pytest.raises(ValueError) as exc_info:
+            form.collect_arguments()
+        assert str(exc_info.value) == "mode: required."
+
+
+@pytest.mark.asyncio
+async def test_collect_arguments_raises_for_integer_with_decimal_string():
+    """Integer field given a decimal string (e.g., "3.5") must raise
+    ValueError with exact message."""
+    schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "count": {"type": "integer", "description": "Count value"},
+        },
+        "required": ["count"],
+    }
+    app = SchemaFormApp(schema=schema)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        form = app.query_one(MCPSchemaForm)
+
+        app.query_one("#mcp-schema-field-0", Input).value = "3.5"
+
+        with pytest.raises(ValueError) as exc_info:
+            form.collect_arguments()
+        assert str(exc_info.value) == "count: must be a number."
