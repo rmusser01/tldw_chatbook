@@ -6875,3 +6875,185 @@ def test_console_image_prep_kick_skips_ids_already_preparing():
         if mid not in screen._console_image_preparing
     ]
     assert pending_images == []
+
+
+@pytest.mark.asyncio
+async def test_path_paste_routes_to_attach_instead_of_draft(tmp_path, monkeypatch):
+    from PIL import Image as PILImage
+
+    from textual.events import Paste
+
+    image_path = tmp_path / "dropped.png"
+    PILImage.new("RGB", (8, 8), (9, 9, 9)).save(image_path, format="PNG")
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.focus()
+        await pilot.pause()
+
+        # Widen the attach root to tmp_path for both gating and processing.
+        # chat_screen imports these helpers BY NAME, so patch the consuming
+        # module's bindings, not the source module's.
+        import tldw_chatbook.Chat.attachment_core as attachment_core
+        import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+        from tldw_chatbook.Chat.console_paste_attach import (
+            looks_attachable as original_attachable,
+        )
+
+        original_load = attachment_core.load_processed_file
+
+        async def _rooted(file_path, *, allowed_root=None):
+            return await original_load(file_path, allowed_root=str(tmp_path))
+
+        monkeypatch.setattr(attachment_core, "load_processed_file", _rooted)
+        monkeypatch.setattr(
+            chat_screen_module,
+            "looks_attachable",
+            lambda path, allowed_root=None: original_attachable(
+                path, allowed_root=str(tmp_path)
+            ),
+        )
+
+        console.on_paste(Paste(text=str(image_path)))
+        for _ in range(80):
+            store = console._ensure_console_chat_store()
+            session_id = store.active_session_id
+            if session_id and store.pending_attachment(session_id) is not None:
+                break
+            await pilot.pause(0.05)
+
+        store = console._ensure_console_chat_store()
+        pending = store.pending_attachment(store.active_session_id)
+        assert pending is not None and pending.file_type == "image"
+        assert composer.draft_text() == ""  # path did NOT land as draft text
+
+
+@pytest.mark.asyncio
+async def test_prose_paste_still_lands_in_draft():
+    from textual.events import Paste
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.focus()
+        await pilot.pause()
+
+        console.on_paste(Paste(text="what does /etc/hosts do?"))
+        await pilot.pause()
+        assert composer.draft_text() == "what does /etc/hosts do?"
+
+
+@pytest.mark.asyncio
+async def test_alt_v_grabs_clipboard_image_into_pending(monkeypatch):
+    from io import BytesIO
+
+    from PIL import Image as PILImage
+
+    import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+
+    buffer = BytesIO()
+    PILImage.new("RGB", (16, 16), (10, 200, 10)).save(buffer, format="PNG")
+    png = buffer.getvalue()
+
+    from tldw_chatbook.Chat.console_paste_attach import ClipboardGrab
+
+    monkeypatch.setattr(
+        chat_screen_module,
+        "grab_clipboard_image",
+        lambda: ClipboardGrab(kind="image", png_bytes=png),
+    )
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        console.query_one("#console-native-composer", ConsoleComposerBar).focus()
+        await pilot.pause()
+
+        await pilot.press("alt+v")
+        for _ in range(80):
+            store = console._ensure_console_chat_store()
+            sid = store.active_session_id
+            if sid and store.pending_attachment(sid) is not None:
+                break
+            await pilot.pause(0.05)
+
+        store = console._ensure_console_chat_store()
+        pending = store.pending_attachment(store.active_session_id)
+        assert pending is not None
+        assert pending.file_type == "image"
+        assert pending.display_name.startswith("clipboard-")
+
+
+@pytest.mark.asyncio
+async def test_alt_v_unavailable_platform_toasts(monkeypatch):
+    import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+
+    from tldw_chatbook.Chat.console_paste_attach import ClipboardGrab
+
+    monkeypatch.setattr(
+        chat_screen_module,
+        "grab_clipboard_image",
+        lambda: ClipboardGrab(kind="unavailable"),
+    )
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    notifications: list[str] = []
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        monkeypatch.setattr(
+            console.app_instance,
+            "notify",
+            lambda message, **kwargs: notifications.append(str(message)),
+        )
+        await pilot.press("alt+v")
+        for _ in range(40):
+            if notifications:
+                break
+            await pilot.pause(0.05)
+        assert any("aren't readable on this platform" in n for n in notifications)
+        store = console._ensure_console_chat_store()
+        sid = store.active_session_id
+        assert sid is None or store.pending_attachment(sid) is None
+
+
+@pytest.mark.asyncio
+async def test_alt_v_action_is_inert_while_setup_modal_blocks(monkeypatch):
+    import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+
+    grab_calls: list[None] = []
+    monkeypatch.setattr(
+        chat_screen_module,
+        "grab_clipboard_image",
+        lambda: grab_calls.append(None),
+    )
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        monkeypatch.setattr(console, "_console_setup_modal_blocking", lambda: True)
+
+        console.action_paste_clipboard_image()
+        await pilot.pause(0.2)
+
+        assert grab_calls == []
+        store = console._ensure_console_chat_store()
+        sid = store.active_session_id
+        assert sid is None or store.pending_attachment(sid) is None

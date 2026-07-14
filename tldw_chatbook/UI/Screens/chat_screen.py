@@ -127,6 +127,11 @@ from ...Chat.console_image_view import (
     next_view_mode,
     resolve_default_mode,
 )
+from ...Chat.console_paste_attach import (
+    extract_dropped_path,
+    grab_clipboard_image,
+    looks_attachable,
+)
 from ...Chat.console_rail_state import (
     CONSOLE_RAIL_SECTION_IDS,
     ConsoleRailPreferences,
@@ -429,6 +434,7 @@ class ChatScreen(BaseAppScreen):
         ),
         Binding("ctrl+k", "open_console_session_switcher", "Switch session", show=True),
         Binding("alt+m", "open_console_model_popover", "Model", show=True),
+        Binding("alt+v", "paste_clipboard_image", "Paste image", show=True),
         # NOT priority: widget-level escapes (transcript clear-selection, modal
         # dismiss) must keep winning before this screen-level fallback runs.
         Binding("escape", "focus_console_composer_home", "Composer", show=False),
@@ -7411,6 +7417,75 @@ class ChatScreen(BaseAppScreen):
             callback=on_file_selected,
         )
 
+    def action_paste_clipboard_image(self) -> None:
+        """Grab an image from the OS clipboard into the pending attachment."""
+        if self._console_setup_modal_blocking():
+            return
+        self.run_worker(
+            self._paste_console_clipboard_image(),
+            exclusive=True,
+            group="console-clipboard-grab",
+        )
+
+    async def _paste_console_clipboard_image(self) -> None:
+        """Read the clipboard off-loop and stage its image (or route paths)."""
+        from datetime import datetime as _datetime
+
+        grab = await asyncio.to_thread(grab_clipboard_image)
+        if grab.kind == "unavailable":
+            self.app_instance.notify(
+                "Clipboard images aren't readable on this platform — "
+                "use Attach or drop a file.",
+                severity="warning",
+            )
+            return
+        if grab.kind == "empty":
+            self.app_instance.notify("No image on the clipboard.")
+            return
+        if grab.kind == "paths":
+            candidate = grab.paths[0] if grab.paths else ""
+            if candidate and looks_attachable(candidate):
+                if len(grab.paths) > 1:
+                    self.app_instance.notify(
+                        f"Attached first of {len(grab.paths)} dropped files."
+                    )
+                await self._process_console_attachment(candidate)
+            else:
+                self.app_instance.notify("No image on the clipboard.")
+            return
+        from tldw_chatbook.Chat.attachment_core import process_attachment_bytes
+
+        try:
+            display_name = (
+                f"clipboard-{_datetime.now().strftime('%Y%m%d-%H%M%S')}.png"
+            )
+            attachment = await asyncio.to_thread(
+                lambda: asyncio.run(
+                    process_attachment_bytes(
+                        grab.png_bytes or b"", display_name=display_name
+                    )
+                )
+            )
+        except Exception as exc:
+            logger.opt(exception=True).warning("Clipboard image processing failed.")
+            self.app_instance.notify(
+                f"Could not attach clipboard image: {escape_markup(str(exc))}",
+                severity="error",
+            )
+            return
+        store = self._ensure_console_chat_store()
+        session = store.ensure_session(
+            workspace_id=store.workspace_context.active_workspace_id
+        )
+        store.set_pending_attachment(session.id, attachment)
+        composer = self._console_composer_or_none()
+        if composer is not None:
+            composer.set_pending_attachment_label(attachment.label)
+        self.app_instance.notify(
+            f"{escape_markup(attachment.display_name)} attached"
+        )
+        self._sync_console_control_bar()
+
     async def _process_console_attachment(self, file_path: str) -> None:
         """Process a picked file and route it into the native Console composer."""
         from tldw_chatbook.Chat.attachment_core import process_attachment_path
@@ -8449,6 +8524,20 @@ class ChatScreen(BaseAppScreen):
         if self._console_setup_modal_blocking():
             return
         if not self._should_capture_console_input(composer):
+            return
+        dropped = extract_dropped_path(event.text)
+        if dropped is not None and looks_attachable(dropped.path):
+            event.stop()
+            self._dismiss_console_guidance()
+            if dropped.total_dropped > 1:
+                self.app_instance.notify(
+                    f"Attached first of {dropped.total_dropped} dropped files."
+                )
+            self.run_worker(
+                self._process_console_attachment(dropped.path),
+                exclusive=True,
+                group="console-attachment",
+            )
             return
         composer.insert_pasted_text(event.text)
         self._sync_console_workbench_actions_from_draft()
