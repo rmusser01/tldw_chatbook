@@ -54,21 +54,68 @@ def test_store_deletes_message_from_transcript():
         store.get_message(message.id)
 
 
-def test_delete_message_clears_orphaned_variant_stream_base():
-    """A message deleted mid-regenerate (stopped, then deleted) must not
-    leave a stale entry in _variant_stream_bases -- Plan-B Task 1 Minor
-    finding (console_chat_store.py delete_message previously popped the
-    stream-chunk maps but not this one)."""
+def test_stop_mid_regenerate_restores_base_and_does_not_orphan_it():
+    """Plan-B final-review Medium-2: stopping a message mid variant-stream
+    (regenerate) must restore the pre-regenerate base content AND status --
+    mirroring ``mark_message_failed`` (Plan-B Task 1) -- and pop the base
+    immediately, rather than leaving it orphaned in `_variant_stream_bases`
+    for `delete_message` to clean up later. (This test previously pinned
+    the opposite, buggy behavior: that a stopped regenerate replaced the
+    original answer with the partial stream and left the base to be
+    cleared only by a later delete -- Plan-B Task 1 Minor finding's fix
+    only covered `delete_message` itself, not this root cause.)"""
     store = ConsoleChatStore()
     session = store.ensure_session()
     message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="answer")
     store.begin_variant_stream(message.id)
-    store.mark_message_stopped(message.id)
+    store.append_stream_chunk(message.id, "partial")
 
-    assert message.id in store._variant_stream_bases
+    stopped = store.mark_message_stopped(message.id)
 
+    assert stopped.content == "answer"
+    assert stopped.status == "complete"
+    assert message.id not in store._variant_stream_bases
+
+    # The now-terminal message can still be deleted cleanly afterward.
     store.delete_message(message.id)
+    with pytest.raises(KeyError):
+        store.get_message(message.id)
 
+
+def test_stop_mid_regenerate_leaves_existing_variants_untouched():
+    """Plan-B final-review Medium-2: a stopped regenerate must not disturb
+    variants recorded by earlier, successfully-finalized regenerates."""
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="v1")
+    store.add_variant(message.id, "v2")
+    store.begin_variant_stream(message.id)
+    store.append_stream_chunk(message.id, "v3-partial")
+
+    stopped = store.mark_message_stopped(message.id)
+
+    assert stopped.content == "v2"
+    assert stopped.status == "complete"
+    assert [v.content for v in stopped.variants.variants] == ["v1", "v2"]
+    assert stopped.variants.selected_index == 1
+    assert message.id not in store._variant_stream_bases
+
+
+def test_stop_mid_plain_send_keeps_partial_content_and_stopped_status():
+    """Plan-B final-review Medium-2: a Stop with no captured variant base
+    (a normal, non-regenerate send) must keep today's behavior unchanged --
+    the partial streamed content is kept and the message is marked
+    "stopped", not silently reverted."""
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    store.append_stream_chunk(message.id, "par")
+    store.append_stream_chunk(message.id, "tial")
+
+    stopped = store.mark_message_stopped(message.id)
+
+    assert stopped.content == "partial"
+    assert stopped.status == "stopped"
     assert message.id not in store._variant_stream_bases
 
 

@@ -1017,7 +1017,22 @@ class ConsoleChatController:
         prepare_retry: bool = False,
         retry_prepared: bool = True,
     ) -> ConsoleChatMessage:
-        """Mark a streaming assistant message stopped, tolerating an earlier stop request."""
+        """Mark a streaming assistant message stopped, tolerating an earlier stop request.
+
+        ``stop_active_run`` finalizes the message synchronously and then
+        cancels the active stream task; that task's own ``CancelledError``
+        handler in ``_stream_assistant_response`` calls this a second,
+        redundant time. ``store.mark_message_stopped`` raises ``ValueError``
+        for that redundant call because the message is no longer pending/
+        streaming -- i.e. some earlier call already finalized it -- so any
+        such error here is tolerated by simply reading back the
+        already-finalized message rather than re-raising. Before Plan-B
+        final-review Medium-2, the only reachable terminal status from this
+        path was "stopped" itself; a mid-regenerate stop now legitimately
+        settles the message at its pre-regenerate status instead (e.g.
+        "complete"), so this must tolerate any terminal status, not just
+        "stopped".
+        """
         if prepare_retry and not retry_prepared:
             stopped = self.store.get_message(assistant_message_id)
         else:
@@ -1025,8 +1040,6 @@ class ConsoleChatController:
                 stopped = self.store.mark_message_stopped(assistant_message_id)
             except ValueError:
                 stopped = self.store.get_message(assistant_message_id)
-                if stopped.status != "stopped":
-                    raise
         self._set_run_state(ConsoleRunState(ConsoleRunStatus.STOPPED, visible_copy))
         return stopped
 

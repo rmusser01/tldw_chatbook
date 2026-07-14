@@ -553,11 +553,34 @@ class ConsoleChatStore:
         return self._snapshot(message)
 
     def mark_message_stopped(self, message_id: str) -> ConsoleChatMessage:
-        """Mark a message stopped and flush final visible content to persistence."""
+        """Mark a message stopped and flush final visible content to persistence.
+
+        If this message was mid variant-stream (regenerate), any partial
+        streamed content is discarded and the pre-regenerate base content AND
+        status are restored -- mirroring ``mark_message_failed`` (Plan-B
+        Task 1) and the pre-refactor regenerate behavior, where Stop could
+        not even reach a regenerate loop (it never set an interruptible
+        task), so the original answer always survived a Stop untouched.
+        Post-unification, Stop is live during regenerate; treating a stopped
+        regenerate exactly like a failed one keeps that guarantee: the
+        partial text is discarded (it remains recoverable from the run's own
+        step log) rather than overwriting the original answer and marking it
+        "stopped" (Plan-B final-review Medium-2).
+
+        A stop with no captured base -- a normal, non-regenerate send -- has
+        no known-good prior state to restore, so it keeps today's behavior:
+        the partial streamed content is kept and the message is marked
+        "stopped".
+        """
         message = self._message_or_raise(message_id)
         self._validate_can_mark_terminal(message)
         self._materialize_stream_buffer(message)
-        message.status = "stopped"
+        base = self._variant_stream_bases.pop(message.id, None)
+        if base is not None:
+            message.content = base.content
+            message.status = base.prior_status
+        else:
+            message.status = "stopped"
         self._persist_existing_message(message)
         return self._snapshot(message)
 

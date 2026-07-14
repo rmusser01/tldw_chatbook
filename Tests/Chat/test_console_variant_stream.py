@@ -115,3 +115,56 @@ async def test_regenerate_empty_stream_restores_prior_status_and_keeps_context()
 
     provider_messages = controller._provider_messages_for_session(session.id)
     assert {"role": "assistant", "content": "original"} in provider_messages
+
+
+@pytest.mark.asyncio
+async def test_regenerate_stop_mid_stream_restores_original_answer():
+    """Plan-B final-review Medium-2: stopping a regenerate mid-stream must
+    restore the pre-regenerate answer exactly like a failed regenerate --
+    not replace it with the partial streamed buffer marked "stopped". Pre-
+    branch, Stop could not even reach the regenerate loop (no interruptible
+    task was ever set during the old inline regenerate loop); post-
+    unification onto the shared streaming engine, Stop is live during
+    regenerate and this pinned a real regression.
+    """
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+    class WaitingGateway:
+        def __init__(self):
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def resolve_for_send(self, selection):
+            class _R:  # noqa: D401 - tiny stub
+                ready = True
+                visible_copy = ""
+            return _R()
+
+        async def stream_chat(self, resolution, messages):
+            self.started.set()
+            yield "partial regen "
+            await self.release.wait()
+            yield "ignored"
+
+    gateway = WaitingGateway()
+    store, _session, mid = _store_with_answer()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=gateway, provider="llama_cpp", model="test-model")
+
+    task = asyncio.create_task(controller.regenerate_message(mid))
+    await asyncio.wait_for(gateway.started.wait(), timeout=1)
+    await asyncio.sleep(0)
+
+    assert controller.stop_active_run() is True
+    message = store.get_message(mid)
+    assert message.content == "original"
+    assert message.status == "complete"
+    assert message.variants is None
+    assert mid not in store._variant_stream_bases
+
+    gateway.release.set()
+    result = await asyncio.wait_for(task, timeout=1)
+    assert result.accepted is True
+    message = store.get_message(mid)
+    assert message.content == "original"
+    assert message.status == "complete"
