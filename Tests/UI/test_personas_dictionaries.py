@@ -1390,6 +1390,26 @@ class TestDictionaryValidationPanel:
             assert container_region.y <= add_region.y < container_region.y + container_region.height
             assert scroll.scroll_offset.y > 0  # the scroll genuinely moved
 
+    async def test_clear_empties_validation_panel(self, mock_app_instance, stub_characters, fake_dict_service):
+        from textual.widgets import OptionList
+
+        fake_dict_service.records[1]["entries"].append(
+            {"pattern": "BP", "replacement": "dup", "probability": 1.0, "group": None,
+             "timed_effects": None, "max_replacements": 1, "type": "literal",
+             "enabled": True, "case_sensitive": False, "priority": 0}
+        )
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            panel = screen.query_one("#personas-dict-validation", OptionList)
+            assert panel.option_count == 1
+            detail = screen.query_one("#personas-dictionary-detail")
+            detail.clear()
+            await pilot.pause()
+            assert panel.option_count == 0
+            assert detail._validation_findings == []
+
 
 class TestTryItDisabledReason:
     async def test_disabled_entry_renders_reason(self, mock_app_instance, stub_characters, fake_dict_service):

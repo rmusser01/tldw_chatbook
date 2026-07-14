@@ -72,10 +72,15 @@ def validate_entries(entries: list[dict]) -> list[ValidationFinding]:
             seen.add(key)
 
         probability = entry.get("probability")
-        try:
-            probability_value = float(probability) if probability is not None else None
-        except (TypeError, ValueError):
-            probability_value = None  # malformed: not zero, no finding; display layer falls back
+        probability_value: float | None = None
+        if probability is not None:
+            try:
+                probability_value = float(probability)
+            except (TypeError, ValueError):
+                findings.append(ValidationFinding(
+                    code="malformed_probability", field="probability", entry_id=entry_id,
+                    message="Probability is not a number; the editor will display 100% until it is fixed.",
+                ))
         if probability_value is not None and probability_value == 0.0:
             findings.append(ValidationFinding(
                 code="probability_zero", field="probability", entry_id=entry_id,

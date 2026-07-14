@@ -277,6 +277,12 @@ class PersonasDictionaryDetailWidget(Vertical):
         self._last_dirty_sent = False
         self._validation_findings = []
         self.query_one("#personas-dict-entries-table", DataTable).clear()
+        self._validation_findings = []
+        try:
+            panel = self.query_one("#personas-dict-validation", OptionList)
+        except Exception:
+            return
+        panel.clear_options()
 
     @property
     def selected_entry_id(self) -> str | None:

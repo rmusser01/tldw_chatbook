@@ -44,10 +44,17 @@ def test_case_flag_on_regex_flagged():
     assert [f.code for f in findings] == ["case_flag_on_regex"]
 
 
-def test_probability_garbage_does_not_crash_and_yields_no_finding():
-    """A malformed probability is neither zero nor a crash - display-layer
-    fallback (not this module) decides what to show for it."""
-    assert validate_entries([_entry("BP", probability="garbage")]) == []
+def test_malformed_probability_yields_advisory():
+    findings = validate_entries([_entry("BP", probability="garbage")])
+    assert [f.code for f in findings] == ["malformed_probability"]
+    assert findings[0].field == "probability"
+
+
+def test_probability_garbage_yields_advisory_not_crash():
+    """A malformed probability now yields a validation advisory instead of
+    being silently swallowed."""
+    findings = validate_entries([_entry("BP", probability="garbage")])
+    assert [f.code for f in findings] == ["malformed_probability"]
 
 
 def test_regex_probe_survives_malformed_sibling_probability():
@@ -56,8 +63,9 @@ def test_regex_probe_survives_malformed_sibling_probability():
     raise inside validate_entries itself - unlike the module's own
     probability check, which already tolerates garbage. The probe is
     skipped for that entry (no invalid_regex verdict either way), but
-    other regex-branch checks (case_flag_on_regex) still run."""
+    other regex-branch checks (case_flag_on_regex) still run. Both
+    malformed_probability and case_flag_on_regex are reported."""
     findings = validate_entries(
         [_entry("/spo2/i", etype="regex", probability="garbage", case_sensitive=True)]
     )
-    assert [f.code for f in findings] == ["case_flag_on_regex"]
+    assert set(f.code for f in findings) == {"malformed_probability", "case_flag_on_regex"}
