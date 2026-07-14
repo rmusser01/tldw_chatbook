@@ -109,6 +109,39 @@ Library click path. Confirmed via `_autounlock_debug.log`: `patched on_mount CAL
    `_QUIET_STEP_TOOLS`) but are fully visible in the raw step log (below). The resumed capture (a fresh
    process reconnecting to the same persisted conversation) shows the exact same TOOL markers
    re-derived from `AgentRunsDB` via `resume_marker_messages` — byte-identical live vs. resumed.
+   **FIXED (commit `6736835d`)** — see "Gate finding 1: FIXED" below;
+   `agent-tool-discovery-fixed-2026-07-14.png` + `agent-tool-discovery-fixed-resumed-2026-07-14.png`
+   are the post-fix re-captures of the same prompt, now ending in a real assistant answer.
+
+## Gate finding 1: FIXED — discovery-run step budget (commit `6736835d`)
+
+Scenario 6's `stuck` outcome was a budget-shape bug at the Console bridge's config-assembly site, not
+a Skills-code defect (as the original caveat suspected): a discovery-heavy round trip (`find_tools` →
+`load_tools` → skill call → final answer) needs exactly 10 primary-loop steps at the floor
+(`STEP_MODEL`+`STEP_TOOL_CALL`+`STEP_TOOL_RESULT` per round × 3 rounds + 1 final model turn), but
+`ConsoleAgentBridge.run_reply` built its `AgentConfig` with a bare engine-default `RunBudget()`
+(`max_steps=8`) — one round short by construction whenever the >8-skill catalog forces the find/load
+path. Fix: a Console-site `CONSOLE_RUN_BUDGET` override (`max_steps=16`, `max_wall_seconds=480.0` —
+2× the engine defaults: ~60% headroom over the counted 10-step floor, plus matching wall-clock for
+the slow local model). The engine's own `RunBudget` defaults are unchanged and stay pinned at 8 by
+`Tests/Agents/test_agent_models.py::test_budget_defaults`. Regression tests
+(`Tests/Chat/test_console_agent_bridge.py`): a scripted run with the gate's exact 5-turn shape
+completes `done` (RED-verified `stuck` before the fix), and the persisted per-run budget is pinned
+`>8 / >=16 / >240s`.
+
+**Post-fix live re-capture** (same recipe verbatim — `serve_qa_autounlock.py` port 9093,
+`qa-home-skills-agent14` profile, llama.cpp @9099, generous 60s/turn waits):
+`agent-tool-discovery-fixed-2026-07-14.png` shows the same prompt now ending
+`Assistant HELLO` + `Tool ⚙ shout → HELLO` — no budget-exhausted marker, no stuck banner.
+**AgentRunsDB evidence**: primary run `7f87d5545c6341c09f7796edb2831446` — persisted budget
+`{"max_steps": 16, "max_wall_seconds": 480.0, ...}`, **`status=done`**, `result=HELLO`, steps
+`find_tools({"query":"shout"})` → `load_tools({"ids":["skill:shout"]})` → `shout({"args":"hello"})`
+→ `tool_result HELLO` → final model turn `HELLO` (10 steps total — exactly the counted floor);
+child run `511a5dfabaac450b9e34edf79de448e6` (`parent_run_id` = the primary, `status=done`,
+`result=HELLO`). **ChaChaNotes evidence**: conversation `96c88262…` persists the raw user prompt
+plus a real `assistant` row `HELLO`. `agent-tool-discovery-fixed-resumed-2026-07-14.png` (fresh
+process, same persisted conversation) re-derives the identical transcript + TOOL marker from
+`AgentRunsDB`. The pre-fix captures above are kept as the finding's historical evidence.
 
 ## Service/DB evidence (not pixels alone)
 
@@ -156,14 +189,13 @@ the literal raw slash command, never a rendered body, for every skill-triggered 
 - **Library Skills detail editor tab-bar-click bug** — see "Live-gate finding" above. Confirmed
   reproducible, workaround shipped (headless auto-unlock) for this gate; the underlying client-side bug
   itself is out of scope for the Skills feature and not fixed here.
-- **Scenario 5's primary run ends `stuck` (step budget exhausted), not a clean final answer.** The
-  catalog-scale + discovery + spawn pipeline all worked correctly and reproduced identically across two
-  independent attempts (the second sub-agent run, `b6bd1c56…`, is the other reproduction) — but the local
-  model spent its entire step budget on the find/load/invoke sequence and never got a turn to compose a
-  short final reply before `RunBudget`'s default `max_steps` was hit. This is a live-model
-  pacing/budget-tuning question (worth a follow-up: either a slightly larger default step budget for
-  agent-tool turns, or a stronger "wrap up now" nudge once a skill result comes back), not a defect in
-  the Skills catalog/dispatch/execution code paths under test here.
+- ~~**Scenario 5's primary run ends `stuck` (step budget exhausted), not a clean final answer.**~~
+  **FIXED (commit `6736835d`)** — root-caused to the Console bridge assembling its `AgentConfig` with
+  the bare engine-default `RunBudget()` (`max_steps=8`), one round short of the 10-step floor a
+  discovery run needs by construction. See "Gate finding 1: FIXED" above for the fix, regression
+  tests, and the post-fix live re-capture (`status=done`, real assistant answer, DB-verified). The
+  original observation (pipeline correct, only the wrap-up turn missing; reproduced identically across
+  two attempts, second sub-agent run `b6bd1c56…`) stands as the finding's historical record.
 - **`t14-01`/`sess1b` naming**: the composer draft is intentionally left un-cleared after the bare
   `/skills` list and after a refusal (matches the documented "draft untouched" behavior — confirmed live,
   not a capture artifact).
