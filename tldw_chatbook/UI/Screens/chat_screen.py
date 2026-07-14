@@ -127,6 +127,7 @@ from ...Chat.console_image_view import (
     next_view_mode,
     resolve_default_mode,
 )
+from ...Chat.console_paste_attach import extract_dropped_path, looks_attachable
 from ...Chat.console_rail_state import (
     CONSOLE_RAIL_SECTION_IDS,
     ConsoleRailPreferences,
@@ -8449,6 +8450,20 @@ class ChatScreen(BaseAppScreen):
         if self._console_setup_modal_blocking():
             return
         if not self._should_capture_console_input(composer):
+            return
+        dropped = extract_dropped_path(event.text)
+        if dropped is not None and looks_attachable(dropped.path):
+            event.stop()
+            self._dismiss_console_guidance()
+            if dropped.total_dropped > 1:
+                self.app_instance.notify(
+                    f"Attached first of {dropped.total_dropped} dropped files."
+                )
+            self.run_worker(
+                self._process_console_attachment(dropped.path),
+                exclusive=True,
+                group="console-attachment",
+            )
             return
         composer.insert_pasted_text(event.text)
         self._sync_console_workbench_actions_from_draft()
