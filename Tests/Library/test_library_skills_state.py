@@ -105,3 +105,29 @@ def test_pure_module_has_no_forbidden_imports():
     for forbidden in ("textual", "sqlite3", "tldw_chatbook.DB",
                       "tldw_chatbook.app", "httpx", "requests"):
         assert forbidden not in src
+
+
+def test_shadow_name_set_stays_in_sync_with_real_sources():
+    """Drift guard: _SHADOWED_BUILTIN_NAMES must cover all real builtin/command names.
+
+    This test fails when a new builtin tool/command isn't added to the shadow set
+    — update _SHADOWED_BUILTIN_NAMES in library_skills_state.py when it fires.
+    """
+    from tldw_chatbook.Agents.agent_models import RUNTIME_TOOL_NAMES
+    from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
+    from tldw_chatbook.Chat.console_command_grammar import default_console_registry
+    from tldw_chatbook.Library.library_skills_state import _SHADOWED_BUILTIN_NAMES
+
+    # Assert RUNTIME_TOOL_NAMES (spawn_subagent, find_tools, load_tools) is a subset
+    assert RUNTIME_TOOL_NAMES <= _SHADOWED_BUILTIN_NAMES, (
+        f"RUNTIME_TOOL_NAMES not covered: {RUNTIME_TOOL_NAMES - _SHADOWED_BUILTIN_NAMES}")
+
+    # Assert builtin tool names (calculator, get_current_datetime) are a subset
+    builtin_names = {e.name for e in BuiltinToolProvider().list_catalog()}
+    assert builtin_names <= _SHADOWED_BUILTIN_NAMES, (
+        f"BuiltinToolProvider names not covered: {builtin_names - _SHADOWED_BUILTIN_NAMES}")
+
+    # Assert console command names (prompt, system) are a subset
+    command_names = set(default_console_registry().available_names())
+    assert command_names <= _SHADOWED_BUILTIN_NAMES, (
+        f"ConsoleCommandRegistry names not covered: {command_names - _SHADOWED_BUILTIN_NAMES}")
