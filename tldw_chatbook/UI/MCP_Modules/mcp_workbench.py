@@ -24,6 +24,7 @@ from tldw_chatbook.MCP.readiness import (
 )
 from tldw_chatbook.MCP.redaction import redact_args, redact_mapping
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
+from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPProfileForm
 from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCPRail
 from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
 
@@ -226,6 +227,13 @@ class MCPWorkbench(Container):
         self._scope: str = "personal"
         self._scope_ref: str | None = None
         self._snapshots: list[ReadinessSnapshot] = []
+        # T6: raw local-profile catalog records keyed by profile_id, kept in
+        # sync with `_snapshots` by `_collect_snapshots()` -- readiness
+        # snapshots don't carry every field the add/edit form needs
+        # (profile_id/command/args/env_placeholders/env_literals), so
+        # `show_form()` on an EDIT_CONFIG hub action looks the record up
+        # here instead.
+        self._catalog_records: dict[str, dict[str, Any]] = {}
         # T5: in-flight local-profile lifecycle operations, keyed by
         # server_key ("local:<profile_id>"). While a key is present here,
         # `_snapshot_for_display()`/`_sync_children()` render that server as
@@ -361,6 +369,11 @@ class MCPWorkbench(Container):
                     records = []
                 if isinstance(records, list):  # local source returns a bare list
                     snapshots.extend(local_profile_readiness(r) for r in records)
+                    self._catalog_records = {
+                        str(r.get("profile_id")): dict(r)
+                        for r in records
+                        if isinstance(r, Mapping) and r.get("profile_id")
+                    }
         else:
             target_store = getattr(service, "target_store", None)
             if target_store is not None:
@@ -584,6 +597,66 @@ class MCPWorkbench(Container):
             self._start_lifecycle(
                 event.server_key, profile_id, _HUB_ACTION_TO_LIFECYCLE_VERB[event.action]
             )
+        elif (
+            event.action is HubAction.EDIT_CONFIG
+            and event.server_key
+            and event.server_key.startswith("local:")
+        ):
+            profile_id = event.server_key.split(":", 1)[1]
+            record = self._catalog_records.get(profile_id)
+            await self.query_one(MCPServersMode).show_form(record)
+
+    async def on_mcp_servers_mode_add_server_requested(
+        self, event: MCPServersMode.AddServerRequested
+    ) -> None:
+        event.stop()
+        await self.query_one(MCPServersMode).show_form(None)
+
+    def on_mcp_profile_form_submit_requested(
+        self, event: MCPProfileForm.SubmitRequested
+    ) -> None:
+        """Dispatch a profile save in the background.
+
+        Synchronous (not `async def`), mirroring `_start_lifecycle()`: the
+        handler itself must return immediately so Textual's message pump
+        stays responsive while the save runs -- the actual `await
+        service.save_local_profile(...)` happens inside the worker coroutine
+        below.
+        """
+        event.stop()
+        self.run_worker(
+            self._save_local_profile(dict(event.payload)),
+            group="mcp-profile-save",
+            exclusive=True,
+        )
+
+    async def _save_local_profile(self, payload: dict[str, Any]) -> None:
+        service = self._service()
+        if service is None:
+            return
+        try:
+            await service.save_local_profile(payload)
+        except ValueError as exc:
+            try:
+                form = self.query_one(MCPProfileForm)
+            except Exception:
+                form = None
+            if form is not None:
+                form.show_error(str(exc))
+            return
+        except Exception as exc:
+            logger.warning(f"MCP profile save failed: {exc}")
+            self.app.notify(f"Save failed: {exc}", severity="error")
+            return
+        canvas = self.query_one(MCPServersMode)
+        await canvas.hide_form()
+        self.app.notify(f"Saved {payload.get('profile_id')}.")
+        self._snapshots = await self._collect_snapshots()
+        await self._sync_children()
+
+    async def on_mcp_profile_form_cancelled(self, event: MCPProfileForm.Cancelled) -> None:
+        event.stop()
+        await self.query_one(MCPServersMode).hide_form()
 
     def on_mcp_inspector_cancel_requested(self, event: MCPInspector.CancelRequested) -> None:
         """Cancel an in-flight lifecycle worker.

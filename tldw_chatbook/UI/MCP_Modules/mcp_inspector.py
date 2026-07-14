@@ -26,12 +26,19 @@ _BASE_WIRED_ACTIONS = {HubAction.VIEW_DETAILS, HubAction.OPEN_TOOL_CATALOG, HubA
 # mutated on the server side (Advanced), not from this pane.
 _LIFECYCLE_ACTIONS = {HubAction.CONNECT, HubAction.VALIDATE, HubAction.REFRESH_DISCOVERY}
 
+# Task 6: editing a local profile's config (command/args/env) is now wired
+# for local-source snapshots -- MCPWorkbench opens the MCPProfileForm
+# pre-filled from the catalog record for that profile_id. Server-source
+# servers are still edited on the server side (Advanced), not from this pane.
+_CONFIG_ACTIONS = {HubAction.EDIT_CONFIG}
+
 
 def _wired_actions(snapshot: ReadinessSnapshot | None) -> set[HubAction]:
     """Actions this inspector renders enabled for the given snapshot."""
     wired = set(_BASE_WIRED_ACTIONS)
     if snapshot is not None and snapshot.source == "local":
         wired |= _LIFECYCLE_ACTIONS
+        wired |= _CONFIG_ACTIONS
     return wired
 
 
@@ -57,6 +64,7 @@ _WIRED_ACTION_TOOLTIPS: dict[HubAction, str] = {
     HubAction.CONNECT: "Connect to this server and discover its tools.",
     HubAction.VALIDATE: "Test the connection without changing the cached catalog.",
     HubAction.REFRESH_DISCOVERY: "Reconnect and refresh the tool/resource/prompt catalog.",
+    HubAction.EDIT_CONFIG: "Edit this profile's command, args, and env.",
 }
 
 # Disabled-button tooltip for a lifecycle action on a server-source snapshot
@@ -273,7 +281,7 @@ class MCPInspector(Vertical):
                 )
                 if action not in wired:
                     button.disabled = True
-                    if action in _LIFECYCLE_ACTIONS and snapshot.source != "local":
+                    if action in (_LIFECYCLE_ACTIONS | _CONFIG_ACTIONS) and snapshot.source != "local":
                         button.tooltip = _SERVER_MANAGED_TOOLTIP
                     else:
                         button.tooltip = _LATER_PHASE_TOOLTIP

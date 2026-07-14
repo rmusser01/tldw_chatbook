@@ -17,6 +17,7 @@ from tldw_chatbook.MCP.readiness import (
     env_placeholder_names,
 )
 from tldw_chatbook.MCP.redaction import redact_args, redact_url
+from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPProfileForm
 
 _TABLE_COLUMNS = ("Name", "Transport", "Status", "Tools", "Auth", "Scope")
 
@@ -38,12 +39,19 @@ class MCPServersMode(Vertical):
         height: 1fr;
         min-height: 0;
     }
+    #mcp-servers-form {
+        height: auto;
+        min-height: 0;
+    }
     """
 
     class ServerRowSelected(Message, namespace="mcp_servers_mode"):
         def __init__(self, server_key: str) -> None:
             super().__init__()
             self.server_key = server_key
+
+    class AddServerRequested(Message, namespace="mcp_servers_mode"):
+        pass
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -56,6 +64,13 @@ class MCPServersMode(Vertical):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="mcp-servers-overview"):
+            yield Button(
+                "Add server",
+                id="mcp-add-server",
+                classes="console-action-primary",
+                compact=True,
+                tooltip="Create a new local stdio server profile.",
+            )
             yield Static("", id="mcp-overview-summary", classes="ds-status-badge", markup=False)
             table = DataTable(id="mcp-servers-table")
             table.cursor_type = "row"
@@ -72,15 +87,33 @@ class MCPServersMode(Vertical):
                     compact=True,
                     tooltip="Copy this built-in server's client config snippet to the clipboard.",
                 )
+        yield Vertical(id="mcp-servers-form")
 
     def on_mount(self) -> None:
         table = self.query_one("#mcp-servers-table", DataTable)
         table.add_columns(*_TABLE_COLUMNS)
+        self.query_one("#mcp-servers-form").display = False
         self._show_overview_container(True)
 
     def _show_overview_container(self, show_overview: bool) -> None:
         self.query_one("#mcp-servers-overview").display = show_overview
         self.query_one("#mcp-servers-detail").display = not show_overview
+
+    async def show_form(self, profile: dict[str, Any] | None) -> None:
+        """Show the add/edit form, hiding overview and detail while it is up."""
+        self.query_one("#mcp-servers-overview").display = False
+        self.query_one("#mcp-servers-detail").display = False
+        form_container = self.query_one("#mcp-servers-form", Vertical)
+        await form_container.remove_children()
+        await form_container.mount(MCPProfileForm(profile=profile))
+        form_container.display = True
+
+    async def hide_form(self) -> None:
+        """Hide the form and restore whichever view (overview or detail) was active."""
+        form_container = self.query_one("#mcp-servers-form", Vertical)
+        await form_container.remove_children()
+        form_container.display = False
+        self._show_overview_container(self._detail_snapshot is None)
 
     async def update_overview(self, snapshots: list[ReadinessSnapshot]) -> None:
         """Rebuild the overview table, summary, and recovery callouts.
@@ -227,6 +260,10 @@ class MCPServersMode(Vertical):
             self.post_message(self.ServerRowSelected(server_key))
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "mcp-add-server":
+            event.stop()
+            self.post_message(self.AddServerRequested())
+            return
         if event.button.id != "mcp-detail-copy-snippet":
             return
         event.stop()

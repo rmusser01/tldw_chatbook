@@ -6,10 +6,11 @@ from dataclasses import replace
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import ContentSwitcher, Select, Static
+from textual.widgets import ContentSwitcher, Input, Select, Static, TextArea
 
 from tldw_chatbook.MCP.unified_control_models import UnifiedMCPContext
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
+from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPProfileForm
 from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCP_RAIL_ROW_PREFIX, MCPRail
 from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
 from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCP_HUB_MODES, MCPWorkbench
@@ -734,3 +735,170 @@ async def test_cancel_after_natural_completion_does_not_toast_cancelled():
         assert notifications == [], (
             f"stale cancel must not toast, got: {notifications!r}"
         )
+
+
+# -- T6: local profile add/edit form hosting + save wiring ------------------
+
+
+class ProfileFormHubService(FakeHubService):
+    """Like `FakeHubService`, but wires `save_local_profile()` -- configurable
+    to raise a store-shaped `ValueError` on the next call (mirrors
+    `LocalMCPStore`'s "cannot be stored as a literal" copy) or to succeed and
+    grow the catalog, so the reload after a successful save has something new
+    to show.
+    """
+
+    def __init__(self, *, fail_next: bool = False) -> None:
+        super().__init__()
+        self.save_calls: list[dict] = []
+        self._fail_next = fail_next
+        self._records: list[dict] = [
+            {
+                "profile_id": "docs",
+                "command": "python",
+                "args": [],
+                # An unresolved placeholder derives AUTH_MISSING (see
+                # local_profile_readiness()), whose action set is
+                # (OPEN_CREDENTIALS, EDIT_CONFIG, VIEW_DETAILS) -- unlike a
+                # clean READY profile, which offers no EDIT_CONFIG button at
+                # all. Needed so the edit-config test below has a button to
+                # click.
+                "env_placeholders": {"API_KEY": "$MCP_TEST_MISSING_VAR_XYZ"},
+                "env_literals": {},
+                "discovery_snapshot": {"tools": [{"name": "a"}], "resources": [], "prompts": []},
+                "is_connected": True,
+            }
+        ]
+
+    async def load_section(self, section=None):
+        effective_section = section or self.context.selected_section or "overview"
+        if self.context.selected_source == "local":
+            if effective_section == "external_servers":
+                return list(self._records)
+            return {"source": "local", "section": effective_section}
+        return {"external_servers": [], "source": "server", "section": "external_servers"}
+
+    async def local_external_catalog(self):
+        return list(self._records)
+
+    async def save_local_profile(self, payload):
+        self.save_calls.append(dict(payload))
+        if self._fail_next:
+            self._fail_next = False
+            raise ValueError("Secret-bearing env key 'API_KEY' cannot be stored as a literal")
+        self._records.append(dict(payload))
+        return dict(payload)
+
+
+class ProfileFormApp(App):
+    def __init__(self, *, fail_next: bool = False) -> None:
+        super().__init__()
+        self.unified_mcp_service = ProfileFormHubService(fail_next=fail_next)
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+@pytest.mark.asyncio
+async def test_add_server_requested_shows_add_mode_form():
+    app = ProfileFormApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.click("#mcp-add-server")
+        await pilot.pause()
+        form = app.query_one(MCPProfileForm)
+        assert not form.is_edit
+        assert app.query_one("#mcp-servers-form").display
+        assert not app.query_one("#mcp-servers-overview").display
+
+
+@pytest.mark.asyncio
+async def test_submit_with_service_value_error_renders_store_copy_in_form():
+    app = ProfileFormApp(fail_next=True)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.click("#mcp-add-server")
+        await pilot.pause()
+        app.query_one("#mcp-form-id", Input).value = "leaky"
+        app.query_one("#mcp-form-command", Input).value = "npx"
+        app.query_one("#mcp-form-env", TextArea).text = "API_KEY=raw-literal-not-a-placeholder"
+        await pilot.click("#mcp-form-save")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        error_text = str(app.query_one("#mcp-form-error", Static).renderable)
+        assert "cannot be stored" in error_text
+        # Form stays open on failure -- the user can fix the value and retry.
+        assert app.query_one("#mcp-servers-form").display
+        assert app.unified_mcp_service.save_calls == [
+            {
+                "profile_id": "leaky", "command": "npx", "args": [],
+                "env_placeholders": {},
+                "env_literals": {"API_KEY": "raw-literal-not-a-placeholder"},
+            }
+        ]
+
+
+@pytest.mark.asyncio
+async def test_submit_success_hides_form_notifies_and_reloads_catalog():
+    app = ProfileFormApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        notifications = _capture_notifications(app)
+        await pilot.click("#mcp-add-server")
+        await pilot.pause()
+        app.query_one("#mcp-form-id", Input).value = "newprofile"
+        app.query_one("#mcp-form-command", Input).value = "npx"
+        await pilot.click("#mcp-form-save")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert not app.query_one("#mcp-servers-form").display
+        assert app.query_one("#mcp-servers-overview").display
+        assert app.unified_mcp_service.save_calls[-1]["profile_id"] == "newprofile"
+        assert any("newprofile" in msg for msg, _ in notifications)
+
+        # Reload actually picked up the new record -- the overview table now
+        # shows both the pre-seeded "docs" profile and the new one.
+        workbench = app.query_one(MCPWorkbench)
+        keys = {snap.server_key for snap in workbench._snapshots}
+        assert "local:newprofile" in keys
+
+
+@pytest.mark.asyncio
+async def test_cancelled_hides_form_without_saving():
+    app = ProfileFormApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.click("#mcp-add-server")
+        await pilot.pause()
+        await pilot.click("#mcp-form-cancel")
+        await pilot.pause()
+        assert not app.query_one("#mcp-servers-form").display
+        assert app.query_one("#mcp-servers-overview").display
+        assert app.unified_mcp_service.save_calls == []
+
+
+@pytest.mark.asyncio
+async def test_edit_config_hub_action_opens_prefilled_form_for_local_profile():
+    """EDIT_CONFIG on a local-source snapshot (Task 6 wiring of the
+    previously-disabled inspector action) opens the form pre-filled from the
+    freshly loaded catalog record for that profile_id -- not just the
+    readiness snapshot, which doesn't carry command/args/env.
+    """
+    app = ProfileFormApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}2")  # local:docs
+        await pilot.pause()
+        assert list(app.query("#mcp-inspector-action-edit_config"))
+        edit_button = app.query_one("#mcp-inspector-action-edit_config")
+        assert not edit_button.disabled
+        await pilot.click("#mcp-inspector-action-edit_config")
+        await pilot.pause()
+        form = app.query_one(MCPProfileForm)
+        assert form.is_edit
+        assert app.query_one("#mcp-form-id", Input).value == "docs"
+        assert app.query_one("#mcp-form-id", Input).disabled
+        assert app.query_one("#mcp-form-command", Input).value == "python"
