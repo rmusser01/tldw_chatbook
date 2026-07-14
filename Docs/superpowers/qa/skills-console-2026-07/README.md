@@ -46,6 +46,18 @@ Seeding sequence (scratchpad `seed_home_skills_agent14.py`): `bootstrap_trust` o
 
 ## Live-gate finding: Library Skills detail editor breaks the app's tab bar (workaround shipped, not a Skills-code bug)
 
+**FIXED (commit `81700962`)** — see "Gate fix 2" in `.superpowers/sdd/task-14-report.md` for the full
+root-cause writeup. Summary: not a client-side/textual-serve quirk and not scoped to the `Body`
+`TextArea` as originally suspected — root cause was `Input` (any of the editor's Inputs, or the list
+view's Filter input) leaking `App.mouse_captured` when the Library screen recomposes
+(`self.refresh(recompose=True)`) while a click/selection is still in flight on it. Fixed generically in
+`BaseAppScreen.refresh` (`tldw_chatbook/UI/Navigation/base_app_screen.py`), so it also covers the
+identically-shaped, pre-existing Prompts/Notes in-canvas editors. The workaround below (kept verbatim
+as this gate's historical record) is now obsolete — a plain Library-UI unlock-and-click-back-to-Console
+flow works post-fix — but re-running it was not required since the regression is covered by a headless
+test (`Tests/UI/test_library_skills_canvas.py::test_opening_skill_editor_does_not_break_tab_bar_click_activation`)
+and the fix touches no visual layout.
+
 While driving the intended recipe (unlock trust via the Library Skills editor's passphrase modal, then
 click back to Console), the served app's **top-level tab bar stopped responding to click activation for
 the remainder of that process** — hover/hbox focus (an underline) still rendered on Home/Console/Library,
@@ -58,7 +70,9 @@ but no screen switch ever happened, for any tab, from that point on. Isolated vi
   first, clicking "‹ Back to list", or repeating the click up to 8×.
 This is very likely a genuine textual-serve/client-side focus-capture bug scoped to the Skill detail
 screen's `Body` `TextArea` (out of scope for this Skills feature to fix) — flagged here as a real product
-finding, not fabricated around. **Workaround used for this gate**: `serve_qa_autounlock.py` monkeypatches
+finding, not fabricated around. ~~(Superseded — see "FIXED" note above: the actual root cause was
+`Input`'s missing mouse-capture-release-on-removal, not the `TextArea`, and it was fixed in this
+branch's reachable code.)~~ **Workaround used for this gate**: `serve_qa_autounlock.py` monkeypatches
 `TldwCli.on_mount` to call the real `SkillTrustService.unlock_with_passphrase` directly on the same
 `app_instance.local_skill_trust_service` the Console's `get_context`/`execute_skill`/`SkillToolProvider`
 paths already read — exercises the identical trust-gated code paths without ever touching the buggy
@@ -186,9 +200,12 @@ the literal raw slash command, never a rendered body, for every skill-triggered 
 
 ## Caveats (honest, not glossed over)
 
-- **Library Skills detail editor tab-bar-click bug** — see "Live-gate finding" above. Confirmed
-  reproducible, workaround shipped (headless auto-unlock) for this gate; the underlying client-side bug
-  itself is out of scope for the Skills feature and not fixed here.
+- ~~**Library Skills detail editor tab-bar-click bug**~~ **FIXED (commit `81700962`)** — see
+  "Live-gate finding" above and "Gate fix 2" in `.superpowers/sdd/task-14-report.md` for the full
+  root-cause writeup (an `Input` leaking `App.mouse_captured` across a same-screen recompose, fixed
+  generically in `BaseAppScreen.refresh`). The original observation (workaround shipped, out of scope,
+  suspected `TextArea`/client-side) stands as the finding's historical record; the suspicion turned out
+  to be off by one widget (`Input`, not `TextArea`) but the finding itself was real and reproducible.
 - ~~**Scenario 5's primary run ends `stuck` (step budget exhausted), not a clean final answer.**~~
   **FIXED (commit `6736835d`)** — root-caused to the Console bridge assembling its `AgentConfig` with
   the bare engine-default `RunBudget()` (`max_steps=8`), one round short of the 10-step floor a
