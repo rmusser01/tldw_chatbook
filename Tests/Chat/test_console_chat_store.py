@@ -54,6 +54,71 @@ def test_store_deletes_message_from_transcript():
         store.get_message(message.id)
 
 
+def test_stop_mid_regenerate_restores_base_and_does_not_orphan_it():
+    """Plan-B final-review Medium-2: stopping a message mid variant-stream
+    (regenerate) must restore the pre-regenerate base content AND status --
+    mirroring ``mark_message_failed`` (Plan-B Task 1) -- and pop the base
+    immediately, rather than leaving it orphaned in `_variant_stream_bases`
+    for `delete_message` to clean up later. (This test previously pinned
+    the opposite, buggy behavior: that a stopped regenerate replaced the
+    original answer with the partial stream and left the base to be
+    cleared only by a later delete -- Plan-B Task 1 Minor finding's fix
+    only covered `delete_message` itself, not this root cause.)"""
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="answer")
+    store.begin_variant_stream(message.id)
+    store.append_stream_chunk(message.id, "partial")
+
+    stopped = store.mark_message_stopped(message.id)
+
+    assert stopped.content == "answer"
+    assert stopped.status == "complete"
+    assert message.id not in store._variant_stream_bases
+
+    # The now-terminal message can still be deleted cleanly afterward.
+    store.delete_message(message.id)
+    with pytest.raises(KeyError):
+        store.get_message(message.id)
+
+
+def test_stop_mid_regenerate_leaves_existing_variants_untouched():
+    """Plan-B final-review Medium-2: a stopped regenerate must not disturb
+    variants recorded by earlier, successfully-finalized regenerates."""
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="v1")
+    store.add_variant(message.id, "v2")
+    store.begin_variant_stream(message.id)
+    store.append_stream_chunk(message.id, "v3-partial")
+
+    stopped = store.mark_message_stopped(message.id)
+
+    assert stopped.content == "v2"
+    assert stopped.status == "complete"
+    assert [v.content for v in stopped.variants.variants] == ["v1", "v2"]
+    assert stopped.variants.selected_index == 1
+    assert message.id not in store._variant_stream_bases
+
+
+def test_stop_mid_plain_send_keeps_partial_content_and_stopped_status():
+    """Plan-B final-review Medium-2: a Stop with no captured variant base
+    (a normal, non-regenerate send) must keep today's behavior unchanged --
+    the partial streamed content is kept and the message is marked
+    "stopped", not silently reverted."""
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    store.append_stream_chunk(message.id, "par")
+    store.append_stream_chunk(message.id, "tial")
+
+    stopped = store.mark_message_stopped(message.id)
+
+    assert stopped.content == "partial"
+    assert stopped.status == "stopped"
+    assert message.id not in store._variant_stream_bases
+
+
 def test_store_updates_message_content():
     store = ConsoleChatStore()
     session = store.ensure_session()
@@ -105,6 +170,25 @@ def test_store_buffers_stream_chunks_until_messages_are_materialized():
     materialized = store.messages_for_session(session.id)[0]
     assert materialized.content == "hel"
     assert materialized.status == "streaming"
+
+
+def test_reset_stream_content_discards_leaked_prose_but_keeps_streaming_status():
+    """Plan-B Task 5 Finding A: once a streamed turn is classified as a tool
+    call, any prose already streamed to the store for it must be discarded
+    so the next turn's chunks start clean instead of concatenating onto
+    already-flushed leaked prose."""
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+
+    store.append_stream_chunk(message.id, "Let me check that for you.")
+    reset = store.reset_stream_content(message.id)
+    assert reset.content == ""
+    assert reset.status == "streaming"
+
+    store.append_stream_chunk(message.id, "42.")
+    materialized = store.get_message(message.id)
+    assert materialized.content == "42."
 
 
 def test_store_tracks_active_workspace_context():
@@ -625,6 +709,47 @@ def test_store_does_not_enqueue_failed_assistant_final_content():
     assert sync_producer.enqueued == []
 
 
+def test_mark_message_failed_restores_prior_status_when_variant_base_present():
+    """Plan-B Task 1 finding: a zero-chunk (empty-stream) regenerate of a
+    previously-complete message must restore that prior status, not flip to
+    "failed" -- every send path builds provider context with skip_failed=True
+    (see console_chat_controller._provider_messages_for_session), so a wrong
+    "failed" status here would silently drop an otherwise-good turn from the
+    model's context for the rest of the session. Pre-refactor, a failed
+    regenerate was a pure no-op on the existing message."""
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="original"
+    )
+    assert message.status == "complete"
+
+    store.begin_variant_stream(message.id)
+    # Zero-chunk stream: no append_stream_chunk calls before failure.
+    failed = store.mark_message_failed(message.id)
+
+    assert failed.status == "complete"
+    assert failed.content == "original"
+    assert message.id not in store._variant_stream_bases
+
+
+def test_mark_message_failed_without_variant_base_still_marks_failed():
+    """A normal (non-regenerate) send failure keeps today's "failed" status;
+    only the variant-regenerate path has a known-good prior state to
+    restore."""
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    store.append_stream_chunk(assistant.id, "partial")
+
+    failed = store.mark_message_failed(assistant.id)
+
+    assert failed.status == "failed"
+    assert failed.content == "partial"
+
+
 def test_store_persists_chat_when_sync_enqueue_fails():
     persistence = FakePersistence()
     store = ConsoleChatStore(
@@ -884,7 +1009,48 @@ def test_store_rejects_streaming_chunks_after_terminal_state():
         role=ConsoleMessageRole.ASSISTANT,
         content="",
     )
-    store.mark_message_stopped(assistant.id)
+    store.mark_message_failed(assistant.id)
+
+    with pytest.raises(ValueError, match="Cannot append stream chunks"):
+        store.append_stream_chunk(assistant.id, "late")
+
+
+def test_store_drops_late_stream_chunks_for_stopped_message_silently():
+    """Plan-B agent-runtime gate Finding 1 (stop-before-first-token race):
+    a chunk that arrives after the message was already marked stopped must
+    be dropped, not raise -- it's benign (the user already stopped this
+    message), unlike a chunk arriving for a complete/failed message."""
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    store.append_stream_chunk(assistant.id, "before stop")
+    stopped = store.mark_message_stopped(assistant.id)
+    assert stopped.status == "stopped"
+    assert stopped.content == "before stop"
+
+    result = store.append_stream_chunk(assistant.id, "late chunk")
+
+    assert result.status == "stopped"
+    assert result.content == "before stop"
+    unchanged = store.get_message(assistant.id)
+    assert unchanged.status == "stopped"
+    assert unchanged.content == "before stop"
+
+
+def test_store_still_rejects_streaming_chunks_for_complete_message():
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    store.append_stream_chunk(assistant.id, "done text")
+    store.mark_message_complete(assistant.id)
 
     with pytest.raises(ValueError, match="Cannot append stream chunks"):
         store.append_stream_chunk(assistant.id, "late")

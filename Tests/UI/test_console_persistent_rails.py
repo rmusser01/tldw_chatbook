@@ -217,12 +217,13 @@ def _rail_prefs(
     context_open: bool = True,
     model_open: bool = True,
     details_open: bool = False,
+    agent_open: bool = False,
 ) -> dict[str, bool]:
-    """Full serialized rail-preference shape (left/right rails + four sections).
+    """Full serialized rail-preference shape (left/right rails + five sections).
 
-    The persisted shape now carries the four collapsible left-rail section
+    The persisted shape now carries the five collapsible left-rail section
     states alongside the left/right rail openness. Section states default to
-    the first-run layout (Session/Context/Model open, Details collapsed).
+    the first-run layout (Session/Context/Model open, Details/Agent collapsed).
     """
     return {
         "left_open": left_open,
@@ -231,6 +232,7 @@ def _rail_prefs(
         "context_open": context_open,
         "model_open": model_open,
         "details_open": details_open,
+        "agent_open": agent_open,
     }
 
 

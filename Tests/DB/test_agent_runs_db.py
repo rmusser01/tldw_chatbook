@@ -55,6 +55,49 @@ def test_count_subagents_counts_only_subagent_kind(db):
     assert db.count_subagent_runs("c") == 3
 
 
+# --- Finding A: batched per-conversation sub-agent counts (single query,
+# not one connection/query per conversation row per poll tick). ---
+
+def test_count_subagents_by_conversation_batches_single_query(db, monkeypatch):
+    parent_a = db.create_run(conversation_id="conv-a", agent_kind="primary")
+    for i in range(2):
+        db.create_run(conversation_id="conv-a", agent_kind="subagent",
+                      task=f"a{i}", parent_run_id=parent_a)
+    parent_b = db.create_run(conversation_id="conv-b", agent_kind="primary")
+    db.create_run(conversation_id="conv-b", agent_kind="subagent",
+                  task="b0", parent_run_id=parent_b)
+    # conv-c has only a primary run -- zero sub-agents, must be absent.
+    db.create_run(conversation_id="conv-c", agent_kind="primary")
+
+    executed = []
+    original_get_connection = type(db)._get_connection
+
+    def spy_get_connection(self):
+        conn = original_get_connection(self)
+        conn.set_trace_callback(executed.append)
+        return conn
+
+    monkeypatch.setattr(type(db), "_get_connection", spy_get_connection)
+    counts = db.count_subagents_by_conversation(["conv-a", "conv-b", "conv-c"])
+
+    assert counts == {"conv-a": 2, "conv-b": 1}
+    assert "conv-c" not in counts   # zero-absent, not zero-valued
+    select_calls = [c for c in executed if c.strip().upper().startswith("SELECT")]
+    assert len(select_calls) == 1   # one batched query, not one per conversation
+
+
+def test_count_subagents_by_conversation_empty_input_returns_empty_dict(db):
+    assert db.count_subagents_by_conversation([]) == {}
+
+
+def test_count_subagents_by_conversation_dedupes_ids_and_ignores_blanks(db):
+    parent = db.create_run(conversation_id="conv-a", agent_kind="primary")
+    db.create_run(conversation_id="conv-a", agent_kind="subagent",
+                  task="x", parent_run_id=parent)
+    counts = db.count_subagents_by_conversation(["conv-a", "conv-a", "", None])
+    assert counts == {"conv-a": 1}
+
+
 def test_supersede_run_tree_marks_run_and_children(db):
     parent = db.create_run(conversation_id="c", agent_kind="primary")
     child = db.create_run(conversation_id="c", agent_kind="subagent",

@@ -117,6 +117,8 @@ class ConsoleConversationBrowserRow:
         starred: Whether this row is locally starred.
         star_enabled: Whether the UI may toggle a local star for this row.
         source_kind: Source of the row.
+        subagent_count: Historical sub-agent count for this conversation, when
+            known. Only persisted rows can carry a non-zero count.
     """
 
     row_key: str
@@ -132,6 +134,7 @@ class ConsoleConversationBrowserRow:
     starred: bool = False
     star_enabled: bool = True
     source_kind: str = "persisted"
+    subagent_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -220,6 +223,7 @@ def build_console_conversation_browser_state(
     result_total_count: int | None = None,
     result_limit: int = CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
     group_row_limit: int = CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT,
+    subagent_counts: Mapping[str, int] | None = None,
     now: datetime | None = None,
 ) -> ConsoleConversationBrowserState:
     """Build a deterministic grouped conversation browser snapshot.
@@ -238,6 +242,9 @@ def build_console_conversation_browser_state(
             larger search result count.
         result_limit: Caller-level result cap retained on the resulting state.
         group_row_limit: Maximum visible rows per section or workspace group.
+        subagent_counts: Historical sub-agent count keyed by conversation id.
+            Only persisted rows can carry a non-zero count; missing/None
+            entries default to 0.
         now: Reference time for computing relative age labels. Defaults to now.
 
     Returns:
@@ -245,6 +252,7 @@ def build_console_conversation_browser_state(
     """
 
     preferences = dict(group_collapse_preferences or {})
+    counts = dict(subagent_counts or {})
     normalized_query = str(query or "").strip().lower()
     query_active = bool(normalized_query)
     safe_result_limit = max(1, int(result_limit))
@@ -286,6 +294,7 @@ def build_console_conversation_browser_state(
         query_active=query_active,
         group_row_limit=safe_group_row_limit,
         empty_copy="No starred conversations.",
+        counts=counts,
     )
     workspace_groups = _build_workspace_groups(
         rows_by_group=workspace_rows_by_group,
@@ -294,6 +303,7 @@ def build_console_conversation_browser_state(
         preferences=preferences,
         query_active=query_active,
         group_row_limit=safe_group_row_limit,
+        counts=counts,
     )
     workspaces_preference_collapsed = _resolve_collapsed(
         preferences,
@@ -330,6 +340,7 @@ def build_console_conversation_browser_state(
         query_active=query_active,
         group_row_limit=safe_group_row_limit,
         empty_copy="No chats.",
+        counts=counts,
     )
 
     sections = (starred_section, workspaces_section, chats_section)
@@ -385,7 +396,11 @@ def _normalize_input_row(
     )
 
 
-def _to_browser_row(row: ConsoleConversationBrowserInputRow) -> ConsoleConversationBrowserRow:
+def _to_browser_row(
+    row: ConsoleConversationBrowserInputRow,
+    counts: Mapping[str, int] | None = None,
+) -> ConsoleConversationBrowserRow:
+    subagent_count = int((counts or {}).get(row.conversation_id or "", 0))
     return ConsoleConversationBrowserRow(
         row_key=row.row_key,
         conversation_id=row.conversation_id,
@@ -400,6 +415,7 @@ def _to_browser_row(row: ConsoleConversationBrowserInputRow) -> ConsoleConversat
         starred=row.starred,
         star_enabled=row.star_enabled,
         source_kind=row.source_kind,
+        subagent_count=subagent_count,
     )
 
 
@@ -412,9 +428,10 @@ def _build_row_section(
     query_active: bool,
     group_row_limit: int,
     empty_copy: str,
+    counts: Mapping[str, int] | None = None,
 ) -> ConsoleConversationBrowserSection:
     collapsed = preference_collapsed and not (query_active and bool(rows))
-    visible_rows, hidden_count = _visible_rows(rows, collapsed, group_row_limit)
+    visible_rows, hidden_count = _visible_rows(rows, collapsed, group_row_limit, counts)
     return ConsoleConversationBrowserSection(
         section_id=section_id,
         label=label,
@@ -434,6 +451,7 @@ def _build_workspace_groups(
     preferences: Mapping[str, bool],
     query_active: bool,
     group_row_limit: int,
+    counts: Mapping[str, int] | None = None,
 ) -> tuple[ConsoleConversationBrowserGroup, ...]:
     groups: list[tuple[str, str, str, tuple[ConsoleConversationBrowserInputRow, ...]]] = []
     for group_id, group_rows in rows_by_group.items():
@@ -453,7 +471,7 @@ def _build_workspace_groups(
             default_collapsed=default_collapsed,
         )
         collapsed = preference_collapsed and not (query_active and bool(group_rows))
-        visible_rows, hidden_count = _visible_rows(group_rows, collapsed, group_row_limit)
+        visible_rows, hidden_count = _visible_rows(group_rows, collapsed, group_row_limit, counts)
         browser_groups.append(
             ConsoleConversationBrowserGroup(
                 group_id=group_id,
@@ -473,12 +491,13 @@ def _visible_rows(
     rows: tuple[ConsoleConversationBrowserInputRow, ...],
     collapsed: bool,
     group_row_limit: int,
+    counts: Mapping[str, int] | None = None,
 ) -> tuple[tuple[ConsoleConversationBrowserRow, ...], int]:
     if collapsed:
         return (), 0
     visible_input_rows = rows[:group_row_limit] if group_row_limit else ()
     hidden_count = max(0, len(rows) - len(visible_input_rows))
-    return tuple(_to_browser_row(row) for row in visible_input_rows), hidden_count
+    return tuple(_to_browser_row(row, counts) for row in visible_input_rows), hidden_count
 
 
 def _dedupe_rows(

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any, Callable, Protocol
+from typing import TYPE_CHECKING, Any, Callable, Protocol
 
 from tldw_chatbook.Chat.attachment_core import (
     image_content_parts,
@@ -24,6 +24,9 @@ from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleCha
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 from tldw_chatbook.model_capabilities import is_vision_capable
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 
 
 MAX_CONSOLE_DRAFT_LENGTH = 100_000
@@ -111,6 +114,8 @@ class ConsoleChatController:
         thinking_budget_tokens: int | None = None,
         streaming: bool = True,
         system_prompt: str | None = None,
+        agent_bridge: "ConsoleAgentBridge | None" = None,
+        agent_runtime_enabled: bool = True,
     ) -> None:
         self.store = store
         self.provider_gateway = provider_gateway
@@ -133,6 +138,8 @@ class ConsoleChatController:
         self.thinking_budget_tokens = thinking_budget_tokens
         self.streaming = streaming
         self.system_prompt = system_prompt
+        self._agent_bridge = agent_bridge
+        self._agent_runtime_enabled = agent_runtime_enabled
         self.run_state = ConsoleRunState()
         self.run_state_history: list[ConsoleRunStatus] = [self.run_state.status]
         #: Optional owner hook invoked once a submit is accepted (user message
@@ -299,6 +306,23 @@ class ConsoleChatController:
         )
         if current_selection != previous_selection:
             self._clear_terminal_run_state()
+
+    def update_agent_runtime(
+        self, *, enabled: bool, bridge: "ConsoleAgentBridge | None"
+    ) -> None:
+        """Refresh the agent-runtime gate and bridge from a fresh config read.
+
+        Both were previously read only once, at controller construction
+        (Plan-B Task 6 Important 3): the ``[console] agent_runtime``
+        kill-switch is meant to take effect on the next send, but a
+        controller built before a config change stayed on its original
+        path until the owning screen tore it down. The owner must call
+        this every time it refreshes provider selection (see
+        ``update_provider_selection``) so the gate and bridge presence
+        never go stale.
+        """
+        self._agent_runtime_enabled = enabled
+        self._agent_bridge = bridge
 
     def switch_session(self, session_id: str) -> ConsoleChatSession:
         """Activate an existing native Console session."""
@@ -486,27 +510,12 @@ class ConsoleChatController:
             before_message_id=message_id,
         )
         self._ensure_user_continuation_instruction(provider_messages)
-        self._set_run_state(ConsoleRunState(ConsoleRunStatus.STREAMING, "Regenerating response."))
-        chunks: list[str] = []
-        try:
-            async for chunk in self.provider_gateway.stream_chat(resolution, provider_messages):
-                if chunk:
-                    chunks.append(chunk)
-        except Exception as exc:
-            visible_copy = f"Provider stream failed: {describe_stream_failure(exc)}"
-            self._append_failure_system_row(session_id, visible_copy)
-            self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
-            return ConsoleSubmitResult(True, True, visible_copy)
-
-        content = "".join(chunks)
-        if not content:
-            visible_copy = "Provider stream ended without content."
-            self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
-            return ConsoleSubmitResult(True, True, visible_copy)
-
-        updated = self.store.add_variant(message_id, content)
-        self._set_run_state(ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response regenerated."))
-        return ConsoleSubmitResult(True, True, updated.content)
+        return await self._stream_assistant_response(
+            resolution=resolution,
+            provider_messages=provider_messages,
+            assistant_message_id=message_id,
+            variant_mode=True,
+        )
 
     def _provider_selection(self) -> ConsoleProviderSelection:
         return ConsoleProviderSelection(
@@ -617,10 +626,21 @@ class ConsoleChatController:
         provider_messages: list[dict[str, str]],
         assistant_message_id: str,
         prepare_retry: bool = False,
+        variant_mode: bool = False,
     ) -> ConsoleSubmitResult:
+        if self._agent_runtime_enabled and self._agent_bridge is not None:
+            return await self._run_agent_reply(
+                resolution=resolution,
+                provider_messages=provider_messages,
+                assistant_message_id=assistant_message_id,
+                prepare_retry=prepare_retry,
+                variant_mode=variant_mode,
+            )
         self._active_assistant_message_id = assistant_message_id
         self._active_stream_task = asyncio.current_task()
         self._stop_requested = False
+        if variant_mode:
+            self.store.begin_variant_stream(assistant_message_id)
         self._set_run_state(ConsoleRunState(ConsoleRunStatus.STREAMING, "Streaming response."))
         retry_prepared = False
         emitted_content = False
@@ -677,7 +697,10 @@ class ConsoleChatController:
                         return self._session_closed_result()
                 return ConsoleSubmitResult(True, True, failed.content)
             try:
-                completed = self.store.mark_message_complete(assistant_message_id)
+                if variant_mode:
+                    completed = self.store.finalize_variant_stream(assistant_message_id)
+                else:
+                    completed = self.store.mark_message_complete(assistant_message_id)
             except KeyError:
                 return self._session_closed_result()
             self._set_run_state(
@@ -722,6 +745,176 @@ class ConsoleChatController:
                 self._active_assistant_message_id = None
                 self._active_stream_task = None
                 self._stop_requested = False
+
+    async def _run_agent_reply(
+        self,
+        *,
+        resolution: Any,
+        provider_messages: list[dict[str, Any]],
+        assistant_message_id: str,
+        prepare_retry: bool,
+        variant_mode: bool,
+    ) -> ConsoleSubmitResult:
+        """Run the agent loop as the reply engine, streaming into the target row."""
+        self._active_assistant_message_id = assistant_message_id
+        self._active_stream_task = asyncio.current_task()
+        self._stop_requested = False
+        self._set_run_state(ConsoleRunState(ConsoleRunStatus.STREAMING, "Agent running."))
+        try:
+            session_id = self.store.session_id_for_message(assistant_message_id)
+        except KeyError:
+            return self._session_closed_result()
+        if variant_mode:
+            self.store.begin_variant_stream(assistant_message_id)
+        elif prepare_retry:
+            self.store.prepare_message_retry(assistant_message_id)
+
+        # Split the leading session system message off the payload; the
+        # agent config carries it (composed with the operating prompt).
+        session_system_prompt = ""
+        agent_messages = list(provider_messages)
+        if agent_messages and agent_messages[0].get("role") == ConsoleMessageRole.SYSTEM.value:
+            session_system_prompt = str(agent_messages[0].get("content", ""))
+            agent_messages = agent_messages[1:]
+
+        conversation_id = self._agent_conversation_id(session_id)
+        should_cancel = lambda: self._stop_requested  # noqa: E731 — tiny closure
+
+        # Swap site: the agent loop runs synchronously on a worker thread via
+        # asyncio.to_thread, so Stop is cooperative-only -- `should_cancel` is
+        # polled between chunks/steps inside the bridge, never preempts the
+        # thread itself. A provider that hangs mid-request without emitting a
+        # single chunk cannot be interrupted here; RunBudget.max_wall_seconds
+        # (agent_models.py) is what bounds a run overall, but only once
+        # control returns to a checkpoint the loop actually polls -- it is
+        # not a hard timeout on an in-flight, zero-chunk provider call.
+        try:
+            outcome = await asyncio.to_thread(
+                self._agent_bridge.run_reply,
+                conversation_id=conversation_id,
+                session_id=session_id,
+                resolution=resolution,
+                assistant_message_id=assistant_message_id,
+                model=self.model or self.configured_model or "",
+                session_system_prompt=session_system_prompt,
+                agent_messages=agent_messages,
+                should_cancel=should_cancel,
+                supersede_previous=bool(prepare_retry or variant_mode),
+            )
+        except asyncio.CancelledError:
+            if self._stop_requested:
+                try:
+                    stopped = self._mark_stream_stopped(
+                        assistant_message_id, visible_copy="Response stopped.")
+                except KeyError:
+                    return self._session_closed_result()
+                return ConsoleSubmitResult(True, True, stopped.content)
+            raise
+        except Exception as exc:
+            # Bridge failures can originate OUTSIDE AgentService's own
+            # narrow loop guard (agent_service.py wraps only
+            # `run_agent_loop`; `db.create_run`, `_persist`
+            # (append_steps/set_status), and `supersede_run_tree` are not
+            # covered). Left uncaught here, run_state would stay STREAMING
+            # forever and every future send on every session would be
+            # rejected ("A Console run is already running.") until app
+            # restart (Plan-B Task 6 Critical 1). Mirror the legacy stream
+            # path's catch-all above, including the Task-1 variant-restore
+            # semantics: `begin_variant_stream`/`prepare_message_retry`
+            # already ran before the bridge call, so `mark_message_failed`
+            # resolves the correct terminal content on its own (restores
+            # the pre-regenerate base + status for a failed regenerate;
+            # preserves whatever partial content already streamed
+            # otherwise).
+            visible_copy = f"Agent run failed: {describe_stream_failure(exc)}"
+            try:
+                self.store.mark_message_failed(assistant_message_id)
+            except KeyError:
+                return self._session_closed_result()
+            self._append_failure_system_row(session_id, visible_copy)
+            self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
+            return ConsoleSubmitResult(True, True, visible_copy)
+        finally:
+            if self._active_stream_task is asyncio.current_task():
+                self._active_assistant_message_id = None
+                self._active_stream_task = None
+                self._stop_requested = False
+
+        return self._finalize_agent_reply(
+            assistant_message_id, session_id, outcome, variant_mode=variant_mode)
+
+    def _agent_conversation_id(self, session_id: str) -> str:
+        """Return the durable id the run store is keyed by (persisted id when set)."""
+        for session in self.store.sessions():
+            if session.id == session_id:
+                return session.persisted_conversation_id or session_id
+        return session_id
+
+    def _finalize_agent_reply(
+        self, assistant_message_id: str, session_id: str, outcome: Any,
+        *, variant_mode: bool,
+    ) -> ConsoleSubmitResult:
+        from tldw_chatbook.Agents.agent_models import RUN_CANCELLED, RUN_DONE
+
+        if outcome.status == RUN_CANCELLED:
+            try:
+                stopped = self._mark_stream_stopped(
+                    assistant_message_id, visible_copy="Response stopped.")
+            except KeyError:
+                return self._session_closed_result()
+            return ConsoleSubmitResult(True, True, stopped.content)
+
+        if outcome.status != RUN_DONE:
+            # RUN_ERROR/RUN_STUCK (and any other non-done outcome) are
+            # failures, never a silent "complete" (Plan-B Task 6 Critical
+            # 2): a failing regenerate must not clobber a good prior
+            # answer with a fake "[agent error]" variant, and a failed
+            # message must stay retryable and excluded from model context
+            # (skip_failed=True). `mark_message_failed` carries the Task-1
+            # variant-restore semantics on its own -- for a regenerate it
+            # restores the pre-regenerate base content + status untouched;
+            # for a plain send/retry it keeps whatever partial prose had
+            # already streamed, matching legacy failure behavior.
+            visible_copy = self._agent_failure_visible_copy(outcome)
+            try:
+                failed = self.store.mark_message_failed(assistant_message_id)
+            except KeyError:
+                return self._session_closed_result()
+            self._append_failure_system_row(session_id, visible_copy)
+            self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
+            return ConsoleSubmitResult(True, True, failed.content)
+
+        try:
+            if variant_mode:
+                completed = self.store.finalize_variant_stream(assistant_message_id)
+            else:
+                completed = self.store.mark_message_complete(assistant_message_id)
+        except KeyError:
+            return self._session_closed_result()
+        self._set_run_state(ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."))
+        return ConsoleSubmitResult(True, True, completed.content)
+
+    @staticmethod
+    def _agent_failure_visible_copy(outcome: Any) -> str:
+        """Return user-facing copy for a non-done agent outcome, naming the reason.
+
+        ``RUN_STUCK`` in particular must read as visibly distinct from a
+        generic failure -- it means the run hit a budget or loop-detection
+        limit (agent_runtime.py), not a raw exception -- so the concrete
+        reason recorded on the last ``STEP_ERROR`` step (e.g. "step budget
+        exhausted", "wall-clock budget exhausted", "loop detected: ...") is
+        surfaced when available.
+        """
+        from tldw_chatbook.Agents.agent_models import RUN_STUCK, STEP_ERROR
+
+        reason = ""
+        for step in reversed(getattr(outcome, "steps", None) or []):
+            if getattr(step, "kind", None) == STEP_ERROR and getattr(step, "summary", ""):
+                reason = step.summary
+                break
+        if outcome.status == RUN_STUCK:
+            return f"Agent run stuck: {reason or 'budget or loop limit reached'}."
+        return f"Agent run failed: {reason or outcome.status}."
 
     def _leading_system_message(self) -> list[dict[str, str]]:
         """Return a single-item system message list when a system prompt is set.
@@ -824,7 +1017,22 @@ class ConsoleChatController:
         prepare_retry: bool = False,
         retry_prepared: bool = True,
     ) -> ConsoleChatMessage:
-        """Mark a streaming assistant message stopped, tolerating an earlier stop request."""
+        """Mark a streaming assistant message stopped, tolerating an earlier stop request.
+
+        ``stop_active_run`` finalizes the message synchronously and then
+        cancels the active stream task; that task's own ``CancelledError``
+        handler in ``_stream_assistant_response`` calls this a second,
+        redundant time. ``store.mark_message_stopped`` raises ``ValueError``
+        for that redundant call because the message is no longer pending/
+        streaming -- i.e. some earlier call already finalized it -- so any
+        such error here is tolerated by simply reading back the
+        already-finalized message rather than re-raising. Before Plan-B
+        final-review Medium-2, the only reachable terminal status from this
+        path was "stopped" itself; a mid-regenerate stop now legitimately
+        settles the message at its pre-regenerate status instead (e.g.
+        "complete"), so this must tolerate any terminal status, not just
+        "stopped".
+        """
         if prepare_retry and not retry_prepared:
             stopped = self.store.get_message(assistant_message_id)
         else:
@@ -832,8 +1040,6 @@ class ConsoleChatController:
                 stopped = self.store.mark_message_stopped(assistant_message_id)
             except ValueError:
                 stopped = self.store.get_message(assistant_message_id)
-                if stopped.status != "stopped":
-                    raise
         self._set_run_state(ConsoleRunState(ConsoleRunStatus.STOPPED, visible_copy))
         return stopped
 

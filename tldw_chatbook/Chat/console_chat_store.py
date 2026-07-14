@@ -24,6 +24,19 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 
 
+@dataclass(frozen=True)
+class _VariantStreamBase:
+    """Pre-regenerate snapshot captured by ``begin_variant_stream``.
+
+    Carries both the visible content *and* the message's status at the
+    moment regeneration began, so a failed regenerate can restore the
+    message to exactly the state it was in before -- not just its content.
+    """
+
+    content: str
+    prior_status: ConsoleMessageStatus
+
+
 class ConsoleChatPersistence(Protocol):
     """Persistence surface used by Console without importing DB dependencies."""
 
@@ -132,6 +145,7 @@ class ConsoleChatStore:
         self._stream_chunks_by_message: dict[str, list[str]] = {}
         self._stream_materialized_counts: dict[str, int] = {}
         self._sync_v2_message_versions: dict[str, str] = {}
+        self._variant_stream_bases: dict[str, _VariantStreamBase] = {}
 
     def ensure_session(
         self,
@@ -460,6 +474,7 @@ class ConsoleChatStore:
         self._stream_chunks_by_message.pop(message_id, None)
         self._stream_materialized_counts.pop(message_id, None)
         self._pending_persistence_message_ids.discard(message_id)
+        self._variant_stream_bases.pop(message_id, None)
         return self._snapshot(message)
 
     def session_id_for_message(self, message_id: str) -> str:
@@ -469,14 +484,62 @@ class ConsoleChatStore:
         return self._message_session_index[message_id]
 
     def append_stream_chunk(self, message_id: str, chunk: str) -> ConsoleChatMessage:
-        """Append streamed assistant content to an existing message."""
+        """Append streamed assistant content to an existing message.
+
+        A chunk arriving for a message already ``"stopped"`` is dropped
+        silently rather than raising: the user's Stop already finalized and
+        persisted this message, so a late chunk from a slow provider (one
+        that hadn't produced a single token before Stop was clicked) is
+        benign by definition, not a programming error (Plan-B agent-runtime
+        gate Finding 1 -- see ``Docs/superpowers/qa/agent-runtime-2026-07/
+        README.md``). Other invalid statuses (``complete``/``failed``)
+        still raise via ``_validate_can_stream`` -- those really do
+        indicate a bug in the caller.
+        """
         message = self._message_or_raise(message_id)
+        if message.status == "stopped":
+            return self._snapshot(message)
         self._validate_can_stream(message)
         buffer = self._stream_chunks_by_message.setdefault(
             message.id,
             [message.content] if message.content else [],
         )
         buffer.append(chunk)
+        message.status = "streaming"
+        return self._snapshot(message)
+
+    def reset_stream_content(self, message_id: str) -> ConsoleChatMessage:
+        """Discard streamed content once a turn is reclassified as a tool call.
+
+        A disobedient model can stream prose before finally emitting a tool
+        fence; the streaming adapter forwards that prose live, before the
+        turn is known to be a tool call rather than a final answer. Once the
+        loop classifies the completed turn as a tool call, the leaked prose
+        already lives in that turn's ``STEP_MODEL`` step summary/log -- its
+        rightful home -- so it is discarded here rather than left to
+        concatenate onto the real final answer's chunks on the next turn
+        (Plan-B Task 5 Finding A). The message is kept in the ``streaming``
+        status (not reset to ``pending``) so the next turn's chunks continue
+        to append normally via ``append_stream_chunk``.
+
+        Args:
+            message_id: Native Console message ID whose streamed content
+                (buffered chunks and materialized ``content``) should be
+                discarded.
+
+        Returns:
+            A snapshot of the now-empty, still-streaming message.
+
+        Raises:
+            KeyError: If the message is unknown.
+            ValueError: If the message is not an assistant message.
+        """
+        message = self._message_or_raise(message_id)
+        if message.role is not ConsoleMessageRole.ASSISTANT:
+            raise ValueError("Only assistant messages can reset stream content.")
+        message.content = ""
+        self._stream_chunks_by_message.pop(message.id, None)
+        self._stream_materialized_counts.pop(message.id, None)
         message.status = "streaming"
         return self._snapshot(message)
 
@@ -490,20 +553,64 @@ class ConsoleChatStore:
         return self._snapshot(message)
 
     def mark_message_stopped(self, message_id: str) -> ConsoleChatMessage:
-        """Mark a message stopped and flush final visible content to persistence."""
+        """Mark a message stopped and flush final visible content to persistence.
+
+        If this message was mid variant-stream (regenerate), any partial
+        streamed content is discarded and the pre-regenerate base content AND
+        status are restored -- mirroring ``mark_message_failed`` (Plan-B
+        Task 1) and the pre-refactor regenerate behavior, where Stop could
+        not even reach a regenerate loop (it never set an interruptible
+        task), so the original answer always survived a Stop untouched.
+        Post-unification, Stop is live during regenerate; treating a stopped
+        regenerate exactly like a failed one keeps that guarantee: the
+        partial text is discarded (it remains recoverable from the run's own
+        step log) rather than overwriting the original answer and marking it
+        "stopped" (Plan-B final-review Medium-2).
+
+        A stop with no captured base -- a normal, non-regenerate send -- has
+        no known-good prior state to restore, so it keeps today's behavior:
+        the partial streamed content is kept and the message is marked
+        "stopped".
+        """
         message = self._message_or_raise(message_id)
         self._validate_can_mark_terminal(message)
         self._materialize_stream_buffer(message)
-        message.status = "stopped"
+        base = self._variant_stream_bases.pop(message.id, None)
+        if base is not None:
+            message.content = base.content
+            message.status = base.prior_status
+        else:
+            message.status = "stopped"
         self._persist_existing_message(message)
         return self._snapshot(message)
 
     def mark_message_failed(self, message_id: str) -> ConsoleChatMessage:
-        """Mark a message failed and flush final visible content to persistence."""
+        """Mark a message failed and flush final visible content to persistence.
+
+        If this message was mid variant-stream (regenerate), any partial
+        streamed content is discarded and the pre-regenerate base content AND
+        status are restored -- mirroring the pre-refactor regenerate
+        behavior, where a failed regenerate never touched the existing
+        message at all. Restoring the prior status (not just the content) is
+        load-bearing: every send path builds provider context via
+        ``_provider_messages_for_session(..., skip_failed=True)``, so a
+        message left at "failed" status would be silently excluded from the
+        model's context for the rest of the session even though its visible
+        content is fully intact (Plan-B Task 1 finding).
+
+        A failure with no captured base -- i.e. a normal, non-regenerate
+        send -- has no known-good prior state to restore, so it keeps
+        today's "failed" status unchanged.
+        """
         message = self._message_or_raise(message_id)
         self._validate_can_mark_terminal(message)
         self._materialize_stream_buffer(message)
-        message.status = "failed"
+        base = self._variant_stream_bases.pop(message.id, None)
+        if base is not None:
+            message.content = base.content
+            message.status = base.prior_status
+        else:
+            message.status = "failed"
         self._persist_existing_message(message)
         return self._snapshot(message)
 
@@ -536,6 +643,68 @@ class ConsoleChatStore:
             message.variants.variants.append(ConsoleVariant(content=content))
             message.variants.selected_index = len(message.variants.variants) - 1
         message.content = message.variants.current.content
+        self._persist_existing_message(message)
+        return self._snapshot(message)
+
+    def begin_variant_stream(self, message_id: str) -> ConsoleChatMessage:
+        """Snapshot current content as the base and reset the buffer for a new variant.
+
+        Args:
+            message_id: ID of the assistant message being regenerated.
+
+        Returns:
+            A snapshot of the message with its content cleared and status
+            set to ``"streaming"``, ready to receive the new variant's
+            chunks.
+
+        Raises:
+            KeyError: ``message_id`` does not reference a known message.
+            ValueError: The message is not an assistant message.
+        """
+        message = self._message_or_raise(message_id)
+        if message.role is not ConsoleMessageRole.ASSISTANT:
+            raise ValueError("Only assistant messages can be regenerated.")
+        self._materialize_stream_buffer(message)
+        self._variant_stream_bases[message.id] = _VariantStreamBase(
+            content=message.content,
+            prior_status=message.status,
+        )
+        message.content = ""
+        self._stream_chunks_by_message.pop(message.id, None)
+        self._stream_materialized_counts.pop(message.id, None)
+        message.status = "streaming"
+        return self._snapshot(message)
+
+    def finalize_variant_stream(self, message_id: str) -> ConsoleChatMessage:
+        """Store the streamed buffer as a new selected variant beside the snapshot base.
+
+        Args:
+            message_id: ID of the assistant message previously passed to
+                ``begin_variant_stream``.
+
+        Returns:
+            A snapshot of the message with the new variant selected as
+            current and status set to ``"complete"``.
+
+        Raises:
+            KeyError: ``message_id`` does not reference a known message.
+        """
+        message = self._message_or_raise(message_id)
+        self._materialize_stream_buffer(message)
+        new_content = message.content
+        base_entry = self._variant_stream_bases.pop(message.id, None)
+        base = base_entry.content if base_entry is not None else ""
+        if message.variants is None:
+            message.variants = ConsoleVariantSet.from_contents(
+                turn_id=message.turn_id or message.id,
+                contents=[base, new_content],
+                selected_index=1,
+            )
+        else:
+            message.variants.variants.append(ConsoleVariant(content=new_content))
+            message.variants.selected_index = len(message.variants.variants) - 1
+        message.content = message.variants.current.content
+        message.status = "complete"
         self._persist_existing_message(message)
         return self._snapshot(message)
 
