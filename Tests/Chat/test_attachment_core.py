@@ -108,3 +108,44 @@ def test_image_content_parts_builds_data_url():
     assert parts[1]["image_url"]["url"].startswith("data:image/png;base64,")
     only_image = image_content_parts("", b"\x89PNG", "image/png")
     assert [p["type"] for p in only_image] == ["image_url"]
+
+
+def test_process_attachment_bytes_builds_image_pending():
+    import asyncio
+    from io import BytesIO
+
+    from PIL import Image as PILImage
+
+    from tldw_chatbook.Chat.attachment_core import process_attachment_bytes
+
+    buffer = BytesIO()
+    PILImage.new("RGB", (32, 32), (200, 10, 10)).save(buffer, format="PNG")
+    data = buffer.getvalue()
+
+    attachment = asyncio.run(
+        process_attachment_bytes(data, display_name="clipboard-20260713-120000.png")
+    )
+    assert attachment.insert_mode == "attachment"
+    assert attachment.file_type == "image"
+    assert attachment.file_path == ""
+    assert attachment.mime_type == "image/png"
+    assert attachment.display_name == "clipboard-20260713-120000.png"
+    assert attachment.data and attachment.processed_size == len(attachment.data)
+
+
+def test_process_attachment_bytes_rejects_corrupt_and_oversized(monkeypatch):
+    import asyncio
+
+    import pytest as _pytest
+
+    from tldw_chatbook.Chat import attachment_core
+    from tldw_chatbook.Chat.attachment_core import process_attachment_bytes
+
+    with _pytest.raises(ValueError, match="not a valid image"):
+        asyncio.run(process_attachment_bytes(b"junk", display_name="x.png"))
+
+    monkeypatch.setattr(attachment_core, "MAX_IMAGE_BYTES", 4)
+    with _pytest.raises(ValueError, match="too large"):
+        asyncio.run(
+            process_attachment_bytes(b"12345678", display_name="big.png")
+        )

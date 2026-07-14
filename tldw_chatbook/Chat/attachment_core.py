@@ -23,6 +23,7 @@ from tldw_chatbook.model_capabilities import (
 )
 
 MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024  # matches the legacy handler's 100MB cap
+MAX_IMAGE_BYTES = 10 * 1024 * 1024  # matches ChatImageHandler.MAX_IMAGE_SIZE
 DEFAULT_MAX_HISTORY_IMAGES = 10  # used when model capabilities omit max_images
 
 # (label, semicolon-separated glob patterns) — single source for both UIs' pickers.
@@ -134,6 +135,61 @@ async def process_attachment_path(
         text_content=processed.content,
         original_size=os.path.getsize(file_path),
         processed_size=len(data) if data is not None else len(processed.content or ""),
+    )
+
+
+async def process_attachment_bytes(
+    data: bytes,
+    *,
+    display_name: str,
+    mime_type: str = "image/png",
+) -> PendingAttachment:
+    """Build an image PendingAttachment from raw bytes (clipboard path).
+
+    Runs the same validate/resize pipeline as file-based image attachments
+    (10 MB cap, PIL validation, resize via ChatImageHandler) with no temp
+    files.
+
+    Args:
+        data: Raw image bytes (e.g. PNG-encoded clipboard grab).
+        display_name: User-facing name (e.g. ``clipboard-20260713-120000.png``).
+        mime_type: MIME type of ``data``.
+
+    Returns:
+        An attachment-mode image PendingAttachment with ``file_path=""``.
+
+    Raises:
+        ValueError: If the bytes exceed the image cap or are not a valid image.
+    """
+    from io import BytesIO
+
+    from PIL import Image as PILImage
+
+    from tldw_chatbook.Event_Handlers.Chat_Events.chat_image_events import (
+        ChatImageHandler,
+    )
+
+    if len(data) > MAX_IMAGE_BYTES:
+        raise ValueError(
+            f"Image too large ({len(data) / 1024 / 1024:.1f}MB). "
+            f"Maximum size: {MAX_IMAGE_BYTES / 1024 / 1024:.0f}MB"
+        )
+    try:
+        PILImage.open(BytesIO(data)).verify()
+    except Exception as exc:
+        raise ValueError("Clipboard data is not a valid image.") from exc
+    extension = ".png" if "png" in mime_type else ".jpg"
+    processed = await ChatImageHandler._process_image_data(data, extension, mime_type)
+    return PendingAttachment(
+        file_path="",
+        display_name=display_name,
+        file_type="image",
+        insert_mode="attachment",
+        data=processed,
+        mime_type=mime_type,
+        text_content=None,
+        original_size=len(data),
+        processed_size=len(processed),
     )
 
 
