@@ -21,7 +21,9 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from textual import events
 from textual.app import App
+from textual.pilot import _get_mouse_message_arguments
 from textual.widgets import Button, Input, Static, TextArea
 
 from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SKILLS
@@ -30,6 +32,8 @@ from tldw_chatbook.Library.library_skills_state import (
     SkillListRow,
     SkillsListState,
 )
+from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
+from tldw_chatbook.Skills_Interop.skills_scope_service import SkillsScopeService
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library.library_skills_canvas import (
     _TRUST_SETUP_EXPLANATION_COPY,
@@ -712,6 +716,124 @@ async def test_library_shell_skills_filter_submitted_rebuilds_state():
         assert screen._library_skills_filter == "review"
         assert screen.query_one("#library-skill-row-code-review", Button)
         assert len(screen.query("#library-skill-row-translate")) == 0
+
+
+_TAB_BAR_CLICK_BUG_SKILL_CONTENT = (
+    "---\n"
+    "description: Summarize notes\n"
+    "---\n"
+    "# Summarize\n"
+    "Summarize body text.\n"
+)
+
+
+@pytest.mark.asyncio
+async def test_opening_skill_editor_does_not_break_tab_bar_click_activation(tmp_path):
+    """Regression lock for the Phase-2 gate's tab-bar-click finding.
+
+    Root cause: ``Widget.recompose()`` (what ``self.refresh(recompose=True)``
+    schedules) unconditionally removes and remounts every child of the
+    screen. If ``App.mouse_captured`` happens to reference one of those
+    children -- e.g. an ``Input`` mid click/selection whose ``MouseUp``
+    hasn't arrived yet (plausible over textual-serve's websocket transport,
+    where down/up travel as independently-timed messages) -- ``Input`` has
+    no ``_on_hide`` handler to release the mouse on removal, unlike
+    ``TextArea``/``ScrollBar`` (Textual's other two mouse-capturing
+    widgets), which both do. ``mouse_captured`` is then left referencing a
+    removed widget FOREVER: every subsequent mouse event anywhere in the
+    app -- routed through ``Screen._forward_event``/``_handle_mouse_move``,
+    both of which special-case ``if self.app.mouse_captured: ...
+    self.find_widget(widget)`` -- hits ``NoWidget`` and is silently
+    swallowed, permanently breaking click dispatch app-wide (including the
+    top nav bar's own buttons). The Library skills detail editor is a
+    reachable trigger: opening it recomposes the screen (list -> "Loading
+    skill..." -> full editor), and any Input on the canvas a user's mouse
+    is mid-interacting with when that fires can leak the capture.
+
+    Fixed in ``BaseAppScreen.refresh`` (``tldw_chatbook/UI/Navigation/
+    base_app_screen.py``): release any active mouse capture BEFORE a
+    recompose, mirroring the same defensive ``capture_mouse(None)`` call
+    Textual's own ``push_screen``/``switch_screen``/``_replace_screen``
+    already make before swapping screens -- this same-screen content
+    recompose path never had that protection.
+
+    This test drives the REAL production path end to end: a real
+    ``LocalSkillsService``/``SkillsScopeService``, a real skill row click to
+    open the in-canvas editor, a simulated in-flight ``MouseDown`` on the
+    Description ``Input`` (capturing the mouse) with no matching
+    ``MouseUp``, an ordinary "Back to list" click (recomposing the canvas
+    away from under it), and then a real click on the top nav bar's Console
+    button -- which must still dispatch. A focused-widget Enter keypress
+    (an entirely different, mouse-capture-oblivious dispatch path) is
+    asserted too, confirming keyboard activation was never at risk either
+    way.
+    """
+    local_service = LocalSkillsService(
+        store_dir=tmp_path, trust_service=None,
+        allow_untrusted_without_trust_service=True, policy_enforcer=None,
+    )
+    await local_service.create_skill(name="summarize-notes", content=_TAB_BAR_CLICK_BUG_SKILL_CONTENT)
+    service = SkillsScopeService(local_service=local_service, server_service=None, policy_enforcer=None)
+
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesListScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.skills_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-skills").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        screen.query_one("#library-skill-row-summarize-notes", Button).press()
+        for _ in range(150):
+            if screen._library_skill_detail is not None:
+                break
+            await pilot.pause(0.02)
+        await pilot.pause()
+        assert screen._library_skills_view == "editor"
+
+        # Simulate a user starting a click/selection gesture in the
+        # Description Input -- MouseDown captures the mouse -- whose
+        # MouseUp never arrives before the screen recomposes.
+        description_input = screen.query_one("#library-skill-description", Input)
+        message_arguments = _get_mouse_message_arguments(description_input, (1, 0), button=1)
+        host.screen._forward_event(events.MouseDown(**message_arguments))
+        await pilot.pause()
+        assert host.app.mouse_captured is description_input
+
+        # An ordinary "Back to list" click recomposes the canvas, removing
+        # the Description Input (and every other editor widget) entirely.
+        screen.query_one("#library-skill-back", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_skills_view == "list"
+
+        # THE FIX: mouse capture must have been released before that
+        # recompose, not left dangling on the now-removed Input.
+        assert host.app.mouse_captured is None
+
+        # A real click on the top nav bar's Console button must still work.
+        nav_button = screen.query_one("#nav-console", Button)
+        await pilot.click(nav_button)
+        await pilot.pause()
+        await pilot.pause()
+        assert "chat" in host.seen_routes
+
+        # Keyboard activation (an entirely separate, mouse-capture-oblivious
+        # dispatch path) was never at risk, but is asserted for completeness.
+        host.seen_routes.clear()
+        nav_button_2 = screen.query_one("#nav-artifacts", Button)
+        nav_button_2.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+        assert "artifacts" in host.seen_routes
 
 
 # ---------------------------------------------------------------------------
