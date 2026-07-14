@@ -519,6 +519,10 @@ class LocalChatDictionaryService:
         return {"dictionary_id": int(dictionary_id), "name": record.get("name"), "content": content, "source": "local"}
 
     def import_json(self, request_data: Any) -> dict[str, Any]:
+        """Import dictionary from JSON; preserves strategy field for round-trip.
+
+        If strategy is not provided, defaults to 'sorted_evenly'.
+        """
         payload = _payload(request_data)
         data = dict(payload.get("data") or {})
         dictionary_id = cdl.save_chat_dictionary(
@@ -527,6 +531,7 @@ class LocalChatDictionaryService:
             description=data.get("description") or "",
             content=data.get("content"),
             entries=[_entry_from_payload(entry) for entry in data.get("entries") or []],
+            strategy=str(data.get("strategy") or "sorted_evenly"),
             max_tokens=int(data.get("default_token_budget") or data.get("max_tokens") or 1000),
             enabled=bool(payload.get("activate", data.get("enabled", True))),
         )
@@ -538,6 +543,10 @@ class LocalChatDictionaryService:
         return {"dictionary_id": int(dictionary_id), "source": "local"}
 
     def export_json(self, dictionary_id: int) -> dict[str, Any]:
+        """Export dictionary to JSON; includes all fields for round-trip import.
+
+        The strategy field is included to support lossless round-trips.
+        """
         record = self._load_required_dictionary(int(dictionary_id))
         return {
             "dictionary_id": int(dictionary_id),
@@ -546,6 +555,7 @@ class LocalChatDictionaryService:
                 "description": record.get("description"),
                 "content": record.get("content"),
                 "entries": _entries_payload(record.get("entries") or []),
+                "strategy": record.get("strategy"),
                 "max_tokens": record.get("max_tokens"),
                 "enabled": bool(record.get("enabled")),
                 "version": record.get("version"),

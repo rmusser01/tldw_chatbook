@@ -331,3 +331,39 @@ def test_entry_loose_typed_priority_and_enabled_do_not_crash(dictionary_db):
     entry = record["entries"][0]
     assert entry["priority"] == 0
     assert entry["enabled"] is False
+
+
+def test_json_export_import_roundtrips_every_field(dictionary_db):
+    service = LocalChatDictionaryService(dictionary_db)
+    created = service.create_dictionary(
+        {
+            "name": "Round Trip",
+            "description": "all fields",
+            "entries": [
+                {"pattern": "BP", "replacement": "blood pressure", "probability": 0.85,
+                 "group": "med", "timed_effects": {"sticky": 0, "cooldown": 5, "delay": 0},
+                 "max_replacements": 3, "type": "literal",
+                 "enabled": False, "case_sensitive": True, "priority": 7},
+            ],
+            "max_tokens": 750,
+        }
+    )
+    # strategy is settable only via update (create ignores it — P1a ground truth).
+    service.update_dictionary(created["id"], {"strategy": "character_lore_first"})
+
+    exported = service.export_json(created["id"])
+    assert exported["data"]["strategy"] == "character_lore_first"  # the fixed seam
+
+    exported["data"]["name"] = "Round Trip (imported)"  # data.name WINS — mutate it
+    imported = service.import_json({"data": exported["data"]})
+    record = service.get_dictionary(imported["dictionary_id"])
+
+    assert record["name"] == "Round Trip (imported)"
+    assert record["description"] == "all fields"
+    assert record["strategy"] == "character_lore_first"
+    assert record["max_tokens"] == 750
+    src_entry = service.get_dictionary(created["id"])["entries"][0]
+    dup_entry = record["entries"][0]
+    for field in ("pattern", "replacement", "probability", "group", "timed_effects",
+                  "max_replacements", "type", "enabled", "case_sensitive", "priority"):
+        assert dup_entry.get(field) == src_entry.get(field), field
