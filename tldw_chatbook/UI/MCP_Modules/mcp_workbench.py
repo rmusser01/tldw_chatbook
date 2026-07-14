@@ -1220,6 +1220,16 @@ class MCPWorkbench(Container):
         `test_hub_tool()` itself already records the attempt to the
         execution log -- nothing here duplicates that, this only renders
         the outcome and measures wall-clock duration for display.
+
+        The success-path result-formatting step (`redact_mapping()` then
+        `json.dumps(..., default=str)` or `str(result)`) gets its own
+        try/except too: `default=str` only rescues non-serializable VALUES,
+        not dict KEYS (a tuple key raises `TypeError`), and `redact_mapping`
+        can raise on pathological input too (e.g. `RecursionError` on a
+        self-referential dict). The `builtin:` path runs arbitrary in-process
+        tool code, so a malformed result is reachable, not just theoretical
+        -- treat a formatting failure the same as a service-call failure
+        rather than letting it escape uncaught.
         """
         started = time.monotonic()
         try:
@@ -1236,10 +1246,14 @@ class MCPWorkbench(Container):
                 self._show_tool_test_result(ok=False, text=str(exc), duration_ms=duration_ms)
                 return
             duration_ms = int((time.monotonic() - started) * 1000)
-            if isinstance(result, dict):
-                excerpt = json.dumps(redact_mapping(result), default=str)[:500]
-            else:
-                excerpt = str(result)[:500]
+            try:
+                if isinstance(result, dict):
+                    excerpt = json.dumps(redact_mapping(result), default=str)[:500]
+                else:
+                    excerpt = str(result)[:500]
+            except Exception as exc:
+                self._show_tool_test_result(ok=False, text=str(exc), duration_ms=duration_ms)
+                return
             self._show_tool_test_result(ok=True, text=excerpt, duration_ms=duration_ms)
         finally:
             self._tool_test_in_flight.discard(tool_id)

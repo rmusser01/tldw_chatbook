@@ -35,6 +35,17 @@ _EMPTY_ACTION_LABELS: dict[str, str] = {
     "refresh": "Refresh",
 }
 
+# Tooltip copy for the same button, keyed the same way -- explains the
+# outcome of the press (audited by
+# test_destination_shells.py::test_destination_action_buttons_explain_their_outcome).
+# "connect" and "refresh" share copy: both just hand off to Servers mode,
+# same as the EmptyActionRequested handler that routes them.
+_EMPTY_ACTION_TOOLTIPS: dict[str, str] = {
+    "add_server": "Open the add-server form.",
+    "connect": "Go to Servers mode to connect or refresh its tools.",
+    "refresh": "Go to Servers mode to connect or refresh its tools.",
+}
+
 # One-shot mount-echo consumption sentinel -- mirrors mcp_rail.py's
 # `_ECHO_CONSUMED`. Textual 8.2.7 posts a `Select.Changed` for a freshly
 # mounted Select's own constructor value as part of mounting it; the filter
@@ -259,10 +270,18 @@ class MCPToolsMode(Vertical):
         button = self.query_one("#mcp-tools-empty-action", Button)
         if action_key is None:
             button.display = False
+            # Hidden (no action to take), but still audited by
+            # test_destination_action_buttons_explain_their_outcome, which
+            # queries every Button regardless of `display` -- keep it a
+            # truthy, honest tooltip rather than leaving stale copy behind.
+            button.tooltip = "No action available."
         else:
             button.display = True
             button.label = _EMPTY_ACTION_LABELS.get(
                 action_key, action_key.replace("_", " ").title()
+            )
+            button.tooltip = _EMPTY_ACTION_TOOLTIPS.get(
+                action_key, f"Go to Servers mode to {action_key.replace('_', ' ')}."
             )
 
     # -- events ---------------------------------------------------------------

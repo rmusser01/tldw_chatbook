@@ -2722,6 +2722,38 @@ async def test_test_tool_double_run_dispatches_exactly_one_service_call():
 
 
 @pytest.mark.asyncio
+async def test_test_tool_run_non_str_dict_key_result_does_not_crash():
+    """Critical regression: `_run_tool_test()`'s success-path result
+    formatting (`json.dumps(redact_mapping(result), default=str)`) used to
+    sit OUTSIDE the inner try/except. A result dict with a non-str key (a
+    tuple, here) makes `json.dumps` raise `TypeError` -- `default=str` only
+    covers values, not keys -- and that exception used to escape the worker
+    body entirely. Textual's `run_worker()` defaults to `exit_on_error=True`,
+    so an uncaught exception there panics the whole app rather than just
+    failing this one tool test. After the fix, formatting errors must be
+    caught and rendered as a failed result like any other test failure."""
+    app = ToolTestApp()
+    app.unified_mcp_service.test_result = {("tuple", "key"): 1}
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch (raw, default "{}")
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        first_line = result.split("\n", 1)[0]
+        assert first_line.startswith("Failed · ")
+        assert app.query_one("#mcp-inspector-test-run", Button).disabled is False
+        assert workbench._tool_test_in_flight == set()
+
+
+@pytest.mark.asyncio
 async def test_collect_arguments_value_error_does_not_call_service():
     app = ToolTestApp()
     async with app.run_test(size=(120, 40)) as pilot:

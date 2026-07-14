@@ -542,10 +542,12 @@ class MCPInspector(Vertical):
             Button(
                 "Run", id="mcp-inspector-test-run",
                 classes="console-action-primary", compact=True,
+                tooltip="Send these arguments to the tool and show the result.",
             ),
             Button(
                 "Close", id="mcp-inspector-test-close",
                 classes="console-action-secondary", compact=True,
+                tooltip="Close this test form without running the tool.",
             ),
             Static("", id="mcp-inspector-test-result", classes="ds-field-row", markup=False),
             id="mcp-inspector-test-panel",
