@@ -201,6 +201,12 @@ class MCPInspector(Vertical):
         # agrees with what a fresh mount would show.
         self._advanced_source: str = "local"
         self._advanced_target_label: str | None = None
+        # T12 review fix: the collapsed state this widget last knew about --
+        # set to the constructed value in compose(), updated only by the
+        # Toggled handler. Used to drop the spurious mount-time Toggled that
+        # `Collapsible(collapsed=False)` posts (see the handler); default
+        # True matches Collapsible's own reactive default.
+        self._advanced_last_collapsed: bool = True
         # Task 4: serializes `update_readiness()`'s remove+mount cycle. Two
         # calls awaited concurrently (a worker-driven refresh interleaved
         # with a pump-driven one) previously could both be mid-flight at
@@ -219,7 +225,7 @@ class MCPInspector(Vertical):
         currently-selected row.
         """
         if self._advanced_source == "server":
-            target = self._advanced_target_label or "(no target selected)"
+            target = self._advanced_target_label or "(none selected)"
             return f"Showing: server {target}"
         return "Showing: Local control plane"
 
@@ -235,6 +241,7 @@ class MCPInspector(Vertical):
         # config in a bare test App; tests monkeypatch this module's
         # `get_cli_setting` name for determinism (see test_mcp_inspector.py).
         persisted_open = bool(get_cli_setting("mcp.hub_state", "advanced_open", False))
+        self._advanced_last_collapsed = not persisted_open
         with Collapsible(
             title="Advanced (legacy control plane)",
             collapsed=not persisted_open,
@@ -266,8 +273,23 @@ class MCPInspector(Vertical):
     @on(Collapsible.Toggled, "#mcp-adv-collapsible")
     def _on_advanced_collapsible_toggled(self, event: Collapsible.Toggled) -> None:
         event.stop()
+        collapsed = event.collapsible.collapsed
+        # Mount-echo guard (review fix): `Collapsible.collapsed` is
+        # `reactive(True, init=False)`, so constructing the widget
+        # already-expanded (`collapsed=False` differs from the reactive's
+        # own True default) fires the watcher during construction and posts
+        # ONE Toggled with zero user interaction. The same quirk is
+        # documented at library_screen.py's
+        # `sync_library_ingest_advanced_open`, where the handler is a
+        # harmless in-memory sync -- here it would be a real disk write
+        # (TOML read-modify-write) on every mount whenever the preference
+        # is open. Drop any event that merely re-asserts the state we
+        # already track; real toggles always change it.
+        if collapsed == self._advanced_last_collapsed:
+            return
+        self._advanced_last_collapsed = collapsed
         self.run_worker(
-            self._persist_advanced_open(not event.collapsible.collapsed),
+            self._persist_advanced_open(not collapsed),
             group="mcp-adv-open",
             exclusive=True,
         )

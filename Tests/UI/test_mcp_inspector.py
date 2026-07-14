@@ -707,6 +707,42 @@ async def test_advanced_collapsible_toggle_persists_state(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_mount_with_persisted_open_does_not_write_config(monkeypatch):
+    """Review fix (T12): `Collapsible(collapsed=False)` posts one spurious
+    Toggled during mount with zero user interaction (`collapsed` is
+    `reactive(True, init=False)`, so constructing it expanded differs from
+    the reactive default and fires the watcher -- the same documented quirk
+    as library_screen.py's `sync_library_ingest_advanced_open`, whose
+    handler is a harmless in-memory sync; ours writes the config file to
+    disk). Mounting with the preference already open must therefore produce
+    ZERO save calls; only a real toggle afterwards persists -- exactly once.
+    """
+    monkeypatch.setattr(mcp_inspector_module, "get_cli_setting", lambda *a, **k: True)
+    save_calls: list[tuple[str, str, Any]] = []
+
+    def fake_save(section, key, value):
+        save_calls.append((section, key, value))
+        return True
+
+    monkeypatch.setattr(mcp_inspector_module, "save_setting_to_cli_config", fake_save)
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert save_calls == [], (
+            f"mount alone must not write the config; got {save_calls!r}"
+        )
+
+        collapsible = app.query_one("#mcp-adv-collapsible", Collapsible)
+        collapsible.collapsed = True
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert save_calls == [("mcp.hub_state", "advanced_open", False)]
+
+
+@pytest.mark.asyncio
 async def test_advanced_collapsible_recollapse_persists_false(monkeypatch):
     monkeypatch.setattr(mcp_inspector_module, "get_cli_setting", lambda *a, **k: True)
     save_calls: list[tuple[str, str, Any]] = []

@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.css.query import NoMatches
 from textual.widgets import Button
 from textual.widgets import Collapsible
 from textual.widgets import Static
@@ -1276,7 +1277,7 @@ async def _assert_advanced_run_reachable(screen, pilot) -> None:
     """
     try:
         collapsible = screen.query_one("#mcp-adv-collapsible", Collapsible)
-    except Exception:
+    except NoMatches:
         collapsible = None
     if collapsible is not None and collapsible.collapsed:
         collapsible.collapsed = False

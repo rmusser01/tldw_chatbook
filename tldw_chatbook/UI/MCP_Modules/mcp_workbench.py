@@ -326,6 +326,11 @@ class MCPWorkbench(Container):
         # in-flight key is running, so the CHECKING badge's message and the
         # eventual notification can say what's actually happening.
         self._in_flight_action: dict[str, str] = {}
+        # T12 review fix: identity of the object the inspector's Advanced
+        # pane was last rebound to (see `_rebind_inspector_advanced_context`).
+        # None until the first rebind so the mount-time reload() always
+        # binds.
+        self._advanced_rebind_key: tuple[Any, ...] | None = None
         self._pending_view_state: dict[str, Any] | None = None
         # T7: `_sync_children()` now flows through `MCPServersMode.show_detail()`,
         # which (since T7 added the detail toolbar) performs its own awaited
@@ -520,12 +525,33 @@ class MCPWorkbench(Container):
         so this is called from every place that changes which object the
         service context refers to: `reload()` itself, `_switch_source()`,
         and `_select_server_key()`.
+
+        Review fix: rebinding is deduplicated on the OBJECT's identity, not
+        on every call -- the UX-inputs text requires a rebind on selection
+        CHANGE, and e.g. reclicking the already-selected rail row (or a
+        no-op reload) is not a change; unconditionally rebinding there wiped
+        the user's Advanced browsing state (section snapping back to
+        Overview). Mirrors the C1 ScopeChanged dedup precedent in this
+        file. The Advanced object is the local control plane (local source,
+        regardless of which row is selected) or the active server target
+        (server source) -- so the key is the source plus, for server source,
+        the active target id/label; the service's identity is included so a
+        swapped-in service (e.g. None -> real) always rebinds.
         """
+        target_label = self._active_target_label()
+        if self._source == "server":
+            identity: Any = (self._active_service_target_id(), target_label)
+        else:
+            identity = None
+        key = (id(service) if service is not None else None, self._source, identity)
+        if key == self._advanced_rebind_key:
+            return
+        self._advanced_rebind_key = key
         self.query_one(MCPInspector).set_service_context(
             _AdvancedSectionShim(service) if service is not None else None,
             _LEGACY_SECTIONS,
             source=self._source,
-            target_label=self._active_target_label(),
+            target_label=target_label,
         )
 
     @staticmethod

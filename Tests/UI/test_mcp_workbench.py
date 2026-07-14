@@ -1747,6 +1747,83 @@ async def test_advanced_object_label_updates_on_source_switch():
         assert str(label.renderable) == "Showing: Local control plane"
 
 
+class AuxTarget:
+    server_id = "aux"
+    label = "Aux Server"
+    base_url = "https://aux.test"
+    auth_mode = "api_key"
+    last_known_reachability = "reachable"
+    last_known_auth_state = "authenticated"
+
+
+class TwoTargetStore:
+    def list_targets(self):
+        return [FakeTarget(), AuxTarget()]
+
+
+@pytest.mark.asyncio
+async def test_same_row_reclick_preserves_advanced_section():
+    """Review fix (T12): the UX-inputs text says rebind on selection
+    CHANGE -- a reclick of the already-selected row is not a change, and
+    must not wipe the user's Advanced browsing state (section snapping back
+    to Overview). Mirrors the C1 ScopeChanged dedup precedent in this file.
+    """
+    app = WorkbenchApp()
+    async with app.run_test(size=(120, 60)) as pilot:
+        await pilot.pause()
+        rail = app.query_one(MCPRail)
+        rail.post_message(MCPRail.SourceChanged("server"))
+        await pilot.pause()
+        await pilot.pause()
+        rail.post_message(MCPRail.ServerSelected("server:main"))
+        await pilot.pause()
+        await pilot.pause()
+
+        section_select = app.query_one("#mcp-adv-section-select", Select)
+        section_select.value = "inventory"
+        await pilot.pause()
+        await pilot.pause()
+        assert section_select.value == "inventory"
+
+        # Reclick the SAME row: not a selection change -- browsing state
+        # must survive.
+        rail.post_message(MCPRail.ServerSelected("server:main"))
+        await pilot.pause()
+        await pilot.pause()
+        assert section_select.value == "inventory"
+
+
+@pytest.mark.asyncio
+async def test_different_target_selection_rebinds_advanced_context():
+    """Counterpart guard: a GENUINE selection change (a different server
+    target) must still rebind -- the section resets to the first entry and
+    the object label follows the new target."""
+    app = WorkbenchApp()
+    app.unified_mcp_service.target_store = TwoTargetStore()
+    async with app.run_test(size=(120, 60)) as pilot:
+        await pilot.pause()
+        rail = app.query_one(MCPRail)
+        rail.post_message(MCPRail.SourceChanged("server"))
+        await pilot.pause()
+        await pilot.pause()
+        rail.post_message(MCPRail.ServerSelected("server:main"))
+        await pilot.pause()
+        await pilot.pause()
+
+        section_select = app.query_one("#mcp-adv-section-select", Select)
+        section_select.value = "inventory"
+        await pilot.pause()
+        await pilot.pause()
+
+        rail.post_message(MCPRail.ServerSelected("server:aux"))
+        await pilot.pause()
+        await pilot.pause()
+
+        assert section_select.value == "overview"
+        label = app.query_one("#mcp-adv-object", Static)
+        assert str(label.renderable) == "Showing: server Aux Server"
+
+
 @pytest.mark.asyncio
 async def test_mode_placeholder_canvases_use_info_callout_not_recovery_callout():
     """UX-inputs #4: phase placeholders are informational, not an alarm
