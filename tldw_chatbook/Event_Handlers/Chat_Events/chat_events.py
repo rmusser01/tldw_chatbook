@@ -26,7 +26,6 @@ from textual.css.query import QueryError
 # Local Imports
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_sidebar
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_worldbooks
-from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_dictionaries
 from tldw_chatbook.Chat.answer_citations import (
     AnswerCitationValidation,
     build_answer_citation_validation,
@@ -2306,8 +2305,7 @@ async def handle_chat_new_temp_chat_button_pressed(app: 'TldwCli', event: Button
     app.current_chat_active_character_data = None
     
     await chat_events_worldbooks.refresh_active_worldbooks(app)
-    await chat_events_dictionaries.refresh_active_dictionaries(app)
-    
+
     try:
         default_system_prompt = app.app_config.get("chat_defaults", {}).get("system_prompt", "You are a helpful AI assistant.")
         app.query_one("#chat-system-prompt", TextArea).text = default_system_prompt
@@ -2380,10 +2378,9 @@ async def handle_chat_new_conversation_button_pressed(app: 'TldwCli', event: But
     # Clear character data
     app.current_chat_active_character_data = None
     
-    # Clear world books and dictionaries
+    # Clear world books
     await chat_events_worldbooks.refresh_active_worldbooks(app)
-    await chat_events_dictionaries.refresh_active_dictionaries(app)
-    
+
     # Reset system prompt
     try:
         default_system_prompt = app.app_config.get("chat_defaults", {}).get("system_prompt", "You are a helpful AI assistant.")
@@ -3200,8 +3197,6 @@ async def display_conversation_in_chat_tab_ui(app: 'TldwCli', conversation_id: s
     
     # Refresh world books for the new conversation
     await chat_events_worldbooks.refresh_active_worldbooks(app)
-    # Refresh dictionaries for the new conversation
-    await chat_events_dictionaries.refresh_active_dictionaries(app)
 
     try:
         character_id_from_conv = conv_metadata.get('character_id')
@@ -4920,7 +4915,6 @@ CHAT_BUTTON_HANDLERS = {
     "toggle-chat-right-sidebar": handle_chat_tab_sidebar_toggle,
     **chat_events_sidebar.CHAT_SIDEBAR_BUTTON_HANDLERS,
     **chat_events_worldbooks.CHAT_WORLDBOOK_BUTTON_HANDLERS,
-    **chat_events_dictionaries.CHAT_DICTIONARY_BUTTON_HANDLERS,
 }
 
 #
