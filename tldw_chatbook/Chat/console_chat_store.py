@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
-from typing import Any, Iterable, Mapping, Protocol
+from typing import Any, Iterable, Mapping, Protocol, Sequence
 from uuid import uuid4
 
 from loguru import logger
@@ -20,8 +20,12 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleVariant,
     ConsoleVariantSet,
     ConsoleWorkspaceContext,
+    MessageAttachment,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+
+#: Maximum number of attachments a Console session may stage before send.
+MAX_PENDING_ATTACHMENTS = 5
 
 
 @dataclass(frozen=True)
@@ -102,7 +106,7 @@ class ConsoleChatSession:
     settings: ConsoleSessionSettings | None = None
     draft: str = ""
     updated_at: str = field(default_factory=_utc_now_iso)
-    pending_attachment: PendingAttachment | None = None
+    pending_attachments: list[PendingAttachment] = field(default_factory=list)
 
 
 class ConsoleChatStore:
@@ -291,26 +295,78 @@ class ConsoleChatStore:
         session.draft = draft
         return session
 
-    def pending_attachment(self, session_id: str) -> PendingAttachment | None:
-        """Return the staged, not-yet-sent attachment for a session.
+    def pending_attachments(self, session_id: str) -> list[PendingAttachment]:
+        """Return the staged attachments for a session (stage order).
 
         Args:
             session_id: Native Console session ID.
 
         Returns:
-            The staged attachment, or None when nothing is staged.
+            A copy of the staged attachments list, in stage order.
 
         Raises:
             KeyError: If the session is unknown.
         """
-        return self._session_or_raise(session_id).pending_attachment
+        return list(self._session_or_raise(session_id).pending_attachments)
+
+    def add_pending_attachment(
+        self, session_id: str, attachment: PendingAttachment
+    ) -> bool:
+        """Append a staged attachment; False (no-op) when at the cap.
+
+        Args:
+            session_id: Native Console session ID.
+            attachment: Processed attachment to stage.
+
+        Returns:
+            True when staged; False when MAX_PENDING_ATTACHMENTS reached.
+
+        Raises:
+            KeyError: If the session is unknown.
+        """
+        session = self._session_or_raise(session_id)
+        if len(session.pending_attachments) >= MAX_PENDING_ATTACHMENTS:
+            return False
+        session.pending_attachments.append(attachment)
+        return True
+
+    def clear_pending_attachments(self, session_id: str) -> ConsoleChatSession:
+        """Remove all staged attachments from a session.
+
+        Args:
+            session_id: Native Console session ID.
+
+        Returns:
+            The updated session.
+
+        Raises:
+            KeyError: If the session is unknown.
+        """
+        session = self._session_or_raise(session_id)
+        session.pending_attachments.clear()
+        return session
+
+    def pending_attachment(self, session_id: str) -> PendingAttachment | None:
+        """Return the first staged attachment (legacy single accessor).
+
+        Args:
+            session_id: Native Console session ID.
+
+        Returns:
+            The first staged attachment, or None when nothing is staged.
+
+        Raises:
+            KeyError: If the session is unknown.
+        """
+        pending = self._session_or_raise(session_id).pending_attachments
+        return pending[0] if pending else None
 
     def set_pending_attachment(
         self,
         session_id: str,
         attachment: PendingAttachment,
     ) -> ConsoleChatSession:
-        """Stage an attachment on a session, replacing any previous one.
+        """Replace all staged attachments with one (legacy semantics).
 
         Args:
             session_id: Native Console session ID.
@@ -323,11 +379,11 @@ class ConsoleChatStore:
             KeyError: If the session is unknown.
         """
         session = self._session_or_raise(session_id)
-        session.pending_attachment = attachment
+        session.pending_attachments[:] = [attachment]
         return session
 
     def clear_pending_attachment(self, session_id: str) -> ConsoleChatSession:
-        """Remove the staged attachment from a session.
+        """Alias of clear_pending_attachments (legacy name).
 
         Args:
             session_id: Native Console session ID.
@@ -338,9 +394,7 @@ class ConsoleChatStore:
         Raises:
             KeyError: If the session is unknown.
         """
-        session = self._session_or_raise(session_id)
-        session.pending_attachment = None
-        return session
+        return self.clear_pending_attachments(session_id)
 
     def set_workspace_context(self, workspace_context: ConsoleWorkspaceContext) -> None:
         """Replace the active workspace context."""
@@ -385,6 +439,29 @@ class ConsoleChatStore:
         elif self._sessions:
             self.active_session_id = next(iter(self._sessions))
 
+    @staticmethod
+    def _set_message_attachments(
+        message: ConsoleChatMessage,
+        attachments: Sequence[MessageAttachment],
+    ) -> None:
+        """Set a message's attachments tuple and mirror #0 into the scalars.
+
+        Every attachments mutation MUST flow through here — the scalar
+        image fields are a read-compatibility mirror of attachments[0].
+        Positions are re-based sequentially from 0 in the given order.
+        """
+        rebased = tuple(
+            replace(attachment, position=index)
+            for index, attachment in enumerate(attachments)
+        )
+        message.attachments = rebased
+        first = rebased[0] if rebased else None
+        message.image_data = first.data if first else None
+        message.image_mime_type = first.mime_type if first else None
+        message.attachment_label = (
+            first.display_name if first and first.display_name else None
+        )
+
     def append_message(
         self,
         session_id: str,
@@ -392,20 +469,31 @@ class ConsoleChatStore:
         role: ConsoleMessageRole,
         content: str,
         persist: bool = False,
+        attachments: Sequence[MessageAttachment] = (),
         image_data: bytes | None = None,
         image_mime_type: str | None = None,
         attachment_label: str | None = None,
     ) -> ConsoleChatMessage:
-        """Append a message to a session and optionally persist it."""
+        """Append a message; scalar image kwargs become a one-item tuple."""
         self._session_or_raise(session_id)
+        effective = tuple(attachments)
+        if not effective and image_data is not None:
+            effective = (
+                MessageAttachment(
+                    data=image_data,
+                    mime_type=image_mime_type or "image/png",
+                    display_name=attachment_label or "",
+                    position=0,
+                ),
+            )
         message = ConsoleChatMessage(
             role=role,
             content=content,
             status=self._initial_status(role=role, content=content),
-            image_data=image_data,
-            image_mime_type=image_mime_type,
-            attachment_label=attachment_label,
         )
+        self._set_message_attachments(message, effective)
+        if attachment_label and effective and not effective[0].display_name:
+            message.attachment_label = attachment_label
         self._messages_by_session[session_id].append(message)
         self._sessions[session_id].updated_at = _utc_now_iso()
         self._message_session_index[message.id] = session_id
@@ -808,7 +896,7 @@ class ConsoleChatStore:
     def _persist_new_message_or_defer(self, *, session_id: str, message: ConsoleChatMessage) -> None:
         if self.persistence is None:
             return
-        if not message.content and message.image_data is None:
+        if not message.content and not message.attachments:
             self._pending_persistence_message_ids.add(message.id)
             self.persist_session_if_needed(session_id)
             return
