@@ -1308,8 +1308,28 @@ class MCPWorkbench(Container):
     async def on_mcp_server_mutations_cancelled(
         self, event: MCPServerMutationsPanel.Cancelled
     ) -> None:
+        """Close the mutations panel AND clear the selection that opened it.
+
+        I2 fix: `show_server_mutations()` never updates `_detail_snapshot`
+        (it hosts an edit-mode panel for an external-server record instead
+        of routing through `show_detail()`), so `hide_form()`'s own
+        `_detail_snapshot is None` check can't be trusted to land back on
+        the overview -- and, worse, `_selected_server_key` was left pointing
+        at the external record, so the very next `_sync_children()` (a
+        background lifecycle completion, the `r` keybinding, a
+        runtime-backend refresh) would call `_show_selected_detail()` again
+        and re-open this same panel out of nowhere.
+        Routes through the exact same path `ServerRowSelected(None)` uses
+        (`_select_server_key(None)`): clears `_selected_server_key`, then a
+        full resync lands on the overview with the table cursor restored.
+        `hide_form()` runs first purely to close the panel/unmount its
+        widgets; the resync right after is what settles the correct
+        final container visibility regardless of `hide_form()`'s own
+        (possibly stale) guess.
+        """
         event.stop()
         await self.query_one(MCPServersMode).hide_form()
+        await self._select_server_key(None)
 
     # -- T8: mcpServers import (paste or file) ---------------------------------
 
@@ -1346,7 +1366,12 @@ class MCPWorkbench(Container):
     async def _load_import_file(self, file_path: str) -> None:
         try:
             text = await asyncio.to_thread(Path(file_path).read_text, encoding="utf-8")
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
+            # UnicodeDecodeError (a ValueError subclass, not an OSError) is
+            # raised by `read_text` for any non-UTF-8 file -- e.g. a
+            # Claude-Desktop config saved with a BOM/legacy encoding. Left
+            # uncaught, it escapes this worker and, with Textual's default
+            # `exit_on_error=True`, takes down the whole app (C1).
             self.app.notify(f"Could not read {file_path}: {exc}", severity="error")
             return
         panel = self._import_panel_or_none()

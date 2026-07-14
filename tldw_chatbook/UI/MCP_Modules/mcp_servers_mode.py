@@ -28,6 +28,13 @@ from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel, MCPPro
 from tldw_chatbook.UI.MCP_Modules.mcp_server_mutations import MCPServerMutationsPanel
 
 _MUTATIONS_GATED_TOOLTIP = "Requires team, org, or system-admin scope."
+# I3: Import always writes to the LOCAL profile store (`_apply_import()` in
+# mcp_workbench.py calls `save_local_profile()` unconditionally) -- under
+# server source that write would be invisible in the current view (a
+# different source/table entirely), so the button is gated off there rather
+# than silently landing writes nobody looking at this screen would see.
+_IMPORT_GATED_TOOLTIP = "Import creates LOCAL server profiles — switch Source to Local."
+_IMPORT_LOCAL_TOOLTIP = "Import servers from a Claude-Desktop-style mcpServers JSON file or paste."
 
 _TABLE_COLUMNS = ("Name", "Transport", "Status", "Tools", "Auth", "Scope")
 # Task 11: the Local source never has a meaningful Scope (built-in is
@@ -184,7 +191,7 @@ class MCPServersMode(Vertical):
                     id="mcp-import-server",
                     classes="console-action-secondary",
                     compact=True,
-                    tooltip="Import servers from a Claude-Desktop-style mcpServers JSON file or paste.",
+                    tooltip=_IMPORT_LOCAL_TOOLTIP,
                 )
             yield Static("", id="mcp-overview-summary", classes="ds-status-badge", markup=False)
             table = DataTable(id="mcp-servers-table")
@@ -222,10 +229,32 @@ class MCPServersMode(Vertical):
         self.query_one("#mcp-servers-form").display = False
         self._show_overview_container(True)
         self._update_add_server_button()
+        self._update_import_server_button()
 
     def _show_overview_container(self, show_overview: bool) -> None:
         self.query_one("#mcp-servers-overview").display = show_overview
         self.query_one("#mcp-servers-detail").display = not show_overview
+
+    def _form_visible(self) -> bool:
+        """Whether `#mcp-servers-form` (add/edit, import, or mutations panel)
+        is currently the visible pane.
+
+        I1 fix: `update_overview()` and `show_detail()` are both called from
+        `_sync_children()`, which runs on every background resync (lifecycle
+        completion, the `r` keybinding, a runtime-backend refresh) -- not
+        just on an explicit navigation. Previously both unconditionally
+        flipped the overview/detail container visibility, so a resync while
+        a form was open re-showed the overview (or detail) UNDERNEATH the
+        still-mounted form, stacking two views and silently discarding
+        whatever the user had typed the next time the form closed. Callers
+        that check this must still apply their DATA updates as normal (the
+        table/detail text underneath should stay current) -- only the
+        container-visibility flip is skipped while the form has the floor.
+        """
+        try:
+            return bool(self.query_one("#mcp-servers-form").display)
+        except Exception:
+            return False
 
     def set_mutations_available(
         self, mutations_available: bool, *, mutation_target_label: str | None = None
@@ -268,6 +297,24 @@ class MCPServersMode(Vertical):
         else:
             button.disabled = False
             button.tooltip = "Create a new local stdio server profile."
+
+    def _update_import_server_button(self) -> None:
+        """Render the Import button's source gate (I3).
+
+        Import always writes LOCAL profiles (`MCPWorkbench._apply_import()`
+        calls `save_local_profile()` unconditionally) -- offering it under
+        server source would silently write somewhere invisible in the
+        current view. Mirrors `_update_add_server_button()`'s
+        disabled+tooltip pattern, gated purely on source (no scope/target
+        gating applies here -- Import never touches server-side records).
+        """
+        button = self.query_one("#mcp-import-server", Button)
+        if self._source == "server":
+            button.disabled = True
+            button.tooltip = _IMPORT_GATED_TOOLTIP
+        else:
+            button.disabled = False
+            button.tooltip = _IMPORT_LOCAL_TOOLTIP
 
     async def show_form(self, profile: dict[str, Any] | None) -> None:
         """Show the add/edit form, hiding overview and detail while it is up."""
@@ -354,6 +401,7 @@ class MCPServersMode(Vertical):
         self._mutations_available = mutations_available
         self._mutation_target_label = mutation_target_label
         self._update_add_server_button()
+        self._update_import_server_button()
         self._snapshots = list(snapshots)
         summary = self.query_one("#mcp-overview-summary", Static)
         summary.update(aggregate_summary(self._snapshots))
@@ -452,19 +500,37 @@ class MCPServersMode(Vertical):
             )
         if callout_widgets:
             await callouts.mount_all(callout_widgets)
-        if self._detail_snapshot is None:
+        # I1: data (table/summary/callouts, all above) always refreshes: only
+        # the container-visibility flip is skipped while the form is open,
+        # so a background resync can never re-show the overview underneath
+        # an in-progress add/edit/import/mutations form.
+        if self._detail_snapshot is None and not self._form_visible():
             self._show_overview_container(True)
 
     async def show_detail(
         self, snapshot: ReadinessSnapshot | None, *, mutations_available: bool = False
     ) -> None:
+        """Render `snapshot` into the detail pane.
+
+        I1 fix: `_sync_children()` calls this on every resync, including
+        background ones (lifecycle completion, the `r` keybinding, a
+        runtime-backend refresh) that can fire while the add/edit/import/
+        mutations form is open. Data (`_detail_snapshot`, title, body,
+        toggles, toolbar) always updates so the pane underneath the form is
+        current the moment it closes -- only the overview/detail
+        container-visibility flip is skipped while the form has the floor,
+        so a resync can never re-show detail (or overview) stacked
+        underneath a still-open form and silently discard typed input.
+        """
         self._detail_snapshot = snapshot
         # Any new snapshot -- including re-showing the same server after a
         # lifecycle resync -- disarms a pending delete confirmation rather
         # than leaving it armed against whatever is selected next.
         self._delete_armed = False
+        form_visible = self._form_visible()
         if snapshot is None:
-            self._show_overview_container(True)
+            if not form_visible:
+                self._show_overview_container(True)
             await self._rebuild_builtin_toggles()
             await self._rebuild_detail_toolbar()
             # Task 11: selection restoration -- returning to the overview
@@ -475,7 +541,8 @@ class MCPServersMode(Vertical):
             self._restore_overview_cursor()
             return
         self._last_selected_key = snapshot.server_key
-        self._show_overview_container(False)
+        if not form_visible:
+            self._show_overview_container(False)
         self.query_one("#mcp-detail-title", Static).update(
             f"{snapshot.badge_text()}  {snapshot.label}"
         )

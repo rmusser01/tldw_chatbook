@@ -89,6 +89,46 @@ async def test_show_error_renders_store_copy():
 
 
 @pytest.mark.asyncio
+async def test_save_with_secret_shaped_arg_shows_warning_but_still_submits():
+    """I4/spec §7: a secret-looking args value (visible in `ps`) must warn,
+    NON-BLOCKING -- Save still posts `SubmitRequested`. Reuses the store's
+    own secret-value shapes (`local_store._looks_like_raw_secret_value`,
+    imported not re-implemented) so the two checks never drift.
+    """
+    app = FormApp()
+    async with app.run_test() as pilot:
+        app.query_one("#mcp-form-id", Input).value = "docs"
+        app.query_one("#mcp-form-command", Input).value = "npx"
+        app.query_one("#mcp-form-args", TextArea).text = "-y\nsk-1234567890abcdef"
+        await pilot.click("#mcp-form-save")
+        await pilot.pause()
+        warning = str(app.query_one("#mcp-form-args-warning", Static).renderable)
+        assert "line 2" in warning
+        assert "secret" in warning.lower()
+        assert "process listings" in warning.lower()
+        assert "env" in warning.lower()
+        # Non-blocking: the submit still went through despite the warning.
+        assert app.events
+        assert app.events[-1].payload["args"] == ["-y", "sk-1234567890abcdef"]
+
+
+@pytest.mark.asyncio
+async def test_save_with_clean_args_shows_no_secret_warning():
+    app = FormApp()
+    async with app.run_test() as pilot:
+        app.query_one("#mcp-form-id", Input).value = "docs"
+        app.query_one("#mcp-form-command", Input).value = "npx"
+        app.query_one("#mcp-form-args", TextArea).text = (
+            "-y\n@modelcontextprotocol/server-filesystem"
+        )
+        await pilot.click("#mcp-form-save")
+        await pilot.pause()
+        warning = str(app.query_one("#mcp-form-args-warning", Static).renderable)
+        assert warning == ""
+        assert app.events
+
+
+@pytest.mark.asyncio
 async def test_save_disables_button_and_show_error_reenables():
     """State-driven buttons: a valid submit disables Save (blocking a second
     real click at the press() gate) until the host reports an outcome --

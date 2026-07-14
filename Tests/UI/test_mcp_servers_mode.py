@@ -571,6 +571,35 @@ async def test_import_button_posts_import_servers_requested():
 
 
 @pytest.mark.asyncio
+async def test_import_button_gated_off_under_server_source():
+    """I3: Import always writes LOCAL profiles (`MCPWorkbench._apply_import()`
+    calls `save_local_profile()` unconditionally), so it must be disabled
+    under server source rather than silently writing somewhere invisible in
+    the current view -- mirrors `_update_add_server_button()`'s
+    disabled+tooltip gating pattern.
+    """
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        button = canvas.query_one("#mcp-import-server", Button)
+        assert button.disabled is False
+
+        await canvas.update_overview([], source="server")
+        await pilot.pause()
+        assert button.disabled is True
+        assert button.tooltip == (
+            "Import creates LOCAL server profiles — switch Source to Local."
+        )
+
+        await canvas.update_overview([], source="local")
+        await pilot.pause()
+        assert button.disabled is False
+        assert button.tooltip == (
+            "Import servers from a Claude-Desktop-style mcpServers JSON file or paste."
+        )
+
+
+@pytest.mark.asyncio
 async def test_show_import_hides_overview_and_mounts_panel():
     app = CanvasApp()
     async with app.run_test() as pilot:

@@ -11,6 +11,7 @@ from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import Button, Input, Static, TextArea
 
+from tldw_chatbook.MCP.local_store import _looks_like_raw_secret_value
 from tldw_chatbook.MCP.mcp_import import ImportCandidate, parse_mcp_servers_json
 
 _ENV_LINE_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
@@ -61,6 +62,7 @@ class MCPProfileForm(Vertical):
         yield Static("Args — one per line", classes="form-label")
         yield TextArea("\n".join(str(a) for a in profile.get("args") or []),
                        id="mcp-form-args")
+        yield Static("", id="mcp-form-args-warning", classes="ds-field-row", markup=False)
         yield Static("Env — one KEY=value per line", classes="form-label")
         yield Static(
             "Secrets are never stored — reference them as KEY=$ENV_VAR and export "
@@ -121,6 +123,39 @@ class MCPProfileForm(Vertical):
         self.query_one("#mcp-form-error", Static).update(text)
         self.query_one("#mcp-form-save", Button).disabled = False
 
+    def _args_secret_warning(self) -> str:
+        """Spec §7: "warn when a secret-looking value appears in args
+        (visible in `ps`); suggest env". Non-blocking -- unlike the env
+        literal path (`_sanitize_env_literals()` in local_store.py, which
+        RAISES for a secret-shaped literal), a stdio command's args are
+        never persisted through that guard at all, so nothing stops a
+        pasted `--api-key sk-live-...` from landing here undetected. Reuses
+        the store's own secret-value shape check (`_looks_like_raw_secret_value`,
+        imported rather than re-implemented so the two never drift) against
+        each non-blank args line and each whitespace/`=`-separated token
+        within it, covering both a value on its own line and a `--flag=value`
+        line.
+
+        Returns:
+            A one-line warning naming the first offending line (1-based, one
+            index per physical line -- including blanks -- matching how the
+            line-numbered env-parse errors above count), or "" when clean.
+        """
+        text = self.query_one("#mcp-form-args", TextArea).text
+        for index, raw_line in enumerate(text.splitlines(), start=1):
+            line = raw_line.strip()
+            if not line:
+                continue
+            candidates = [line, *line.split()]
+            if "=" in line:
+                candidates.append(line.partition("=")[2].strip())
+            if any(_looks_like_raw_secret_value(candidate) for candidate in candidates):
+                return (
+                    f"Warning: args line {index} looks like a secret — it will be "
+                    "visible in process listings; pass it via env ($VAR) instead."
+                )
+        return ""
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "mcp-form-save":
             event.stop()
@@ -129,6 +164,11 @@ class MCPProfileForm(Vertical):
             except ValueError as exc:
                 self.show_error(str(exc))
                 return
+            # Non-blocking (I4/spec §7): a secret-shaped arg does not stop
+            # the submit below, it only surfaces a warning alongside it.
+            self.query_one("#mcp-form-args-warning", Static).update(
+                self._args_secret_warning()
+            )
             # Disable while the host's save is in flight -- Button.press()
             # gates on `disabled`, so a real second click can't even post
             # another Pressed. (A Pressed already queued before this line

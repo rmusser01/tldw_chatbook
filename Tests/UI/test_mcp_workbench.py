@@ -148,6 +148,41 @@ async def test_server_source_add_button_gated_when_mutations_unavailable():
 
 
 @pytest.mark.asyncio
+async def test_import_button_gated_off_under_server_source():
+    """I3: `MCPWorkbench._apply_import()` always saves to the LOCAL profile
+    store (`save_local_profile()`, unconditionally) -- offering Import under
+    server source would silently write somewhere invisible in the current
+    view. Mirrors `_update_add_server_button()`'s disabled+tooltip gating
+    pattern, but on source alone (no scope/target gating applies -- Import
+    never touches server-side records at all).
+    """
+    app = WorkbenchApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        canvas = app.query_one(MCPServersMode)
+        button = canvas.query_one("#mcp-import-server", Button)
+        assert button.disabled is False
+        assert button.tooltip == (
+            "Import servers from a Claude-Desktop-style mcpServers JSON file or paste."
+        )
+
+        rail = app.query_one(MCPRail)
+        rail.post_message(MCPRail.SourceChanged("server"))
+        await pilot.pause()
+        assert button.disabled is True
+        assert button.tooltip == (
+            "Import creates LOCAL server profiles — switch Source to Local."
+        )
+
+        rail.post_message(MCPRail.SourceChanged("local"))
+        await pilot.pause()
+        assert button.disabled is False
+        assert button.tooltip == (
+            "Import servers from a Claude-Desktop-style mcpServers JSON file or paste."
+        )
+
+
+@pytest.mark.asyncio
 async def test_open_add_server_form_local_source_shows_profile_form():
     """T13: `MCPWorkbench.open_add_server_form()` is the `a` keybinding's
     entry point -- it never presses `#mcp-add-server`, so this drives the
@@ -342,6 +377,62 @@ async def test_server_source_add_names_implicit_target_and_create_drills_into_ne
         panel = app.query_one(MCPServerMutationsPanel)
         assert panel.is_edit
         assert app.query_one("#mcp-srv-name", Input).value == "Docs"
+
+
+@pytest.mark.asyncio
+async def test_mutations_panel_cancel_clears_selection_and_does_not_reopen_on_resync():
+    """I2 regression: `show_server_mutations()` never updates `_detail_snapshot`,
+    so Cancel used to restore whatever detail was last shown while
+    `_selected_server_key` kept pointing at the external record it was
+    hosting -- the very next `_sync_children()` (a background lifecycle
+    completion, the `r` keybinding, a runtime-backend refresh) would read
+    that stale selection and re-open the SAME mutations panel out of
+    nowhere. Cancel must route through the same "clear selection, resync"
+    path `ServerRowSelected(None)` uses.
+    """
+    app = MutationsAvailableApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        rail = app.query_one(MCPRail)
+        rail.post_message(MCPRail.ServerSelected(None))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        # Create an external record -- T9's post-create drill leaves the
+        # mutations panel open in EDIT mode for it, i.e. exactly the
+        # `server:T/R` selection scenario this bug needs.
+        await pilot.click("#mcp-add-server")
+        await pilot.pause()
+        app.query_one("#mcp-srv-id", Input).value = "docs"
+        app.query_one("#mcp-srv-name", Input).value = "Docs"
+        await pilot.click("#mcp-srv-save")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert workbench.get_view_state()["selected_server_key"] == "server:main/docs"
+        panel = app.query_one(MCPServerMutationsPanel)
+        assert panel.is_edit
+
+        await pilot.click("#mcp-srv-cancel")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert workbench.get_view_state()["selected_server_key"] is None
+        canvas = app.query_one(MCPServersMode)
+        assert canvas.query_one("#mcp-servers-overview").display is True
+        assert canvas.query_one("#mcp-servers-detail").display is False
+        assert not app.query(MCPServerMutationsPanel)
+
+        # The next resync must not re-open the mutations panel now that the
+        # selection that used to point at the external record is gone.
+        await workbench._sync_children()
+        await pilot.pause()
+        assert not app.query(MCPServerMutationsPanel)
+        assert canvas.query_one("#mcp-servers-overview").display is True
 
 
 @pytest.mark.asyncio
@@ -1274,6 +1365,86 @@ async def test_cancelled_hides_form_without_saving():
 
 
 @pytest.mark.asyncio
+async def test_reload_while_add_form_open_does_not_stack_overview_and_form():
+    """I1 regression (review probe): a background resync -- here `reload()`,
+    standing in for the `r` keybinding or a runtime-backend refresh --
+    must never re-show the overview UNDERNEATH a still-open add/edit form.
+    Typed input must survive a resync: the form is only ever hidden/
+    remounted by an explicit close (Save/Cancel), never by a passive
+    resync.
+    """
+    app = ProfileFormApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.click("#mcp-add-server")
+        await pilot.pause()
+        app.query_one("#mcp-form-command", Input).value = "still-typing"
+        canvas = app.query_one(MCPServersMode)
+        assert canvas.query_one("#mcp-servers-form").display is True
+        assert canvas.query_one("#mcp-servers-overview").display is False
+
+        workbench = app.query_one(MCPWorkbench)
+        await workbench.reload()
+        await pilot.pause()
+
+        form_display = canvas.query_one("#mcp-servers-form").display
+        overview_display = canvas.query_one("#mcp-servers-overview").display
+        detail_display = canvas.query_one("#mcp-servers-detail").display
+        assert form_display is True
+        assert not (form_display and overview_display), (
+            "overview and form are both visible after reload with form open"
+        )
+        assert not (form_display and detail_display), (
+            "detail and form are both visible after reload with form open"
+        )
+        # Not just "not stacked" -- the SAME form instance, with the typed
+        # value intact, proving the resync never hid/remounted it.
+        assert app.query_one("#mcp-form-command", Input).value == "still-typing"
+
+
+@pytest.mark.asyncio
+async def test_rail_selection_while_add_form_open_does_not_stack_detail_and_form():
+    """I1 regression (review probe): selecting a different rail row while a
+    LOCAL add/edit form is open must keep the form on screen rather than
+    stack the detail pane underneath it. Selection interaction decision
+    (documented in the final-review-fixes report): the underlying
+    `_selected_server_key`/`_detail_snapshot` state DOES still update in the
+    background here -- only the container-visibility flip is suppressed --
+    so once the form closes (Save/Cancel) the view reflects the latest
+    selection rather than snapping back to whatever was selected before the
+    form opened. That is a deliberate, minimal-scope consequence of this
+    fix, not a separate bug.
+    """
+    app = ProfileFormApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        await workbench.open_add_server_form()
+        await pilot.pause()
+        app.query_one("#mcp-form-command", Input).value = "still-typing"
+        canvas = app.query_one(MCPServersMode)
+        assert canvas.query_one("#mcp-servers-form").display is True
+
+        await workbench._select_server_key("local:docs")
+        await pilot.pause()
+
+        form_display = canvas.query_one("#mcp-servers-form").display
+        detail_display = canvas.query_one("#mcp-servers-detail").display
+        overview_display = canvas.query_one("#mcp-servers-overview").display
+        assert form_display is True
+        assert not (form_display and detail_display), (
+            "detail and form are both visible after rail selection with form open"
+        )
+        assert not (form_display and overview_display), (
+            "overview and form are both visible after rail selection with form open"
+        )
+        assert app.query_one("#mcp-form-command", Input).value == "still-typing"
+        # The background selection DID update (see docstring) -- it just
+        # isn't rendered while the form has the floor.
+        assert workbench.get_view_state()["selected_server_key"] == "local:docs"
+
+
+@pytest.mark.asyncio
 async def test_edit_config_hub_action_opens_prefilled_form_for_local_profile():
     """EDIT_CONFIG on a local-source snapshot (Task 6 wiring of the
     previously-disabled inspector action) opens the form pre-filled from the
@@ -1768,6 +1939,56 @@ async def test_file_requested_pushes_picker_and_loads_selected_file_into_panel(t
         assert app.query_one("#mcp-import-text", TextArea).text.strip() == (
             config_path.read_text().strip()
         )
+
+
+@pytest.mark.asyncio
+async def test_non_utf8_import_file_does_not_crash_app(tmp_path):
+    """C1 regression (review probe): `_load_import_file` previously only
+    caught `OSError`. `Path.read_text(encoding="utf-8")` raises
+    `UnicodeDecodeError` (a `ValueError` subclass, NOT an `OSError`) for any
+    non-UTF-8 file -- e.g. a Claude-Desktop config saved with a UTF-16 BOM.
+    Left uncaught, that escapes the worker and, with Textual's default
+    `exit_on_error=True`, takes down the whole app. Dispatches through the
+    exact `run_worker(..., group="mcp-import-file", exclusive=True)` call
+    the real file-picker callback uses (not a bare `await`) -- the crash
+    only manifests via that worker boundary.
+    """
+    bad = tmp_path / "bad.json"
+    bad.write_bytes(b"\xff\xfe{\"mcpServers\": {}}")
+    app = WorkbenchApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        notifications = _capture_notifications(app)
+        workbench = app.query_one(MCPWorkbench)
+        workbench.run_worker(
+            workbench._load_import_file(str(bad)),
+            group="mcp-import-file",
+            exclusive=True,
+        )
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert app.is_running, "a non-UTF-8 import file must not crash the app"
+        assert any(
+            "could not read" in msg.lower() and severity == "error"
+            for msg, severity in notifications
+        ), f"expected an error notify for the unreadable file, got: {notifications!r}"
+
+
+@pytest.mark.asyncio
+async def test_notify_survives_markup_bearing_text():
+    """Review probe (b): a message that looks like unbalanced Rich markup
+    (e.g. embedded in a profile id) must not crash `app.notify()`. Kept as a
+    permanent regression guard even though it already passed pre-fix --
+    documents that this adjacent surface is NOT the C1 crash and must stay
+    that way.
+    """
+    app = WorkbenchApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.notify("Saved [/bold]x.")
+        await pilot.pause()
+        assert app.is_running
 
 
 # -- Task 12: Advanced disclosure object label + info-callout placeholders --
