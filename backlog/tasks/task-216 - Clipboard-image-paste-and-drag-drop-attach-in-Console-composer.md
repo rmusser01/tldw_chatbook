@@ -1,8 +1,8 @@
 ---
 id: TASK-216
 title: Clipboard image paste and drag-drop attach in Console composer
-status: To Do
-assignee: []
+status: In Progress
+assignee: ['@claude']
 created_date: '2026-07-13 09:30'
 labels:
   - console
