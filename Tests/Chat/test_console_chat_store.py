@@ -1200,3 +1200,160 @@ def test_editing_message_content_does_not_wipe_persisted_image():
 
     assert persistence.updated[-1]["image_data"] == b"\x89PNG-bytes"
     assert persistence.updated[-1]["image_mime_type"] == "image/png"
+
+
+from tldw_chatbook.Chat.console_chat_models import MessageAttachment
+from tldw_chatbook.Chat.console_chat_store import MAX_PENDING_ATTACHMENTS
+
+
+def _att(name="a.png", data=b"img", position=1):
+    return MessageAttachment(
+        data=data, mime_type="image/png", display_name=name, position=position
+    )
+
+
+def test_append_message_with_attachments_mirrors_first_into_scalars():
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="look",
+        attachments=(
+            _att("a.png", b"img-1", 0),
+            _att("b.jpg", b"img-2", 1),
+        ),
+    )
+    assert len(message.attachments) == 2
+    assert message.image_data == b"img-1"
+    assert message.image_mime_type == "image/png"
+    assert message.attachment_label and "a.png" in message.attachment_label
+
+
+def test_append_message_scalar_kwargs_become_single_attachment():
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="pic",
+        image_data=b"img",
+        image_mime_type="image/png",
+        attachment_label="pic.png · 3 B",
+    )
+    assert len(message.attachments) == 1
+    assert message.attachments[0].data == b"img"
+    assert message.image_data == b"img"
+
+
+def test_pending_list_appends_caps_and_clears():
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    from tldw_chatbook.Chat.attachment_core import PendingAttachment
+
+    def _pending(name):
+        return PendingAttachment(
+            file_path=f"/tmp/{name}", display_name=name, file_type="image",
+            insert_mode="attachment", data=b"x", mime_type="image/png",
+            original_size=1, processed_size=1,
+        )
+
+    for index in range(MAX_PENDING_ATTACHMENTS):
+        assert store.add_pending_attachment(session.id, _pending(f"f{index}.png")) is True
+    assert store.add_pending_attachment(session.id, _pending("overflow.png")) is False
+    assert len(store.pending_attachments(session.id)) == MAX_PENDING_ATTACHMENTS
+
+    # Legacy single accessors still work over the list.
+    assert store.pending_attachment(session.id).display_name == "f0.png"
+    store.clear_pending_attachments(session.id)
+    assert store.pending_attachments(session.id) == []
+    assert store.pending_attachment(session.id) is None
+
+
+def test_legacy_set_pending_attachment_replaces_all():
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    from tldw_chatbook.Chat.attachment_core import PendingAttachment
+
+    def _pending(name):
+        return PendingAttachment(
+            file_path=f"/tmp/{name}", display_name=name, file_type="image",
+            insert_mode="attachment", data=b"x", mime_type="image/png",
+            original_size=1, processed_size=1,
+        )
+
+    store.add_pending_attachment(session.id, _pending("a.png"))
+    store.add_pending_attachment(session.id, _pending("b.png"))
+    store.set_pending_attachment(session.id, _pending("only.png"))
+    names = [p.display_name for p in store.pending_attachments(session.id)]
+    assert names == ["only.png"]
+
+
+# RecordingPersistence is defined in a pre-existing (origin/dev) region of
+# this file, so it is subclassed here rather than edited. Its **kwargs-based
+# create_message/update_message_content already record every kwarg the store
+# sends, including the new ``attachments`` parameter.
+class RecordingAttachmentPersistence(RecordingPersistence):
+    pass  # create_message / update_message_content already record kwargs
+
+
+def test_persist_new_message_sends_full_attachment_list():
+    persistence = RecordingAttachmentPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="multi",
+        attachments=(
+            _att("a.png", b"img-0"),
+            _att("b.png", b"img-1"),
+        ),
+        persist=True,
+    )
+    sent = persistence.created[-1]["attachments"]
+    assert [a["position"] for a in sent] == [0, 1]
+    assert sent[0]["data"] == b"img-0"
+    assert sent[1]["display_name"] == "b.png"
+    # The service derives the legacy image columns from position 0 when
+    # attachments is provided, but create_message's image_data/
+    # image_mime_type kwargs are keyword-only, so the store still sends
+    # explicit None scalars alongside attachments (defense in depth; a P0
+    # live crash was caused by omitting them against the real service,
+    # which declared them required with no defaults).
+    assert persistence.created[-1]["image_data"] is None
+    assert persistence.created[-1]["image_mime_type"] is None
+
+
+def test_persist_new_message_sends_data_bearing_attachments_only():
+    persistence = RecordingAttachmentPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="multi",
+        attachments=(
+            _att("a.png", b"img-0"),
+            _att("hollow.png", None),
+            _att("c.png", b"img-2"),
+        ),
+        persist=True,
+    )
+    sent = persistence.created[-1]["attachments"]
+    # The hollow (data=None) attachment is skipped; surviving entries keep
+    # their re-based positions rather than being compacted.
+    assert [a["position"] for a in sent] == [0, 2]
+    assert [a["display_name"] for a in sent] == ["a.png", "c.png"]
+
+
+def test_persist_edit_leaves_attachments_none():
+    persistence = RecordingAttachmentPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="x",
+        attachments=(_att("a.png", b"img"),), persist=True,
+    )
+    store.update_message_content(message.id, "edited")
+    assert persistence.updated[-1]["attachments"] is None

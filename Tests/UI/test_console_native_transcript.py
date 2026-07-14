@@ -11,6 +11,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
     ConsoleVariantSet,
+    MessageAttachment,
 )
 from tldw_chatbook.Chat.console_message_actions import (
     ConsoleMessageActionService,
@@ -692,6 +693,29 @@ def test_image_chip_metadata_only_keeps_bare_mime():
     )
     rendered = _message_render_text(message, selected=False)
     assert "🖼 image/png" in rendered.plain
+
+
+def test_multi_attachment_message_renders_chip_per_attachment():
+    from tldw_chatbook.Widgets.Console.console_transcript import _message_render_text
+
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="three pics",
+    )
+    message.attachments = (
+        MessageAttachment(data=b"1", mime_type="image/png", display_name="a.png", position=0),
+        MessageAttachment(data=b"22", mime_type="image/jpeg", display_name="b.jpg", position=1),
+        MessageAttachment(data=None, mime_type="image/png", display_name="", position=2),
+    )
+    message.image_data = b"1"
+    message.image_mime_type = "image/png"
+    message.attachment_label = "a.png"
+
+    rendered = _message_render_text(message, selected=False)
+    plain = rendered.plain
+    assert "🖼 a.png" in plain
+    assert "🖼 b.jpg" in plain
+    assert plain.count("🖼") == 3  # dataless third falls back to mime label
 
 
 def _image_row_spec(message_id: str, mode: str = "pixels"):

@@ -241,6 +241,23 @@ def max_history_images(provider: str, model: str | None) -> int:
     return DEFAULT_MAX_HISTORY_IMAGES
 
 
+def image_url_part(image_data: bytes, mime_type: str) -> dict[str, Any]:
+    """Build one OpenAI-style image_url content part (base64 data URL).
+
+    Args:
+        image_data: Raw image bytes.
+        mime_type: MIME type for the data URL.
+
+    Returns:
+        A single ``{"type": "image_url", ...}`` content part dict.
+    """
+    encoded = base64.b64encode(image_data).decode("ascii")
+    return {
+        "type": "image_url",
+        "image_url": {"url": f"data:{mime_type};base64,{encoded}"},
+    }
+
+
 def image_content_parts(
     text: str,
     image_data: bytes,
@@ -257,11 +274,8 @@ def image_content_parts(
         Content-part dicts: an optional {"type": "text"} part followed by
         one {"type": "image_url"} part with a data URL.
     """
-    encoded = base64.b64encode(image_data).decode("ascii")
     parts: list[dict[str, Any]] = []
     if text:
         parts.append({"type": "text", "text": text})
-    parts.append(
-        {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{encoded}"}}
-    )
+    parts.append(image_url_part(image_data, mime_type))
     return parts

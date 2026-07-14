@@ -44,7 +44,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import threading
 import logging
-from typing import List, Dict, Optional, Any, Union, Set, Tuple
+from typing import List, Dict, Optional, Any, Union, Set, Tuple, Sequence
 
 from loguru import logger
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
@@ -139,7 +139,7 @@ class CharactersRAGDB:
         is_memory_db (bool): True if the database is in-memory.
         db_path_str (str): String representation of the database path for SQLite connection.
     """
-    _CURRENT_SCHEMA_VERSION = 18  # Adds per-conversation system_prompt.
+    _CURRENT_SCHEMA_VERSION = 19  # Adds message_attachments (positions >= 1; position 0 stays in messages.image_data).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -2220,6 +2220,24 @@ UPDATE db_schema_version
    AND version = 17;
 """
 
+    # Keep this runner SQL aligned with
+    # tldw_chatbook/DB/migrations/chachanotes_v18_to_v19_message_attachments.sql.
+    _MIGRATE_V18_TO_V19_SQL = """
+CREATE TABLE IF NOT EXISTS message_attachments(
+  message_id   TEXT    NOT NULL REFERENCES messages(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  position     INTEGER NOT NULL CHECK (position >= 1),
+  data         BLOB    NOT NULL,
+  mime_type    TEXT    NOT NULL,
+  display_name TEXT    NOT NULL DEFAULT '',
+  PRIMARY KEY (message_id, position)
+);
+CREATE INDEX IF NOT EXISTS idx_message_attachments_message ON message_attachments(message_id);
+UPDATE db_schema_version
+   SET version = 19
+ WHERE schema_name = 'rag_char_chat_schema'
+   AND version = 18;
+"""
+
     def __init__(self, db_path: Union[str, Path], client_id: str,
                  check_integrity_on_startup: bool = False):
         """
@@ -3116,6 +3134,35 @@ UPDATE db_schema_version
             logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V17→V18] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V17 to V18 for '{self._SCHEMA_NAME}': {e}") from e
 
+    def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
+        """
+        Migrates the database schema from version 18 to version 19.
+
+        This migration adds the ``message_attachments`` table for storing
+        extra Console message attachments (positions >= 1; position 0
+        remains in ``messages.image_data``/``image_mime_type``). No sync
+        triggers are added here; sync wiring is tracked separately
+        (TASK-220).
+        """
+        logger.info(f"Migrating schema from V18 to V19 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        try:
+            conn.executescript(self._MIGRATE_V18_TO_V19_SQL)
+            logger.debug(f"[{self._SCHEMA_NAME} V18→V19] Migration script executed.")
+
+            final_version = self._get_db_version(conn)
+            if final_version != 19:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V18→V19] Migration version check failed. Expected 19, got: {final_version}"
+                )
+
+            logger.info(f"[{self._SCHEMA_NAME} V18→V19] Migration completed successfully for DB: {self.db_path_str}.")
+        except sqlite3.Error as e:
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V18→V19] Migration failed: {e}")
+            raise SchemaError(f"Migration from V18 to V19 failed for '{self._SCHEMA_NAME}': {e}") from e
+        except Exception as e:
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V18→V19] Unexpected error during migration: {e}")
+            raise SchemaError(f"Unexpected error migrating from V18 to V19 for '{self._SCHEMA_NAME}': {e}") from e
+
     def _migrate_from_v7_to_v8(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 7 to version 8.
@@ -3202,6 +3249,7 @@ UPDATE db_schema_version
                     15: self._migrate_from_v15_to_v16,
                     16: self._migrate_from_v16_to_v17,
                     17: self._migrate_from_v17_to_v18,
+                    18: self._migrate_from_v18_to_v19,
                 }
 
                 if current_db_version == 0:
@@ -5561,6 +5609,82 @@ UPDATE db_schema_version
         except CharactersRAGDBError as e:
             logger.error(f"Database error fetching message ID {message_id}: {e}")
             raise
+
+    def set_message_attachments(self, message_id: str, rows: list[dict]) -> None:
+        """Replace the extra attachments (positions >= 1) for a message.
+
+        Position 0 lives in ``messages.image_data``/``image_mime_type``; this
+        table only holds positions >= 1. Runs DELETE + INSERT in one
+        transaction.
+
+        Args:
+            message_id: Target message UUID.
+            rows: Dicts with ``position`` (>= 1), ``data``, ``mime_type``,
+                ``display_name``.
+
+        Raises:
+            ValueError: If any row has position < 1.
+            CharactersRAGDBError: On database errors.
+        """
+        for row in rows:
+            if int(row.get("position", 0)) < 1:
+                raise ValueError("message_attachments positions start at 1.")
+        with self.transaction() as cursor:
+            cursor.execute(
+                "DELETE FROM message_attachments WHERE message_id = ?", (message_id,)
+            )
+            cursor.executemany(
+                "INSERT INTO message_attachments (message_id, position, data, mime_type, display_name)"
+                " VALUES (?, ?, ?, ?, ?)",
+                [
+                    (
+                        message_id,
+                        int(row["position"]),
+                        row["data"],
+                        row["mime_type"],
+                        row.get("display_name", ""),
+                    )
+                    for row in rows
+                ],
+            )
+
+    def get_attachments_for_messages(
+        self, message_ids: "Sequence[str]"
+    ) -> dict[str, list[dict]]:
+        """Batch-fetch extra attachments (positions >= 1) for messages.
+
+        Args:
+            message_ids: Message UUIDs to fetch for.
+
+        Returns:
+            Mapping of message_id to position-ordered attachment row dicts
+            (``position``, ``data``, ``mime_type``, ``display_name``); ids
+            with no rows are absent.
+        """
+        ids = [str(m) for m in message_ids if m]
+        if not ids:
+            return {}
+        result: dict[str, list[dict]] = {}
+        with self.transaction() as cursor:
+            for start in range(0, len(ids), 500):
+                chunk = ids[start : start + 500]
+                placeholders = ",".join("?" for _ in chunk)
+                cursor.execute(
+                    "SELECT message_id, position, data, mime_type, display_name"
+                    f" FROM message_attachments WHERE message_id IN ({placeholders})"
+                    " ORDER BY message_id, position",
+                    chunk,
+                )
+                for row in cursor.fetchall():
+                    result.setdefault(row["message_id"], []).append(
+                        {
+                            "position": row["position"],
+                            "data": row["data"],
+                            "mime_type": row["mime_type"],
+                            "display_name": row["display_name"],
+                        }
+                    )
+        return result
 
     def get_messages_for_conversation(self, conversation_id: str, limit: int = 100, offset: int = 0,
                                       order_by_timestamp: str = "ASC") -> List[Dict[str, Any]]:
