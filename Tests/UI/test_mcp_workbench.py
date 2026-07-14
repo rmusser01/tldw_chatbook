@@ -34,6 +34,11 @@ class FakeHubService:
     def __init__(self) -> None:
         self.target_store = FakeTargetStore()
         self.context = UnifiedMCPContext(selected_source="local", selected_section="overview")
+        self.disconnect_calls: list[str] = []
+
+    async def disconnect_local_profile(self, profile_id):
+        self.disconnect_calls.append(profile_id)
+        return True
 
     async def load_context(self):
         return self.context
@@ -132,6 +137,24 @@ async def test_rail_selection_drives_detail_and_view_state():
         state = app.query_one(MCPWorkbench).get_view_state()
         assert state["selected_server_key"] == "local:docs"
         assert state["mode"] == "servers"
+
+
+@pytest.mark.asyncio
+async def test_detail_disconnect_button_routes_through_start_lifecycle():
+    """T7: the detail toolbar's Disconnect button (rendered because the
+    seeded "docs" profile has `is_connected: True`) must route through the
+    same `_start_lifecycle()` dispatch T5 wired for connect/test/refresh --
+    not a separate, parallel code path."""
+    app = WorkbenchApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}2")  # local:docs
+        await pilot.pause()
+        await pilot.click("#mcp-detail-disconnect")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert app.unified_mcp_service.disconnect_calls == ["docs"]
 
 
 @pytest.mark.asyncio
@@ -589,6 +612,10 @@ class LifecycleFakeHubService(FakeHubService):
         self.lifecycle_calls.append(("refresh", profile_id))
         return {"server_id": profile_id, "tools": [], "resources": [], "prompts": []}
 
+    async def disconnect_local_profile(self, profile_id):
+        self.lifecycle_calls.append(("disconnect", profile_id))
+        return True
+
 
 class LifecycleApp(App):
     def __init__(self) -> None:
@@ -755,6 +782,10 @@ class ProfileFormHubService(FakeHubService):
         # When set, save_local_profile() records its call then blocks on
         # this gate -- lets the double-submit test hold a save in flight.
         self.save_gate: asyncio.Event | None = None
+        self.delete_calls: list[str] = []
+        # When set, delete_local_profile() records its call then blocks on
+        # this gate -- mirrors save_gate, for the double-confirm test.
+        self.delete_gate: asyncio.Event | None = None
         self._records: list[dict] = [
             {
                 "profile_id": "docs",
@@ -793,6 +824,13 @@ class ProfileFormHubService(FakeHubService):
             await self.save_gate.wait()
         self._records.append(dict(payload))
         return dict(payload)
+
+    async def delete_local_profile(self, profile_id):
+        self.delete_calls.append(profile_id)
+        if self.delete_gate is not None:
+            await self.delete_gate.wait()
+        self._records = [r for r in self._records if r.get("profile_id") != profile_id]
+        return True
 
 
 class ProfileFormApp(App):
@@ -910,6 +948,25 @@ async def test_edit_config_hub_action_opens_prefilled_form_for_local_profile():
 
 
 @pytest.mark.asyncio
+async def test_detail_edit_button_opens_prefilled_form_for_local_profile():
+    """T7: the detail toolbar's Edit button must reuse the exact same
+    EDIT_CONFIG path as the inspector's own action button (Task 6) -- not a
+    parallel implementation that could drift from it or skip the catalog
+    record lookup."""
+    app = ProfileFormApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}2")  # local:docs
+        await pilot.pause()
+        await pilot.click("#mcp-detail-edit")
+        await pilot.pause()
+        form = app.query_one(MCPProfileForm)
+        assert form.is_edit
+        assert app.query_one("#mcp-form-id", Input).value == "docs"
+        assert app.query_one("#mcp-form-command", Input).value == "python"
+
+
+@pytest.mark.asyncio
 async def test_double_submit_dispatches_exactly_one_save():
     """Review fix (Important #1): a second Save while a save is in flight
     must NOT dispatch a second worker. The old handler ran every submit
@@ -975,3 +1032,82 @@ async def test_save_value_error_with_form_gone_notifies_instead_of_vanishing():
             "cannot be stored" in msg and severity == "error"
             for msg, severity in notifications
         ), f"ValueError with no form must notify, got: {notifications!r}"
+
+
+# -- T7: DeleteConfirmed wiring -----------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_delete_confirmed_deletes_profile_clears_selection_and_notifies():
+    app = ProfileFormApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        notifications = _capture_notifications(app)
+        await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}2")  # local:docs
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        assert workbench.get_view_state()["selected_server_key"] == "local:docs"
+
+        await pilot.click("#mcp-detail-delete")
+        await pilot.pause()
+        await pilot.click("#mcp-detail-delete-confirm")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert app.unified_mcp_service.delete_calls == ["docs"]
+        assert workbench.get_view_state()["selected_server_key"] is None
+        assert any("Deleted" in msg and "docs" in msg for msg, _ in notifications), (
+            f"expected a 'Deleted docs.' toast, got: {notifications!r}"
+        )
+        assert app.query_one("#mcp-servers-overview").display
+        keys = {snap.server_key for snap in workbench._snapshots}
+        assert "local:docs" not in keys
+
+
+@pytest.mark.asyncio
+async def test_double_delete_confirm_dispatches_exactly_one_delete():
+    """Mirrors test_double_submit_dispatches_exactly_one_save: a second
+    `DeleteConfirmed` arriving while a delete worker is already in flight
+    must not cancel/duplicate it -- `_profile_delete_in_flight` swallows the
+    repeat with a warning toast, leaving exactly one delete call."""
+    app = ProfileFormApp()
+    app.unified_mcp_service.delete_gate = asyncio.Event()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        notifications = _capture_notifications(app)
+        workbench = app.query_one(MCPWorkbench)
+        workbench.on_mcp_servers_mode_delete_confirmed(
+            MCPServersMode.DeleteConfirmed("local:docs")
+        )
+        workbench.on_mcp_servers_mode_delete_confirmed(
+            MCPServersMode.DeleteConfirmed("local:docs")
+        )
+        await pilot.pause()
+        assert any(
+            "already running" in msg.lower() and severity == "warning"
+            for msg, severity in notifications
+        ), f"second confirm must toast a warning, got: {notifications!r}"
+        app.unified_mcp_service.delete_gate.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert app.unified_mcp_service.delete_calls == ["docs"]
+
+
+@pytest.mark.asyncio
+async def test_delete_confirmed_ignores_non_local_server_key():
+    """Only local-source server_keys are ever produced by the detail
+    toolbar's arm-then-confirm flow (built-in/server-source render no
+    toolbar at all -- see test_mcp_servers_mode.py), but the handler must
+    not misinterpret a server-source key by calling delete_local_profile
+    with a bogus profile id derived from it."""
+    app = ProfileFormApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.on_mcp_servers_mode_delete_confirmed(
+            MCPServersMode.DeleteConfirmed("server:main")
+        )
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert app.unified_mcp_service.delete_calls == []

@@ -6,11 +6,13 @@ from textual.app import App, ComposeResult
 from textual.widgets import DataTable, Static
 
 from tldw_chatbook.MCP.readiness import (
+    HubAction,
     ReadinessSnapshot,
     ReadinessState,
     ReasonCode,
     builtin_readiness,
 )
+from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
 from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
 
 
@@ -30,6 +32,15 @@ class CanvasApp(App):
         yield MCPServersMode(id="mcp-mode-canvas-servers")
 
     def on_mcp_servers_mode_server_row_selected(self, event) -> None:
+        self.events.append(event)
+
+    def on_mcp_servers_mode_delete_confirmed(self, event) -> None:
+        self.events.append(event)
+
+    def on_mcp_servers_mode_disconnect_requested(self, event) -> None:
+        self.events.append(event)
+
+    def on_mcp_inspector_hub_action_requested(self, event) -> None:
         self.events.append(event)
 
 
@@ -204,7 +215,7 @@ async def test_detail_text_redacts_secret_query_params_in_base_url():
             "server:main", "main",
             detail={"base_url": "https://example.test/api?api_key=sk-super-secret&region=us"},
         )
-        canvas.show_detail(snap)
+        await canvas.show_detail(snap)
         await pilot.pause()
         body = str(app.query_one("#mcp-detail-body", Static).renderable)
         assert "sk-super-secret" not in body
@@ -234,7 +245,7 @@ async def test_detail_text_marks_env_placeholder_missing_despite_whitespace():
                 "discovery_snapshot": None,
             },
         )
-        canvas.show_detail(local)
+        await canvas.show_detail(local)
         await pilot.pause()
         body = str(app.query_one("#mcp-detail-body", Static).renderable)
         assert "API_KEY (missing)" in body
@@ -255,17 +266,17 @@ async def test_detail_renders_redacted_config_and_builtin_snippet():
                 "discovery_snapshot": {"tools": [{"name": "a"}], "resources": [], "prompts": []},
             },
         )
-        canvas.show_detail(local)
+        await canvas.show_detail(local)
         await pilot.pause()
         body = str(app.query_one("#mcp-detail-body", Static).renderable)
         assert "sk-123" not in body
         assert "python" in body
 
-        canvas.show_detail(builtin_readiness(enabled=True))
+        await canvas.show_detail(builtin_readiness(enabled=True))
         await pilot.pause()
         assert list(app.query("#mcp-detail-copy-snippet"))
 
-        canvas.show_detail(None)
+        await canvas.show_detail(None)
         await pilot.pause()
         assert app.query_one("#mcp-servers-overview").display
 
@@ -279,7 +290,7 @@ async def test_builtin_detail_summarizes_exposed_capabilities_in_human_copy():
     app = CanvasApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPServersMode)
-        canvas.show_detail(
+        await canvas.show_detail(
             builtin_readiness(
                 enabled=True, expose_tools=True, expose_resources=True, expose_prompts=False
             )
@@ -293,7 +304,7 @@ async def test_builtin_detail_summarizes_exposed_capabilities_in_human_copy():
         assert "True" not in body
         assert "False" not in body
 
-        canvas.show_detail(
+        await canvas.show_detail(
             builtin_readiness(
                 enabled=True, expose_tools=False, expose_resources=False, expose_prompts=False
             )
@@ -301,3 +312,123 @@ async def test_builtin_detail_summarizes_exposed_capabilities_in_human_copy():
         await pilot.pause()
         body_none = str(app.query_one("#mcp-detail-body", Static).renderable)
         assert "Exposes · nothing" in body_none
+
+
+# -- T7: detail-view toolbar (Edit/Disconnect/Delete arm-then-confirm) ------
+
+
+@pytest.mark.asyncio
+async def test_delete_requires_arm_then_confirm():
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        snap = _snap("local:docs", "docs",
+                     detail={"command": "npx", "args": [], "env_placeholders": {},
+                             "missing_env": [], "discovery_snapshot": None})
+        await canvas.show_detail(snap)
+        await pilot.pause()
+        await pilot.click("#mcp-detail-delete")
+        await pilot.pause()
+        assert list(app.query("#mcp-detail-delete-confirm"))
+        assert not app.events  # nothing posted yet
+        await pilot.click("#mcp-detail-delete-cancel")
+        await pilot.pause()
+        assert list(app.query("#mcp-detail-delete"))  # disarmed
+        await pilot.click("#mcp-detail-delete")
+        await pilot.pause()
+        await pilot.click("#mcp-detail-delete-confirm")
+        await pilot.pause()
+        confirmed = [e for e in app.events if type(e).__name__ == "DeleteConfirmed"]
+        assert confirmed and confirmed[-1].server_key == "local:docs"
+
+
+@pytest.mark.asyncio
+async def test_builtin_detail_has_no_delete_toolbar():
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.show_detail(builtin_readiness(enabled=True))
+        await pilot.pause()
+        assert not list(app.query("#mcp-detail-delete"))
+
+
+@pytest.mark.asyncio
+async def test_server_source_detail_has_no_delete_toolbar():
+    """Interfaces: "Built-in and server-source detail views do NOT render
+    this toolbar" -- server-source is mutated server-side (Advanced), not
+    from this detail pane, so it must be checked the same as builtin."""
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        snap = _snap("server:main", "main", detail={"base_url": "https://example.test"})
+        await canvas.show_detail(snap)
+        await pilot.pause()
+        assert not list(app.query("#mcp-detail-edit"))
+        assert not list(app.query("#mcp-detail-disconnect"))
+        assert not list(app.query("#mcp-detail-delete"))
+
+
+@pytest.mark.asyncio
+async def test_disconnect_button_gated_by_is_connected():
+    """`snapshot.is_connected` gates the Disconnect button: shown for a
+    connected local profile, absent for a disconnected (or never-checked)
+    one -- disconnecting something that isn't running makes no sense."""
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        connected = _snap("local:docs", "docs", is_connected=True)
+        await canvas.show_detail(connected)
+        await pilot.pause()
+        assert list(app.query("#mcp-detail-disconnect"))
+
+        disconnected = _snap("local:docs", "docs", is_connected=False)
+        await canvas.show_detail(disconnected)
+        await pilot.pause()
+        assert not list(app.query("#mcp-detail-disconnect"))
+
+
+@pytest.mark.asyncio
+async def test_disconnect_button_posts_disconnect_requested():
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.show_detail(_snap("local:docs", "docs", is_connected=True))
+        await pilot.pause()
+        await pilot.click("#mcp-detail-disconnect")
+        await pilot.pause()
+        posted = [e for e in app.events if type(e).__name__ == "DisconnectRequested"]
+        assert posted and posted[-1].server_key == "local:docs"
+
+
+@pytest.mark.asyncio
+async def test_edit_button_posts_edit_config_hub_action():
+    """Edit reuses the existing EDIT_CONFIG path (Task 6's `show_form(record)`
+    via the workbench's `on_mcp_inspector_hub_action_requested` handler)
+    instead of duplicating the record lookup."""
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.show_detail(_snap("local:docs", "docs"))
+        await pilot.pause()
+        await pilot.click("#mcp-detail-edit")
+        await pilot.pause()
+        posted = [e for e in app.events if isinstance(e, MCPInspector.HubActionRequested)]
+        assert posted and posted[-1].action is HubAction.EDIT_CONFIG
+        assert posted[-1].server_key == "local:docs"
+
+
+@pytest.mark.asyncio
+async def test_every_detail_toolbar_button_has_a_tooltip():
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.show_detail(_snap("local:docs", "docs", is_connected=True))
+        await pilot.pause()
+        for button_id in ("#mcp-detail-edit", "#mcp-detail-disconnect", "#mcp-detail-delete"):
+            button = app.query_one(button_id)
+            assert button.tooltip, f"{button_id} missing a tooltip"
+        await pilot.click("#mcp-detail-delete")
+        await pilot.pause()
+        for button_id in ("#mcp-detail-delete-confirm", "#mcp-detail-delete-cancel"):
+            button = app.query_one(button_id)
+            assert button.tooltip, f"{button_id} missing a tooltip"

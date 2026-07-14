@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from typing import Any
 
@@ -242,6 +243,13 @@ class MCPWorkbench(Container):
         # every submit through `run_worker(..., exclusive=True)` let a second
         # click CANCEL the in-flight save mid-write.
         self._profile_save_in_flight: bool = False
+        # T7: True while a profile-delete worker is in flight. Same
+        # synchronous-registration guard as `_profile_save_in_flight` above:
+        # set before the worker is dispatched, cleared in its `finally`, so
+        # a second DeleteConfirmed arriving in the same pump window (e.g. a
+        # double-click on "Confirm delete" before the button unmounts)
+        # cannot cancel the in-flight delete mid-write.
+        self._profile_delete_in_flight: bool = False
         # T5: in-flight local-profile lifecycle operations, keyed by
         # server_key ("local:<profile_id>"). While a key is present here,
         # `_snapshot_for_display()`/`_sync_children()` render that server as
@@ -254,6 +262,21 @@ class MCPWorkbench(Container):
         # eventual notification can say what's actually happening.
         self._in_flight_action: dict[str, str] = {}
         self._pending_view_state: dict[str, Any] | None = None
+        # T7: `_sync_children()` now flows through `MCPServersMode.show_detail()`,
+        # which (since T7 added the detail toolbar) performs its own awaited
+        # remove_children()/mount_all() cycle on `#mcp-detail-toolbar` --
+        # real suspension points a concurrently *running* `_sync_children()`
+        # call can interleave with. `_start_lifecycle()` deliberately fires
+        # two independent workers (the immediate "mcp-lifecycle-sync" resync
+        # for the optimistic CHECKING badge, and "mcp-lifecycle"'s own
+        # finally-triggered resync once the lifecycle call completes) --
+        # different worker groups, so Textual's `exclusive=True` cancellation
+        # within one group does not serialize them against each other. This
+        # lock does: a second `_sync_children()` call simply waits for the
+        # first's remove+mount cycle to finish (harmless -- it repaints with
+        # whatever the latest state is once it acquires the lock) instead of
+        # racing it and raising DuplicateIds.
+        self._sync_children_lock = asyncio.Lock()
         # Guards the post-mount restore race: `on_mount` awaits `reload()`
         # inline, but a caller (e.g. the destination screen) can call
         # `set_initial_view_state()` while that reload is still in flight.
@@ -425,23 +448,33 @@ class MCPWorkbench(Container):
         second selection event and start another `_sync_children()` call
         while the first's inspector refresh is still settling
         (`DuplicateIds` regression; see test_mcp_inspector.py).
+
+        Wrapped in `_sync_children_lock` (T7): that guards the *pump*
+        ordering above, but `_start_lifecycle()` also fires this method from
+        two independent worker groups (the immediate optimistic-CHECKING
+        resync and the lifecycle wrapper's own completion resync), which can
+        genuinely run concurrently as separate asyncio tasks -- the lock
+        serializes those too, so two overlapping calls' remove+mount cycles
+        (now real suspension points, since `MCPServersMode.show_detail()`
+        rebuilds the detail toolbar) can't interleave on the same widgets.
         """
-        display_snapshots = [self._display_snapshot(snap) for snap in self._snapshots]
-        rail = self.query_one(MCPRail)
-        rail.sync_state(
-            source=self._source,
-            snapshots=display_snapshots,
-            selected_server_key=self._selected_server_key,
-            scope_options=[("Personal", "personal")],
-            scope_value=self._scope,
-            scope_ref_options=[],
-            scope_ref_value=self._scope_ref,
-        )
-        canvas = self.query_one(MCPServersMode)
-        await canvas.update_overview(display_snapshots)
-        selected = self._snapshot_for_display(self._selected_server_key)
-        canvas.show_detail(selected)
-        await self.query_one(MCPInspector).update_readiness(selected)
+        async with self._sync_children_lock:
+            display_snapshots = [self._display_snapshot(snap) for snap in self._snapshots]
+            rail = self.query_one(MCPRail)
+            rail.sync_state(
+                source=self._source,
+                snapshots=display_snapshots,
+                selected_server_key=self._selected_server_key,
+                scope_options=[("Personal", "personal")],
+                scope_value=self._scope,
+                scope_ref_options=[],
+                scope_ref_value=self._scope_ref,
+            )
+            canvas = self.query_one(MCPServersMode)
+            await canvas.update_overview(display_snapshots)
+            selected = self._snapshot_for_display(self._selected_server_key)
+            await canvas.show_detail(selected)
+            await self.query_one(MCPInspector).update_readiness(selected)
 
     # -- modes & view state ---------------------------------------------------
 
@@ -619,6 +652,66 @@ class MCPWorkbench(Container):
     ) -> None:
         event.stop()
         await self.query_one(MCPServersMode).show_form(None)
+
+    async def on_mcp_servers_mode_disconnect_requested(
+        self, event: MCPServersMode.DisconnectRequested
+    ) -> None:
+        """Route the detail toolbar's Disconnect button through the same
+        `_start_lifecycle()` dispatch T5 wired for connect/test/refresh --
+        disconnect is a detail-view-only action, so it never comes through
+        `HubActionRequested`/`_HUB_ACTION_TO_LIFECYCLE_VERB` like those three.
+        """
+        event.stop()
+        if event.server_key and event.server_key.startswith("local:"):
+            profile_id = event.server_key.split(":", 1)[1]
+            self._start_lifecycle(event.server_key, profile_id, "disconnect")
+
+    def on_mcp_servers_mode_delete_confirmed(
+        self, event: MCPServersMode.DeleteConfirmed
+    ) -> None:
+        """Dispatch a profile delete in the background.
+
+        Synchronous (not `async def`), mirroring
+        `on_mcp_profile_form_submit_requested()`: the handler itself must
+        return immediately so Textual's message pump stays responsive while
+        the delete runs -- the actual `await
+        service.delete_local_profile(...)` happens inside the worker
+        coroutine below. `_profile_delete_in_flight` (set here,
+        synchronously, before dispatch; cleared in the worker's `finally`)
+        is what makes a double confirm safe.
+        """
+        event.stop()
+        if not event.server_key or not event.server_key.startswith("local:"):
+            return
+        profile_id = event.server_key.split(":", 1)[1]
+        if self._profile_delete_in_flight:
+            self.app.notify(f"{profile_id}: delete already running.", severity="warning")
+            return
+        self._profile_delete_in_flight = True
+        self.run_worker(
+            self._delete_local_profile(event.server_key, profile_id),
+            group="mcp-profile-delete",
+            exclusive=True,
+        )
+
+    async def _delete_local_profile(self, server_key: str, profile_id: str) -> None:
+        try:
+            service = self._service()
+            if service is None:
+                return
+            try:
+                await service.delete_local_profile(profile_id)
+            except Exception as exc:
+                logger.warning(f"MCP profile delete failed: {exc}")
+                self.app.notify(f"Delete failed: {exc}", severity="error")
+                return
+            self.app.notify(f"Deleted {profile_id}.")
+            if self._selected_server_key == server_key:
+                self._selected_server_key = None
+            self._snapshots = await self._collect_snapshots()
+            await self._sync_children()
+        finally:
+            self._profile_delete_in_flight = False
 
     def on_mcp_profile_form_submit_requested(
         self, event: MCPProfileForm.SubmitRequested

@@ -6,17 +6,19 @@ from typing import Any
 
 from rich.text import Text
 from textual.app import ComposeResult
-from textual.containers import Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.widgets import Button, DataTable, Static
 
 from tldw_chatbook.MCP.readiness import (
+    HubAction,
     ReadinessSnapshot,
     ReadinessState,
     aggregate_summary,
     env_placeholder_names,
 )
 from tldw_chatbook.MCP.redaction import redact_args, redact_url
+from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
 from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPProfileForm
 
 _TABLE_COLUMNS = ("Name", "Transport", "Status", "Tools", "Auth", "Scope")
@@ -53,6 +55,25 @@ class MCPServersMode(Vertical):
     class AddServerRequested(Message, namespace="mcp_servers_mode"):
         pass
 
+    class DisconnectRequested(Message, namespace="mcp_servers_mode"):
+        """Posted when Disconnect is pressed in the detail toolbar. The
+        workbench owns the actual lifecycle worker (`_start_lifecycle`,
+        same dispatch T5 wired for connect/test/refresh) -- this pane only
+        knows which server the button belongs to."""
+
+        def __init__(self, server_key: str) -> None:
+            super().__init__()
+            self.server_key = server_key
+
+    class DeleteConfirmed(Message, namespace="mcp_servers_mode"):
+        """Posted once the arm-then-confirm sequence completes (Delete,
+        then Confirm delete). The workbench owns the actual delete worker
+        against `delete_local_profile`."""
+
+        def __init__(self, server_key: str) -> None:
+            super().__init__()
+            self.server_key = server_key
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._snapshots: list[ReadinessSnapshot] = []
@@ -61,6 +82,12 @@ class MCPServersMode(Vertical):
         # canonical `ReadinessSnapshot.server_key` it represents -- see F3
         # in `update_overview()`/`on_data_table_row_selected()`.
         self._row_key_to_server_key: dict[str, str] = {}
+        # T7: True once the first Delete press has armed the inline
+        # confirm/keep pair in the detail toolbar. Reset whenever a new
+        # snapshot is shown (`show_detail()`) so navigating away silently
+        # disarms rather than leaving a stale "Confirm delete" button armed
+        # for whatever server happens to be selected next.
+        self._delete_armed: bool = False
 
     def compose(self) -> ComposeResult:
         with Vertical(id="mcp-servers-overview"):
@@ -78,6 +105,7 @@ class MCPServersMode(Vertical):
             yield Vertical(id="mcp-overview-callouts")
         with Vertical(id="mcp-servers-detail"):
             yield Static("", id="mcp-detail-title", classes="destination-section", markup=False)
+            yield Horizontal(id="mcp-detail-toolbar", classes="ds-toolbar")
             with VerticalScroll(id="mcp-detail-scroll"):
                 yield Static("", id="mcp-detail-body", classes="ds-field-row", markup=False)
                 yield Button(
@@ -189,10 +217,15 @@ class MCPServersMode(Vertical):
         if self._detail_snapshot is None:
             self._show_overview_container(True)
 
-    def show_detail(self, snapshot: ReadinessSnapshot | None) -> None:
+    async def show_detail(self, snapshot: ReadinessSnapshot | None) -> None:
         self._detail_snapshot = snapshot
+        # Any new snapshot -- including re-showing the same server after a
+        # lifecycle resync -- disarms a pending delete confirmation rather
+        # than leaving it armed against whatever is selected next.
+        self._delete_armed = False
         if snapshot is None:
             self._show_overview_container(True)
+            await self._rebuild_detail_toolbar()
             return
         self._show_overview_container(False)
         self.query_one("#mcp-detail-title", Static).update(
@@ -202,6 +235,84 @@ class MCPServersMode(Vertical):
         self.query_one("#mcp-detail-copy-snippet", Button).display = (
             snapshot.source == "builtin"
         )
+        await self._rebuild_detail_toolbar()
+
+    def _detail_toolbar_widgets(self) -> list[Button]:
+        """Build the local-profile toolbar (Edit/Disconnect/Delete), or the
+        arm-then-confirm pair once Delete has been pressed.
+
+        Local-source snapshots only: built-in is edited via config.toml, and
+        server-source profiles are mutated server-side (Advanced), so both
+        render no toolbar at all here.
+        """
+        snapshot = self._detail_snapshot
+        if snapshot is None or snapshot.source != "local":
+            return []
+        if self._delete_armed:
+            return [
+                Button(
+                    "Confirm delete",
+                    id="mcp-detail-delete-confirm",
+                    classes="console-action-primary",
+                    compact=True,
+                    tooltip="Confirm permanent deletion.",
+                ),
+                Button(
+                    "Keep",
+                    id="mcp-detail-delete-cancel",
+                    classes="console-action-secondary",
+                    compact=True,
+                    tooltip="Keep the profile.",
+                ),
+            ]
+        widgets = [
+            Button(
+                "Edit",
+                id="mcp-detail-edit",
+                classes="console-action-secondary",
+                compact=True,
+                tooltip="Edit this profile.",
+            ),
+        ]
+        if snapshot.is_connected:
+            widgets.append(
+                Button(
+                    "Disconnect",
+                    id="mcp-detail-disconnect",
+                    classes="console-action-secondary",
+                    compact=True,
+                    tooltip="Disconnect the running server.",
+                )
+            )
+        widgets.append(
+            Button(
+                "Delete",
+                id="mcp-detail-delete",
+                classes="console-action-secondary",
+                compact=True,
+                tooltip="Delete this profile — asks to confirm.",
+            )
+        )
+        return widgets
+
+    async def _rebuild_detail_toolbar(self) -> None:
+        """Rebuild `#mcp-detail-toolbar` from `_detail_toolbar_widgets()`.
+
+        Mirrors the awaited remove-then-mount discipline used elsewhere in
+        this canvas (`update_overview()`'s callouts, `show_form()`/
+        `hide_form()`'s form container) so a second `show_detail()` (or a
+        button press) queued right behind this one cannot interleave its
+        own removal/mount with this call's and produce DuplicateIds.
+        """
+        toolbar = self.query_one("#mcp-detail-toolbar", Horizontal)
+        await toolbar.remove_children()
+        widgets = self._detail_toolbar_widgets()
+        # Built-in/server-source detail views (and no snapshot at all) get
+        # no toolbar -- hide the row itself rather than leaving an empty
+        # padded `.ds-toolbar` band under the title.
+        toolbar.display = bool(widgets)
+        if widgets:
+            await toolbar.mount_all(widgets)
 
     def _detail_text(self, snapshot: ReadinessSnapshot) -> str:
         detail = snapshot.detail or {}
@@ -259,17 +370,53 @@ class MCPServersMode(Vertical):
             server_key = self._row_key_to_server_key.get(raw_key, raw_key)
             self.post_message(self.ServerRowSelected(server_key))
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "mcp-add-server":
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        button_id = event.button.id or ""
+        if button_id == "mcp-add-server":
             event.stop()
             self.post_message(self.AddServerRequested())
             return
-        if event.button.id != "mcp-detail-copy-snippet":
+        if button_id == "mcp-detail-copy-snippet":
+            event.stop()
+            snippet = ""
+            if self._detail_snapshot is not None:
+                snippet = str((self._detail_snapshot.detail or {}).get("client_snippet") or "")
+            if snippet:
+                self.app.copy_to_clipboard(snippet)
+                self.app.notify("Client config copied to clipboard.")
             return
-        event.stop()
-        snippet = ""
-        if self._detail_snapshot is not None:
-            snippet = str((self._detail_snapshot.detail or {}).get("client_snippet") or "")
-        if snippet:
-            self.app.copy_to_clipboard(snippet)
-            self.app.notify("Client config copied to clipboard.")
+        if button_id == "mcp-detail-edit":
+            event.stop()
+            if self._detail_snapshot is not None:
+                # Reuses the existing EDIT_CONFIG path (Task 6's
+                # `show_form(record)` via the workbench's
+                # `on_mcp_inspector_hub_action_requested` handler) instead
+                # of duplicating the catalog record lookup here.
+                self.post_message(
+                    MCPInspector.HubActionRequested(
+                        HubAction.EDIT_CONFIG, self._detail_snapshot.server_key
+                    )
+                )
+            return
+        if button_id == "mcp-detail-disconnect":
+            event.stop()
+            if self._detail_snapshot is not None:
+                self.post_message(self.DisconnectRequested(self._detail_snapshot.server_key))
+            return
+        if button_id == "mcp-detail-delete":
+            event.stop()
+            self._delete_armed = True
+            await self._rebuild_detail_toolbar()
+            return
+        if button_id == "mcp-detail-delete-cancel":
+            event.stop()
+            self._delete_armed = False
+            await self._rebuild_detail_toolbar()
+            return
+        if button_id == "mcp-detail-delete-confirm":
+            event.stop()
+            self._delete_armed = False
+            await self._rebuild_detail_toolbar()
+            if self._detail_snapshot is not None:
+                self.post_message(self.DeleteConfirmed(self._detail_snapshot.server_key))
+            return
