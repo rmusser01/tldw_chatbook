@@ -7,11 +7,13 @@ import json
 from typing import Any
 
 from loguru import logger
+from textual import on
 from textual.app import ComposeResult
 from textual.containers import Vertical, VerticalScroll
 from textual.message import Message
-from textual.widgets import Button, Label, Select, Static, TextArea
+from textual.widgets import Button, Collapsible, Label, Select, Static, TextArea
 
+from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
 from tldw_chatbook.MCP.readiness import (
     REASON_LABELS,
     STATE_CSS_CLASSES,
@@ -113,6 +115,23 @@ class MCPInspector(Vertical):
         height: auto;
         min-height: 0;
     }
+    /* T12: the Advanced block moved from a direct-child VerticalScroll to a
+    Collapsible's body. Give the Collapsible itself the 1fr the scroll used
+    to claim directly (so it still fills the remaining pane height when
+    expanded) and drop back to auto when collapsed (Contents is display:
+    none then -- reserving 1fr of empty space below the title bar would
+    waste most of the pane). #mcp-adv-scroll keeps height:1fr for when it
+    IS visible; nested inside Collapsible's own auto-height Contents this
+    mostly falls back to intrinsic sizing, but VerticalScroll still scrolls
+    on overflow regardless, so nothing breaks -- exact geometry polish is
+    T13's job. */
+    #mcp-adv-collapsible {
+        height: 1fr;
+        min-height: 0;
+    }
+    #mcp-adv-collapsible.-collapsed {
+        height: auto;
+    }
     #mcp-adv-scroll {
         height: 1fr;
         min-height: 0;
@@ -176,6 +195,12 @@ class MCPInspector(Vertical):
         self._service: Any = None
         self._sections: list[tuple[str, str]] = [("Overview", "overview")]
         self._action_templates: dict[str, str] = {}
+        # T12: the object the Advanced pane's content currently describes --
+        # defaults match set_service_context()'s own default source="local"
+        # so the label composed here (before any set_service_context() call)
+        # agrees with what a fresh mount would show.
+        self._advanced_source: str = "local"
+        self._advanced_target_label: str | None = None
         # Task 4: serializes `update_readiness()`'s remove+mount cycle. Two
         # calls awaited concurrently (a worker-driven refresh interleaved
         # with a pump-driven one) previously could both be mid-flight at
@@ -185,32 +210,92 @@ class MCPInspector(Vertical):
         # once instead of racing into `DuplicateIds`.
         self._refresh_lock = asyncio.Lock()
 
+    def _advanced_object_label(self) -> str:
+        """Compute the "Showing: <object>" text for `#mcp-adv-object`.
+
+        UX-inputs: label the object the Advanced content describes, so its
+        section dumps -- which can legitimately describe a different object
+        than the selected server -- never get mistaken for facts about the
+        currently-selected row.
+        """
+        if self._advanced_source == "server":
+            target = self._advanced_target_label or "(no target selected)"
+            return f"Showing: server {target}"
+        return "Showing: Local control plane"
+
     def compose(self) -> ComposeResult:
         yield Static("Inspector", classes="destination-section")
         yield Static("Select a server to see its readiness.", id="mcp-inspector-state",
                      classes="ds-status-badge", markup=False)
         yield Static("", id="mcp-inspector-message", classes="ds-field-row", markup=False)
         yield Vertical(id="mcp-inspector-actions")
-        yield Static("Advanced (legacy control plane)", classes="destination-section")
-        with VerticalScroll(id="mcp-adv-scroll"):
-            yield Label("Section", classes="form-label")
-            yield Select(self._sections, id="mcp-adv-section-select", allow_blank=False,
-                         value="overview")
-            yield Static("", id="mcp-adv-content", classes="ds-field-row", markup=False)
-            yield Label("Action", classes="form-label")
-            yield Select([("No actions available", Select.BLANK)], id="mcp-adv-action-select",
-                         value=Select.BLANK)
-            # Task 4: guidance shown only while the section above has zero
-            # runnable action descriptors (see `_refresh_advanced_actions`),
-            # so a user landing on e.g. Overview isn't left staring at a
-            # disabled "No actions available" select with no next step.
-            yield Static("", id="mcp-adv-empty-hint", classes="ds-field-row", markup=False)
-            yield Label("Payload (JSON)", classes="form-label")
-            yield TextArea("{}", id="mcp-adv-payload")
-            yield Button("Run Action", id="mcp-adv-run", classes="console-action-primary",
-                         compact=True,
-                         tooltip="Run the selected legacy control-plane action with this JSON payload.")
-            yield Static("", id="mcp-adv-result", classes="ds-field-row", markup=False)
+        # T12: default collapsed unless the user has previously opened it --
+        # per-user GLOBAL preference (Console rail section-preference
+        # precedent), NOT per-server. `get_cli_setting` reads the real user
+        # config in a bare test App; tests monkeypatch this module's
+        # `get_cli_setting` name for determinism (see test_mcp_inspector.py).
+        persisted_open = bool(get_cli_setting("mcp.hub_state", "advanced_open", False))
+        with Collapsible(
+            title="Advanced (legacy control plane)",
+            collapsed=not persisted_open,
+            id="mcp-adv-collapsible",
+        ):
+            yield Static(self._advanced_object_label(), id="mcp-adv-object", markup=False)
+            with VerticalScroll(id="mcp-adv-scroll"):
+                yield Label("Section", classes="form-label")
+                yield Select(self._sections, id="mcp-adv-section-select", allow_blank=False,
+                             value="overview")
+                yield Static("", id="mcp-adv-content", classes="ds-field-row", markup=False)
+                yield Label("Action", classes="form-label")
+                yield Select([("No actions available", Select.BLANK)], id="mcp-adv-action-select",
+                             value=Select.BLANK)
+                # Task 4: guidance shown only while the section above has zero
+                # runnable action descriptors (see `_refresh_advanced_actions`),
+                # so a user landing on e.g. Overview isn't left staring at a
+                # disabled "No actions available" select with no next step.
+                yield Static("", id="mcp-adv-empty-hint", classes="ds-field-row", markup=False)
+                yield Label("Payload (JSON)", classes="form-label")
+                yield TextArea("{}", id="mcp-adv-payload")
+                yield Button("Run Action", id="mcp-adv-run", classes="console-action-primary",
+                             compact=True,
+                             tooltip="Run the selected legacy control-plane action with this JSON payload.")
+                yield Static("", id="mcp-adv-result", classes="ds-field-row", markup=False)
+
+    # -- T12: Advanced disclosure open/collapsed persistence -----------------
+
+    @on(Collapsible.Toggled, "#mcp-adv-collapsible")
+    def _on_advanced_collapsible_toggled(self, event: Collapsible.Toggled) -> None:
+        event.stop()
+        self.run_worker(
+            self._persist_advanced_open(not event.collapsible.collapsed),
+            group="mcp-adv-open",
+            exclusive=True,
+        )
+
+    async def _persist_advanced_open(self, open_state: bool) -> None:
+        """Persist the Advanced disclosure's open/collapsed state.
+
+        Thread-offloaded exactly like `MCPWorkbench._save_builtin_flag()`
+        (`mcp_workbench.py`, Task 10 precedent) -- `save_setting_to_cli_config`
+        does a blocking TOML read-modify-write. Unlike that handler, this one
+        has no UI to resync afterward (the Collapsible already reflects its
+        own reactive `collapsed` state) and doesn't reach into `self.app` at
+        all: `save_setting_to_cli_config` is a free function, not something
+        that needs app-specific wiring, so there is nothing here that a bare
+        test App would be missing (contrast `_action_allowed()`'s
+        getattr-tolerant read of `self.app.require_ui_action_allowed`, which
+        DOES need that idiom because it's an app-specific seam). Failures are
+        logged and swallowed rather than surfaced via `self.app.notify()`
+        (unlike `_save_builtin_flag`): this is a low-stakes UI preference that
+        silently reverts to its default on next launch, not worth alarming
+        the user over.
+        """
+        try:
+            await asyncio.to_thread(
+                save_setting_to_cli_config, "mcp.hub_state", "advanced_open", open_state
+            )
+        except Exception as exc:
+            logger.warning(f"MCP advanced-open preference save failed: {exc}")
 
     # -- readiness block -----------------------------------------------------
 
@@ -307,9 +392,30 @@ class MCPInspector(Vertical):
 
     # -- advanced escape hatch -----------------------------------------------
 
-    def set_service_context(self, service: Any, sections: list[tuple[str, str]]) -> None:
+    def set_service_context(
+        self,
+        service: Any,
+        sections: list[tuple[str, str]],
+        *,
+        source: str = "local",
+        target_label: str | None = None,
+    ) -> None:
+        """Bind the Advanced pane to a service context (initial mount, or a
+        rebind on a workbench source/target switch).
+
+        `source`/`target_label` drive `#mcp-adv-object`'s "Showing: ..."
+        label. The section resets to `sections[0]` and `#mcp-adv-content` is
+        blanked SYNCHRONOUSLY (not just once the reload worker below
+        resolves) so a rebind can never leave a previous object's rendered
+        dump on screen, even for one frame (UX-inputs acceptance: "reopening
+        never shows a previous object's facts").
+        """
         self._service = service
         self._sections = sections or [("Overview", "overview")]
+        self._advanced_source = source
+        self._advanced_target_label = target_label
+        self.query_one("#mcp-adv-object", Static).update(self._advanced_object_label())
+        self.query_one("#mcp-adv-content", Static).update("")
         section_select = self.query_one("#mcp-adv-section-select", Select)
         with section_select.prevent(Select.Changed):
             section_select.set_options(self._sections)

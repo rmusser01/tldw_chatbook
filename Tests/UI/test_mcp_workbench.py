@@ -11,6 +11,7 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Checkbox, ContentSwitcher, Input, Select, Static, TextArea
 
+import tldw_chatbook.UI.MCP_Modules.mcp_inspector as mcp_inspector_module
 from tldw_chatbook.MCP.unified_control_models import UnifiedMCPContext
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
 from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel, MCPProfileForm
@@ -18,6 +19,19 @@ from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCP_RAIL_ROW_PREFIX, MCPRail
 from tldw_chatbook.UI.MCP_Modules.mcp_server_mutations import MCPServerMutationsPanel
 from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
 from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCP_HUB_MODES, MCPWorkbench
+
+
+@pytest.fixture(autouse=True)
+def _default_advanced_open(monkeypatch):
+    """T12: same rationale as test_mcp_inspector.py's fixture of the same
+    name -- `MCPWorkbench` mounts a nested `MCPInspector`, whose `compose()`
+    reads `mcp.hub_state.advanced_open` via `mcp_inspector.get_cli_setting`
+    at mount time. Keep it expanded and never touch the real user config
+    file for every workbench test that isn't specifically exercising T12's
+    disclosure/persistence behavior itself.
+    """
+    monkeypatch.setattr(mcp_inspector_module, "get_cli_setting", lambda *a, **k: True)
+    monkeypatch.setattr(mcp_inspector_module, "save_setting_to_cli_config", lambda *a, **k: True)
 
 
 class FakeTarget:
@@ -1697,3 +1711,55 @@ async def test_file_requested_pushes_picker_and_loads_selected_file_into_panel(t
         assert app.query_one("#mcp-import-text", TextArea).text.strip() == (
             config_path.read_text().strip()
         )
+
+
+# -- Task 12: Advanced disclosure object label + info-callout placeholders --
+
+
+@pytest.mark.asyncio
+async def test_advanced_object_label_updates_on_source_switch():
+    """UX-inputs #1: switching source must rebind the inspector's Advanced
+    object label (and, per `MCPInspector.set_service_context()`, reset/
+    reload its section content) so a previous object's facts never linger.
+    `FakeHubService.target_store` labels server_id "main" as "Main Server".
+    """
+    app = WorkbenchApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        label = app.query_one("#mcp-adv-object", Static)
+        assert str(label.renderable) == "Showing: Local control plane"
+
+        rail = app.query_one(MCPRail)
+        rail.post_message(MCPRail.SourceChanged("server"))
+        await pilot.pause()
+        await pilot.pause()
+        rail.post_message(MCPRail.ServerSelected("server:main"))
+        await pilot.pause()
+        await pilot.pause()
+
+        assert str(label.renderable) == "Showing: server Main Server"
+
+        # Switching back to local must rebind the label again, not leave the
+        # server-source text stuck on screen.
+        rail.post_message(MCPRail.SourceChanged("local"))
+        await pilot.pause()
+        await pilot.pause()
+        assert str(label.renderable) == "Showing: Local control plane"
+
+
+@pytest.mark.asyncio
+async def test_mode_placeholder_canvases_use_info_callout_not_recovery_callout():
+    """UX-inputs #4: phase placeholders are informational, not an alarm
+    condition -- they must carry `.ds-info-callout`, never the orange-chrome
+    `.ds-recovery-callout` used for actionable problems elsewhere in the hub.
+    """
+    app = WorkbenchApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        for mode, spec in MCP_HUB_MODES.items():
+            if mode == "servers":
+                continue
+            static = app.query_one(f"#mcp-mode-canvas-{mode} Static", Static)
+            assert "ds-info-callout" in static.classes, mode
+            assert "ds-recovery-callout" not in static.classes, mode
+            assert str(static.renderable) == spec["placeholder"]

@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import Any
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Select, Static, TextArea
+from textual.widgets import Button, Collapsible, Select, Static, TextArea
 
 import tldw_chatbook
+import tldw_chatbook.UI.MCP_Modules.mcp_inspector as mcp_inspector_module
 from tldw_chatbook.MCP.readiness import (
     REASON_LABELS,
     STATE_CSS_CLASSES,
@@ -20,6 +22,26 @@ from tldw_chatbook.MCP.readiness import (
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
 
 _BUNDLED_CSS_PATH = str(Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss")
+
+
+@pytest.fixture(autouse=True)
+def _default_advanced_open(monkeypatch):
+    """T12: keep the Advanced disclosure expanded, and never touch the real
+    user config file, for every test in this module that isn't specifically
+    exercising the collapsed-by-default / persistence behavior itself.
+
+    `MCPInspector.compose()` reads `mcp.hub_state.advanced_open` via this
+    module's `get_cli_setting` at mount time; without this fixture every
+    test here would hit the developer's real `~/.config/tldw_cli/config.toml`
+    (non-deterministic) and the pre-T12 tests that `pilot.click` into the
+    Advanced pane (e.g. `test_advanced_runner_runs_action_with_template_
+    payload`) would fail outright once collapsed-by-default lands, since a
+    collapsed `Collapsible`'s contents are `display: none` (not clickable).
+    Individual tests below override this locally via their own
+    `monkeypatch.setattr(...)` call, which wins over this fixture's.
+    """
+    monkeypatch.setattr(mcp_inspector_module, "get_cli_setting", lambda *a, **k: True)
+    monkeypatch.setattr(mcp_inspector_module, "save_setting_to_cli_config", lambda *a, **k: True)
 
 
 class FakeAdvService:
@@ -631,3 +653,126 @@ async def test_zero_descriptor_sections_show_guidance_hint():
         hint = app.query_one("#mcp-adv-empty-hint", Static)
         assert hint.display
         assert "Inventory" in str(hint.renderable)
+
+
+# -- Task 12: Advanced disclosure (Collapsible) + object label --------------
+
+
+@pytest.mark.asyncio
+async def test_advanced_collapsible_starts_collapsed_by_default(monkeypatch):
+    """No persisted preference (fresh install) -> collapsed on mount."""
+    monkeypatch.setattr(mcp_inspector_module, "get_cli_setting", lambda *a, **k: False)
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        collapsible = app.query_one("#mcp-adv-collapsible", Collapsible)
+        assert collapsible.collapsed is True
+
+
+@pytest.mark.asyncio
+async def test_advanced_collapsible_starts_expanded_when_persisted_open(monkeypatch):
+    monkeypatch.setattr(mcp_inspector_module, "get_cli_setting", lambda *a, **k: True)
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        collapsible = app.query_one("#mcp-adv-collapsible", Collapsible)
+        assert collapsible.collapsed is False
+
+
+@pytest.mark.asyncio
+async def test_advanced_collapsible_toggle_persists_state(monkeypatch):
+    """Expanding the disclosure must persist `advanced_open=True` via
+    `save_setting_to_cli_config("mcp.hub_state", "advanced_open", True)`,
+    per the task interface's exact call-signature contract."""
+    monkeypatch.setattr(mcp_inspector_module, "get_cli_setting", lambda *a, **k: False)
+    save_calls: list[tuple[str, str, Any]] = []
+
+    def fake_save(section, key, value):
+        save_calls.append((section, key, value))
+        return True
+
+    monkeypatch.setattr(mcp_inspector_module, "save_setting_to_cli_config", fake_save)
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        collapsible = app.query_one("#mcp-adv-collapsible", Collapsible)
+        assert collapsible.collapsed is True
+
+        collapsible.collapsed = False
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert ("mcp.hub_state", "advanced_open", True) in save_calls
+
+
+@pytest.mark.asyncio
+async def test_advanced_collapsible_recollapse_persists_false(monkeypatch):
+    monkeypatch.setattr(mcp_inspector_module, "get_cli_setting", lambda *a, **k: True)
+    save_calls: list[tuple[str, str, Any]] = []
+
+    def fake_save(section, key, value):
+        save_calls.append((section, key, value))
+        return True
+
+    monkeypatch.setattr(mcp_inspector_module, "save_setting_to_cli_config", fake_save)
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        collapsible = app.query_one("#mcp-adv-collapsible", Collapsible)
+        assert collapsible.collapsed is False
+
+        collapsible.collapsed = True
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert ("mcp.hub_state", "advanced_open", False) in save_calls
+
+
+@pytest.mark.asyncio
+async def test_advanced_object_label_defaults_to_local_control_plane():
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        label = app.query_one("#mcp-adv-object", Static)
+        assert str(label.renderable) == "Showing: Local control plane"
+
+
+@pytest.mark.asyncio
+async def test_advanced_object_label_reflects_server_source_and_target():
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        inspector = app.query_one(MCPInspector)
+        inspector.set_service_context(
+            app.service, [("Overview", "overview")],
+            source="server", target_label="Main Server",
+        )
+        await pilot.pause()
+        label = app.query_one("#mcp-adv-object", Static)
+        assert str(label.renderable) == "Showing: server Main Server"
+
+
+@pytest.mark.asyncio
+async def test_advanced_content_cleared_synchronously_on_rebind():
+    """A rebind (`set_service_context()` called again -- e.g. on a workbench
+    source/target switch) must blank the previous section's rendered dump
+    SYNCHRONOUSLY, before the reload worker even starts, so a stale object's
+    facts can never linger on screen even for one frame (UX-inputs
+    acceptance)."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        content = app.query_one("#mcp-adv-content", Static)
+        assert str(content.renderable), "sanity: overview section rendered something"
+
+        inspector = app.query_one(MCPInspector)
+        inspector.set_service_context(
+            app.service, [("Overview", "overview")],
+            source="server", target_label="Other Server",
+        )
+        # No pilot.pause() here: the clear must be visible before the
+        # reload worker this call schedules has had any chance to run.
+        assert str(content.renderable) == ""

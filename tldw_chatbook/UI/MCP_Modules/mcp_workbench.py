@@ -407,7 +407,12 @@ class MCPWorkbench(Container):
                     with Vertical(id=f"mcp-mode-canvas-{mode}"):
                         yield Static(
                             spec["placeholder"],
-                            classes="ds-recovery-callout",
+                            # T12: phase placeholders are informational, not a
+                            # recovery/alarm condition -- the warning chrome
+                            # was semantic dilution of the single alarm color
+                            # (UX-inputs #4). T13 adds the `.ds-info-callout`
+                            # CSS rule itself; this is the class-name swap.
+                            classes="ds-info-callout",
                             markup=False,
                         )
             yield MCPInspector(id="mcp-hub-inspector", classes="destination-workbench-pane")
@@ -439,11 +444,7 @@ class MCPWorkbench(Container):
                     logger.warning(f"MCP workbench context load failed: {exc}")
             self._snapshots = await self._collect_snapshots()
             await self._sync_children()
-            inspector = self.query_one(MCPInspector)
-            inspector.set_service_context(
-                _AdvancedSectionShim(service) if service is not None else None,
-                _LEGACY_SECTIONS,
-            )
+            self._rebind_inspector_advanced_context(service)
         finally:
             self._reloading = False
         # Consume any view state that arrived while this reload was in
@@ -506,6 +507,26 @@ class MCPWorkbench(Container):
             except Exception as exc:
                 logger.warning(f"MCP target label lookup failed: {exc}")
         return target_id
+
+    def _rebind_inspector_advanced_context(self, service: Any) -> None:
+        """Push the current source/target into the inspector's Advanced pane.
+
+        T12 (UX-inputs #1): "rebind or reset the section content whenever
+        the selection changes so reopening never shows a previous object's
+        facts; and label the object the content describes." Calling
+        `set_service_context()` again resets the Advanced section back to
+        its first entry and reloads it against the (possibly new) service
+        context -- the same full rebind `reload()` already did on mount --
+        so this is called from every place that changes which object the
+        service context refers to: `reload()` itself, `_switch_source()`,
+        and `_select_server_key()`.
+        """
+        self.query_one(MCPInspector).set_service_context(
+            _AdvancedSectionShim(service) if service is not None else None,
+            _LEGACY_SECTIONS,
+            source=self._source,
+            target_label=self._active_target_label(),
+        )
 
     @staticmethod
     def _is_external_record_key(server_key: str | None) -> bool:
@@ -836,6 +857,7 @@ class MCPWorkbench(Container):
         self._selected_server_key = None
         self._snapshots = await self._collect_snapshots()
         await self._sync_children()
+        self._rebind_inspector_advanced_context(service)
 
     async def on_mcp_rail_source_changed(self, event: MCPRail.SourceChanged) -> None:
         event.stop()
@@ -868,6 +890,7 @@ class MCPWorkbench(Container):
         if self._source == "server":
             self._snapshots = await self._collect_snapshots()
         await self._sync_children()
+        self._rebind_inspector_advanced_context(service)
 
     async def on_mcp_rail_server_selected(self, event: MCPRail.ServerSelected) -> None:
         event.stop()
