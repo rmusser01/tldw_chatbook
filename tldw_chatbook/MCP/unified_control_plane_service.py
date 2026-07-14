@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import time
 from dataclasses import replace
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from loguru import logger
@@ -11,6 +13,7 @@ from loguru import logger
 from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
+from .execution_log import MCPExecutionLog, build_record
 from .server_target_store import ConfiguredServerTargetStore
 from .unified_context_store import UnifiedMCPContextStore
 from .unified_control_models import ServerAccessContext, UnifiedMCPContext
@@ -32,6 +35,7 @@ class UnifiedMCPControlPlaneService:
         self.local_service = local_service
         self.server_service = server_service
         self.context = self.context_store.load() if self.context_store is not None else UnifiedMCPContext()
+        self._execution_log: MCPExecutionLog | None = None
 
     @property
     def selected_source(self) -> str:
@@ -1869,3 +1873,95 @@ class UnifiedMCPControlPlaneService:
             profile_id = str(record.get("profile_id") or "")
             record["runtime_state"] = runtime_state_by_profile.get(profile_id)
         return records
+
+    # ---- Typed tool-execution seam (Phase 3) ---------------------------
+    # Shared by the Hub Tools mode now and by the Phase 5 chat bridge /
+    # agent-runtime MCPToolProvider (task-201) later. Keep this UI-free.
+
+    @property
+    def execution_log(self) -> MCPExecutionLog | None:
+        if self._execution_log is not None:
+            return self._execution_log
+        store = getattr(self.local_service, "store", None)
+        if store is None:
+            return None
+        log_path = Path(store.path).with_name("mcp_execution_log.jsonl")
+        self._execution_log = MCPExecutionLog(log_path)
+        return self._execution_log
+
+    def _record_tool_execution(
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        ok: bool,
+        duration_ms: int,
+        error: str | None,
+        arguments: dict[str, Any],
+        result: Any,
+    ) -> None:
+        # Recording is best-effort: it must never mask the tool result or
+        # the tool error being propagated (Phase 2 masking lesson).
+        log = self.execution_log
+        if log is None:
+            return
+        try:
+            record = build_record(
+                server_key=server_key,
+                tool_name=tool_name,
+                initiator="test",
+                ok=ok,
+                duration_ms=duration_ms,
+                error=error,
+                arguments=arguments,
+                result_excerpt=str(result)[:500],
+                capture_args=get_cli_setting("mcp", "log_tool_arguments", True),
+            )
+            log.append(record)
+        except Exception as exc:
+            logger.warning(f"MCP execution log record failed for {server_key}/{tool_name}: {exc}")
+
+    async def test_hub_tool(
+        self,
+        server_key: str,
+        tool_name: str,
+        arguments: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        normalized_key = str(server_key or "").strip()
+        normalized_tool_name = str(tool_name or "").strip()
+        normalized_arguments = dict(arguments or {})
+
+        if normalized_key.startswith("local:"):
+            profile_id = normalized_key.split(":", 1)[1]
+            coro = self.local_service.execute_external_tool(profile_id, normalized_tool_name, normalized_arguments)
+        elif normalized_key.startswith("builtin:"):
+            coro = self.local_service.execute_tool(normalized_tool_name, normalized_arguments)
+        else:
+            raise ValueError("Tool testing for server-source tools arrives in Phase 4.")
+
+        timeout = self._lifecycle_timeout()
+        started = time.monotonic()
+        try:
+            result = await asyncio.wait_for(coro, timeout=timeout)
+        except asyncio.TimeoutError:
+            duration_ms = int((time.monotonic() - started) * 1000)
+            message = f"Timed out after {timeout:.0f}s"
+            self._record_tool_execution(
+                normalized_key, normalized_tool_name, ok=False, duration_ms=duration_ms,
+                error=message, arguments=normalized_arguments, result=None,
+            )
+            raise RuntimeError(message) from None
+        except Exception as exc:
+            duration_ms = int((time.monotonic() - started) * 1000)
+            self._record_tool_execution(
+                normalized_key, normalized_tool_name, ok=False, duration_ms=duration_ms,
+                error=str(exc), arguments=normalized_arguments, result=None,
+            )
+            raise
+
+        duration_ms = int((time.monotonic() - started) * 1000)
+        self._record_tool_execution(
+            normalized_key, normalized_tool_name, ok=True, duration_ms=duration_ms,
+            error=None, arguments=normalized_arguments, result=result,
+        )
+        return result
