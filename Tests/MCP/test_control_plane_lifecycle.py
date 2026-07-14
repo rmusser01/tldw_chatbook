@@ -112,3 +112,33 @@ async def test_save_and_delete_delegate(tmp_path):
     assert saved["profile_id"] == "x"
     assert await service.delete_local_profile("x") is True
     assert ("save", "x") in fake.calls and ("delete", "x") in fake.calls
+
+
+class _RaisingStore(LocalMCPStore):
+    def save_profile_runtime_state(self, profile_id, record):
+        raise OSError("disk full")
+
+
+def _service_with_raising_store(tmp_path: Path, **fake_kwargs) -> tuple[UnifiedMCPControlPlaneService, FakeLocalService, LocalMCPStore]:
+    store = _RaisingStore(tmp_path / "store.json")
+    fake = FakeLocalService(store, **fake_kwargs)
+    service = UnifiedMCPControlPlaneService(
+        local_service=fake, server_service=None, target_store=None, context_store=None
+    )
+    return service, fake, store
+
+
+@pytest.mark.asyncio
+async def test_record_failure_does_not_mask_success_result(tmp_path):
+    service, fake, store = _service_with_raising_store(tmp_path)
+    result = await service.connect_local_profile("docs")
+    assert result["server_id"] == "docs"
+    assert ("connect", "docs") in fake.calls
+
+
+@pytest.mark.asyncio
+async def test_record_failure_does_not_mask_original_error(tmp_path):
+    service, fake, store = _service_with_raising_store(
+        tmp_path, connect_error=RuntimeError("spawn failed"))
+    with pytest.raises(RuntimeError, match="spawn failed"):
+        await service.connect_local_profile("docs")

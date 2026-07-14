@@ -6,6 +6,8 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any
 
+from loguru import logger
+
 from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
@@ -1799,14 +1801,19 @@ class UnifiedMCPControlPlaneService:
         if store is None:
             return
         now = datetime.now(timezone.utc).isoformat()
-        previous = store.get_profile_runtime_state(profile_id) or {}
-        store.save_profile_runtime_state(profile_id, {
-            "last_attempt_at": now,
-            "last_action": action,
-            "ok": ok,
-            "last_ok_at": now if ok else previous.get("last_ok_at"),
-            "last_error": None if ok else (error or "")[:300],
-        })
+        try:
+            previous = store.get_profile_runtime_state(profile_id) or {}
+            store.save_profile_runtime_state(profile_id, {
+                "last_attempt_at": now,
+                "last_action": action,
+                "ok": ok,
+                "last_ok_at": now if ok else previous.get("last_ok_at"),
+                "last_error": None if ok else (error or "")[:300],
+            })
+        except Exception as exc:
+            # Recording is best-effort: it must never mask the lifecycle
+            # result or the original exception being propagated.
+            logger.warning(f"MCP lifecycle attempt record failed for {profile_id}: {exc}")
 
     async def _run_local_lifecycle(self, action: str, profile_id: str, coro):
         timeout = self._lifecycle_timeout()
