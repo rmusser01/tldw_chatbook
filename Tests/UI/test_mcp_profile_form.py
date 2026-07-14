@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Input, Static, TextArea
+from textual.widgets import Button, Input, Static, TextArea
 
 from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPProfileForm
 
@@ -32,13 +32,22 @@ async def test_build_payload_splits_env_into_placeholders_and_literals():
         app.query_one("#mcp-form-id", Input).value = "docs"
         app.query_one("#mcp-form-command", Input).value = "npx"
         app.query_one("#mcp-form-args", TextArea).text = "-y\n@modelcontextprotocol/server-filesystem"
-        app.query_one("#mcp-form-env", TextArea).text = "API_KEY=$MY_KEY\nDEBUG=true"
+        # UNBAL_A/UNBAL_B: unbalanced-brace values ($VAR} / ${VAR) are NOT
+        # placeholders -- they fall to the literals path, where the store's
+        # own validation gives honest copy if they turn out secret-shaped.
+        app.query_one("#mcp-form-env", TextArea).text = (
+            "API_KEY=$MY_KEY\nDEBUG=true\nUNBAL_A=$MY_KEY}\nUNBAL_B=${MY_KEY"
+        )
         payload = form.build_payload()
         assert payload == {
             "profile_id": "docs", "command": "npx",
             "args": ["-y", "@modelcontextprotocol/server-filesystem"],
             "env_placeholders": {"API_KEY": "$MY_KEY"},
-            "env_literals": {"DEBUG": "true"},
+            "env_literals": {
+                "DEBUG": "true",
+                "UNBAL_A": "$MY_KEY}",
+                "UNBAL_B": "${MY_KEY",
+            },
         }
 
 
@@ -75,3 +84,24 @@ async def test_show_error_renders_store_copy():
         form.show_error("Secret-bearing env key 'API_KEY' cannot be stored as a literal")
         await pilot.pause()
         assert "cannot be stored" in str(app.query_one("#mcp-form-error", Static).renderable)
+
+
+@pytest.mark.asyncio
+async def test_save_disables_button_and_show_error_reenables():
+    """State-driven buttons: a valid submit disables Save (blocking a second
+    real click at the press() gate) until the host reports an outcome --
+    show_error() (validation/save failure) re-enables it for a retry."""
+    profile = {"profile_id": "docs", "command": "npx", "args": [],
+               "env_placeholders": {}, "env_literals": {}}
+    app = FormApp(profile=profile)
+    async with app.run_test() as pilot:
+        form = app.query_one(MCPProfileForm)
+        save_button = app.query_one("#mcp-form-save", Button)
+        assert not save_button.disabled
+        await pilot.click("#mcp-form-save")
+        await pilot.pause()
+        assert app.events, "valid submit must still post SubmitRequested"
+        assert save_button.disabled, "Save must disable while a save is pending"
+        form.show_error("Secret-bearing env key 'API_KEY' cannot be stored as a literal")
+        await pilot.pause()
+        assert not save_button.disabled, "show_error must re-enable Save for retry"

@@ -6,7 +6,7 @@ from dataclasses import replace
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import ContentSwitcher, Input, Select, Static, TextArea
+from textual.widgets import Button, ContentSwitcher, Input, Select, Static, TextArea
 
 from tldw_chatbook.MCP.unified_control_models import UnifiedMCPContext
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
@@ -752,6 +752,9 @@ class ProfileFormHubService(FakeHubService):
         super().__init__()
         self.save_calls: list[dict] = []
         self._fail_next = fail_next
+        # When set, save_local_profile() records its call then blocks on
+        # this gate -- lets the double-submit test hold a save in flight.
+        self.save_gate: asyncio.Event | None = None
         self._records: list[dict] = [
             {
                 "profile_id": "docs",
@@ -786,6 +789,8 @@ class ProfileFormHubService(FakeHubService):
         if self._fail_next:
             self._fail_next = False
             raise ValueError("Secret-bearing env key 'API_KEY' cannot be stored as a literal")
+        if self.save_gate is not None:
+            await self.save_gate.wait()
         self._records.append(dict(payload))
         return dict(payload)
 
@@ -902,3 +907,71 @@ async def test_edit_config_hub_action_opens_prefilled_form_for_local_profile():
         assert app.query_one("#mcp-form-id", Input).value == "docs"
         assert app.query_one("#mcp-form-id", Input).disabled
         assert app.query_one("#mcp-form-command", Input).value == "python"
+
+
+@pytest.mark.asyncio
+async def test_double_submit_dispatches_exactly_one_save():
+    """Review fix (Important #1): a second Save while a save is in flight
+    must NOT dispatch a second worker. The old handler ran every submit
+    through `run_worker(..., exclusive=True)`, so a second click CANCELLED
+    the in-flight save mid-write and started a fresh one. Two synchronous
+    `Button.press()` calls reproduce it deterministically (pilot.click's
+    pump timing masks the race): both `Pressed` messages queue before the
+    first handler can disable the button, so two `SubmitRequested` reach
+    the workbench -- the in-flight guard must swallow the second with a
+    warning toast, leaving exactly one `save_local_profile` call.
+    """
+    app = ProfileFormApp()
+    app.unified_mcp_service.save_gate = asyncio.Event()  # hold save in flight
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        notifications = _capture_notifications(app)
+        await pilot.click("#mcp-add-server")
+        await pilot.pause()
+        app.query_one("#mcp-form-id", Input).value = "newprofile"
+        app.query_one("#mcp-form-command", Input).value = "npx"
+        save_button = app.query_one("#mcp-form-save", Button)
+        save_button.press()
+        save_button.press()
+        await pilot.pause()
+        assert any(
+            "already running" in msg.lower() and severity == "warning"
+            for msg, severity in notifications
+        ), f"second submit must toast a warning, got: {notifications!r}"
+        app.unified_mcp_service.save_gate.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert len(app.unified_mcp_service.save_calls) == 1, (
+            f"expected exactly one save call, got: "
+            f"{app.unified_mcp_service.save_calls!r}"
+        )
+        # The single (uncancelled) save completed: form hidden, record saved.
+        assert not app.query_one("#mcp-servers-form").display
+        workbench = app.query_one(MCPWorkbench)
+        assert "local:newprofile" in {s.server_key for s in workbench._snapshots}
+
+
+@pytest.mark.asyncio
+async def test_save_value_error_with_form_gone_notifies_instead_of_vanishing():
+    """Review fix (Important #2): if the form is no longer mounted when the
+    service raises ValueError (user cancelled while the save worker was in
+    flight), the validation failure must surface as an error toast -- never
+    disappear silently."""
+    app = ProfileFormApp(fail_next=True)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        notifications = _capture_notifications(app)
+        workbench = app.query_one(MCPWorkbench)
+        # No form mounted -- drive the worker coroutine directly.
+        await workbench._save_local_profile(
+            {
+                "profile_id": "leaky", "command": "npx", "args": [],
+                "env_placeholders": {},
+                "env_literals": {"API_KEY": "raw-literal"},
+            }
+        )
+        await pilot.pause()
+        assert any(
+            "cannot be stored" in msg and severity == "error"
+            for msg, severity in notifications
+        ), f"ValueError with no form must notify, got: {notifications!r}"

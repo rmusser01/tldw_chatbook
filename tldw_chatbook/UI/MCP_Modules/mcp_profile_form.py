@@ -12,7 +12,12 @@ from textual.message import Message
 from textual.widgets import Button, Input, Static, TextArea
 
 _ENV_LINE_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
-_PLACEHOLDER_VALUE_RE = re.compile(r"^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$")
+# Balanced forms only: $VAR or ${VAR}. Unbalanced values ($VAR} / ${VAR)
+# deliberately fall through to the literals path, where the store's own
+# validation gives honest copy if they turn out to be secret-shaped.
+_PLACEHOLDER_VALUE_RE = re.compile(
+    r"^\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)$"
+)
 
 
 class MCPProfileForm(Vertical):
@@ -105,7 +110,14 @@ class MCPProfileForm(Vertical):
         }
 
     def show_error(self, text: str) -> None:
+        """Surface an error and re-enable Save so the user can retry.
+
+        State-driven buttons: `on_button_pressed` disables Save when a valid
+        submit is posted; the host reporting failure through this method is
+        what re-arms it (success unmounts the whole form instead).
+        """
         self.query_one("#mcp-form-error", Static).update(text)
+        self.query_one("#mcp-form-save", Button).disabled = False
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "mcp-form-save":
@@ -115,6 +127,12 @@ class MCPProfileForm(Vertical):
             except ValueError as exc:
                 self.show_error(str(exc))
                 return
+            # Disable while the host's save is in flight -- Button.press()
+            # gates on `disabled`, so a real second click can't even post
+            # another Pressed. (A Pressed already queued before this line
+            # still gets through; the workbench's in-flight guard is the
+            # authoritative dedupe for that window.)
+            event.button.disabled = True
             self.post_message(self.SubmitRequested(payload))
         elif event.button.id == "mcp-form-cancel":
             event.stop()

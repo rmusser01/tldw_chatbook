@@ -234,6 +234,14 @@ class MCPWorkbench(Container):
         # `show_form()` on an EDIT_CONFIG hub action looks the record up
         # here instead.
         self._catalog_records: dict[str, dict[str, Any]] = {}
+        # T6: True while a profile-save worker is in flight. Mirrors
+        # `_start_lifecycle()`'s synchronous-registration pattern: set in the
+        # (sync) SubmitRequested handler before the worker is dispatched and
+        # cleared in the worker's `finally`, so a second Save arriving in the
+        # same pump window reliably observes it. Without this, dispatching
+        # every submit through `run_worker(..., exclusive=True)` let a second
+        # click CANCEL the in-flight save mid-write.
+        self._profile_save_in_flight: bool = False
         # T5: in-flight local-profile lifecycle operations, keyed by
         # server_key ("local:<profile_id>"). While a key is present here,
         # `_snapshot_for_display()`/`_sync_children()` render that server as
@@ -621,38 +629,62 @@ class MCPWorkbench(Container):
         handler itself must return immediately so Textual's message pump
         stays responsive while the save runs -- the actual `await
         service.save_local_profile(...)` happens inside the worker coroutine
-        below.
+        below. The `_profile_save_in_flight` guard (set here, synchronously,
+        before dispatch; cleared in the worker's `finally`) is what makes a
+        double Save safe: without it, `exclusive=True` alone let a second
+        submit CANCEL the in-flight save mid-write and start over.
         """
         event.stop()
+        if self._profile_save_in_flight:
+            self.app.notify("Save already running.", severity="warning")
+            return
+        self._profile_save_in_flight = True
         self.run_worker(
             self._save_local_profile(dict(event.payload)),
             group="mcp-profile-save",
             exclusive=True,
         )
 
-    async def _save_local_profile(self, payload: dict[str, Any]) -> None:
-        service = self._service()
-        if service is None:
-            return
+    def _form_or_none(self) -> MCPProfileForm | None:
         try:
-            await service.save_local_profile(payload)
-        except ValueError as exc:
+            return self.query_one(MCPProfileForm)
+        except Exception:
+            return None
+
+    async def _save_local_profile(self, payload: dict[str, Any]) -> None:
+        try:
+            service = self._service()
+            if service is None:
+                return
             try:
-                form = self.query_one(MCPProfileForm)
-            except Exception:
-                form = None
-            if form is not None:
-                form.show_error(str(exc))
-            return
-        except Exception as exc:
-            logger.warning(f"MCP profile save failed: {exc}")
-            self.app.notify(f"Save failed: {exc}", severity="error")
-            return
-        canvas = self.query_one(MCPServersMode)
-        await canvas.hide_form()
-        self.app.notify(f"Saved {payload.get('profile_id')}.")
-        self._snapshots = await self._collect_snapshots()
-        await self._sync_children()
+                await service.save_local_profile(payload)
+            except ValueError as exc:
+                # Store-validation copy is user-ready. If the form is gone
+                # (e.g. cancelled while the save was in flight), the failure
+                # must still surface -- never vanish silently.
+                form = self._form_or_none()
+                if form is not None:
+                    form.show_error(str(exc))
+                else:
+                    self.app.notify(str(exc), severity="error")
+                return
+            except Exception as exc:
+                logger.warning(f"MCP profile save failed: {exc}")
+                # Route through show_error when possible: it also re-enables
+                # the form's Save button (disabled at submit) for a retry.
+                form = self._form_or_none()
+                if form is not None:
+                    form.show_error(f"Save failed: {exc}")
+                else:
+                    self.app.notify(f"Save failed: {exc}", severity="error")
+                return
+            canvas = self.query_one(MCPServersMode)
+            await canvas.hide_form()
+            self.app.notify(f"Saved {payload.get('profile_id')}.")
+            self._snapshots = await self._collect_snapshots()
+            await self._sync_children()
+        finally:
+            self._profile_save_in_flight = False
 
     async def on_mcp_profile_form_cancelled(self, event: MCPProfileForm.Cancelled) -> None:
         event.stop()
