@@ -1,8 +1,8 @@
 ---
 id: TASK-217
 title: Multiple attachments per Console message
-status: To Do
-assignee: []
+status: In Progress
+assignee: ['@claude']
 created_date: '2026-07-13 09:30'
 labels:
   - console
