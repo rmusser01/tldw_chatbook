@@ -58,7 +58,16 @@ def _blocked_skill(name: str, *, reason: str = "skill_modified") -> dict[str, An
 
 
 class FakeSkillsScopeService:
-    """Minimal stand-in for ``SkillsScopeService.get_context``."""
+    """Minimal stand-in for ``SkillsScopeService.get_context``/``execute_skill``.
+
+    ``execute_skill`` exists because Task 10's provider-payload substitution
+    rule renders the triggering `/skill-name` turn at build time through
+    the controller's injected skills service (the same object staged on
+    ``app.skills_scope_service`` here) -- a raw-command submit in these
+    tests therefore reaches ``execute_skill`` even though the assertions
+    below are about dispatch (raw command stored + marker order), not the
+    rendered payload.
+    """
 
     def __init__(
         self,
@@ -69,12 +78,25 @@ class FakeSkillsScopeService:
         self.available_skills = available_skills or []
         self.blocked_skills = blocked_skills or []
         self.calls: list[str | None] = []
+        self.executions: list[tuple[str, str | None]] = []
 
     async def get_context(self, *, mode: str | None = None) -> Mapping[str, Any]:
         self.calls.append(mode)
         return {
             "available_skills": list(self.available_skills),
             "blocked_skills": list(self.blocked_skills),
+        }
+
+    async def execute_skill(
+        self, name: str, *, mode: str | None = None, args: str | None = None
+    ) -> Mapping[str, Any]:
+        self.executions.append((name, args))
+        return {
+            "skill_name": name,
+            "rendered_prompt": f"RENDERED[{name}:{args}]",
+            "allowed_tools": None,
+            "execution_mode": "inline",
+            "fork_output": None,
         }
 
 

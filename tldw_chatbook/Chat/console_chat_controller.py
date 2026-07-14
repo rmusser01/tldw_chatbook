@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Protocol
 
@@ -21,7 +22,15 @@ from tldw_chatbook.Chat.console_chat_models import (
     is_default_console_session_title,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from tldw_chatbook.Chat.console_command_grammar import COMMAND_PREFIX
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_skill_resolver import (
+    SKILL_UNTRUSTED_REFUSE,
+    SkillCommandCandidate,
+    cap_skill_args,
+    resolve_skill_command,
+)
+from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 from tldw_chatbook.model_capabilities import is_vision_capable
 
@@ -66,6 +75,23 @@ def describe_stream_failure(exc: BaseException) -> str:
     if detail and detail.lower() != summary.lower():
         return f"{summary} ({detail})"
     return summary
+
+
+def _split_skill_command_word(text: str) -> tuple[str, str]:
+    """Split a ``/word rest`` string into its leading token and the remainder.
+
+    Mirrors ``console_command_grammar._split_leading_token``'s single-
+    whitespace-character split rule. That helper is module-private (by
+    design -- callers own their own tokenization per its module docstring),
+    so this is a deliberate small duplicate rather than an import, the same
+    precedent ``chat_screen.ChatScreen._split_console_skill_name_args``
+    already follows. ``text`` is assumed to already start with
+    `COMMAND_PREFIX`.
+    """
+    for index, character in enumerate(text):
+        if character.isspace():
+            return text[:index], text[index + 1 :]
+    return text, ""
 
 
 class ConsoleProviderGatewayProtocol(Protocol):
@@ -116,6 +142,8 @@ class ConsoleChatController:
         system_prompt: str | None = None,
         agent_bridge: "ConsoleAgentBridge | None" = None,
         agent_runtime_enabled: bool = True,
+        skills_service: Any | None = None,
+        skill_substitution_enabled: bool = True,
     ) -> None:
         self.store = store
         self.provider_gateway = provider_gateway
@@ -140,6 +168,8 @@ class ConsoleChatController:
         self.system_prompt = system_prompt
         self._agent_bridge = agent_bridge
         self._agent_runtime_enabled = agent_runtime_enabled
+        self._skills_service = skills_service
+        self._skill_substitution_enabled = skill_substitution_enabled
         self.run_state = ConsoleRunState()
         self.run_state_history: list[ConsoleRunStatus] = [self.run_state.status]
         #: Optional owner hook invoked once a submit is accepted (user message
@@ -204,6 +234,9 @@ class ConsoleChatController:
             self.store.clear_pending_attachment(session.id)
         self._notify_submission_accepted()
         provider_messages = self._provider_messages_for_session(session.id)
+        provider_messages, refuse = await self._apply_skill_substitution(provider_messages)
+        if refuse is not None:
+            return self._block(session.id, refuse)
         assistant = self.store.append_message(
             session.id,
             role=ConsoleMessageRole.ASSISTANT,
@@ -440,6 +473,9 @@ class ConsoleChatController:
             before_message_id=message_id,
         )
         self._ensure_user_continuation_instruction(provider_messages)
+        provider_messages, refuse = await self._apply_skill_substitution(provider_messages)
+        if refuse is not None:
+            return self._block(session_id, refuse)
         return await self._stream_assistant_response(
             resolution=resolution,
             provider_messages=provider_messages,
@@ -470,6 +506,9 @@ class ConsoleChatController:
 
         provider_messages = self._provider_messages_through_message(session_id, message_id)
         self._ensure_user_continuation_instruction(provider_messages)
+        provider_messages, refuse = await self._apply_skill_substitution(provider_messages)
+        if refuse is not None:
+            return self._block(session_id, refuse)
         assistant = self.store.append_message(
             session_id,
             role=ConsoleMessageRole.ASSISTANT,
@@ -510,6 +549,9 @@ class ConsoleChatController:
             before_message_id=message_id,
         )
         self._ensure_user_continuation_instruction(provider_messages)
+        provider_messages, refuse = await self._apply_skill_substitution(provider_messages)
+        if refuse is not None:
+            return self._block(session_id, refuse)
         return await self._stream_assistant_response(
             resolution=resolution,
             provider_messages=provider_messages,
@@ -552,6 +594,124 @@ class ConsoleChatController:
             provider_messages.append(
                 {"role": ConsoleMessageRole.USER.value, "content": CONSOLE_CONTINUE_INSTRUCTION}
             )
+
+    async def _apply_skill_substitution(
+        self, provider_messages: list[dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        """Render-fresh the triggering turn's skill command at payload build time.
+
+        Spec: "Invocation semantics" §5 (the substitution rule) -- one rule
+        for fresh sends AND retry/regenerate/continue. Only the FINAL
+        ``role == "user"`` message in ``provider_messages`` (the turn
+        actually driving this send) is ever a substitution candidate; every
+        earlier message -- including an earlier raw skill command sitting
+        in history -- is left untouched, so the persisted transcript always
+        keeps the literal text the user typed (the raw command is what gets
+        submitted and stored; only the ephemeral provider payload for this
+        turn is ever rendered). Re-resolves against a FRESH candidate
+        snapshot and re-verifies trust through ``execute_skill`` on every
+        call (never a cached snapshot), so a retry issued after a skill was
+        edited (now untrusted) refuses instead of silently re-running a
+        stale render.
+
+        Args:
+            provider_messages: The fully-built payload about to be sent to
+                the provider (already includes any leading session-system
+                message and any synthesized continuation instruction).
+
+        Returns:
+            ``(provider_messages, None)`` unchanged when there is no skills
+            service configured, substitution is disabled, there is no final
+            user message, or that message's content does not resolve to a
+            known skill command (not a string, doesn't start with
+            `COMMAND_PREFIX`, or `resolve_skill_command` doesn't return
+            ``"resolved"``). ``(new_messages, None)`` when a skill resolves
+            and renders: ``inline`` replaces just the final message in
+            place (history preserved); ``fork`` drops every message before
+            it except a leading ``role == "system"`` message (clean context
+            = session system prompt + rendered turn only). ``(provider_
+            messages, refuse_copy)`` -- the ORIGINAL, unmodified messages,
+            paired with `SKILL_UNTRUSTED_REFUSE` copy -- when the resolved
+            skill is no longer trusted (`SkillTrustBlockedError` at
+            execute-time); the caller must append `refuse_copy` as a system
+            row and abort the turn without sending.
+        """
+        if self._skills_service is None or not self._skill_substitution_enabled:
+            return provider_messages, None
+
+        final_index: int | None = None
+        for index in range(len(provider_messages) - 1, -1, -1):
+            if provider_messages[index].get("role") == ConsoleMessageRole.USER.value:
+                final_index = index
+                break
+        if final_index is None:
+            return provider_messages, None
+
+        content = provider_messages[final_index].get("content")
+        if not isinstance(content, str) or not content.startswith(COMMAND_PREFIX):
+            return provider_messages, None
+
+        word, rest = _split_skill_command_word(content)
+        name = word[len(COMMAND_PREFIX) :]
+        if not name:
+            return provider_messages, None
+
+        context = await self._skills_service.get_context(mode="local")
+        candidates = self._skill_candidates_from_context(context)
+        resolution = resolve_skill_command(name, rest, candidates)
+        if resolution.kind != "resolved":
+            return provider_messages, None
+
+        args = cap_skill_args(rest)
+        try:
+            result = await self._skills_service.execute_skill(
+                resolution.name, mode="local", args=args
+            )
+        except SkillTrustBlockedError as exc:
+            refuse = SKILL_UNTRUSTED_REFUSE.format(name=resolution.name, reason=exc.reason_code)
+            return provider_messages, refuse
+
+        rendered = result.get("rendered_prompt", "") if isinstance(result, Mapping) else ""
+        rendered_message = {"role": ConsoleMessageRole.USER.value, "content": rendered}
+        execution_mode = result.get("execution_mode") if isinstance(result, Mapping) else None
+        if execution_mode == "fork":
+            leading = (
+                [provider_messages[0]]
+                if provider_messages
+                and provider_messages[0].get("role") == ConsoleMessageRole.SYSTEM.value
+                else []
+            )
+            return leading + [rendered_message], None
+
+        new_messages = list(provider_messages)
+        new_messages[final_index] = rendered_message
+        return new_messages, None
+
+    @staticmethod
+    def _skill_candidates_from_context(
+        context: Any,
+    ) -> tuple[SkillCommandCandidate, ...]:
+        """Build the user-invocable, trusted skill candidate population.
+
+        Mirrors ``chat_screen.ChatScreen.
+        _console_skill_trusted_candidates_from_context``'s filter -- kept as
+        a small duplicate rather than a shared import because `Chat/`
+        business logic must not depend on `UI/Screens/` (project layering),
+        and `console_skill_resolver` deliberately stays unaware of trust/
+        context shape (see its own module docstring).
+        """
+        available = context.get("available_skills") if isinstance(context, Mapping) else None
+        return tuple(
+            SkillCommandCandidate(
+                name=str(item.get("name")),
+                description=str(item.get("description") or ""),
+            )
+            for item in (available or [])
+            if isinstance(item, Mapping)
+            and item.get("name")
+            and item.get("user_invocable", True)
+            and not item.get("trust_blocked", False)
+        )
 
     @staticmethod
     def _validated_draft(draft: str, *, allow_empty: bool = False) -> tuple[str, str | None]:

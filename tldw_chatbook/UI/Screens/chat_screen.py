@@ -2276,6 +2276,7 @@ class ChatScreen(BaseAppScreen):
                 system_prompt=selection.system_prompt,
                 agent_bridge=self._ensure_console_agent_bridge(),
                 agent_runtime_enabled=self._console_agent_runtime_enabled(),
+                skills_service=getattr(self.app_instance, "skills_scope_service", None),
             )
         self._console_chat_controller.on_submission_accepted = (
             self._on_console_submission_accepted
