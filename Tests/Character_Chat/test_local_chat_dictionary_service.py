@@ -211,3 +211,123 @@ def test_local_chat_dictionary_service_repairs_legacy_fts_trigger_before_delete(
     deleted = service.delete_dictionary(dictionary["id"], expected_version=dictionary["version"])
 
     assert deleted["status"] == "deleted"
+
+
+def _create_two_entry_dictionary(service, *, name="Diagnose Me"):
+    return service.create_dictionary(
+        {
+            "name": name,
+            "entries": [
+                {"pattern": "BP", "replacement": "blood pressure"},
+                {"pattern": "HR", "replacement": "heart rate", "group": "vitals"},
+            ],
+        }
+    )
+
+
+def test_process_text_carries_enriched_diagnostics(dictionary_db):
+    service = LocalChatDictionaryService(dictionary_db)
+    created = _create_two_entry_dictionary(service)
+
+    response = service.process_text({"text": "BP and HR", "dictionary_id": created["id"]})
+
+    # Existing keys byte-identical in name and meaning.
+    assert response["text"] == "BP and HR"
+    assert response["processed_text"] == "blood pressure and heart rate"
+    assert response["dictionary_id"] == created["id"]
+    assert response["source"] == "local"
+
+    diagnostics = response["diagnostics"]
+    assert diagnostics["matched"] == 2 and diagnostics["fired"] == 2
+    ids = {r["pattern"]: r["entry_id"] for r in diagnostics["entries"]}
+    assert ids["BP"] == f"local:chat_dictionary_entry:{created['id']}:0"
+    assert ids["HR"] == f"local:chat_dictionary_entry:{created['id']}:1"
+
+
+def test_process_text_group_filter_keeps_ids_correct(dictionary_db):
+    # The group filter drops entry 0 BEFORE the engine runs; append-time
+    # tracking must still map the surviving entry to stored index 1.
+    service = LocalChatDictionaryService(dictionary_db)
+    created = _create_two_entry_dictionary(service, name="Grouped")
+
+    response = service.process_text(
+        {"text": "BP and HR", "dictionary_id": created["id"], "group": "vitals"}
+    )
+
+    records = response["diagnostics"]["entries"]
+    assert [r["pattern"] for r in records] == ["HR"]
+    assert records[0]["entry_id"] == f"local:chat_dictionary_entry:{created['id']}:1"
+    assert records[0]["input_index"] == 0  # engine saw a 1-element list
+
+
+def test_process_text_all_dictionaries_path_ids_carry_own_dict(dictionary_db):
+    # dictionary_id=None concatenates entries across ALL dictionaries; each
+    # record's entry_id must carry its OWN dictionary's id + stored index.
+    service = LocalChatDictionaryService(dictionary_db)
+    first = _create_two_entry_dictionary(service, name="First")
+    second = service.create_dictionary(
+        {"name": "Second", "entries": [{"pattern": "RR", "replacement": "respiratory rate"}]}
+    )
+
+    response = service.process_text({"text": "BP and RR"})
+
+    ids = {r["pattern"]: r["entry_id"] for r in response["diagnostics"]["entries"]}
+    assert ids["BP"] == f"local:chat_dictionary_entry:{first['id']}:0"
+    assert ids["RR"] == f"local:chat_dictionary_entry:{second['id']}:0"
+    assert response["dictionary_id"] is None
+
+
+def test_process_text_omits_diagnostics_on_assembly_failure(dictionary_db, monkeypatch):
+    service = LocalChatDictionaryService(dictionary_db)
+    created = _create_two_entry_dictionary(service, name="Degrade")
+
+    import tldw_chatbook.Character_Chat.Chat_Dictionary_Lib as cdl_module
+
+    monkeypatch.setattr(
+        cdl_module.DictionaryProcessDiagnostics,
+        "to_dict",
+        lambda self: (_ for _ in ()).throw(RuntimeError("assembly boom")),
+    )
+    response = service.process_text({"text": "BP now", "dictionary_id": created["id"]})
+    assert response["processed_text"] == "blood pressure now"
+    assert "diagnostics" not in response
+
+
+def test_entry_new_fields_roundtrip_through_service(dictionary_db):
+    service = LocalChatDictionaryService(dictionary_db)
+    created = service.create_dictionary(
+        {
+            "name": "Fields",
+            "entries": [
+                {"pattern": "BP", "replacement": "blood pressure",
+                 "enabled": False, "case_sensitive": True, "priority": 9},
+            ],
+        }
+    )
+    record = service.get_dictionary(created["id"])
+    entry = record["entries"][0]
+    assert entry["enabled"] is False          # no longer hardcoded True
+    assert entry["case_sensitive"] is True
+    assert entry["priority"] == 9
+    # Partial update touching only the replacement preserves the three fields.
+    updated = service.update_entry(entry["id"], {"replacement": "arterial pressure"})
+    assert (updated["enabled"], updated["case_sensitive"], updated["priority"]) == (False, True, 9)
+
+
+def test_entry_loose_typed_priority_and_enabled_do_not_crash(dictionary_db):
+    """A malformed ``priority`` string must not crash entry creation, and a
+    quoted ``"false"`` must be honored as False rather than truthy-``bool()``."""
+    service = LocalChatDictionaryService(dictionary_db)
+    created = service.create_dictionary(
+        {
+            "name": "Loose Types",
+            "entries": [
+                {"pattern": "BP", "replacement": "blood pressure",
+                 "priority": "garbage", "enabled": "false"},
+            ],
+        }
+    )
+    record = service.get_dictionary(created["id"])
+    entry = record["entries"][0]
+    assert entry["priority"] == 0
+    assert entry["enabled"] is False

@@ -20,13 +20,14 @@ from ..Metrics.metrics_logger import log_counter, log_histogram
 def detect_terminal_capabilities() -> Dict[str, any]:
     """
     Detect terminal image support capabilities.
-    
+
     Returns:
         Dictionary with:
         - sixel: Whether sixel graphics are supported
         - tgp: Whether terminal graphics protocol is supported
         - unicode: Whether unicode is supported (assumed True)
         - recommended_mode: Recommended rendering mode ('pixels', 'regular', or 'auto')
+        - terminal_type: Detected terminal name ('kitty', 'wezterm', 'iterm2', ... or 'unknown')
     """
     start_time = time.time()
     log_counter("terminal_utils_detect_capabilities_attempt")
@@ -114,7 +115,8 @@ def detect_terminal_capabilities() -> Dict[str, any]:
         "has_tgp": str(capabilities['tgp']),
         "recommended_mode": capabilities['recommended_mode']
     })
-    
+
+    capabilities['terminal_type'] = terminal_type
     return capabilities
 
 

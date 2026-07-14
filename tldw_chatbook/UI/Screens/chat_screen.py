@@ -10,7 +10,7 @@ from pathlib import Path
 import re
 import time
 from types import SimpleNamespace
-from typing import Any, Dict, Iterable, Optional, TYPE_CHECKING
+from typing import Any, Dict, Iterable, Literal, Optional, TYPE_CHECKING
 import uuid
 
 import toml
@@ -120,6 +120,19 @@ from ...Chat.console_live_work import (
     ConsoleLiveWorkStatusCardState,
 )
 from ...Chat.console_glyphs import GLYPH_COLLAPSE_LEFT, GLYPH_COLLAPSE_RIGHT
+from ...Chat.console_image_view import (
+    IMAGE_CACHE_MAX_ENTRIES,
+    ConsoleImageRenderCache,
+    ConsoleImageRowSpec,
+    ConsoleImageViewState,
+    next_view_mode,
+    resolve_default_mode,
+)
+from ...Chat.console_paste_attach import (
+    extract_dropped_path,
+    grab_clipboard_image,
+    looks_attachable,
+)
 from ...Chat.console_rail_state import (
     CONSOLE_RAIL_SECTION_IDS,
     ConsoleRailPreferences,
@@ -438,6 +451,7 @@ class ChatScreen(BaseAppScreen):
         ),
         Binding("ctrl+k", "open_console_session_switcher", "Switch session", show=True),
         Binding("alt+m", "open_console_model_popover", "Model", show=True),
+        Binding("alt+v", "paste_clipboard_image", "Paste image", show=True),
         # NOT priority: widget-level escapes (transcript clear-selection, modal
         # dismiss) must keep winning before this screen-level fallback runs.
         Binding("escape", "focus_console_composer_home", "Composer", show=False),
@@ -1170,6 +1184,10 @@ class ChatScreen(BaseAppScreen):
         self._console_chat_controller: ConsoleChatController | None = None
         self._console_command_registry: ConsoleCommandRegistry = default_console_registry()
         self._console_unknown_send_armed: str | None = None
+        self._console_image_view_state: ConsoleImageViewState | None = None
+        self._console_image_cache: ConsoleImageRenderCache | None = None
+        self._console_image_default_mode: Literal["pixels", "graphics"] | None = None
+        self._console_image_preparing: set[str] = set()
         self._console_message_action_service = ConsoleMessageActionService()
         self._console_model_option_warnings: dict[tuple[str, str], str] = {}
         self._last_console_action: ConsoleActionResult | None = None
@@ -2089,6 +2107,82 @@ class ChatScreen(BaseAppScreen):
         """Return whether ``[console] agent_runtime`` gates in the agent loop (default on)."""
         value = self._console_config().get("agent_runtime", True)
         return bool(value) if isinstance(value, (bool, int)) else True
+
+    def _ensure_console_image_view(self) -> tuple[ConsoleImageViewState, ConsoleImageRenderCache]:
+        """Return (view state, render cache) for inline images, creating lazily."""
+        if getattr(self, "_console_image_view_state", None) is None:
+            self._console_image_view_state = ConsoleImageViewState()
+            self._console_image_cache = ConsoleImageRenderCache()
+            # `getattr(self, "app_instance", None)`, not `self.app_instance`:
+            # test helpers build bare screens via `ChatScreen.__new__` to
+            # exercise serialize/restore without a mounted app, which never
+            # sets `app_instance` at all (not even to None).
+            self._console_image_default_mode = resolve_default_mode(
+                getattr(getattr(self, "app_instance", None), "app_config", {}) or {}
+            )
+        return self._console_image_view_state, self._console_image_cache
+
+    def _recent_console_image_messages(self, messages) -> list[Any]:
+        """Return the most recent image-bearing messages, bounded to cache capacity.
+
+        Mirrors the provider payload's most-recent-N image policy
+        (``_provider_message_payloads``'s ``image_ids[-image_budget:]``).
+        """
+        # Bound the working set to the cache capacity so prep can never evict
+        # what the transcript still shows (churn guard).
+        image_messages = [
+            message for message in messages if getattr(message, "image_data", None) is not None
+        ]
+        return image_messages[-IMAGE_CACHE_MAX_ENTRIES:]
+
+    def _build_console_image_specs(self, messages) -> dict[str, ConsoleImageRowSpec]:
+        """Build image-row payloads for prepared, non-hidden image messages."""
+        state, cache = self._ensure_console_image_view()
+        default_mode = self._console_image_default_mode
+        specs: dict[str, ConsoleImageRowSpec] = {}
+        for message in self._recent_console_image_messages(messages):
+            mode = state.mode_for(message.id, default=default_mode)
+            if mode == "hidden":
+                continue
+            pil = cache.get_pil(message.id)
+            if pil is None:
+                continue
+            specs[message.id] = ConsoleImageRowSpec(
+                message_id=message.id,
+                mode=mode,
+                pixels=cache.get_pixels(message.id) if mode == "pixels" else None,
+                pil=pil if mode == "graphics" else None,
+            )
+        return specs
+
+    async def _prep_console_images(self, pending: list[tuple[str, bytes]]) -> None:
+        """Prepare pending transcript images off-loop, then resync once."""
+        _state, cache = self._ensure_console_image_view()
+
+        def _prepare_all() -> None:
+            for message_id, image_data in pending:
+                cache.prepare(message_id, image_data)
+
+        try:
+            await asyncio.to_thread(_prepare_all)
+            await self._sync_native_console_chat_ui()
+        finally:
+            # Covers cancellation too (the exclusive-worker re-kick below):
+            # a cancelled batch's ids become eligible for re-kick, and the
+            # cache's pending_ids recompute keeps the working set converged.
+            self._console_image_preparing.difference_update(
+                mid for mid, _ in pending
+            )
+
+    def _handle_console_toggle_image_view(self, message_id: str) -> None:
+        """Cycle one message's inline-image view mode."""
+        state, _cache = self._ensure_console_image_view()
+        current = state.mode_for(message_id, default=self._console_image_default_mode)
+        state.set_mode(
+            message_id,
+            next_view_mode(current),
+            default=self._console_image_default_mode,
+        )
 
     def _ensure_console_provider_gateway(self) -> Any:
         """Return the native Console provider gateway with a test injection seam."""
@@ -6213,6 +6307,14 @@ class ChatScreen(BaseAppScreen):
             except KeyError:
                 pass
 
+        image_state, _cache = self._ensure_console_image_view()
+        live_ids = {
+            message.id
+            for session in store.sessions()
+            for message in store.messages_for_session(session.id)
+        }
+        image_state.prune(live_ids)
+
         return {
             "version": NATIVE_CONSOLE_STATE_VERSION,
             "active_session_id": store.active_session_id,
@@ -6235,6 +6337,7 @@ class ChatScreen(BaseAppScreen):
                 ]
                 for session in store.sessions()
             },
+            "image_view_modes": image_state.serialize(),
         }
 
     def _restore_native_console_state(self, payload: Any) -> None:
@@ -6302,6 +6405,10 @@ class ChatScreen(BaseAppScreen):
         )
         self._console_visible_draft_session_id = None
         self._last_native_transcript_refresh_key = None
+
+        image_state, cache = self._ensure_console_image_view()
+        image_state.restore(payload.get("image_view_modes"))
+        cache.clear()
 
     def _rehydrate_console_message_image(self, message: ConsoleChatMessage) -> None:
         """Refill image bytes dropped by screen-state restore (metadata-only).
@@ -6843,9 +6950,41 @@ class ChatScreen(BaseAppScreen):
         messages = self._native_console_messages()
         if transcript is not None:
             transcript.set_messages(messages)
+            image_specs = self._build_console_image_specs(messages)
+            transcript.set_image_specs(image_specs)
+            _state, cache = self._ensure_console_image_view()
+            # Same bounded subset as `_build_console_image_specs` — computing
+            # pending work over the full transcript would prep messages the
+            # LRU cache immediately evicts again (churn guard).
+            # Exclude ids a prep worker is already chewing on: the 0.2s sync
+            # tick would otherwise re-kick the exclusive `console-image-prep`
+            # worker for the SAME pending ids on every tick, cancelling the
+            # in-flight run and piling duplicate decodes into the executor.
+            pending_images = [
+                (mid, data)
+                for mid, data in cache.pending_ids(self._recent_console_image_messages(messages))
+                if mid not in self._console_image_preparing
+            ]
+            if pending_images:
+                self._console_image_preparing.update(mid for mid, _ in pending_images)
+                self.run_worker(
+                    self._prep_console_images(pending_images),
+                    exclusive=True,
+                    group="console-image-prep",
+                )
+            # Image readiness resolves asynchronously (prep worker) after the
+            # message-signature fingerprint below has already stabilized, so
+            # fold the built specs (id + mode) into the gate too - otherwise
+            # a sync that only differs by "the image finished decoding" (or
+            # a view-mode toggle) would be skipped as a no-op refresh.
+            image_signature = tuple(
+                (message_id, image_specs[message_id].mode)
+                for message_id in sorted(image_specs)
+            )
             refresh_key = (
                 id(transcript),
                 self._native_console_transcript_fingerprint(messages),
+                image_signature,
             )
             if refresh_key != self._last_native_transcript_refresh_key:
                 await transcript.refresh_messages()
@@ -7649,6 +7788,75 @@ class ChatScreen(BaseAppScreen):
             callback=on_file_selected,
         )
 
+    def action_paste_clipboard_image(self) -> None:
+        """Grab an image from the OS clipboard into the pending attachment."""
+        if self._console_setup_modal_blocking():
+            return
+        self.run_worker(
+            self._paste_console_clipboard_image(),
+            exclusive=True,
+            group="console-clipboard-grab",
+        )
+
+    async def _paste_console_clipboard_image(self) -> None:
+        """Read the clipboard off-loop and stage its image (or route paths)."""
+        from datetime import datetime as _datetime
+
+        grab = await asyncio.to_thread(grab_clipboard_image)
+        if grab.kind == "unavailable":
+            self.app_instance.notify(
+                "Clipboard images aren't readable on this platform — "
+                "use Attach or drop a file.",
+                severity="warning",
+            )
+            return
+        if grab.kind == "empty":
+            self.app_instance.notify("No image on the clipboard.")
+            return
+        if grab.kind == "paths":
+            candidate = grab.paths[0] if grab.paths else ""
+            if candidate and looks_attachable(candidate):
+                if len(grab.paths) > 1:
+                    self.app_instance.notify(
+                        f"Attached first of {len(grab.paths)} dropped files."
+                    )
+                await self._process_console_attachment(candidate)
+            else:
+                self.app_instance.notify("No image on the clipboard.")
+            return
+        from tldw_chatbook.Chat.attachment_core import process_attachment_bytes
+
+        try:
+            display_name = (
+                f"clipboard-{_datetime.now().strftime('%Y%m%d-%H%M%S')}.png"
+            )
+            attachment = await asyncio.to_thread(
+                lambda: asyncio.run(
+                    process_attachment_bytes(
+                        grab.png_bytes or b"", display_name=display_name
+                    )
+                )
+            )
+        except Exception as exc:
+            logger.opt(exception=True).warning("Clipboard image processing failed.")
+            self.app_instance.notify(
+                f"Could not attach clipboard image: {escape_markup(str(exc))}",
+                severity="error",
+            )
+            return
+        store = self._ensure_console_chat_store()
+        session = store.ensure_session(
+            workspace_id=store.workspace_context.active_workspace_id
+        )
+        store.set_pending_attachment(session.id, attachment)
+        composer = self._console_composer_or_none()
+        if composer is not None:
+            composer.set_pending_attachment_label(attachment.label)
+        self.app_instance.notify(
+            f"{escape_markup(attachment.display_name)} attached"
+        )
+        self._sync_console_control_bar()
+
     async def _process_console_attachment(self, file_path: str) -> None:
         """Process a picked file and route it into the native Console composer."""
         from tldw_chatbook.Chat.attachment_core import process_attachment_path
@@ -7864,6 +8072,10 @@ class ChatScreen(BaseAppScreen):
             store.set_message_feedback(message_id, feedback)
             await self._sync_native_console_chat_ui()
             self.app_instance.notify(result.visible_copy, severity="information")
+            return True
+        if action_id == "toggle-image-view" and result.status == "completed":
+            self._handle_console_toggle_image_view(message_id)
+            await self._sync_native_console_chat_ui()
             return True
         if action_id == "save-image" and result.status == "completed":
             self.run_worker(
@@ -8324,6 +8536,7 @@ class ChatScreen(BaseAppScreen):
             ("console-message-action-variant-next-", "variant-next"),
             ("console-message-action-save-as-", "save-as"),
             ("console-message-action-save-image-", "save-image"),
+            ("console-message-action-toggle-image-view-", "toggle-image-view"),
             ("console-message-action-regenerate-", "regenerate"),
             ("console-message-action-continue-", "continue"),
             ("console-message-action-delete-", "delete"),
@@ -8682,6 +8895,20 @@ class ChatScreen(BaseAppScreen):
         if self._console_setup_modal_blocking():
             return
         if not self._should_capture_console_input(composer):
+            return
+        dropped = extract_dropped_path(event.text)
+        if dropped is not None and looks_attachable(dropped.path):
+            event.stop()
+            self._dismiss_console_guidance()
+            if dropped.total_dropped > 1:
+                self.app_instance.notify(
+                    f"Attached first of {dropped.total_dropped} dropped files."
+                )
+            self.run_worker(
+                self._process_console_attachment(dropped.path),
+                exclusive=True,
+                group="console-attachment",
+            )
             return
         composer.insert_pasted_text(event.text)
         self._sync_console_workbench_actions_from_draft()
@@ -9882,11 +10109,18 @@ class ChatScreen(BaseAppScreen):
                 messages = store.messages_for_session(session_id)
             except KeyError:
                 messages = []
+            closing_ids = [m.id for m in messages]
+
+            def _evict_closing_session_images() -> None:
+                _state, cache = self._ensure_console_image_view()
+                cache.evict_session(closing_ids)
+
             if messages:
                 from ...Widgets.confirmation_dialog import ConfirmationDialog
 
                 async def _do_close() -> None:
                     self._ensure_console_chat_controller().close_session(session_id)
+                    _evict_closing_session_images()
                     await self._sync_native_console_chat_ui()
 
                 dialog = ConfirmationDialog(
@@ -9899,6 +10133,7 @@ class ChatScreen(BaseAppScreen):
                 self.app.push_screen(dialog)
             else:
                 self._ensure_console_chat_controller().close_session(session_id)
+                _evict_closing_session_images()
                 await self._sync_native_console_chat_ui()
             return
         if button_id and button_id.startswith("console-session-tab-"):

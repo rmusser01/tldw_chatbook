@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Checkbox, Select, Static, TextArea
+from textual.widgets import Button, Checkbox, Select, Static
 
 from Tests.UI.test_screen_navigation import _build_test_app
 from Tests.UI.test_unified_mcp_panel import FakeUnifiedMCPService
@@ -19,6 +19,9 @@ from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, HomeDashboard
 from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
 from tldw_chatbook.MCP.unified_control_models import ConfiguredServerTarget
 from tldw_chatbook.runtime_policy.types import PolicyDeniedError
+from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
+from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCPRail
+from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCPWorkbench
 from tldw_chatbook.UI.MCP_Modules.unified_mcp_panel import UnifiedMCPPanel
 from tldw_chatbook.UI.Screens.artifacts_screen import ArtifactsScreen
 from tldw_chatbook.UI.Screens.acp_screen import ACPScreen
@@ -2289,7 +2292,14 @@ async def test_unwired_destination_actions_are_disabled_with_honest_copy(route, 
 
 
 @pytest.mark.asyncio
-async def test_mcp_destination_embeds_unified_mcp_management_panel():
+async def test_mcp_destination_embeds_mcp_workbench():
+    """MCP screen now hosts the rail/canvas/inspector workbench, not the legacy panel.
+
+    Realigned from the retired `test_mcp_destination_embeds_unified_mcp_management_panel`
+    (Task 8 replaced the embedded `UnifiedMCPPanel` with `MCPWorkbench`). Same product
+    intent — the MCP destination embeds its management surface directly, with no
+    "open elsewhere" escape hatch and no "not embedded" placeholder copy.
+    """
     app = _build_test_app()
     host = DestinationHarness(app, "mcp")
 
@@ -2297,49 +2307,74 @@ async def test_mcp_destination_embeds_unified_mcp_management_panel():
         await pilot.pause(0.1)
         screen = _active_destination_screen(host)
 
-        assert screen.query_one(UnifiedMCPPanel)
-        assert screen.query_one("#unified-mcp-source", Select)
-        assert screen.query_one("#unified-mcp-server-target", Select)
-        assert screen.query_one("#unified-mcp-scope", Select)
-        assert screen.query_one("#unified-mcp-section", Select)
-        assert screen.query_one("#unified-mcp-action", Select)
-        assert screen.query_one("#unified-mcp-action-payload", TextArea)
-        assert screen.query_one("#unified-mcp-action-run", Button)
+        workbench = screen.query_one(MCPWorkbench)
+        assert workbench is screen.workbench
+        assert screen.query_one("#mcp-hub-rail", MCPRail)
+        assert screen.query_one("#mcp-hub-canvas")
+        assert screen.query_one("#mcp-hub-inspector", MCPInspector)
+        assert not screen.query(UnifiedMCPPanel)
         assert not screen.query("#mcp-open-management")
         assert "Unified MCP management is not embedded in this shell yet." not in _visible_text(screen)
 
 
 @pytest.mark.asyncio
 async def test_mcp_destination_labels_server_first_workbench_columns():
+    """The rail/canvas/inspector triad is mounted with its documented pane roles.
+
+    Realigned from the retired `UnifiedMCPPanel` 3-column labels test (that
+    embed shape no longer exists). Same product intent — a server-first
+    workbench with clearly delineated panes — verified against the new
+    `#mcp-hub-rail` / `#mcp-hub-canvas` / `#mcp-hub-inspector` landmarks: the
+    rail lists servers, the canvas hosts the mode content, the inspector is
+    present and explains readiness.
+    """
     app = _build_test_app()
     host = DestinationHarness(app, "mcp")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await _wait_for_selector(_active_destination_screen(host), pilot, "#unified-mcp-action-readiness")
+        await _wait_for_selector(_active_destination_screen(host), pilot, "#mcp-hub-rail")
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
-        assert "Servers + Scope" in text
-        assert "Server Detail" in text
-        assert "Readiness + Actions" in text
+        rail = screen.query_one("#mcp-hub-rail", MCPRail)
+        canvas = screen.query_one("#mcp-hub-canvas")
+        inspector = screen.query_one("#mcp-hub-inspector", MCPInspector)
+
+        assert "destination-workbench-pane" in rail.classes
+        assert "destination-workbench-pane" in canvas.classes
+        assert "destination-workbench-pane" in inspector.classes
+
+        # Rail lists servers: the "All servers" row plus at least the
+        # built-in server (always present for the default local source).
+        rail_rows = list(rail.query("Button.mcp-rail-row"))
+        assert len(rail_rows) >= 2
+        assert any("All servers" in str(row.label) for row in rail_rows)
+
+        # Inspector is present and explains readiness (not a bare shell).
+        assert "Inspector" in text
+        assert "Select a server to see its readiness." in text
+
         assert "Manage MCP servers, scoped tools, permissions, and audit readiness." in text
-        assert "Section" in text
-        assert "try Inventory" not in text
-        assert "Column 1:" not in text
-        assert "Column 2:" not in text
-        assert "Column 3:" not in text
-        assert screen.query_one("#mcp-column-divider-left").has_class("mcp-column-resize-handle")
-        assert screen.query_one("#mcp-column-divider-right").has_class("mcp-column-resize-handle")
-        assert screen.query_one("#mcp-column-divider-left").tooltip == "Resize columns"
-        assert screen.query_one("#mcp-column-divider-right").tooltip == "Resize columns"
-        assert "Blocked" in text
-        assert "Select Section: Inventory" in text
-        assert "Run Action disabled" in text
-        assert "Payload (JSON)" not in text
 
 
 @pytest.mark.asyncio
 async def test_mcp_destination_restores_unified_mcp_view_state_after_mount(tmp_path):
+    """Restoring a legacy `unified_mcp_view_state` blob must not crash and must carry over.
+
+    Realigned from the retired `UnifiedMCPPanel.context` assertions (that
+    object no longer exists). Same product intent — a saved legacy view
+    survives the Task 8 rewire — verified against the new surface:
+
+    - Mounting with a restored `scope="team"` must not crash, even though
+      Phase 1's rail only offers a Personal scope option to select from
+      (fix A clamps the rail's DISPLAY, not the tracked state).
+    - `selected_source` carries over into the workbench's live state.
+    - The workbench keeps tracking the true restored scope
+      (`get_view_state()["scope"] == "team"`) despite the rail's clamped
+      display.
+    - `save_state()` emits the NEW `mcp_hub_view_state` key, reflecting the
+      restored values.
+    """
     target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
     target_store.save_targets(
         [ConfiguredServerTarget(server_id="server-a", label="Server A", base_url="https://a.example/api", is_default=True)]
@@ -2361,31 +2396,132 @@ async def test_mcp_destination_restores_unified_mcp_view_state_after_mount(tmp_p
     )
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.pause(0.2)
-        panel = _active_destination_screen(host).query_one(UnifiedMCPPanel)
+        screen = _active_destination_screen(host)
+        workbench = screen.query_one(MCPWorkbench)
 
-        assert panel.context.selected_source == "server"
-        assert panel.context.selected_active_server_id == "server-a"
-        assert panel.context.selected_scope == "team"
-        assert panel.context.selected_scope_ref == "21"
-        assert panel.context.selected_section == "inventory"
+        # Restore applies asynchronously (source switch + scope assignment
+        # span an await boundary inside `_switch_source()`); wait for both
+        # to land rather than racing a fixed sleep.
+        deadline = time.monotonic() + 2.0
+        view_state = workbench.get_view_state()
+        while time.monotonic() < deadline and not (
+            view_state["source"] == "server" and view_state["scope"] == "team"
+        ):
+            await pilot.pause(0.01)
+            view_state = workbench.get_view_state()
+        assert view_state["source"] == "server"  # selected_source carried over
+        assert view_state["scope"] == "team"  # true restored scope still tracked
+
+        # Mounting did not crash; the rail rendered despite the restored
+        # scope value ("team") not being among Phase 1's Personal-only
+        # scope options. The rail recomposes when state settles, and the
+        # mounted Select applies its initial value on its own deferred
+        # `_on_mount` — wait for that to land instead of reading mid-flight.
+        rail = screen.query_one("#mcp-hub-rail", MCPRail)
+        deadline = time.monotonic() + 2.0
+        scope_select = None
+        while time.monotonic() < deadline:
+            try:
+                scope_select = rail.query_one("#mcp-rail-scope-select", Select)
+            except Exception:
+                scope_select = None
+            if scope_select is not None and scope_select.value is not Select.NULL:
+                break
+            await pilot.pause(0.01)
+        assert rail.is_mounted
+        assert scope_select is not None
+        assert scope_select.value == "personal"  # clamped display (fix A)
+
+        saved = screen.save_state()
+        assert saved["mcp_hub_view_state"]["source"] == "server"
+        assert saved["mcp_hub_view_state"]["scope"] == "team"
+
+
+@pytest.mark.asyncio
+async def test_mcp_destination_mode_chip_syncs_to_restored_mode():
+    """I2 regression: chips are composed with Servers active and are only
+    otherwise kept in sync by `MCPScreen._activate_mode()` (a click or
+    keybinding). A restore that changes the active mode (e.g. a saved
+    `mode: "tools"`) must also sync the chip highlight -- otherwise the
+    Tools canvas renders under a highlighted Servers chip.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(
+        app,
+        "mcp",
+        restored_state={"mcp_hub_view_state": {"mode": "tools"}},
+    )
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        workbench = screen.query_one(MCPWorkbench)
+
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and workbench.active_mode != "tools":
+            await pilot.pause(0.01)
+
+        assert workbench.active_mode == "tools"
+        tools_chip = screen.query_one("#mcp-mode-tools", Button)
+        servers_chip = screen.query_one("#mcp-mode-servers", Button)
+        assert tools_chip.has_class("is-active")
+        assert not servers_chip.has_class("is-active")
+
+
+@pytest.mark.asyncio
+async def test_mcp_destination_mode_chip_syncs_on_inspector_hub_action():
+    """I2 follow-up: inspector hub actions also change the mode without going
+    through `MCPScreen._activate_mode()` -- "Open tool catalog"/"Open audit"
+    call `MCPWorkbench.set_mode()` directly from
+    `on_mcp_inspector_hub_action_requested`. The chip highlight must follow
+    that path too, not just click/keybinding/restore, so `set_mode` itself is
+    the single emission point for the mode-change notification.
+    """
+    from tldw_chatbook.MCP.readiness import HubAction
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "mcp")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause()
+        screen = _active_destination_screen(host)
+        workbench = screen.query_one(MCPWorkbench)
+        inspector = screen.query_one(MCPInspector)
+        assert workbench.active_mode == "servers"
+
+        inspector.post_message(
+            MCPInspector.HubActionRequested(HubAction.OPEN_TOOL_CATALOG, None)
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        assert workbench.active_mode == "tools"
+        tools_chip = screen.query_one("#mcp-mode-tools", Button)
+        servers_chip = screen.query_one("#mcp-mode-servers", Button)
+        assert tools_chip.has_class("is-active")
+        assert not servers_chip.has_class("is-active")
 
 
 @pytest.mark.asyncio
 async def test_mcp_destination_runtime_refresh_uses_exclusive_worker(monkeypatch):
+    """Runtime backend changes refresh the workbench via a named, exclusive worker.
+
+    Realigned from the retired `FakePanel`/`screen.mcp_panel` seam (Task 8
+    replaced the embedded panel with `screen.workbench`, whose refresh entry
+    point is `reload()` rather than `load_context()`). Same product intent —
+    a single, named, exclusive worker refreshes the MCP surface on runtime
+    backend change — verified against the new seam.
+    """
     app = _build_test_app()
     screen = MCPScreen(app)
     scheduled = {}
 
-    class FakePanel:
-        async def load_context(self):
+    class FakeWorkbench:
+        async def reload(self) -> None:
             return None
 
     def capture_worker(coro, **kwargs):
         scheduled["kwargs"] = kwargs
         coro.close()
 
-    screen.mcp_panel = FakePanel()
+    screen.workbench = FakeWorkbench()
     monkeypatch.setattr(screen, "run_worker", capture_worker)
 
     await screen.handle_runtime_backend_changed("server")

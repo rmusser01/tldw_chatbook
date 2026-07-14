@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from loguru import logger
+
 from . import Chat_Dictionary_Lib as cdl
 
 
@@ -36,6 +38,9 @@ def _entry_from_payload(value: Any) -> cdl.ChatDictionary:
         group=data.get("group"),
         timed_effects=data.get("timed_effects"),
         max_replacements=int(data.get("max_replacements", 1) or 1),
+        enabled=data.get("enabled", True),
+        case_sensitive=data.get("case_sensitive", False),
+        priority=data.get("priority", 0),
     )
 
 
@@ -52,7 +57,9 @@ def _entry_to_response(entry: cdl.ChatDictionary, *, dictionary_id: int, index: 
         "timed_effects": entry.timed_effects,
         "max_replacements": entry.max_replacements,
         "type": entry_type,
-        "enabled": True,
+        "enabled": entry.enabled,
+        "case_sensitive": entry.case_sensitive,
+        "priority": entry.priority,
         "source": "local",
     }
 
@@ -447,19 +454,39 @@ class LocalChatDictionaryService:
                 for item in cdl.list_chat_dictionaries(self._require_db(), limit=1000)
             ]
         entries: list[cdl.ChatDictionary] = []
+        entry_ids: list[str] = []
         strategy = "sorted_evenly"
         for dictionary in dictionaries:
             strategy = dictionary.get("strategy") or strategy
-            for entry in dictionary.get("entries") or []:
+            record_id = int(dictionary.get("id") or 0)
+            for stored_index, entry in enumerate(dictionary.get("entries") or []):
                 if group is not None and entry.group != group:
                     continue
                 entries.append(entry)
-        return {
+                # Append-time id tracking: input_index == len-1 at append time,
+                # correct under the group filter and the all-dictionaries path.
+                entry_ids.append(f"local:chat_dictionary_entry:{record_id}:{stored_index}")
+        processed_text, diagnostics = cdl.process_user_input_with_diagnostics(
+            text, entries, max_tokens=token_budget, strategy=strategy
+        )
+        response = {
             "text": text,
-            "processed_text": cdl.process_user_input(text, entries, max_tokens=token_budget, strategy=strategy),
+            "processed_text": processed_text,
             "dictionary_id": dictionary_id,
             "source": "local",
         }
+        try:
+            diagnostics_payload = diagnostics.to_dict()
+            for record in diagnostics_payload.get("entries") or []:
+                input_index = record.get("input_index")
+                if isinstance(input_index, int) and 0 <= input_index < len(entry_ids):
+                    record["entry_id"] = entry_ids[input_index]
+            response["diagnostics"] = diagnostics_payload
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Chat dictionary diagnostics assembly failed; returning substitution only."
+            )
+        return response
 
     def import_markdown(self, request_data: Any) -> dict[str, Any]:
         payload = _payload(request_data)

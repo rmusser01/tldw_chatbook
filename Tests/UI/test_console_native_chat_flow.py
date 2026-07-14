@@ -27,6 +27,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunStatus,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from tldw_chatbook.Chat.console_image_view import IMAGE_CACHE_MAX_ENTRIES
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -6714,3 +6715,384 @@ async def test_clear_attachment_button_resyncs_composer_blocked_state(monkeypatc
         assert store.pending_attachment(session.id) is None
         assert composer._send_blocked is False
         assert not send_button.tooltip or "can't accept images" not in send_button.tooltip
+
+
+@pytest.mark.asyncio
+async def test_image_message_gets_inline_row_after_prep_and_toggle_cycles():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    # Pin the session default so the pixels -> graphics -> hidden -> pixels
+    # cycle below is deterministic; leaving this on "auto" resolves from the
+    # host terminal's TERM/TERM_PROGRAM env vars (see resolve_default_mode),
+    # which varies across dev machines and CI.
+    app.app_config["chat"] = {"images": {"default_render_mode": "pixels"}}
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        from io import BytesIO
+
+        from PIL import Image as PILImage
+
+        buffer = BytesIO()
+        PILImage.new("RGB", (32, 32), (200, 10, 10)).save(buffer, format="PNG")
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="look at this",
+            image_data=buffer.getvalue(),
+            image_mime_type="image/png",
+        )
+        await console._sync_native_console_chat_ui()
+        # Prep runs in a worker; wait for the image row to appear.
+        for _ in range(80):
+            if console.query(f"#console-image-{message.id}"):
+                break
+            await pilot.pause(0.05)
+        assert console.query(f"#console-image-{message.id}"), "image row never appeared"
+
+        # Toggle: pixels -> graphics (widget swaps, still present)
+        console._handle_console_toggle_image_view(message.id)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+        assert console.query(f"#console-image-{message.id}")
+
+        # Toggle: graphics -> hidden (row disappears)
+        console._handle_console_toggle_image_view(message.id)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+        assert not console.query(f"#console-image-{message.id}")
+
+        # Toggle: hidden -> pixels (row returns)
+        console._handle_console_toggle_image_view(message.id)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+        assert console.query(f"#console-image-{message.id}")
+
+
+def test_image_view_modes_ride_screen_state_allowlist_and_prune_stale():
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="pic",
+        image_data=b"\x89PNG-bytes",
+        image_mime_type="image/png",
+    )
+    state, _cache = screen._ensure_console_image_view()
+    state.restore({message.id: "hidden", "stale-id": "graphics"})
+
+    payload = screen._serialize_native_console_state()
+    assert payload is not None
+    # Live override survives; the stale one is pruned at serialize time.
+    assert payload["image_view_modes"] == {message.id: "hidden"}
+
+    fresh = ChatScreen(app)
+    fresh._restore_native_console_state(payload)
+    fresh_state, _ = fresh._ensure_console_image_view()
+    assert fresh_state.serialize() == {message.id: "hidden"}
+
+
+def test_console_image_prep_bounded_to_cache_capacity_avoids_churn():
+    """Regression: prep must never chase more images than the cache can hold.
+
+    Before this fix, the sync path computed `cache.pending_ids(messages)`
+    over the FULL session while `ConsoleImageRenderCache` is LRU-bounded at
+    `IMAGE_CACHE_MAX_ENTRIES`. With more image messages than the cache holds,
+    each sync would prep an older message, evict the newest one to make room,
+    and the next sync would re-prep the evicted one — an infinite decode +
+    refresh churn. `_build_console_image_specs` (and the sync-site pending
+    computation) must bound their working set to the most-recent-N
+    image-bearing messages so the working set can never exceed cache
+    capacity.
+    """
+    from io import BytesIO
+
+    from PIL import Image as PILImage
+
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+
+    total_images = IMAGE_CACHE_MAX_ENTRIES + 3
+    messages = []
+    for index in range(total_images):
+        buffer = BytesIO()
+        PILImage.new("RGB", (4, 4), (index % 256, 20, 30)).save(buffer, format="PNG")
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content=f"pic {index}",
+            image_data=buffer.getvalue(),
+            image_mime_type="image/png",
+        )
+        messages.append(message)
+
+    _state, cache = screen._ensure_console_image_view()
+    recent = screen._recent_console_image_messages(messages)
+    most_recent_ids = [m.id for m in messages[-IMAGE_CACHE_MAX_ENTRIES:]]
+    assert len(recent) == IMAGE_CACHE_MAX_ENTRIES
+    assert [m.id for m in recent] == most_recent_ids
+
+    # Prepare exactly the bounded (most-recent) subset via the cache
+    # directly, mirroring what the fixed sync-site prep kick does.
+    for message_id, image_data in cache.pending_ids(recent):
+        cache.prepare(message_id, image_data)
+
+    # (a) + (b): specs are bounded to cache capacity and are the most recent
+    # image messages — older messages were never prepared, so they can never
+    # appear here regardless of how many messages the session holds.
+    specs = screen._build_console_image_specs(messages)
+    assert len(specs) <= IMAGE_CACHE_MAX_ENTRIES
+    assert set(specs) == set(most_recent_ids)
+
+    # The older, out-of-window messages were never touched by prep.
+    older_ids = [m.id for m in messages[: -IMAGE_CACHE_MAX_ENTRIES]]
+    assert older_ids  # sanity: the test actually exceeds cache capacity
+    for older_id in older_ids:
+        assert cache.get_pil(older_id) is None
+
+    # (c) No churn: recomputing pending over the same bounded subset finds
+    # nothing left to prepare — the working set converges instead of
+    # flapping between decode and eviction.
+    assert cache.pending_ids(screen._recent_console_image_messages(messages)) == []
+
+
+def test_console_image_prep_kick_skips_ids_already_preparing():
+    """Regression: the 0.2s sync tick must not re-kick prep for ids a
+    worker is already chewing on.
+
+    Before this fix, every sync tick recomputed `cache.pending_ids(...)`
+    over the still-uncached image messages and unconditionally kicked the
+    exclusive `console-image-prep` worker for them — cancelling any
+    in-flight run and piling duplicate decodes into the executor.
+    `_console_image_preparing` tracks in-flight ids so the kick site's
+    filtered pending list converges to empty once a batch is staged.
+    """
+    from io import BytesIO
+
+    from PIL import Image as PILImage
+
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+
+    buffer = BytesIO()
+    PILImage.new("RGB", (4, 4), (10, 20, 30)).save(buffer, format="PNG")
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="pic",
+        image_data=buffer.getvalue(),
+        image_mime_type="image/png",
+    )
+
+    messages = [message]
+    _state, cache = screen._ensure_console_image_view()
+
+    # Same helper chain the sync site uses to compute the raw pending set.
+    recent = screen._recent_console_image_messages(messages)
+    assert cache.pending_ids(recent) == [(message.id, message.image_data)]
+
+    # Stage the id as already-preparing, exactly as the kick site does right
+    # before `run_worker`.
+    screen._console_image_preparing.update(mid for mid, _ in cache.pending_ids(recent))
+    assert message.id in screen._console_image_preparing
+
+    # The filtered pending list the kick site actually acts on must now be
+    # empty — a re-kick for the same id must not fire while it's in flight.
+    pending_images = [
+        (mid, data)
+        for mid, data in cache.pending_ids(recent)
+        if mid not in screen._console_image_preparing
+    ]
+    assert pending_images == []
+
+
+@pytest.mark.asyncio
+async def test_path_paste_routes_to_attach_instead_of_draft(tmp_path, monkeypatch):
+    from PIL import Image as PILImage
+
+    from textual.events import Paste
+
+    image_path = tmp_path / "dropped.png"
+    PILImage.new("RGB", (8, 8), (9, 9, 9)).save(image_path, format="PNG")
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.focus()
+        await pilot.pause()
+
+        # Widen the attach root to tmp_path for both gating and processing.
+        # chat_screen imports these helpers BY NAME, so patch the consuming
+        # module's bindings, not the source module's.
+        import tldw_chatbook.Chat.attachment_core as attachment_core
+        import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+        from tldw_chatbook.Chat.console_paste_attach import (
+            looks_attachable as original_attachable,
+        )
+
+        original_load = attachment_core.load_processed_file
+
+        async def _rooted(file_path, *, allowed_root=None):
+            return await original_load(file_path, allowed_root=str(tmp_path))
+
+        monkeypatch.setattr(attachment_core, "load_processed_file", _rooted)
+        monkeypatch.setattr(
+            chat_screen_module,
+            "looks_attachable",
+            lambda path, allowed_root=None: original_attachable(
+                path, allowed_root=str(tmp_path)
+            ),
+        )
+
+        console.on_paste(Paste(text=str(image_path)))
+        for _ in range(80):
+            store = console._ensure_console_chat_store()
+            session_id = store.active_session_id
+            if session_id and store.pending_attachment(session_id) is not None:
+                break
+            await pilot.pause(0.05)
+
+        store = console._ensure_console_chat_store()
+        pending = store.pending_attachment(store.active_session_id)
+        assert pending is not None and pending.file_type == "image"
+        assert composer.draft_text() == ""  # path did NOT land as draft text
+
+
+@pytest.mark.asyncio
+async def test_prose_paste_still_lands_in_draft():
+    from textual.events import Paste
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.focus()
+        await pilot.pause()
+
+        console.on_paste(Paste(text="what does /etc/hosts do?"))
+        await pilot.pause()
+        assert composer.draft_text() == "what does /etc/hosts do?"
+
+
+@pytest.mark.asyncio
+async def test_alt_v_grabs_clipboard_image_into_pending(monkeypatch):
+    from io import BytesIO
+
+    from PIL import Image as PILImage
+
+    import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+
+    buffer = BytesIO()
+    PILImage.new("RGB", (16, 16), (10, 200, 10)).save(buffer, format="PNG")
+    png = buffer.getvalue()
+
+    from tldw_chatbook.Chat.console_paste_attach import ClipboardGrab
+
+    monkeypatch.setattr(
+        chat_screen_module,
+        "grab_clipboard_image",
+        lambda: ClipboardGrab(kind="image", png_bytes=png),
+    )
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        console.query_one("#console-native-composer", ConsoleComposerBar).focus()
+        await pilot.pause()
+
+        await pilot.press("alt+v")
+        for _ in range(80):
+            store = console._ensure_console_chat_store()
+            sid = store.active_session_id
+            if sid and store.pending_attachment(sid) is not None:
+                break
+            await pilot.pause(0.05)
+
+        store = console._ensure_console_chat_store()
+        pending = store.pending_attachment(store.active_session_id)
+        assert pending is not None
+        assert pending.file_type == "image"
+        assert pending.display_name.startswith("clipboard-")
+
+
+@pytest.mark.asyncio
+async def test_alt_v_unavailable_platform_toasts(monkeypatch):
+    import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+
+    from tldw_chatbook.Chat.console_paste_attach import ClipboardGrab
+
+    monkeypatch.setattr(
+        chat_screen_module,
+        "grab_clipboard_image",
+        lambda: ClipboardGrab(kind="unavailable"),
+    )
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    notifications: list[str] = []
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        monkeypatch.setattr(
+            console.app_instance,
+            "notify",
+            lambda message, **kwargs: notifications.append(str(message)),
+        )
+        await pilot.press("alt+v")
+        for _ in range(40):
+            if notifications:
+                break
+            await pilot.pause(0.05)
+        assert any("aren't readable on this platform" in n for n in notifications)
+        store = console._ensure_console_chat_store()
+        sid = store.active_session_id
+        assert sid is None or store.pending_attachment(sid) is None
+
+
+@pytest.mark.asyncio
+async def test_alt_v_action_is_inert_while_setup_modal_blocks(monkeypatch):
+    import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+
+    grab_calls: list[None] = []
+    monkeypatch.setattr(
+        chat_screen_module,
+        "grab_clipboard_image",
+        lambda: grab_calls.append(None),
+    )
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        monkeypatch.setattr(console, "_console_setup_modal_blocking", lambda: True)
+
+        console.action_paste_clipboard_image()
+        await pilot.pause(0.2)
+
+        assert grab_calls == []
+        store = console._ensure_console_chat_store()
+        sid = store.active_session_id
+        assert sid is None or store.pending_attachment(sid) is None

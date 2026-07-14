@@ -28,7 +28,7 @@ from Tests.UI.test_library_shell import (
 )
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import ConsoleHarness
 from Tests.UI.test_screen_navigation import _build_test_app
-from tldw_chatbook.UI.MCP_Modules import unified_mcp_panel as unified_mcp_panel_module
+from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCPWorkbench
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
 from tldw_chatbook.UI.Screens import (
     artifacts_screen as artifacts_screen_module,
@@ -1244,77 +1244,134 @@ async def test_operational_loading_states_preserve_workbench_geometry(
         )
 
 
+def _assert_advanced_run_reachable(screen) -> None:
+    """The Advanced "Run Action" button is mounted and (when actions exist) focusable.
+
+    #mcp-adv-run is the direct successor of the retired
+    #unified-mcp-action-run, but unlike its predecessor it is NOT an
+    always-visible column action: the inspector's Advanced escape hatch is a
+    scrollable section, and in the default loaded state the rendered section
+    content pushes the run button below the scroll fold (verified — an
+    in-viewport assertion on it fails at both 140x42 and 100x32). The
+    genuinely visible primary action is the rail row; this asserts the
+    Advanced runner's surviving contract instead: mounted, not scrolled out
+    via `display: none`, and focusable whenever the current section actually
+    has actions.
+
+    The button is legitimately *disabled* when the current section has zero
+    actions (mirrors the legacy panel's `_sync_action_controls()`, which
+    also disables `#unified-mcp-action-run` for a zero-descriptor section —
+    see unified_mcp_panel.py). Phase 1's default "Overview" section has no
+    actions, so `#mcp-adv-run` starts disabled by default; that is not a
+    regression, it is `MCPInspector._refresh_advanced_actions()` correctly
+    reflecting the loaded section instead of the stale action set the mount
+    happened to compute before the section finished loading.
+    """
+    adv_run = screen.query_one("#mcp-adv-run", Button)
+    assert _is_effectively_displayed(adv_run), "#mcp-adv-run is not displayed"
+    if not adv_run.disabled:
+        assert adv_run.can_focus, "#mcp-adv-run is not focusable"
+
+
 @pytest.mark.asyncio
 async def test_mcp_uses_visible_server_detail_readiness_layout_without_overflow():
+    """Realigned from the retired `UnifiedMCPPanel` 3-column embed.
+
+    Task 8 replaced the embedded panel with the rail/canvas/inspector
+    `MCPWorkbench` triad. Same product intent -- server list, server detail,
+    and readiness/actions each get a fully visible, non-overflowing pane --
+    verified against the new `#mcp-hub-rail` / `#mcp-hub-canvas` /
+    `#mcp-hub-inspector` landmarks.
+    """
     app = _build_test_app()
     host = DestinationHarness(app, "mcp")
     async with host.run_test(size=(140, 42)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_selector(screen, pilot, "#mcp-workbench")
+        await _wait_for_selector(screen, pilot, "#mcp-hub-workbench")
         _assert_strip_compact(screen, "#mcp-title", max_height=1)
         _assert_strip_compact(screen, "#mcp-purpose", max_height=1)
         _assert_ascii_workbench_contract(
             screen,
-            workbench="#mcp-workbench",
+            workbench="#mcp-hub-workbench",
             strip="#mcp-mode-strip",
-            panes=("#mcp-server-tree-pane", "#mcp-detail-pane", "#mcp-readiness-pane"),
-            actions=("#unified-mcp-action-run",),
+            panes=("#mcp-hub-rail", "#mcp-hub-canvas", "#mcp-hub-inspector"),
+            actions=("#mcp-rail-row-0",),
             height=42,
             min_pane_rows=30,
         )
+        _assert_advanced_run_reachable(screen)
 
 
 @pytest.mark.asyncio
 async def test_mcp_unavailable_or_local_default_state_keeps_workbench_geometry():
+    """Realigned from the retired `UnifiedMCPPanel` embed (same intent as above).
+
+    Verifies the default local-source state (no server selected, only the
+    built-in server present) does not break the workbench triad's geometry,
+    and that the servers-mode overview content stays confined to the canvas
+    pane rather than escaping it (successor to the old
+    `#unified-mcp-content` inside `#mcp-detail-pane` check).
+    """
     app = _build_test_app()
     host = DestinationHarness(app, "mcp")
     async with host.run_test(size=(140, 42)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_selector(screen, pilot, "#mcp-workbench")
+        await _wait_for_selector(screen, pilot, "#mcp-hub-workbench")
         _assert_ascii_workbench_contract(
             screen,
-            workbench="#mcp-workbench",
+            workbench="#mcp-hub-workbench",
             strip="#mcp-mode-strip",
-            panes=("#mcp-server-tree-pane", "#mcp-detail-pane", "#mcp-readiness-pane"),
-            actions=("#unified-mcp-action-run",),
+            panes=("#mcp-hub-rail", "#mcp-hub-canvas", "#mcp-hub-inspector"),
+            actions=("#mcp-rail-row-0",),
             height=42,
         )
+        _assert_advanced_run_reachable(screen)
         _assert_marker_inside_container(
             screen,
-            "#unified-mcp-content",
-            "#mcp-detail-pane",
-            context="MCP loading/status content escaped detail pane",
+            "#mcp-overview-summary",
+            "#mcp-hub-canvas",
+            context="MCP servers-mode overview content escaped canvas pane",
         )
 
 
 @pytest.mark.asyncio
 async def test_mcp_forced_loading_state_stays_inside_workbench(monkeypatch):
-    async def keep_initial_loading_state(self):
-        return self.context
+    """Realigned from the retired `UnifiedMCPPanel.load_context` monkeypatch.
 
-    monkeypatch.setattr(
-        unified_mcp_panel_module.UnifiedMCPPanel,
-        "load_context",
-        keep_initial_loading_state,
-    )
+    `UnifiedMCPPanel` is no longer mounted anywhere in the MCP screen's
+    component chain (Task 8 replaced it with `MCPWorkbench`), so forcing
+    *its* `load_context()` to hang no longer has any effect. Same product
+    intent -- force the surface to sit in a still-loading state and verify
+    nothing overflows its pane geometry -- reproduced by no-op'ing
+    `MCPWorkbench.reload()`, which pins the rail/canvas/inspector to their
+    just-mounted, pre-reload compose shape (empty rail besides "All servers";
+    inspector's default "Select a server" prompt) for the whole test. A no-op
+    rather than a hung await: `MCPWorkbench.on_mount` awaits `reload()`
+    inline, so an await that never resolves would deadlock app teardown.
+    """
+
+    async def keep_loading(self):
+        return None
+
+    monkeypatch.setattr(MCPWorkbench, "reload", keep_loading)
     app = _build_test_app()
     host = DestinationHarness(app, "mcp")
     async with host.run_test(size=(140, 42)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_selector(screen, pilot, "#unified-mcp-content")
+        await _wait_for_selector(screen, pilot, "#mcp-hub-inspector")
         _assert_ascii_workbench_contract(
             screen,
-            workbench="#mcp-workbench",
+            workbench="#mcp-hub-workbench",
             strip="#mcp-mode-strip",
-            panes=("#mcp-server-tree-pane", "#mcp-detail-pane", "#mcp-readiness-pane"),
-            actions=("#unified-mcp-action-run",),
+            panes=("#mcp-hub-rail", "#mcp-hub-canvas", "#mcp-hub-inspector"),
+            actions=("#mcp-adv-run",),
             height=42,
         )
         _assert_marker_inside_container(
             screen,
-            "#unified-mcp-content",
-            "#mcp-detail-pane",
-            context="MCP forced loading state escaped detail pane",
+            "#mcp-inspector-state",
+            "#mcp-hub-inspector",
+            context="MCP forced loading state escaped inspector pane",
         )
 
 
@@ -1556,11 +1613,22 @@ COMPACT_DESTINATION_CONTRACTS = {
         "actions": ("#workflows-launch-in-console",),
     },
     "mcp": {
+        # #mcp-workbench / #mcp-server-tree-pane / #mcp-detail-pane /
+        # #mcp-readiness-pane are all retired (see test_destination_shells.py):
+        # Task 8 replaced the embedded `UnifiedMCPPanel` with the
+        # rail/canvas/inspector `MCPWorkbench` triad, mounted as
+        # #mcp-hub-workbench. Same intent -- rail (server list) as "object",
+        # canvas (server detail/overview) as "detail" -- verified against the
+        # new landmarks. The compact-viewport visible action is the
+        # always-visible rail row: #mcp-adv-run (successor of the retired
+        # #unified-mcp-action-run) sits below the inspector's Advanced scroll
+        # fold at 100x32 (verified), and is covered by
+        # _assert_advanced_run_reachable + the tab-order test instead.
         "identity": "#mcp-title",
-        "workbench": "#mcp-workbench",
-        "object": "#mcp-server-tree-pane",
-        "detail": "#mcp-detail-pane",
-        "actions": ("#unified-mcp-action-run",),
+        "workbench": "#mcp-hub-workbench",
+        "object": "#mcp-hub-rail",
+        "detail": "#mcp-hub-canvas",
+        "actions": ("#mcp-rail-row-0",),
     },
     "acp": {
         "identity": "#acp-title",
@@ -1653,7 +1721,14 @@ VISIBLE_FOCUS_TARGETS = {
     "watchlists_collections": {"wc-open-watchlists", "wc-attach-to-console", "watchlists-follow-in-console"},
     "schedules": {"schedules-follow-in-console"},
     "workflows": {"workflows-launch-in-console"},
-    "mcp": {"unified-mcp-action-run"},
+    # #unified-mcp-action-run is retired with the `UnifiedMCPPanel` embed
+    # (Task 8); its direct successor is #mcp-adv-run, the workbench
+    # inspector's Advanced "Run Action" button. It is legitimately disabled
+    # by default (Phase 1's default "Overview" section has no actions --
+    # see _assert_advanced_run_reachable), so #mcp-rail-row-0 ("All
+    # servers", always enabled) is listed alongside it as the genuinely
+    # reachable default primary action.
+    "mcp": {"mcp-rail-row-0", "mcp-adv-run"},
     "acp": {"acp-follow-in-console", "acp-launch-agent"},
     "skills": {"skills-import-skill", "skills-attach-to-console"},
     "settings": {"settings-open-appearance"},

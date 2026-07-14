@@ -9,6 +9,7 @@ import random
 import re
 import sqlite3
 import warnings
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Any, Tuple, Set
@@ -62,9 +63,80 @@ class TokenBudgetExceededWarning(Warning):
     pass
 
 
+def _coerce_int(value: Any, default: int = 0) -> int:
+    """Best-effort int coercion for loosely-typed entry fields.
+
+    Args:
+        value: Raw value from a payload or persisted JSON.
+        default: Fallback when the value is missing or malformed.
+
+    Returns:
+        The coerced int, or ``default`` on None/non-numeric input.
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+_FALSY_STRINGS = {"false", "0", "no", "off", ""}
+_TRUTHY_STRINGS = {"true", "1", "yes", "on"}
+
+
+def _coerce_bool(value: Any, default: bool) -> bool:
+    """Best-effort bool coercion that treats quoted booleans honestly.
+
+    Args:
+        value: Raw value from a payload or persisted JSON.
+        default: Fallback for None or unrecognized strings.
+
+    Returns:
+        ``value`` itself for real bools; a case-insensitive allowlist parse
+        for strings ("false"/"0"/"no"/"off" are False); ``default`` for None
+        or unrecognized strings; ``bool(value)`` otherwise.
+    """
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in _TRUTHY_STRINGS:
+            return True
+        if lowered in _FALSY_STRINGS:
+            return False
+        return default
+    return bool(value)
+
+
 class ChatDictionary:
     def __init__(self, key: str, content: str, probability: int = 100, group: Optional[str] = None,
-                 timed_effects: Optional[Dict[str, int]] = None, max_replacements: int = 1):
+                 timed_effects: Optional[Dict[str, int]] = None, max_replacements: int = 1, enabled: bool = True,
+                 case_sensitive: bool = False, priority: int = 0):
+        """Initialize a single chat-dictionary entry.
+
+        Args:
+            key: The raw match key. A ``/pattern/flags`` form is compiled as
+                a regex; any other string is treated as a literal match key.
+            content: The replacement text substituted in for a match.
+            probability: Percent chance (0-100) that a match actually fires.
+            group: Optional group name used for mutually-exclusive
+                group-scoring between entries.
+            timed_effects: Optional ``{"sticky": int, "cooldown": int,
+                "delay": int}`` mapping; defaults to all-zero effects.
+            max_replacements: Maximum number of replacements to apply per
+                invocation.
+            enabled: Whether the entry participates in matching. Loosely
+                typed values (e.g. ``"false"``) are coerced honestly instead
+                of via truthy-string ``bool()``.
+            case_sensitive: Whether literal-key matching is case sensitive.
+                Ignored for regex keys, whose case handling comes from the
+                pattern's own flags. Loosely typed values are coerced the
+                same way as ``enabled``.
+            priority: Tie-breaker used for group scoring, token-budget
+                survival, and application order (higher wins). Malformed
+                values fall back to ``0`` instead of raising.
+        """
         self.raw_key = key # Store the original key string
         self.content = content
         self.is_regex = False
@@ -77,6 +149,9 @@ class ChatDictionary:
         self.timed_effects = timed_effects or {"sticky": 0, "cooldown": 0, "delay": 0}
         self.last_triggered: Optional[datetime] = None
         self.max_replacements = max_replacements
+        self.enabled = _coerce_bool(enabled, True)
+        self.case_sensitive = _coerce_bool(case_sensitive, False)
+        self.priority = _coerce_int(priority, 0)
 
     def _compile_key_internal(self, key_str: str) -> Union[re.Pattern, str]:
         self.is_regex = False # Reset for this compilation
@@ -131,7 +206,13 @@ class ChatDictionary:
         return False
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert ChatDictionary instance to a dictionary for database storage."""
+        """Convert ChatDictionary instance to a dictionary for database storage.
+
+        Returns:
+            A dict with keys ``key``, ``content``, ``probability``, ``group``,
+            ``timed_effects``, ``max_replacements``, ``is_regex``, ``enabled``,
+            ``case_sensitive``, and ``priority``.
+        """
         return {
             'key': self.raw_key,
             'content': self.content,
@@ -139,19 +220,35 @@ class ChatDictionary:
             'group': self.group,
             'timed_effects': self.timed_effects,
             'max_replacements': self.max_replacements,
-            'is_regex': self.is_regex
+            'is_regex': self.is_regex,
+            'enabled': self.enabled,
+            'case_sensitive': self.case_sensitive,
+            'priority': self.priority,
         }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'ChatDictionary':
-        """Create ChatDictionary instance from dictionary data."""
+        """Create ChatDictionary instance from dictionary data.
+
+        Args:
+            data: A mapping as produced by :meth:`to_dict` (or a legacy
+                stored dict missing the newer keys). ``key`` and ``content``
+                are required; all other keys are optional and fall back to
+                the same defaults as :meth:`__init__`.
+
+        Returns:
+            A new :class:`ChatDictionary` built from ``data``.
+        """
         return cls(
             key=data['key'],
             content=data['content'],
             probability=data.get('probability', 100),
             group=data.get('group'),
             timed_effects=data.get('timed_effects', {"sticky": 0, "cooldown": 0, "delay": 0}),
-            max_replacements=data.get('max_replacements', 1)
+            max_replacements=data.get('max_replacements', 1),
+            enabled=data.get('enabled', True),
+            case_sensitive=data.get('case_sensitive', False),
+            priority=data.get('priority', 0),
         )
 
 
@@ -306,7 +403,8 @@ def group_scoring(entries: List[ChatDictionary]) -> List[ChatDictionary]:
 
     - Entries without a group (group is None) are all included if matched.
     - For entries within the same named group, only the "best" entry (currently
-      defined as the one with the longest raw key string) is selected from that group.
+      defined as the highest-priority entry, with raw-key length breaking ties)
+      is selected from that group.
 
     Args:
         entries: A list of `ChatDictionary` objects that have already matched.
@@ -331,7 +429,10 @@ def group_scoring(entries: List[ChatDictionary]) -> List[ChatDictionary]:
             selected_entries.extend(group_entries_list)
         else:
             # For named groups, keep the original behavior of selecting the best.
-            best_entry_in_group = max(group_entries_list, key=lambda e: len(str(e.raw_key)) if e.raw_key else 0)
+            best_entry_in_group = max(
+                group_entries_list,
+                key=lambda e: (getattr(e, "priority", 0), len(str(e.raw_key)) if e.raw_key else 0),
+            )
             selected_entries.append(best_entry_in_group)
 
     logging.debug(f"Selected {len(selected_entries)} entries after group scoring.")
@@ -435,7 +536,7 @@ def match_whole_words(entries: List[ChatDictionary], text: str) -> List[ChatDict
 
     - If an entry's key is a compiled regex, `re.search()` is used.
     - If an entry's key is a plain string, it's matched as a whole word
-      (using `\\b` word boundaries) case-insensitively.
+      (using `\\b` word boundaries) case per entry.case_sensitive.
 
     Args:
         entries: A list of `ChatDictionary` objects.
@@ -451,8 +552,9 @@ def match_whole_words(entries: List[ChatDictionary], text: str) -> List[ChatDict
                 matched_entries.append(entry)
                 logging.debug(f"Chat Dictionary: Matched regex entry: {entry.key.pattern}")
         elif isinstance(entry.key, str): # Plain string key
-            # Ensure whole word match for plain strings, case-insensitive
-            if re.search(rf'\b{re.escape(entry.key)}\b', text, re.IGNORECASE):
+            # Ensure whole word match for plain strings; case per entry.case_sensitive
+            flags = 0 if getattr(entry, "case_sensitive", False) else re.IGNORECASE
+            if re.search(rf'\b{re.escape(entry.key)}\b', text, flags):
                 matched_entries.append(entry)
                 logging.debug(f"Chat Dictionary: Matched string entry: {entry.key}")
     return matched_entries
@@ -479,8 +581,8 @@ def apply_replacement_once(text: str, entry: ChatDictionary) -> Tuple[str, int]:
     Replaces the first occurrence of an entry's key in text with its content.
 
     - If `entry.key` is a regex pattern, `re.subn()` with `count=1` is used.
-    - If `entry.key` is a string, a case-insensitive whole-word regex is
-      constructed and used with `re.subn()` with `count=1`.
+    - If `entry.key` is a string, a whole-word regex is constructed respecting
+      entry.case_sensitive and used with `re.subn()` with `count=1`.
 
     Args:
         text: The input text where replacement should occur.
@@ -495,9 +597,303 @@ def apply_replacement_once(text: str, entry: ChatDictionary) -> Tuple[str, int]:
     if isinstance(entry.key, re.Pattern):
         replaced_text, replaced_count = entry.key.subn(entry.content, text, count=1)
     else: # Plain string key
-        pattern = re.compile(rf'\b{re.escape(str(entry.key))}\b', re.IGNORECASE) # Ensure entry.key is str
+        flags = 0 if getattr(entry, "case_sensitive", False) else re.IGNORECASE
+        pattern = re.compile(rf'\b{re.escape(str(entry.key))}\b', flags) # Ensure entry.key is str
         replaced_text, replaced_count = pattern.subn(entry.content, text, count=1)
     return replaced_text, replaced_count
+
+
+@dataclass
+class DictionaryEntryDiagnostic:
+    """One matched entry's outcome in the substitution pipeline.
+
+    Args:
+        input_index: Position of the entry in the caller-provided list.
+        pattern: The entry's raw key (slash-delimited for regex entries).
+        status: ``"fired"``, ``"skipped:<stage>"``, or ``"no_replacement"``.
+        replacements: Number of replacements this entry performed.
+        token_cost: Approximate token cost of the entry's content.
+        applied_order: 0-based position in the post-strategy application
+            sequence for entries that reached the replacement loop, else None.
+        content_preview: The first 40 characters of the entry's content.
+    """
+
+    input_index: int
+    pattern: str
+    status: str
+    replacements: int = 0
+    token_cost: int = 0
+    applied_order: Optional[int] = None
+    content_preview: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Returns the record as a plain JSON-safe dict."""
+        return {
+            "input_index": self.input_index,
+            "pattern": self.pattern,
+            "status": self.status,
+            "replacements": self.replacements,
+            "token_cost": self.token_cost,
+            "applied_order": self.applied_order,
+            "content_preview": self.content_preview,
+        }
+
+
+@dataclass
+class DictionaryProcessDiagnostics:
+    """Aggregate diagnostics for one substitution run.
+
+    Totals maintain the invariant ``matched == fired + skipped`` —
+    ``no_replacement`` entries count as skipped. ``tokens_used`` is
+    budget-stage accounting: the summed cost of entries that survived the
+    token-budget stage (including no_replacement survivors), and
+    ``budget_exceeded`` is truncation-derived (at least one matched entry
+    was dropped at the budget stage).
+    """
+
+    entries: List[DictionaryEntryDiagnostic] = field(default_factory=list)
+    matched: int = 0
+    fired: int = 0
+    skipped: int = 0
+    total_replacements: int = 0
+    tokens_used: int = 0
+    token_budget: int = 0
+    budget_exceeded: bool = False
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Returns the diagnostics as a plain JSON-safe dict."""
+        return {
+            "entries": [record.to_dict() for record in self.entries],
+            "matched": self.matched,
+            "fired": self.fired,
+            "skipped": self.skipped,
+            "total_replacements": self.total_replacements,
+            "tokens_used": self.tokens_used,
+            "token_budget": self.token_budget,
+            "budget_exceeded": self.budget_exceeded,
+        }
+
+
+def process_user_input_with_diagnostics(
+    user_input: str,
+    entries: List[ChatDictionary],
+    max_tokens: int = 5000,
+    strategy: str = "sorted_evenly"
+) -> Tuple[str, DictionaryProcessDiagnostics]:
+    """Runs the substitution pipeline and reports per-entry diagnostics.
+
+    Identical behavior to :func:`process_user_input` (which now wraps this
+    function); diagnostics are collected purely from stage-boundary diffs,
+    so no pipeline stage behaves differently.
+
+    Args:
+        user_input: The text input from the user.
+        entries: A list of ``ChatDictionary`` objects to apply.
+        max_tokens: The maximum token budget for applied entries' content.
+        strategy: The sorting strategy for entries before replacement.
+
+    Returns:
+        A ``(processed_text, diagnostics)`` tuple. On critical pipeline
+        failure the original input is returned with whatever diagnostics
+        were collected before the failure.
+    """
+    current_time = datetime.now()
+    original_input_for_fallback = user_input  # Save for critical error case
+    temp_user_input = user_input
+
+    diagnostics = DictionaryProcessDiagnostics(token_budget=max_tokens)
+    # First-wins for pathological duplicate objects in the input list.
+    index_by_id: Dict[int, int] = {}
+    matched_snapshot: List[ChatDictionary] = []
+    skip_reason_by_id: Dict[int, str] = {}
+    replacements_by_id: Dict[int, int] = {}
+    applied_order_by_id: Dict[int, int] = {}
+    budget_survivor_ids: Set[int] = set()
+
+    def _record_stage_drops(
+        before: List[ChatDictionary], after: List[ChatDictionary], stage: str
+    ) -> None:
+        surviving = {id(e) for e in after}
+        for candidate in before:
+            if id(candidate) not in surviving and id(candidate) not in skip_reason_by_id:
+                skip_reason_by_id[id(candidate)] = f"skipped:{stage}"
+
+    def _finalize() -> None:
+        # Same formula as calculate_token_usage; inlined to avoid a debug-log call per entry.
+        for candidate in matched_snapshot:
+            entry_id = id(candidate)
+            replacements = replacements_by_id.get(entry_id, 0)
+            if entry_id in skip_reason_by_id:
+                status = skip_reason_by_id[entry_id]
+            elif replacements > 0:
+                status = "fired"
+            else:
+                status = "no_replacement"
+            diagnostics.entries.append(
+                DictionaryEntryDiagnostic(
+                    input_index=index_by_id.get(entry_id, -1),
+                    pattern=str(candidate.raw_key),
+                    status=status,
+                    replacements=replacements,
+                    token_cost=len(candidate.content.split()) if candidate.content else 0,
+                    applied_order=applied_order_by_id.get(entry_id),
+                    content_preview=" ".join(str(candidate.content or "").split())[:40],
+                )
+            )
+        diagnostics.matched = len(matched_snapshot)
+        diagnostics.fired = sum(1 for r in diagnostics.entries if r.status == "fired")
+        diagnostics.skipped = diagnostics.matched - diagnostics.fired
+        diagnostics.total_replacements = sum(r.replacements for r in diagnostics.entries)
+        # Budget-stage accounting: survivors of the budget stage, including
+        # no_replacement survivors (they consumed budget without firing).
+        diagnostics.tokens_used = calculate_token_usage([
+            candidate for candidate in matched_snapshot
+            if id(candidate) in budget_survivor_ids
+        ])
+
+    try:
+        # 1. Match entries  (verbatim from the original body)
+        logging.debug(f"Chat Dictionary: Initial matching for: {user_input[:100]}")
+        # The original `entry.matches()` is a simple check. `match_whole_words` is more robust.
+        # The original `process_user_input` had `entry.matches(user_input)` then later `match_whole_words`.
+        # Consolidating to `match_whole_words` as the primary matching mechanism.
+        try:
+            # Ensure entries are ChatDictionary instances
+            valid_initial_entries = []
+            for input_index, candidate in enumerate(entries):
+                index_by_id.setdefault(id(candidate), input_index)
+                if isinstance(candidate, ChatDictionary):
+                    valid_initial_entries.append(candidate)
+            if len(valid_initial_entries) != len(entries):
+                logging.warning("Some provided entries were not ChatDictionary instances and were skipped.")
+            matched_entries = match_whole_words(valid_initial_entries, user_input)
+        except re.error as e:
+            log_counter("chat_dict_regex_error", labels={"key": "compilation_phase"})  # Generic key
+            logging.error(f"Invalid regex pattern during initial matching. Error: {str(e)}")
+            matched_entries = []
+        except Exception as e_match:
+            log_counter("chat_dict_match_error")
+            logging.error(f"Error during initial matching: {str(e_match)}", exc_info=True)
+            matched_entries = []
+
+        matched_snapshot = list(matched_entries)                     # ADDED
+        logging.debug(f"Matched entries after initial filtering: {[e.raw_key for e in matched_entries]}")
+
+        # P1c: disabled entries stay visible as near-misses (filtered after match).
+        stage_before = list(matched_entries)                          # ADDED
+        matched_entries = [e for e in matched_entries if getattr(e, "enabled", True)]  # ADDED
+        _record_stage_drops(stage_before, matched_entries, "disabled")               # ADDED
+
+        # 2. Group scoring (verbatim try/except, with a before-list diff)
+        stage_before = list(matched_entries)                          # ADDED
+        try:
+            logging.debug(f"Chat Dictionary: Applying group scoring for {len(matched_entries)} entries")
+            matched_entries = group_scoring(matched_entries)
+        except Exception as e_gs:  # More specific exception if defined (ChatProcessingError)
+            log_counter("chat_dict_group_scoring_error")
+            logging.error(f"Error in group scoring: {str(e_gs)}")
+            matched_entries = []  # Fallback to empty list
+        _record_stage_drops(stage_before, matched_entries, "group_scoring")   # ADDED
+
+        # 3. Probability filter (same pattern)
+        stage_before = list(matched_entries)                          # ADDED
+        try:
+            logging.debug(f"Chat Dictionary: Filtering by probability for {len(matched_entries)} entries")
+            matched_entries = filter_by_probability(matched_entries)
+        except Exception as e_prob:
+            log_counter("chat_dict_probability_error")
+            logging.error(f"Error in probability filtering: {str(e_prob)}")
+            matched_entries = []  # Fallback to empty list
+        _record_stage_drops(stage_before, matched_entries, "probability")     # ADDED
+
+        # 4. Timed effects (same pattern around the original loop)
+        # And update last_triggered for those that *will* be used
+        stage_before = list(matched_entries)                          # ADDED
+        active_timed_entries = []
+        try:
+            logging.debug("Chat Dictionary: Applying timed effects")
+            for entry in matched_entries:
+                if apply_timed_effects(entry, current_time):  # Checks if eligible
+                    active_timed_entries.append(entry)
+            matched_entries = active_timed_entries
+        except Exception as e_time:
+            log_counter("chat_dict_timed_effects_error")
+            logging.error(f"Error applying timed effects: {str(e_time)}")
+            matched_entries = []  # Fallback to empty list
+        _record_stage_drops(stage_before, matched_entries, "timed_effects")   # ADDED
+
+        # 5. Ordering (strategy sort + priority) (sort-only; drops are only possible via its except)
+        stage_before = list(matched_entries)                          # ADDED
+        try:
+            logging.debug("Chat Dictionary: Applying replacement strategy")
+            matched_entries = apply_strategy(matched_entries, strategy)
+        except Exception as e_strategy:
+            log_counter("chat_dict_strategy_error")
+            logging.error(f"Error applying strategy: {str(e_strategy)}")
+            matched_entries = []  # Fallback to empty list
+        _record_stage_drops(stage_before, matched_entries, "strategy_error")  # ADDED (defensive)
+        matched_entries.sort(key=lambda e: -int(getattr(e, "priority", 0) or 0))  # ADDED: stable — strategy order breaks ties
+
+        # 6. Token budget (same pattern; truncation drives budget_exceeded)
+        stage_before = list(matched_entries)                          # ADDED
+        try:
+            logging.debug(f"Chat Dictionary: Enforcing token budget for {len(matched_entries)} entries")
+            matched_entries = enforce_token_budget(matched_entries, max_tokens)
+            diagnostics.budget_exceeded = len(matched_entries) != len(stage_before)  # ADDED
+        except TokenBudgetExceededWarning as e:
+            log_counter("chat_dict_token_limit")
+            logging.warning(str(e))
+            matched_entries = []  # Fallback to empty list
+        except Exception as e_budget:
+            log_counter("chat_dict_token_budget_error")
+            logging.error(f"Error enforcing token budget: {str(e_budget)}")
+            matched_entries = []  # Fallback to empty list
+        _record_stage_drops(stage_before, matched_entries, "token_budget")    # ADDED
+        budget_survivor_ids = {id(e) for e in matched_entries}               # ADDED
+
+        # Alert (dead code in practice — preserved verbatim, not used for diagnostics)
+        try:
+            alert_token_budget_exceeded(matched_entries, max_tokens)
+        except Exception as e_alert:
+            log_counter("chat_dict_token_alert_error")
+            logging.error(f"Error in token budget alert: {str(e_alert)}")
+
+        # 7. Replacements (verbatim loop + order/count recording)
+        for applied_position, entry in enumerate(matched_entries):    # ADDED enumerate
+            applied_order_by_id[id(entry)] = applied_position         # ADDED
+            try:
+                logging.debug("Chat Dictionary: Applying replacements")
+                # Use a copy of max_replacements for this run if needed, or modify original for state
+                replacements_done_for_this_entry = 0
+                # Original code had `entry.max_replacements > 0` check outside loop.
+                # If multiple replacements are allowed by one entry definition:
+                current_max_replacements = entry.max_replacements  # Use current value
+                while current_max_replacements > 0:
+                    temp_user_input, replaced_count = apply_replacement_once(temp_user_input, entry)
+                    if replaced_count > 0:
+                        replacements_done_for_this_entry += 1
+                        current_max_replacements -= 1
+                        # Update last_triggered for entries that actually made a replacement
+                        entry.last_triggered = current_time
+                    else:
+                        break  # No more matches for this key
+                if replacements_done_for_this_entry > 0:
+                    logging.debug(f"Replaced {replacements_done_for_this_entry} occurrences of '{entry.raw_key}'")
+                replacements_by_id[id(entry)] = replacements_done_for_this_entry  # ADDED
+            except Exception as e_replace:
+                log_counter("chat_dict_replacement_error", labels={"key": entry.raw_key})
+                logging.error(f"Error applying replacement for entry {entry.raw_key}: {str(e_replace)}", exc_info=True)
+                skip_reason_by_id.setdefault(id(entry), "error:replacement")  # ADDED
+                continue
+
+    except Exception as e_crit:  # Catch-all for ChatProcessingError or other unexpected issues
+        log_counter("chat_dict_processing_error")
+        logging.error(f"Critical error in process_user_input: {str(e_crit)}", exc_info=True)
+        _finalize()                                                   # ADDED
+        return original_input_for_fallback, diagnostics  # Return original input on critical failure (CHANGED: now a tuple)
+
+    _finalize()                                                       # ADDED
+    return temp_user_input, diagnostics                               # CHANGED (tuple)
 
 
 def process_user_input(
@@ -511,13 +907,16 @@ def process_user_input(
 
     The pipeline includes:
     1. Matching entries against the input text (regex and whole-word string matching).
-    2. Applying group scoring to select among matched entries from the same group.
-    3. Filtering entries by probability.
-    4. Applying timed effects (delay, cooldown).
-    5. Enforcing a token budget for the content of selected entries.
-    6. Alerting if the token budget is exceeded by the (potentially filtered) entries.
-    7. Sorting the final set of entries based on the chosen strategy.
-    8. Applying replacements: each selected entry replaces its key in the user input
+    2. Filtering out disabled entries (kept visible as near-misses in diagnostics).
+    3. Applying group scoring to select among matched entries from the same group.
+    4. Filtering entries by probability.
+    5. Applying timed effects (delay, cooldown).
+    6. Sorting entries by the chosen strategy, then by priority (stable, descending;
+       strategy order breaks ties among equal priorities).
+    7. Enforcing a token budget by walking the sorted entries and stopping once the
+       budget would be exceeded.
+    8. Alerting if the token budget is exceeded by the (potentially filtered) entries.
+    9. Applying replacements: each selected entry replaces its key in the user input
        (respecting `entry.max_replacements`).
 
     If any step in the pipeline encounters a significant error, it may log the error
@@ -535,129 +934,12 @@ def process_user_input(
     Returns:
         The processed user input string after all applicable transformations.
         Returns the original input if critical errors occur.
+        Diagnostics-aware callers should use process_user_input_with_diagnostics.
     """
-    current_time = datetime.now()
-    original_input_for_fallback = user_input # Save for critical error case
-    temp_user_input = user_input
-
-    try:
-        # 1. Match entries (uses refined match_whole_words for strings)
-        logging.debug(f"Chat Dictionary: Initial matching for: {user_input[:100]}")
-        # The original `entry.matches()` is a simple check. `match_whole_words` is more robust.
-        # The original `process_user_input` had `entry.matches(user_input)` then later `match_whole_words`.
-        # Consolidating to `match_whole_words` as the primary matching mechanism.
-        try:
-            # Ensure entries are ChatDictionary instances
-            valid_initial_entries = [e for e in entries if isinstance(e, ChatDictionary)]
-            if len(valid_initial_entries) != len(entries):
-                logging.warning("Some provided entries were not ChatDictionary instances and were skipped.")
-
-            matched_entries = match_whole_words(valid_initial_entries, user_input)
-        except re.error as e:
-            log_counter("chat_dict_regex_error", labels={"key": "compilation_phase"}) # Generic key
-            logging.error(f"Invalid regex pattern during initial matching. Error: {str(e)}")
-            matched_entries = []
-        except Exception as e_match:
-            log_counter("chat_dict_match_error")
-            logging.error(f"Error during initial matching: {str(e_match)}", exc_info=True)
-            matched_entries = []
-
-
-        logging.debug(f"Matched entries after initial filtering: {[e.raw_key for e in matched_entries]}")
-
-        # 2. Apply group scoring
-        try:
-            logging.debug(f"Chat Dictionary: Applying group scoring for {len(matched_entries)} entries")
-            matched_entries = group_scoring(matched_entries)
-        except Exception as e_gs: # More specific exception if defined (ChatProcessingError)
-            log_counter("chat_dict_group_scoring_error")
-            logging.error(f"Error in group scoring: {str(e_gs)}")
-            matched_entries = []  # Fallback to empty list
-
-        # 3. Apply probability filter
-        try:
-            logging.debug(f"Chat Dictionary: Filtering by probability for {len(matched_entries)} entries")
-            matched_entries = filter_by_probability(matched_entries)
-        except Exception as e_prob:
-            log_counter("chat_dict_probability_error")
-            logging.error(f"Error in probability filtering: {str(e_prob)}")
-            matched_entries = []  # Fallback to empty list
-
-        # 4. Apply timed effects (filter out those not ready)
-        # And update last_triggered for those that *will* be used
-        active_timed_entries = []
-        try:
-            logging.debug("Chat Dictionary: Applying timed effects")
-            for entry in matched_entries:
-                if apply_timed_effects(entry, current_time): # Checks if eligible
-                    active_timed_entries.append(entry)
-            matched_entries = active_timed_entries
-        except Exception as e_time:
-            log_counter("chat_dict_timed_effects_error")
-            logging.error(f"Error applying timed effects: {str(e_time)}")
-            matched_entries = []  # Fallback to empty list
-
-        # 5. Enforce token budget
-        try:
-            logging.debug(f"Chat Dictionary: Enforcing token budget for {len(matched_entries)} entries")
-            matched_entries = enforce_token_budget(matched_entries, max_tokens)
-        except TokenBudgetExceededWarning as e:
-            log_counter("chat_dict_token_limit")
-            logging.warning(str(e))
-            matched_entries = []  # Fallback to empty list
-        except Exception as e_budget:
-            log_counter("chat_dict_token_budget_error")
-            logging.error(f"Error enforcing token budget: {str(e_budget)}")
-            matched_entries = []  # Fallback to empty list
-
-        # Alert if token budget exceeded
-        try:
-            alert_token_budget_exceeded(matched_entries, max_tokens)
-        except Exception as e_alert:
-            log_counter("chat_dict_token_alert_error")
-            logging.error(f"Error in token budget alert: {str(e_alert)}")
-
-        # Apply replacement strategy
-        try:
-            logging.debug("Chat Dictionary: Applying replacement strategy")
-            matched_entries = apply_strategy(matched_entries, strategy)
-        except Exception as e_strategy:
-            log_counter("chat_dict_strategy_error")
-            logging.error(f"Error applying strategy: {str(e_strategy)}")
-            matched_entries = []  # Fallback to empty list
-
-        # Generate output with single replacement per match
-        for entry in matched_entries:
-            try:
-                logging.debug("Chat Dictionary: Applying replacements")
-                # Use a copy of max_replacements for this run if needed, or modify original for state
-                replacements_done_for_this_entry = 0
-                # Original code had `entry.max_replacements > 0` check outside loop.
-                # If multiple replacements are allowed by one entry definition:
-                current_max_replacements = entry.max_replacements # Use current value
-                while current_max_replacements > 0:
-                    temp_user_input, replaced_count = apply_replacement_once(temp_user_input, entry)
-                    if replaced_count > 0:
-                        replacements_done_for_this_entry += 1
-                        current_max_replacements -= 1
-                        # Update last_triggered for entries that actually made a replacement
-                        entry.last_triggered = current_time
-                    else:
-                        break # No more matches for this key
-                if replacements_done_for_this_entry > 0:
-                     logging.debug(f"Replaced {replacements_done_for_this_entry} occurrences of '{entry.raw_key}'")
-
-            except Exception as e_replace:
-                log_counter("chat_dict_replacement_error", labels={"key": entry.raw_key})
-                logging.error(f"Error applying replacement for entry {entry.raw_key}: {str(e_replace)}", exc_info=True)
-                continue
-
-    except Exception as e_crit: # Catch-all for ChatProcessingError or other unexpected issues
-        log_counter("chat_dict_processing_error")
-        logging.error(f"Critical error in process_user_input: {str(e_crit)}", exc_info=True)
-        return original_input_for_fallback # Return original input on critical failure
-
-    return temp_user_input
+    processed_text, _diagnostics = process_user_input_with_diagnostics(
+        user_input, entries, max_tokens=max_tokens, strategy=strategy
+    )
+    return processed_text
 
 
 #######################################################################################################################
