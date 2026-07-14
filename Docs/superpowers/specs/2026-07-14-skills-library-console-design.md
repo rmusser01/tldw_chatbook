@@ -49,7 +49,9 @@ agent discovers and calls them mid-run as tools. Both are thin adapters over shi
   user_invocable, disable_model_invocation, context, model — model shown with a "not applied in
   v1" hint), body TextArea, supporting-files list (read-only names + sizes in v1; add/remove via
   import), and the **trust panel**: current trust state, what-changed diff, approve (passphrase
-  modal — reuse `SkillTrustPassphraseModal`), revoke. Explicit Save with the established
+  modal — reuse `SkillTrustPassphraseModal`). Revoke is DEFERRED: the shipped trust
+  service exposes approve + diff but no revoke/untrust primitive — editing a skill already
+  returns it to needs-review, which covers the practical case. Explicit Save with the established
   save-outcome/conflict discipline; saving a trusted skill marks it needs-review (content hash
   changed) — the editor says so before saving.
 - `tldw_chatbook/Chat/console_skill_resolver.py` — pure-ish resolver registered on
@@ -160,6 +162,7 @@ task-227-adjacent TODO in tool_catalog.py).
 ## Out of scope (named follow-ups)
 
 Skill `model` override (deferred — needs a one-turn provider/model override path);
+trust revoke/untrust (no shipped primitive; edit-marks-needs-review covers the practical case);
 skills-calling-skills; supporting-file editing in the detail canvas (import-only in v1);
 server-side skills backend surfaces beyond what `skills_scope_service` already routes;
 skill marketplace/discovery.
