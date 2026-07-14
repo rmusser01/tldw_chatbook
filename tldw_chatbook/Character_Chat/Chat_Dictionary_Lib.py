@@ -342,7 +342,10 @@ def group_scoring(entries: List[ChatDictionary]) -> List[ChatDictionary]:
             selected_entries.extend(group_entries_list)
         else:
             # For named groups, keep the original behavior of selecting the best.
-            best_entry_in_group = max(group_entries_list, key=lambda e: len(str(e.raw_key)) if e.raw_key else 0)
+            best_entry_in_group = max(
+                group_entries_list,
+                key=lambda e: (getattr(e, "priority", 0), len(str(e.raw_key)) if e.raw_key else 0),
+            )
             selected_entries.append(best_entry_in_group)
 
     logging.debug(f"Selected {len(selected_entries)} entries after group scoring.")
@@ -446,7 +449,7 @@ def match_whole_words(entries: List[ChatDictionary], text: str) -> List[ChatDict
 
     - If an entry's key is a compiled regex, `re.search()` is used.
     - If an entry's key is a plain string, it's matched as a whole word
-      (using `\\b` word boundaries) case-insensitively.
+      (using `\\b` word boundaries) case per entry.case_sensitive.
 
     Args:
         entries: A list of `ChatDictionary` objects.
@@ -462,8 +465,9 @@ def match_whole_words(entries: List[ChatDictionary], text: str) -> List[ChatDict
                 matched_entries.append(entry)
                 logging.debug(f"Chat Dictionary: Matched regex entry: {entry.key.pattern}")
         elif isinstance(entry.key, str): # Plain string key
-            # Ensure whole word match for plain strings, case-insensitive
-            if re.search(rf'\b{re.escape(entry.key)}\b', text, re.IGNORECASE):
+            # Ensure whole word match for plain strings; case per entry.case_sensitive
+            flags = 0 if getattr(entry, "case_sensitive", False) else re.IGNORECASE
+            if re.search(rf'\b{re.escape(entry.key)}\b', text, flags):
                 matched_entries.append(entry)
                 logging.debug(f"Chat Dictionary: Matched string entry: {entry.key}")
     return matched_entries
@@ -490,8 +494,8 @@ def apply_replacement_once(text: str, entry: ChatDictionary) -> Tuple[str, int]:
     Replaces the first occurrence of an entry's key in text with its content.
 
     - If `entry.key` is a regex pattern, `re.subn()` with `count=1` is used.
-    - If `entry.key` is a string, a case-insensitive whole-word regex is
-      constructed and used with `re.subn()` with `count=1`.
+    - If `entry.key` is a string, a whole-word regex is constructed respecting
+      entry.case_sensitive and used with `re.subn()` with `count=1`.
 
     Args:
         text: The input text where replacement should occur.
@@ -506,7 +510,8 @@ def apply_replacement_once(text: str, entry: ChatDictionary) -> Tuple[str, int]:
     if isinstance(entry.key, re.Pattern):
         replaced_text, replaced_count = entry.key.subn(entry.content, text, count=1)
     else: # Plain string key
-        pattern = re.compile(rf'\b{re.escape(str(entry.key))}\b', re.IGNORECASE) # Ensure entry.key is str
+        flags = 0 if getattr(entry, "case_sensitive", False) else re.IGNORECASE
+        pattern = re.compile(rf'\b{re.escape(str(entry.key))}\b', flags) # Ensure entry.key is str
         replaced_text, replaced_count = pattern.subn(entry.content, text, count=1)
     return replaced_text, replaced_count
 
