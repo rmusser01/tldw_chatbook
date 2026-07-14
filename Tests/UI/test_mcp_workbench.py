@@ -1110,6 +1110,70 @@ async def test_in_flight_shows_checking_and_cancel_then_completes():
 
 
 @pytest.mark.asyncio
+async def test_in_flight_checking_message_includes_time_bound(monkeypatch):
+    """T7 (P3 UX batch): the CHECKING message ("Working — <action>…") gave
+    no indication of how long an in-flight lifecycle op might sit there
+    before a user gave up on it. `_display_snapshot()` now appends a time
+    bound read from `[mcp] hub_lifecycle_timeout_seconds` (the same setting
+    `UnifiedMCPControlPlaneService._lifecycle_timeout()` uses to actually
+    enforce the timeout) -- default 45s, formatted as an int.
+
+    Monkeypatches `get_cli_setting` to return each call's own default
+    (i.e. "nothing configured") so this assertion can't accidentally pass
+    or fail depending on a developer's real `~/.config/tldw_cli/config.toml`.
+    """
+    monkeypatch.setattr(
+        mcp_workbench_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: default,
+    )
+
+    app = LifecycleApp()
+    app.unified_mcp_service.connect_gate = asyncio.Event()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench._selected_server_key = "local:docs"
+        workbench._start_lifecycle("local:docs", "docs", "connect")
+        await pilot.pause()
+        selected = workbench._snapshot_for_display("local:docs")
+        assert selected.state.value == "checking"
+        assert "(up to" in selected.message
+        assert "(up to 45s)" in selected.message
+        app.unified_mcp_service.connect_gate.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_in_flight_checking_message_time_bound_honors_config_override(monkeypatch):
+    """The time bound is read live from config, not hardcoded -- a
+    non-default `hub_lifecycle_timeout_seconds` must show up in the CHECKING
+    copy verbatim."""
+
+    def fake_get_cli_setting(section, key=None, default=None):
+        if (section, key) == ("mcp", "hub_lifecycle_timeout_seconds"):
+            return 12
+        return default
+
+    monkeypatch.setattr(mcp_workbench_module, "get_cli_setting", fake_get_cli_setting)
+
+    app = LifecycleApp()
+    app.unified_mcp_service.connect_gate = asyncio.Event()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench._selected_server_key = "local:docs"
+        workbench._start_lifecycle("local:docs", "docs", "connect")
+        await pilot.pause()
+        selected = workbench._snapshot_for_display("local:docs")
+        assert "(up to 12s)" in selected.message
+        app.unified_mcp_service.connect_gate.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
 async def test_cancel_requested_cancels_worker():
     app = LifecycleApp()
     app.unified_mcp_service.connect_gate = asyncio.Event()  # never set -> hangs

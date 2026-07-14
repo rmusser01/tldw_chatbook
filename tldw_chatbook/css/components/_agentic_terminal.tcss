@@ -4421,3 +4421,23 @@ Button.mcp-callout {
     height: auto;
     min-height: 0;
 }
+
+/* T7 (P3 UX batch): quiet focus treatment for the hub's scrollable content
+   panes. Both are VerticalScroll (can_focus=True by default, via
+   ScrollableContainer) and, without a rule here, fall back to the generic
+   `*:focus { outline: solid $ds-focus-accent; }` fallback (core/_reset.tcss)
+   -- a heavy boxed cue for panes that just scroll read-only detail text /
+   the legacy Advanced form. Mirrors the idiom already established for
+   Console content panes elsewhere in this file (#console-left-rail-body:
+   focus, #console-workspace-context:focus, #console-workspace-
+   conversations:focus): drop the outline/border and shift the background
+   instead, so keyboard focus stays visible without boxing the pane. Uses
+   $ds-surface-panel (this codebase's quiet-surface token) rather than
+   Textual's built-in $boost, which nothing else in this design system
+   references. */
+#mcp-detail-scroll:focus,
+#mcp-adv-scroll:focus {
+    outline: none;
+    border: none;
+    background: $ds-surface-panel;
+}

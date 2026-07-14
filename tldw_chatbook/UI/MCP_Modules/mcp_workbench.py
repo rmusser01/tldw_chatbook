@@ -729,10 +729,21 @@ class MCPWorkbench(Container):
         action has something correct to fall back to -- this wraps it with
         `as_checking()` only for display, purely based on whether the key is
         currently in `self._in_flight`.
+
+        T7 (P3 UX batch): the CHECKING message ("Working — <action>…") had
+        no indication of how long a stuck lifecycle op might sit there --
+        this appends a time bound, e.g. "connect (up to 45s)", read straight
+        from the same `[mcp] hub_lifecycle_timeout_seconds` setting
+        `UnifiedMCPControlPlaneService._lifecycle_timeout()` already uses to
+        actually enforce the timeout (unified_control_plane_service.py), so
+        the copy can never drift from the real bound without touching
+        readiness.py's `as_checking()` itself.
         """
         if snapshot.server_key in self._in_flight:
             action = self._in_flight_action.get(snapshot.server_key, "update")
-            return as_checking(snapshot, action)
+            timeout_seconds = float(get_cli_setting("mcp", "hub_lifecycle_timeout_seconds", 45))
+            bounded_action = f"{action} (up to {int(timeout_seconds)}s)"
+            return as_checking(snapshot, bounded_action)
         return snapshot
 
     def _snapshot_for_display(self, server_key: str | None) -> ReadinessSnapshot | None:
