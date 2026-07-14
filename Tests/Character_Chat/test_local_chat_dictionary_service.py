@@ -413,21 +413,57 @@ def test_attach_missing_conversation_raises(dictionary_db):
 
 def test_used_by_exact_int_membership_not_substring(dictionary_db):
     # THE 1-vs-11 trap: dict id 1 must NOT match a conversation holding only id 11.
+    # Ids auto-increment from 1, so create 11 dictionaries to force a real id-11
+    # (a function-scoped 2-dictionary fixture only ever yields ids 1 and 2, which
+    # can't distinguish exact-int membership from substring matching).
     service = LocalChatDictionaryService(dictionary_db)
-    d1 = service.create_dictionary({"name": "One"})
-    d11 = service.create_dictionary({"name": "Eleven"})
-    # Force the ids we need by attaching to distinct conversations.
-    conv_with_1 = _seed_conversation(dictionary_db, "has 1")
+    created = [service.create_dictionary({"name": f"Dict {n}"}) for n in range(1, 12)]
+    d1, d11 = created[0], created[10]
+    assert d1["id"] == 1
+    assert d11["id"] == 11
+
+    # Attach ONLY the id-11 dictionary to a conversation.
     conv_with_11 = _seed_conversation(dictionary_db, "has 11")
-    service.attach_to_conversation(d1["id"], conv_with_1)
     service.attach_to_conversation(d11["id"], conv_with_11)
 
+    # Dict id 1 is not attached anywhere: a substring LIKE match ('%1%') would
+    # wrongly catch conv_with_11 (metadata contains "11", which contains "1").
+    used_by_1 = service.list_dictionary_conversations(d1["id"])
+    assert used_by_1["conversations"] == []
+
+    # Attach id 1 elsewhere and confirm its used-by returns exactly that one
+    # conversation, not the id-11 conversation.
+    conv_with_1 = _seed_conversation(dictionary_db, "has 1")
+    service.attach_to_conversation(d1["id"], conv_with_1)
     used_by_1 = service.list_dictionary_conversations(d1["id"])
     ids = {c["conversation_id"] for c in used_by_1["conversations"]}
-    assert conv_with_1 in ids
-    assert conv_with_11 not in ids     # would fail under a substring LIKE match
+    assert ids == {conv_with_1}
     titles = {c["title"] for c in used_by_1["conversations"]}
-    assert "has 1" in titles
+    assert titles == {"has 1"}
+
+
+def test_used_by_tolerates_non_list_active_dictionaries_value(dictionary_db):
+    # Well-formed JSON, but a malformed *value* under a good key:
+    # {"active_dictionaries": 5} is valid JSON yet not iterable as a member
+    # list. list_dictionary_conversations() scans ALL matching rows, so one
+    # pathological row like this must not crash used-by for every dictionary.
+    service = LocalChatDictionaryService(dictionary_db)
+    d = service.create_dictionary({"name": "Meds"})
+    good_conv = _seed_conversation(dictionary_db, "good")
+    service.attach_to_conversation(d["id"], good_conv)
+
+    bad_conv = dictionary_db.add_conversation({"title": "bad metadata"})
+    bad_record = dictionary_db.get_conversation_by_id(bad_conv)
+    dictionary_db.update_conversation(
+        bad_conv,
+        {"metadata": _json.dumps({"active_dictionaries": 5})},
+        expected_version=bad_record["version"],
+    )
+
+    result = service.list_dictionary_conversations(d["id"])  # must not raise
+    ids = {c["conversation_id"] for c in result["conversations"]}
+    assert ids == {good_conv}
+    assert bad_conv not in ids
 
 
 def test_attach_conflict_on_stale_version(dictionary_db, monkeypatch):

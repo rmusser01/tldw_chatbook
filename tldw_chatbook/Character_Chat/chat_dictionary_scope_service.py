@@ -328,7 +328,7 @@ class ChatDictionaryScopeService:
         normalized_mode = self._normalize_mode(mode)
         return await self._invoke(
             normalized_mode,
-            self._statistics_action(normalized_mode, "detail"),
+            self._dictionary_action(normalized_mode, "update"),
             "attach_to_conversation",
             dictionary_id,
             conversation_id,
@@ -338,7 +338,7 @@ class ChatDictionaryScopeService:
         normalized_mode = self._normalize_mode(mode)
         return await self._invoke(
             normalized_mode,
-            self._statistics_action(normalized_mode, "detail"),
+            self._dictionary_action(normalized_mode, "update"),
             "detach_from_conversation",
             dictionary_id,
             conversation_id,

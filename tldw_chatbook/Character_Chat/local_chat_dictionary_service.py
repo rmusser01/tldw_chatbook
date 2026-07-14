@@ -675,6 +675,8 @@ class LocalChatDictionaryService:
         except (TypeError, ValueError):
             meta = {}
         raw = meta.get("active_dictionaries") or []
+        if not isinstance(raw, list):
+            raw = []
         result: list[int] = []
         for value in raw:
             try:
@@ -758,7 +760,12 @@ class LocalChatDictionaryService:
         ).fetchall()
         conversations: list[dict[str, Any]] = []
         for row in rows:
-            if did in self._active_dictionaries({"metadata": row["metadata"]}):
+            try:
+                is_member = did in self._active_dictionaries({"metadata": row["metadata"]})
+            except Exception:
+                # One pathological row's metadata must never break the whole scan.
+                continue
+            if is_member:
                 conversations.append({"conversation_id": str(row["id"]), "title": str(row["title"] or "")})
         return {"conversations": conversations, "source": "local"}
 
