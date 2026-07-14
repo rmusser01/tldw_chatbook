@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 from dataclasses import replace
+from datetime import datetime, timezone
 from typing import Any
 
+from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
 from .server_target_store import ConfiguredServerTargetStore
@@ -1778,3 +1781,78 @@ class UnifiedMCPControlPlaneService:
         if value in (None, ""):
             raise ValueError(f"Unified MCP action requires '{field_name}'.")
         return value
+
+    # ---- Typed local lifecycle/mutation seam (Phase 2) ----------------------
+    # Shared by the Hub UI now and by the Phase 5 chat bridge / agent-runtime
+    # MCPToolProvider (task-201) later. Governance enforcement stays inside
+    # the local service exactly as run_action's branches rely on it.
+
+    def _lifecycle_timeout(self) -> float:
+        try:
+            return float(get_cli_setting("mcp", "hub_lifecycle_timeout_seconds", 45))
+        except (TypeError, ValueError):
+            return 45.0
+
+    def _record_local_attempt(self, profile_id: str, action: str, *,
+                              ok: bool, error: str | None) -> None:
+        store = getattr(self.local_service, "store", None)
+        if store is None:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        previous = store.get_profile_runtime_state(profile_id) or {}
+        store.save_profile_runtime_state(profile_id, {
+            "last_attempt_at": now,
+            "last_action": action,
+            "ok": ok,
+            "last_ok_at": now if ok else previous.get("last_ok_at"),
+            "last_error": None if ok else (error or "")[:300],
+        })
+
+    async def _run_local_lifecycle(self, action: str, profile_id: str, coro):
+        timeout = self._lifecycle_timeout()
+        try:
+            result = await asyncio.wait_for(coro, timeout=timeout)
+        except asyncio.TimeoutError:
+            message = f"Timed out after {timeout:.0f}s"
+            self._record_local_attempt(profile_id, action, ok=False, error=message)
+            raise RuntimeError(message) from None
+        except asyncio.CancelledError:
+            self._record_local_attempt(profile_id, action, ok=False, error="Cancelled")
+            raise
+        except Exception as exc:
+            self._record_local_attempt(profile_id, action, ok=False, error=str(exc))
+            raise
+        self._record_local_attempt(profile_id, action, ok=True, error=None)
+        return result
+
+    async def connect_local_profile(self, profile_id: str) -> dict:
+        return await self._run_local_lifecycle(
+            "connect", profile_id, self.local_service.connect_profile(profile_id))
+
+    async def disconnect_local_profile(self, profile_id: str) -> bool:
+        return await self._run_local_lifecycle(
+            "disconnect", profile_id, self.local_service.disconnect_profile(profile_id))
+
+    async def test_local_profile(self, profile_id: str) -> dict:
+        return await self._run_local_lifecycle(
+            "test", profile_id, self.local_service.test_external_profile(profile_id))
+
+    async def refresh_local_profile(self, profile_id: str) -> dict:
+        return await self._run_local_lifecycle(
+            "refresh", profile_id, self.local_service.refresh_external_profile(profile_id))
+
+    async def save_local_profile(self, payload: dict) -> dict:
+        return self.local_service.save_external_profile(dict(payload or {}))
+
+    async def delete_local_profile(self, profile_id: str) -> bool:
+        return bool(self.local_service.delete_external_profile(profile_id))
+
+    async def local_external_catalog(self) -> list[dict]:
+        records = list(self.local_service.get_external_servers() or [])
+        store = getattr(self.local_service, "store", None)
+        for record in records:
+            profile_id = str(record.get("profile_id") or "")
+            record["runtime_state"] = (
+                store.get_profile_runtime_state(profile_id) if store else None
+            )
+        return records
