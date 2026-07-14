@@ -708,3 +708,102 @@ def test_skill_named_like_a_builtin_never_shadows_it_at_invocation(tmp_path):
     tool_rows = [m for m in store.messages_for_session(session.id)
                  if m.role is ConsoleMessageRole.TOOL]
     assert any("42" in row.content for row in tool_rows)
+
+
+# -- Skills Phase-2 gate finding 1: discovery-heavy runs must not exhaust the
+# bare engine step budget right after a successful skill call, before the
+# final wrap-up reply (Task-14 gate scenario 5: "Find a skill that can
+# shout, load it, and use it on: hello"). --
+
+
+class _ManySkillsService:
+    """9 real skills (> DIRECT_DISCLOSE_THRESHOLD == 8), so the catalog
+    defers everything to find_tools/load_tools -- the exact >8-skill shape
+    that engaged progressive disclosure in the live gate capture."""
+
+    def __init__(self):
+        self.execute_calls = []
+
+    async def get_context(self, *, mode="local"):
+        names = ["shout"] + [f"filler{i}" for i in range(8)]
+        return {
+            "available_skills": [
+                {"name": n, "description": f"{n} skill", "argument_hint": "[args]",
+                 "trust_blocked": False, "disable_model_invocation": False}
+                for n in names
+            ],
+            "blocked_skills": [],
+        }
+
+    async def execute_skill(self, name, *, mode="local", args=None):
+        self.execute_calls.append((name, args))
+        return {
+            "skill_name": name,
+            "rendered_prompt": f"SHOUT[{args}]",
+            "allowed_tools": None,
+            "execution_mode": "inline",
+        }
+
+
+def _discovery_heavy_shout_scripts():
+    # Mirrors the gate's live raw step log: find_tools({"query": "shout"})
+    # -> load_tools({"ids": ["skill:shout"]}) -> shout({"args": "hello"})
+    # -> the sub-agent's own turn -> the primary's final wrap-up reply.
+    return [
+        [_fence("find_tools", {"query": "shout"})],
+        [_fence("load_tools", {"ids": ["skill:shout"]})],
+        [_fence("shout", {"args": "hello"})],
+        ["HELLO"],              # sub-agent turn (never streamed to the store)
+        ["Shouted: HELLO"],     # primary final answer
+    ]
+
+
+def test_discovery_heavy_skill_run_completes_done_not_stuck(tmp_path):
+    """Task-14 gate finding 1 repro: find_tools -> load_tools -> a skill
+    call -> final answer needs exactly 10 primary-loop steps at minimum (3
+    steps per tool round x 3 rounds, plus 1 final model turn -- see
+    agent_runtime.run_agent_loop's per-round STEP_MODEL/STEP_TOOL_CALL/
+    STEP_TOOL_RESULT accounting). The bare engine default
+    (agent_models.RunBudget.max_steps == 8, pinned by
+    test_agent_models.test_budget_defaults) is ONE ROUND short of that --
+    it exhausts right after the skill's tool_result, one step before the
+    wrap-up reply, even though every tool call already succeeded. The
+    Console bridge must give this exact shape enough headroom to actually
+    reach the final answer and persist `done`."""
+    scripts = _discovery_heavy_shout_scripts()
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    skills_service = _ManySkillsService()
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
+        skills_service=skills_service)
+
+    outcome = _run(bridge, store, session, assistant.id, conversation_id="conv-discover")
+
+    assert outcome.status == "done"
+    assert outcome.final_text == "Shouted: HELLO"
+    assert skills_service.execute_calls == [("shout", "hello")]
+    assert db.count_subagent_runs("conv-discover") == 1
+    tool_rows = [m for m in store.messages_for_session(session.id)
+                 if m.role is ConsoleMessageRole.TOOL]
+    assert any("shout" in row.content for row in tool_rows)
+
+
+def test_console_run_budget_is_raised_above_the_bare_engine_default(tmp_path):
+    """Pins the config-assembly override directly: a primary Console run's
+    PERSISTED budget must sit strictly above the engine's own pure default
+    (RunBudget().max_steps == 8 -- see test_agent_models.test_budget_defaults,
+    which stays unchanged) -- with enough headroom (>= 16, per the counted
+    10-step discovery-heavy floor above) to survive a real disclosure run,
+    and a proportionally raised wall-clock allowance for the extra turns."""
+    bridge, db, store, session, aid = _bridge(tmp_path, [["hi there"]])
+    _run(bridge, store, session, aid, conversation_id="conv-budget")
+    run = db.list_runs("conv-budget")[0]
+    assert run["agent_kind"] == "primary"
+    assert run["budget"]["max_steps"] > 8
+    assert run["budget"]["max_steps"] >= 16
+    assert run["budget"]["max_wall_seconds"] > 240.0

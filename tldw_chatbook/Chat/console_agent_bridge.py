@@ -38,6 +38,28 @@ CONSOLE_AGENT_OPERATING_PROMPT = (
     "result. Use spawn_subagent to delegate a self-contained sub-task to an "
     "isolated helper. Keep replies concise.")
 
+# Skills Phase-2 gate finding 1 (Task-14 report, scenario 5: "Find a skill
+# that can shout, load it, and use it on: hello"): a discovery-heavy run --
+# find_tools -> load_tools -> a tool/skill call -> the final wrap-up reply --
+# needs exactly 10 primary-loop steps at the floor (3 steps per tool round:
+# STEP_MODEL + STEP_TOOL_CALL + STEP_TOOL_RESULT, times 3 rounds, plus 1
+# final STEP_MODEL with no tool call -- see agent_runtime.run_agent_loop).
+# That floor already sits ABOVE the engine's own pure default
+# (agent_models.RunBudget.max_steps == 8), so any >DIRECT_DISCLOSE_THRESHOLD
+# skill catalog -- which forces the find/load path -- exhausts the bare
+# default right after the skill's successful tool_result, one step short of
+# the wrap-up reply: the run persists `stuck` even though every tool call
+# already succeeded (live-gate confirmed). max_steps=16 gives ~60% headroom
+# above the 10-step floor (room for ~2 more tool rounds for a model that
+# retries or double-checks); max_wall_seconds is raised by the same 16/8=2x
+# factor (240s -> 480s) so a run that actually uses that headroom still has
+# time for it at the slow local-model pace this gate exercises
+# (25-50s/turn x up to ~6 model turns). The engine's own RunBudget defaults
+# (agent_models.RunBudget) are left UNCHANGED -- this override applies only
+# at the Console bridge's own config-assembly site (run_reply below); other
+# callers of RunBudget()/AgentConfig keep the bare engine default.
+CONSOLE_RUN_BUDGET = RunBudget(max_steps=16, max_wall_seconds=480.0)
+
 _QUIET_STEP_TOOLS = {FIND_TOOLS_NAME, LOAD_TOOLS_NAME}
 
 
@@ -526,7 +548,7 @@ class ConsoleAgentBridge:
             model=model,
             system_prompt=compose_agent_system_prompt(session_system_prompt),
             allowed_tools=allowed_tools,
-            budget=RunBudget())
+            budget=CONSOLE_RUN_BUDGET)
         # One event loop for the whole run (PR #629 Fix 1(c)): every turn
         # this run makes -- primary tool-call turns, any sub-agent turns,
         # and the final-answer turn -- bridges through this same loop via
