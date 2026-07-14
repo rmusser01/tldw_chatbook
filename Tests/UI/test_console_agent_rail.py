@@ -300,6 +300,113 @@ async def test_agent_section_lines_render_brackets_literally_not_escaped():
         assert "\\[" not in subagents_text
 
 
+# --- Gate Finding 2: the top-level Agent summary must re-derive from
+# AgentRunsDB (via bridge.historical_snapshot) when live_snapshot is idle
+# (e.g. right after an app restart), instead of showing "Agent: idle"
+# forever until the next live run in this process. ---
+
+
+@pytest.mark.asyncio
+async def test_agent_section_falls_back_to_historical_snapshot_when_live_is_idle():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
+
+        class _FakeBridge:
+            def live_snapshot(self, conversation_id):
+                return AgentLiveSnapshot()   # idle -- simulates a fresh process
+
+            def historical_snapshot(self, conversation_id):
+                return AgentLiveSnapshot(
+                    status="done", step=1,
+                    steps=(AgentLiveStep("model", "The capital of France is Paris.",
+                                          "primary"),),
+                    subagents=(SubAgentSummary("research pricing", status="done"),),
+                )
+
+            def subagent_run(self, run_id):
+                return None
+
+            def subagent_runs(self, conversation_id):
+                return []
+
+        console._console_agent_bridge = _FakeBridge()
+        console._console_agent_drilldown_run_id = None
+        status_line, steps_text, subagents_text = console._console_agent_section_lines()
+
+        assert status_line == "Agent: done"
+        assert "Paris" in steps_text
+        assert "research pricing" in subagents_text
+
+
+@pytest.mark.asyncio
+async def test_agent_section_prefers_live_snapshot_over_historical_when_present():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
+
+        calls = []
+
+        class _FakeBridge:
+            def live_snapshot(self, conversation_id):
+                return AgentLiveSnapshot(status="running", step=2)
+
+            def historical_snapshot(self, conversation_id):
+                calls.append(conversation_id)
+                return AgentLiveSnapshot(status="done")
+
+            def subagent_run(self, run_id):
+                return None
+
+            def subagent_runs(self, conversation_id):
+                return []
+
+        console._console_agent_bridge = _FakeBridge()
+        console._console_agent_drilldown_run_id = None
+        status_line, _steps, _subagents = console._console_agent_section_lines()
+
+        assert status_line == "Agent: running · step 2"
+        assert calls == []   # historical_snapshot must not even be consulted
+
+
+def test_resume_rederives_top_level_agent_summary_from_durable_run_store(tmp_path):
+    """Full-stack (real ConsoleAgentBridge + real AgentRunsDB) version of the
+    same gate finding: a fresh bridge over a durable DB with a completed
+    primary+subagent run reports that history via historical_snapshot, not
+    the idle default -- matching the badge/drill-in's existing durability."""
+    from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    db_path = tmp_path / "agent_runs.db"
+    db = AgentRunsDB(db_path, client_id="t")
+    primary_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    db.append_steps(primary_id, [
+        {"index": 0, "kind": "model", "summary": "final answer",
+         "tool_name": "", "args": None, "result": "", "created_at": ""},
+    ])
+    db.set_status(primary_id, "done", result="final answer")
+    sub_id = db.create_run(
+        conversation_id="conv-1", agent_kind="subagent",
+        task="research pricing", parent_run_id=primary_id)
+    db.set_status(sub_id, "done", result="done researching")
+
+    # Simulate resume: a brand-new bridge/DB handle over the same file.
+    fresh_bridge = ConsoleAgentBridge(
+        agent_runs_db=AgentRunsDB(db_path, client_id="t"), store=None,
+        provider_gateway=None)
+
+    assert fresh_bridge.live_snapshot("conv-1").status == "idle"
+    historical = fresh_bridge.historical_snapshot("conv-1")
+    assert historical.status == "done"
+    assert historical.subagents and historical.subagents[0].text == "research pricing"
+
+
 # --- Finding C: a sub-agent drill-in is scoped to the conversation active
 # when the user drilled in -- switching conversations must drop back to
 # the overview instead of showing a foreign conversation's sub-agent. ---

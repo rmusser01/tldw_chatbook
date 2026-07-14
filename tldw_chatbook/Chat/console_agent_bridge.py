@@ -169,6 +169,7 @@ class ConsoleAgentBridge:
         self._allowed_tools = tuple(
             e.name for e in registry.list_catalog()) + (SPAWN_TOOL_NAME,)
         self._live: dict[str, AgentLiveSnapshot] = {}
+        self._historical_cache: dict[str, AgentLiveSnapshot] = {}
 
     # -- run ------------------------------------------------------------
 
@@ -188,6 +189,10 @@ class ConsoleAgentBridge:
         live_steps: list[AgentLiveStep] = []
         subagents: list[SubAgentSummary] = []
         self._live[conversation_id] = AgentLiveSnapshot(status="running")
+        # A live run is starting -- live_snapshot takes over as the rail's
+        # source of truth for this conversation from here on, so any
+        # previously cached historical (DB-derived) summary is stale.
+        self._historical_cache.pop(conversation_id, None)
 
         def on_step(step: AgentStep, agent_kind: str) -> None:
             live_steps.append(AgentLiveStep(step.kind, self._summarize(step), agent_kind))
@@ -232,12 +237,48 @@ class ConsoleAgentBridge:
         self._live[conversation_id] = AgentLiveSnapshot(
             status=outcome.status, step=len(live_steps),
             steps=tuple(live_steps[-5:]), subagents=tuple(subagents))
+        # The run just finished -- drop any stale historical cache entry so
+        # a *later* resume (in a future process) always re-derives fresh
+        # rather than reading this run's now-superseded snapshot (belt and
+        # braces on top of the pop at run start above).
+        self._historical_cache.pop(conversation_id, None)
         return outcome
 
     # -- rail reads -----------------------------------------------------
 
     def live_snapshot(self, conversation_id: str) -> AgentLiveSnapshot:
         return self._live.get(conversation_id, AgentLiveSnapshot())
+
+    def historical_snapshot(self, conversation_id: str) -> AgentLiveSnapshot:
+        """Rail summary derived from ``AgentRunsDB`` for a conversation this
+        bridge instance has never run in-process (Plan-B agent-runtime gate
+        Finding 2): after an app restart, ``live_snapshot`` stays ``idle``
+        forever for a resumed conversation, since its ``_live`` dict starts
+        empty every new process. The drill-in (``subagent_run``/
+        ``subagent_runs``) and the ``[N Sub-Agents]`` badge already read
+        ``AgentRunsDB`` directly and correctly survive a restart; this gives
+        the rail's top-level summary line the same durability, by deriving
+        it from the most recent non-superseded primary run for the
+        conversation and that primary's own sub-agent runs.
+
+        Returns the idle default when the conversation has no primary run
+        at all -- callers should prefer ``live_snapshot`` and only fall
+        back to this when it reports ``idle`` (see
+        ``ChatScreen._console_agent_section_lines``), so a truly-idle
+        conversation (never run, ever) renders identically either way.
+
+        Cached per ``conversation_id`` (Task-7 discipline: the rail poll
+        ticks every 0.2s and must not hit the DB on every tick) --
+        invalidated whenever this bridge instance itself starts or
+        finishes a run for that conversation, at which point
+        ``live_snapshot`` takes over as the source of truth anyway.
+        """
+        cached = self._historical_cache.get(conversation_id)
+        if cached is not None:
+            return cached
+        snapshot = self._derive_historical_snapshot(conversation_id)
+        self._historical_cache[conversation_id] = snapshot
+        return snapshot
 
     def subagent_runs(self, conversation_id: str) -> list[dict]:
         return [r for r in self._db.list_runs(conversation_id)
@@ -289,3 +330,47 @@ class ConsoleAgentBridge:
             if record["agent_kind"] == AGENT_KIND_PRIMARY:
                 return record["id"]
         return None
+
+    def _derive_historical_snapshot(self, conversation_id: str) -> AgentLiveSnapshot:
+        # One query covers both the primary lookup and its sub-agents --
+        # AgentRunsDB has no separate "get one conversation's tree" call,
+        # and issuing two queries here would double the DB hit this cache
+        # exists to avoid.
+        records = self._db.list_runs(conversation_id, include_superseded=False)
+        primary = next(
+            (r for r in records if r["agent_kind"] == AGENT_KIND_PRIMARY), None)
+        if primary is None:
+            return AgentLiveSnapshot()
+        steps = tuple(
+            AgentLiveStep(
+                kind=str(step.get("kind") or ""),
+                text=self._summarize_persisted_step(step),
+                agent_kind=AGENT_KIND_PRIMARY,
+            )
+            for step in (primary.get("steps") or [])[-5:]
+        )
+        subagents = tuple(
+            SubAgentSummary(
+                text=str(record.get("task") or ""),
+                status=str(record.get("status") or "running"),
+            )
+            for record in records
+            if record["agent_kind"] == AGENT_KIND_SUBAGENT
+            and record.get("parent_run_id") == primary["id"]
+        )
+        return AgentLiveSnapshot(
+            status=str(primary.get("status") or "idle"),
+            step=len(primary.get("steps") or []),
+            steps=steps,
+            subagents=subagents,
+        )
+
+    @staticmethod
+    def _summarize_persisted_step(step: dict) -> str:
+        # Mirrors _summarize's precedence for a live AgentStep, but reads a
+        # persisted (JSON-decoded) step dict instead -- also left raw (no
+        # escaping) for the same Finding-B reason: this text only ever
+        # renders into a markup=False Static.
+        raw = (step.get("summary") or step.get("result")
+               or step.get("tool_name") or step.get("kind") or "")
+        return str(raw)[:200]

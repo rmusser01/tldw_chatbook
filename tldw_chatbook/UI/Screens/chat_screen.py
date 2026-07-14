@@ -1727,6 +1727,17 @@ class ChatScreen(BaseAppScreen):
         catching any switch path that doesn't itself clear the drill-down
         -- and falls back to the overview on a mismatch rather than show
         a foreign conversation's sub-agent detail.
+
+        Gate Finding 2 (agent-runtime live gate): the top-level overview
+        line used to read only ``bridge.live_snapshot`` -- an in-memory,
+        per-process cache that starts empty every new bridge instance, so
+        it showed "Agent: idle" for a resumed conversation right after an
+        app restart even though the drill-in and the conversation-row
+        badge both correctly re-derived from ``AgentRunsDB``. An idle live
+        snapshot now falls back to ``bridge.historical_snapshot`` (cached
+        by the bridge itself, so this does not add a DB hit per 0.2s poll
+        tick) -- a live/in-process run always reports non-"idle" and keeps
+        precedence over the fallback.
         """
         bridge = self._ensure_console_agent_bridge()
         conversation_id = self._current_console_rail_conversation_id() or ""
@@ -1758,6 +1769,22 @@ class ChatScreen(BaseAppScreen):
             # a stale/foreign drill-in view.
             self._console_agent_drilldown_run_id = None
         snapshot = bridge.live_snapshot(conversation_id)
+        if snapshot.status == "idle":
+            # Finding 2 (Plan-B agent-runtime gate): this bridge instance
+            # has never run this conversation in-process -- most likely a
+            # resumed conversation right after an app restart, since
+            # ``live_snapshot`` is an in-memory-only, per-process cache
+            # that starts empty every new instance. Fall back to
+            # AgentRunsDB so the summary reflects history immediately
+            # instead of showing "Agent: idle" until the next live run.
+            # A live run already in progress/finished in this process
+            # always reports a non-"idle" status above and keeps
+            # precedence -- this fallback is only ever consulted when
+            # there is nothing live to show. ``getattr`` tolerates a bare
+            # test double that only implements ``live_snapshot``.
+            historical = getattr(bridge, "historical_snapshot", None)
+            if historical is not None:
+                snapshot = historical(conversation_id)
         status = f"Agent: {snapshot.status}"
         if snapshot.status == "running":
             status = f"Agent: running · step {snapshot.step}"

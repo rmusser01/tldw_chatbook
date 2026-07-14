@@ -211,3 +211,85 @@ def test_stop_mid_final_answer_persists_cancelled_and_store_agrees(tmp_path):
     assert outcome.status == "cancelled"
     assert db.list_runs("conv-1")[0]["status"] == "cancelled"
     assert store.get_message(aid).content == outcome.final_text
+
+
+# -- Plan-B agent-runtime gate Finding 2: rail summary re-derived from
+# AgentRunsDB after a restart, when this bridge instance has no in-process
+# live-run record for the conversation. --
+
+
+def test_historical_snapshot_idle_when_conversation_never_ran(tmp_path):
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+    snap = bridge.historical_snapshot("conv-never-seen")
+    assert snap.status == "idle"
+    assert snap.steps == ()
+    assert snap.subagents == ()
+
+
+def test_historical_snapshot_derives_status_steps_and_subagents_from_db(tmp_path):
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    primary_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    db.append_steps(primary_id, [
+        {"index": 0, "kind": "model", "summary": "The capital of France is Paris.",
+         "tool_name": "", "args": None, "result": "", "created_at": ""},
+    ])
+    db.set_status(primary_id, "done", result="The capital of France is Paris.")
+    sub_id = db.create_run(
+        conversation_id="conv-1", agent_kind="subagent",
+        task="research pricing", parent_run_id=primary_id)
+    db.set_status(sub_id, "done", result="done researching")
+
+    # Fresh bridge instance -- simulates an app restart: `_live` starts empty.
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+    assert bridge.live_snapshot("conv-1").status == "idle"
+
+    snap = bridge.historical_snapshot("conv-1")
+    assert snap.status == "done"
+    assert len(snap.steps) == 1
+    assert "Paris" in snap.steps[0].text
+    assert snap.steps[0].agent_kind == "primary"
+    assert len(snap.subagents) == 1
+    assert snap.subagents[0].text == "research pricing"
+    assert snap.subagents[0].status == "done"
+
+
+def test_historical_snapshot_ignores_subagents_of_other_runs(tmp_path):
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    primary_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    db.set_status(primary_id, "done", result="ok")
+    other_primary_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    db.set_status(other_primary_id, "superseded")
+    db.create_run(
+        conversation_id="conv-1", agent_kind="subagent",
+        task="orphaned", parent_run_id=other_primary_id)
+
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+    snap = bridge.historical_snapshot("conv-1")
+    assert snap.status == "done"
+    assert snap.subagents == ()
+
+
+def test_historical_snapshot_caches_per_conversation_not_hit_every_call(tmp_path, monkeypatch):
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    primary_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    db.set_status(primary_id, "done", result="ok")
+
+    calls = []
+    original = db.list_runs
+
+    def spy(conversation_id, *args, **kwargs):
+        calls.append(conversation_id)
+        return original(conversation_id, *args, **kwargs)
+
+    monkeypatch.setattr(db, "list_runs", spy)
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+
+    first = bridge.historical_snapshot("conv-1")
+    second = bridge.historical_snapshot("conv-1")
+    assert first == second
+    assert len(calls) == 1   # the 0.2s rail poll must not re-hit the DB
+
+    # A different conversation is a separate cache entry.
+    bridge.historical_snapshot("conv-2")
+    assert len(calls) == 2
