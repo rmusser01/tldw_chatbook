@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
@@ -25,6 +27,7 @@ from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...DB.ChaChaNotes_DB import ConflictError
 from ...tldw_api import PersonaProfileCreate, PersonaProfileUpdate
 from ...Utils.path_validation import validate_path_simple
+from ...Utils.paths import get_user_data_dir
 from ...Widgets.Console.console_rail_handle import ConsoleRailHandle
 from ...Widgets.confirmation_dialog import ConfirmationDialog, UnsavedChangesDialog
 from ...Widgets.destination_workbench import DestinationModeStrip
@@ -65,6 +68,7 @@ from ...Widgets.Persona_Widgets.personas_dictionary_detail import (
     DictionaryEntryAddRequested,
     DictionaryEntryDeleteRequested,
     DictionaryEntryUpdateRequested,
+    DictionaryExportRequested,
     DictionarySettingsEdited,
     DictionarySettingsSaveRequested,
     DictionaryVersionRevertRequested,
@@ -1205,6 +1209,78 @@ class PersonasScreen(BaseAppScreen):
         self.query_one(PersonasLibraryPane).mark_active_row("dictionary", entity_id)
         self._sync_inspector_console_actions()
         await self._refresh_dictionary_versions()
+
+    _MARKDOWN_LOSSY_FIELDS = (
+        "regex/type, probability, group, max replacements, timed effects, "
+        "enabled, case-sensitivity, priority"
+    )
+
+    @on(DictionaryExportRequested)
+    async def _handle_dictionary_export(self, message: DictionaryExportRequested) -> None:
+        message.stop()
+        if self.state.selected_entity_kind != "dictionary" or not self.state.selected_entity_id:
+            return
+        if self._io_dialog_active:
+            return
+        self._io_dialog_active = True
+        self.run_worker(self._dictionary_export_worker(message.fmt), group="personas-io")
+
+    async def _confirm_lossy_markdown_export(self) -> bool:
+        """True when the user accepted the lossy-markdown warning."""
+        dialog = ConfirmationDialog(
+            title="Export Markdown",
+            message=(
+                "Markdown keeps only pattern and replacement text. These fields "
+                f"are DROPPED: {self._MARKDOWN_LOSSY_FIELDS}. Use JSON for a full backup."
+            ),
+            confirm_label="Export anyway",
+            cancel_label="Cancel",
+        )
+        try:
+            return bool(await self.app.push_screen_wait(dialog))
+        except Exception:
+            logger.opt(exception=True).warning("Could not show the lossy-export dialog.")
+            return False
+
+    async def _dictionary_export_worker(self, fmt: str) -> None:
+        try:
+            if fmt == "markdown" and not await self._confirm_lossy_markdown_export():
+                return
+            entity_id = self.state.selected_entity_id
+            service = self._dictionary_scope_service()
+            if service is None or not entity_id:
+                return
+            detail = self.query_one(PersonasDictionaryDetailWidget)
+            try:
+                if fmt == "json":
+                    response = await service.export_json(int(entity_id), mode="local")
+                    body = json.dumps(response, indent=2, ensure_ascii=False)
+                    extension = "json"
+                else:
+                    response = await service.export_markdown(int(entity_id), mode="local")
+                    body = str(response.get("content") or "")
+                    extension = "md"
+            except Exception as exc:
+                logger.opt(exception=True).warning(f"Could not export dictionary {entity_id}.")
+                detail.set_status(f"Export failed: {exc}")
+                return
+            name = str(self.state.selected_entity_name or "dictionary")
+            slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "dictionary"
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            exports_dir = get_user_data_dir() / "exports"
+            try:
+                exports_dir.mkdir(parents=True, exist_ok=True)
+                target = exports_dir / f"{slug}-{stamp}.{extension}"
+                temp = exports_dir / f".{slug}-{stamp}.{extension}.tmp"
+                temp.write_text(body, encoding="utf-8")
+                temp.replace(target)
+            except OSError as exc:
+                logger.opt(exception=True).warning("Could not write the export file.")
+                detail.set_status(f"Export failed: {exc}")
+                return
+            detail.set_status(f"Exported to {target}")
+        finally:
+            self._io_dialog_active = False
 
     async def _reload_selected_dictionary_entries(self) -> bool:
         """Re-fetch entries + version after a mutation (positional ids shift).

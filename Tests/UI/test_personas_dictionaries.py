@@ -367,6 +367,28 @@ class FakeDictScopeService:
             }
         return response
 
+    async def export_json(self, dictionary_id: int, mode: str = "local") -> dict:
+        record = self.records[int(dictionary_id)]
+        return {
+            "dictionary_id": int(dictionary_id),
+            "data": {
+                "name": record["name"], "description": record.get("description") or "",
+                "content": None,
+                "entries": copy.deepcopy(record["entries"]),
+                "strategy": record.get("strategy") or "sorted_evenly",
+                "max_tokens": record.get("max_tokens") or 1000,
+                "enabled": bool(record.get("enabled", True)),
+                "version": record.get("version", 1),
+            },
+            "source": "local",
+        }
+
+    async def export_markdown(self, dictionary_id: int, mode: str = "local") -> dict:
+        record = self.records[int(dictionary_id)]
+        lines = [f"{e.get('pattern')}: {e.get('replacement')}" for e in record["entries"]]
+        return {"dictionary_id": int(dictionary_id), "name": record["name"],
+                "content": "\n".join(lines) + ("\n" if lines else ""), "source": "local"}
+
 
 def make_dict_record(
     record_id: int = 1,
@@ -1669,3 +1691,76 @@ class TestDictionaryVersionsTab:
             await pilot.pause()
             assert fake_dict_service.records[1]["name"] == "Medical Abbrev"  # restored
             assert screen.query_one("#personas-dict-name", Input).value == "Medical Abbrev"  # detail reloaded
+
+
+class TestDictionaryExport:
+    async def _select_first(self, pilot, screen):
+        rows = screen.query_one("#personas-library-rows", ListView)
+        rows.index = 0
+        rows.action_select_cursor()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+    async def test_export_json_writes_file_and_reports_path(self, mock_app_instance, stub_characters, fake_dict_service, tmp_path, monkeypatch):
+        from textual.widgets import TabbedContent
+        import tldw_chatbook.UI.Screens.personas_screen as screen_module
+
+        monkeypatch.setattr(screen_module, "get_user_data_dir", lambda: tmp_path)
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            screen.query_one("#personas-dict-tabs", TabbedContent).active = "personas-dict-tab-settings"
+            await pilot.pause()
+            await pilot.click("#personas-dict-export-json")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            files = list((tmp_path / "exports").glob("medical-abbrev-*.json"))
+            assert len(files) == 1
+            import json as jsonlib
+            payload = jsonlib.loads(files[0].read_text())
+            assert payload["data"]["name"] == "Medical Abbrev"
+            assert payload["data"]["strategy"] == "sorted_evenly"
+            status = str(screen.query_one("#personas-dict-status", Static).renderable)
+            assert "Exported to" in status and str(files[0]) in status
+
+    async def test_markdown_export_gates_on_lossy_confirm(self, mock_app_instance, stub_characters, fake_dict_service, tmp_path, monkeypatch):
+        from textual.widgets import TabbedContent
+        import tldw_chatbook.UI.Screens.personas_screen as screen_module
+
+        monkeypatch.setattr(screen_module, "get_user_data_dir", lambda: tmp_path)
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+
+            async def _declined():
+                return False
+
+            monkeypatch.setattr(screen, "_confirm_lossy_markdown_export", _declined)
+            screen.query_one("#personas-dict-tabs", TabbedContent).active = "personas-dict-tab-settings"
+            await pilot.pause()
+            await pilot.click("#personas-dict-export-md")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert list((tmp_path / "exports").glob("*.md")) == []  # declined -> no file
+
+            async def _accepted():
+                return True
+
+            monkeypatch.setattr(screen, "_confirm_lossy_markdown_export", _accepted)
+            # Button.press() flags "-active" for active_effect_duration (0.2s) and
+            # _on_click() no-ops a second click while that class is set; a real-time
+            # pause (pilot.pause() alone only yields to the event loop, it doesn't
+            # advance the clock) lets the flash clear so this second click registers.
+            await pilot.pause(0.3)
+            await pilot.click("#personas-dict-export-md")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            files = list((tmp_path / "exports").glob("medical-abbrev-*.md"))
+            assert len(files) == 1
+            assert "BP: blood pressure" in files[0].read_text()

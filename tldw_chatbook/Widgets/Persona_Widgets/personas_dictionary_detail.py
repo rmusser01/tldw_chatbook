@@ -88,6 +88,12 @@ class DictionaryVersionRevertRequested(Message):
         self.revision = revision
 
 
+class DictionaryExportRequested(Message):
+    def __init__(self, fmt: str) -> None:
+        super().__init__()
+        self.fmt = fmt
+
+
 class PersonasDictionaryDetailWidget(Vertical):
     """Entries + Settings tabs for one dictionary. Emits intents; owns no I/O."""
 
@@ -182,6 +188,10 @@ class PersonasDictionaryDetailWidget(Vertical):
                     yield Static("Enabled", markup=False)
                     yield Switch(value=True, id="personas-dict-enabled")
                 yield Button("Save settings", id="personas-dict-settings-save", classes="console-action-secondary")
+                with Horizontal(classes="personas-dict-form-row"):
+                    yield Button("Export JSON", id="personas-dict-export-json", classes="console-action-secondary")
+                    yield Button("Export Markdown", id="personas-dict-export-md", classes="console-action-secondary")
+                yield Static("Exports read the last saved state.", id="personas-dict-export-note", markup=False, classes="destination-purpose")
             with TabPane("Stats", id="personas-dict-tab-stats"):
                 yield Static("", id="personas-dict-stats-body", markup=False)
             with TabPane("Versions", id="personas-dict-tab-versions"):
@@ -574,6 +584,16 @@ class PersonasDictionaryDetailWidget(Vertical):
         event.stop()
         self.post_message(DictionarySettingsSaveRequested(self.settings_payload()))
 
+    @on(Button.Pressed, "#personas-dict-export-json")
+    def _export_json_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(DictionaryExportRequested("json"))
+
+    @on(Button.Pressed, "#personas-dict-export-md")
+    def _export_markdown_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(DictionaryExportRequested("markdown"))
+
     @on(Button.Pressed, "#personas-dict-version-view")
     def _version_view_pressed(self, event: Button.Pressed) -> None:
         event.stop()
@@ -617,6 +637,7 @@ __all__ = [
     "DictionaryEntryAddRequested",
     "DictionaryEntryDeleteRequested",
     "DictionaryEntryUpdateRequested",
+    "DictionaryExportRequested",
     "DictionarySettingsEdited",
     "DictionarySettingsSaveRequested",
     "DictionaryVersionRevertRequested",
