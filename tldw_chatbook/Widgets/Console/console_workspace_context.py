@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from rich.markup import escape as _escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -47,6 +48,24 @@ _STATUS_DETAIL_LABELS = {
 _MAX_CONVERSATION_ROW_TITLE = 20
 _CONVERSATION_BROWSER_HEADER_HEIGHT = 1
 _CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT = 1
+
+
+def format_console_conversation_row_label(title: str, *, subagent_count: int = 0) -> str:
+    """Return a markup-safe conversation-row label with an optional badge.
+
+    Args:
+        title: Raw row label text (escaped before any markup is appended).
+        subagent_count: Historical sub-agent run count for this conversation.
+            When greater than zero, a dim ``[N Sub-Agents]`` badge is
+            appended.
+
+    Returns:
+        Rich-markup text safe to render via ``Text.from_markup``.
+    """
+    base = _escape_markup(str(title))
+    if subagent_count > 0:
+        return f"{base}  [dim]\\[{subagent_count} Sub-Agents][/dim]"
+    return base
 
 
 class ConsoleWorkspaceStatusPair(Horizontal):
@@ -358,9 +377,14 @@ class ConsoleWorkspaceContextTray(Vertical):
         conversation_id: str,
         tooltip_label: str | None = None,
         selected: bool = False,
+        subagent_count: int = 0,
     ) -> Button:
+        # Escaped-then-markup rendering round-trips plain text unchanged while
+        # letting `format_console_conversation_row_label` safely append a dim
+        # "[N Sub-Agents]" badge when this conversation has historical runs.
+        label = format_console_conversation_row_label(text, subagent_count=subagent_count)
         button = Button(
-            Text(str(text)),
+            Text.from_markup(label),
             id=id,
             classes="console-workspace-conversation-row",
             compact=True,
@@ -799,21 +823,18 @@ class ConsoleWorkspaceContextTray(Vertical):
             secondary = " - ".join(secondary_parts) or "conversation"
             marker = f"{GLYPH_ACTIVE} " if row.selected else "  "
             status_suffix = f" [{status}]" if status else ""
-            row_button = Button(
-                Text(f"{marker}{visible_title}\n  {secondary}"),
+            row_button = self._conversation_button(
+                f"{marker}{visible_title}\n  {secondary}",
                 id=f"console-workspace-conversation-{index}",
-                classes="console-workspace-conversation-row",
-                compact=True,
+                conversation_id=row.conversation_id or row.row_key,
+                tooltip_label=f"{title}{status_suffix}",
+                selected=row.selected,
+                subagent_count=row.subagent_count,
             )
-            row_button.tooltip = f"Switch to {title}{status_suffix}"
             row_button.row_key = row.row_key
-            row_button.conversation_id = row.conversation_id or row.row_key
             row_button.native_session_id = row.native_session_id
             row_button.scope_type = row.scope_type
             row_button.workspace_id = row.workspace_id
-            row_button.set_class(row.selected, "console-workspace-conversation-row-selected")
-            row_button.styles.height = 2
-            row_button.styles.min_height = 2
             row_button.styles.width = "1fr"
             row_button.styles.min_width = 0
             yield row_button

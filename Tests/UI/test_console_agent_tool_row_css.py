@@ -18,3 +18,11 @@ def test_tool_row_class_is_styled_in_source_and_bundle():
         Path("tldw_chatbook/css/tldw_cli_modular.tcss"),
     ):
         assert ".console-transcript-message-tool" in path.read_text(encoding="utf-8")
+
+
+def test_agent_rail_section_css_is_styled_in_source_and_bundle():
+    for path in (
+        Path("tldw_chatbook/css/components/_agentic_terminal.tcss"),
+        Path("tldw_chatbook/css/tldw_cli_modular.tcss"),
+    ):
+        assert ".console-agent-section-steps" in path.read_text(encoding="utf-8")

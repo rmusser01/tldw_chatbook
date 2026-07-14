@@ -2103,6 +2103,22 @@ ConsoleSystemPromptModal {
     color: $ds-text-muted;
 }
 
+.console-agent-section-line {
+    height: 1;
+    color: $ds-text-primary;
+}
+
+.console-agent-section-steps,
+.console-agent-section-subagents {
+    height: auto;
+    color: $ds-text-muted;
+    text-style: dim;
+}
+
+.console-agent-drilldown-back {
+    margin-top: 1;
+}
+
 #console-rail-system-line {
     height: 1;
     color: $ds-text-primary;

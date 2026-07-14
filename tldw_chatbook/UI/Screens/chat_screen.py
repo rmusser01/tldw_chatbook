@@ -1114,6 +1114,7 @@ class ChatScreen(BaseAppScreen):
         self._console_library_rag_query = ""
         self._console_chat_store: ConsoleChatStore | None = None
         self._console_agent_bridge: Any | None = None
+        self._console_agent_drilldown_run_id: str | None = None
         self._console_rail_prune_dispatched = False
         self._console_workspace_conversation_query = ""
         self._console_workspace_conversation_search_timer: Any | None = None
@@ -1669,6 +1670,74 @@ class ChatScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             pass
         self._sync_console_rail_system_line()
+        self._sync_console_agent_section()
+
+    def _console_agent_section_lines(self) -> tuple[str, str, str]:
+        """Return the Agent rail's (status, steps, sub-agents) line text.
+
+        Reads the live in-memory run snapshot (or, when drilled into one
+        sub-agent, that run's durable record) via the Console agent bridge --
+        the same bridge whose ``AgentRunsDB`` backs resume re-derivation, so
+        this always reflects the latest known state without any extra event
+        plumbing (the 0.2s Console poll re-calls this on every tick).
+        """
+        bridge = self._ensure_console_agent_bridge()
+        conversation_id = self._current_console_rail_conversation_id() or ""
+        if bridge is None:
+            return ("Agent: unavailable", "", "")
+        drill = getattr(self, "_console_agent_drilldown_run_id", None)
+        if drill:
+            record = bridge.subagent_run(drill)
+            if record is not None:
+                steps = "\n".join(
+                    f"{s.get('kind')}: "
+                    f"{escape_markup(str(s.get('summary') or s.get('result') or ''))[:80]}"
+                    for s in record.get("steps", []))
+                return (
+                    f"Sub-agent · {record.get('status')} (Back)",
+                    steps,
+                    escape_markup(str(record.get("task") or "")),
+                )
+            # The drilled-into run vanished (e.g. a different conversation
+            # was resumed); fall back to the live snapshot instead of
+            # showing a stale/blank drill-in view.
+            self._console_agent_drilldown_run_id = None
+        snapshot = bridge.live_snapshot(conversation_id)
+        status = f"Agent: {snapshot.status}"
+        if snapshot.status == "running":
+            status = f"Agent: running · step {snapshot.step}"
+        steps = "\n".join(f"· {escape_markup(s.text)[:80]}" for s in snapshot.steps)
+        glyphs = {"done": "✓", "running": "●", "stuck": "⚠", "error": "✗", "cancelled": "✗"}
+        subagents = "\n".join(
+            f"{glyphs.get(s.status, '●')} {escape_markup(s.text)[:60]}"
+            for s in snapshot.subagents)
+        return (status, steps, subagents)
+
+    def _sync_console_agent_section(self) -> None:
+        """Refresh the mounted Agent rail Statics + Back-button visibility."""
+        try:
+            status_line, steps_text, subagents_text = self._console_agent_section_lines()
+            self.query_one("#console-agent-section-status", Static).update(status_line)
+            self.query_one("#console-agent-section-steps", Static).update(steps_text)
+            self.query_one("#console-agent-section-subagents", Static).update(subagents_text)
+            back_button = self.query_one("#console-agent-drilldown-back", Button)
+            back_button.styles.display = (
+                "block" if self._console_agent_drilldown_run_id else "none"
+            )
+        except (NoMatches, QueryError):
+            pass
+
+    def _toggle_console_agent_drilldown_from_subagents_click(self) -> None:
+        """Drill into the most recent sub-agent run, or back out if already in one."""
+        if self._console_agent_drilldown_run_id:
+            self._console_agent_drilldown_run_id = None
+        else:
+            bridge = self._ensure_console_agent_bridge()
+            conversation_id = self._current_console_rail_conversation_id() or ""
+            runs = bridge.subagent_runs(conversation_id) if bridge is not None else []
+            if runs:
+                self._console_agent_drilldown_run_id = runs[0].get("id")
+        self.run_worker(self._sync_native_console_chat_ui(), exclusive=True)
 
     def _current_console_workspace_context(self) -> ConsoleWorkspaceContext:
         """Return explicit workspace policy context for native Console sends."""
@@ -3602,6 +3671,13 @@ class ChatScreen(BaseAppScreen):
             query,
             current_conversation_id=current_conversation_id,
         )
+        bridge = self._ensure_console_agent_bridge()
+        subagent_counts: dict[str, int] = {}
+        if bridge is not None:
+            for input_row in rows:
+                cid = getattr(input_row, "conversation_id", None)
+                if cid:
+                    subagent_counts[cid] = bridge.subagent_count(cid)
         browser = build_console_conversation_browser_state(
             rows=rows,
             active_workspace_id=self._current_console_workspace_context().active_workspace_id,
@@ -3613,6 +3689,7 @@ class ChatScreen(BaseAppScreen):
             error_copy=error_copy or self._console_conversation_browser_error,
             result_total_count=total,
             result_limit=CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
+            subagent_counts=subagent_counts,
         )
         legacy_state = self._with_console_workspace_conversation_section(state)
         return replace(
@@ -5536,7 +5613,43 @@ class ChatScreen(BaseAppScreen):
                             configure.tooltip = "Configure Console session settings"
                             yield configure
 
-                        # Section 4: Details (storage, sync, handoff plumbing).
+                        # Section 4: Agent (run inspector -- the watch-and-drill
+                        # surface for the live/most-recent agent run and its
+                        # historical sub-agent runs).
+                        yield ConsoleRailSectionHeader(
+                            "Agent",
+                            section_id="agent",
+                            open=rail_state.agent_open,
+                            id="console-rail-section-header-agent",
+                        )
+                        agent_body = Vertical(
+                            id="console-rail-section-body-agent",
+                            classes="console-rail-section-body console-agent-section",
+                        )
+                        agent_body.styles.height = "auto"
+                        if not rail_state.agent_open:
+                            agent_body.styles.display = "none"
+                        with agent_body:
+                            status_line, steps_text, subagents_text = (
+                                self._console_agent_section_lines())
+                            yield Static(status_line, id="console-agent-section-status",
+                                         classes="console-agent-section-line", markup=False)
+                            yield Static(steps_text, id="console-agent-section-steps",
+                                         classes="console-agent-section-steps", markup=False)
+                            yield Static(subagents_text, id="console-agent-section-subagents",
+                                         classes="console-agent-section-subagents", markup=False)
+                            back_button = Button(
+                                "Back",
+                                id="console-agent-drilldown-back",
+                                classes="console-workspace-action console-agent-drilldown-back",
+                                compact=True,
+                            )
+                            back_button.tooltip = "Return to the live agent run view"
+                            if not self._console_agent_drilldown_run_id:
+                                back_button.styles.display = "none"
+                            yield back_button
+
+                        # Section 5: Details (storage, sync, handoff plumbing).
                         yield ConsoleRailSectionHeader(
                             "Details",
                             section_id="details",
@@ -8402,6 +8515,10 @@ class ChatScreen(BaseAppScreen):
             event.stop()
             self.run_worker(self._open_console_system_prompt_editor(), exclusive=False)
             return
+        if getattr(target, "id", None) == "console-agent-section-subagents":
+            event.stop()
+            self._toggle_console_agent_drilldown_from_subagents_click()
+            return
         try:
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
         except QueryError:
@@ -9340,6 +9457,11 @@ class ChatScreen(BaseAppScreen):
             return
         if button_id == "console-model-section-configure":
             await self.on_console_settings_open(event)
+            return
+        if button_id == "console-agent-drilldown-back":
+            event.stop()
+            self._console_agent_drilldown_run_id = None
+            self.run_worker(self._sync_native_console_chat_ui(), exclusive=True)
             return
         if button_id and button_id.startswith(CONSOLE_RAIL_SECTION_TOGGLE_PREFIX):
             event.stop()
