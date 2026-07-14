@@ -1187,7 +1187,7 @@ class MCPWorkbench(Container):
             return
         self._profile_save_in_flight = True
         self.run_worker(
-            self._save_local_profile(dict(event.payload)),
+            self._save_local_profile(dict(event.payload), warning=event.warning),
             group="mcp-profile-save",
             exclusive=True,
         )
@@ -1198,7 +1198,17 @@ class MCPWorkbench(Container):
         except Exception:
             return None
 
-    async def _save_local_profile(self, payload: dict[str, Any]) -> None:
+    async def _save_local_profile(
+        self, payload: dict[str, Any], warning: str | None = None
+    ) -> None:
+        """Run one profile save; on success, also re-surface the form's args
+        secret-lint `warning` as a toast (I4 follow-up). The in-form
+        `#mcp-form-args-warning` Static only survives FAILED saves -- the
+        success path's `hide_form()` below unmounts the whole form
+        sub-second after the warning rendered, so without this toast the
+        user would never see it on exactly the path where the secret
+        actually got persisted into a profile's args.
+        """
         try:
             service = self._service()
             if service is None:
@@ -1228,6 +1238,8 @@ class MCPWorkbench(Container):
             canvas = self.query_one(MCPServersMode)
             await canvas.hide_form()
             self.app.notify(f"Saved {payload.get('profile_id')}.")
+            if warning:
+                self.app.notify(warning, severity="warning")
             self._snapshots = await self._collect_snapshots()
             await self._sync_children()
         finally:

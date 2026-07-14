@@ -32,9 +32,18 @@ class MCPProfileForm(Vertical):
     """
 
     class SubmitRequested(Message, namespace="mcp_profile_form"):
-        def __init__(self, payload: dict[str, Any]) -> None:
+        """`warning` (I4 follow-up): the args secret-lint text computed at
+        submit time, or None when the args are clean. Carried on the message
+        because the in-form `#mcp-form-args-warning` Static is only durable
+        on FAILED saves -- a successful save unmounts the whole form
+        (`hide_form()`) sub-second, so the host must re-surface the warning
+        as a toast alongside its own success notify for the user to ever
+        see it."""
+
+        def __init__(self, payload: dict[str, Any], warning: str | None = None) -> None:
             super().__init__()
             self.payload = payload
+            self.warning = warning
 
     class Cancelled(Message, namespace="mcp_profile_form"):
         pass
@@ -166,16 +175,19 @@ class MCPProfileForm(Vertical):
                 return
             # Non-blocking (I4/spec §7): a secret-shaped arg does not stop
             # the submit below, it only surfaces a warning alongside it.
-            self.query_one("#mcp-form-args-warning", Static).update(
-                self._args_secret_warning()
-            )
+            # The in-form Static covers the failed-save case (form stays
+            # up); the SubmitRequested `warning` carries the same text to
+            # the host, whose success path unmounts this form sub-second --
+            # the host re-surfaces it as a toast there instead.
+            warning = self._args_secret_warning()
+            self.query_one("#mcp-form-args-warning", Static).update(warning)
             # Disable while the host's save is in flight -- Button.press()
             # gates on `disabled`, so a real second click can't even post
             # another Pressed. (A Pressed already queued before this line
             # still gets through; the workbench's in-flight guard is the
             # authoritative dedupe for that window.)
             event.button.disabled = True
-            self.post_message(self.SubmitRequested(payload))
+            self.post_message(self.SubmitRequested(payload, warning or None))
         elif event.button.id == "mcp-form-cancel":
             event.stop()
             self.post_message(self.Cancelled())

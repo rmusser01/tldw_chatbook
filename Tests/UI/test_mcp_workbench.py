@@ -1351,6 +1351,69 @@ async def test_submit_success_hides_form_notifies_and_reloads_catalog():
 
 
 @pytest.mark.asyncio
+async def test_submit_success_with_secret_shaped_arg_toasts_warning():
+    """I4 follow-up (final-review caveat): the in-form
+    `#mcp-form-args-warning` Static is unmounted by `hide_form()` sub-second
+    after a SUCCESSFUL save, so on exactly the path where the secret got
+    persisted the user never saw the warning. The form now carries the
+    computed warning on `SubmitRequested`, and the workbench's save-success
+    path re-surfaces it as a warning toast alongside the "Saved {id}."
+    notify.
+    """
+    app = ProfileFormApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        notifications = _capture_notifications(app)
+        await pilot.click("#mcp-add-server")
+        await pilot.pause()
+        app.query_one("#mcp-form-id", Input).value = "leakyargs"
+        app.query_one("#mcp-form-command", Input).value = "npx"
+        app.query_one("#mcp-form-args", TextArea).text = "-y\nsk-1234567890abcdef"
+        await pilot.click("#mcp-form-save")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        # Save succeeded through the real flow: form gone, record saved.
+        assert not app.query_one("#mcp-servers-form").display
+        assert app.unified_mcp_service.save_calls[-1]["profile_id"] == "leakyargs"
+        assert any("leakyargs" in msg for msg, _ in notifications)
+        # ...and the secret-lint warning survived the form's unmount as a toast.
+        warnings = [
+            msg for msg, severity in notifications
+            if severity == "warning" and "visible in process listings" in msg
+        ]
+        assert warnings, (
+            f"expected a secret-lint warning toast on save success, "
+            f"got: {notifications!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_submit_success_with_clean_args_toasts_no_warning():
+    app = ProfileFormApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        notifications = _capture_notifications(app)
+        await pilot.click("#mcp-add-server")
+        await pilot.pause()
+        app.query_one("#mcp-form-id", Input).value = "cleanargs"
+        app.query_one("#mcp-form-command", Input).value = "npx"
+        app.query_one("#mcp-form-args", TextArea).text = (
+            "-y\n@modelcontextprotocol/server-filesystem"
+        )
+        await pilot.click("#mcp-form-save")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert any("cleanargs" in msg for msg, _ in notifications)
+        assert not any(
+            severity == "warning" for _, severity in notifications
+        ), f"clean args must not produce a warning toast, got: {notifications!r}"
+
+
+@pytest.mark.asyncio
 async def test_cancelled_hides_form_without_saving():
     app = ProfileFormApp()
     async with app.run_test(size=(120, 40)) as pilot:
