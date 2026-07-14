@@ -484,8 +484,21 @@ class ConsoleChatStore:
         return self._message_session_index[message_id]
 
     def append_stream_chunk(self, message_id: str, chunk: str) -> ConsoleChatMessage:
-        """Append streamed assistant content to an existing message."""
+        """Append streamed assistant content to an existing message.
+
+        A chunk arriving for a message already ``"stopped"`` is dropped
+        silently rather than raising: the user's Stop already finalized and
+        persisted this message, so a late chunk from a slow provider (one
+        that hadn't produced a single token before Stop was clicked) is
+        benign by definition, not a programming error (Plan-B agent-runtime
+        gate Finding 1 -- see ``Docs/superpowers/qa/agent-runtime-2026-07/
+        README.md``). Other invalid statuses (``complete``/``failed``)
+        still raise via ``_validate_can_stream`` -- those really do
+        indicate a bug in the caller.
+        """
         message = self._message_or_raise(message_id)
+        if message.status == "stopped":
+            return self._snapshot(message)
         self._validate_can_stream(message)
         buffer = self._stream_chunks_by_message.setdefault(
             message.id,

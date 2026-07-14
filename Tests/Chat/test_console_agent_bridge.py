@@ -165,6 +165,39 @@ def test_stop_persists_cancelled(tmp_path):
     assert db.list_runs("conv-1")[0]["status"] == "cancelled"
 
 
+def test_stop_before_first_chunk_persists_cancelled_not_error(tmp_path):
+    """Plan-B agent-runtime gate Finding 1: reproduces the live-repro'd race
+    where Stop is clicked before the (slow) provider has streamed a single
+    chunk. The controller's ``stop_active_run`` marks the assistant message
+    "stopped" and flips ``should_cancel`` *before* the first chunk arrives;
+    when it finally does, ``append_stream_chunk`` must drop it silently
+    (store-level fix) instead of raising, so the run settles as
+    "cancelled" (AgentRunsDB) rather than "error" with a step-log message
+    of "Cannot append stream chunks to a stopped message.\""""
+    scripts = [["late", " chunk", " arrives", " anyway."]]
+    bridge, db, store, session, aid = _bridge(tmp_path, scripts)
+
+    # Mirror ConsoleChatController.stop_active_run(): the message is
+    # finalized to "stopped" up front, before any chunk streamed. The
+    # first should_cancel() poll (at the top of the loop, before the model
+    # call) still returns False -- the run genuinely starts -- then flips
+    # True from the second poll onward, mirroring how ``_stop_requested``
+    # was already True by the time the slow provider's first chunk
+    # finally arrived inside ``_consume()``.
+    store.mark_message_stopped(aid)
+    flags = iter([False])
+    outcome = _run(bridge, store, session, aid, should_cancel=lambda: next(flags, True))
+
+    assert outcome.status == "cancelled"
+    assert db.list_runs("conv-1")[0]["status"] == "cancelled"
+    from tldw_chatbook.Agents.agent_models import STEP_ERROR
+    assert not any(s.kind == STEP_ERROR for s in outcome.steps)
+    # The message stays exactly as Stop left it -- no late content leaked in.
+    stored = store.get_message(aid)
+    assert stored.status == "stopped"
+    assert stored.content == ""
+
+
 def test_stop_mid_final_answer_persists_cancelled_and_store_agrees(tmp_path):
     # Finding B: a Stop that lands mid a plain final-answer stream (no tool
     # call to dispatch) must not be downgraded to "done" -- the outcome

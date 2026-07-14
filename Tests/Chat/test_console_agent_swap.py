@@ -95,6 +95,66 @@ async def test_stop_cancels_tree_and_persists_cancelled(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_stop_before_first_token_persists_cancelled_no_agent_run_failed(tmp_path):
+    """Plan-B agent-runtime gate Finding 1, full-chain reproduction: the real
+    live gate found that clicking Stop before a slow provider's *first*
+    chunk arrives settled the run as ``error`` (with a step-log entry
+    "Cannot append stream chunks to a stopped message.") and dropped the
+    assistant message entirely -- because ``ConsoleChatController.
+    stop_active_run`` finalizes the assistant message to "stopped" (via
+    ``store.mark_message_stopped``) *before* a slow provider's first chunk
+    ever streams -- but *after* the run has already genuinely started (the
+    first ``should_cancel()`` poll, at the very top of the agent loop
+    before the model is ever called, must still see ``False``, exactly as
+    it would in production: the loop had already committed to this turn
+    before Stop was clicked). This reproduces that exact ordering
+    deterministically (via a gateway that flips the stop state right
+    before it streams anything) rather than via real background
+    threading/task-cancellation timing, which -- as
+    ``test_stop_cancels_tree_and_persists_cancelled`` above already
+    exercises the should_cancel-only half of -- is covered by other tests;
+    this one isolates the store-level race that was Finding 1's actual
+    root cause."""
+    controller, store, db = _controller(tmp_path, [["late", " answer."]])
+    gateway = controller.provider_gateway
+    real_stream_chat = gateway.stream_chat
+
+    async def stop_before_first_chunk(resolution, messages):
+        # Mirror ConsoleChatController.stop_active_run(): mark the message
+        # stopped and flip should_cancel *before* the gateway ever streams
+        # a chunk into the store -- simulating Stop landing while the
+        # (slow) provider is still silent.
+        session_id = store.active_session_id
+        assistant_message_id = next(
+            m.id for m in reversed(store.messages_for_session(session_id))
+            if m.role is ConsoleMessageRole.ASSISTANT
+        )
+        store.mark_message_stopped(assistant_message_id)
+        controller._stop_requested = True
+        async for chunk in real_stream_chat(resolution, messages):
+            yield chunk
+
+    gateway.stream_chat = stop_before_first_chunk
+    result = await controller.submit_draft("slow question")
+    assert result.accepted is True
+
+    session_id = store.active_session_id
+    messages = store.messages_for_session(session_id)
+    assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
+    # The late "late answer." chunks were dropped, not leaked into content.
+    assert assistant.status == "stopped"
+    assert assistant.content == ""
+    assert not any(
+        m.role is ConsoleMessageRole.SYSTEM and "Agent run failed" in m.content
+        for m in messages
+    )
+
+    primary = [r for r in _all_runs(db) if r["agent_kind"] == "primary"]
+    assert primary and primary[0]["status"] == "cancelled"
+    assert controller.run_state.status is ConsoleRunStatus.STOPPED
+
+
+@pytest.mark.asyncio
 async def test_config_gate_off_uses_legacy_path(tmp_path):
     controller, store, db = _controller(tmp_path, [["legacy answer."]], enabled=False)
     await controller.submit_draft("hi")

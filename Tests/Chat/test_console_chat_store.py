@@ -962,7 +962,48 @@ def test_store_rejects_streaming_chunks_after_terminal_state():
         role=ConsoleMessageRole.ASSISTANT,
         content="",
     )
-    store.mark_message_stopped(assistant.id)
+    store.mark_message_failed(assistant.id)
+
+    with pytest.raises(ValueError, match="Cannot append stream chunks"):
+        store.append_stream_chunk(assistant.id, "late")
+
+
+def test_store_drops_late_stream_chunks_for_stopped_message_silently():
+    """Plan-B agent-runtime gate Finding 1 (stop-before-first-token race):
+    a chunk that arrives after the message was already marked stopped must
+    be dropped, not raise -- it's benign (the user already stopped this
+    message), unlike a chunk arriving for a complete/failed message."""
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    store.append_stream_chunk(assistant.id, "before stop")
+    stopped = store.mark_message_stopped(assistant.id)
+    assert stopped.status == "stopped"
+    assert stopped.content == "before stop"
+
+    result = store.append_stream_chunk(assistant.id, "late chunk")
+
+    assert result.status == "stopped"
+    assert result.content == "before stop"
+    unchanged = store.get_message(assistant.id)
+    assert unchanged.status == "stopped"
+    assert unchanged.content == "before stop"
+
+
+def test_store_still_rejects_streaming_chunks_for_complete_message():
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    store.append_stream_chunk(assistant.id, "done text")
+    store.mark_message_complete(assistant.id)
 
     with pytest.raises(ValueError, match="Cannot append stream chunks"):
         store.append_stream_chunk(assistant.id, "late")
