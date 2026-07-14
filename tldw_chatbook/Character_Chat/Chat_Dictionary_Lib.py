@@ -617,6 +617,7 @@ def process_user_input_with_diagnostics(
                 skip_reason_by_id[id(candidate)] = f"skipped:{stage}"
 
     def _finalize() -> None:
+        # Same formula as calculate_token_usage; inlined to avoid a debug-log call per entry.
         for candidate in matched_snapshot:
             entry_id = id(candidate)
             replacements = replacements_by_id.get(entry_id, 0)
@@ -632,7 +633,7 @@ def process_user_input_with_diagnostics(
                     pattern=str(candidate.raw_key),
                     status=status,
                     replacements=replacements,
-                    token_cost=calculate_token_usage([candidate]),
+                    token_cost=len(candidate.content.split()) if candidate.content else 0,
                     applied_order=applied_order_by_id.get(entry_id),
                     content_preview=str(candidate.content or "")[:40],
                 )
@@ -643,11 +644,10 @@ def process_user_input_with_diagnostics(
         diagnostics.total_replacements = sum(r.replacements for r in diagnostics.entries)
         # Budget-stage accounting: survivors of the budget stage, including
         # no_replacement survivors (they consumed budget without firing).
-        diagnostics.tokens_used = sum(
-            calculate_token_usage([candidate])
-            for candidate in matched_snapshot
+        diagnostics.tokens_used = calculate_token_usage([
+            candidate for candidate in matched_snapshot
             if id(candidate) in budget_survivor_ids
-        )
+        ])
 
     try:
         # 1. Match entries  (verbatim from the original body)
@@ -720,6 +720,7 @@ def process_user_input_with_diagnostics(
         try:
             logging.debug(f"Chat Dictionary: Enforcing token budget for {len(matched_entries)} entries")
             matched_entries = enforce_token_budget(matched_entries, max_tokens)
+            diagnostics.budget_exceeded = len(matched_entries) != len(stage_before)  # ADDED
         except TokenBudgetExceededWarning as e:
             log_counter("chat_dict_token_limit")
             logging.warning(str(e))
@@ -730,7 +731,6 @@ def process_user_input_with_diagnostics(
             matched_entries = []  # Fallback to empty list
         _record_stage_drops(stage_before, matched_entries, "token_budget")    # ADDED
         budget_survivor_ids = {id(e) for e in matched_entries}               # ADDED
-        diagnostics.budget_exceeded = len(matched_entries) != len(stage_before)  # ADDED
 
         # Alert (dead code in practice — preserved verbatim, not used for diagnostics)
         try:
@@ -775,6 +775,7 @@ def process_user_input_with_diagnostics(
             except Exception as e_replace:
                 log_counter("chat_dict_replacement_error", labels={"key": entry.raw_key})
                 logging.error(f"Error applying replacement for entry {entry.raw_key}: {str(e_replace)}", exc_info=True)
+                skip_reason_by_id.setdefault(id(entry), "error:replacement")  # ADDED
                 continue
 
     except Exception as e_crit:  # Catch-all for ChatProcessingError or other unexpected issues

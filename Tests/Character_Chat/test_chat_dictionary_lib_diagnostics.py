@@ -94,6 +94,32 @@ class TestDiagnosticsCore:
         # no_replacement counts as skipped in the totals invariant.
         assert diag.matched == 2 and diag.fired == 1 and diag.skipped == 1
 
+    def test_budget_stage_exception_does_not_flag_over_budget(self, monkeypatch):
+        import tldw_chatbook.Character_Chat.Chat_Dictionary_Lib as cdl_module
+
+        monkeypatch.setattr(
+            cdl_module, "enforce_token_budget",
+            lambda entries, max_tokens: (_ for _ in ()).throw(RuntimeError("budget boom")),
+        )
+        entries = [_entry("BP", "blood pressure")]
+        text, diag = process_user_input_with_diagnostics("BP now", entries)
+        assert text == "BP now"  # degraded, nothing replaced
+        assert diag.budget_exceeded is False  # error, not truncation  (RED-first: True pre-fix)
+        assert diag.entries[0].status == "skipped:token_budget"
+
+    def test_replacement_error_gets_distinct_status(self, monkeypatch):
+        import tldw_chatbook.Character_Chat.Chat_Dictionary_Lib as cdl_module
+
+        def _boom(text, entry):
+            raise RuntimeError("replace boom")
+
+        monkeypatch.setattr(cdl_module, "apply_replacement_once", _boom)
+        entries = [_entry("BP", "blood pressure")]
+        text, diag = process_user_input_with_diagnostics("BP now", entries)
+        assert text == "BP now"
+        assert diag.entries[0].status == "error:replacement"  # RED-first: "no_replacement" pre-fix
+        assert diag.matched == diag.fired + diag.skipped
+
     def test_totals_invariant_and_to_dict_shape(self):
         entries = [
             _entry("BP", "blood pressure", probability=100),
