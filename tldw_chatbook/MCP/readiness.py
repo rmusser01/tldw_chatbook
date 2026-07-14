@@ -189,7 +189,16 @@ class ReadinessSnapshot:
 
 
 def aggregate_summary(snapshots: list[ReadinessSnapshot]) -> str:
-    """One-line hub summary, e.g. '2 of 4 servers ready — 1 needs setup, 1 stale.'"""
+    """Build a one-line hub summary across all server readiness snapshots.
+
+    Args:
+        snapshots: Readiness snapshots for every server currently shown in
+            the hub (any source: local, server, or builtin).
+
+    Returns:
+        A human-readable summary, e.g. "2 of 4 servers ready — 1 needs
+        setup, 1 stale.", or "No MCP servers configured yet." when empty.
+    """
     if not snapshots:
         return "No MCP servers configured yet."
     total = len(snapshots)
@@ -345,6 +354,7 @@ def server_target_readiness(target: Any) -> ReadinessSnapshot:
 
 
 _VALID_REASON_VALUES = {code.value for code in ReasonCode}
+_VALID_STATE_VALUES = {state.value for state in ReadinessState}
 
 
 def server_external_record_readiness(record: dict[str, Any], *, server_id: str) -> ReadinessSnapshot:
@@ -352,20 +362,51 @@ def server_external_record_readiness(record: dict[str, Any], *, server_id: str) 
 
     Readiness fields are backend-owned and not guaranteed; unknown or missing
     vocabulary degrades to discovery_not_run with an honest message rather
-    than inventing a state.
+    than inventing a state. When the backend reports a `display_state` but no
+    (or no recognized) `reason_codes`, that `display_state` is trusted
+    directly instead of being fed through `resolve_state(())` -- an empty
+    reason tuple always resolves to READY, which would silently contradict a
+    non-ready state the backend explicitly reported.
+
+    Args:
+        record: One raw external-server record from `/mcp/hub`, as returned
+            pass-through by the control-plane client.
+        server_id: The connection-level server id this record belongs to,
+            used to build the composite `server_key`.
+
+    Returns:
+        A `ReadinessSnapshot` normalizing the record's readiness fields.
     """
     external_id = str(record.get("server_id") or record.get("id") or record.get("name") or "unknown")
     label = str(record.get("name") or external_id)
-    raw_reasons = record.get("reason_codes") or []
-    reasons = tuple(
-        ReasonCode(value) for value in raw_reasons if isinstance(value, str) and value in _VALID_REASON_VALUES
-    )
-    reported = bool(reasons) or isinstance(record.get("display_state"), str)
-    if not reasons and not reported:
-        reasons = (ReasonCode.DISCOVERY_NOT_RUN,)
-        message = "Readiness not reported by the server — validate to check."
+    raw_reasons = record.get("reason_codes")
+    reasons: tuple[ReasonCode, ...] = ()
+    if isinstance(raw_reasons, (list, tuple)):
+        reasons = tuple(
+            ReasonCode(value) for value in raw_reasons if isinstance(value, str) and value in _VALID_REASON_VALUES
+        )
+
+    display_state = record.get("display_state")
+    status_message = record.get("status_message")
+
+    if reasons:
+        state = resolve_state(reasons)
+        message = str(status_message or "Reported by server.")
+    elif isinstance(display_state, str) and display_state in _VALID_STATE_VALUES:
+        # Reported, but without (recognized) reason codes to back it up --
+        # trust the backend's explicit state rather than inventing READY.
+        state = ReadinessState(display_state)
+        message = str(status_message or "Reported by server without reason codes.")
+    elif isinstance(display_state, str) and display_state:
+        # A non-empty display_state that isn't valid ReadinessState
+        # vocabulary: something is wrong, but we don't know what -- surface
+        # it rather than pretending the server is ready.
+        state = ReadinessState.NEEDS_ATTENTION
+        message = "Server reported an unrecognized state."
     else:
-        message = str(record.get("status_message") or "Reported by server.")
+        reasons = (ReasonCode.DISCOVERY_NOT_RUN,)
+        state = resolve_state(reasons)
+        message = "Readiness not reported by the server — validate to check."
 
     tool_count = record.get("tool_count")
     if tool_count is None and isinstance(record.get("tools"), list):
@@ -375,7 +416,7 @@ def server_external_record_readiness(record: dict[str, Any], *, server_id: str) 
         server_key=f"server:{server_id}/{external_id}",
         label=label,
         source="server",
-        state=resolve_state(reasons),
+        state=state,
         reasons=reasons,
         message=message,
         tool_count=tool_count if isinstance(tool_count, int) else None,

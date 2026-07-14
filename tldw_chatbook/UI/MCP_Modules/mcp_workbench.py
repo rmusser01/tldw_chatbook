@@ -346,7 +346,7 @@ class MCPWorkbench(Container):
             scope_ref_value=self._scope_ref,
         )
         canvas = self.query_one(MCPServersMode)
-        canvas.update_overview(self._snapshots)
+        await canvas.update_overview(self._snapshots)
         selected = self._snapshot_for(self._selected_server_key)
         canvas.show_detail(selected)
         await self.query_one(MCPInspector).update_readiness(selected)

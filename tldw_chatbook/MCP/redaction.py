@@ -69,6 +69,14 @@ def redact_args(args: Sequence[str]) -> list[str]:
     instead of being replaced with REDACTED. Only genuine `--flag value`
     pairs where the value does not start with "-" are covered by the
     flag-then-value branch below.
+
+    Args:
+        args: Raw CLI argument tokens, e.g. as launched for a local MCP
+            server profile (`command` + `args`).
+
+    Returns:
+        A new list of the same length with secret-looking values replaced
+        by `REDACTED`; non-secret tokens are returned unchanged.
     """
     redacted: list[str] = []
     previous_was_secret_flag = False

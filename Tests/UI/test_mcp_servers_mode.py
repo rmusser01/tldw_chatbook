@@ -38,7 +38,7 @@ async def test_overview_renders_aggregate_table_and_callouts():
     app = CanvasApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPServersMode)
-        canvas.update_overview(
+        await canvas.update_overview(
             [
                 _snap("local:docs", "docs", tool_count=4),
                 _snap(
@@ -63,7 +63,7 @@ async def test_table_row_selection_posts_server_key():
     app = CanvasApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPServersMode)
-        canvas.update_overview([_snap("local:docs", "docs")])
+        await canvas.update_overview([_snap("local:docs", "docs")])
         await pilot.pause()
         table = app.query_one("#mcp-servers-table", DataTable)
         table.focus()
@@ -84,7 +84,7 @@ async def test_update_overview_survives_markup_like_labels_and_renders_plain():
     app = CanvasApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPServersMode)
-        canvas.update_overview(
+        await canvas.update_overview(
             [
                 _snap("local:evil1", "[/bold]docs"),
                 _snap(
@@ -106,6 +106,73 @@ async def test_update_overview_survives_markup_like_labels_and_renders_plain():
 
 
 @pytest.mark.asyncio
+async def test_row_selection_for_deduped_row_posts_canonical_server_key():
+    """F3 regression: `update_overview` de-dupes a colliding row key with a
+    `#N` suffix (see `test_update_overview_dedupes_colliding_row_keys_...`
+    below), but that suffixed key is a table-internal identifier, not a real
+    `server_key` -- posting it upstream leaves callers unable to resolve the
+    selection back to a snapshot. Selecting the second (suffixed) row must
+    still post the original, canonical `server_key`.
+    """
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.update_overview(
+            [
+                _snap("local:unknown", "unknown-1"),
+                _snap("local:unknown", "unknown-2"),
+            ]
+        )
+        await pilot.pause()
+        table = app.query_one("#mcp-servers-table", DataTable)
+        assert table.row_count == 2
+        table.focus()
+        table.move_cursor(row=1)
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.events and app.events[-1].server_key == "local:unknown"
+
+
+@pytest.mark.asyncio
+async def test_second_update_overview_leaves_only_latest_callouts():
+    """F4 regression: `update_overview` must rebuild the callouts container
+    the same awaited way `MCPInspector.update_readiness()` rebuilds its
+    action buttons (remove_children awaited, then a single batched mount) --
+    see the P0 fix in mcp_inspector.py. Driving two updates back to back
+    with NO intervening `pilot.pause()` is the only way to prove the
+    remove+mount cycle is fully serialized within one awaited call rather
+    than merely "usually fast enough in practice": if the first call's
+    callout removal is not awaited, a second call queued right behind it can
+    interleave, leaving stale callouts from the first (superseded) snapshot
+    list mounted alongside the new ones.
+    """
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.update_overview(
+            [
+                _snap("local:a", "a", state=ReadinessState.NEEDS_SETUP,
+                      reasons=(ReasonCode.AUTH_MISSING,), message="first-a"),
+                _snap("local:b", "b", state=ReadinessState.NEEDS_SETUP,
+                      reasons=(ReasonCode.AUTH_MISSING,), message="first-b"),
+            ]
+        )
+        # No pilot.pause() here: the second call must start (and its own
+        # remove+mount cycle must fully resolve) before this coroutine
+        # returns.
+        await canvas.update_overview(
+            [
+                _snap("local:c", "c", state=ReadinessState.NEEDS_SETUP,
+                      reasons=(ReasonCode.AUTH_MISSING,), message="second-c"),
+            ]
+        )
+        await pilot.pause()
+        callouts = list(app.query(".ds-recovery-callout"))
+        texts = [str(c.renderable) for c in callouts]
+        assert texts == ["c: second-c"], texts
+
+
+@pytest.mark.asyncio
 async def test_update_overview_dedupes_colliding_row_keys_without_crashing():
     """I1 regression: two malformed records can both fall back to the same
     server_key (e.g. two local profiles missing `profile_id` both become
@@ -115,7 +182,7 @@ async def test_update_overview_dedupes_colliding_row_keys_without_crashing():
     app = CanvasApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPServersMode)
-        canvas.update_overview(
+        await canvas.update_overview(
             [
                 _snap("local:unknown", "unknown"),
                 _snap("local:unknown", "unknown"),
@@ -142,6 +209,35 @@ async def test_detail_text_redacts_secret_query_params_in_base_url():
         body = str(app.query_one("#mcp-detail-body", Static).renderable)
         assert "sk-super-secret" not in body
         assert "region=us" in body
+
+
+@pytest.mark.asyncio
+async def test_detail_text_marks_env_placeholder_missing_despite_whitespace():
+    """F5 regression: the "(missing)" marker must use the same placeholder
+    canonicalization as `env_placeholder_names()` (used to compute
+    `missing_env` in the first place). A raw value with surrounding
+    whitespace (e.g. " $MY_KEY ") previously compared
+    `str(raw).strip("${}")` -- which only strips '$', '{', '}' characters,
+    not whitespace -- against the canonical name in `missing`, so it never
+    matched and the marker silently fell back to "set".
+    """
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        local = _snap(
+            "local:docs", "docs",
+            detail={
+                "command": "python",
+                "args": [],
+                "env_placeholders": {"API_KEY": " $MY_KEY "},
+                "missing_env": ["MY_KEY"],
+                "discovery_snapshot": None,
+            },
+        )
+        canvas.show_detail(local)
+        await pilot.pause()
+        body = str(app.query_one("#mcp-detail-body", Static).renderable)
+        assert "API_KEY (missing)" in body
 
 
 @pytest.mark.asyncio

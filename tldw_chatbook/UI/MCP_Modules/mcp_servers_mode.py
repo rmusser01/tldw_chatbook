@@ -14,6 +14,7 @@ from tldw_chatbook.MCP.readiness import (
     ReadinessSnapshot,
     ReadinessState,
     aggregate_summary,
+    env_placeholder_names,
 )
 from tldw_chatbook.MCP.redaction import redact_args, redact_url
 
@@ -48,6 +49,10 @@ class MCPServersMode(Vertical):
         super().__init__(**kwargs)
         self._snapshots: list[ReadinessSnapshot] = []
         self._detail_snapshot: ReadinessSnapshot | None = None
+        # Maps the (possibly `#N`-suffixed) DataTable row key back to the
+        # canonical `ReadinessSnapshot.server_key` it represents -- see F3
+        # in `update_overview()`/`on_data_table_row_selected()`.
+        self._row_key_to_server_key: dict[str, str] = {}
 
     def compose(self) -> ComposeResult:
         with Vertical(id="mcp-servers-overview"):
@@ -77,13 +82,30 @@ class MCPServersMode(Vertical):
         self.query_one("#mcp-servers-overview").display = show_overview
         self.query_one("#mcp-servers-detail").display = not show_overview
 
-    def update_overview(self, snapshots: list[ReadinessSnapshot]) -> None:
+    async def update_overview(self, snapshots: list[ReadinessSnapshot]) -> None:
+        """Rebuild the overview table, summary, and recovery callouts.
+
+        The callouts container is refreshed the same awaited way
+        `MCPInspector.update_readiness()` rebuilds its action buttons (see
+        the P0 fix in mcp_inspector.py): `remove_children()` is awaited
+        before mounting, and the new callouts are mounted in a single
+        batched `mount_all()` call rather than one `mount()` call per
+        callout in a loop, so a second `update_overview()` call queued
+        right behind this one cannot interleave its own removal/mount with
+        this call's -- and the canvas takes one layout pass instead of one
+        per callout.
+
+        Args:
+            snapshots: Readiness snapshots for every server currently
+                visible under the active source (local or server).
+        """
         self._snapshots = list(snapshots)
         summary = self.query_one("#mcp-overview-summary", Static)
         summary.update(aggregate_summary(self._snapshots))
         table = self.query_one("#mcp-servers-table", DataTable)
         table.clear()
         seen_keys: set[str] = set()
+        self._row_key_to_server_key = {}
         for snap in self._snapshots:
             row_key = snap.server_key
             if row_key in seen_keys:
@@ -100,6 +122,10 @@ class MCPServersMode(Vertical):
                     candidate = f"{row_key}#{suffix}"
                 row_key = candidate
             seen_keys.add(row_key)
+            # The suffixed row_key is a table-internal de-dupe identifier,
+            # not a real server_key -- remember the canonical key so
+            # `on_data_table_row_selected()` can translate it back.
+            self._row_key_to_server_key[row_key] = snap.server_key
             table.add_row(
                 # label/auth_display/scope_display are user-controlled
                 # (local profile ids, server-reported names) and DataTable
@@ -115,17 +141,18 @@ class MCPServersMode(Vertical):
                 key=row_key,
             )
         callouts = self.query_one("#mcp-overview-callouts", Vertical)
-        callouts.remove_children()
-        for snap in self._snapshots:
-            if snap.state in (ReadinessState.READY, ReadinessState.CHECKING):
-                continue
-            callouts.mount(
-                Static(
-                    f"{snap.label}: {snap.message}",
-                    classes="ds-recovery-callout",
-                    markup=False,
-                )
+        await callouts.remove_children()
+        callout_widgets = [
+            Static(
+                f"{snap.label}: {snap.message}",
+                classes="ds-recovery-callout",
+                markup=False,
             )
+            for snap in self._snapshots
+            if snap.state not in (ReadinessState.READY, ReadinessState.CHECKING)
+        ]
+        if callout_widgets:
+            await callouts.mount_all(callout_widgets)
         if self._detail_snapshot is None:
             self._show_overview_container(True)
 
@@ -152,7 +179,15 @@ class MCPServersMode(Vertical):
             placeholders = detail.get("env_placeholders") or {}
             missing = set(detail.get("missing_env") or [])
             for env_key, raw in placeholders.items():
-                marker = "missing" if str(raw).strip("${}") in missing else "set"
+                # Reuse the same canonicalization `missing` was computed
+                # with (env_placeholder_names() strips whitespace *then*
+                # the $/${} wrapper) instead of a local ad hoc
+                # `str(raw).strip("${}")`, which leaves surrounding
+                # whitespace intact and so never matches `missing` for a
+                # value like " $MY_KEY " (F5).
+                names = env_placeholder_names({env_key: raw})
+                is_missing = bool(names) and names[0] in missing
+                marker = "missing" if is_missing else "set"
                 lines.append(f"Env · {env_key} ({marker})")
             discovery = detail.get("discovery_snapshot") or {}
             for kind in ("tools", "resources", "prompts"):
@@ -185,7 +220,11 @@ class MCPServersMode(Vertical):
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         event.stop()
         if event.row_key is not None and event.row_key.value is not None:
-            self.post_message(self.ServerRowSelected(str(event.row_key.value)))
+            raw_key = str(event.row_key.value)
+            # Translate a de-duped table key (e.g. "local:unknown#2") back
+            # to the canonical server_key -- see F3 in update_overview().
+            server_key = self._row_key_to_server_key.get(raw_key, raw_key)
+            self.post_message(self.ServerRowSelected(server_key))
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id != "mcp-detail-copy-snippet":

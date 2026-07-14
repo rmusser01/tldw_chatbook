@@ -123,6 +123,77 @@ def test_server_external_record_passthrough_and_fallback():
     assert "not reported" in bare.message.lower()
 
 
+def test_server_external_record_display_state_without_reason_codes_is_trusted():
+    """F1 regression: a `display_state` the backend reports with no (or
+    unrecognized) `reason_codes` must not silently resolve to READY via
+    `resolve_state(())` -- the explicit display_state wins.
+    """
+    snap = server_external_record_readiness(
+        {
+            "server_id": "s1",
+            "name": "S1",
+            "display_state": "needs_attention",
+            "reason_codes": [],
+        },
+        server_id="main",
+    )
+    assert snap.state is ReadinessState.NEEDS_ATTENTION
+    assert snap.reasons == ()
+
+
+def test_server_external_record_display_state_message_uses_status_message_or_default():
+    with_status = server_external_record_readiness(
+        {
+            "server_id": "s1",
+            "name": "S1",
+            "display_state": "stale",
+            "reason_codes": [],
+            "status_message": "Catalog is 3 days old.",
+        },
+        server_id="main",
+    )
+    assert with_status.state is ReadinessState.STALE
+    assert with_status.message == "Catalog is 3 days old."
+
+    without_status = server_external_record_readiness(
+        {"server_id": "s1", "name": "S1", "display_state": "stale", "reason_codes": []},
+        server_id="main",
+    )
+    assert without_status.message == "Reported by server without reason codes."
+
+
+def test_server_external_record_unrecognized_display_state_is_needs_attention():
+    """F1 regression: an unrecognized `display_state` string (not a valid
+    ReadinessState) must degrade to NEEDS_ATTENTION with an honest message,
+    not silently resolve to READY.
+    """
+    snap = server_external_record_readiness(
+        {"server_id": "s1", "name": "S1", "display_state": "bogus", "reason_codes": []},
+        server_id="main",
+    )
+    assert snap.state is ReadinessState.NEEDS_ATTENTION
+    assert snap.message == "Server reported an unrecognized state."
+
+
+def test_server_external_record_non_list_reason_codes_does_not_crash():
+    """F2 regression: `reason_codes` arriving as a non-list/tuple (e.g. an
+    int from a malformed backend payload) must not raise when iterated --
+    it should be treated as if no reason codes were supplied.
+    """
+    fallback = server_external_record_readiness(
+        {"server_id": "s1", "name": "S1", "reason_codes": 42},
+        server_id="main",
+    )
+    assert fallback.primary_reason is ReasonCode.DISCOVERY_NOT_RUN
+
+    with_display_state = server_external_record_readiness(
+        {"server_id": "s1", "name": "S1", "reason_codes": 42, "display_state": "ready"},
+        server_id="main",
+    )
+    assert with_display_state.state is ReadinessState.READY
+    assert with_display_state.reasons == ()
+
+
 def test_builtin_readiness():
     on = builtin_readiness(enabled=True)
     assert on.server_key == BUILTIN_SERVER_KEY

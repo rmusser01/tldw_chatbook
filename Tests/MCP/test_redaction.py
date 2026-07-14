@@ -91,6 +91,18 @@ def test_redact_mapping_does_not_iterate_into_strings():
     assert isinstance(redacted["note"], str)
 
 
+def test_redact_args_redacts_inline_flag_with_leading_dashes():
+    # `--api-key=sk-123` is the inline `key=value` form, not the two-token
+    # `--api-key sk-123` form -- `key` is "--api-key" (the arg charset
+    # includes "-"), which `is_secret_key` still matches via the "api-key"
+    # substring, so this is redacted by the inline branch.
+    assert redact_args(["--api-key=sk-123"]) == ["--api-key=***"]
+
+
+def test_redact_args_leaves_non_secret_short_inline_flag_unchanged():
+    assert redact_args(["-k=v"]) == ["-k=v"]
+
+
 def test_redact_args_reevaluates_flag_after_consecutive_secret_flags():
     # The second secret flag must not be swallowed as the first flag's value;
     # it must be re-evaluated as its own flag, so the real secret that
