@@ -10,7 +10,19 @@ from textual.containers import Vertical
 from textual.message import Message
 from textual.widgets import Button, Label, Select, Static
 
-from tldw_chatbook.MCP.readiness import STATE_GLYPHS, ReadinessSnapshot
+from tldw_chatbook.MCP.readiness import STATE_CSS_CLASSES, STATE_GLYPHS, ReadinessSnapshot
+
+# Task 4: one-shot mount-echo consumption sentinel. `on_select_changed`'s
+# scope/scope-ref guards compare an incoming Select.Changed value against the
+# value each Select was actually constructed with at the last compose()
+# (`_displayed_scope_value`/`_displayed_scope_ref_value`) to swallow that
+# constructor-triggered echo. A *standing* sentinel would keep swallowing any
+# later user selection that happens to match the same value again (e.g. an
+# A -> B -> A round trip's final "A" looks identical to the mount echo), so
+# once a guard actually consumes an echo it overwrites the sentinel with this
+# unique object instead of leaving the matched value in place -- no real
+# Select value can ever equal it, so every subsequent change dispatches.
+_ECHO_CONSUMED = object()
 
 MCP_RAIL_ROW_PREFIX = "mcp-rail-row-"
 # A4: wide enough that the built-in server's full label ("tldw_chatbook
@@ -26,18 +38,70 @@ _MAX_ROW_LABEL = 36
 _ALL_SERVERS_GUTTER = "  "
 
 
-def _row_label(snapshot: ReadinessSnapshot) -> str:
+def _row_prefix_and_label(snapshot: ReadinessSnapshot) -> tuple[str, str]:
+    """Truncated, UNESCAPED `(prefix, label)` for a rail row.
+
+    Shared by `_row_label()`'s final formatting and `MCPRail.compose()`'s
+    per-call adaptive pad-width measurement (A6) -- both need EXACTLY the
+    same truncation, so the logic lives in one place rather than two copies
+    that could drift. It still runs twice per row per compose() (once to
+    measure `pad_width`, once inside `_row_label()` itself) -- rail row
+    counts are small and this isn't a hot path, so that repeat call was not
+    worth the extra parameter-threading to avoid.
+
+    Deliberately returns the label BEFORE `escape_markup()` -- callers that
+    only need the rendered width (`len(prefix) + len(label)`, i.e. this
+    function's return value) must measure it here, not on the escaped
+    string `_row_label()` actually embeds. `escape_markup()` inserts one
+    backslash per markup-special character (e.g. `[` -> `\\[`), and
+    Button's own markup parsing consumes exactly that backslash again when
+    displaying the label -- so the escaped string is longer than what
+    actually renders, and padding/measuring against IT (rather than this
+    unescaped, truncated text) misaligns any row whose label contains a
+    markup-special character against its sibling rows.
+    """
     # snapshot.label is user-controlled (local profile ids, server-reported
     # names) and is rendered through Button, which parses str labels as Rich
-    # markup — escape it so a profile id like "[bold red]x" can't inject
-    # styling or break layout.
+    # markup — escape it (in `_row_label()`, at format time) so a profile id
+    # like "[bold red]x" can't inject styling or break layout.
     label = snapshot.label
     if len(label) > _MAX_ROW_LABEL:
         label = f"{label[: _MAX_ROW_LABEL - 3].rstrip()}..."
-    label = escape_markup(label)
     prefix = "⌂ " if snapshot.source == "builtin" else ""
-    suffix = f" · {snapshot.tool_count}" if snapshot.tool_count is not None else ""
-    return f"{STATE_GLYPHS[snapshot.state]} {prefix}{label}{suffix}"
+    return prefix, label
+
+
+def _row_label(snapshot: ReadinessSnapshot, pad_width: int = _MAX_ROW_LABEL) -> str:
+    """Format one rail row's full label, including the glyph and count.
+
+    Args:
+        snapshot: The row's readiness snapshot.
+        pad_width: A6 -- the column width to left-justify `prefix+label`'s
+            RENDERED (post-escape-round-trip) width to before the count
+            field. `MCPRail.compose()` passes the per-call adaptive width
+            (the longest current rendered label width among its rows) so a
+            short label's count isn't stranded far right of a long label's;
+            this defaults to the old fixed truncation budget for a
+            standalone/direct call (e.g. a unit test exercising truncation
+            in isolation, with no sibling rows to adapt to).
+    """
+    prefix, label = _row_prefix_and_label(snapshot)
+    # Pad using the RENDERED width (prefix + unescaped label), not the
+    # escaped string's own (longer, for any markup-special character)
+    # length -- see `_row_prefix_and_label()`'s docstring. Python's
+    # `f"{s:<{n}}"` format pads based on `len(s)`, which would be wrong
+    # here once `s` is escaped, so the padding is built manually instead.
+    visual_width = len(prefix) + len(label)
+    pad = " " * max(0, pad_width - visual_width)
+    text = f"{prefix}{escape_markup(label)}{pad}"
+    # Task 11 (UX-inputs polish): the tool count sits in a fixed right-side
+    # column instead of trailing the label at a variable offset -- the name
+    # is left-justified to `pad_width`, and the count is right-aligned in a
+    # fixed 3-char field (blank, not "0", when no count has ever been
+    # discovered) so counts form one scannable column down the rail instead
+    # of drifting with label length.
+    count = "" if snapshot.tool_count is None else str(snapshot.tool_count)
+    return f"{STATE_GLYPHS[snapshot.state]} {text} {count:>3}"
 
 
 class MCPRail(Vertical):
@@ -152,11 +216,32 @@ class MCPRail(Vertical):
         all_row.tooltip = "Show every server in the overview table."
         all_row.set_class(self.selected_server_key is None, "is-active")
         yield all_row
+        # A6: the count column's pad width is computed per compose() call as
+        # the longest CURRENT row's RENDERED width (post-truncate, still
+        # unescaped -- see `_row_prefix_and_label()`'s docstring for why
+        # measuring the escaped string instead would misalign any row whose
+        # label contains a markup-special character) among this rail's rows,
+        # not the fixed `_MAX_ROW_LABEL` truncation budget -- a short label
+        # (e.g. "docs") no longer strands its tool count 30+ columns right of
+        # where a long label's count lands. The truncation budget itself is
+        # unchanged; this only affects the padding applied AFTER truncation.
+        pad_width = max(
+            (
+                len(f"{prefix}{label}")
+                for prefix, label in (_row_prefix_and_label(snap) for snap in self.snapshots)
+            ),
+            default=0,
+        )
         for index, snap in enumerate(self.snapshots, start=1):
+            # Task 11: each row carries its readiness state's CSS class
+            # (STATE_CSS_CLASSES, Task 3) so it can be colored by status --
+            # constructed fresh on every compose() (sync_state() always
+            # recomposes), so there is no stale class from a prior render to
+            # remove first.
             row = Button(
-                _row_label(snap),
+                _row_label(snap, pad_width),
                 id=f"{MCP_RAIL_ROW_PREFIX}{index}",
-                classes="mcp-rail-row console-action-subdued",
+                classes=f"mcp-rail-row console-action-subdued {STATE_CSS_CLASSES[snap.state]}",
                 compact=True,
             )
             row.tooltip = escape_markup(snap.message or snap.label)
@@ -243,13 +328,24 @@ class MCPRail(Vertical):
             # against `self.scope_value` directly would miss this — that
             # attribute holds the true, un-clamped tracked scope, which can
             # differ from what was actually displayed/selected.
-            if event.value == self._displayed_scope_value:
+            # Task 4: one-shot -- consume at most the first matching echo,
+            # then flip the sentinel to `_ECHO_CONSUMED` so a later user
+            # selection that happens to land back on the same value (an
+            # A -> B -> A round trip) is never mistaken for a second echo.
+            if event.value == self._displayed_scope_value and (
+                self._displayed_scope_value is not _ECHO_CONSUMED
+            ):
+                self._displayed_scope_value = _ECHO_CONSUMED
                 return
             self.post_message(self.ScopeChanged(str(event.value), None))
         elif select_id == "mcp-rail-scope-ref":
             event.stop()
-            # Same mount-echo guard as above, for the scope-ref select.
-            if event.value == self._displayed_scope_ref_value:
+            # Same one-shot mount-echo guard as above, for the scope-ref
+            # select.
+            if event.value == self._displayed_scope_ref_value and (
+                self._displayed_scope_ref_value is not _ECHO_CONSUMED
+            ):
+                self._displayed_scope_ref_value = _ECHO_CONSUMED
                 return
             # Both our synthetic placeholder sentinel (Select.BLANK, used when
             # there are no ref options) and the auto-added blank row

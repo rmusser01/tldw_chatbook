@@ -178,6 +178,16 @@ class ConsoleRunState:
         return self.status is ConsoleRunStatus.STREAMING
 
 
+@dataclass(frozen=True)
+class MessageAttachment:
+    """One attachment carried by a Console message (position 0 = legacy slot)."""
+
+    data: bytes | None
+    mime_type: str
+    display_name: str
+    position: int
+
+
 @dataclass
 class ConsoleChatMessage:
     """A native Console transcript message."""
@@ -193,6 +203,7 @@ class ConsoleChatMessage:
     image_data: bytes | None = None
     image_mime_type: str | None = None
     attachment_label: str | None = None
+    attachments: tuple["MessageAttachment", ...] = ()
 
 
 @dataclass(frozen=True)

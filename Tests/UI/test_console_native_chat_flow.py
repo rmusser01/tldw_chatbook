@@ -7096,3 +7096,133 @@ async def test_alt_v_action_is_inert_while_setup_modal_blocks(monkeypatch):
         store = console._ensure_console_chat_store()
         sid = store.active_session_id
         assert sid is None or store.pending_attachment(sid) is None
+
+
+@pytest.mark.asyncio
+async def test_staging_appends_and_caps_at_five(tmp_path, monkeypatch):
+    from PIL import Image as PILImage
+
+    paths = []
+    for index in range(6):
+        p = tmp_path / f"img{index}.png"
+        PILImage.new("RGB", (8, 8), (index * 30, 9, 9)).save(p, format="PNG")
+        paths.append(p)
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    notifications: list[str] = []
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        import tldw_chatbook.Chat.attachment_core as attachment_core
+
+        original_load = attachment_core.load_processed_file
+
+        async def _rooted(file_path, *, allowed_root=None):
+            return await original_load(file_path, allowed_root=str(tmp_path))
+
+        monkeypatch.setattr(attachment_core, "load_processed_file", _rooted)
+        monkeypatch.setattr(
+            console.app_instance,
+            "notify",
+            lambda message, **kwargs: notifications.append(str(message)),
+        )
+
+        store = console._ensure_console_chat_store()
+        for index in range(5):
+            await console._process_console_attachment(str(paths[index]))
+            session_id = store.active_session_id
+            assert len(store.pending_attachments(session_id)) == index + 1
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        # The composer prepends its own 📎 glyph, so the label PARAMETER is
+        # glyph-free while the RENDERED indicator carries exactly one glyph.
+        assert composer._pending_attachment_label == "5 files"
+        await pilot.pause()
+        indicator = console.query_one("#console-attachment-indicator", Static)
+        rendered = str(indicator.renderable)
+        assert "📎 5 files" in rendered
+        assert "📎 📎" not in rendered
+
+        await console._process_console_attachment(str(paths[5]))
+        assert len(store.pending_attachments(store.active_session_id)) == 5
+        assert any("Attachment limit reached (5 per message)." in n for n in notifications)
+
+
+@pytest.mark.asyncio
+async def test_save_image_saves_all_attachments(tmp_path, monkeypatch):
+    from tldw_chatbook.Chat.console_chat_models import MessageAttachment
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    notifications: list[str] = []
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        monkeypatch.setattr(
+            "tldw_chatbook.UI.Screens.chat_screen.get_cli_setting",
+            lambda section, key, default=None: str(tmp_path)
+            if (section, key) == ("chat.images", "save_location")
+            else default,
+        )
+        monkeypatch.setattr(
+            console.app_instance,
+            "notify",
+            lambda message, **kwargs: notifications.append(str(message)),
+        )
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="three",
+            attachments=(
+                MessageAttachment(data=b"img-0", mime_type="image/png", display_name="a.png", position=0),
+                MessageAttachment(data=b"img-1", mime_type="image/png", display_name="b.png", position=1),
+                MessageAttachment(data=b"img-2", mime_type="image/jpeg", display_name="c.jpg", position=2),
+            ),
+        )
+
+        await console._save_console_message_image(message.id)
+
+        saved = sorted(tmp_path.glob("console_image_*"))
+        assert len(saved) == 3
+        assert any("Saved 3 images to" in n for n in notifications)
+
+
+def test_console_message_serialization_round_trips_multi_attachment_labels():
+    """Verify multi-attachment messages serialize to labels-only and restore metadata-only.
+
+    Companion to `test_console_message_serialization_carries_image_metadata_not_bytes`:
+    that test covers the single-attachment (scalar-only) shape, this one
+    covers the `attachment_labels` list a 2+ attachment message carries.
+    """
+    from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, MessageAttachment
+
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="two files",
+        image_data=b"\x89PNG-a",
+        image_mime_type="image/png",
+        attachment_label="a.png",
+        attachments=(
+            MessageAttachment(data=b"\x89PNG-a", mime_type="image/png", display_name="a.png", position=0),
+            MessageAttachment(data=b"\x89PNG-b", mime_type="image/png", display_name="b.png", position=1),
+        ),
+    )
+
+    payload = ChatScreen._serialize_console_message(message)
+
+    assert payload["attachment_labels"] == ["a.png", "b.png"]
+    assert "image_data" not in payload
+    assert not any(isinstance(value, (bytes, bytearray)) for value in payload.values())
+
+    restored = ChatScreen._restore_console_message(payload)
+
+    assert restored is not None
+    assert len(restored.attachments) == 2
+    assert [a.display_name for a in restored.attachments] == ["a.png", "b.png"]
+    assert all(a.data is None for a in restored.attachments)
