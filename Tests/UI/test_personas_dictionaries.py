@@ -55,6 +55,7 @@ class FakeDictScopeService:
         self.records: dict[int, dict] = {}
         self.calls: list[tuple] = []
         self.history: dict[int, list[dict]] = {}
+        self.conversations: dict[str, dict] = {}
         for record in records or []:
             self.records[int(record["id"])] = copy.deepcopy(record)
         self._next_id = max(self.records, default=0) + 1
@@ -418,6 +419,29 @@ class FakeDictScopeService:
         created = await self.create_dictionary({"name": name, "entries": entries})
         self.calls.append(("import_markdown", name))
         return {"dictionary_id": created["id"], "source": "local"}
+
+    async def list_dictionary_conversations(self, dictionary_id: int, mode: str = "local") -> dict:
+        did = int(dictionary_id)
+        rows = [{"conversation_id": cid, "title": c.get("title") or ""}
+                for cid, c in self.conversations.items()
+                if did in (c.get("active_dictionaries") or [])]
+        return {"conversations": rows, "source": "local"}
+
+    async def attach_to_conversation(self, dictionary_id: int, conversation_id: str, mode: str = "local") -> dict:
+        conv = self.conversations[str(conversation_id)]
+        did = int(dictionary_id)
+        ids = conv.setdefault("active_dictionaries", [])
+        if did not in ids:
+            ids.append(did)
+        return {"dictionary_id": did, "conversation_id": str(conversation_id),
+                "active_dictionaries": list(ids), "source": "local"}
+
+    async def detach_from_conversation(self, dictionary_id: int, conversation_id: str, mode: str = "local") -> dict:
+        conv = self.conversations[str(conversation_id)]
+        did = int(dictionary_id)
+        conv["active_dictionaries"] = [i for i in conv.get("active_dictionaries") or [] if i != did]
+        return {"dictionary_id": did, "conversation_id": str(conversation_id),
+                "active_dictionaries": list(conv["active_dictionaries"]), "source": "local"}
 
 
 def make_dict_record(
@@ -2141,3 +2165,56 @@ class TestDictionaryAttachmentsTab:
             table = screen.query_one("#personas-dict-attachments-table", DataTable)
             assert table.row_count == 1
             assert "Noir case" in str(table.get_cell_at((0, 0)))
+
+
+class TestDictionaryAttachFlow:
+    async def _select_first(self, pilot, screen):
+        rows = screen.query_one("#personas-library-rows", ListView)
+        rows.index = 0
+        rows.action_select_cursor()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+    async def test_attach_via_picker_then_detach(self, mock_app_instance, stub_characters, fake_dict_service, monkeypatch):
+        from textual.widgets import DataTable, TabbedContent
+        from tldw_chatbook.Widgets.Persona_Widgets.dictionary_attach_picker import DictionaryAttachPicker
+
+        # Seed a conversation the picker can offer + the attach can target.
+        fake_dict_service.conversations = {"c1": {"id": "c1", "title": "Noir case", "active_dictionaries": []}}
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            # The attach/detach buttons live in the Attachments TabPane; the
+            # default active tab is Entries, so a click won't land on them
+            # (and may fall through to whatever's underneath) until switched.
+            screen.query_one("#personas-dict-tabs", TabbedContent).active = "personas-dict-tab-attachments"
+            await pilot.pause()
+
+            # Auto-pick "c1" instead of showing the modal (the picker itself is
+            # covered by Task 4's dedicated test).
+            async def _fake_push(screen_obj):
+                return "c1" if isinstance(screen_obj, DictionaryAttachPicker) else None
+            monkeypatch.setattr(screen.app, "push_screen_wait", _fake_push, raising=False)
+            # The attach worker also does a sync DB read for the conversation list;
+            # stub it to the fake's seeded conversation.
+            monkeypatch.setattr(
+                screen, "_list_attachable_conversations",
+                lambda: [{"conversation_id": "c1", "title": "Noir case"}],
+            )
+            await pilot.click("#personas-dict-attach-add")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert 1 in fake_dict_service.conversations["c1"]["active_dictionaries"]  # attached (dict id 1)
+            table = screen.query_one("#personas-dict-attachments-table", DataTable)
+            assert table.row_count == 1
+            # detach
+            table.move_cursor(row=0)
+            await pilot.click("#personas-dict-attach-detach")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert fake_dict_service.conversations["c1"]["active_dictionaries"] == []
