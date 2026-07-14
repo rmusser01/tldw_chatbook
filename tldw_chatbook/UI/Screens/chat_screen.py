@@ -8,6 +8,7 @@ import inspect
 import os
 from pathlib import Path
 import re
+import time
 from types import SimpleNamespace
 from typing import Any, Dict, Iterable, Optional, TYPE_CHECKING
 import uuid
@@ -260,6 +261,22 @@ CONSOLE_SYSTEM_PROMPT_NO_SYSTEM_PART_TEMPLATE = 'Prompt "{name}" has no system p
 CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL = "Set up provider"
 CONSOLE_PROVIDER_ACTION_ARROW = " ---------------------->"
 NATIVE_CONSOLE_STATE_VERSION = "1.0"
+# Statuses during which the 0.2s transcript poll is actively ticking
+# (see `_start_console_transcript_sync_timer`) -- also used by the
+# sub-agent badge-count cache (Finding A) to decide whether a live run
+# justifies an eager re-count.
+CONSOLE_ACTIVE_RUN_STATUSES = (
+    ConsoleRunStatus.VALIDATING,
+    ConsoleRunStatus.RETRYING,
+    ConsoleRunStatus.STREAMING,
+)
+# Plan-B Task 7 Finding A: the conversation-browser `[N Sub-Agents]` badge
+# count previously re-queried the DB once per visible row on every 0.2s
+# poll tick. The batched replacement is still cheap to cache; this TTL is
+# the fallback staleness bound when neither the row set changed nor a run
+# is actively streaming (e.g. a sub-agent finished in a *different*
+# Console session/tab).
+CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS = 2.0
 CONSOLE_FOCUS_REGISTRY = WorkbenchFocusRegistry(
     (
         "console-left-rail",
@@ -994,6 +1011,12 @@ class ChatScreen(BaseAppScreen):
         if controller.store.active_session_id != session_id:
             self._set_active_workspace_for_console_session(session_id)
             controller.switch_session(session_id)
+            # Finding C: a sub-agent drill-in is scoped to the conversation
+            # active when the user drilled in -- clear it immediately on
+            # switch here (the shared activation path for tab clicks,
+            # Ctrl+K, and Alt+1..9) rather than rely solely on the rail
+            # render path's own defensive re-check on the next sync.
+            self._console_agent_drilldown_run_id = None
             await self._sync_native_console_chat_ui()
         self._focus_console_composer_if_needed(force=True)
 
@@ -1115,6 +1138,15 @@ class ChatScreen(BaseAppScreen):
         self._console_chat_store: ConsoleChatStore | None = None
         self._console_agent_bridge: Any | None = None
         self._console_agent_drilldown_run_id: str | None = None
+        # Finding C: the conversation the drill-in was set for -- used to
+        # detect a conversation/session switch and drop back to the
+        # overview instead of showing a foreign conversation's sub-agent.
+        self._console_agent_drilldown_conversation_id: str | None = None
+        # Finding A: batched sub-agent badge-count cache + the staleness
+        # markers used to decide whether it needs a fresh DB round trip.
+        self._console_subagent_counts_cache: Dict[str, int] = {}
+        self._console_subagent_counts_cache_row_ids: frozenset = frozenset()
+        self._console_subagent_counts_cache_at: float = 0.0
         self._console_rail_prune_dispatched = False
         self._console_workspace_conversation_query = ""
         self._console_workspace_conversation_search_timer: Any | None = None
@@ -1680,36 +1712,59 @@ class ChatScreen(BaseAppScreen):
         the same bridge whose ``AgentRunsDB`` backs resume re-derivation, so
         this always reflects the latest known state without any extra event
         plumbing (the 0.2s Console poll re-calls this on every tick).
+
+        Finding B: none of this text is escaped -- every string returned
+        here is rendered into a ``markup=False`` Static (see the compose
+        block below), so escaping would be a second guard stacked on top
+        of ``markup=False`` and would render literal backslashes (e.g.
+        ``fetch [docs]`` -> ``fetch \\[docs]``). Contrast with the
+        conversation-browser badge label (``format_console_conversation_
+        row_label``), which renders through ``Text.from_markup`` and must
+        stay escaped.
+
+        Finding C: a drill-in is scoped to the conversation active when
+        the user drilled in. Every call here re-checks that scope --
+        catching any switch path that doesn't itself clear the drill-down
+        -- and falls back to the overview on a mismatch rather than show
+        a foreign conversation's sub-agent detail.
         """
         bridge = self._ensure_console_agent_bridge()
         conversation_id = self._current_console_rail_conversation_id() or ""
         if bridge is None:
             return ("Agent: unavailable", "", "")
-        drill = getattr(self, "_console_agent_drilldown_run_id", None)
+        if conversation_id != self._console_agent_drilldown_conversation_id:
+            # The active conversation/session changed since the drill-in
+            # (tab switch, Ctrl+K switcher, saved-conversation resume,
+            # workspace switch, ...) -- this self-heals even for a switch
+            # path that doesn't explicitly clear the drill-down itself.
+            self._console_agent_drilldown_run_id = None
+            self._console_agent_drilldown_conversation_id = conversation_id
+        drill = self._console_agent_drilldown_run_id
         if drill:
             record = bridge.subagent_run(drill)
-            if record is not None:
+            if record is not None and record.get("conversation_id") == conversation_id:
                 steps = "\n".join(
                     f"{s.get('kind')}: "
-                    f"{escape_markup(str(s.get('summary') or s.get('result') or ''))[:80]}"
+                    f"{str(s.get('summary') or s.get('result') or '')[:80]}"
                     for s in record.get("steps", []))
                 return (
                     f"Sub-agent · {record.get('status')} (Back)",
                     steps,
-                    escape_markup(str(record.get("task") or "")),
+                    str(record.get("task") or ""),
                 )
-            # The drilled-into run vanished (e.g. a different conversation
-            # was resumed); fall back to the live snapshot instead of
-            # showing a stale/blank drill-in view.
+            # The drilled-into run vanished, or (defensive re-check) its
+            # recorded conversation_id no longer matches the one now
+            # active -- fall back to the live snapshot instead of showing
+            # a stale/foreign drill-in view.
             self._console_agent_drilldown_run_id = None
         snapshot = bridge.live_snapshot(conversation_id)
         status = f"Agent: {snapshot.status}"
         if snapshot.status == "running":
             status = f"Agent: running · step {snapshot.step}"
-        steps = "\n".join(f"· {escape_markup(s.text)[:80]}" for s in snapshot.steps)
+        steps = "\n".join(f"· {s.text[:80]}" for s in snapshot.steps)
         glyphs = {"done": "✓", "running": "●", "stuck": "⚠", "error": "✗", "cancelled": "✗"}
         subagents = "\n".join(
-            f"{glyphs.get(s.status, '●')} {escape_markup(s.text)[:60]}"
+            f"{glyphs.get(s.status, '●')} {s.text[:60]}"
             for s in snapshot.subagents)
         return (status, steps, subagents)
 
@@ -1728,15 +1783,32 @@ class ChatScreen(BaseAppScreen):
             pass
 
     def _toggle_console_agent_drilldown_from_subagents_click(self) -> None:
-        """Drill into the most recent sub-agent run, or back out if already in one."""
-        if self._console_agent_drilldown_run_id:
-            self._console_agent_drilldown_run_id = None
+        """Step the drill-in through this conversation's sub-agent runs.
+
+        Finding D: a conversation can have more than one sub-agent run,
+        but the combined ``subagents`` rail line only ever opened
+        ``runs[0]`` no matter how many times it was clicked, leaving every
+        other sub-agent unreachable. Repeated clicks now cycle through
+        ``runs[0], runs[1], ..., runs[n-1]`` (newest first, matching
+        ``AgentRunsDB.list_runs``' order) and then back to the overview,
+        rather than adding a new per-row widget for what is usually a
+        small N. The dedicated Back button always returns to the overview
+        directly, regardless of where the cycle currently is.
+        """
+        bridge = self._ensure_console_agent_bridge()
+        conversation_id = self._current_console_rail_conversation_id() or ""
+        runs = bridge.subagent_runs(conversation_id) if bridge is not None else []
+        run_ids = [run.get("id") for run in runs]
+        current = self._console_agent_drilldown_run_id
+        if not run_ids:
+            next_run_id = None
+        elif current in run_ids:
+            next_index = run_ids.index(current) + 1
+            next_run_id = run_ids[next_index] if next_index < len(run_ids) else None
         else:
-            bridge = self._ensure_console_agent_bridge()
-            conversation_id = self._current_console_rail_conversation_id() or ""
-            runs = bridge.subagent_runs(conversation_id) if bridge is not None else []
-            if runs:
-                self._console_agent_drilldown_run_id = runs[0].get("id")
+            next_run_id = run_ids[0]
+        self._console_agent_drilldown_run_id = next_run_id
+        self._console_agent_drilldown_conversation_id = conversation_id
         self.run_worker(self._sync_native_console_chat_ui(), exclusive=True)
 
     def _current_console_workspace_context(self) -> ConsoleWorkspaceContext:
@@ -2496,6 +2568,11 @@ class ChatScreen(BaseAppScreen):
             settings=self._console_session_settings_for_resume(conversation),
         )
         self._set_active_workspace_for_console_session(session.id)
+        # Finding C: resuming a saved conversation switches the active
+        # conversation just as much as a tab switch does -- clear any
+        # sub-agent drill-in immediately rather than rely solely on the
+        # rail render path's defensive re-check on the next sync.
+        self._console_agent_drilldown_run_id = None
         self._sync_console_chat_core_state()
         await self._sync_native_console_chat_ui()
         self._focus_console_composer_if_needed(force=True)
@@ -3655,6 +3732,77 @@ class ChatScreen(BaseAppScreen):
         )
         return replace(state, conversation_section=section)
 
+    def _console_subagent_counts_refresh_needed(self, row_ids: frozenset) -> bool:
+        """Decide whether the sub-agent badge-count cache needs a DB round trip.
+
+        Finding A: refreshing on every 0.2s poll tick would re-issue the
+        batched count query up to 5x/second even when nothing sub-agent
+        related changed. This gates the refresh to three cheap-to-check
+        conditions instead of refreshing unconditionally:
+
+        1. The visible conversation row set changed (a rebuild) -- new
+           rows may need counts we have never cached.
+        2. A run is actively streaming/validating/retrying for this
+           screen -- a just-spawned sub-agent's count should show up
+           promptly rather than wait out the full TTL.
+        3. The cache has aged past ``CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS``
+           -- a fallback bound covering counts that changed from a
+           different Console session/tab or a resumed run, where neither
+           of the above two signals fires on this screen.
+
+        Args:
+            row_ids: The conversation ids of the currently visible browser
+                rows (deduplicated, blanks excluded).
+
+        Returns:
+            ``True`` when the cache should be rebuilt from the DB.
+        """
+        if row_ids != self._console_subagent_counts_cache_row_ids:
+            return True
+        controller = self._console_chat_controller
+        if controller is not None and controller.run_state.status in CONSOLE_ACTIVE_RUN_STATUSES:
+            return True
+        age = time.monotonic() - self._console_subagent_counts_cache_at
+        return age >= CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS
+
+    def _console_subagent_counts_for_rows(
+        self,
+        bridge: Any | None,
+        rows: Iterable[Any],
+    ) -> Dict[str, int]:
+        """Return ``conversation_id -> sub-agent count`` for browser rows.
+
+        Finding A: previously called ``bridge.subagent_count(cid)`` once
+        per row (a fresh sqlite connection per call) on every poll tick --
+        up to ~75 queries/tick. Replaced with one batched
+        ``bridge.subagent_counts(...)`` call, gated by
+        ``_console_subagent_counts_refresh_needed`` so it isn't reissued
+        unconditionally every tick either.
+
+        Args:
+            bridge: The Console agent bridge, or ``None`` when the agent
+                runtime is unavailable (e.g. in-memory test harness).
+            rows: The conversation-browser input rows currently visible.
+
+        Returns:
+            Mapping of ``conversation_id -> count``; conversations with
+            zero sub-agent runs are simply absent (see
+            ``AgentRunsDB.count_subagents_by_conversation``).
+        """
+        if bridge is None:
+            return {}
+        row_ids = frozenset(
+            cid for row in rows
+            if (cid := getattr(row, "conversation_id", None))
+        )
+        if self._console_subagent_counts_refresh_needed(row_ids):
+            self._console_subagent_counts_cache = (
+                bridge.subagent_counts(list(row_ids)) if row_ids else {}
+            )
+            self._console_subagent_counts_cache_row_ids = row_ids
+            self._console_subagent_counts_cache_at = time.monotonic()
+        return self._console_subagent_counts_cache
+
     def _with_console_conversation_browser_state(
         self,
         state: ConsoleWorkspaceContextState,
@@ -3672,12 +3820,7 @@ class ChatScreen(BaseAppScreen):
             current_conversation_id=current_conversation_id,
         )
         bridge = self._ensure_console_agent_bridge()
-        subagent_counts: dict[str, int] = {}
-        if bridge is not None:
-            for input_row in rows:
-                cid = getattr(input_row, "conversation_id", None)
-                if cid:
-                    subagent_counts[cid] = bridge.subagent_count(cid)
+        subagent_counts = self._console_subagent_counts_for_rows(bridge, rows)
         browser = build_console_conversation_browser_state(
             rows=rows,
             active_workspace_id=self._current_console_workspace_context().active_workspace_id,
@@ -6772,12 +6915,8 @@ class ChatScreen(BaseAppScreen):
         async def _poll_transcript() -> None:
             await self._sync_native_console_chat_ui()
             controller = self._console_chat_controller
-            active_statuses = {
-                ConsoleRunStatus.VALIDATING,
-                ConsoleRunStatus.RETRYING,
-                ConsoleRunStatus.STREAMING,
-            }
-            if controller is None or controller.run_state.status not in active_statuses:
+            if (controller is None
+                    or controller.run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES):
                 self._stop_console_transcript_sync_timer()
 
         self._console_transcript_sync_timer = self.set_interval(0.2, _poll_transcript)

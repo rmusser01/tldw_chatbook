@@ -195,7 +195,14 @@ class ConsoleAgentBridge:
             live_steps.append(AgentLiveStep(step.kind, self._summarize(step), agent_kind))
             if agent_kind == AGENT_KIND_PRIMARY:
                 if step.kind == STEP_SPAWN:
-                    subagents.append(SubAgentSummary(escape_markup(step.summary or "")))
+                    # Finding B: this text is only ever rendered into the
+                    # rail's markup=False Statics (_console_agent_section_lines
+                    # in chat_screen.py) -- never into a markup-enabled
+                    # widget -- so it must stay raw. Escaping here produced
+                    # literal backslashes once rendered (`fetch [docs]` ->
+                    # `fetch \[docs]`), since markup=False never interprets
+                    # (and so never "consumes") the escape sequence.
+                    subagents.append(SubAgentSummary(step.summary or ""))
                     self._append_marker(
                         session_id, f"⤷ spawned sub-agent: {step.summary}")
                 elif (step.kind == STEP_TOOL_RESULT
@@ -238,6 +245,14 @@ class ConsoleAgentBridge:
     def subagent_count(self, conversation_id: str) -> int:
         return self._db.count_subagent_runs(conversation_id)
 
+    def subagent_counts(self, conversation_ids: list[str]) -> dict[str, int]:
+        """Batched per-conversation sub-agent counts (Finding A).
+
+        One call replaces one ``subagent_count(cid)`` call per row -- see
+        ``AgentRunsDB.count_subagents_by_conversation`` for the query.
+        """
+        return self._db.count_subagents_by_conversation(conversation_ids)
+
     # -- internals ------------------------------------------------------
 
     def _append_marker(self, session_id: str, text: str) -> None:
@@ -249,8 +264,14 @@ class ConsoleAgentBridge:
 
     @staticmethod
     def _summarize(step: AgentStep) -> str:
+        # Finding B: feeds only AgentLiveStep.text, which
+        # _console_agent_section_lines renders into a markup=False Static --
+        # escaping here (a second guard on top of markup=False) produced
+        # literal backslashes for bracketed text. Left raw; the transcript
+        # TOOL marker path below (_append_marker) still escapes, since that
+        # text renders through a markup-enabled widget.
         raw = step.summary or step.result or step.tool_name or step.kind
-        return escape_markup(str(raw)[:200])
+        return str(raw)[:200]
 
     def _previous_primary_run_id(self, conversation_id: str) -> str | None:
         for record in self._db.list_runs(conversation_id, include_superseded=False):

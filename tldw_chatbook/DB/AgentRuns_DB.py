@@ -251,6 +251,41 @@ class AgentRunsDB(BaseDB):
                 (conversation_id,)).fetchone()
         return int(row["n"])
 
+    def count_subagents_by_conversation(
+        self, conversation_ids: list[str],
+    ) -> dict[str, int]:
+        """Count sub-agent runs for many conversations in a single query.
+
+        Plan-B Task 7 Finding A: the Console conversation browser's
+        ``[N Sub-Agents]`` badge previously called ``count_subagent_runs``
+        once per visible conversation row (opening a fresh sqlite
+        connection each time) on every 0.2s rail poll tick -- up to ~75
+        connections/queries per tick. This batches all of them into one
+        parameterized ``GROUP BY`` query.
+
+        Args:
+            conversation_ids: The conversations to count sub-agent runs
+                for. Duplicates and blank entries are ignored.
+
+        Returns:
+            Mapping of ``conversation_id -> count`` for conversations that
+            have at least one sub-agent run. A conversation with zero
+            sub-agent runs is simply absent from the mapping (not present
+            with a ``0`` value) -- callers should treat a missing key as
+            zero, matching plain ``GROUP BY`` semantics.
+        """
+        ids = [cid for cid in dict.fromkeys(conversation_ids) if cid]
+        if not ids:
+            return {}
+        placeholders = ",".join("?" * len(ids))
+        with self.connection() as conn:
+            rows = conn.execute(
+                "SELECT conversation_id, COUNT(*) AS n FROM agent_runs "
+                f"WHERE agent_kind = 'subagent' AND conversation_id IN ({placeholders}) "
+                "GROUP BY conversation_id",
+                ids).fetchall()
+        return {row["conversation_id"]: int(row["n"]) for row in rows}
+
     def supersede_run_tree(self, run_id: str) -> int:
         """Mark a run and its direct children ``superseded``.
 
