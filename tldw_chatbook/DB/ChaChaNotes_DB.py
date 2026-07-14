@@ -2221,8 +2221,6 @@ UPDATE db_schema_version
 """
 
     _MIGRATE_V19_TO_V20_SQL = """
-ALTER TABLE conversations ADD COLUMN metadata TEXT;
-
 DROP TRIGGER IF EXISTS conversations_sync_create;
 DROP TRIGGER IF EXISTS conversations_sync_update;
 DROP TRIGGER IF EXISTS conversations_sync_delete;
@@ -3255,6 +3253,12 @@ UPDATE db_schema_version
         """
         logger.info(f"Migrating schema from V19 to V20 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
         try:
+            # Idempotent column add: SQLite has no ``ADD COLUMN IF NOT EXISTS``, so
+            # skip the ALTER when a replayed/partial migration already left the
+            # column in place (mirrors the v18->v19 ``CREATE TABLE IF NOT EXISTS``).
+            existing_columns = {row[1] for row in conn.execute("PRAGMA table_info(conversations)").fetchall()}
+            if "metadata" not in existing_columns:
+                conn.execute("ALTER TABLE conversations ADD COLUMN metadata TEXT")
             conn.executescript(self._MIGRATE_V19_TO_V20_SQL)
             logger.debug(f"[{self._SCHEMA_NAME} V19→V20] Migration script executed.")
 
