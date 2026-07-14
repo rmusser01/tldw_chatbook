@@ -40,7 +40,10 @@ agent discovers and calls them mid-run as tools. Both are thin adapters over shi
 
 - `tldw_chatbook/Library/library_skills_state.py` — pure list/detail state builders (mirror
   `library_prompts_state.py`): rows carry name, description, trust glyph (✓ trusted / ⚠ needs
-  review), and an invocation-flags line (`user · agent`, per the two flags).
+  review), and an invocation-flags line (`user · agent`, per the two flags). The list renders
+  BOTH populations the scope service returns — trusted skills and `blocked_skills`
+  (needs-review): blocked rows cannot invoke but open the detail with the trust panel primed
+  (the review flow depends on them being visible).
 - `tldw_chatbook/Widgets/Library/library_skills_canvas.py` — list + detail canvases. Detail =
   SKILL.md editor: frontmatter fields (name, description, argument_hint, allowed_tools,
   user_invocable, disable_model_invocation, context, model — model shown with a "not applied in
@@ -85,8 +88,14 @@ agent discovers and calls them mid-run as tools. Both are thin adapters over shi
 4. **Transcript + persistence carry the raw command** as the user message (compact, honest),
    plus a marker row naming the skill (`skill code-review → driving this turn`, TOOL-role,
    escaped). Subsequent turns' history therefore contains the raw command — an accepted,
-   documented trade-off. Retry/regenerate re-resolve, re-trust-check, and re-render fresh; a
-   skill edited since (now untrusted) refuses at retry with the same copy.
+   documented trade-off.
+5. **The substitution rule (one rule for fresh sends AND retries):** when building a provider
+   payload, if the turn's TRIGGERING user message — the final user message in the payload —
+   parses as a resolvable skill command, it is rendered fresh at build time (re-resolve,
+   re-trust-check, `{{args}}` re-substituted, `context` re-read so fork/inline survives
+   retries). Earlier history messages are never substituted. The stored raw command is thus the
+   durable record that drives re-rendering — no per-message skill metadata needed. A skill
+   edited since approval (now untrusted) refuses at retry with the standard refuse copy.
 
 **Agent-tool surface** (mid-run): the agent sees trusted model-invocable skills in its catalog
 (subject to the run's `allowed_tools` and progressive disclosure), loads one, calls it with an
@@ -102,6 +111,11 @@ in v1 (a skill's own run excludes skill tools — depth stays bounded).
   between listing and invoking refuses (no rug-pulls). The `agent_service` permission gate
   additionally requires skill tools to be disclosed + allowed like any tool.
 - `allowed_tools` **intersects** with the runtime's builtin set — never grants.
+- **Run allowlist composition**: a normal Console run's `AgentConfig.allowed_tools` =
+  builtins ∪ eligible skill names (trusted + model-invocable), computed fresh at run start —
+  otherwise the disclosed-AND-allowed permission gate would refuse every skill tool. A
+  skill-driven turn's intersection rule (`skill.allowed_tools ∩ builtins`) then naturally
+  excludes other skills, consistent with no-skills-calling-skills.
 - All skill-derived text (names, descriptions, hints, marker copy, list rows) markup-escaped
   where markup is enabled; raw where `markup=False` (the #629 discipline). Args length-capped
   before substitution.
@@ -112,8 +126,9 @@ Skills are the first realistic >8-tool catalog, so progressive disclosure
 (`find_tools`/`load_tools`) goes live here — and the two deferred catalog fixes land as part of
 Phase 2, with regression tests: (a) duplicate re-load desync (loop-side dedupe before slicing —
 F1-b, plan-a-final-review); (b) `_owner_and_id` per-lookup re-listing (cache the tool_id →
-provider map, invalidated on provider registration/skill CRUD — task-227-adjacent TODO in
-tool_catalog.py).
+provider map; cache scope is PER RUN — the catalog is listed fresh at run start, so skill CRUD
+between runs is always picked up and no cross-run invalidation signal is needed —
+task-227-adjacent TODO in tool_catalog.py).
 
 ## Error handling
 
