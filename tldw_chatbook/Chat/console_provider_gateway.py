@@ -300,14 +300,8 @@ class ConsoleProviderGateway:
         safe_error_copy: Callable[[str, BaseException], str] | None = None,
     ) -> None:
         self._owns_http_client = http_client is None
-        self.http_client = http_client or httpx.AsyncClient(
-            timeout=httpx.Timeout(
-                connect=GENERATION_CONNECT_TIMEOUT_SECONDS,
-                read=GENERATION_READ_TIMEOUT_SECONDS,
-                write=GENERATION_READ_TIMEOUT_SECONDS,
-                pool=GENERATION_READ_TIMEOUT_SECONDS,
-            )
-        )
+        self.http_client = http_client or self._new_owned_http_client()
+        self._client_loop: asyncio.AbstractEventLoop | None = None
         self._config_provider = config_provider or (lambda: {})
         self._environ = environ
         self._chat_api_call_fn = chat_api_call_fn
@@ -321,6 +315,67 @@ class ConsoleProviderGateway:
         """
         if self._owns_http_client:
             await self.http_client.aclose()
+
+    @staticmethod
+    def _new_owned_http_client() -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            timeout=httpx.Timeout(
+                connect=GENERATION_CONNECT_TIMEOUT_SECONDS,
+                read=GENERATION_READ_TIMEOUT_SECONDS,
+                write=GENERATION_READ_TIMEOUT_SECONDS,
+                pool=GENERATION_READ_TIMEOUT_SECONDS,
+            )
+        )
+
+    def _active_http_client(self) -> httpx.AsyncClient:
+        """Return an HTTP client bound to the CURRENTLY running event loop.
+
+        The Console reuses one gateway instance for both readiness probes
+        (awaited on the app's own event loop) and agent-runtime generation
+        calls (bridged from a worker thread via a fresh ``asyncio.run()``
+        per turn -- see ``console_agent_bridge._StreamingModelAdapter``).
+        httpx/httpcore lazily bind their internal connection-pool
+        ``asyncio.Lock``/``Event`` objects to whichever loop first touches
+        them; reusing that same client from a second, different loop raises
+        ``RuntimeError: ... is bound to a different event loop`` (or, once
+        the first loop has since closed, ``RuntimeError: Event loop is
+        closed``) on every request -- observed live as every agent send
+        failing with "Agent run failed: ... is bound to a different event
+        loop." Recreate the owned client whenever the running loop changes
+        so each loop gets its own client; injected clients (tests) are
+        trusted to manage their own loop lifecycle and are left untouched.
+        """
+        if not self._owns_http_client:
+            return self.http_client
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return self.http_client
+        if self._client_loop is loop:
+            return self.http_client
+        stale_client, stale_loop = self.http_client, self._client_loop
+        self.http_client = self._new_owned_http_client()
+        self._client_loop = loop
+        if stale_loop is not None:
+            self._schedule_stale_client_close(stale_client, stale_loop)
+        return self.http_client
+
+    @staticmethod
+    def _schedule_stale_client_close(
+        client: httpx.AsyncClient, loop: asyncio.AbstractEventLoop
+    ) -> None:
+        """Best-effort close of a client left behind by a loop swap.
+
+        The previous loop may already be closed (a completed per-turn
+        ``asyncio.run()``) or may still be running elsewhere (the app's
+        main loop) -- either way this must never raise into the caller
+        that triggered the swap.
+        """
+        try:
+            future = asyncio.run_coroutine_threadsafe(client.aclose(), loop)
+        except RuntimeError:
+            return
+        future.add_done_callback(lambda f: f.exception())
 
     async def resolve_llamacpp(self, config: LlamaCppProviderConfig) -> ConsoleProviderResolution:
         """Resolve llama.cpp readiness and the effective model.
@@ -368,7 +423,7 @@ class ConsoleProviderGateway:
             )
 
         try:
-            response = await self.http_client.get(
+            response = await self._active_http_client().get(
                 f"{base_url.rstrip('/')}/v1/models",
                 timeout=PROBE_TIMEOUT_SECONDS,
             )
@@ -577,7 +632,7 @@ class ConsoleProviderGateway:
         emitted_content = False
         stream_error: httpx.HTTPError | None = None
         try:
-            async with self.http_client.stream(
+            async with self._active_http_client().stream(
                 "POST",
                 f"{normalized_base_url.rstrip('/')}/v1/chat/completions",
                 json=payload,
@@ -643,7 +698,7 @@ class ConsoleProviderGateway:
         if not validate_url(normalized_base_url):
             raise ValueError("invalid llama.cpp base URL")
 
-        response = await self.http_client.post(
+        response = await self._active_http_client().post(
             f"{normalized_base_url.rstrip('/')}/v1/chat/completions",
             json=build_llamacpp_chat_payload(
                 model=model,
@@ -859,7 +914,7 @@ class ConsoleProviderGateway:
 
     async def _is_reachable(self, base_url: str) -> bool:
         try:
-            await self.http_client.get(
+            await self._active_http_client().get(
                 f"{base_url.rstrip('/')}/health",
                 timeout=PROBE_TIMEOUT_SECONDS,
             )

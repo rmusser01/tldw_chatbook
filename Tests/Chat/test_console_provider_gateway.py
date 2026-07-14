@@ -1,4 +1,6 @@
+import asyncio
 import builtins
+import http.server
 import json
 import threading
 
@@ -1244,3 +1246,108 @@ async def test_llamacpp_generation_calls_keep_client_level_timeout():
     assert [path for path, _ in seen] == ["/v1/chat/completions"]
     assert seen[0][1].get("read") == client_timeout
     assert seen[0][1].get("read") != PROBE_TIMEOUT_SECONDS
+
+
+class _JSONOKHandler(http.server.BaseHTTPRequestHandler):
+    """Minimal local HTTP server: real sockets, real httpcore connection pool.
+
+    A ``httpx.MockTransport`` does not reproduce the loop-binding bug below
+    (it never touches httpcore's real ``AsyncConnectionPool``, so no
+    loop-bound lock/event is ever created) -- only genuine socket traffic
+    does, which is why this fixture spins up a real (if tiny) HTTP server
+    instead. ``protocol_version`` must be HTTP/1.1 (``BaseHTTPRequestHandler``
+    defaults to 1.0, which closes the connection after every response and
+    happens to sidestep the pool-level lock reuse this test targets) -- real
+    llama.cpp servers speak keep-alive HTTP/1.1, which is what actually
+    reproduced the live crash this regression test is pinned to.
+    """
+
+    protocol_version = "HTTP/1.1"
+
+    def do_GET(self):  # noqa: N802 -- BaseHTTPRequestHandler naming
+        body = b'{"data": [{"id": "model-a"}]}'
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):  # noqa: D102 -- silence default stderr logging
+        pass
+
+
+@pytest.fixture
+def local_http_server():
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _JSONOKHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+
+
+def test_owned_http_client_survives_agent_bridge_style_loop_swap(local_http_server):
+    """Regression (Task 8 live gate): every agent turn crashed against a real
+    llama.cpp server with ``RuntimeError: <asyncio.locks.Event ...> is bound
+    to a different event loop``. Root cause: the gateway's OWNED httpx
+    client was reused verbatim across the app's main event loop (readiness
+    probes, awaited in-place) and the agent bridge's per-turn
+    ``asyncio.run()`` worker-thread loop (``console_agent_bridge.
+    _StreamingModelAdapter.chat_call``) -- httpx/httpcore bind their
+    internal connection-pool lock/event objects to whichever loop first
+    touches them, so a second, concurrently-running loop reusing the same
+    client always raised. This drives the exact same two-loop shape: a
+    background thread keeps a loop alive indefinitely (like the Textual app
+    loop) while a fresh ``asyncio.run()`` (like the agent bridge) reuses the
+    same gateway afterward.
+    """
+    gateway = ConsoleProviderGateway()
+
+    async def probe() -> bool:
+        return await gateway._is_reachable(local_http_server)
+
+    main_loop = asyncio.new_event_loop()
+    main_loop_ready = threading.Event()
+
+    def run_main_loop() -> None:
+        asyncio.set_event_loop(main_loop)
+        main_loop_ready.set()
+        main_loop.run_forever()
+
+    main_thread = threading.Thread(target=run_main_loop, daemon=True)
+    main_thread.start()
+    main_loop_ready.wait(timeout=2)
+    try:
+        # First use: a readiness probe awaited on the (still-running) main
+        # loop -- binds the owned client's internal locks to `main_loop`.
+        first = asyncio.run_coroutine_threadsafe(probe(), main_loop).result(timeout=5)
+        assert first is True
+
+        # Second use: the agent bridge's worker thread bridges via a BRAND
+        # NEW asyncio.run() loop while `main_loop` is still alive elsewhere.
+        # Before the fix this raised RuntimeError("... is bound to a
+        # different event loop") on every single agent turn.
+        second = asyncio.run(probe())
+        assert second is True
+    finally:
+        main_loop.call_soon_threadsafe(main_loop.stop)
+        main_thread.join(timeout=2)
+
+
+def test_injected_http_client_is_never_swapped_across_loops():
+    """Injected clients (test doubles / callers that own their own client)
+    must never be silently replaced -- only the gateway's OWNED client is
+    loop-swapped."""
+    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200)))
+    gateway = ConsoleProviderGateway(http_client=client)
+
+    async def active_client_identity() -> int:
+        return id(gateway._active_http_client())
+
+    first = asyncio.run(active_client_identity())
+    second = asyncio.run(active_client_identity())
+
+    assert first == second == id(client)
+    asyncio.run(client.aclose())
