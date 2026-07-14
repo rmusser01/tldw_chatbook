@@ -2054,7 +2054,7 @@ max_size_mb = 10.0
 auto_resize = true
 resize_max_dimension = 2048
 save_location = "~/Downloads"
-supported_formats = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"]
+supported_formats = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".tif", ".svg"]
 
 [chat.images.terminal_overrides]
 kitty = "regular"

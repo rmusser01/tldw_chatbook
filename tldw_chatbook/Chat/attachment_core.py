@@ -26,6 +26,29 @@ MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024  # matches the legacy handler's 100MB c
 MAX_IMAGE_BYTES = 10 * 1024 * 1024  # matches ChatImageHandler.MAX_IMAGE_SIZE
 DEFAULT_MAX_HISTORY_IMAGES = 10  # used when model capabilities omit max_images
 
+DEFAULT_RESIZE_MAX_DIMENSION = 2048  # matches ChatImageHandler's legacy literal
+
+DEFAULT_SUPPORTED_IMAGE_FORMATS: tuple[str, ...] = (
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".tif", ".svg",
+)
+
+# Non-image picker rows; the image rows are derived at call time by
+# attachment_filter_specs(). The "All Supported Files" non-image tail is the
+# legacy literal verbatim (it was never the union of the rows below — do not
+# "fix" that here).
+_ALL_FILES_NON_IMAGE_PATTERNS = (
+    "*.txt;*.md;*.log;*.py;*.js;*.ts;*.java;*.cpp;*.c;*.h;*.cs;*.rb;*.go;*.rs;"
+    "*.json;*.yaml;*.yml;*.csv;*.tsv;*.pdf;*.doc;*.docx;*.rtf;*.odt;"
+    "*.epub;*.mobi;*.azw;*.azw3;*.fb2"
+)
+_NON_IMAGE_FILTER_SPECS: tuple[tuple[str, str], ...] = (
+    ("Document Files", "*.pdf;*.doc;*.docx;*.rtf;*.odt"),
+    ("E-book Files", "*.epub;*.mobi;*.azw;*.azw3;*.fb2"),
+    ("Text Files", "*.txt;*.md;*.log;*.text;*.rst"),
+    ("Code Files", "*.py;*.js;*.ts;*.java;*.cpp;*.c;*.h;*.cs;*.rb;*.go;*.rs;*.swift;*.kt;*.php;*.r;*.m;*.lua;*.sh;*.bash;*.ps1;*.sql;*.html;*.css;*.xml"),
+    ("Data Files", "*.json;*.yaml;*.yml;*.csv;*.tsv"),
+)
+
 # (label, semicolon-separated glob patterns) — single source for both UIs' pickers.
 ATTACHMENT_FILTER_SPECS: tuple[tuple[str, str], ...] = (
     ("All Supported Files", "*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp;*.tiff;*.tif;*.svg;*.txt;*.md;*.log;*.py;*.js;*.ts;*.java;*.cpp;*.c;*.h;*.cs;*.rb;*.go;*.rs;*.json;*.yaml;*.yml;*.csv;*.tsv;*.pdf;*.doc;*.docx;*.rtf;*.odt;*.epub;*.mobi;*.azw;*.azw3;*.fb2"),
@@ -44,6 +67,93 @@ def _format_size(size: int) -> str:
     if size >= 1024:
         return f"{size / 1024:.0f} KB"
     return f"{size} B"
+
+
+def svg_rendering_available() -> bool:
+    """Capability seam for the SVG gate; tests monkeypatch this name."""
+    from tldw_chatbook.Utils.optional_deps import ensure_svg_rendering
+
+    return ensure_svg_rendering()
+
+
+def supported_image_formats() -> tuple[str, ...]:
+    """Effective image extension allowlist from [chat.images].supported_formats.
+
+    Entries are normalized (lowercased, dotted, deduped in order); .svg is
+    dropped when cairosvg is unavailable. Invalid or empty config values fall
+    back to DEFAULT_SUPPORTED_IMAGE_FORMATS.
+    """
+    from tldw_chatbook.config import get_cli_setting
+
+    raw = get_cli_setting(
+        "chat.images", "supported_formats", list(DEFAULT_SUPPORTED_IMAGE_FORMATS)
+    )
+    formats: list[str] = []
+    if isinstance(raw, (list, tuple)):
+        for entry in raw:
+            if not isinstance(entry, str) or not entry.strip():
+                logger.warning(
+                    f"[chat.images].supported_formats: ignoring entry {entry!r}"
+                )
+                continue
+            ext = entry.strip().lower()
+            if not ext.startswith("."):
+                ext = f".{ext}"
+            if ext not in formats:
+                formats.append(ext)
+    if not formats:
+        logger.warning(
+            "[chat.images].supported_formats invalid or empty; using defaults"
+        )
+        formats = list(DEFAULT_SUPPORTED_IMAGE_FORMATS)
+    if ".svg" in formats and not svg_rendering_available():
+        formats.remove(".svg")
+    return tuple(formats)
+
+
+def max_image_bytes() -> int:
+    """Image byte cap from [chat.images].max_size_mb (default 10 MB)."""
+    from tldw_chatbook.config import get_cli_setting
+
+    raw = get_cli_setting("chat.images", "max_size_mb", MAX_IMAGE_BYTES / (1024 * 1024))
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = 0.0
+    if value <= 0:
+        logger.warning(f"[chat.images].max_size_mb invalid ({raw!r}); using 10.0")
+        return MAX_IMAGE_BYTES
+    return int(value * 1024 * 1024)
+
+
+def image_resize_max_dimension() -> int:
+    """Resize bound from [chat.images].resize_max_dimension (default 2048)."""
+    from tldw_chatbook.config import get_cli_setting
+
+    raw = get_cli_setting(
+        "chat.images", "resize_max_dimension", DEFAULT_RESIZE_MAX_DIMENSION
+    )
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = 0
+    if value <= 0:
+        logger.warning(
+            f"[chat.images].resize_max_dimension invalid ({raw!r}); using "
+            f"{DEFAULT_RESIZE_MAX_DIMENSION}"
+        )
+        return DEFAULT_RESIZE_MAX_DIMENSION
+    return value
+
+
+def attachment_filter_specs() -> tuple[tuple[str, str], ...]:
+    """Picker filter rows with image patterns derived from the effective formats."""
+    image_patterns = ";".join(f"*{ext}" for ext in supported_image_formats())
+    return (
+        ("All Supported Files", f"{image_patterns};{_ALL_FILES_NON_IMAGE_PATTERNS}"),
+        ("Image Files", image_patterns),
+        *_NON_IMAGE_FILTER_SPECS,
+    )
 
 
 @dataclass
