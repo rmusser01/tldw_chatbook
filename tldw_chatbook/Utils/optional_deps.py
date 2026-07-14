@@ -1,6 +1,7 @@
 # optional_deps.py
 # Central module for checking availability of optional dependencies
 #
+import os
 import sys
 import importlib.util
 from dataclasses import dataclass
@@ -39,6 +40,8 @@ DEPENDENCIES_AVAILABLE = {
     'pymupdf': False,
     'pymupdf4llm': False,
     'docling': False,
+    # Image/SVG rendering
+    'svg_rendering': False,
     # E-book processing
     'ebook_processing': False,
     'ebooklib': False,
@@ -306,6 +309,11 @@ OPTIONAL_FEATURES: dict[str, OptionalFeatureInfo] = {
         ("markdown", "schedule", "feedparser", "beautifulsoup4", "cryptography"),
         "Watchlists", "Subscriptions/watchlists", OWNER_WATCHLISTS,
     ),
+    "svg": _feature(
+        "svg", "SVG rasterization", AREA_MEDIA,
+        ("cairosvg",),
+        "Library > Import/Export", "SVG rasterization for image attachments", OWNER_LIBRARY_MEDIA,
+    ),
     "transcription_faster_whisper": _feature(
         "transcription_faster_whisper", "Faster Whisper transcription", AREA_MEDIA,
         ("faster-whisper",),
@@ -406,6 +414,50 @@ def check_dependency(module_name: str, feature_name: Optional[str] = None) -> bo
         DEPENDENCIES_AVAILABLE[feature_name] = False
         logger.debug(f"⚠️ {module_name} dependency not found. Feature '{feature_name}' will be disabled. Reason: {e}")
         return False
+
+# SVG rendering (cairosvg) — checked lazily, cached after the first call.
+_svg_rendering_available: Optional[bool] = None
+
+_HOMEBREW_LIB = '/opt/homebrew/lib'
+
+
+def _ensure_homebrew_dyld_path() -> None:
+    """Make Homebrew's libcairo findable by ctypes.util.find_library on macOS.
+
+    dlopen reads DYLD_* at process start, but ctypes.util.find_library
+    (cairocffi's fallback resolver) re-reads os.environ on every call, so an
+    in-process append is sufficient. When the variable is unset, macOS uses a
+    default fallback chain — reproduce it first so other libraries keep
+    resolving exactly as before.
+    """
+    if not os.path.isdir(_HOMEBREW_LIB):
+        return
+    current = os.environ.get('DYLD_FALLBACK_LIBRARY_PATH')
+    if current is None:
+        default_chain = (
+            os.path.expanduser('~/lib'), '/usr/local/lib', '/lib', '/usr/lib',
+        )
+        os.environ['DYLD_FALLBACK_LIBRARY_PATH'] = ':'.join(
+            default_chain + (_HOMEBREW_LIB,)
+        )
+        return
+    if _HOMEBREW_LIB not in current.split(':'):
+        os.environ['DYLD_FALLBACK_LIBRARY_PATH'] = f"{current}:{_HOMEBREW_LIB}"
+
+
+def ensure_svg_rendering() -> bool:
+    """Return whether cairosvg-based SVG rasterization is available.
+
+    Applies the macOS Homebrew dyld fix before the first import attempt.
+    The result is cached for the life of the process.
+    """
+    global _svg_rendering_available
+    if _svg_rendering_available is not None:
+        return _svg_rendering_available
+    if sys.platform == 'darwin':
+        _ensure_homebrew_dyld_path()
+    _svg_rendering_available = check_dependency('cairosvg', 'svg_rendering')
+    return _svg_rendering_available
 
 def check_embeddings_rag_deps() -> bool:
     """Check all dependencies needed for embeddings and RAG functionality."""
