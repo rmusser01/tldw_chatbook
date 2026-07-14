@@ -336,6 +336,23 @@ def test_prompts_route_resolves_to_library_screen():
     assert screen_class is LibraryScreen
 
 
+def test_skills_route_resolves_to_library_screen():
+    """The standalone Skills tab is retired (Skills sub-project Task 5):
+    skill management now lives entirely inside Library (its own Skills
+    rail row, built in Tasks 1-4). The legacy "skills" route id must
+    resolve to ``LibraryScreen`` instead of ``SkillsScreen``, mirroring the
+    "notes"/"prompts" compatibility aliases above. ``SkillsScreen`` itself
+    is not deleted -- its passphrase modal is reused by the Library skill
+    editor's trust panel, and it stays directly reachable by its own
+    destination-shell test suite (``Tests/UI/test_destination_shells.py``).
+    """
+    from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_target
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    _screen_name, _canonical_tab, screen_class = resolve_screen_target("skills")
+    assert screen_class is LibraryScreen
+
+
 def test_all_master_shell_primary_routes_resolve_before_nav_exposure():
     app = _build_test_app()
     expected_routes = {
@@ -350,7 +367,6 @@ def test_all_master_shell_primary_routes_resolve_before_nav_exposure():
         "workflows",
         "mcp",
         "acp",
-        "skills",
         "settings",
     }
 
@@ -378,7 +394,6 @@ def test_lazy_screen_registry_resolves_visible_shell_destinations():
         "workflows": "WorkflowsScreen",
         "mcp": "MCPScreen",
         "acp": "ACPScreen",
-        "skills": "SkillsScreen",
         "settings": "SettingsScreen",
     }
 
@@ -1006,7 +1021,6 @@ async def test_main_navigation_copy_and_order():
         ("nav-workflows", "Workflows"),
         ("nav-mcp", "MCP"),
         ("nav-acp", "ACP"),
-        ("nav-skills", "Skills"),
         ("nav-settings", "Settings"),
     ]
 
@@ -1230,6 +1244,39 @@ async def test_prompts_route_lands_on_library_with_prompts_row_selected():
 
         assert type(app.screen).__name__ == "LibraryScreen"
         assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
+
+
+@pytest.mark.asyncio
+async def test_skills_route_lands_on_library_with_skills_row_selected():
+    """``NavigateToScreen("skills")`` must land on Library with the skills
+    rail row selected. The standalone Skills tab is retired (Skills
+    sub-project Task 5) and the legacy route now re-points into Library,
+    mirroring ``test_prompts_route_lands_on_library_with_prompts_row_selected``
+    exactly -- "skills" (like "prompts") has no dedicated re-entry action to
+    carry a nav-context, so the bare alias route itself must supply it via
+    ``_LEGACY_ROUTE_LIBRARY_NAV_CONTEXT``.
+    """
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SKILLS
+
+    app = _build_test_app()
+
+    async with app.run_test(size=(170, 48)) as pilot:
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ != "Screen":
+                break
+
+        app.post_message(NavigateToScreen("skills"))
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if (
+                type(app.screen).__name__ == "LibraryScreen"
+                and app.screen.query("#library-row-browse-skills")
+            ):
+                break
+
+        assert type(app.screen).__name__ == "LibraryScreen"
+        assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
 
 
 @pytest.mark.asyncio

@@ -20,6 +20,9 @@ documented render-safety discipline (see
 Checkbox/Switch) and ``context`` is a cycling Button (not Select), the same
 "cycling/toggle Buttons instead" posture the media type filter and notes
 sort control already use.
+
+Task 5 adds the list view's inline Import row (``import_open``), a
+structural template copy of ``LibraryPromptsListCanvas``'s own Import row.
 """
 
 from __future__ import annotations
@@ -192,6 +195,16 @@ class LibrarySkillsListCanvas(Vertical):
             EXISTING skill's Name Input is disabled (with a dim hint)
             instead of letting a user silently corrupt the skill by
             changing it -- only the create branch renders it editable.
+        import_open: List-view only (Task 5). When ``True``, renders the
+            inline Import row (a path Input for a SKILL.md file OR a
+            skill's own directory, plus Browse/Import/Cancel actions)
+            below the sort/Import… toolbar -- structural template copy of
+            ``LibraryPromptsListCanvas``'s own Import row.
+        import_path: The Import row's path ``Input`` prefilled value. Only
+            meaningful while ``import_open`` is ``True``.
+        import_status: Muted outcome line shown below the Import row
+            (e.g. ``"1 imported · re-review it in the trust panel"``), or
+            ``""`` when idle/not yet run.
     """
 
     def __init__(
@@ -207,6 +220,9 @@ class LibrarySkillsListCanvas(Vertical):
         conflict: bool = False,
         active_review: Mapping[str, Any] | None = None,
         is_create: bool = False,
+        import_open: bool = False,
+        import_path: str = "",
+        import_status: str = "",
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -220,6 +236,9 @@ class LibrarySkillsListCanvas(Vertical):
         self.conflict = conflict
         self.active_review = active_review
         self.is_create = is_create
+        self.import_open = import_open
+        self.import_path = import_path
+        self.import_status = import_status
         self.styles.width = "1fr"
         self.styles.min_width = 40
 
@@ -246,10 +265,7 @@ class LibrarySkillsListCanvas(Vertical):
         )
         # One horizontal ds-toolbar row for sort/Import -- mirrors
         # library_prompts_canvas.py's toolbar exactly (same render-safe
-        # shape: every child is a fixed-width compact Button). Import… has
-        # no handler wired yet (a later Skills task) -- same
-        # inert-but-selectable posture Task 1 gave the rail row itself
-        # before this canvas existed.
+        # shape: every child is a fixed-width compact Button).
         toolbar = Horizontal(classes="ds-toolbar")
         toolbar.styles.height = "auto"
         with toolbar:
@@ -261,6 +277,8 @@ class LibrarySkillsListCanvas(Vertical):
                 "Import…", id="library-skills-import",
                 classes="library-canvas-action", compact=True,
             )
+        if self.import_open:
+            yield from self._compose_import_row()
         if not state.rows:
             yield Static(
                 _EMPTY_SKILLS_FILTER_COPY if self.filter_value else _EMPTY_SKILLS_COPY,
@@ -300,6 +318,56 @@ class LibrarySkillsListCanvas(Vertical):
                         escape_markup(row.secondary),
                         classes="library-skill-row-secondary",
                     )
+
+    def _compose_import_row(self) -> ComposeResult:
+        """Render the inline Import row: a path Input, then a Run/Cancel
+        action toolbar, then the outcome line.
+
+        Structural template copy of
+        ``LibraryPromptsListCanvas._compose_import_row``: the path
+        ``Input`` is its own full-width sibling -- NOT packed into a
+        ``Horizontal`` alongside the action Buttons -- same render-safe
+        shape this canvas family documents throughout (mixing a 1fr-width
+        Input with fixed-width compact Buttons in one ``Horizontal`` is
+        this family's known non-rendering failure mode).
+
+        Unlike the prompts Import row, the placeholder copy mentions a
+        skill's own directory too: every real skill package (e.g. the
+        ``superpowers`` skillset) is a directory named after the skill
+        containing a literally-named ``SKILL.md`` file, so pointing the
+        path Input at either the ``SKILL.md`` file itself or its parent
+        directory both resolve to the same skill name (see
+        ``_run_library_skills_import``).
+        """
+        yield Input(
+            placeholder="SKILL.md file or skill folder path…",
+            id="library-skills-import-path",
+            value=self.import_path,
+        )
+        toolbar = Horizontal(classes="ds-toolbar")
+        toolbar.styles.height = "auto"
+        with toolbar:
+            # Browse… picks a FILE via the same FileOpen dialog the
+            # prompts/media-ingest Browse actions use -- that dialog has no
+            # directory-selection mode, so importing a skill BY ITS FOLDER
+            # path still has to be typed by hand into the path Input above.
+            yield Button(
+                "Browse…", id="library-skills-import-browse",
+                classes="library-canvas-action", compact=True,
+            )
+            yield Button(
+                "Import", id="library-skills-import-run",
+                classes="library-canvas-action", compact=True,
+            )
+            yield Button(
+                "Cancel", id="library-skills-import-cancel",
+                classes="library-canvas-action", compact=True,
+            )
+        yield Static(
+            self.import_status,
+            id="library-skills-import-status",
+            markup=False,
+        )
 
     def _compose_editor(self) -> ComposeResult:
         """Render the SKILL.md editor: Back, fields, warnings, trust panel, actions.

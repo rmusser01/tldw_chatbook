@@ -53,7 +53,7 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
         "library",
         "Workspaces, source material, imports, notes, media, conversations, Study, flashcards, quizzes, and Search/RAG.",
         "Browse Workspaces, imports, notes, media, Study, flashcards, quizzes, search, and source material.",
-        ("notes", "media", "ingest", "search", "conversation", "study", "prompts"),
+        ("notes", "media", "ingest", "search", "conversation", "study", "prompts", "skills"),
         navigation_priority=30,
     ),
     ShellDestination(
@@ -112,13 +112,6 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
         "Manage ACP agents and sessions.",
     ),
     ShellDestination(
-        "skills",
-        "Skills",
-        "skills",
-        "Agent Skills packs, discovery, validation, and attachments.",
-        "Browse, import, validate, and attach skills.",
-    ),
-    ShellDestination(
         "settings",
         "Settings",
         "settings",
@@ -147,6 +140,10 @@ _ROUTABLE_LEGACY_ROUTES = {
     # Personas "prompts" mode chip retirement (Task 7): keep the legacy
     # route id as its own canonical route under Library, mirroring "notes".
     "prompts",
+    # Standalone Skills tab retirement (Skills sub-project Task 5): keep
+    # the legacy route id as its own canonical route under Library,
+    # mirroring "notes"/"prompts" above.
+    "skills",
 }
 
 _CANONICAL_ROUTE_OVERRIDES = {

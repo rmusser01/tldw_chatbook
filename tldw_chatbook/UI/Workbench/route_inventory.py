@@ -24,7 +24,6 @@ WORKBENCH_ROUTE_OWNERS: dict[str, str] = {
     "workflows": "workflows",
     "mcp": "mcp",
     "acp": "acp",
-    "skills": "skills",
     "settings": "settings",
     "ingest": "library",
     "coding": "console",
@@ -35,6 +34,9 @@ WORKBENCH_ROUTE_OWNERS: dict[str, str] = {
     # The Personas "prompts" mode chip is retired (Task 7): the legacy
     # "prompts" route re-points to Library, like "notes" below.
     "prompts": "library",
+    # The standalone Skills tab is retired (Skills sub-project Task 5): the
+    # legacy "skills" route re-points to Library, like "notes"/"prompts".
+    "skills": "library",
     "media": "library",
     "notes": "library",
     "search": "library",

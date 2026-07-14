@@ -224,6 +224,10 @@ _LIBRARY_PROMPTS_SORT_MODES = ("newest", "name")
 # concern, not pure list-state-building logic" posture as the prompts modes
 # above, kept local rather than in library_skills_state.py.
 _LIBRARY_SKILLS_SORT_MODES = ("name", "status")
+# Skills toolbar Import… (Task 5): the fixed filename every real skill
+# package uses for its own content, matched case-insensitively by
+# ``LibraryScreen._find_skill_md_in_dir``. See ``_run_library_skills_import``.
+_SKILL_MD_FILENAME = "SKILL.md"
 # Toolbar Import… (Task 5): which parser handles which file extension.
 # Mirrors ``Prompts_Interop._get_file_type``'s extension map, but writes
 # through ``prompt_scope_service``/``LocalPromptService`` per-prompt
@@ -741,6 +745,12 @@ class LibraryScreen(BaseAppScreen):
         self._library_skills_sort: str = "name"
         self._library_skills_filter: str = ""
         self._selected_skill_name: str = ""
+        # Toolbar Import… state (Task 5): a path Input (a SKILL.md file OR
+        # a skill's own directory) inlined below the sort/Import… toolbar,
+        # worker-executed on Run/Enter. See ``_run_library_skills_import``.
+        self._library_skills_import_open: bool = False
+        self._library_skills_import_path: str = ""
+        self._library_skills_import_status: str = ""
         # Skill detail/trust editor (Task 4 of the Skills sub-project).
         # Mirrors the prompts editor's own state shape
         # (``_library_prompts_view``/``_library_prompt_detail``/etc.) --
@@ -3204,6 +3214,9 @@ class LibraryScreen(BaseAppScreen):
                         self._build_library_skills_state(),
                         sort_mode=self._library_skills_sort,
                         filter_value=self._library_skills_filter,
+                        import_open=self._library_skills_import_open,
+                        import_path=self._library_skills_import_path,
+                        import_status=self._library_skills_import_status,
                         id="library-skills-canvas",
                     )
                 elif shell.canvas_kind == "search":
@@ -6235,6 +6248,392 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         self._library_skills_filter = self._safe_text(event.value, max_length=200).strip()
         self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-skills-import")
+    def handle_library_skills_import(self, event: Button.Pressed) -> None:
+        """Open the inline Import row below the skills toolbar.
+
+        Idempotent while already open, mirrors
+        ``handle_library_prompts_import`` exactly: Cancel is the only way
+        to close the row once opened.
+
+        Args:
+            event: Button press event emitted by the "Import…" action.
+        """
+        event.stop()
+        if self._library_skills_import_open:
+            return
+        self._library_skills_import_open = True
+        self._library_skills_import_path = ""
+        self._library_skills_import_status = ""
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-skills-import-cancel")
+    def handle_library_skills_import_cancel(self, event: Button.Pressed) -> None:
+        """Close the inline Import row, discarding any typed path/outcome.
+
+        Args:
+            event: Button press event emitted by the Import row's
+                "Cancel" action.
+        """
+        event.stop()
+        self._library_skills_import_open = False
+        self._library_skills_import_path = ""
+        self._library_skills_import_status = ""
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-skills-import-browse")
+    def handle_library_skills_import_browse(self, event: Button.Pressed) -> None:
+        """Push a ``FileOpen`` dialog to pick a local SKILL.md file.
+
+        Mirrors ``handle_library_prompts_import_browse``'s dialog flow
+        exactly. The shared ``FileOpen`` dialog has no directory-selection
+        mode, so importing a skill BY ITS FOLDER path still requires
+        typing that path into the Import row's path ``Input`` by hand
+        (see ``_run_library_skills_import``, which accepts either shape).
+
+        Args:
+            event: Button press event emitted by the "Browse…" action.
+        """
+        event.stop()
+
+        async def browse_callback(selected_path: Path | None) -> None:
+            if selected_path is None:
+                return
+            self._library_skills_import_path = str(selected_path)
+            self.refresh(recompose=True)
+
+        self.app.push_screen(
+            FileOpen(title="Import Skill (SKILL.md)"),
+            browse_callback,
+        )
+
+    @on(Input.Changed, "#library-skills-import-path")
+    def handle_library_skills_import_path_changed(self, event: Input.Changed) -> None:
+        """Track the Import row's path text as the user types it (state only).
+
+        Args:
+            event: Input change event emitted by the Import row's path field.
+        """
+        event.stop()
+        self._library_skills_import_path = event.value
+
+    @on(Input.Submitted, "#library-skills-import-path")
+    def handle_library_skills_import_path_submitted(self, event: Input.Submitted) -> None:
+        """Run the import when Enter is pressed in the Import row's path field.
+
+        Args:
+            event: Input submission event emitted by the Import row's
+                path field.
+        """
+        event.stop()
+        self._start_library_skills_import()
+
+    @on(Button.Pressed, "#library-skills-import-run")
+    def handle_library_skills_import_run(self, event: Button.Pressed) -> None:
+        """Run the import when the Import row's "Import" action is pressed.
+
+        Args:
+            event: Button press event emitted by the Import row's
+                "Import" action.
+        """
+        event.stop()
+        self._start_library_skills_import()
+
+    def _start_library_skills_import(self) -> None:
+        """Validate the Import row has a non-blank path, then run the import worker.
+
+        Worker-executed (exclusive, its own group) since it performs file
+        IO plus a service call -- never inline on the UI thread. A blank
+        path is a quiet inline status line, matching
+        ``_start_library_prompts_import``'s equivalent gate.
+        """
+        if self._library_skills_view != "list":
+            return
+        raw_path = self._library_skills_import_path.strip()
+        if not raw_path:
+            self._apply_library_skills_import_status("Please enter a file or folder path.")
+            return
+        self.run_worker(
+            self._run_library_skills_import(raw_path),
+            exclusive=True,
+            group="library_skills_import",
+        )
+
+    def _apply_library_skills_import_status(self, text: str) -> None:
+        """Set the Import row's outcome line and recompose to show it."""
+        self._library_skills_import_status = text
+        if self.is_mounted:
+            self.refresh(recompose=True)
+
+    async def _run_library_skills_import(self, raw_path: str) -> None:
+        """Import ONE skill from a SKILL.md file path or a skill's own directory.
+
+        Unlike ``_run_library_prompts_import`` (which batch-imports every
+        supported file in a folder), a skill is conceptually ONE directory
+        containing exactly one ``SKILL.md`` -- so this always imports
+        exactly one skill per Import press, landing it TRUST-PENDING
+        (``trust_approved=False``; the review panel is primed the next
+        time this skill's row is opened, since every quarantined/
+        uninitialized trust status already gates the trust panel's
+        "Review changes" action -- see ``skill_trust_review_enabled``).
+
+        Two path shapes are accepted, both resolving to the SAME skill
+        name (the directory's own name) -- this matters because every
+        real skill package (e.g. the ``superpowers`` skillset) is a
+        directory named after the skill containing a file LITERALLY named
+        ``SKILL.md``, so deriving the name from the file's own basename
+        (``local_skills_service._derive_name_from_filename``, which is
+        what a plain ``import_skill_file(..., filename="SKILL.md")`` call
+        would do) would incorrectly produce ``"skill"`` for every import
+        regardless of the real skill's name:
+
+        - A file path whose basename is ``SKILL.md`` (case-insensitive):
+          treated as that file's PARENT directory's skill (the common
+          case for a real skillset laid out one-directory-per-skill).
+        - A directory path containing a top-level ``SKILL.md``: same
+          shape, just already pointing at the directory.
+
+        Both call ``import_skill(name=<directory name>, content=..., ...)``
+        directly (the name is already known, so no filename-derivation
+        guesswork is needed) and thread any FLAT sibling files in that
+        same directory through as ``supporting_files`` (nested
+        subdirectories -- e.g. a ``references/`` folder -- are NOT
+        recursed into: ``local_skills_service``'s own supporting-file
+        model has no nested-path support, so those would either be
+        silently dropped or rejected by the service's own filename
+        pattern; skipping them here keeps this import path's own failure
+        mode explicit rather than surprising).
+
+        Any OTHER file path (e.g. a standalone ``some-skill.md`` not named
+        ``SKILL.md``, or a ``.zip`` export) is imported via
+        ``import_skill_file`` instead, letting the service derive the
+        name from that file's own (already meaningful) basename.
+
+        A folder that does not directly contain a ``SKILL.md`` is
+        reported as an outcome (never silently imports zero skills or
+        guesses at a subdirectory to use) -- batch "import every skill
+        under this folder" is out of this task's scope.
+
+        Args:
+            raw_path: The Import row's typed path (SKILL.md file, skill
+                directory, standalone ``.md`` file, or ``.zip`` export),
+                already known non-blank by the caller.
+        """
+        try:
+            validated_path = validate_path_simple(
+                Path(raw_path).expanduser(), require_exists=True
+            )
+        except ValueError:
+            logger.opt(exception=True).warning(
+                f"Rejected Library skills import path {raw_path!r}."
+            )
+            self._apply_library_skills_import_status("Could not find that file or folder.")
+            return
+
+        service = getattr(self.app_instance, "skills_scope_service", None)
+        import_skill = getattr(service, "import_skill", None)
+        import_skill_file = getattr(service, "import_skill_file", None)
+        if not callable(import_skill) or not callable(import_skill_file):
+            self._apply_library_skills_import_status("Skill import is unavailable.")
+            return
+
+        if validated_path.is_dir():
+            skill_dir = validated_path
+            skill_md_path = self._find_skill_md_in_dir(skill_dir)
+            if skill_md_path is None:
+                self._apply_library_skills_import_status("No SKILL.md found in that folder.")
+                return
+        elif validated_path.name.lower() == _SKILL_MD_FILENAME.lower():
+            skill_dir = validated_path.parent
+            skill_md_path = validated_path
+        else:
+            await self._import_library_skill_from_loose_file(validated_path, import_skill_file)
+            return
+
+        try:
+            content = await asyncio.to_thread(
+                skill_md_path.read_text, encoding="utf-8", errors="strict"
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Could not read Library skill import file '{skill_md_path}'."
+            )
+            self._apply_library_skills_import_status("Could not read that file.")
+            return
+
+        supporting_files = self._read_library_skill_import_supporting_files(skill_dir, skill_md_path)
+        skill_name = skill_dir.name
+
+        try:
+            await self._run_library_service_call(
+                import_skill,
+                mode="local",
+                name=skill_name,
+                content=content,
+                supporting_files=supporting_files or None,
+                trust_approved=False,
+                isolate_in_worker=True,
+            )
+        except Exception as exc:
+            self._apply_library_skills_import_outcome_from_exception(skill_name, exc)
+            return
+
+        self._apply_library_skills_import_success()
+
+    async def _import_library_skill_from_loose_file(
+        self, file_path: Path, import_skill_file: Any,
+    ) -> None:
+        """Import a standalone ``.md``/``.zip`` file (not named ``SKILL.md``).
+
+        Split out of ``_run_library_skills_import`` for that method's own
+        readability -- this branch has no directory/supporting-files
+        concerns at all, unlike the SKILL.md-directory branch.
+
+        Args:
+            file_path: The standalone file to import (already known to
+                exist and NOT be named ``SKILL.md``).
+            import_skill_file: The bound ``skills_scope_service.import_skill_file``
+                callable.
+        """
+        suffix = file_path.suffix.lower()
+        if suffix == ".zip":
+            content_type = "application/zip"
+            try:
+                data = await asyncio.to_thread(file_path.read_bytes)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"Could not read Library skill import file '{file_path}'."
+                )
+                self._apply_library_skills_import_status("Could not read that file.")
+                return
+        elif suffix == ".md":
+            content_type = "text/markdown"
+            try:
+                text = await asyncio.to_thread(
+                    file_path.read_text, encoding="utf-8", errors="strict"
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"Could not read Library skill import file '{file_path}'."
+                )
+                self._apply_library_skills_import_status("Could not read that file.")
+                return
+            data = text.encode("utf-8")
+        else:
+            self._apply_library_skills_import_status("Unsupported file type.")
+            return
+
+        try:
+            await self._run_library_service_call(
+                import_skill_file,
+                data,
+                mode="local",
+                filename=file_path.name,
+                content_type=content_type,
+                trust_approved=False,
+                isolate_in_worker=True,
+            )
+        except Exception as exc:
+            self._apply_library_skills_import_outcome_from_exception(
+                self._safe_text(file_path.stem, max_length=64), exc,
+            )
+            return
+
+        self._apply_library_skills_import_success()
+
+    def _apply_library_skills_import_success(self) -> None:
+        """Report a successful single-skill import and refresh the rail/list."""
+        self._library_skills_import_path = ""
+        self._apply_library_skills_import_status(
+            "1 imported · re-review it in the trust panel"
+        )
+        self._refresh_local_source_snapshot()
+
+    def _apply_library_skills_import_outcome_from_exception(
+        self, skill_name: str, exc: Exception,
+    ) -> None:
+        """Translate a failed import call into an honest, specific outcome line.
+
+        Never silently swallowed -- ``local_skill_exists:`` (the only
+        expected "the user tried to re-import a name that's already
+        there" case) is reported as a duplicate-name skip; every OTHER
+        exception (a bad skill name, an invalid supporting-file name, an
+        oversized field, a policy denial, or a plain read/parse failure)
+        is reported as a distinct failure, always clearing the in-flight
+        path so the Import row does not look stuck (mirrors
+        ``_run_library_prompts_import``'s unconditional path-clear at the
+        end of its per-file loop).
+        """
+        logger.opt(exception=True).warning(
+            f"Library skill import failed for {skill_name!r}."
+        )
+        self._library_skills_import_path = ""
+        if "local_skill_exists:" in str(exc):
+            self._apply_library_skills_import_status(
+                f"Skipped — a skill named \"{skill_name}\" already exists."
+            )
+            return
+        self._apply_library_skills_import_status("Could not import that skill.")
+
+    @staticmethod
+    def _find_skill_md_in_dir(directory: Path) -> Path | None:
+        """Return the directory's ``SKILL.md`` file, matched case-insensitively.
+
+        Returns:
+            The matched path, or ``None`` when the directory has no
+            top-level file named ``SKILL.md`` (any case).
+        """
+        exact = directory / _SKILL_MD_FILENAME
+        if exact.is_file():
+            return exact
+        try:
+            children = list(directory.iterdir())
+        except Exception:
+            return None
+        for child in children:
+            if child.is_file() and child.name.lower() == _SKILL_MD_FILENAME.lower():
+                return child
+        return None
+
+    @staticmethod
+    def _read_library_skill_import_supporting_files(
+        skill_dir: Path, skill_md_path: Path,
+    ) -> dict[str, str]:
+        """Read the skill directory's FLAT sibling files as supporting files.
+
+        Only immediate-child FILES are read (mirrors
+        ``local_skills_service._read_supporting_files``'s own flat-only
+        model) -- nested subdirectories (e.g. a real skill's own
+        ``references/`` folder) are skipped entirely rather than
+        recursed into or flattened, since the service's supporting-file
+        name pattern has no path-separator support. A sibling that fails
+        to decode as UTF-8 text (e.g. a binary asset) is skipped
+        individually rather than failing the whole import.
+
+        Args:
+            skill_dir: The skill's own directory.
+            skill_md_path: The directory's ``SKILL.md`` file (excluded
+                from the result).
+
+        Returns:
+            A ``{filename: content}`` mapping of every readable flat
+            sibling file, excluding ``SKILL.md`` itself.
+        """
+        supporting_files: dict[str, str] = {}
+        try:
+            children = sorted(skill_dir.iterdir(), key=lambda item: item.name)
+        except Exception:
+            return supporting_files
+        for child in children:
+            if not child.is_file() or child.resolve() == skill_md_path.resolve():
+                continue
+            try:
+                supporting_files[child.name] = child.read_text(encoding="utf-8", errors="strict")
+            except Exception:
+                logger.debug(f"Skipping unreadable Library skill supporting file '{child}'.")
+                continue
+        return supporting_files
 
     @on(Button.Pressed, ".library-skill-row")
     async def handle_library_skill_row(self, event: Button.Pressed) -> None:
