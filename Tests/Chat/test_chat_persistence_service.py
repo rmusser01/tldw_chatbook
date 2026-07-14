@@ -619,6 +619,55 @@ class TestChatPersistenceService:
         assert row["image_data"] == b"img-old"
         assert row["image_mime_type"] == "image/png"
 
+    def test_update_skips_attachment_write_when_row_update_returns_false(
+        self, db_instance: CharactersRAGDB, monkeypatch
+    ):
+        """``update_message`` returning a falsy result (optimistic-lock miss
+        reported without an exception, e.g. from a future/alternate db
+        implementation) must short-circuit before ``set_message_attachments``
+        runs. Without the guard, attachments would be rewritten even though
+        the content/version update did not take -- attachments and content
+        would drift out of sync."""
+        service = ChatPersistenceService(db_instance)
+        conv_id = service.create_conversation(
+            assistant_kind="generic", assistant_id="console",
+            conversation_title="t", workspace_id=None, scope_type="global",
+        )
+        msg_id = service.create_message(
+            conversation_id=conv_id, sender="user", content="before",
+            image_data=None, image_mime_type=None,
+            attachments=[
+                {"position": 0, "data": b"img-0", "mime_type": "image/png", "display_name": "a.png"},
+                {"position": 1, "data": b"img-1", "mime_type": "image/png", "display_name": "b.png"},
+            ],
+        )
+
+        set_attachments_calls = []
+        original_set_attachments = db_instance.set_message_attachments
+
+        def _tracking_set_attachments(message_id, rows):
+            set_attachments_calls.append((message_id, rows))
+            return original_set_attachments(message_id, rows)
+
+        monkeypatch.setattr(db_instance, "set_message_attachments", _tracking_set_attachments)
+        monkeypatch.setattr(db_instance, "update_message", lambda *args, **kwargs: False)
+
+        result = service.update_message_content(
+            message_id=msg_id, content="after",
+            image_data=None, image_mime_type=None,
+            attachments=[
+                {"position": 0, "data": b"img-new", "mime_type": "image/jpeg", "display_name": "n.jpg"},
+                {"position": 1, "data": b"img-1-new", "mime_type": "image/png", "display_name": "b2.png"},
+            ],
+        )
+
+        assert result is False
+        assert set_attachments_calls == []
+        # The message_attachments table must be untouched -- still the
+        # original position-1 row, not the rewritten one.
+        extra = db_instance.get_attachments_for_messages([msg_id])[msg_id]
+        assert extra[0]["data"] == b"img-1"
+
     # -- Regression coverage for the #217 P0 live crash --------------------
     #
     # ``ConsoleChatStore``'s persistence tests all wire in **kwargs-based

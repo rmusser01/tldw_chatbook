@@ -1388,3 +1388,39 @@ def test_image_budget_counts_images_newest_first(monkeypatch):
 
     decoded = base64.b64decode(older_images[0]["image_url"]["url"].split(",", 1)[1])
     assert decoded == b"old-0"
+
+
+def test_history_image_with_empty_mime_type_falls_back_to_default_mime(monkeypatch):
+    """A resumed message can carry an attachment with ``mime_type=""`` (e.g.
+    ``_console_messages_from_conversation_tree`` falls back to ``""`` when
+    the persisted ``image_mime_type`` column is NULL). The provider payload
+    builder must never emit a bare ``data:;base64,...`` URL for it -- that
+    is an invalid data URI most providers reject outright. It must fall
+    back to the same default mime the send-time staging path already uses
+    (``pending.mime_type or "image/png"`` in this module, and
+    ``image_mime_type or "image/png"`` in ``ConsoleChatStore.append_message``)."""
+    monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: True)
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway, model="vision-model")
+    session = store.ensure_session()
+    from tldw_chatbook.Chat.console_chat_models import MessageAttachment
+
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="resumed image",
+        attachments=(
+            MessageAttachment(data=b"img-bytes", mime_type="", display_name="a.png", position=0),
+        ),
+    )
+
+    asyncio.run(controller.submit_draft("what is this?"))
+
+    user_payloads = [m for m in gateway.messages_seen if m["role"] == "user"]
+    resumed_payload = user_payloads[0]
+    image_parts = [p for p in resumed_payload["content"] if p["type"] == "image_url"]
+    assert len(image_parts) == 1
+    url = image_parts[0]["image_url"]["url"]
+    assert not url.startswith("data:;base64,")
+    assert url.startswith("data:image/")

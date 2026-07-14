@@ -223,6 +223,65 @@ class ChatPersistenceService:
         update_feedback: bool = False,
         attachments: Optional[Sequence[Mapping[str, Any]]] = None,
     ) -> bool:
+        """Update a message's content, optionally its parent/feedback, and its images.
+
+        Two mutually exclusive contracts govern how images are updated:
+
+        Legacy (``attachments=None``): ``image_data``/``image_mime_type`` are
+        the sole source of the message's single legacy image. Passing
+        ``image_data=None`` leaves any already-persisted image untouched
+        (it does NOT clear it) -- callers may pass ``None`` simply because
+        in-memory bytes were never rehydrated. Passing non-``None``
+        ``image_data`` replaces the persisted image.
+
+        Split addressing (``attachments`` is a sequence): an authoritative,
+        full rewrite of every position. Position 0 (if present) replaces the
+        legacy ``image_data``/``image_mime_type`` columns -- even when its
+        ``data``/``mime_type`` are ``None``, since supplying ``attachments``
+        at all means the caller intends to overwrite. Positions >= 1 replace
+        the ``message_attachments`` table rows via
+        ``CharactersRAGDB.set_message_attachments`` (an empty list clears any
+        stale rows). The row update and the table rewrite happen inside one
+        transaction so a table-write failure rolls back the row update too;
+        conversely, if the row update itself does not succeed (returns a
+        falsy result without raising), the table write is skipped entirely
+        so attachments never drift out of sync with unrevised content.
+        ``image_data``/``image_mime_type`` are ignored when ``attachments``
+        is supplied.
+
+        Args:
+            message_id: UUID of the message to update.
+            content: New message text content.
+            image_data: Legacy single-image bytes; ignored when
+                ``attachments`` is supplied. See the legacy contract above
+                for how ``None`` is handled.
+            image_mime_type: Legacy single-image MIME type; ignored when
+                ``attachments`` is supplied.
+            parent_message_id: New parent message id, applied only when
+                ``update_parent`` is True.
+            feedback: New feedback value, applied only when
+                ``update_feedback`` is True.
+            update_parent: Whether to update ``parent_message_id``.
+            update_feedback: Whether to update ``feedback``.
+            attachments: Optional full 0..N-1 position list of attachment
+                rows (each a mapping with ``position``, ``data``,
+                ``mime_type``, and optional ``display_name``). When
+                supplied, this is the sole, authoritative source for both
+                the legacy image columns (position 0) and the
+                ``message_attachments`` table (positions >= 1). ``None``
+                leaves all attachments/images untouched by this call except
+                via the legacy ``image_data``/``image_mime_type`` kwargs.
+
+        Returns:
+            True if the row update was applied; False if the underlying
+            update reported failure without raising (attachments are left
+            untouched in that case).
+
+        Raises:
+            ValueError: If the message cannot be found.
+            ConflictError: If the message was concurrently modified or
+                soft-deleted (optimistic-lock version mismatch).
+        """
         current_message = self.db.get_message_by_id(message_id)
         if not current_message:
             raise ValueError(f"Message {message_id} not found")
@@ -272,7 +331,12 @@ class ChatPersistenceService:
             # One atomic unit: inside this outer transaction the nested
             # update_message/set_message_attachments transactions are no-ops,
             # so a failed table write rolls back the row update (content and
-            # legacy image columns) too.
+            # legacy image columns) too. Conversely, if the row update itself
+            # fails without raising (e.g. an optimistic-lock miss reported as
+            # a plain ``False`` return instead of a ``ConflictError``), the
+            # attachments table write must be skipped -- otherwise
+            # attachments would be rewritten while content/version were not,
+            # leaving the two out of sync.
             with self.db.transaction():
                 result = bool(
                     self.db.update_message(
@@ -281,7 +345,8 @@ class ChatPersistenceService:
                         expected_version=current_message["version"],
                     )
                 )
-                self.db.set_message_attachments(message_id, extra_rows)
+                if result:
+                    self.db.set_message_attachments(message_id, extra_rows)
             return result
 
         return bool(
@@ -305,6 +370,56 @@ class ChatPersistenceService:
         feedback: Optional[str] = None,
         attachments: Optional[Sequence[Mapping[str, Any]]] = None,
     ) -> str:
+        """Create a new message, optionally with a legacy image or a full attachment list.
+
+        Two mutually exclusive contracts govern how images are stored,
+        mirroring ``update_message_content``:
+
+        Legacy (``attachments=None``): ``image_data``/``image_mime_type``
+        are the sole source of the message's single legacy image, stored
+        directly on the ``messages`` row. The ``message_attachments`` table
+        is never touched.
+
+        Split addressing (``attachments`` is a sequence): an authoritative
+        full 0..N-1 position list. Position 0 (if present) overrides the
+        scalar ``image_data``/``image_mime_type`` kwargs -- even overriding
+        them with ``None`` when no position-0 entry is present, since
+        supplying ``attachments`` at all means it is authoritative. Positions
+        >= 1 are written to the ``message_attachments`` table via
+        ``CharactersRAGDB.set_message_attachments``, always -- even an empty
+        list, so any stale rows a prior attempt at this same ``message_id``
+        left behind are cleared. The row insert and the table write happen
+        inside one transaction, so a table-write failure rolls back the row
+        insert too.
+
+        Args:
+            conversation_id: UUID of the parent conversation.
+            sender: Message sender/role (e.g. ``"user"``, ``"assistant"``).
+            content: Message text content.
+            image_data: Legacy single-image bytes; ignored when
+                ``attachments`` is supplied.
+            image_mime_type: Legacy single-image MIME type; ignored when
+                ``attachments`` is supplied.
+            message_id: Optional explicit message id; the DB generates one
+                when omitted.
+            parent_message_id: Optional parent message id for threading.
+            feedback: Optional feedback value applied via a follow-up update
+                once the message exists (feedback is not part of the initial
+                insert payload).
+            attachments: Optional full 0..N-1 position list of attachment
+                rows (each a mapping with ``position``, ``data``,
+                ``mime_type``, and optional ``display_name``). When
+                supplied, this is the sole, authoritative source for both
+                the legacy image columns (position 0) and the
+                ``message_attachments`` table (positions >= 1).
+
+        Returns:
+            The newly created message's id.
+
+        Raises:
+            CharactersRAGDBError: For database integrity errors during the
+                insert or the attachment-table write.
+        """
         # Split addressing: when ``attachments`` is supplied it covers ALL
         # positions (0..N-1) and is authoritative -- position 0 overrides the
         # scalar ``image_data``/``image_mime_type`` kwargs (even overriding
@@ -372,6 +487,17 @@ class ChatPersistenceService:
         """Batch-fetch extra (position >= 1) attachments for messages.
 
         Passthrough to ``CharactersRAGDB.get_attachments_for_messages``.
+        Legacy position-0 images are not included here -- they live on the
+        ``messages`` row itself (``image_data``/``image_mime_type``).
+
+        Args:
+            message_ids: Message ids to fetch attachment rows for.
+
+        Returns:
+            A mapping of message id to its list of attachment row dicts
+            (each with ``position``, ``data``, ``mime_type``,
+            ``display_name``), ordered by position. Message ids with no
+            extra (position >= 1) attachments are omitted from the result.
         """
         return self.db.get_attachments_for_messages(message_ids)
 

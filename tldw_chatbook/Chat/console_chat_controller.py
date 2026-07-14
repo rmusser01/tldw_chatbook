@@ -1021,7 +1021,19 @@ class ConsoleChatController:
                 if text:
                     parts.append({"type": "text", "text": text})
                 for attachment in usable[:take]:
-                    parts.append(image_url_part(attachment.data, attachment.mime_type))
+                    # An attachment can reach here with an empty mime_type
+                    # (e.g. a resumed message whose persisted
+                    # image_mime_type column was NULL --
+                    # ``_console_messages_from_conversation_tree`` falls back
+                    # to ``""`` for display purposes). Emitting a bare
+                    # ``data:;base64,...`` URL produces an invalid data URI
+                    # most providers reject outright, so fall back to the
+                    # same default mime the send-time staging path already
+                    # uses (see ``pending.mime_type or "image/png"`` above
+                    # and ``ConsoleChatStore.append_message``).
+                    parts.append(
+                        image_url_part(attachment.data, attachment.mime_type or "image/png")
+                    )
                 payloads.append({"role": message.role.value, "content": parts})
                 continue
             if not text:
