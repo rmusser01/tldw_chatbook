@@ -464,6 +464,49 @@ class MCPWorkbench(Container):
         remainder = key.split(":", 1)[1]
         return remainder.split("/", 1)[0] if remainder else None
 
+    def _active_service_target_id(self) -> str | None:
+        """The target id server-source operations would actually run against.
+
+        UI selection wins when present, but `run_action`'s server branch
+        resolves its target from the SERVICE context
+        (`_require_active_server_target()` reads
+        `context.selected_active_server_id`), not from the workbench's local
+        selection -- and the two genuinely diverge: Add-server is only ever
+        reachable from the overview, where `_selected_server_key` is None
+        while the service still remembers the last-activated target. Falling
+        back to the service context here keeps everything derived from this
+        id (external-record loading, the post-create drill, the Add-server
+        tooltip's target naming) consistent with where a mutation would
+        really land.
+        """
+        target_id = self._selected_target_id()
+        if target_id is not None:
+            return target_id
+        service = self._service()
+        context = getattr(service, "context", None) if service is not None else None
+        active = getattr(context, "selected_active_server_id", None)
+        return str(active) if active else None
+
+    def _active_target_label(self) -> str | None:
+        """Human label for `_active_service_target_id()`'s target, or None.
+
+        Prefers the target store's configured label; falls back to the raw
+        id so the Add-server tooltip can always name a resolvable target.
+        """
+        target_id = self._active_service_target_id()
+        if target_id is None:
+            return None
+        target_store = getattr(self._service(), "target_store", None)
+        if target_store is not None:
+            try:
+                for target in target_store.list_targets():
+                    if str(getattr(target, "server_id", "")) == target_id:
+                        label = getattr(target, "label", None)
+                        return str(label) if label else target_id
+            except Exception as exc:
+                logger.warning(f"MCP target label lookup failed: {exc}")
+        return target_id
+
     @staticmethod
     def _is_external_record_key(server_key: str | None) -> bool:
         if not server_key or not server_key.startswith("server:"):
@@ -487,11 +530,14 @@ class MCPWorkbench(Container):
         `selected_section` to "external_servers" as a side effect of real
         navigation, so `available_actions()` called right after is accurate
         with no extra round trip and no context left mutated beyond what the
-        UI was already doing. When no target is selected, `selected_section`
-        may not be "external_servers" (stale from prior Advanced-pane
-        navigation, or simply unset) -- this then reads as unavailable,
+        UI was already doing. When no target is ACTIVE at all
+        (`_active_service_target_id()` is None -- neither a UI selection nor
+        a service-remembered target), that load never ran and
+        `selected_section` may be stale -- this then reads as unavailable,
         which happens to also be the honest answer: without an active
-        target, `external_server.create` has nowhere to attach anyway.
+        target, `external_server.create` has nowhere to attach anyway (and
+        the Add-server button additionally carries its own no-target gate,
+        see `MCPServersMode._update_add_server_button()`).
         """
         if service is None:
             return False
@@ -550,11 +596,16 @@ class MCPWorkbench(Container):
                 snapshots.extend(
                     server_target_readiness(t) for t in target_store.list_targets()
                 )
-            # T9: with a target selected (either the target row itself or
-            # one of its external-record rows), also load and append that
-            # target's external-server records -- they appear in rail/table
-            # beneath the target, keyed "server:<target>/<ext>".
-            target_id = self._selected_target_id()
+            # T9: with an ACTIVE target (a target/external-record row
+            # selected in the UI, or -- review fix -- the service context's
+            # remembered active target when nothing is visibly selected),
+            # also load and append that target's external-server records --
+            # they appear in rail/table beneath the target, keyed
+            # "server:<target>/<ext>". Gating on the service's notion of
+            # active (not just the UI selection) is what lets a freshly
+            # created record show up immediately: Add-server runs from the
+            # overview with no selection at all.
+            target_id = self._active_service_target_id()
             if service is not None and target_id is not None:
                 try:
                     payload = await service.load_section("external_servers")
@@ -633,6 +684,7 @@ class MCPWorkbench(Container):
                 display_snapshots,
                 source=self._source,
                 mutations_available=self._server_mutations_available,
+                mutation_target_label=self._active_target_label(),
             )
             selected = self._snapshot_for_display(self._selected_server_key)
             await self._show_selected_detail(canvas, selected)
@@ -850,7 +902,8 @@ class MCPWorkbench(Container):
         if self._source == "server":
             self._server_mutations_available = self._compute_server_mutations_available(service)
             self.query_one(MCPServersMode).set_mutations_available(
-                self._server_mutations_available
+                self._server_mutations_available,
+                mutation_target_label=self._active_target_label(),
             )
 
     async def on_mcp_servers_mode_server_row_selected(
@@ -895,10 +948,12 @@ class MCPWorkbench(Container):
         event.stop()
         canvas = self.query_one(MCPServersMode)
         if self._source == "server":
-            # The button is disabled (see `set_mutations_available()`) when
-            # this is False -- a real Button.Pressed can't reach here then,
-            # but a defensive check costs nothing.
+            # The button is disabled (see `_update_add_server_button()`)
+            # when either of these fails -- a real Button.Pressed can't
+            # reach here then, but a defensive check costs nothing.
             if not self._server_mutations_available:
+                return
+            if self._active_service_target_id() is None:
                 return
             await canvas.show_server_mutations(None, [])
         else:
@@ -1097,8 +1152,12 @@ class MCPWorkbench(Container):
                 # Drill straight into the record just created -- credential
                 # setup is the natural next step, and `_sync_children()`
                 # below will fetch its slots and show the mutation panel in
-                # edit mode (T9's `_show_selected_detail()`).
-                target_id = self._selected_target_id()
+                # edit mode (T9's `_show_selected_detail()`). Review fix:
+                # derived from the SERVICE's active target, because create
+                # only ever runs from the overview where the local UI
+                # selection is None -- `_selected_target_id()` alone made
+                # this branch dead.
+                target_id = self._active_service_target_id()
                 server_id = payload.get("server_id")
                 if target_id and server_id:
                     self._selected_server_key = f"server:{target_id}/{server_id}"

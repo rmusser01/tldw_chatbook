@@ -15,6 +15,7 @@ from tldw_chatbook.MCP.unified_control_models import UnifiedMCPContext
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
 from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel, MCPProfileForm
 from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCP_RAIL_ROW_PREFIX, MCPRail
+from tldw_chatbook.UI.MCP_Modules.mcp_server_mutations import MCPServerMutationsPanel
 from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
 from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCP_HUB_MODES, MCPWorkbench
 
@@ -130,6 +131,158 @@ async def test_server_source_add_button_gated_when_mutations_unavailable():
         button = canvas.query_one("#mcp-add-server", Button)
         assert button.disabled is True
         assert button.tooltip == "Requires team, org, or system-admin scope."
+
+
+class MutationsAvailableTarget:
+    server_id = "main"
+    label = "Main Server"
+    base_url = "https://example.test"
+    auth_mode = "api_key"
+    last_known_reachability = "reachable"
+    last_known_auth_state = "authenticated"
+
+
+class MutationsAvailableTargetStore:
+    def list_targets(self):
+        return [MutationsAvailableTarget()]
+
+
+class MutationsAvailableHubService:
+    """Server-source fake whose `available_actions()` DOES offer the
+    external_server.* set (team scope), with a mutable external-records
+    list that `external_server.create` appends to -- the "available branch"
+    counterpart of `FakeHubService`'s always-gated `[]`.
+    """
+
+    def __init__(self) -> None:
+        self.target_store = MutationsAvailableTargetStore()
+        self.context = UnifiedMCPContext(
+            selected_source="server",
+            selected_active_server_id="main",
+            selected_scope="team",
+            selected_section="external_servers",
+        )
+        self.external_records: list[dict[str, Any]] = []
+        self.run_action_calls: list[tuple[str, dict[str, Any]]] = []
+
+    async def load_context(self):
+        return self.context
+
+    async def select_source(self, source):
+        self.context = replace(self.context, selected_source=source)
+        return self.context
+
+    async def select_server_target(self, server_id):
+        self.context = replace(self.context, selected_active_server_id=server_id)
+        return self.context
+
+    async def select_scope(self, scope, scope_ref=None):
+        return self.context
+
+    async def select_section(self, section):
+        return self.context
+
+    async def load_section(self, section=None):
+        return {
+            "source": "server",
+            "section": "external_servers",
+            "external_servers": [dict(r) for r in self.external_records],
+        }
+
+    def available_actions(self):
+        return [
+            {"name": "external_server.create", "label": "Create External Server"},
+            {"name": "external_server.update", "label": "Update External Server"},
+            {"name": "external_server.slots.list", "label": "List Credential Slots"},
+        ]
+
+    async def run_action(self, action_name, payload):
+        self.run_action_calls.append((action_name, dict(payload)))
+        if action_name == "external_server.create":
+            self.external_records.append(
+                {
+                    "server_id": payload["server_id"],
+                    "name": payload["name"],
+                    "transport": payload.get("transport", "http"),
+                    "enabled": payload.get("enabled", True),
+                }
+            )
+            return {"server_id": payload["server_id"]}
+        if action_name == "external_server.slots.list":
+            return {"credential_slots": []}
+        return {"ok": True}
+
+
+class MutationsAvailableApp(App):
+    def __init__(self) -> None:
+        super().__init__()
+        self.unified_mcp_service = MutationsAvailableHubService()
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+@pytest.mark.asyncio
+async def test_server_source_add_names_implicit_target_and_create_drills_into_new_record():
+    """T9 review fix: the "available branch" of the Add-server gate.
+
+    Add-server is only ever reachable from the overview, where nothing is
+    selected -- `external_server.create` then attaches to whatever target
+    the SERVICE context has active, invisibly. Two behaviors under test:
+
+    1. The enabled button's tooltip names that implicit target ("Adds to
+       server: Main Server.") so the attach point is never silent.
+    2. After a successful create, the workbench drills into the new record
+       (`server:main/<new_id>`): it appears in the collected snapshots and
+       the mutation panel re-opens in edit mode for credential setup.
+    """
+    app = MutationsAvailableApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        # Clear the mount-restored target selection: the scenario under test
+        # is the overview with NO visible selection while the service still
+        # remembers "main" as its active target.
+        rail = app.query_one(MCPRail)
+        rail.post_message(MCPRail.ServerSelected(None))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        canvas = app.query_one(MCPServersMode)
+        button = canvas.query_one("#mcp-add-server", Button)
+        assert button.disabled is False
+        assert "Main Server" in str(button.tooltip)
+
+        await pilot.click("#mcp-add-server")
+        await pilot.pause()
+        panel = app.query_one(MCPServerMutationsPanel)
+        assert not panel.is_edit
+        app.query_one("#mcp-srv-id", Input).value = "docs"
+        app.query_one("#mcp-srv-name", Input).value = "Docs"
+        await pilot.click("#mcp-srv-save")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        svc = app.unified_mcp_service
+        assert ("external_server.create", {
+            "server_id": "docs", "name": "Docs", "transport": "http",
+            "config": {}, "enabled": True,
+        }) in svc.run_action_calls
+        # Post-create drill: the new record is selected...
+        assert workbench.get_view_state()["selected_server_key"] == "server:main/docs"
+        # ...its snapshot was actually collected (external-record loading is
+        # gated on the ACTIVE target, not the UI selection)...
+        assert any(
+            snap.server_key == "server:main/docs" for snap in workbench._snapshots
+        )
+        # ...its credential slots were fetched, and the panel re-opened in
+        # edit mode for credential setup.
+        assert ("external_server.slots.list", {"server_id": "docs"}) in svc.run_action_calls
+        panel = app.query_one(MCPServerMutationsPanel)
+        assert panel.is_edit
+        assert app.query_one("#mcp-srv-name", Input).value == "Docs"
 
 
 @pytest.mark.asyncio

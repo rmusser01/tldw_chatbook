@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -98,9 +99,13 @@ class MCPServersMode(Vertical):
         # -- kept here purely for rendering the Add-server button's
         # disabled/tooltip state (`_update_add_server_button()`), set by
         # `update_overview()` (full resync) and `set_mutations_available()`
-        # (cheap scope-only update, no resync).
+        # (cheap scope-only update, no resync). `_mutation_target_label`
+        # (review fix) is the human label of the target a create would
+        # implicitly attach to -- None means no target is active at all,
+        # which disables Add-server even when scope allows mutations.
         self._source: str = "local"
         self._mutations_available: bool = False
+        self._mutation_target_label: str | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="mcp-servers-overview"):
@@ -149,7 +154,9 @@ class MCPServersMode(Vertical):
         self.query_one("#mcp-servers-overview").display = show_overview
         self.query_one("#mcp-servers-detail").display = not show_overview
 
-    def set_mutations_available(self, mutations_available: bool) -> None:
+    def set_mutations_available(
+        self, mutations_available: bool, *, mutation_target_label: str | None = None
+    ) -> None:
         """Cheap, no-resync update of the Add-server gating (T9).
 
         Called by the workbench's scope-change handler, which deliberately
@@ -157,17 +164,34 @@ class MCPServersMode(Vertical):
         -- this only touches the Add-server button, not the table/detail/rail.
         """
         self._mutations_available = mutations_available
+        self._mutation_target_label = mutation_target_label
         self._update_add_server_button()
 
     def _update_add_server_button(self) -> None:
+        """Render the Add-server button's gate state.
+
+        Server source, in precedence order (review fix): scope gate first
+        (mutations not offered at all), then the no-active-target gate
+        (nothing for a create to attach to), then enabled -- with the
+        tooltip NAMING the implicit target, because Add-server runs from
+        the overview where no selection is visible and the create would
+        otherwise silently attach to whatever target the service remembers.
+        """
         button = self.query_one("#mcp-add-server", Button)
         if self._source == "server":
-            button.disabled = not self._mutations_available
-            button.tooltip = (
-                "Create a new external server on the active connection."
-                if self._mutations_available
-                else _MUTATIONS_GATED_TOOLTIP
-            )
+            if not self._mutations_available:
+                button.disabled = True
+                button.tooltip = _MUTATIONS_GATED_TOOLTIP
+            elif self._mutation_target_label is None:
+                button.disabled = True
+                button.tooltip = "Select a server target first."
+            else:
+                button.disabled = False
+                # Target labels are user/remote-configured -- escape before
+                # the markup-interpreting tooltip (mcp_rail.py precedent).
+                button.tooltip = (
+                    f"Adds to server: {escape_markup(self._mutation_target_label)}."
+                )
         else:
             button.disabled = False
             button.tooltip = "Create a new local stdio server profile."
@@ -227,6 +251,7 @@ class MCPServersMode(Vertical):
         *,
         source: str = "local",
         mutations_available: bool = False,
+        mutation_target_label: str | None = None,
     ) -> None:
         """Rebuild the overview table, summary, and recovery callouts.
 
@@ -248,9 +273,13 @@ class MCPServersMode(Vertical):
             mutations_available: Whether `external_server.*` mutation
                 actions are currently usable (server source only; see
                 `MCPWorkbench._compute_server_mutations_available()`).
+            mutation_target_label: Human label of the target a create would
+                implicitly attach to (None disables Add-server with a
+                "Select a server target first." tooltip).
         """
         self._source = source
         self._mutations_available = mutations_available
+        self._mutation_target_label = mutation_target_label
         self._update_add_server_button()
         self._snapshots = list(snapshots)
         summary = self.query_one("#mcp-overview-summary", Static)
