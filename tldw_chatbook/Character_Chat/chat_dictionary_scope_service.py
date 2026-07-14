@@ -324,5 +324,34 @@ class ChatDictionaryScopeService:
             dictionary_id,
         )
 
+    async def attach_to_conversation(self, dictionary_id: int, conversation_id: str, mode: str = "local") -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        return await self._invoke(
+            normalized_mode,
+            self._statistics_action(normalized_mode, "detail"),
+            "attach_to_conversation",
+            dictionary_id,
+            conversation_id,
+        )
+
+    async def detach_from_conversation(self, dictionary_id: int, conversation_id: str, mode: str = "local") -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        return await self._invoke(
+            normalized_mode,
+            self._statistics_action(normalized_mode, "detail"),
+            "detach_from_conversation",
+            dictionary_id,
+            conversation_id,
+        )
+
+    async def list_dictionary_conversations(self, dictionary_id: int, mode: str = "local") -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        return await self._invoke(
+            normalized_mode,
+            self._statistics_action(normalized_mode, "detail"),
+            "list_dictionary_conversations",
+            dictionary_id,
+        )
+
 
 __all__ = ["ChatDictionaryScopeService"]

@@ -1,3 +1,5 @@
+import json as _json
+
 import pytest
 
 from tldw_chatbook.Character_Chat.local_chat_dictionary_service import LocalChatDictionaryService
@@ -367,3 +369,77 @@ def test_json_export_import_roundtrips_every_field(dictionary_db):
     for field in ("pattern", "replacement", "probability", "group", "timed_effects",
                   "max_replacements", "type", "enabled", "case_sensitive", "priority"):
         assert dup_entry.get(field) == src_entry.get(field), field
+
+
+def _seed_conversation(db, title="Chat"):
+    return db.add_conversation({"title": title})
+
+
+def _active(db, conv_id):
+    meta = _json.loads(db.get_conversation_by_id(conv_id).get("metadata") or "{}")
+    return meta.get("active_dictionaries", [])
+
+
+def test_attach_is_idempotent_and_dedups(dictionary_db):
+    service = LocalChatDictionaryService(dictionary_db)
+    d = service.create_dictionary({"name": "Meds"})
+    conv = _seed_conversation(dictionary_db)
+
+    r1 = service.attach_to_conversation(d["id"], conv)
+    assert r1["active_dictionaries"] == [d["id"]]
+    r2 = service.attach_to_conversation(d["id"], conv)          # idempotent
+    assert r2["active_dictionaries"] == [d["id"]]               # no duplicate
+    assert _active(dictionary_db, conv) == [d["id"]]            # persisted as int
+
+
+def test_detach_removes_and_noop_when_absent(dictionary_db):
+    service = LocalChatDictionaryService(dictionary_db)
+    d = service.create_dictionary({"name": "Meds"})
+    conv = _seed_conversation(dictionary_db)
+    service.attach_to_conversation(d["id"], conv)
+    service.detach_from_conversation(d["id"], conv)
+    assert _active(dictionary_db, conv) == []
+    # not-attached -> no-op success
+    again = service.detach_from_conversation(d["id"], conv)
+    assert again["active_dictionaries"] == []
+
+
+def test_attach_missing_conversation_raises(dictionary_db):
+    service = LocalChatDictionaryService(dictionary_db)
+    d = service.create_dictionary({"name": "Meds"})
+    with pytest.raises(ValueError):
+        service.attach_to_conversation(d["id"], "does-not-exist")
+
+
+def test_used_by_exact_int_membership_not_substring(dictionary_db):
+    # THE 1-vs-11 trap: dict id 1 must NOT match a conversation holding only id 11.
+    service = LocalChatDictionaryService(dictionary_db)
+    d1 = service.create_dictionary({"name": "One"})
+    d11 = service.create_dictionary({"name": "Eleven"})
+    # Force the ids we need by attaching to distinct conversations.
+    conv_with_1 = _seed_conversation(dictionary_db, "has 1")
+    conv_with_11 = _seed_conversation(dictionary_db, "has 11")
+    service.attach_to_conversation(d1["id"], conv_with_1)
+    service.attach_to_conversation(d11["id"], conv_with_11)
+
+    used_by_1 = service.list_dictionary_conversations(d1["id"])
+    ids = {c["conversation_id"] for c in used_by_1["conversations"]}
+    assert conv_with_1 in ids
+    assert conv_with_11 not in ids     # would fail under a substring LIKE match
+    titles = {c["title"] for c in used_by_1["conversations"]}
+    assert "has 1" in titles
+
+
+def test_attach_conflict_on_stale_version(dictionary_db, monkeypatch):
+    service = LocalChatDictionaryService(dictionary_db)
+    d = service.create_dictionary({"name": "Meds"})
+    conv = _seed_conversation(dictionary_db)
+    # Make update_conversation report a version mismatch.
+    real_update = dictionary_db.update_conversation
+
+    def _stale(conversation_id, update_data, expected_version):
+        raise ConflictError("version mismatch")
+
+    monkeypatch.setattr(dictionary_db, "update_conversation", _stale)
+    with pytest.raises(ConflictError):
+        service.attach_to_conversation(d["id"], conv)
