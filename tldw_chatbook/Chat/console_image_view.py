@@ -10,6 +10,7 @@ legacy chat defines those keys but never reads them.
 
 from __future__ import annotations
 
+import threading
 from collections import OrderedDict
 from dataclasses import dataclass
 from io import BytesIO
@@ -82,6 +83,11 @@ def resolve_default_mode(app_config: Mapping[str, Any]) -> Literal["pixels", "gr
     configured = str(images.get("default_render_mode", "auto")).strip().lower()
     if configured in _LEGACY_TO_MODE:
         return _LEGACY_TO_MODE[configured]  # type: ignore[return-value]
+    if configured not in ("auto", ""):
+        # Anything unrecognized (not "pixels"/"regular", not "auto", not
+        # missing/empty) pins to "pixels" immediately rather than falling
+        # through the terminal-auto path.
+        return "pixels"
 
     overrides = images.get("terminal_overrides")
     overrides = overrides if isinstance(overrides, Mapping) else {}
@@ -191,9 +197,9 @@ class ConsoleImageRenderCache:
     ``prepare`` is synchronous CPU work (PIL decode + LANCZOS downscale) —
     callers must run it off the event loop (``asyncio.to_thread``).
 
-    Thread model: ``prepare`` runs in a worker thread while the event loop
-    reads concurrently; safety relies on per-operation dict/set atomicity
-    under the GIL — keep mutations to single container ops.
+    Thread model: a reentrant lock guards all cache state; ``prepare`` runs
+    in a worker thread while the event loop reads concurrently. Heavy PIL
+    work happens outside the lock.
     """
 
     def __init__(self, *, max_entries: int = IMAGE_CACHE_MAX_ENTRIES) -> None:
@@ -201,6 +207,7 @@ class ConsoleImageRenderCache:
         self._images: OrderedDict[str, PILImage.Image] = OrderedDict()
         self._pixels: dict[str, Pixels] = {}
         self._failed: set[str] = set()
+        self._lock = threading.RLock()
 
     def prepare(self, message_id: str, image_data: bytes) -> bool:
         """Decode, downscale, and cache an image; negative-cache failures.
@@ -224,44 +231,56 @@ class ConsoleImageRenderCache:
             logger.opt(exception=True).warning(
                 f"Console image prep failed for message {message_id}."
             )
-            self._failed.add(message_id)
+            with self._lock:
+                self._failed.add(message_id)
             return False
-        self._failed.discard(message_id)
-        self._images[message_id] = pil
-        self._images.move_to_end(message_id)
-        self._pixels.pop(message_id, None)
-        while len(self._images) > self._max_entries:
-            evicted_id, _ = self._images.popitem(last=False)
-            self._pixels.pop(evicted_id, None)
+        with self._lock:
+            self._failed.discard(message_id)
+            self._images[message_id] = pil
+            self._images.move_to_end(message_id)
+            self._pixels.pop(message_id, None)
+            while len(self._images) > self._max_entries:
+                evicted_id, _ = self._images.popitem(last=False)
+                self._pixels.pop(evicted_id, None)
         return True
 
     def get_pil(self, message_id: str) -> PILImage.Image | None:
         """Return the cached decoded image, refreshing its LRU position."""
-        pil = self._images.get(message_id)
-        if pil is not None:
-            self._images.move_to_end(message_id)
-        return pil
+        with self._lock:
+            pil = self._images.get(message_id)
+            if pil is not None:
+                self._images.move_to_end(message_id)
+            return pil
 
     def get_pixels(self, message_id: str) -> Pixels | None:
         """Return (lazily building) the pixels renderable for a cached image."""
-        cached = self._pixels.get(message_id)
-        if cached is not None:
-            return cached
-        pil = self.get_pil(message_id)
-        if pil is None:
-            return None
-        # Half-block rendering: one text line shows two pixel rows.
-        scaled = pil.copy()
-        scaled.thumbnail(
+        with self._lock:
+            cached = self._pixels.get(message_id)
+            if cached is not None:
+                return cached
+            pil = self._images.get(message_id)
+            if pil is None:
+                return None
+            self._images.move_to_end(message_id)
+            pil = pil.copy()
+        # Half-block rendering: one text line shows two pixel rows. Heavy
+        # PIL/Pixels work happens outside the lock.
+        pil.thumbnail(
             (PIXELS_MAX_COLS, PIXELS_MAX_LINES * 2), PILImage.Resampling.LANCZOS
         )
-        pixels = Pixels.from_image(scaled)
-        self._pixels[message_id] = pixels
+        pixels = Pixels.from_image(pil)
+        with self._lock:
+            # A racing evict may have dropped this entry while we were
+            # thumbnailing; only store if it's still live, else drop the
+            # now-orphaned pixels on the floor.
+            if message_id in self._images:
+                self._pixels[message_id] = pixels
         return pixels
 
     def is_failed(self, message_id: str) -> bool:
         """Return whether decoding previously failed for this message."""
-        return message_id in self._failed
+        with self._lock:
+            return message_id in self._failed
 
     def pending_ids(self, messages: Iterable[Any]) -> list[tuple[str, bytes]]:
         """Return (message_id, bytes) pairs needing preparation.
@@ -274,27 +293,30 @@ class ConsoleImageRenderCache:
             negative-cached.
         """
         pending: list[tuple[str, bytes]] = []
-        for message in messages:
-            image_data = getattr(message, "image_data", None)
-            message_id = getattr(message, "id", None)
-            if (
-                isinstance(message_id, str)
-                and image_data
-                and message_id not in self._images
-                and message_id not in self._failed
-            ):
-                pending.append((message_id, image_data))
+        with self._lock:
+            for message in messages:
+                image_data = getattr(message, "image_data", None)
+                message_id = getattr(message, "id", None)
+                if (
+                    isinstance(message_id, str)
+                    and image_data
+                    and message_id not in self._images
+                    and message_id not in self._failed
+                ):
+                    pending.append((message_id, image_data))
         return pending
 
     def evict_session(self, message_ids: Iterable[str]) -> None:
         """Drop cache entries (and failure marks) for a closed session."""
-        for message_id in message_ids:
-            self._images.pop(message_id, None)
-            self._pixels.pop(message_id, None)
-            self._failed.discard(message_id)
+        with self._lock:
+            for message_id in message_ids:
+                self._images.pop(message_id, None)
+                self._pixels.pop(message_id, None)
+                self._failed.discard(message_id)
 
     def clear(self) -> None:
         """Drop all cache state (used on full store restore)."""
-        self._images.clear()
-        self._pixels.clear()
-        self._failed.clear()
+        with self._lock:
+            self._images.clear()
+            self._pixels.clear()
+            self._failed.clear()

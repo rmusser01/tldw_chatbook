@@ -1147,6 +1147,7 @@ class ChatScreen(BaseAppScreen):
         self._console_image_view_state: ConsoleImageViewState | None = None
         self._console_image_cache: ConsoleImageRenderCache | None = None
         self._console_image_default_mode: Literal["pixels", "graphics"] | None = None
+        self._console_image_preparing: set[str] = set()
         self._console_message_action_service = ConsoleMessageActionService()
         self._console_model_option_warnings: dict[tuple[str, str], str] = {}
         self._last_console_action: ConsoleActionResult | None = None
@@ -1954,8 +1955,16 @@ class ChatScreen(BaseAppScreen):
             for message_id, image_data in pending:
                 cache.prepare(message_id, image_data)
 
-        await asyncio.to_thread(_prepare_all)
-        await self._sync_native_console_chat_ui()
+        try:
+            await asyncio.to_thread(_prepare_all)
+            await self._sync_native_console_chat_ui()
+        finally:
+            # Covers cancellation too (the exclusive-worker re-kick below):
+            # a cancelled batch's ids become eligible for re-kick, and the
+            # cache's pending_ids recompute keeps the working set converged.
+            self._console_image_preparing.difference_update(
+                mid for mid, _ in pending
+            )
 
     def _handle_console_toggle_image_view(self, message_id: str) -> None:
         """Cycle one message's inline-image view mode."""
@@ -6566,8 +6575,17 @@ class ChatScreen(BaseAppScreen):
             # Same bounded subset as `_build_console_image_specs` — computing
             # pending work over the full transcript would prep messages the
             # LRU cache immediately evicts again (churn guard).
-            pending_images = cache.pending_ids(self._recent_console_image_messages(messages))
+            # Exclude ids a prep worker is already chewing on: the 0.2s sync
+            # tick would otherwise re-kick the exclusive `console-image-prep`
+            # worker for the SAME pending ids on every tick, cancelling the
+            # in-flight run and piling duplicate decodes into the executor.
+            pending_images = [
+                (mid, data)
+                for mid, data in cache.pending_ids(self._recent_console_image_messages(messages))
+                if mid not in self._console_image_preparing
+            ]
             if pending_images:
+                self._console_image_preparing.update(mid for mid, _ in pending_images)
                 self.run_worker(
                     self._prep_console_images(pending_images),
                     exclusive=True,

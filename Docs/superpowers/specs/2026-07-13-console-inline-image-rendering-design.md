@@ -23,7 +23,7 @@ The terminal-graphics mode is called **`graphics`**, not "TGP": `textual_image.w
 ### New pure module — `tldw_chatbook/Chat/console_image_view.py`
 
 - `ConsoleImageViewMode = Literal["pixels", "graphics", "hidden"]`
-- `resolve_default_mode(app_config) -> Literal["pixels", "graphics"]` — resolution semantics (defined here, since no prior consumer exists to mirror): explicit `default_render_mode = "pixels"`/`"regular"` wins outright (`regular` → `graphics`); `"auto"` consults `detect_terminal_capabilities()` for the terminal name/flags, then `terminal_overrides[<terminal>]` if present, else `terminal_overrides["default"]` (shipped defaults: kitty/wezterm/iterm2 → `regular`, default → `pixels`); unknown/missing values fall back to `pixels` (safest everywhere). |
+- `resolve_default_mode(app_config) -> Literal["pixels", "graphics"]` — resolution semantics (defined here, since no prior consumer exists to mirror): explicit `default_render_mode = "pixels"`/`"regular"` wins outright (`regular` → `graphics`); `"auto"` consults `detect_terminal_capabilities()` for the terminal name/flags, then `terminal_overrides[<terminal>]` if present, else `terminal_overrides["default"]` (shipped defaults: kitty/wezterm/iterm2 → `regular`, default → `pixels`); missing/empty behaves as `auto`; unrecognized values fall back to `pixels` (safest). |
 - `next_view_mode(current) -> ConsoleImageViewMode` — the three-state cycle.
 - `ConsoleImageViewState` — per-message overrides (only non-default entries); `serialize() -> dict[str, str]` / `restore(payload)`; `prune(live_message_ids)` drops stale entries (called at serialize time).
 - `ConsoleImageRenderCache` — bounded cache of prepared images:

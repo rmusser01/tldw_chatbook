@@ -85,11 +85,16 @@ def test_resolve_default_mode_garbage_falls_back_to_pixels(monkeypatch):
         civ, "detect_terminal_capabilities", lambda: {"terminal_type": "unknown"}
     )
     monkeypatch.setattr(civ, "get_image_render_mode", lambda mode: "regular")
-    assert resolve_default_mode({"chat": {"images": {"default_render_mode": "nonsense"}}}) in {
-        "pixels",
-        "graphics",
-    }
-    assert resolve_default_mode({}) in {"pixels", "graphics"}
+    # An unrecognized value pins to "pixels" immediately instead of falling
+    # through to the terminal-auto path.
+    assert (
+        resolve_default_mode({"chat": {"images": {"default_render_mode": "nonsense"}}})
+        == "pixels"
+    )
+    # Missing/empty behaves as "auto" -- it must still consult the
+    # terminal-auto path (proven here by the patched `get_image_render_mode`
+    # returning "regular" -> "graphics"), not fall back to "pixels".
+    assert resolve_default_mode({}) == "graphics"
 
 
 def test_view_state_defaults_overrides_and_prune():

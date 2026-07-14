@@ -6823,3 +6823,55 @@ def test_console_image_prep_bounded_to_cache_capacity_avoids_churn():
     # nothing left to prepare — the working set converges instead of
     # flapping between decode and eviction.
     assert cache.pending_ids(screen._recent_console_image_messages(messages)) == []
+
+
+def test_console_image_prep_kick_skips_ids_already_preparing():
+    """Regression: the 0.2s sync tick must not re-kick prep for ids a
+    worker is already chewing on.
+
+    Before this fix, every sync tick recomputed `cache.pending_ids(...)`
+    over the still-uncached image messages and unconditionally kicked the
+    exclusive `console-image-prep` worker for them — cancelling any
+    in-flight run and piling duplicate decodes into the executor.
+    `_console_image_preparing` tracks in-flight ids so the kick site's
+    filtered pending list converges to empty once a batch is staged.
+    """
+    from io import BytesIO
+
+    from PIL import Image as PILImage
+
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+
+    buffer = BytesIO()
+    PILImage.new("RGB", (4, 4), (10, 20, 30)).save(buffer, format="PNG")
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="pic",
+        image_data=buffer.getvalue(),
+        image_mime_type="image/png",
+    )
+
+    messages = [message]
+    _state, cache = screen._ensure_console_image_view()
+
+    # Same helper chain the sync site uses to compute the raw pending set.
+    recent = screen._recent_console_image_messages(messages)
+    assert cache.pending_ids(recent) == [(message.id, message.image_data)]
+
+    # Stage the id as already-preparing, exactly as the kick site does right
+    # before `run_worker`.
+    screen._console_image_preparing.update(mid for mid, _ in cache.pending_ids(recent))
+    assert message.id in screen._console_image_preparing
+
+    # The filtered pending list the kick site actually acts on must now be
+    # empty — a re-kick for the same id must not fire while it's in flight.
+    pending_images = [
+        (mid, data)
+        for mid, data in cache.pending_ids(recent)
+        if mid not in screen._console_image_preparing
+    ]
+    assert pending_images == []
