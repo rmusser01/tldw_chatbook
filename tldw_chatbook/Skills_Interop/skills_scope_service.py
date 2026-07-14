@@ -153,6 +153,30 @@ class SkillsScopeService:
             method_name="get_context",
         )
 
+    async def count_skills(self, *, mode: SkillsBackend | str | None = None, **kwargs: Any) -> int:
+        """Return the total managed skills count for one backend.
+
+        Unlike ``list_skills``/``get_context``, the result is a bare ``int``
+        rather than a dict/list envelope, so this bypasses ``_call``'s
+        ``_normalize_response`` step (which only mutates dict/list
+        payloads) and routes directly -- mirroring ``delete_skill``'s
+        bespoke dispatch.
+
+        Args:
+            mode: Which backend to query (``local`` or ``server``);
+                defaults to ``server``.
+            **kwargs: Forwarded to the backend service's ``count_skills``.
+
+        Returns:
+            The total managed skills count (trusted plus needs-review) for
+            the selected backend.
+        """
+        normalized_mode = self._normalize_mode(mode)
+        service = self._require_service(normalized_mode)
+        self._enforce_policy(self._source_action_id("skills.context.list.server", normalized_mode))
+        result = await self._maybe_await(service.count_skills(**kwargs))
+        return int(result)
+
     async def get_skill(self, skill_name: str, *, mode: SkillsBackend | str | None = None) -> dict[str, Any]:
         return await self._call(
             mode=mode,
