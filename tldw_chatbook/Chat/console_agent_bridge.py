@@ -2,9 +2,9 @@
 """Impure Console glue between the synchronous agent engine and the store.
 
 Builds the AgentConfig, drives a streaming model adapter (StreamGate +
-provider_gateway.stream_chat), appends escaped TOOL markers for the primary
-run's tool/spawn steps, keeps an in-memory live snapshot for the rail poll,
-and runs AgentService.run_turn synchronously (the controller wraps it in
+provider_gateway.stream_chat), appends TOOL markers for the primary run's
+tool/spawn steps, keeps an in-memory live snapshot for the rail poll, and
+runs AgentService.run_turn synchronously (the controller wraps it in
 asyncio.to_thread). No widget mutation.
 """
 from __future__ import annotations
@@ -13,8 +13,6 @@ import asyncio
 import time
 from dataclasses import dataclass
 from typing import Any, Callable
-
-from rich.markup import escape as escape_markup
 
 from tldw_chatbook.Agents.agent_models import (
     AGENT_KIND_PRIMARY, AGENT_KIND_SUBAGENT, FIND_TOOLS_NAME, LOAD_TOOLS_NAME,
@@ -201,7 +199,13 @@ class ConsoleAgentBridge:
                     # widget -- so it must stay raw. Escaping here produced
                     # literal backslashes once rendered (`fetch [docs]` ->
                     # `fetch \[docs]`), since markup=False never interprets
-                    # (and so never "consumes") the escape sequence.
+                    # (and so never "consumes") the escape sequence. The same
+                    # is true of the transcript TOOL marker path below
+                    # (_append_marker): both of its consumers
+                    # (console_transcript.py's Content.assemble and
+                    # chat_screen.py's Text(...)) render the text as-is
+                    # rather than parsing it as markup, so _append_marker
+                    # must stay raw too.
                     subagents.append(SubAgentSummary(step.summary or ""))
                     self._append_marker(
                         session_id, f"⤷ spawned sub-agent: {step.summary}")
@@ -256,9 +260,16 @@ class ConsoleAgentBridge:
     # -- internals ------------------------------------------------------
 
     def _append_marker(self, session_id: str, text: str) -> None:
+        # Kept raw (no escaping): both consumers render markup-off --
+        # console_transcript.py's _message_render_text builds a Content via
+        # Content.assemble (never markup-parsed) and chat_screen.py's legacy
+        # fallback wraps the string in a bare rich.text.Text(...) (also never
+        # markup-parsed). Escaping here for a parser that never runs used to
+        # leave literal backslashes in the rendered marker (`fetch [docs]` ->
+        # `fetch \[docs]`).
         try:
             self._store.append_message(
-                session_id, role=ConsoleMessageRole.TOOL, content=escape_markup(text))
+                session_id, role=ConsoleMessageRole.TOOL, content=text)
         except KeyError:
             pass   # session vanished mid-run; the rail still has the live snapshot
 
@@ -268,8 +279,8 @@ class ConsoleAgentBridge:
         # _console_agent_section_lines renders into a markup=False Static --
         # escaping here (a second guard on top of markup=False) produced
         # literal backslashes for bracketed text. Left raw; the transcript
-        # TOOL marker path below (_append_marker) still escapes, since that
-        # text renders through a markup-enabled widget.
+        # TOOL marker path (_append_marker) is also raw, since its consumers
+        # never parse the text as markup either.
         raw = step.summary or step.result or step.tool_name or step.kind
         return str(raw)[:200]
 

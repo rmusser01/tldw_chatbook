@@ -121,6 +121,27 @@ def test_spawn_renders_marker_and_persists_linked_subagent(tmp_path):
     assert any(s.text for s in snap.subagents)
 
 
+def test_tool_marker_with_brackets_renders_literally_not_escaped(tmp_path):
+    # Both TOOL-marker consumers (console_transcript.py's Content.assemble
+    # and chat_screen.py's legacy Text(...) fallback) render markup-off, so
+    # a bracketed task/result must survive as literal text -- not as a
+    # backslash-escaped sequence (`fetch \[docs]`) that a markup parser
+    # would need to consume but never runs.
+    scripts = [
+        [_fence("spawn_subagent", {"task": "fetch [docs]"})],  # primary turn 1
+        ["ok"],                                                 # sub-agent turn
+        ["Done."],                                             # primary final
+    ]
+    bridge, _db, store, session, aid = _bridge(tmp_path, scripts)
+    outcome = _run(bridge, store, session, aid)
+    assert outcome.status == "done"
+    spawn_markers = [m for m in store.messages_for_session(session.id)
+                     if m.role is ConsoleMessageRole.TOOL and "sub-agent" in m.content.lower()]
+    assert spawn_markers
+    assert "[docs]" in spawn_markers[0].content
+    assert "\\[docs]" not in spawn_markers[0].content
+
+
 def test_supersede_marks_previous_primary_and_tree(tmp_path):
     bridge, db, store, session, aid = _bridge(tmp_path, [["one."], ["two."]])
     _run(bridge, store, session, aid)                        # first run
