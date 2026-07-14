@@ -250,16 +250,12 @@ async def test_keyboard_down_moves_highlight_and_enter_selects_moved_row() -> No
 
 
 @pytest.mark.asyncio
-async def test_typing_still_filters_after_a_row_click_does_not_dismiss() -> None:
-    """A click on a row always dismisses immediately in this single-mode
-    picker (no blocked-row concept), but the filter Input must still be the
-    thing regaining/keeping focus afterwards -- mirrors the discipline
-    ``ConsolePromptPickerModal`` documents for its blocked-row click, applied
-    here to confirm rows never strand real DOM focus even on the success
-    path."""
+async def test_filter_has_focus_on_open_and_typing_filters() -> None:
+    """After the modal opens, the filter Input has keyboard focus and typing
+    immediately triggers filtering -- no click or manual focus management
+    needed."""
     app = ModalHarness()
-    record = _record(name="alpha")
-    fake_search = FakeSkillSearch([record])
+    fake_search = FakeSkillSearch([_record(name="code-review")])
 
     async with app.run_test(size=(100, 40)) as pilot:
         await app.push_screen(
@@ -269,10 +265,13 @@ async def test_typing_still_filters_after_a_row_click_does_not_dismiss() -> None
         await pilot.pause()
         await _wait_for_search(pilot)
 
-        await pilot.click(f"#{ROW_ID_PREFIX}alpha")
-        await pilot.pause()
+        filter_input = app.screen.query_one(f"#{FILTER_INPUT_ID}", Input)
+        assert filter_input.has_focus, "Filter input should have focus on modal open"
 
-    assert app.dismissed_with == record
+        filter_input.value = "code"
+        await _wait_for_search(pilot)
+
+        assert "code" in fake_search.calls
 
 
 @pytest.mark.asyncio
