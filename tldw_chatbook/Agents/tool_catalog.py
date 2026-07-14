@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Protocol
+from typing import Iterable, Mapping, Protocol
 
 from tldw_chatbook.Tools.tool_executor import CalculatorTool, DateTimeTool
 
@@ -109,6 +109,74 @@ class BuiltinToolProvider:
             return ToolResult(ok=False, error=str(raw["error"]))
         content = json.dumps(raw) if isinstance(raw, (dict, list)) else str(raw)
         return ToolResult(ok=True, content=content)
+
+
+def intersect_skill_tools(
+    skill_allowed_tools: list[str] | None, builtin_names: Iterable[str],
+) -> tuple[str, ...]:
+    """A skill's `allowed_tools` narrows the runtime builtin set; never grants.
+
+    ``None`` means the skill did not narrow — all builtins pass through.
+    Otherwise only names present in both survive, ordered by
+    ``builtin_names`` (not the skill's own order) so callers get a stable,
+    registry-consistent ordering regardless of how the skill listed them.
+    """
+    if skill_allowed_tools is None:
+        return tuple(builtin_names)
+    allowed = set(skill_allowed_tools)
+    return tuple(name for name in builtin_names if name in allowed)
+
+
+class SkillToolProvider:
+    """Exposes trusted, model-invocable skills as catalog tools.
+
+    Built from a per-run snapshot of skill summaries (plain mappings with
+    "name", "description", "argument_hint") — never imports Skills_Interop
+    itself, so this module stays importable without that subsystem and the
+    catalog is always as fresh as the snapshot the caller passed in (the
+    per-run freshness doctrine: callers re-read skills at run start, not
+    once at import time).
+
+    ``invoke()`` deliberately raises: skill tools never execute via plain
+    provider.invoke(). They route through the run-scoped spawn executor
+    (budget-counted, cancellable, DB-lineage-tracked sub-agent runs — see
+    the skills design doc's Architecture section). This method exists only
+    to satisfy the ToolProvider protocol; calling it directly is a bug.
+    """
+
+    SOURCE = "skill"
+
+    def __init__(self, entries: list[Mapping]) -> None:
+        self._entries = list(entries)
+
+    def _tool_id(self, name: str) -> str:
+        return f"{self.SOURCE}:{name}"
+
+    def list_catalog(self) -> list[ToolCatalogEntry]:
+        return [
+            ToolCatalogEntry(id=self._tool_id(e["name"]), name=e["name"],
+                             one_line_description=e["description"],
+                             source=self.SOURCE)
+            for e in self._entries
+        ]
+
+    def load_schema(self, tool_id: str) -> ToolSchema:
+        name = tool_id.split(":", 1)[1]
+        entry = next(e for e in self._entries if e["name"] == name)
+        hint = entry.get("argument_hint") or entry["description"]
+        return ToolSchema(
+            id=tool_id, name=name, description=entry["description"],
+            parameters={
+                "type": "object",
+                "properties": {"args": {"type": "string", "description": hint}},
+                "required": [],
+            },
+        )
+
+    def invoke(self, tool_id: str, args: dict) -> ToolResult:
+        raise RuntimeError(
+            "SkillToolProvider.invoke must not be called; skills route "
+            "through the run-scoped spawn executor")
 
 
 class ToolCatalogRegistry:
