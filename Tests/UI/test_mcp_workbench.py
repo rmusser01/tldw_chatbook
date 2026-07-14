@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Checkbox, ContentSwitcher, Input, Select, Static, TextArea
+from textual.widgets import Button, Checkbox, ContentSwitcher, DataTable, Input, Select, Static, TextArea
 
 import tldw_chatbook.UI.MCP_Modules.mcp_inspector as mcp_inspector_module
 import tldw_chatbook.UI.MCP_Modules.mcp_workbench as mcp_workbench_module
@@ -19,6 +19,7 @@ from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel, MCPPro
 from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCP_RAIL_ROW_PREFIX, MCPRail
 from tldw_chatbook.UI.MCP_Modules.mcp_server_mutations import MCPServerMutationsPanel
 from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
+from tldw_chatbook.UI.MCP_Modules.mcp_tools_mode import MCPToolsMode
 from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCP_HUB_MODES, MCPWorkbench
 
 
@@ -2283,9 +2284,168 @@ async def test_mode_placeholder_canvases_use_info_callout_not_recovery_callout()
     async with app.run_test() as pilot:
         await pilot.pause()
         for mode, spec in MCP_HUB_MODES.items():
-            if mode == "servers":
+            # T5: "tools" now hosts the real `MCPToolsMode` canvas (see
+            # test_mcp_tools_mode.py for its own empty-state coverage), not
+            # a generic phase placeholder -- only "servers" and "tools" are
+            # real canvases at this point.
+            if mode in ("servers", "tools"):
                 continue
             static = app.query_one(f"#mcp-mode-canvas-{mode} Static", Static)
             assert "ds-info-callout" in static.classes, mode
             assert "ds-recovery-callout" not in static.classes, mode
             assert str(static.renderable) == spec["placeholder"]
+
+
+# -- T5: Tools mode canvas registration + workbench-fed catalog -------------
+
+
+@pytest.mark.asyncio
+async def test_tools_mode_canvas_replaces_placeholder():
+    """`#mcp-mode-canvas-tools` must host the real `MCPToolsMode` widget --
+    not the generic placeholder Vertical/Static every other not-yet-built
+    mode still renders."""
+    app = WorkbenchApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert isinstance(app.query_one("#mcp-mode-canvas-tools"), MCPToolsMode)
+        assert not list(app.query("#mcp-mode-canvas-tools > Static"))
+
+
+@pytest.mark.asyncio
+async def test_tools_mode_shows_tools_from_local_catalog_snapshots():
+    """T5: `_collect_hub_tools()` derives Tools mode's catalog from the SAME
+    local-profile records `_collect_snapshots()` already loaded for the rail/
+    overview (`FakeHubService`'s seeded "docs" profile, discovery_snapshot
+    tools=[{"name": "a"}]) -- no separate fetch.
+    """
+    app = WorkbenchApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one(MCPToolsMode)
+        table = canvas.query_one("#mcp-tools-table", DataTable)
+        assert table.row_count == 1
+        row_key, _ = table.coordinate_to_cell_key((0, 0))
+        assert row_key.value == "local:docs::a"
+        assert canvas.query_one("#mcp-tools-empty").display is False
+
+
+class NoServersHubService(FakeHubService):
+    """Local source with zero local profiles configured (and no builtin
+    inventory, since this fake never sets `local_service`) -- the "no
+    servers configured" empty-diagnosis bucket."""
+
+    async def load_section(self, section=None):
+        effective_section = section or self.context.selected_section or "overview"
+        if self.context.selected_source == "local":
+            if effective_section == "external_servers":
+                return []
+            return {"source": "local", "section": effective_section}
+        return {"external_servers": [], "source": "server", "section": "external_servers"}
+
+
+class NoServersApp(App):
+    def __init__(self) -> None:
+        super().__init__()
+        self.unified_mcp_service = NoServersHubService()
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+@pytest.mark.asyncio
+async def test_empty_diagnosis_no_servers_shows_add_server_and_button_opens_form():
+    app = NoServersApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")  # the button must be on-screen for pilot.click()
+        await pilot.pause()
+        canvas = app.query_one(MCPToolsMode)
+        empty = canvas.query_one("#mcp-tools-empty")
+        assert empty.display is True
+        message = str(canvas.query_one("#mcp-tools-empty-message", Static).renderable)
+        assert message == "No servers configured — add one to see its tools."
+
+        await pilot.click("#mcp-tools-empty-action")
+        await pilot.pause()
+        form = app.query_one(MCPProfileForm)
+        assert not form.is_edit
+
+
+@pytest.mark.asyncio
+async def test_empty_diagnosis_connect_routes_to_servers_mode_with_notify():
+    """LifecycleFakeHubService's seeded "docs" profile is disconnected with
+    no discovery snapshot -> NEEDS_SETUP -- the "servers exist but none
+    connected/discovered" empty-diagnosis bucket. The empty state's button
+    must switch to Servers mode (where the real connect/refresh actions
+    live) and notify, not attempt any lifecycle action itself.
+    """
+    app = LifecycleApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        canvas = app.query_one(MCPToolsMode)
+        message = str(canvas.query_one("#mcp-tools-empty-message", Static).renderable)
+        assert message == "No tools discovered yet — connect or refresh a server."
+
+        notifications = _capture_notifications(app)
+        await pilot.click("#mcp-tools-empty-action")
+        await pilot.pause()
+        assert workbench.active_mode == "servers"
+        assert notifications and notifications[-1] == (
+            "Select a server below to connect or refresh its tools.",
+            "information",
+        )
+
+
+class ServerToolsHubService(FakeHubService):
+    """Server source with one active target ("main") whose sole external
+    record embeds its own `tools` list -- mirrors a backend that returns
+    per-record tool inventories inline (see `readiness.py`'s own
+    `record.get("tools")` tool_count fallback, the same embedded shape)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.context = UnifiedMCPContext(
+            selected_source="server", selected_active_server_id="main"
+        )
+
+    async def load_section(self, section=None):
+        effective_section = section or self.context.selected_section or "overview"
+        if effective_section == "external_servers":
+            return {
+                "external_servers": [
+                    {
+                        "server_id": "docs",
+                        "name": "Docs",
+                        "tools": [{"name": "search", "description": "Search."}],
+                    }
+                ],
+                "source": "server",
+                "section": "external_servers",
+            }
+        return {"external_servers": [], "source": "server", "section": effective_section}
+
+
+class ServerToolsApp(App):
+    def __init__(self) -> None:
+        super().__init__()
+        self.unified_mcp_service = ServerToolsHubService()
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+@pytest.mark.asyncio
+async def test_tools_mode_shows_server_source_tools_from_embedded_inventory():
+    app = ServerToolsApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one(MCPToolsMode)
+        table = canvas.query_one("#mcp-tools-table", DataTable)
+        assert table.row_count == 1
+        row_key, _ = table.coordinate_to_cell_key((0, 0))
+        assert row_key.value == "server:main/docs::search"
+        assert canvas.query_one("#mcp-tools-empty").display is False

@@ -18,10 +18,17 @@ from textual.widgets import ContentSwitcher, Static
 from textual.worker import Worker
 
 from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
+from tldw_chatbook.MCP.hub_tool_catalog import (
+    HubTool,
+    builtin_tools_from_inventory,
+    local_tools_from_record,
+    server_tools_from_inventory,
+)
 from tldw_chatbook.MCP.mcp_import import ImportCandidate
 from tldw_chatbook.MCP.readiness import (
     HubAction,
     ReadinessSnapshot,
+    ReadinessState,
     as_checking,
     builtin_readiness,
     local_profile_readiness,
@@ -34,6 +41,7 @@ from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel, MCPPro
 from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCPRail
 from tldw_chatbook.UI.MCP_Modules.mcp_server_mutations import MCPServerMutationsPanel
 from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
+from tldw_chatbook.UI.MCP_Modules.mcp_tools_mode import MCPToolsMode
 from tldw_chatbook.Utils.path_validation import is_safe_path
 
 # Sentinel distinguishing "key absent from a restore blob" from "key present
@@ -64,14 +72,10 @@ def _toast(text: str) -> str:
 
 MCP_HUB_MODES: dict[str, dict[str, str]] = {
     "servers": {"label": "Servers", "button_id": "mcp-mode-servers", "placeholder": ""},
-    "tools": {
-        "label": "Tools",
-        "button_id": "mcp-mode-tools",
-        "placeholder": (
-            "Tools mode arrives in a later phase. Until then, a server's tools are "
-            "listed in its Server detail, and tool actions run via Advanced in the inspector."
-        ),
-    },
+    # T5: Tools mode now hosts the real `MCPToolsMode` canvas (see compose())
+    # -- "placeholder" is unused for it, same as "servers" above, kept "" for
+    # shape parity with the other MCP_HUB_MODES entries.
+    "tools": {"label": "Tools", "button_id": "mcp-mode-tools", "placeholder": ""},
     "permissions": {
         "label": "Permissions",
         "button_id": "mcp-mode-permissions",
@@ -431,8 +435,9 @@ class MCPWorkbench(Container):
                 classes="destination-workbench-pane",
             ):
                 yield MCPServersMode(id="mcp-mode-canvas-servers")
+                yield MCPToolsMode(id="mcp-mode-canvas-tools")
                 for mode, spec in MCP_HUB_MODES.items():
-                    if mode == "servers":
+                    if mode in ("servers", "tools"):
                         continue
                     with Vertical(id=f"mcp-mode-canvas-{mode}"):
                         yield Static(
@@ -761,6 +766,90 @@ class MCPWorkbench(Container):
             selected = self._snapshot_for_display(self._selected_server_key)
             await self._show_selected_detail(canvas, selected)
             await self.query_one(MCPInspector).update_readiness(selected)
+            await self._sync_tools_mode()
+
+    async def _sync_tools_mode(self) -> None:
+        """Push the current cross-server tool catalog into `MCPToolsMode`.
+
+        T5: runs on every `_sync_children()` pass (mirrors `MCPServersMode`'s
+        own unconditional resync above) rather than only while Tools mode is
+        the active canvas -- the ContentSwitcher hides the inactive canvas
+        via CSS but never unmounts it, so keeping its data current the whole
+        time means switching TO Tools mode never shows stale rows from
+        before the last background resync. Computed entirely from
+        `self._catalog_records`/`self._snapshots` (both already loaded by
+        `_collect_snapshots()` this same pass) plus one guarded, synchronous
+        `local_service.get_inventory()` call -- no new I/O.
+        """
+        tools = self._collect_hub_tools()
+        diagnosis = None if tools else self._empty_tools_diagnosis()
+        await self.query_one(MCPToolsMode).update_tools(tools, empty_diagnosis=diagnosis)
+
+    def _collect_hub_tools(self) -> list[HubTool]:
+        """Derive the current source's cross-server `HubTool` catalog.
+
+        Local source: every local profile's discovered tools
+        (`self._catalog_records`, populated by `_collect_snapshots()` --
+        reused here, not re-fetched) plus the built-in server's inventory
+        (`service.local_service.get_inventory()`, guarded by getattr since
+        test fakes and a still-initializing service may not expose it).
+
+        Server source: each external-server record's own embedded `tools`
+        list (when the backend includes one -- `ReadinessSnapshot.detail
+        ["raw"]`, already loaded by `_collect_snapshots()`'s external-
+        servers-section read for the active target; see
+        `server_external_record_readiness()`), keyed by that record's own
+        composite id so its tools group under the SAME server_key
+        (`"server:<target>/<record>"`) the Servers-mode rail/table already
+        use for it. Bare server TARGETS (the tldw_server connection itself)
+        carry no tools of their own -- only the external records beneath
+        them do, mirroring how a local profile (not the built-in server) is
+        the tool-bearing entity on the local side.
+        """
+        tools: list[HubTool] = []
+        if self._source == "local":
+            for record in self._catalog_records.values():
+                tools.extend(local_tools_from_record(record))
+            service = self._service()
+            local_service = getattr(service, "local_service", None) if service is not None else None
+            get_inventory = getattr(local_service, "get_inventory", None)
+            if callable(get_inventory):
+                try:
+                    inventory = get_inventory()
+                except Exception as exc:
+                    logger.warning(f"MCP built-in inventory read failed: {exc}")
+                    inventory = None
+                if isinstance(inventory, Mapping):
+                    tools.extend(builtin_tools_from_inventory(inventory))
+        else:
+            for snap in self._snapshots:
+                if snap.source != "server" or not self._is_external_record_key(snap.server_key):
+                    continue
+                raw = (snap.detail or {}).get("raw")
+                if isinstance(raw, Mapping):
+                    remainder = snap.server_key.split(":", 1)[1]
+                    tools.extend(
+                        server_tools_from_inventory(raw, target_id=remainder, target_label=snap.label)
+                    )
+        return tools
+
+    def _empty_tools_diagnosis(self) -> tuple[str, str]:
+        """Diagnose why the Tools mode catalog is currently empty.
+
+        Mirrors the design spec's three-bucket empty-state model: no
+        servers at all -> add one; servers exist but none have ever
+        connected/discovered (every relevant snapshot is still
+        `NEEDS_SETUP`) -> connect or refresh; otherwise (servers have
+        connected/discovered but genuinely returned zero tools) -> refresh
+        again. "Relevant" excludes the built-in server under local source
+        (it's always present and isn't something the user "configured").
+        """
+        relevant = [snap for snap in self._snapshots if snap.source == self._source]
+        if not relevant:
+            return ("No servers configured — add one to see its tools.", "add_server")
+        if all(snap.state is ReadinessState.NEEDS_SETUP for snap in relevant):
+            return ("No tools discovered yet — connect or refresh a server.", "connect")
+        return ("No tools found — try refreshing a server's discovery.", "refresh")
 
     async def _show_selected_detail(
         self, canvas: MCPServersMode, selected: ReadinessSnapshot | None
@@ -1021,6 +1110,26 @@ class MCPWorkbench(Container):
     ) -> None:
         event.stop()
         await self._open_add_server(notify_if_gated=False)
+
+    async def on_mcp_tools_mode_empty_action_requested(
+        self, event: MCPToolsMode.EmptyActionRequested
+    ) -> None:
+        """Route the Tools mode diagnostic empty state's primary Button.
+
+        `"add_server"` reuses the existing add-form path (same as the
+        overview's own Add-server button, notifying if gated -- reachable
+        here with no disabled-button affordance to lean on, same rationale
+        as `open_add_server_form()`'s `a`-keybinding entry point). `"connect"`
+        and `"refresh"` both just point the user at Servers mode, where the
+        actual per-server lifecycle actions live (Task 5 scope; Tools mode
+        itself gains no lifecycle buttons).
+        """
+        event.stop()
+        if event.action_key == "add_server":
+            await self._open_add_server(notify_if_gated=True)
+        elif event.action_key in ("connect", "refresh"):
+            self.set_mode("servers")
+            self.app.notify("Select a server below to connect or refresh its tools.")
 
     async def open_add_server_form(self) -> None:
         """Open the Add-server form/panel from outside the overview button.
