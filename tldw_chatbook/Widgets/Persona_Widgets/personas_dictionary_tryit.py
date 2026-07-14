@@ -15,6 +15,15 @@ from textual.widgets import Button, Static, TextArea
 
 _TOKEN_RE = re.compile(r"(\s+)")
 
+_SKIP_REASON_COPY = {
+    "skipped:group_scoring": "skipped: lost group scoring",
+    "skipped:probability": "skipped: probability roll — re-running may differ",
+    "skipped:timed_effects": "skipped: cooldown or delay",
+    "skipped:token_budget": "skipped: token budget",
+    "error:replacement": "replacement failed — see logs",
+    "no_replacement": "no replacement — text changed by an earlier entry",
+}
+
 
 def word_diff(original: str, processed: str) -> tuple[Text, Text]:
     """Word-level diff: removals styled 'strike dim' in the original, additions
@@ -78,6 +87,18 @@ class PersonasDictionaryTryItWidget(Vertical):
     PersonasDictionaryTryItWidget #personas-dict-tryit-status {
         height: 1;
     }
+    PersonasDictionaryTryItWidget #personas-dict-tryit-summary {
+        height: 1;
+    }
+    PersonasDictionaryTryItWidget #personas-dict-tryit-details {
+        height: auto;
+        max-height: 12;
+        overflow-y: auto;
+    }
+    PersonasDictionaryTryItWidget #personas-dict-tryit-fired,
+    PersonasDictionaryTryItWidget #personas-dict-tryit-nearmiss {
+        height: auto;
+    }
     """
 
     def compose(self) -> ComposeResult:
@@ -93,6 +114,10 @@ class PersonasDictionaryTryItWidget(Vertical):
         yield Static("", id="personas-dict-tryit-status", markup=False)
         yield Static("", id="personas-dict-tryit-original")
         yield Static("", id="personas-dict-tryit-processed")
+        yield Static("", id="personas-dict-tryit-summary", markup=False)
+        with Vertical(id="personas-dict-tryit-details"):
+            yield Static("", id="personas-dict-tryit-fired")
+            yield Static("", id="personas-dict-tryit-nearmiss")
 
     def set_ready(self, ready: bool, hint: str = "") -> None:
         self.query_one("#personas-dict-tryit-run", Button).disabled = not ready
@@ -102,7 +127,17 @@ class PersonasDictionaryTryItWidget(Vertical):
     def sample_text(self) -> str:
         return self.query_one("#personas-dict-tryit-sample", TextArea).text
 
-    def render_result(self, original: str, processed: str) -> None:
+    def render_result(
+        self, original: str, processed: str, diagnostics: dict | None = None
+    ) -> None:
+        """Renders the word-diff and, when available, the diagnostics story.
+
+        Args:
+            original: The sample text before substitution.
+            processed: The sample text after substitution.
+            diagnostics: The service's diagnostics dict, or None to degrade
+                to the diff-only view with an "unavailable" note.
+        """
         left, right = word_diff(original, processed)
         status = self.query_one("#personas-dict-tryit-status", Static)
         if original == processed:
@@ -111,6 +146,60 @@ class PersonasDictionaryTryItWidget(Vertical):
             status.update("Changed spans highlighted below.")
         self.query_one("#personas-dict-tryit-original", Static).update(left)
         self.query_one("#personas-dict-tryit-processed", Static).update(right)
+        self._render_diagnostics(diagnostics)
+
+    def _render_diagnostics(self, diagnostics: dict | None) -> None:
+        summary = self.query_one("#personas-dict-tryit-summary", Static)
+        fired_area = self.query_one("#personas-dict-tryit-fired", Static)
+        nearmiss_area = self.query_one("#personas-dict-tryit-nearmiss", Static)
+        if not isinstance(diagnostics, dict):
+            summary.update(Text("diagnostics unavailable", style="dim"))
+            fired_area.update("")
+            nearmiss_area.update("")
+            return
+        # Each section guards independently: render what parses, skip what doesn't.
+        try:
+            line = (
+                f"{int(diagnostics.get('fired') or 0)} fired · "
+                f"{int(diagnostics.get('skipped') or 0)} skipped · "
+                f"{int(diagnostics.get('tokens_used') or 0)}"
+                f"/{int(diagnostics.get('token_budget') or 0)} tokens"
+            )
+            text = Text(line)
+            if diagnostics.get("budget_exceeded"):
+                text.append(" · over budget", style="bold")
+            summary.update(text)
+        except Exception:
+            summary.update(Text("diagnostics unavailable", style="dim"))
+        records = diagnostics.get("entries")
+        records = records if isinstance(records, list) else []
+        try:
+            fired = sorted(
+                (r for r in records if r.get("status") == "fired"),
+                key=lambda r: (r.get("applied_order") is None, r.get("applied_order") or 0),
+            )
+            fired_text = Text()
+            for record in fired:
+                fired_text.append(
+                    f"{record.get('pattern')} → {record.get('content_preview')}"
+                    f" · ×{int(record.get('replacements') or 0)}"
+                    f" · {int(record.get('token_cost') or 0)} tok\n"
+                )
+            fired_area.update(fired_text)
+        except Exception:
+            fired_area.update("")
+        try:
+            misses = sorted(
+                (r for r in records if r.get("status") != "fired"),
+                key=lambda r: int(r.get("input_index") or 0),
+            )
+            miss_text = Text()
+            for record in misses:
+                reason = _SKIP_REASON_COPY.get(str(record.get("status")), str(record.get("status")))
+                miss_text.append(f"{record.get('pattern')} — {reason}\n", style="dim")
+            nearmiss_area.update(miss_text)
+        except Exception:
+            nearmiss_area.update("")
 
     def show_error(self, message: str) -> None:
         self.query_one("#personas-dict-tryit-status", Static).update(message)

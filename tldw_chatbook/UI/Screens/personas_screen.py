@@ -1309,6 +1309,7 @@ class PersonasScreen(BaseAppScreen):
         tryit.render_result(
             str(response.get("text") or message.text),
             str(response.get("processed_text") or ""),
+            response.get("diagnostics"),
         )
 
     # ===== Saved conversations =====

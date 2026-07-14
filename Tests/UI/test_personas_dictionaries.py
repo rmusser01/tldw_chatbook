@@ -47,6 +47,8 @@ def _entry_response(dictionary_id: int, index: int, entry: dict) -> dict:
 class FakeDictScopeService:
     """In-memory stand-in mirroring the real local shapes and quirks."""
 
+    emit_diagnostics = True
+
     def __init__(self, records: list[dict] | None = None) -> None:
         self.records: dict[int, dict] = {}
         self.calls: list[tuple] = []
@@ -206,17 +208,60 @@ class FakeDictScopeService:
         record = self.records.get(int(payload.get("dictionary_id") or 0))
         if record is None:
             raise ValueError("Local chat dictionary was not found.")
+        token_budget = int(payload.get("token_budget") or 5000)
         processed = text
-        for entry in record["entries"]:
-            if entry.get("type") != "regex" and entry.get("pattern"):
-                processed = processed.replace(entry["pattern"], entry["replacement"])
+        diag_entries = []
+        tokens_used = 0
+        budget_exceeded = False
+        applied_order = 0
+        for stored_index, entry in enumerate(record["entries"]):
+            pattern = entry.get("pattern") or ""
+            if entry.get("type") == "regex" or not pattern or pattern not in text:
+                continue  # never-matched entries are omitted (real shape)
+            token_cost = len((entry.get("replacement") or "").split())
+            base = {
+                "input_index": stored_index,
+                "pattern": pattern,
+                "replacements": 0,
+                "token_cost": token_cost,
+                "applied_order": None,
+                "content_preview": (entry.get("replacement") or "")[:40],
+                "entry_id": f"local:chat_dictionary_entry:{record['id']}:{stored_index}",
+            }
+            if float(entry.get("probability", 1.0)) == 0.0:
+                diag_entries.append({**base, "status": "skipped:probability"})
+                continue
+            if tokens_used + token_cost > token_budget:
+                budget_exceeded = True
+                diag_entries.append({**base, "status": "skipped:token_budget"})
+                continue
+            tokens_used += token_cost
+            count = processed.count(pattern)
+            processed = processed.replace(pattern, entry.get("replacement") or "")
+            diag_entries.append(
+                {**base, "status": "fired", "replacements": count, "applied_order": applied_order}
+            )
+            applied_order += 1
         self.calls.append(("process", text))
-        return {
+        response = {
             "text": text,
             "processed_text": processed,
             "dictionary_id": record["id"],
             "source": "local",
         }
+        if self.emit_diagnostics:
+            fired = sum(1 for r in diag_entries if r["status"] == "fired")
+            response["diagnostics"] = {
+                "entries": diag_entries,
+                "matched": len(diag_entries),
+                "fired": fired,
+                "skipped": len(diag_entries) - fired,
+                "total_replacements": sum(r["replacements"] for r in diag_entries),
+                "tokens_used": tokens_used,
+                "token_budget": token_budget,
+                "budget_exceeded": budget_exceeded,
+            }
+        return response
 
 
 def make_dict_record(
@@ -1095,3 +1140,77 @@ class TestDictionaryTryIt:
             await pilot.pause()
             assert screen.query_one(PersonasDictionaryTryItWidget).display is False
             assert screen.query_one(PersonasPreviewPane).display is True
+
+    async def test_tryit_renders_summary_and_fired_lines(self, mock_app_instance, stub_characters, fake_dict_service):
+        from textual.widgets import TextArea
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            screen.query_one("#personas-dict-tryit-sample", TextArea).text = "check BP now"
+            await pilot.click("#personas-dict-tryit-run")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            summary = str(screen.query_one("#personas-dict-tryit-summary", Static).renderable)
+            assert "1 fired" in summary and "0 skipped" in summary
+            assert "/1000 tokens" in summary  # dict max_tokens=1000 rode along
+            fired = str(screen.query_one("#personas-dict-tryit-fired", Static).renderable)
+            assert "BP" in fired and "blood pressure" in fired and "×1" in fired
+
+    async def test_tryit_renders_near_miss_with_reason(self, mock_app_instance, stub_characters, fake_dict_service):
+        from textual.widgets import TextArea
+
+        fake_dict_service.records[1]["entries"][1]["probability"] = 0.0  # HR never fires
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            screen.query_one("#personas-dict-tryit-sample", TextArea).text = "BP and HR"
+            await pilot.click("#personas-dict-tryit-run")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            nearmiss = str(screen.query_one("#personas-dict-tryit-nearmiss", Static).renderable)
+            assert "HR" in nearmiss and "probability roll" in nearmiss
+            summary = str(screen.query_one("#personas-dict-tryit-summary", Static).renderable)
+            assert "1 fired" in summary and "1 skipped" in summary
+
+    async def test_tryit_budget_flag_shows(self, mock_app_instance, stub_characters, fake_dict_service):
+        from textual.widgets import TextArea
+
+        fake_dict_service.records[1]["max_tokens"] = 2  # both entries cost 2 -> second is dropped
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            screen.query_one("#personas-dict-tryit-sample", TextArea).text = "BP and HR"
+            await pilot.click("#personas-dict-tryit-run")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            summary = str(screen.query_one("#personas-dict-tryit-summary", Static).renderable)
+            assert "over budget" in summary
+            nearmiss = str(screen.query_one("#personas-dict-tryit-nearmiss", Static).renderable)
+            assert "token budget" in nearmiss
+
+    async def test_tryit_degrades_without_diagnostics(self, mock_app_instance, stub_characters, fake_dict_service):
+        from textual.widgets import TextArea
+
+        fake_dict_service.emit_diagnostics = False
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            screen.query_one("#personas-dict-tryit-sample", TextArea).text = "check BP now"
+            await pilot.click("#personas-dict-tryit-run")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            # Diff still renders (P1a behavior)...
+            processed = str(screen.query_one("#personas-dict-tryit-processed", Static).renderable)
+            assert "blood pressure" in processed
+            # ...and the summary carries the honest unavailable note.
+            summary = str(screen.query_one("#personas-dict-tryit-summary", Static).renderable)
+            assert "diagnostics unavailable" in summary
