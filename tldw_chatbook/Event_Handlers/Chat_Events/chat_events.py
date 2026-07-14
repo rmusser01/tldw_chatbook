@@ -983,7 +983,7 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
             # Get conversation metadata to find active dictionaries
             conv_details = db.get_conversation_by_id(app.current_chat_conversation_id)
             if conv_details:
-                metadata = json.loads(conv_details.get('metadata', '{}'))
+                metadata = json.loads(conv_details.get('metadata') or '{}')
                 active_dict_ids = metadata.get('active_dictionaries', [])
                 
                 # Load each active dictionary

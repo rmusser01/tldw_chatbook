@@ -532,6 +532,20 @@ async def _enter_dictionaries(pilot):
     return screen
 
 
+async def _select_first(pilot, screen):
+    """Select the first library row and settle the async load worker.
+
+    Shared by TestDictionaryAttachmentsTab and TestDictionaryAttachFlow
+    (both P1e-added), which previously each defined an identical method.
+    """
+    rows = screen.query_one("#personas-library-rows", ListView)
+    rows.index = 0
+    rows.action_select_cursor()
+    await pilot.pause()
+    await pilot.app.workers.wait_for_complete()
+    await pilot.pause()
+
+
 class TestLibraryMetaRows:
     async def test_meta_row_renders_two_lines(self, mock_app_instance, stub_characters, fake_dict_service):
         app = PersonasTestApp(mock_app_instance)
@@ -2137,19 +2151,11 @@ class TestDictionaryImport:
 
 
 class TestDictionaryAttachmentsTab:
-    async def _select_first(self, pilot, screen):
-        rows = screen.query_one("#personas-library-rows", ListView)
-        rows.index = 0
-        rows.action_select_cursor()
-        await pilot.pause()
-        await pilot.app.workers.wait_for_complete()
-        await pilot.pause()
-
     async def test_empty_state_when_unattached(self, mock_app_instance, stub_characters, fake_dict_service):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _enter_dictionaries(pilot)
-            await self._select_first(pilot, screen)
+            await _select_first(pilot, screen)
             empty = screen.query_one("#personas-dict-attachments-empty", Static)
             assert "Not attached" in str(empty.renderable)
 
@@ -2158,7 +2164,7 @@ class TestDictionaryAttachmentsTab:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _enter_dictionaries(pilot)
-            await self._select_first(pilot, screen)
+            await _select_first(pilot, screen)
             detail = screen.query_one("#personas-dictionary-detail")
             detail.load_attachments([{"conversation_id": "c1", "title": "Noir case"}])
             await pilot.pause()
@@ -2168,14 +2174,6 @@ class TestDictionaryAttachmentsTab:
 
 
 class TestDictionaryAttachFlow:
-    async def _select_first(self, pilot, screen):
-        rows = screen.query_one("#personas-library-rows", ListView)
-        rows.index = 0
-        rows.action_select_cursor()
-        await pilot.pause()
-        await pilot.app.workers.wait_for_complete()
-        await pilot.pause()
-
     async def test_attach_via_picker_then_detach(self, mock_app_instance, stub_characters, fake_dict_service, monkeypatch):
         from textual.widgets import DataTable, TabbedContent
         from tldw_chatbook.Widgets.Persona_Widgets.dictionary_attach_picker import DictionaryAttachPicker
@@ -2186,7 +2184,7 @@ class TestDictionaryAttachFlow:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _enter_dictionaries(pilot)
-            await self._select_first(pilot, screen)
+            await _select_first(pilot, screen)
             # The attach/detach buttons live in the Attachments TabPane; the
             # default active tab is Entries, so a click won't land on them
             # (and may fall through to whatever's underneath) until switched.

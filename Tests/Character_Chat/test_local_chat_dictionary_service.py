@@ -466,6 +466,28 @@ def test_used_by_tolerates_non_list_active_dictionaries_value(dictionary_db):
     assert bad_conv not in ids
 
 
+def test_attach_survives_non_dict_metadata_json(dictionary_db):
+    """Regression for Roleplay P1e final-review #2.
+
+    A conversation's `metadata` can be valid JSON but not a JSON object
+    (e.g. a bare scalar like ``"5"``). `_active_dictionaries`/
+    `_write_active_dictionaries` used to call `.get()`/`__setitem__` on
+    whatever `json.loads()` returned, which raises `AttributeError` /
+    `TypeError` for a non-dict value (only `json.loads()` itself was
+    guarded, not the shape of its result). Attach must recover by treating
+    a non-dict decode result as an empty dict.
+    """
+    service = LocalChatDictionaryService(dictionary_db)
+    d = service.create_dictionary({"name": "Meds"})
+    conv = _seed_conversation(dictionary_db)
+    record = dictionary_db.get_conversation_by_id(conv)
+    dictionary_db.update_conversation(conv, {"metadata": "5"}, expected_version=record["version"])
+
+    result = service.attach_to_conversation(d["id"], conv)
+    assert result["active_dictionaries"] == [d["id"]]
+    assert _active(dictionary_db, conv) == [d["id"]]
+
+
 def test_attach_conflict_on_stale_version(dictionary_db, monkeypatch):
     service = LocalChatDictionaryService(dictionary_db)
     d = service.create_dictionary({"name": "Meds"})

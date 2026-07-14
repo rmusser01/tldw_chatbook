@@ -674,6 +674,8 @@ class LocalChatDictionaryService:
             meta = json.loads(record.get("metadata") or "{}")
         except (TypeError, ValueError):
             meta = {}
+        if not isinstance(meta, dict):
+            meta = {}
         raw = meta.get("active_dictionaries") or []
         if not isinstance(raw, list):
             raw = []
@@ -689,6 +691,8 @@ class LocalChatDictionaryService:
         try:
             meta = json.loads(record.get("metadata") or "{}")
         except (TypeError, ValueError):
+            meta = {}
+        if not isinstance(meta, dict):
             meta = {}
         meta["active_dictionaries"] = ids
         self._require_db().update_conversation(

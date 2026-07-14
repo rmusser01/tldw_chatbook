@@ -5095,7 +5095,8 @@ UPDATE db_schema_version
         `version` is incremented, `last_modified` updated to current UTC time,
         and `client_id` set to the DB instance's `client_id`.
 
-        Updatable fields from `update_data`: 'title', 'rating', 'metadata'. Other fields are ignored.
+        Updatable fields from `update_data`: 'title', 'rating', 'metadata' (expects a
+        JSON string). Other fields are ignored.
         If `update_data` is empty or contains no updatable fields, metadata (version,
         last_modified, client_id) is still updated if the version check passes.
 

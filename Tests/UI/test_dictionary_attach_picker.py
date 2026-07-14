@@ -55,6 +55,32 @@ async def test_picker_search_filters():
     assert app.result == "conv-uuid-a"
 
 
+async def test_picker_stale_selection_after_filter_is_not_returned():
+    """Regression for Roleplay P1e final-review #3.
+
+    Select a row from the full list, then narrow the search to a DIFFERENT
+    conversation without re-selecting. Confirm must not silently reuse the
+    old highlighted index against the rebuilt (differently-mapped) row set;
+    it must require an explicit re-select instead.
+    """
+    app = _Host()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        picker = app.screen
+        # Select row 0 of the FULL 2-row list ("Noir case").
+        picker.query_one("#dict-attach-list", ListView).index = 0
+        await pilot.pause()
+        # Narrow the list to the OTHER conversation only ("Lab notes").
+        picker.query_one("#dict-attach-search", Input).value = "lab"
+        await pilot.pause()
+        rows = picker.query_one("#dict-attach-list", ListView).children
+        assert len(rows) == 1
+        # Confirm WITHOUT re-selecting: no stale index should carry over.
+        await pilot.click("#dict-attach-confirm")
+        await pilot.pause()
+    assert app.result is None
+
+
 async def test_picker_cancel_returns_none():
     app = _Host()
     async with app.run_test(size=(120, 40)) as pilot:

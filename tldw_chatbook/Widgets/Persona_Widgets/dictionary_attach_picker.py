@@ -56,6 +56,10 @@ class DictionaryAttachPicker(ModalScreen[str | None]):
             item = ListItem(Static(str(row.get("title") or "(untitled)"), markup=False))
             listing.append(item)
             self._row_ids.append(str(row.get("conversation_id")))
+        # A filter change must require an explicit re-select: don't let a
+        # previously-highlighted index silently carry over onto a rebuilt,
+        # differently-ordered row set.
+        listing.index = None
 
     @on(Input.Changed, "#dict-attach-search")
     def _filter(self, event: Input.Changed) -> None:
