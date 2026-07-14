@@ -23,6 +23,7 @@ from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel
 from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
 
 _BUNDLED_CSS_PATH = str(Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss")
+_AGENTIC_TERMINAL_TCSS = Path(tldw_chatbook.__file__).parent / "css" / "components" / "_agentic_terminal.tcss"
 
 
 def _snap(key: str, label: str, state=ReadinessState.READY, reasons=(), message="", **kw):
@@ -994,6 +995,36 @@ async def test_overview_table_hugs_content_so_callouts_sit_close_below():
         assert table.size.height <= 6
         gap = callouts.region.y - (table.region.y + table.region.height)
         assert 0 <= gap <= 3
+
+
+def test_servers_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
+    """T7 (P3 UX batch) gave `#mcp-servers-table` `height: auto; max-height:
+    70%;` in `MCPServersMode.DEFAULT_CSS` alone -- no matching rule was ever
+    added to the bundle-source component file (`_agentic_terminal.tcss`),
+    unlike the established `#mcp-detail-builtin-toggles` / `#mcp-servers-
+    form` / `#mcp-import-list` lockstep pairs there. Without a bundle-layer
+    copy, app-loaded CSS (which cascades ON TOP of DEFAULT_CSS) could
+    silently reintroduce the `height: 1fr` ballooning regression T7 fixed
+    (see `test_overview_table_hugs_content_so_callouts_sit_close_below`
+    above), with nothing here to catch it. Pins the rule in both the
+    bundle-source file and the generated bundle (`tldw_cli_modular.tcss`)
+    -- the latter also proves `build_css.py` was re-run after the source
+    edit, mirroring `test_prompt_picker_css_blocks_pinned_in_source_and_
+    bundle` in test_console_prompt_picker.py."""
+    agentic_terminal = _AGENTIC_TERMINAL_TCSS.read_text(encoding="utf-8")
+    bundled_stylesheet = Path(_BUNDLED_CSS_PATH).read_text(encoding="utf-8")
+
+    for text, label in (
+        (agentic_terminal, "_agentic_terminal.tcss"),
+        (bundled_stylesheet, "tldw_cli_modular.tcss"),
+    ):
+        selector = "#mcp-servers-table {"
+        start = text.find(selector)
+        assert start != -1, f"{label} is missing {selector!r}"
+        end = text.find("}", start)
+        block = text[start:end]
+        assert "height: auto;" in block, f"{label}'s {selector!r} block is missing 'height: auto;'"
+        assert "max-height: 70%;" in block, f"{label}'s {selector!r} block is missing 'max-height: 70%;'"
 
 
 class InspectorAppWithBundledCSS(App):

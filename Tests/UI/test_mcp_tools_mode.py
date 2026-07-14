@@ -1,12 +1,19 @@
 # Tests/UI/test_mcp_tools_mode.py
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, DataTable, Input, Select, Static
 
+import tldw_chatbook
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.UI.MCP_Modules.mcp_tools_mode import MCPToolsMode
+
+_CSS_ROOT = Path(tldw_chatbook.__file__).parent / "css"
+_AGENTIC_TERMINAL_TCSS = _CSS_ROOT / "components" / "_agentic_terminal.tcss"
+_BUNDLED_STYLESHEET = _CSS_ROOT / "tldw_cli_modular.tcss"
 
 
 def _tool(
@@ -334,3 +341,32 @@ async def test_server_select_options_reflect_current_catalog_and_prune_stale_fil
         assert canvas._filter_server_key is None
         table = app.query_one("#mcp-tools-table", DataTable)
         assert table.row_count == 1
+
+
+def test_tools_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
+    """T7 (P3 UX batch) gave `#mcp-tools-table` `height: auto; max-height:
+    70%;` in `MCPToolsMode.DEFAULT_CSS` alone -- no matching rule was ever
+    added to the bundle-source component file (`_agentic_terminal.tcss`),
+    unlike the established `#mcp-detail-builtin-toggles` / `#mcp-servers-
+    form` / `#mcp-import-list` lockstep pairs there. Without a bundle-layer
+    copy, app-loaded CSS (which cascades ON TOP of DEFAULT_CSS) could
+    silently reintroduce the `height: 1fr` ballooning regression T7 fixed,
+    with nothing here to catch it. Pins the rule in both the bundle-source
+    file and the generated bundle (`tldw_cli_modular.tcss`) -- the latter
+    also proves `build_css.py` was re-run after the source edit, mirroring
+    `test_prompt_picker_css_blocks_pinned_in_source_and_bundle` in
+    test_console_prompt_picker.py."""
+    agentic_terminal = _AGENTIC_TERMINAL_TCSS.read_text(encoding="utf-8")
+    bundled_stylesheet = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+
+    for text, label in (
+        (agentic_terminal, "_agentic_terminal.tcss"),
+        (bundled_stylesheet, "tldw_cli_modular.tcss"),
+    ):
+        selector = "#mcp-tools-table {"
+        start = text.find(selector)
+        assert start != -1, f"{label} is missing {selector!r}"
+        end = text.find("}", start)
+        block = text[start:end]
+        assert "height: auto;" in block, f"{label}'s {selector!r} block is missing 'height: auto;'"
+        assert "max-height: 70%;" in block, f"{label}'s {selector!r} block is missing 'max-height: 70%;'"

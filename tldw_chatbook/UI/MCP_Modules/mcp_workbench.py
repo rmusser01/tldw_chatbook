@@ -58,6 +58,23 @@ _UNSET: Any = object()
 MAX_MCP_IMPORT_FILE_BYTES = 1024 * 1024  # 1MB cap for an imported config JSON
 
 
+def _hub_lifecycle_timeout_seconds() -> float:
+    """Read `[mcp] hub_lifecycle_timeout_seconds`, falling back to 45s.
+
+    Mirrors `UnifiedMCPControlPlaneService._lifecycle_timeout()`
+    (unified_control_plane_service.py) so the CHECKING-state time bound
+    shown here can never drift from the value that service actually
+    enforces the timeout with -- including the malformed-config fallback:
+    a non-numeric value (e.g. a user typo like "soon" in config.toml) must
+    not raise out of the render path, it should just fall back to 45s same
+    as the enforcement side does.
+    """
+    try:
+        return float(get_cli_setting("mcp", "hub_lifecycle_timeout_seconds", 45))
+    except (TypeError, ValueError):
+        return 45.0
+
+
 def _toast(text: str) -> str:
     """Escape a `notify()`-bound message before Rich's markup interpreter sees it.
 
@@ -741,8 +758,8 @@ class MCPWorkbench(Container):
         """
         if snapshot.server_key in self._in_flight:
             action = self._in_flight_action.get(snapshot.server_key, "update")
-            timeout_seconds = float(get_cli_setting("mcp", "hub_lifecycle_timeout_seconds", 45))
-            bounded_action = f"{action} (up to {int(timeout_seconds)}s)"
+            timeout_seconds = _hub_lifecycle_timeout_seconds()
+            bounded_action = f"{action} (up to {int(round(timeout_seconds))}s)"
             return as_checking(snapshot, bounded_action)
         return snapshot
 

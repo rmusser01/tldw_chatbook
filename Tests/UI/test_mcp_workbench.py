@@ -1174,6 +1174,38 @@ async def test_in_flight_checking_message_time_bound_honors_config_override(monk
 
 
 @pytest.mark.asyncio
+async def test_in_flight_checking_message_time_bound_survives_malformed_config(monkeypatch):
+    """A non-numeric `hub_lifecycle_timeout_seconds` (e.g. a user fat-fingering
+    "soon" into config.toml) must not crash the CHECKING render path --
+    `_display_snapshot()` should fall back to the same 45s default that
+    `UnifiedMCPControlPlaneService._lifecycle_timeout()` falls back to on the
+    same malformed input, rather than letting `float()` raise ValueError
+    straight out of a render call."""
+
+    def fake_get_cli_setting(section, key=None, default=None):
+        if (section, key) == ("mcp", "hub_lifecycle_timeout_seconds"):
+            return "soon"
+        return default
+
+    monkeypatch.setattr(mcp_workbench_module, "get_cli_setting", fake_get_cli_setting)
+
+    app = LifecycleApp()
+    app.unified_mcp_service.connect_gate = asyncio.Event()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench._selected_server_key = "local:docs"
+        workbench._start_lifecycle("local:docs", "docs", "connect")
+        await pilot.pause()
+        selected = workbench._snapshot_for_display("local:docs")
+        assert selected.state.value == "checking"
+        assert "(up to 45s)" in selected.message
+        app.unified_mcp_service.connect_gate.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
 async def test_cancel_requested_cancels_worker():
     app = LifecycleApp()
     app.unified_mcp_service.connect_gate = asyncio.Event()  # never set -> hangs

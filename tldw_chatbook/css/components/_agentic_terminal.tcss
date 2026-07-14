@@ -4394,6 +4394,27 @@ Button.mcp-callout {
 }
 
 /* Kept in lockstep with the baseline copy in MCPServersMode.DEFAULT_CSS
+   (mcp_servers_mode.py) -- T7 (P3 UX batch) gave the overview table
+   `height: auto; max-height: 70%;` so it hugs its own row count instead of
+   a `1fr` table ballooning to fill the pane and stranding
+   #mcp-overview-callouts dozens of rows below its last row (same bug class
+   as #mcp-detail-builtin-toggles below). Without this bundle-layer copy,
+   app-loaded CSS cascading on top of DEFAULT_CSS could silently
+   reintroduce that regression. */
+#mcp-servers-table {
+    height: auto;
+    max-height: 70%;
+}
+
+/* Kept in lockstep with the baseline copy in MCPToolsMode.DEFAULT_CSS
+   (mcp_tools_mode.py) -- same fix, same rationale, as #mcp-servers-table
+   immediately above. */
+#mcp-tools-table {
+    height: auto;
+    max-height: 70%;
+}
+
+/* Kept in lockstep with the baseline copy in MCPServersMode.DEFAULT_CSS
    (mcp_servers_mode.py) -- without an explicit height override here too,
    Textual's Vertical default (height: 1fr) expands this container to fill
    the rest of #mcp-detail-scroll, pushing its sibling "Copy client config"
