@@ -5,6 +5,8 @@ from tldw_chatbook.Character_Chat.Chat_Dictionary_Lib import (
     group_scoring,
     match_whole_words,
     ChatDictionary,
+    process_user_input,
+    process_user_input_with_diagnostics,
 )
 
 
@@ -70,3 +72,66 @@ class TestGroupWinner:
         long_e = _entry("blood pressure cuff", "sphygmomanometer", group="med")
         short_e = _entry("cuff", "wrap", group="med")
         assert group_scoring([long_e, short_e]) == [long_e]
+
+
+class TestUnifiedOrdering:
+    def test_disabled_entry_is_near_miss_not_fired(self):
+        on = _entry("BP", "blood pressure")
+        off = _entry("HR", "heart rate", enabled=False)
+        text, diag = process_user_input_with_diagnostics("BP and HR", [on, off])
+        assert text == "blood pressure and HR"
+        by = {r.pattern: r for r in diag.entries}
+        assert by["HR"].status == "skipped:disabled"
+        assert by["BP"].status == "fired"
+        assert diag.matched == 2 and diag.fired == 1 and diag.skipped == 1
+
+    def test_priority_governs_budget_survival(self):
+        # Strategy order (alphabetical) would put "aa" first; priority must trump it.
+        cheap_low = _entry("aa", "w1 w2 w3", priority=0)      # 3 tokens
+        pricey_high = _entry("zz", "w1 w2 w3 w4", priority=5)  # 4 tokens
+        _, diag = process_user_input_with_diagnostics("aa zz", [cheap_low, pricey_high], max_tokens=4)
+        by = {r.pattern: r for r in diag.entries}
+        assert by["zz"].status == "fired"                      # high priority survived
+        assert by["aa"].status == "skipped:token_budget"       # walk stopped after zz
+        assert diag.budget_exceeded is True
+        assert diag.tokens_used == 4
+
+    def test_priority_governs_application_order(self):
+        first = _entry("zz", "Z", priority=9)
+        second = _entry("aa", "A", priority=0)
+        _, diag = process_user_input_with_diagnostics("aa zz", [first, second])
+        by = {r.pattern: r for r in diag.entries}
+        assert by["zz"].applied_order == 0                     # -priority beats alphabetical
+        assert by["aa"].applied_order == 1
+
+    def test_legacy_zero_priority_keeps_strategy_application_order(self):
+        a = _entry("bb", "B")
+        b = _entry("aa", "A")
+        _, diag = process_user_input_with_diagnostics("aa bb", [a, b])
+        by = {r.pattern: r for r in diag.entries}
+        assert by["aa"].applied_order == 0 and by["bb"].applied_order == 1  # alphabetical
+
+    def test_legacy_budget_survival_now_follows_strategy_order(self):
+        # THE spec'd legacy delta: stored order was [zz, aa]; survival now walks
+        # strategy (alphabetical) order, so "aa" survives a 1-token budget.
+        stored_first = _entry("zz", "w1")   # 1 token
+        stored_second = _entry("aa", "w1")  # 1 token
+        _, diag = process_user_input_with_diagnostics("aa zz", [stored_first, stored_second], max_tokens=1)
+        by = {r.pattern: r for r in diag.entries}
+        assert by["aa"].status == "fired"
+        assert by["zz"].status == "skipped:token_budget"
+
+    def test_content_preview_flattens_whitespace(self):
+        entry = _entry("BP", "blood\npressure\treading")
+        _, diag = process_user_input_with_diagnostics("BP", [entry])
+        assert diag.entries[0].content_preview == "blood pressure reading"
+
+    def test_wrapper_still_matches_core(self):
+        entries = [
+            _entry("BP", "blood pressure", priority=3),
+            _entry("HR", "heart rate", enabled=False),
+            _entry("bp2", "exact", case_sensitive=True),
+        ]
+        sample = "BP HR bp2 end"
+        assert process_user_input(sample, entries) == \
+            process_user_input_with_diagnostics(sample, entries)[0]

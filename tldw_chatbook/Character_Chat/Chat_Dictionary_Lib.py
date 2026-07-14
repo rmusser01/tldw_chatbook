@@ -317,7 +317,8 @@ def group_scoring(entries: List[ChatDictionary]) -> List[ChatDictionary]:
 
     - Entries without a group (group is None) are all included if matched.
     - For entries within the same named group, only the "best" entry (currently
-      defined as the one with the longest raw key string) is selected from that group.
+      defined as the highest-priority entry, with raw-key length breaking ties)
+      is selected from that group.
 
     Args:
         entries: A list of `ChatDictionary` objects that have already matched.
@@ -650,7 +651,7 @@ def process_user_input_with_diagnostics(
                     replacements=replacements,
                     token_cost=len(candidate.content.split()) if candidate.content else 0,
                     applied_order=applied_order_by_id.get(entry_id),
-                    content_preview=str(candidate.content or "")[:40],
+                    content_preview=" ".join(str(candidate.content or "").split())[:40],
                 )
             )
         diagnostics.matched = len(matched_snapshot)
@@ -692,6 +693,11 @@ def process_user_input_with_diagnostics(
         matched_snapshot = list(matched_entries)                     # ADDED
         logging.debug(f"Matched entries after initial filtering: {[e.raw_key for e in matched_entries]}")
 
+        # P1c: disabled entries stay visible as near-misses (filtered after match).
+        stage_before = list(matched_entries)                          # ADDED
+        matched_entries = [e for e in matched_entries if getattr(e, "enabled", True)]  # ADDED
+        _record_stage_drops(stage_before, matched_entries, "disabled")               # ADDED
+
         # 2. Group scoring (verbatim try/except, with a before-list diff)
         stage_before = list(matched_entries)                          # ADDED
         try:
@@ -730,6 +736,18 @@ def process_user_input_with_diagnostics(
             matched_entries = []  # Fallback to empty list
         _record_stage_drops(stage_before, matched_entries, "timed_effects")   # ADDED
 
+        # 6. Strategy sort (sort-only; drops are only possible via its except)
+        stage_before = list(matched_entries)                          # ADDED
+        try:
+            logging.debug("Chat Dictionary: Applying replacement strategy")
+            matched_entries = apply_strategy(matched_entries, strategy)
+        except Exception as e_strategy:
+            log_counter("chat_dict_strategy_error")
+            logging.error(f"Error applying strategy: {str(e_strategy)}")
+            matched_entries = []  # Fallback to empty list
+        _record_stage_drops(stage_before, matched_entries, "strategy_error")  # ADDED (defensive)
+        matched_entries.sort(key=lambda e: -int(getattr(e, "priority", 0) or 0))  # ADDED: stable — strategy order breaks ties
+
         # 5. Token budget (same pattern; truncation drives budget_exceeded)
         stage_before = list(matched_entries)                          # ADDED
         try:
@@ -753,17 +771,6 @@ def process_user_input_with_diagnostics(
         except Exception as e_alert:
             log_counter("chat_dict_token_alert_error")
             logging.error(f"Error in token budget alert: {str(e_alert)}")
-
-        # 6. Strategy sort (sort-only; drops are only possible via its except)
-        stage_before = list(matched_entries)                          # ADDED
-        try:
-            logging.debug("Chat Dictionary: Applying replacement strategy")
-            matched_entries = apply_strategy(matched_entries, strategy)
-        except Exception as e_strategy:
-            log_counter("chat_dict_strategy_error")
-            logging.error(f"Error applying strategy: {str(e_strategy)}")
-            matched_entries = []  # Fallback to empty list
-        _record_stage_drops(stage_before, matched_entries, "strategy_error")  # ADDED (defensive)
 
         # 7. Replacements (verbatim loop + order/count recording)
         for applied_position, entry in enumerate(matched_entries):    # ADDED enumerate
@@ -814,13 +821,16 @@ def process_user_input(
 
     The pipeline includes:
     1. Matching entries against the input text (regex and whole-word string matching).
-    2. Applying group scoring to select among matched entries from the same group.
-    3. Filtering entries by probability.
-    4. Applying timed effects (delay, cooldown).
-    5. Enforcing a token budget for the content of selected entries.
-    6. Alerting if the token budget is exceeded by the (potentially filtered) entries.
-    7. Sorting the final set of entries based on the chosen strategy.
-    8. Applying replacements: each selected entry replaces its key in the user input
+    2. Filtering out disabled entries (kept visible as near-misses in diagnostics).
+    3. Applying group scoring to select among matched entries from the same group.
+    4. Filtering entries by probability.
+    5. Applying timed effects (delay, cooldown).
+    6. Sorting entries by the chosen strategy, then by priority (stable, descending;
+       strategy order breaks ties among equal priorities).
+    7. Enforcing a token budget by walking the sorted entries and stopping once the
+       budget would be exceeded.
+    8. Alerting if the token budget is exceeded by the (potentially filtered) entries.
+    9. Applying replacements: each selected entry replaces its key in the user input
        (respecting `entry.max_replacements`).
 
     If any step in the pipeline encounters a significant error, it may log the error
