@@ -2149,6 +2149,7 @@ class ChatScreen(BaseAppScreen):
             agent_runs_db=runs_db,
             store=self._ensure_console_chat_store(),
             provider_gateway=self._ensure_console_provider_gateway(),
+            skills_service=getattr(self.app_instance, "skills_scope_service", None),
         )
         return self._console_agent_bridge
 
