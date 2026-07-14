@@ -3,6 +3,8 @@ import inspect
 import pytest
 
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, MessageAttachment
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
@@ -616,3 +618,113 @@ class TestChatPersistenceService:
         assert row["content"] == "before"
         assert row["image_data"] == b"img-old"
         assert row["image_mime_type"] == "image/png"
+
+    # -- Regression coverage for the #217 P0 live crash --------------------
+    #
+    # ``ConsoleChatStore``'s persistence tests all wire in **kwargs-based
+    # fakes (see ``RecordingPersistence`` in test_console_chat_store.py).
+    # Those fakes silently swallowed a call shape the REAL
+    # ``ChatPersistenceService.create_message`` rejected outright: the
+    # store's multi-attachment branch omitted the keyword-only
+    # ``image_data``/``image_mime_type`` arguments, which used to have no
+    # defaults, so a real send with >= 2 attachments raised
+    # ``TypeError: create_message() missing 2 required keyword-only
+    # arguments: 'image_data' and 'image_mime_type'`` and crashed the whole
+    # app. The store->fake seam never exercised the store against the real
+    # service, so the gap went undetected. The tests below wire a REAL
+    # ``ChatPersistenceService`` (backed by the ``db_instance`` fixture's
+    # real in-memory-file SQLite) into ``ConsoleChatStore`` and drive
+    # ``append_message(..., persist=True)`` -- the exact call path that
+    # crashed live -- for zero, one, and two-or-more attachments.
+
+    def test_console_store_real_service_persists_zero_attachment_message(
+        self, db_instance: CharactersRAGDB
+    ):
+        """A plain text message (no attachments) persists cleanly through a
+        real ``ChatPersistenceService`` wired into ``ConsoleChatStore``."""
+        service = ChatPersistenceService(db_instance)
+        store = ConsoleChatStore(persistence=service)
+        session = store.ensure_session()
+
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="hello",
+            persist=True,
+        )
+
+        assert message.persisted_message_id is not None
+        row = db_instance.get_message_by_id(message.persisted_message_id)
+        assert row["content"] == "hello"
+        assert row["image_data"] is None
+        assert row["image_mime_type"] is None
+        assert db_instance.get_attachments_for_messages([message.persisted_message_id]) == {}
+
+    def test_console_store_real_service_persists_single_attachment_message(
+        self, db_instance: CharactersRAGDB
+    ):
+        """A single attachment stays on the pre-split scalar columns (the
+        store's ``len(attachments) > 1`` gate never engages split
+        addressing for exactly one attachment); the real service must
+        accept that call shape too."""
+        service = ChatPersistenceService(db_instance)
+        store = ConsoleChatStore(persistence=service)
+        session = store.ensure_session()
+
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="one file",
+            attachments=(
+                MessageAttachment(
+                    data=b"img-0", mime_type="image/png", display_name="a.png", position=0
+                ),
+            ),
+            persist=True,
+        )
+
+        assert message.persisted_message_id is not None
+        row = db_instance.get_message_by_id(message.persisted_message_id)
+        assert row["image_data"] == b"img-0"
+        assert row["image_mime_type"] == "image/png"
+        assert db_instance.get_attachments_for_messages([message.persisted_message_id]) == {}
+
+    def test_console_store_real_service_persists_multi_attachment_message(
+        self, db_instance: CharactersRAGDB
+    ):
+        """The exact P0 live-crash call path: sending >= 2 attachments
+        through ``ConsoleChatStore.append_message(..., persist=True)``
+        against a REAL ``ChatPersistenceService`` must not raise. Legacy
+        columns hold position 0; the ``message_attachments`` table holds
+        positions >= 1."""
+        service = ChatPersistenceService(db_instance)
+        store = ConsoleChatStore(persistence=service)
+        session = store.ensure_session()
+
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="two files",
+            attachments=(
+                MessageAttachment(
+                    data=b"img-0", mime_type="image/png", display_name="a.png", position=0
+                ),
+                MessageAttachment(
+                    data=b"img-1", mime_type="image/jpeg", display_name="b.jpg", position=1
+                ),
+            ),
+            persist=True,
+        )
+
+        assert message.persisted_message_id is not None
+        row = db_instance.get_message_by_id(message.persisted_message_id)
+        # The real service derives the legacy columns from attachments[0],
+        # overriding the store's explicit None scalars.
+        assert row["image_data"] == b"img-0"
+        assert row["image_mime_type"] == "image/png"
+        extra = db_instance.get_attachments_for_messages([message.persisted_message_id])[
+            message.persisted_message_id
+        ]
+        assert [entry["position"] for entry in extra] == [1]
+        assert extra[0]["data"] == b"img-1"
+        assert extra[0]["display_name"] == "b.jpg"

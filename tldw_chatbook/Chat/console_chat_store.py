@@ -984,6 +984,12 @@ class ConsoleChatStore:
             self.persistence.create_message, "attachments"
         ):
             create_kwargs["attachments"] = attachments_payload
+            # The real service derives the legacy image_data/image_mime_type
+            # columns from position 0 of ``attachments`` (overriding whatever
+            # is passed here), but the kwargs are keyword-only with no
+            # defaults, so they must still be supplied explicitly.
+            create_kwargs["image_data"] = None
+            create_kwargs["image_mime_type"] = None
         else:
             create_kwargs["image_data"] = message.image_data
             create_kwargs["image_mime_type"] = message.image_mime_type

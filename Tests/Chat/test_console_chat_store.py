@@ -1315,10 +1315,14 @@ def test_persist_new_message_sends_full_attachment_list():
     assert [a["position"] for a in sent] == [0, 1]
     assert sent[0]["data"] == b"img-0"
     assert sent[1]["display_name"] == "b.png"
-    # The service derives the legacy image columns from position 0, so the
-    # scalar image kwargs are dropped when the attachments list is sent.
-    assert "image_data" not in persistence.created[-1]
-    assert "image_mime_type" not in persistence.created[-1]
+    # The service derives the legacy image columns from position 0 when
+    # attachments is provided, but create_message's image_data/
+    # image_mime_type kwargs are keyword-only, so the store still sends
+    # explicit None scalars alongside attachments (defense in depth; a P0
+    # live crash was caused by omitting them against the real service,
+    # which declared them required with no defaults).
+    assert persistence.created[-1]["image_data"] is None
+    assert persistence.created[-1]["image_mime_type"] is None
 
 
 def test_persist_new_message_sends_data_bearing_attachments_only():
