@@ -202,7 +202,7 @@ from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 from ..Views.RAGSearch.search_handoff import build_library_rag_console_live_work_payload
 from .destination_recovery import DestinationRecoveryState, policy_denied_recovery_state
-from .skills_screen import SkillTrustPassphraseModal
+from .skills_screen import SkillTrustBootstrapModal, SkillTrustPassphraseModal
 from .study_scope_models import (
     MATERIAL_SOURCE_LIBRARY,
     MATERIAL_TITLE_LIBRARY_SOURCES,
@@ -7392,6 +7392,95 @@ class LibraryScreen(BaseAppScreen):
         )
         self._render_library_skill_trust_panel()
         self._update_library_skill_warnings_static(name=self._read_library_skill_live_name())
+
+    async def _request_library_skill_trust_bootstrap_passphrase(self) -> str | None:
+        """Push the confirm-passphrase bootstrap modal and await a passphrase.
+
+        Structural twin of ``_request_library_skill_trust_passphrase``: the
+        only difference is which modal it drives -- this one CREATES a
+        brand-new passphrase (twice-entry confirmed by
+        ``SkillTrustBootstrapModal`` itself), the other unlocks an existing
+        one.
+        """
+        push_screen_wait = getattr(self.app, "push_screen_wait", None)
+        if not callable(push_screen_wait):
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Local skill trust passphrase prompt is unavailable.", severity="warning")
+            return None
+        result = await push_screen_wait(SkillTrustBootstrapModal())
+        if isinstance(result, str) and result:
+            return result
+        return None
+
+    @on(Button.Pressed, "#library-skill-trust-setup")
+    def handle_library_skill_trust_setup(self, event: Button.Pressed) -> None:
+        """Bootstrap local skill trust from the editor's first-run setup state.
+
+        Only rendered while ``trust_status == "trust_uninitialized"`` (a
+        brand-new, never-bootstrapped trust store) -- the Phase-1 gate fix
+        for the finding that a fresh install had no live-UI path to create
+        the trust passphrase at all.
+
+        Args:
+            event: Button press event emitted by the trust panel's "Set up
+                skill trust" action.
+        """
+        event.stop()
+        self.run_worker(
+            self._bootstrap_library_skill_trust(),
+            exclusive=True,
+            group="library_skill_trust",
+        )
+
+    async def _bootstrap_library_skill_trust(self) -> None:
+        """Create the initial trust baseline via a confirm-passphrase modal.
+
+        Unlike every other trust action here, ``bootstrap_trust`` is called
+        directly (never preceded by ``unlock_with_passphrase`` -- it takes
+        the new passphrase itself and derives+stores fresh keys). A full
+        recompose follows a successful bootstrap, not the usual targeted
+        ``_render_library_skill_trust_panel`` patch: the panel's layout
+        itself changes shape here, from the first-run setup state to the
+        normal Unlock/Review/Approve row, which a no-recompose patch can't
+        produce since those buttons don't exist in the DOM yet.
+        """
+        if self._library_skills_view != "editor" or self._library_skill_editor_state is None:
+            return
+        passphrase = await self._request_library_skill_trust_bootstrap_passphrase()
+        if passphrase is None:
+            return
+        _, ok = await self._call_library_skill_trust_service("bootstrap_trust", passphrase)
+        if not ok:
+            return
+        name = self._selected_skill_name
+        if name and self._library_skills_view == "editor" and self._library_skill_editor_state is not None:
+            result, status_ok = await self._call_library_skill_trust_service("status_for_skill", name)
+            if (
+                status_ok
+                and result is not None
+                and name == self._selected_skill_name
+                and self._library_skills_view == "editor"
+            ):
+                self._library_skill_editor_state = dataclasses.replace(
+                    self._library_skill_editor_state,
+                    trust_status=result.trust_status,
+                    trust_blocked=result.trust_blocked,
+                    trust_changed_files=tuple(result.changed_files),
+                )
+        self._library_skill_active_review = None
+        self._refresh_local_source_snapshot()
+        if self.is_mounted:
+            # Disarm dirty-tracking before the recompose (mirrors
+            # ``_apply_library_skill_detail``): remounting the Inputs with
+            # their existing values still fires their initial
+            # ``Input.Changed`` -- without this, still-armed dirty-tracking
+            # would misread that as a real edit and wrongly mark the editor
+            # dirty (vetoing the next Back/row-switch for no reason).
+            self._library_skill_dirty = False
+            self._library_skill_editor_armed = False
+            self.refresh(recompose=True)
+            self.call_after_refresh(self._arm_library_skill_editor)
 
     @on(Button.Pressed, "#library-skill-trust-unlock")
     def handle_library_skill_trust_unlock(self, event: Button.Pressed) -> None:

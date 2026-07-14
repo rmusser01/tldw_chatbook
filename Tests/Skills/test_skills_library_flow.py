@@ -84,6 +84,21 @@ def _real_trust_service(tmp_path) -> SkillTrustService:
     return trust_service
 
 
+def _real_uninitialized_trust_service(tmp_path) -> SkillTrustService:
+    """A real trust service with NO manifest and NO in-memory keys yet --
+    the true first-run state (``trust_uninitialized``), unlike
+    ``_real_trust_service`` above, which is already unlocked. This is the
+    exact fresh-install shape the Phase-1 gate flagged as having no live-UI
+    bootstrap path (FIX 2)."""
+    return SkillTrustService(
+        skills_dir=tmp_path / "skills",
+        trust_store=SkillTrustStore(
+            store_dir=tmp_path / "trust",
+            marker_store=FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json"),
+        ),
+    )
+
+
 def _wire_empty_non_skill_services(app) -> None:
     app.notes_scope_service = StaticLibraryNotesListScopeService([])
     app.media_reading_scope_service = StaticLibraryMediaScopeService([])
@@ -426,6 +441,231 @@ async def test_skill_editor_canvas_scrolls_trust_panel_into_view(tmp_path):
         canvas_region = canvas.region
         button_region = review_button.region
         assert canvas_region.y <= button_region.y < canvas_region.y + canvas_region.height
+
+
+@pytest.mark.asyncio
+async def test_uninitialized_trust_shows_setup_state_and_bootstrap_enables_approve_flow(tmp_path):
+    """Gate fix wave FIX 2: a brand-new (never-bootstrapped) trust store had
+    no live-UI path to create the passphrase at all -- the Library editor's
+    Unlock only ever unlocked an EXISTING manifest. This proves the fix end
+    to end: the Trust panel shows the "Set up skill trust" state instead of
+    a dead Unlock/Review/Approve row, driving the real ``bootstrap_trust``
+    primitive through a confirm-passphrase modal genuinely initializes the
+    on-disk trust store, the panel refreshes into the normal flow, and a
+    SECOND skill can then be reviewed/approved end to end through that now-
+    initialized store."""
+    trust_service = _real_uninitialized_trust_service(tmp_path)
+    local_service = LocalSkillsService(store_dir=tmp_path, trust_service=trust_service)
+    service = SkillsScopeService(local_service=local_service, server_service=None)
+    await local_service.create_skill(
+        name="onboarding-check", content=_skill_content(title="Onboard", description="v1"),
+    )
+
+    app = _build_test_app()
+    _wire_empty_non_skill_services(app)
+    app.skills_scope_service = service
+    app.local_skill_trust_service = trust_service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_skill_editor(screen, pilot, "onboarding-check")
+
+        assert screen._library_skill_editor_state.trust_status == "trust_uninitialized"
+        assert not trust_service.trust_store.has_manifest()
+        assert str(
+            screen.query_one("#library-skill-trust-state", Static).renderable
+        ) == "Trust: not initialized"
+        assert screen.query_one("#library-skill-trust-setup", Button)
+        # The normal Unlock/Review/Approve row must NOT render while
+        # uninitialized -- there is nothing yet to unlock or review.
+        assert len(screen.query("#library-skill-trust-unlock")) == 0
+        assert len(screen.query("#library-skill-trust-review")) == 0
+        assert len(screen.query("#library-skill-trust-approve")) == 0
+
+        pilot.app.push_screen_wait = AsyncMock(return_value="fresh-passphrase")
+        screen.query_one("#library-skill-trust-setup", Button).press()
+        await pilot.pause()
+        for _ in range(150):
+            state = screen._library_skill_editor_state
+            if state is not None and state.trust_status != "trust_uninitialized":
+                break
+            await pilot.pause(0.02)
+        await pilot.pause()
+
+        # Bootstrapping trusts every currently on-disk skill as the initial
+        # baseline -- the just-opened skill becomes trusted, the real
+        # on-disk store is genuinely initialized, and the panel has
+        # switched to the normal (non-setup) layout.
+        assert screen._library_skill_editor_state.trust_status == "trusted"
+        assert trust_service.trust_store.has_manifest()
+        assert len(screen.query("#library-skill-trust-setup")) == 0
+        assert screen.query_one("#library-skill-trust-unlock", Button)
+        assert screen.query_one("#library-skill-trust-review", Button)
+        assert screen.query_one("#library-skill-trust-approve", Button)
+
+        # Prove the store is genuinely usable now, not just flagged
+        # "trusted" cosmetically: edit the skill (re-quarantines it under
+        # the freshly-created manifest), then run a full review/approve
+        # cycle through the now-normal panel.
+        await local_service.update_skill(
+            "onboarding-check",
+            content=_skill_content(title="Onboard", description="v2"),
+        )
+        screen.query_one("#library-skill-back", Button).press()
+        await pilot.pause()
+        for _ in range(150):
+            if screen._library_skills_view == "list":
+                break
+            await pilot.pause(0.02)
+        for _ in range(150):
+            if screen.query("#library-skill-row-onboarding-check"):
+                break
+            await pilot.pause(0.02)
+        screen.query_one("#library-skill-row-onboarding-check", Button).press()
+        await pilot.pause()
+        for _ in range(150):
+            if screen._library_skill_detail is not None:
+                break
+            await pilot.pause(0.02)
+        await pilot.pause()
+
+        assert screen._library_skill_editor_state.trust_blocked is True
+        screen.query_one("#library-skill-trust-review", Button).press()
+        await pilot.pause()
+        for _ in range(150):
+            if screen._library_skill_active_review is not None:
+                break
+            await pilot.pause(0.02)
+
+        pilot.app.push_screen_wait = AsyncMock(return_value="fresh-passphrase")
+        screen.query_one("#library-skill-trust-approve", Button).press()
+        await pilot.pause()
+        for _ in range(150):
+            if screen._library_skill_active_review is None:
+                break
+            await pilot.pause(0.02)
+        await pilot.pause()
+
+        assert screen._library_skill_editor_state.trust_status == "trusted"
+        context = await service.get_context(mode="local")
+        available_names = [item["name"] for item in context["available_skills"]]
+        assert "onboarding-check" in available_names
+
+
+@pytest.mark.asyncio
+async def test_already_bootstrapped_store_never_shows_setup_state(tmp_path):
+    """Once trust has been bootstrapped (by any means), the Trust panel must
+    render its NORMAL Unlock/Review/Approve row, never the first-run "Set up
+    skill trust" state -- even for a freshly needs-review (blocked) skill."""
+    trust_service = _real_trust_service(tmp_path)
+    local_service = LocalSkillsService(store_dir=tmp_path, trust_service=trust_service)
+    service = SkillsScopeService(local_service=local_service, server_service=None)
+    await local_service.create_skill(
+        name="already-bootstrapped", content=_skill_content(title="A", description="v1"),
+    )
+    trust_service.bootstrap_trust()
+    await local_service.update_skill(
+        "already-bootstrapped", content=_skill_content(title="A", description="v2"),
+    )
+
+    app = _build_test_app()
+    _wire_empty_non_skill_services(app)
+    app.skills_scope_service = service
+    app.local_skill_trust_service = trust_service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_skill_editor(screen, pilot, "already-bootstrapped")
+
+        assert screen._library_skill_editor_state.trust_status != "trust_uninitialized"
+        assert len(screen.query("#library-skill-trust-setup")) == 0
+        assert screen.query_one("#library-skill-trust-unlock", Button)
+        assert screen.query_one("#library-skill-trust-review", Button)
+        assert screen.query_one("#library-skill-trust-approve", Button)
+
+
+@pytest.mark.asyncio
+async def test_uninitialized_trust_store_list_still_shows_needs_review_glyph(tmp_path):
+    """A never-bootstrapped trust store must degrade gracefully everywhere
+    else in the Library UI, not just in the editor's Trust panel -- the
+    list view still shows the skill as needs-review (``⚠``), same as any
+    other trust-blocked skill, and the rail count still includes it."""
+    trust_service = _real_uninitialized_trust_service(tmp_path)
+    local_service = LocalSkillsService(store_dir=tmp_path, trust_service=trust_service)
+    service = SkillsScopeService(local_service=local_service, server_service=None)
+    await local_service.create_skill(
+        name="pre-bootstrap", content=_skill_content(title="P", description="p"),
+    )
+
+    app = _build_test_app()
+    _wire_empty_non_skill_services(app)
+    app.skills_scope_service = service
+    app.local_skill_trust_service = trust_service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-skills").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        row = screen.query_one("#library-skill-row-pre-bootstrap", Button)
+        assert row.has_class("library-skill-row-blocked")
+        assert "⚠" in str(row.label)
+        rail_label = str(screen.query_one("#library-row-browse-skills").label)
+        assert "(1)" in rail_label
+
+
+@pytest.mark.asyncio
+async def test_skill_trust_bootstrap_modal_rejects_mismatched_confirmation():
+    """The bootstrap modal creates a BRAND-NEW passphrase (unlike every
+    other trust action, which unlocks an existing one) -- it must ask twice
+    and refuse to dismiss on a mismatch instead of silently proceeding with
+    a possibly-mistyped passphrase nobody could recover."""
+    from textual import work
+    from textual.app import App
+    from tldw_chatbook.UI.Screens.skills_screen import SkillTrustBootstrapModal
+
+    class _ModalHost(App):
+        def __init__(self) -> None:
+            super().__init__()
+            self.result: str | None = "unset"
+
+        def on_mount(self) -> None:
+            self._await_modal()
+
+        @work
+        async def _await_modal(self) -> None:
+            self.result = await self.push_screen_wait(SkillTrustBootstrapModal())
+
+    app = _ModalHost()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal.query_one("#skill-trust-bootstrap-input", Input).value = "correct-horse"
+        modal.query_one("#skill-trust-bootstrap-confirm-input", Input).value = "mismatched"
+        await pilot.pause()
+        modal.query_one("#skill-trust-bootstrap-submit", Button).press()
+        await pilot.pause()
+
+        # Rejected: the modal must still be on screen with an inline error
+        # -- never dismissed with an unconfirmed passphrase.
+        assert app.screen is modal
+        error_text = str(modal.query_one("#skill-trust-bootstrap-error", Static).renderable)
+        assert "match" in error_text.lower()
+        assert app.result == "unset"
+
+        modal.query_one("#skill-trust-bootstrap-confirm-input", Input).value = "correct-horse"
+        await pilot.pause()
+        modal.query_one("#skill-trust-bootstrap-submit", Button).press()
+        await pilot.pause()
+
+        assert app.result == "correct-horse"
 
 
 @pytest.mark.asyncio

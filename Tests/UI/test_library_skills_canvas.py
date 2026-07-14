@@ -32,10 +32,12 @@ from tldw_chatbook.Library.library_skills_state import (
 )
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library.library_skills_canvas import (
+    _TRUST_SETUP_EXPLANATION_COPY,
     LibrarySkillsListCanvas,
     skill_context_toggle_label,
     skill_disable_model_label,
     skill_editor_warning_lines,
+    skill_trust_needs_setup,
     skill_trust_state_line,
     skill_user_invocable_label,
 )
@@ -394,6 +396,52 @@ async def test_skill_editor_trust_panel_approve_enabled_with_active_review():
             pilot.app.query_one("#library-skill-trust-review-files", Static).renderable
         )
         assert review_files == "SKILL.md"
+
+
+@pytest.mark.asyncio
+async def test_skill_editor_trust_panel_shows_setup_state_when_uninitialized():
+    """Fix wave (Skills Phase-1 gate, FIX 2): while
+    ``trust_status == "trust_uninitialized"`` (a brand-new, never-
+    bootstrapped trust store), the trust panel renders the first-run setup
+    state -- an explanation line plus a single "Set up skill trust" action
+    -- instead of a dead Unlock/Review/Approve row (Unlock only ever
+    unlocks an EXISTING manifest, so it would never enable here)."""
+    state = _editor_state(trust_status="trust_uninitialized", trust_blocked=True)
+    app = _EditorHost(mode="editor", editor_state=state)
+    async with app.run_test() as pilot:
+        state_line = str(pilot.app.query_one("#library-skill-trust-state", Static).renderable)
+        assert state_line == "Trust: not initialized"
+        explanation = str(
+            pilot.app.query_one("#library-skill-trust-setup-explanation", Static).renderable
+        )
+        assert explanation == _TRUST_SETUP_EXPLANATION_COPY
+        setup_button = pilot.app.query_one("#library-skill-trust-setup", Button)
+        assert setup_button.disabled is False
+        assert len(pilot.app.query("#library-skill-trust-unlock")) == 0
+        assert len(pilot.app.query("#library-skill-trust-review")) == 0
+        assert len(pilot.app.query("#library-skill-trust-approve")) == 0
+        assert len(pilot.app.query("#library-skill-trust-review-files")) == 0
+
+
+@pytest.mark.asyncio
+async def test_skill_editor_trust_panel_hides_setup_state_when_not_uninitialized():
+    """The inverse of the setup-state test above: any OTHER trust status
+    (trusted, locked, quarantined-*) must render the normal panel, never
+    the first-run setup state."""
+    state = _editor_state(trust_status="quarantined_modified", trust_blocked=True)
+    app = _EditorHost(mode="editor", editor_state=state)
+    async with app.run_test() as pilot:
+        assert len(pilot.app.query("#library-skill-trust-setup")) == 0
+        assert len(pilot.app.query("#library-skill-trust-setup-explanation")) == 0
+        assert pilot.app.query_one("#library-skill-trust-unlock", Button)
+        assert pilot.app.query_one("#library-skill-trust-review", Button)
+        assert pilot.app.query_one("#library-skill-trust-approve", Button)
+
+
+def test_skill_trust_needs_setup_predicate():
+    assert skill_trust_needs_setup("trust_uninitialized") is True
+    for other in ("trusted", "trust_locked", "quarantined_modified", "quarantined_added"):
+        assert skill_trust_needs_setup(other) is False
 
 
 def test_skill_trust_state_line_appends_changed_files():
@@ -820,3 +868,26 @@ def test_library_skills_import_row_css_blocks_match_prompt_parity():
         ):
             assert pinned in import_status_block
             assert pinned in prompts_import_status_block
+
+
+def test_library_skill_trust_setup_explanation_css_block_matches_review_files_parity():
+    """``#library-skill-trust-setup-explanation`` (the first-run trust
+    setup state's explanation line, gate fix wave FIX 2) must have a
+    stylesheet block with the same muted secondary-line look as its
+    ``#library-skill-trust-review-files`` sibling -- dual-pinned against
+    both the source module AND the regenerated bundle, same pattern as
+    every other Skills CSS pin above."""
+    agentic_terminal = AGENTIC_TERMINAL.read_text(encoding="utf-8")
+    bundled_stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+
+    for text in (agentic_terminal, bundled_stylesheet):
+        assert "#library-skill-trust-setup-explanation {" in text
+        setup_block = _css_block(text, "#library-skill-trust-setup-explanation {")
+        review_files_block = _css_block(text, "#library-skill-trust-review-files {")
+        for pinned in (
+            "width: 100%;",
+            "height: auto;",
+            "color: $ds-text-muted;",
+        ):
+            assert pinned in setup_block
+            assert pinned in review_files_block

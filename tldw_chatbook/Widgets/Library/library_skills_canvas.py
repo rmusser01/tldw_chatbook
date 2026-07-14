@@ -80,6 +80,25 @@ _NEEDS_REVIEW_WARNING = (
 )
 MODEL_HINT_COPY = "Not applied in v1."
 
+# Fix wave (Skills Phase-1 gate, FIX 2): a brand-new install has no trust
+# manifest at all (``trust_status == "trust_uninitialized"``) -- the Library
+# editor's Unlock action only ever unlocks an EXISTING manifest, so the
+# normal Unlock/Review/Approve row would render as a permanent dead end.
+# This copy/predicate pair backs a dedicated first-run panel state instead
+# (see ``_compose_trust_panel``): an explanation line plus a single "Set up
+# skill trust" action that drives the real ``bootstrap_trust`` primitive
+# through a confirm-passphrase modal.
+_TRUST_SETUP_EXPLANATION_COPY = (
+    "Local skill trust hasn't been set up yet. Set a trust passphrase to "
+    "start reviewing and approving local skills — current local skill "
+    "files become the trusted baseline."
+)
+
+
+def skill_trust_needs_setup(trust_status: str) -> bool:
+    """Return whether the trust panel should render its first-run setup state."""
+    return trust_status == "trust_uninitialized"
+
 
 def skill_trust_state_line(trust_status: str, changed_files: tuple[str, ...] = ()) -> str:
     """Render the trust panel's current-state line.
@@ -494,6 +513,14 @@ class LibrarySkillsListCanvas(VerticalScroll):
         review is active) rather than mounted/removed on demand -- simpler
         than a D3-style targeted mount/remove, and matches how
         ``#library-skill-save-status`` is always present too.
+
+        Fix wave (Phase-1 gate, FIX 2): while ``trust_status ==
+        "trust_uninitialized"`` (a brand-new, never-bootstrapped trust
+        store), the normal Unlock/Review/Approve row is replaced entirely
+        by a first-run setup state -- an explanation line plus a single
+        "Set up skill trust" action -- since Unlock only ever unlocks an
+        EXISTING manifest and would otherwise render as a permanent dead
+        end (there is nothing yet to unlock, review, or approve).
         """
         active_review = self.active_review or {}
         changed_files = active_review.get("changed_files") or []
@@ -508,6 +535,22 @@ class LibrarySkillsListCanvas(VerticalScroll):
                 classes=state_classes,
                 markup=False,
             )
+            if skill_trust_needs_setup(editor_state.trust_status):
+                yield Static(
+                    _TRUST_SETUP_EXPLANATION_COPY,
+                    id="library-skill-trust-setup-explanation",
+                    markup=False,
+                )
+                setup_toolbar = Horizontal(classes="ds-toolbar")
+                setup_toolbar.styles.height = "auto"
+                with setup_toolbar:
+                    yield Button(
+                        "Set up skill trust",
+                        id="library-skill-trust-setup",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                return
             yield Static(
                 ", ".join(str(item) for item in changed_files),
                 id="library-skill-trust-review-files",
