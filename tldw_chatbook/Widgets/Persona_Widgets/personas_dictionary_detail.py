@@ -113,6 +113,7 @@ class PersonasDictionaryDetailWidget(Vertical):
         self._entries: list[dict] = []
         self._loaded_settings: dict | None = None  # last-loaded settings snapshot; dirty = value diff
         self._last_dirty_sent: bool = False  # last dirty state posted via DictionarySettingsEdited
+        self._validation_findings: list = []  # index-aligned with the validation OptionList's options
 
     # ----- compose -----
 
@@ -210,22 +211,30 @@ class PersonasDictionaryDetailWidget(Vertical):
         self._refresh_validation()
 
     def _refresh_validation(self) -> None:
-        """Recompute advisory findings for the current entry list."""
+        """Recompute advisory findings for the current entry list.
+
+        Options are added WITHOUT an id: two findings on the same entry
+        (e.g. duplicate_pattern + probability_zero) share an entry_id, and
+        Textual's OptionList raises DuplicateID on a repeated id. Instead,
+        ``_validation_findings`` mirrors the panel's options 1:1 by index,
+        and ``_validation_selected`` looks the finding up by
+        ``event.option_index``.
+        """
         panel = self.query_one("#personas-dict-validation", OptionList)
         panel.clear_options()
         try:
             findings = validate_entries(self._entries)
         except Exception:
             logger.opt(exception=True).warning("Dictionary validation failed; panel left empty.")
+            self._validation_findings = []
             return
+        self._validation_findings = findings
         for finding in findings:
             pattern = next(
                 (str(e.get("pattern") or "") for e in self._entries if str(e.get("id")) == str(finding.entry_id)),
                 "",
             )
-            panel.add_option(
-                Option(Text(f"[{finding.code}] {pattern} — {finding.message}"), id=str(finding.entry_id))
-            )
+            panel.add_option(Option(Text(f"[{finding.code}] {pattern} — {finding.message}")))
 
     def apply_enabled(self, enabled: bool) -> None:
         """Reflect an externally-toggled enabled flag without touching other fields.
@@ -242,6 +251,7 @@ class PersonasDictionaryDetailWidget(Vertical):
         self._entries = []
         self._loaded_settings = None
         self._last_dirty_sent = False
+        self._validation_findings = []
         self.query_one("#personas-dict-entries-table", DataTable).clear()
 
     @property
@@ -357,7 +367,9 @@ class PersonasDictionaryDetailWidget(Vertical):
     @on(OptionList.OptionSelected, "#personas-dict-validation")
     def _validation_selected(self, event: OptionList.OptionSelected) -> None:
         event.stop()
-        entry_id = str(event.option.id or "")
+        if not 0 <= event.option_index < len(self._validation_findings):
+            return  # stale click during a recompute (findings/options briefly out of sync)
+        entry_id = str(self._validation_findings[event.option_index].entry_id)
         ids = self.entry_ids_in_order()
         if entry_id in ids:
             table = self.query_one("#personas-dict-entries-table", DataTable)

@@ -40,15 +40,18 @@ def validate_entries(entries: list[dict]) -> list[ValidationFinding]:
         Findings in entry order; empty when everything is clean.
     """
     findings: list[ValidationFinding] = []
-    seen: dict[tuple[str, str], str | None] = {}
+    seen: set[tuple[str, str]] = set()
     for entry in entries:
         entry_id = entry.get("id")
         pattern = str(entry.get("pattern") or "")
         etype = str(entry.get("type") or "literal")
 
         if etype == "regex":
-            probe = _entry_from_payload(entry)
-            if not probe.is_regex:
+            try:
+                probe = _entry_from_payload(entry)
+            except Exception:
+                probe = None  # malformed sibling fields: skip the regex probe, other checks still run
+            if probe is not None and not probe.is_regex:
                 findings.append(ValidationFinding(
                     code="invalid_regex", field="pattern", entry_id=entry_id,
                     message="Pattern does not compile; the engine will treat it as a literal.",
@@ -66,7 +69,7 @@ def validate_entries(entries: list[dict]) -> list[ValidationFinding]:
                 message="Same pattern and type as an earlier entry; only one will usually fire.",
             ))
         else:
-            seen[key] = entry_id
+            seen.add(key)
 
         probability = entry.get("probability")
         try:

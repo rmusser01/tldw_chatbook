@@ -48,3 +48,16 @@ def test_probability_garbage_does_not_crash_and_yields_no_finding():
     """A malformed probability is neither zero nor a crash - display-layer
     fallback (not this module) decides what to show for it."""
     assert validate_entries([_entry("BP", probability="garbage")]) == []
+
+
+def test_regex_probe_survives_malformed_sibling_probability():
+    """The regex-branch probe (_entry_from_payload) casts probability via
+    int(); a non-numeric probability on an otherwise-regex entry used to
+    raise inside validate_entries itself - unlike the module's own
+    probability check, which already tolerates garbage. The probe is
+    skipped for that entry (no invalid_regex verdict either way), but
+    other regex-branch checks (case_flag_on_regex) still run."""
+    findings = validate_entries(
+        [_entry("/spo2/i", etype="regex", probability="garbage", case_sensitive=True)]
+    )
+    assert [f.code for f in findings] == ["case_flag_on_regex"]

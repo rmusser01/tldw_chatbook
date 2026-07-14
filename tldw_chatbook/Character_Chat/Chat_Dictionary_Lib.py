@@ -736,7 +736,7 @@ def process_user_input_with_diagnostics(
             matched_entries = []  # Fallback to empty list
         _record_stage_drops(stage_before, matched_entries, "timed_effects")   # ADDED
 
-        # 6. Strategy sort (sort-only; drops are only possible via its except)
+        # 5. Ordering (strategy sort + priority) (sort-only; drops are only possible via its except)
         stage_before = list(matched_entries)                          # ADDED
         try:
             logging.debug("Chat Dictionary: Applying replacement strategy")
@@ -748,7 +748,7 @@ def process_user_input_with_diagnostics(
         _record_stage_drops(stage_before, matched_entries, "strategy_error")  # ADDED (defensive)
         matched_entries.sort(key=lambda e: -int(getattr(e, "priority", 0) or 0))  # ADDED: stable — strategy order breaks ties
 
-        # 5. Token budget (same pattern; truncation drives budget_exceeded)
+        # 6. Token budget (same pattern; truncation drives budget_exceeded)
         stage_before = list(matched_entries)                          # ADDED
         try:
             logging.debug(f"Chat Dictionary: Enforcing token budget for {len(matched_entries)} entries")

@@ -1332,6 +1332,34 @@ class TestDictionaryValidationPanel:
             table = screen.query_one("#personas-dict-entries-table", DataTable)
             assert table.cursor_row == 2  # jumped to the duplicate (index 2)
 
+    async def test_multi_finding_entry_does_not_crash_and_jump_selects_by_index(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
+        """One entry tripping two rules (duplicate_pattern + probability_zero)
+        must not crash the panel. Before the fix, options were keyed by
+        ``id=str(finding.entry_id)`` and the add_option loop sat outside the
+        try/except, so a second finding sharing an entry_id raised Textual's
+        DuplicateID and took the whole selection flow down with it."""
+        from textual.widgets import DataTable, Input, OptionList
+
+        fake_dict_service.records[1]["entries"].append(
+            {"pattern": "BP", "replacement": "dup-and-dead", "probability": 0.0,
+             "group": None, "timed_effects": None, "max_replacements": 1, "type": "literal",
+             "enabled": True, "case_sensitive": False, "priority": 0}
+        )
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)  # must not raise DuplicateID
+            panel = screen.query_one("#personas-dict-validation", OptionList)
+            assert panel.option_count == 2  # duplicate_pattern + probability_zero, same entry
+            panel.highlighted = 1
+            panel.action_select()
+            await pilot.pause()
+            table = screen.query_one("#personas-dict-entries-table", DataTable)
+            assert table.cursor_row == 2  # jumped to the new (index 2) entry
+            assert screen.query_one("#personas-dict-entry-probability", Input).value == "0"
+
     async def test_panel_clears_on_clean_dictionary(self, mock_app_instance, stub_characters, fake_dict_service):
         from textual.widgets import OptionList
 
