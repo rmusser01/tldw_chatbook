@@ -43,6 +43,7 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_NOTES,
     LIBRARY_ROW_BROWSE_PROMPTS,
     LIBRARY_ROW_BROWSE_SEARCH,
+    LIBRARY_ROW_BROWSE_SKILLS,
     LIBRARY_ROW_CREATE_NOTE,
     LIBRARY_ROW_INGEST_EXPORT,
     LIBRARY_ROW_INGEST_MEDIA,
@@ -4631,6 +4632,74 @@ async def test_library_shell_prompts_rail_row_shows_exact_count():
         assert screen.query_one("#library-prompts-canvas")
         assert screen.query_one("#library-prompts-empty")
     assert app.prompt_scope_service.count_calls
+
+
+class _FakeSkillsScopeService:
+    """Minimal skills-scope fake exposing ``count_skills``/``get_context``,
+    mirroring the real ``SkillsScopeService``'s shape (``mode="local"``)
+    without going through the local/server routing. The Library screen's
+    snapshot fetch (Task 1) only calls ``get_context`` (a single call gives
+    both the count -- ``len(available_skills) + len(blocked_skills)`` -- and
+    the payload the future Skills canvas will render), but ``count_skills``
+    is exposed too so this fake matches the real service's full interface.
+    """
+
+    def __init__(self, *, available, blocked=()):
+        self._available = list(available)
+        self._blocked = list(blocked)
+        self.get_context_calls = []
+
+    async def count_skills(self, *, mode="local", **kwargs):
+        return len(self._available) + len(self._blocked)
+
+    async def get_context(self, *, mode="local", **kwargs):
+        self.get_context_calls.append({"mode": mode, **kwargs})
+        return {
+            "available_skills": list(self._available),
+            "blocked_skills": list(self._blocked),
+        }
+
+
+@pytest.mark.asyncio
+async def test_library_shell_skills_rail_row_shows_exact_count():
+    """The Browse rail renders a ``Skills (2)`` row -- id
+    ``LIBRARY_ROW_BROWSE_SKILLS`` -- once ``skills_scope_service.get_context``
+    is wired into the Library screen's local-source snapshot fetch (Task 1).
+    The count spans BOTH ``available_skills`` (trusted) and
+    ``blocked_skills`` (needs-review) per the spec's blocked-skills
+    visibility rule. Row selection shows the empty-canvas landing path
+    (no dedicated Skills canvas exists yet -- that's Task 3), same as any
+    other unhandled ``canvas_kind`` -- the row is inert-but-selectable."""
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesListScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.skills_scope_service = _FakeSkillsScopeService(
+        available=[{"name": "code-review"}],
+        blocked=[{"name": "summarize"}],
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        # Literal DOM id pinned on purpose (mirrors the notes/prompts badge
+        # tests' literal ids): the rendered id is the rail-row contract
+        # downstream tasks target, so a drift in either the prefix or the
+        # row-id constant must fail loudly here.
+        button = screen.query_one("#library-row-browse-skills", Button)
+        assert button.id == f"{LIBRARY_RAIL_ROW_PREFIX}{LIBRARY_ROW_BROWSE_SKILLS}"
+        assert button.row_id == LIBRARY_ROW_BROWSE_SKILLS
+        rail_label = str(button.label)
+        assert "Skills (2)" in rail_label
+
+        button.press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
+        assert screen.query_one("#library-canvas-landing")
+    assert app.skills_scope_service.get_context_calls
 
 
 class _FakeStudyScopeService:

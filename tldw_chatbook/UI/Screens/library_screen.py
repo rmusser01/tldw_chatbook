@@ -138,6 +138,7 @@ from ...Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_NOTES,
     LIBRARY_ROW_BROWSE_PROMPTS,
     LIBRARY_ROW_BROWSE_SEARCH,
+    LIBRARY_ROW_BROWSE_SKILLS,
     LIBRARY_ROW_CREATE_NOTE,
     LIBRARY_ROW_CREATE_PROMPT,
     LIBRARY_ROW_INGEST_EXPORT,
@@ -362,8 +363,11 @@ def _active_library_sync_scope(app_instance: Any) -> dict[str, str | None]:
 # tested contracts of ``apply_navigation_context``, though no live emitter
 # currently sends them), and ``prompts`` (the retired Personas "prompts" mode
 # chip's legacy route alias -- see ``screen_registry``'s ``_SCREEN_ALIASES``
-# and ``shell_destinations``, Task 7). ``notes`` is handled as its own
-# dedicated branch in ``_apply_navigation_context_state`` below
+# and ``shell_destinations``, Task 7). ``skills`` (Skills sub-project Task 1)
+# has no live emitter yet either -- same forward-compat posture as
+# ``search``/``collections`` -- added so a future Skills deep link has
+# somewhere to land without another table edit. ``notes`` is handled as its
+# own dedicated branch in ``_apply_navigation_context_state`` below
 # (``open_notes_workspace``'s route), not through this table. ``media`` has
 # no navigation-context entry point at all (the retired mode-strip machinery
 # never had a "media" mode either). Any other mode value -- including the
@@ -376,6 +380,7 @@ LIBRARY_NAV_MODE_TO_ROW_ID = {
     "collections": LIBRARY_ROW_BROWSE_COLLECTIONS,
     "search": LIBRARY_ROW_BROWSE_SEARCH,
     "prompts": LIBRARY_ROW_BROWSE_PROMPTS,
+    "skills": LIBRARY_ROW_BROWSE_SKILLS,
 }
 
 
@@ -568,6 +573,13 @@ class LibraryScreen(BaseAppScreen):
             # fetching/paging past the first page of records remains
             # future work.
             "prompts": (None, ()),
+            # Skills sub-project Task 1: also ``(count, payload)``, not a
+            # bare records tuple -- but unlike prompts' ``page_records``
+            # (a list of rows), ``payload`` here is the normalized
+            # ``get_context`` dict (``available_skills`` + ``blocked_skills``)
+            # a future Skills canvas will render directly, so there is no
+            # separate paginated fetch to add later.
+            "skills": (None, {"available_skills": [], "blocked_skills": []}),
         }
         self._local_source_counts: dict[str, int] = {
             "notes": 0,
@@ -1733,6 +1745,44 @@ class LibraryScreen(BaseAppScreen):
             )
         return tuple(records)
 
+    async def _skills_context_or_none(self, get_context: Any, **kwargs: Any) -> Mapping[str, Any] | None:
+        """Fetch the local skills context, degrading quietly on failure.
+
+        Runs inside the same ``asyncio.gather`` as the notes/media/
+        conversations/prompts fetch (see ``_list_local_source_snapshot``).
+        Mirrors ``_prompts_count_or_none``: the seam is optional (guarded by
+        ``callable(get_context)`` at the call site), so when it is missing
+        this method is never invoked, and when it *is* present but raises,
+        the failure is swallowed and ``None`` is returned -- the Skills
+        rail row then renders uncounted with an empty context payload
+        rather than surfacing an error or failing the whole snapshot
+        fetch.
+
+        Unlike prompts (a separate ``count_prompts`` call plus a separate
+        paginated ``list_prompts`` page fetch), a single ``get_context``
+        call here supplies both: the count is derived from its
+        ``available_skills``/``blocked_skills`` lengths by the caller, and
+        the same payload is stashed for a future Skills canvas to render.
+
+        Args:
+            get_context: The bound ``skills_scope_service.get_context``
+                callable to invoke.
+            **kwargs: Forwarded to ``get_context`` (``mode``).
+
+        Returns:
+            The normalized ``get_context`` payload (``available_skills`` +
+            ``blocked_skills``), or ``None`` if the call failed or returned
+            something other than a ``Mapping``.
+        """
+        try:
+            result = await self._run_library_service_call(get_context, isolate_in_worker=True, **kwargs)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Failed to fetch local skills context; Skills row will show no count."
+            )
+            return None
+        return result if isinstance(result, Mapping) else None
+
     async def _study_count_or_none(self, count_callable: Any, label: str, **kwargs: Any) -> int | None:
         """Fetch a decorative Create-rail count, degrading quietly on failure.
 
@@ -1790,6 +1840,7 @@ class LibraryScreen(BaseAppScreen):
         study_service = getattr(self.app_instance, "study_scope_service", None)
         quiz_service = getattr(self.app_instance, "study_quiz_scope_service", None)
         prompt_service = getattr(self.app_instance, "prompt_scope_service", None)
+        skills_service = getattr(self.app_instance, "skills_scope_service", None)
         list_notes = getattr(notes_service, "list_notes", None)
         list_media = getattr(media_service, "list_media_items", None)
         list_conversations = getattr(conversation_service, "list_conversations", None)
@@ -1802,6 +1853,8 @@ class LibraryScreen(BaseAppScreen):
         count_prompts_available = callable(count_prompts)
         list_prompts = getattr(prompt_service, "list_prompts", None)
         list_prompts_available = callable(list_prompts)
+        get_skills_context = getattr(skills_service, "get_context", None)
+        get_skills_context_available = callable(get_skills_context)
         notes_user_id = getattr(self.app_instance, "notes_user_id", None) or "default_user"
 
         empty_records: dict[str, tuple[Mapping[str, Any], ...]] = {
@@ -1811,6 +1864,9 @@ class LibraryScreen(BaseAppScreen):
             # See ``__init__``'s ``_local_source_records`` default: this key
             # carries ``(count, page_records)``, not a bare records tuple.
             "prompts": (None, ()),
+            # Likewise ``(count, context_payload)`` -- see ``__init__``'s
+            # comment on this same key.
+            "skills": (None, {"available_skills": [], "blocked_skills": []}),
         }
         empty_counts = {"notes": 0, "media": 0, "conversations": 0}
         empty_total_known = {"notes": True, "media": True, "conversations": True}
@@ -1897,6 +1953,10 @@ class LibraryScreen(BaseAppScreen):
                     ),
                 )
             )
+        if get_skills_context_available:
+            optional_calls.append(
+                ("skills_context", self._skills_context_or_none(get_skills_context, mode="local"))
+            )
         gathered_calls.extend(call for _, call in optional_calls)
 
         try:
@@ -1939,6 +1999,15 @@ class LibraryScreen(BaseAppScreen):
         notes_true_count = optional_values.get("notes_true_count")
         prompts_count = optional_values.get("prompts_count")
         prompts_page_records = optional_values.get("prompts_page") or ()
+        skills_context = optional_values.get("skills_context")
+        if isinstance(skills_context, Mapping):
+            skills_available = skills_context.get("available_skills") or []
+            skills_blocked = skills_context.get("blocked_skills") or []
+            skills_count: int | None = len(skills_available) + len(skills_blocked)
+            skills_payload: Mapping[str, Any] = skills_context
+        else:
+            skills_count = None
+            skills_payload = {"available_skills": [], "blocked_skills": []}
         study_counts: dict[str, int | None] = {
             "study_decks": optional_values.get("study_decks"),
             "flashcards_due": optional_values.get("flashcards_due"),
@@ -1966,6 +2035,14 @@ class LibraryScreen(BaseAppScreen):
                 # seam or the fetch failed (degrade-quietly contract; see
                 # ``_prompts_page_records_or_empty``).
                 "prompts": (prompts_count, prompts_page_records),
+                # (count, context_payload) -- see the ``__init__``/
+                # ``empty_records`` comments above. ``skills_count`` spans
+                # BOTH ``available_skills`` and ``blocked_skills`` (needs
+                # review) per the spec's blocked-skills visibility rule, and
+                # degrades to ``None``/empty payload whenever the local
+                # backend has no ``get_context`` seam or the fetch failed
+                # (degrade-quietly contract; see ``_skills_context_or_none``).
+                "skills": (skills_count, skills_payload),
             },
             {
                 "notes": notes_count,
@@ -3096,6 +3173,12 @@ class LibraryScreen(BaseAppScreen):
             if isinstance(prompts_entry, tuple) and len(prompts_entry) == 2
             else None
         )
+        skills_entry = self._local_source_records.get("skills")
+        skills_count = (
+            skills_entry[0]
+            if isinstance(skills_entry, tuple) and len(skills_entry) == 2
+            else None
+        )
         return LibraryShellInput(
             media_count=counts.get("media") if counts_known_yet else None,
             media_known=known.get("media", True),
@@ -3110,6 +3193,11 @@ class LibraryScreen(BaseAppScreen):
             # stays ``True``.
             prompts_count=prompts_count if counts_known_yet else None,
             prompts_known=True,
+            # Same posture as prompts: no sample-cap fallback backs this
+            # count either (a single ``get_context`` call, not a paginated
+            # fetch), so ``skills_known`` stays ``True``.
+            skills_count=skills_count if counts_known_yet else None,
+            skills_known=True,
             collections_count=collections_count,
             runtime_source=active_source,
             server_label=str(server_label) if server_label else None,
