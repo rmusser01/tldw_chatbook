@@ -295,6 +295,22 @@ class MCPServersMode(Vertical):
         )
         return widgets
 
+    async def disarm_delete(self) -> None:
+        """Disarm a pending delete confirmation (no-op when unarmed).
+
+        The arm-then-confirm contract is "any other interaction disarms".
+        `show_detail()` already resets the arm state for every interaction
+        that flows through it (selecting another server, lifecycle resyncs),
+        but a mode switch does not: the ContentSwitcher hides this canvas
+        without unmounting it, so a live "Confirm delete" button would
+        otherwise survive a Servers -> Tools -> Servers round-trip.
+        `MCPWorkbench.set_mode()` calls this on every actual mode change.
+        """
+        if not self._delete_armed:
+            return
+        self._delete_armed = False
+        await self._rebuild_detail_toolbar()
+
     async def _rebuild_detail_toolbar(self) -> None:
         """Rebuild `#mcp-detail-toolbar` from `_detail_toolbar_widgets()`.
 

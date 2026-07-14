@@ -1095,6 +1095,73 @@ async def test_double_delete_confirm_dispatches_exactly_one_delete():
 
 
 @pytest.mark.asyncio
+async def test_mode_round_trip_disarms_pending_delete_confirmation():
+    """Review fix (Important): the arm-then-confirm contract says "any other
+    interaction disarms" -- switching modes is such an interaction. Before
+    the fix, arming Delete, leaving for Tools, and coming back to Servers
+    still rendered the live "Confirm delete" button (the ContentSwitcher
+    hides the canvas without unmounting it, so nothing reset the arm state).
+    """
+    app = ProfileFormApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}2")  # local:docs
+        await pilot.pause()
+        await pilot.click("#mcp-detail-delete")
+        await pilot.pause()
+        assert list(app.query("#mcp-detail-delete-confirm"))  # armed
+
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        workbench.set_mode("servers")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert list(app.query("#mcp-detail-delete")), (
+            "mode round-trip must disarm back to the plain Delete button"
+        )
+        assert not list(app.query("#mcp-detail-delete-confirm"))
+        assert app.unified_mcp_service.delete_calls == []
+
+
+@pytest.mark.asyncio
+async def test_selecting_different_profile_while_armed_disarms():
+    """Reviewer's Minor: selecting a DIFFERENT local profile via the rail
+    while a delete confirmation is armed must disarm -- otherwise the live
+    "Confirm delete" button silently retargets whatever got selected next.
+    Already handled by `show_detail()`'s unconditional arm-state reset;
+    this locks the behavior in."""
+    app = ProfileFormApp()
+    app.unified_mcp_service._records.append(
+        {
+            "profile_id": "web",
+            "command": "npx",
+            "args": [],
+            "env_placeholders": {},
+            "env_literals": {},
+            "discovery_snapshot": {"tools": [], "resources": [], "prompts": []},
+            "is_connected": False,
+        }
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}2")  # local:docs
+        await pilot.pause()
+        await pilot.click("#mcp-detail-delete")
+        await pilot.pause()
+        assert list(app.query("#mcp-detail-delete-confirm"))  # armed
+
+        await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}3")  # local:web
+        await pilot.pause()
+
+        assert list(app.query("#mcp-detail-delete"))
+        assert not list(app.query("#mcp-detail-delete-confirm"))
+        assert app.unified_mcp_service.delete_calls == []
+
+
+@pytest.mark.asyncio
 async def test_delete_confirmed_ignores_non_local_server_key():
     """Only local-source server_keys are ever produced by the detail
     toolbar's arm-then-confirm flow (built-in/server-source render no

@@ -276,6 +276,22 @@ class MCPWorkbench(Container):
         # first's remove+mount cycle to finish (harmless -- it repaints with
         # whatever the latest state is once it acquires the lock) instead of
         # racing it and raising DuplicateIds.
+        #
+        # DELIBERATELY BROAD (T7 review adjudication): review proposed
+        # narrowing this to a toolbar-local lock per the widget-local
+        # `MCPInspector._refresh_lock` convention; kept broad because beyond
+        # the DuplicateIds fix it also guarantees whole-triad consistency --
+        # rail, overview table, and inspector always render from the same
+        # snapshot generation within one locked pass, so a torn state where
+        # the rail shows refresh A while the table shows refresh B cannot
+        # occur -- and it serializes the DataTable clear()/add_row() cycle in
+        # `update_overview()` against concurrent workers. Relationship to
+        # `MCPInspector._refresh_lock`: that one is the inspector's own
+        # widget-local guard for its external callers (worker-driven Advanced
+        # refreshes racing pump-driven ones); on the `_sync_children()` path
+        # it is always acquired AFTER this lock (via `update_readiness()`
+        # inside the locked block), and no code path acquires them in the
+        # opposite order -- same ordering everywhere, no AB-BA deadlock.
         self._sync_children_lock = asyncio.Lock()
         # Guards the post-mount restore race: `on_mount` awaits `reload()`
         # inline, but a caller (e.g. the destination screen) can call
@@ -489,6 +505,25 @@ class MCPWorkbench(Container):
             # covers restore and inspector hub-action paths, which bypass
             # the screen's _activate_mode chip sync.
             self.post_message(self.ModeChanged(mode))
+            # T7 review fix: a mode change is an "other interaction" per the
+            # arm-then-confirm contract, so it must disarm any pending delete
+            # confirmation -- the ContentSwitcher hides the servers canvas
+            # without unmounting it, so nothing else resets the arm state on
+            # a Servers -> Tools -> Servers round-trip. Dispatched as a
+            # worker (set_mode is sync); no-op when unarmed.
+            self.run_worker(
+                self._disarm_canvas_delete(),
+                group="mcp-detail-disarm",
+                exclusive=True,
+            )
+
+    async def _disarm_canvas_delete(self) -> None:
+        # Under `_sync_children_lock`: `disarm_delete()` rebuilds the detail
+        # toolbar (awaited remove+mount), which must not interleave with a
+        # concurrently running `_sync_children()` doing the same via
+        # `show_detail()` -- same DuplicateIds hazard the lock exists for.
+        async with self._sync_children_lock:
+            await self.query_one(MCPServersMode).disarm_delete()
 
     def get_view_state(self) -> dict[str, Any]:
         return {
