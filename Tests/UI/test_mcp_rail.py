@@ -8,7 +8,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button, Select
 
 import tldw_chatbook
-from tldw_chatbook.MCP.readiness import ReadinessSnapshot, ReadinessState
+from tldw_chatbook.MCP.readiness import STATE_CSS_CLASSES, ReadinessSnapshot, ReadinessState
 from tldw_chatbook.UI.MCP_Modules.mcp_rail import (
     _MAX_ROW_LABEL,
     MCP_RAIL_ROW_PREFIX,
@@ -268,6 +268,60 @@ async def test_rail_rows_are_left_aligned_with_bundled_css():
         row = app.query_one(f"#{MCP_RAIL_ROW_PREFIX}0", Button)
         assert row.styles.text_align == "left"
         assert row.styles.content_align_horizontal == "left"
+
+
+# -- Task 11: status colors + rail count alignment ---------------------------
+
+
+@pytest.mark.asyncio
+async def test_rail_row_carries_state_css_class_and_swaps_on_resync():
+    app = RailApp()
+    async with app.run_test() as pilot:
+        rail = app.query_one(MCPRail)
+        docs_row = app.query_one(f"#{MCP_RAIL_ROW_PREFIX}2", Button)  # local:docs
+        assert STATE_CSS_CLASSES[ReadinessState.NEEDS_SETUP] in docs_row.classes
+
+        rail.sync_state(
+            source="local",
+            snapshots=[
+                _snap("builtin:tldw_chatbook", "tldw_chatbook (built-in)"),
+                _snap("local:docs", "docs", ReadinessState.NEEDS_ATTENTION),
+            ],
+            selected_server_key=None,
+            scope_options=[("Personal", "personal")],
+            scope_value="personal",
+            scope_ref_options=[],
+            scope_ref_value=None,
+        )
+        await pilot.pause()
+        docs_row = app.query_one(f"#{MCP_RAIL_ROW_PREFIX}2", Button)
+        assert STATE_CSS_CLASSES[ReadinessState.NEEDS_ATTENTION] in docs_row.classes
+        assert STATE_CSS_CLASSES[ReadinessState.NEEDS_SETUP] not in docs_row.classes
+
+
+def test_row_label_right_aligns_tool_count_in_fixed_column():
+    """A4/UX-inputs polish: the tool count sits in a fixed right-side column
+    -- two rows with differently-sized names/counts must both render the
+    same total length, with the count right-justified in the trailing
+    3-char field, so counts line up down the rail regardless of name length.
+    """
+    short = ReadinessSnapshot(
+        server_key="local:a", label="a", source="local",
+        state=ReadinessState.READY, reasons=(), message="", tool_count=3,
+    )
+    long = ReadinessSnapshot(
+        server_key="local:bb", label="a-longer-profile-name", source="local",
+        state=ReadinessState.READY, reasons=(), message="", tool_count=12,
+    )
+    short_label = _row_label(short)
+    long_label = _row_label(long)
+    assert len(short_label) == len(long_label)
+    assert short_label[-3:] == "  3"
+    assert long_label[-3:] == " 12"
+    # No count discovered yet -- the count field renders blank, not "0" or
+    # any other placeholder digit.
+    none_label = _row_label(_snap("local:c", "c", ReadinessState.READY))
+    assert none_label[-3:] == "   "
 
 
 # -- Task 4: one-shot mount-echo guard (A -> B -> A must not be swallowed) --

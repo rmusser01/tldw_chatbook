@@ -214,6 +214,36 @@ def aggregate_summary(snapshots: list[ReadinessSnapshot]) -> str:
     return f"{ready} of {total} servers ready{suffix}."
 
 
+# Task 11: severity order for the overview's aggregate status badge --
+# most-severe-first, same style as REASON_PRIORITY above. States that share
+# a STATE_CSS_CLASSES bucket (NEEDS_SETUP/NO_TOOLS/STALE all map to
+# "mcp-status-warning") don't need a meaningful order relative to each
+# other, only relative to NEEDS_ATTENTION (error) / CHECKING (info) /
+# READY (ready).
+STATE_SEVERITY: tuple[ReadinessState, ...] = (
+    ReadinessState.NEEDS_ATTENTION,
+    ReadinessState.NEEDS_SETUP,
+    ReadinessState.NO_TOOLS,
+    ReadinessState.STALE,
+    ReadinessState.CHECKING,
+    ReadinessState.READY,
+)
+
+
+def worst_state(snapshots: list[ReadinessSnapshot]) -> ReadinessState:
+    """Return the most severe state present across `snapshots`.
+
+    Used to color the overview's aggregate summary badge. An empty list (no
+    servers configured yet) and an all-READY list both resolve to READY --
+    there is nothing to warn about in either case.
+    """
+    present = {snap.state for snap in snapshots}
+    for state in STATE_SEVERITY:
+        if state in present:
+            return state
+    return ReadinessState.READY
+
+
 BUILTIN_SERVER_KEY = "builtin:tldw_chatbook"
 BUILTIN_CLIENT_SNIPPET = (
     '{\n'
@@ -247,6 +277,19 @@ def _snapshot_counts(snapshot: Mapping[str, Any] | None) -> tuple[int | None, in
         len(snapshot.get("resources") or []),
         len(snapshot.get("prompts") or []),
     )
+
+
+# Task 11: human-facing copy for the local-profile Auth column/detail line --
+# "env (N)" read as control-plane shorthand rather than a sentence a user
+# would say out loud; every surface (overview table, rail tooltip, detail
+# body) reads `snapshot.auth_display` so the plural form is derived once
+# here rather than re-humanized ad hoc at each call site.
+def _env_auth_display(placeholder_count: int) -> str:
+    if placeholder_count == 0:
+        return "none"
+    if placeholder_count == 1:
+        return "1 env var"
+    return f"{placeholder_count} env vars"
 
 
 def local_profile_readiness(
@@ -320,7 +363,7 @@ def local_profile_readiness(
         resource_count=resource_count,
         prompt_count=prompt_count,
         transport="stdio",
-        auth_display=f"env ({len(placeholders)})" if placeholders else "none",
+        auth_display=_env_auth_display(len(placeholders)),
         scope_display="Personal",
         is_connected=is_connected,
         detail={

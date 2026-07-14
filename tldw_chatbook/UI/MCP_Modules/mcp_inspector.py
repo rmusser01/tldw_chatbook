@@ -12,7 +12,13 @@ from textual.containers import Vertical, VerticalScroll
 from textual.message import Message
 from textual.widgets import Button, Label, Select, Static, TextArea
 
-from tldw_chatbook.MCP.readiness import REASON_LABELS, HubAction, ReadinessSnapshot, ReadinessState
+from tldw_chatbook.MCP.readiness import (
+    REASON_LABELS,
+    STATE_CSS_CLASSES,
+    HubAction,
+    ReadinessSnapshot,
+    ReadinessState,
+)
 from tldw_chatbook.MCP.redaction import redact_mapping
 from tldw_chatbook.UI.MCP_Modules.unified_mcp_sections import render_unified_mcp_section
 
@@ -232,10 +238,18 @@ class MCPInspector(Vertical):
             message = self.query_one("#mcp-inspector-message", Static)
             actions = self.query_one("#mcp-inspector-actions", Vertical)
             await actions.remove_children()
+            # Task 11: this Static persists across snapshots (unlike the
+            # rail's rows, which are recomposed fresh) -- drop whatever
+            # status class the previous snapshot left behind before
+            # possibly adding the new one, so two selections in a row never
+            # leave a stale color class stacked alongside the current one.
+            for css_class in STATE_CSS_CLASSES.values():
+                state.remove_class(css_class)
             if snapshot is None:
                 state.update("Select a server to see its readiness.")
                 message.update("")
                 return
+            state.add_class(STATE_CSS_CLASSES[snapshot.state])
             state.update(f"{snapshot.badge_text()}  {snapshot.label}")
             # A5: lead with the humanized *reason*, not a repeat of the
             # canvas's own snapshot.message -- the inspector should add

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Checkbox, DataTable, Static
+from textual.widgets import Button, Checkbox, DataTable, Static
 
 from tldw_chatbook.MCP.readiness import (
     HubAction,
@@ -75,8 +75,12 @@ async def test_overview_renders_aggregate_table_and_callouts():
         assert "1 of 2" in str(summary.renderable)
         table = app.query_one("#mcp-servers-table", DataTable)
         assert table.row_count == 2
-        callouts = list(app.query(".ds-recovery-callout"))
+        # Task 11: callouts are actionable one-line Buttons now, not inert
+        # Statics.
+        callouts = list(app.query(".mcp-callout"))
         assert len(callouts) == 1  # one problem row -> one callout
+        assert "web" in str(callouts[0].label)
+        assert "Missing environment variables" in str(callouts[0].label)
 
 
 @pytest.mark.asyncio
@@ -101,6 +105,12 @@ async def test_update_overview_survives_markup_like_labels_and_renders_plain():
     "[red]x[/red]" would inject real styling. Label/auth_display/
     scope_display are user-controlled (local profile ids, server-reported
     names) and must render as literal, unstyled text.
+
+    Task 11: `source="server"` here (rather than the default "local") so
+    the Scope column is still rendered -- Local overviews omit it (see
+    `test_local_source_overview_omits_scope_column_and_uses_env_var_copy`),
+    but this test's whole point is exercising markup-escaping across every
+    column, Scope included.
     """
     app = CanvasApp()
     async with app.run_test() as pilot:
@@ -113,7 +123,8 @@ async def test_update_overview_survives_markup_like_labels_and_renders_plain():
                     auth_display="[red]x[/red]",
                     scope_display="[red]y[/red]",
                 ),
-            ]
+            ],
+            source="server",
         )
         await pilot.pause()
         table = app.query_one("#mcp-servers-table", DataTable)
@@ -188,9 +199,10 @@ async def test_second_update_overview_leaves_only_latest_callouts():
             ]
         )
         await pilot.pause()
-        callouts = list(app.query(".ds-recovery-callout"))
-        texts = [str(c.renderable) for c in callouts]
-        assert texts == ["c: second-c"], texts
+        callouts = list(app.query(".mcp-callout"))
+        texts = [str(c.label) for c in callouts]
+        assert len(texts) == 1
+        assert "second-c" in texts[0], texts
 
 
 @pytest.mark.asyncio
@@ -583,3 +595,181 @@ async def test_hide_form_closes_import_panel_and_restores_overview():
         assert not list(app.query(MCPImportPanel))
         assert app.query_one("#mcp-servers-overview").display
         assert not app.query_one("#mcp-servers-form").display
+
+
+# -- Task 11: breadcrumb navigation + selection restoration ------------------
+
+
+@pytest.mark.asyncio
+async def test_breadcrumb_posts_clear_and_returning_restores_table_cursor():
+    """Task 11: `#mcp-detail-back` posts `ServerRowSelected(None)` (the same
+    "clear the selection" contract the rail's "All servers" row uses), and
+    the canvas's own `show_detail(None)` -- which the workbench calls once
+    it applies that clear -- must put the DataTable cursor back on the row
+    for whichever server was selected before, not reset to row 0.
+    """
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.update_overview(
+            [
+                _snap("local:a", "a"),
+                _snap("local:b", "b"),
+                _snap("local:c", "c"),
+            ]
+        )
+        await pilot.pause()
+        # Select the third row (index 2) via the detail view, the same way
+        # the workbench does after a table row click.
+        await canvas.show_detail(_snap("local:c", "c"))
+        await pilot.pause()
+        assert not app.query_one("#mcp-servers-overview").display
+
+        back_button = app.query_one("#mcp-detail-back", Button)
+        assert back_button.tooltip == "Return to the overview table."
+        back_button.press()
+        await pilot.pause()
+
+        assert app.events, "breadcrumb press should post ServerRowSelected"
+        assert app.events[-1].server_key is None
+
+        # The workbench's `_select_server_key(None)` path re-syncs the
+        # overview and then calls `show_detail(None)` -- simulate that here
+        # since this test drives the canvas directly, without a workbench.
+        await canvas.show_detail(None)
+        await pilot.pause()
+        assert app.query_one("#mcp-servers-overview").display
+        table = app.query_one("#mcp-servers-table", DataTable)
+        assert table.cursor_row == 2
+
+
+@pytest.mark.asyncio
+async def test_returning_to_overview_without_a_prior_selection_leaves_cursor_alone():
+    """No `_last_selected_key` recorded yet (e.g. the breadcrumb-equivalent
+    fires before any row was ever selected) -- `_restore_overview_cursor()`
+    must no-op rather than raise or force a move to row 0.
+    """
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.update_overview([_snap("local:a", "a"), _snap("local:b", "b")])
+        await pilot.pause()
+        await canvas.show_detail(None)  # no prior show_detail(snapshot) call
+        await pilot.pause()
+        assert app.query_one("#mcp-servers-overview").display
+
+
+# -- Task 11: actionable callouts ---------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_callout_click_posts_server_row_selected_with_its_key():
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.update_overview(
+            [
+                _snap("local:docs", "docs"),
+                _snap(
+                    "local:web", "web",
+                    state=ReadinessState.NEEDS_SETUP,
+                    reasons=(ReasonCode.AUTH_MISSING,),
+                    message="Missing environment variables: KEY.",
+                ),
+            ]
+        )
+        await pilot.pause()
+        callout = app.query_one("#mcp-callout-0", Button)
+        assert callout.tooltip == "Open web."
+        callout.press()
+        await pilot.pause()
+        assert app.events and app.events[-1].server_key == "local:web"
+
+
+@pytest.mark.asyncio
+async def test_callouts_cap_at_four_with_overflow_static():
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        problem_snaps = [
+            _snap(
+                f"local:p{i}", f"p{i}",
+                state=ReadinessState.NEEDS_SETUP,
+                reasons=(ReasonCode.AUTH_MISSING,),
+                message=f"problem {i}",
+            )
+            for i in range(6)
+        ]
+        await canvas.update_overview(problem_snaps)
+        await pilot.pause()
+        callouts = list(app.query(".mcp-callout"))
+        assert len(callouts) == 4
+        overflow = list(app.query("#mcp-overview-callouts .ds-recovery-callout"))
+        assert len(overflow) == 1
+        assert "+2 more" in str(overflow[0].renderable)
+        assert "see the table above" in str(overflow[0].renderable)
+
+
+# -- Task 11: per-source columns ----------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_local_source_overview_omits_scope_column_and_shows_env_var_copy():
+    """Local source (built-in + local profiles) has no meaningful Scope --
+    the overview table omits the column there rather than rendering a
+    column of dashes. The Auth column copy for a local profile with one env
+    placeholder is "1 env var" (see readiness.py's `local_profile_readiness`
+    / `_env_auth_display`, which is what actually derives this for real
+    profiles) -- pinned here at the table-rendering layer.
+    """
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.update_overview(
+            [_snap("local:docs", "docs", auth_display="1 env var")],
+            source="local",
+        )
+        await pilot.pause()
+        table = app.query_one("#mcp-servers-table", DataTable)
+        columns = [str(col.label) for col in table.ordered_columns]
+        assert columns == ["Name", "Transport", "Status", "Tools", "Auth"]
+        row0 = table.get_row_at(0)
+        assert len(row0) == 5
+        assert str(row0[4]) == "1 env var"
+
+
+@pytest.mark.asyncio
+async def test_server_source_overview_keeps_scope_column():
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.update_overview(
+            [_snap("server:main", "main", scope_display="Team")],
+            source="server",
+        )
+        await pilot.pause()
+        table = app.query_one("#mcp-servers-table", DataTable)
+        columns = [str(col.label) for col in table.ordered_columns]
+        assert columns == ["Name", "Transport", "Status", "Tools", "Auth", "Scope"]
+        row0 = table.get_row_at(0)
+        assert len(row0) == 6
+        assert str(row0[5]) == "Team"
+
+
+@pytest.mark.asyncio
+async def test_switching_source_between_calls_rebuilds_columns():
+    """Columns are rebuilt from scratch on every `update_overview()` call --
+    a source switch (server -> local, the rail's actual round trip) must
+    not leave a stale Scope column from the previous call's source behind.
+    """
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.update_overview([_snap("server:main", "main")], source="server")
+        await pilot.pause()
+        table = app.query_one("#mcp-servers-table", DataTable)
+        assert len(table.ordered_columns) == 6
+
+        await canvas.update_overview([_snap("local:docs", "docs")], source="local")
+        await pilot.pause()
+        assert len(table.ordered_columns) == 5

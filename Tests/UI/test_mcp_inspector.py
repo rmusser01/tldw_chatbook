@@ -11,6 +11,7 @@ from textual.widgets import Button, Select, Static, TextArea
 import tldw_chatbook
 from tldw_chatbook.MCP.readiness import (
     REASON_LABELS,
+    STATE_CSS_CLASSES,
     HubAction,
     ReadinessSnapshot,
     ReadinessState,
@@ -119,6 +120,29 @@ async def test_readiness_block_shows_state_message_and_action_buttons():
         server_connect = app.query_one("#mcp-inspector-action-connect", Button)
         assert server_connect.disabled
         assert "server" in (server_connect.tooltip or "").lower()
+
+
+# -- Task 11: status color class on the readiness badge ----------------------
+
+
+@pytest.mark.asyncio
+async def test_readiness_badge_carries_and_swaps_state_css_class():
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.update_readiness(_stale_snap())
+        await pilot.pause()
+        badge = app.query_one("#mcp-inspector-state", Static)
+        assert STATE_CSS_CLASSES[ReadinessState.STALE] in badge.classes
+
+        await inspector.update_readiness(_ready_snap())
+        await pilot.pause()
+        assert STATE_CSS_CLASSES[ReadinessState.READY] in badge.classes
+        assert STATE_CSS_CLASSES[ReadinessState.STALE] not in badge.classes
+
+        await inspector.update_readiness(None)
+        await pilot.pause()
+        assert STATE_CSS_CLASSES[ReadinessState.READY] not in badge.classes
 
 
 # -- A2: disabled action buttons must stay legible ---------------------------

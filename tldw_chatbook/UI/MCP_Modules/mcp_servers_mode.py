@@ -13,11 +13,14 @@ from textual.widget import Widget
 from textual.widgets import Button, Checkbox, DataTable, Static
 
 from tldw_chatbook.MCP.readiness import (
+    STATE_CSS_CLASSES,
+    STATE_GLYPHS,
     HubAction,
     ReadinessSnapshot,
     ReadinessState,
     aggregate_summary,
     env_placeholder_names,
+    worst_state,
 )
 from tldw_chatbook.MCP.redaction import redact_args, redact_url
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
@@ -27,6 +30,15 @@ from tldw_chatbook.UI.MCP_Modules.mcp_server_mutations import MCPServerMutations
 _MUTATIONS_GATED_TOOLTIP = "Requires team, org, or system-admin scope."
 
 _TABLE_COLUMNS = ("Name", "Transport", "Status", "Tools", "Auth", "Scope")
+# Task 11: the Local source never has a meaningful Scope (built-in is
+# stdio-only; local profiles are always "Personal") -- the overview table
+# omits the column entirely there instead of rendering a column of dashes.
+_TABLE_COLUMNS_NO_SCOPE = _TABLE_COLUMNS[:-1]
+
+# Task 11: at most this many actionable recovery callouts render below the
+# table -- beyond that, a single "+N more" Static points back at the table
+# rather than growing the callout list without bound.
+_CALLOUT_CAP = 4
 
 # Task 10: the built-in detail view's Checkbox ids -> the `[mcp]` config key
 # (and `BuiltinFlagChanged.key`) each one edits.
@@ -59,10 +71,23 @@ class MCPServersMode(Vertical):
         height: auto;
         min-height: 0;
     }
+    #mcp-detail-header {
+        height: auto;
+        min-height: 1;
+    }
+    #mcp-detail-header #mcp-detail-title {
+        width: 1fr;
+    }
     """
 
     class ServerRowSelected(Message, namespace="mcp_servers_mode"):
-        def __init__(self, server_key: str) -> None:
+        """Posted on a table row click, a callout click, or the detail
+        breadcrumb (Task 11). `server_key=None` means "clear the
+        selection" -- the workbench's `_select_server_key()` already
+        treats a `None` key that way (same path `MCPRail.ServerSelected`
+        uses for its "All servers" row)."""
+
+        def __init__(self, server_key: str | None) -> None:
             super().__init__()
             self.server_key = server_key
 
@@ -132,6 +157,17 @@ class MCPServersMode(Vertical):
         self._source: str = "local"
         self._mutations_available: bool = False
         self._mutation_target_label: str | None = None
+        # Task 11: the last server_key a non-None `show_detail()` call
+        # rendered -- `_restore_overview_cursor()` uses it to put the
+        # DataTable cursor back on that row when the user returns to the
+        # overview (breadcrumb, or any other path that clears the
+        # selection), instead of resetting to the top of the table.
+        self._last_selected_key: str | None = None
+        # Task 11: row_key of each currently-mounted callout Button, indexed
+        # by the numeric suffix of its `mcp-callout-{index}` id -- lets
+        # `on_button_pressed` translate a callout click back to the
+        # server_key to select.
+        self._callout_keys: list[str] = []
 
     def compose(self) -> ComposeResult:
         with Vertical(id="mcp-servers-overview"):
@@ -156,7 +192,17 @@ class MCPServersMode(Vertical):
             yield table
             yield Vertical(id="mcp-overview-callouts")
         with Vertical(id="mcp-servers-detail"):
-            yield Static("", id="mcp-detail-title", classes="destination-section", markup=False)
+            with Horizontal(id="mcp-detail-header", classes="ds-toolbar"):
+                yield Button(
+                    "← All servers",
+                    id="mcp-detail-back",
+                    classes="console-action-subdued",
+                    compact=True,
+                    tooltip="Return to the overview table.",
+                )
+                yield Static(
+                    "", id="mcp-detail-title", classes="destination-section", markup=False
+                )
             yield Horizontal(id="mcp-detail-toolbar", classes="ds-toolbar")
             with VerticalScroll(id="mcp-detail-scroll"):
                 yield Static("", id="mcp-detail-body", classes="ds-field-row", markup=False)
@@ -311,8 +357,26 @@ class MCPServersMode(Vertical):
         self._snapshots = list(snapshots)
         summary = self.query_one("#mcp-overview-summary", Static)
         summary.update(aggregate_summary(self._snapshots))
+        # Task 11: the aggregate badge additionally carries the CSS class
+        # for the WORST state present (READY -- no extra class beyond the
+        # base ds-status-badge look -- when every server is ready, or when
+        # there are none at all). This Static persists across calls (it is
+        # never removed/remounted), so the previous call's class must be
+        # dropped before possibly adding a different one.
+        for css_class in STATE_CSS_CLASSES.values():
+            summary.remove_class(css_class)
+        summary.add_class(STATE_CSS_CLASSES[worst_state(self._snapshots)])
         table = self.query_one("#mcp-servers-table", DataTable)
-        table.clear()
+        # Task 11: per-source columns -- Local (built-in + local profiles)
+        # has no meaningful Scope (stdio-only / always "Personal"), so the
+        # column is omitted there rather than rendering a column of dashes.
+        # Columns are rebuilt from scratch every call (not just when the
+        # set actually changes) -- simpler than tracking the previously
+        # rendered column set, and this only runs on an actual overview
+        # resync, not per keystroke.
+        show_scope = source != "local"
+        table.clear(columns=True)
+        table.add_columns(*(_TABLE_COLUMNS if show_scope else _TABLE_COLUMNS_NO_SCOPE))
         seen_keys: set[str] = set()
         self._row_key_to_server_key = {}
         for snap in self._snapshots:
@@ -335,31 +399,57 @@ class MCPServersMode(Vertical):
             # not a real server_key -- remember the canonical key so
             # `on_data_table_row_selected()` can translate it back.
             self._row_key_to_server_key[row_key] = snap.server_key
-            table.add_row(
-                # label/auth_display/scope_display are user-controlled
-                # (local profile ids, server-reported names) and DataTable
-                # parses plain str cells as Rich markup -- wrap in Text so a
-                # value like "[/bold]docs" can't crash the app
-                # (MarkupError) and "[red]x[/red]" can't inject styling.
+            # label/auth_display/scope_display are user-controlled (local
+            # profile ids, server-reported names) and DataTable parses
+            # plain str cells as Rich markup -- wrap in Text so a value like
+            # "[/bold]docs" can't crash the app (MarkupError) and
+            # "[red]x[/red]" can't inject styling. Status cells stay plain
+            # (theme-token colors aren't addressable per-cell in a
+            # DataTable -- Task 11 documented decision; the rail row and
+            # inspector badge carry the status color instead).
+            row_cells: list[Any] = [
                 Text(snap.label),
                 snap.transport,
                 snap.badge_text(),
                 "—" if snap.tool_count is None else str(snap.tool_count),
                 Text(snap.auth_display),
-                Text(snap.scope_display),
-                key=row_key,
-            )
+            ]
+            if show_scope:
+                row_cells.append(Text(snap.scope_display))
+            table.add_row(*row_cells, key=row_key)
         callouts = self.query_one("#mcp-overview-callouts", Vertical)
         await callouts.remove_children()
-        callout_widgets = [
-            Static(
-                f"{snap.label}: {snap.message}",
-                classes="ds-recovery-callout",
-                markup=False,
-            )
+        # Task 11: callouts are now actionable one-line Buttons (posting
+        # ServerRowSelected straight to the problem row) instead of inert
+        # Statics -- capped at _CALLOUT_CAP with a final "+N more" Static
+        # pointing back at the table so a source with many problem servers
+        # doesn't grow the callout list without bound.
+        problem_snapshots = [
+            snap
             for snap in self._snapshots
             if snap.state not in (ReadinessState.READY, ReadinessState.CHECKING)
         ]
+        visible = problem_snapshots[:_CALLOUT_CAP]
+        overflow = len(problem_snapshots) - len(visible)
+        self._callout_keys = [snap.server_key for snap in visible]
+        callout_widgets: list[Widget] = [
+            Button(
+                escape_markup(f"{STATE_GLYPHS[snap.state]} {snap.label}: {snap.message}"),
+                id=f"mcp-callout-{index}",
+                classes="mcp-callout console-action-subdued",
+                compact=True,
+                tooltip=f"Open {escape_markup(snap.label)}.",
+            )
+            for index, snap in enumerate(visible)
+        ]
+        if overflow > 0:
+            callout_widgets.append(
+                Static(
+                    f"+{overflow} more — see the table above.",
+                    classes="ds-recovery-callout",
+                    markup=False,
+                )
+            )
         if callout_widgets:
             await callouts.mount_all(callout_widgets)
         if self._detail_snapshot is None:
@@ -377,7 +467,14 @@ class MCPServersMode(Vertical):
             self._show_overview_container(True)
             await self._rebuild_builtin_toggles()
             await self._rebuild_detail_toolbar()
+            # Task 11: selection restoration -- returning to the overview
+            # (breadcrumb, or any other path that clears the selection)
+            # moves the DataTable cursor back to the row for the
+            # last-selected server so keyboard users resume where they
+            # left instead of landing back at the top of the table.
+            self._restore_overview_cursor()
             return
+        self._last_selected_key = snapshot.server_key
         self._show_overview_container(False)
         self.query_one("#mcp-detail-title", Static).update(
             f"{snapshot.badge_text()}  {snapshot.label}"
@@ -390,6 +487,28 @@ class MCPServersMode(Vertical):
         )
         await self._rebuild_builtin_toggles()
         await self._rebuild_detail_toolbar()
+
+    def _restore_overview_cursor(self) -> None:
+        """Move the overview DataTable's cursor onto `_last_selected_key`'s
+        row, if it still has one.
+
+        Called from `show_detail(None)` -- i.e. every path that returns to
+        the overview (breadcrumb click, `ServerRowSelected(None)` from a
+        callout-cleared parent, etc). `self._snapshots` is already the
+        table's current row order (each snapshot produces exactly one row,
+        in order -- the dedupe suffix in `update_overview()` only changes a
+        row's *key*, never its position), so a plain index lookup is
+        enough; no separate row-order bookkeeping needed. A key that no
+        longer has a row (e.g. the server was deleted) leaves the cursor
+        wherever it already was.
+        """
+        if self._last_selected_key is None:
+            return
+        table = self.query_one("#mcp-servers-table", DataTable)
+        for index, snap in enumerate(self._snapshots):
+            if snap.server_key == self._last_selected_key:
+                table.move_cursor(row=index)
+                return
 
     def _detail_toolbar_widgets(self) -> list[Button]:
         """Build the local-profile toolbar (Edit/Disconnect/Delete), or the
@@ -644,6 +763,22 @@ class MCPServersMode(Vertical):
         if button_id == "mcp-import-server":
             event.stop()
             self.post_message(self.ImportServersRequested())
+            return
+        if button_id == "mcp-detail-back":
+            # Task 11: breadcrumb -- reuses ServerRowSelected(None), the
+            # same "clear the selection" path the rail's "All servers" row
+            # drives via MCPRail.ServerSelected(None).
+            event.stop()
+            self.post_message(self.ServerRowSelected(None))
+            return
+        if button_id.startswith("mcp-callout-"):
+            # Task 11: actionable callout -- jump straight to the problem
+            # server's detail view, same destination a table-row click for
+            # that server would reach.
+            event.stop()
+            index = int(button_id.removeprefix("mcp-callout-"))
+            if 0 <= index < len(self._callout_keys):
+                self.post_message(self.ServerRowSelected(self._callout_keys[index]))
             return
         if button_id == "mcp-detail-copy-snippet":
             event.stop()

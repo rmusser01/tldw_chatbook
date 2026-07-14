@@ -10,7 +10,7 @@ from textual.containers import Vertical
 from textual.message import Message
 from textual.widgets import Button, Label, Select, Static
 
-from tldw_chatbook.MCP.readiness import STATE_GLYPHS, ReadinessSnapshot
+from tldw_chatbook.MCP.readiness import STATE_CSS_CLASSES, STATE_GLYPHS, ReadinessSnapshot
 
 # Task 4: one-shot mount-echo consumption sentinel. `on_select_changed`'s
 # scope/scope-ref guards compare an incoming Select.Changed value against the
@@ -48,8 +48,14 @@ def _row_label(snapshot: ReadinessSnapshot) -> str:
         label = f"{label[: _MAX_ROW_LABEL - 3].rstrip()}..."
     label = escape_markup(label)
     prefix = "⌂ " if snapshot.source == "builtin" else ""
-    suffix = f" · {snapshot.tool_count}" if snapshot.tool_count is not None else ""
-    return f"{STATE_GLYPHS[snapshot.state]} {prefix}{label}{suffix}"
+    # Task 11 (UX-inputs polish): the tool count sits in a fixed right-side
+    # column instead of trailing the label at a variable offset -- the name
+    # is left-justified to the same truncation budget every row uses, and
+    # the count is right-aligned in a fixed 3-char field (blank, not "0",
+    # when no count has ever been discovered) so counts form one scannable
+    # column down the rail instead of drifting with label length.
+    count = "" if snapshot.tool_count is None else str(snapshot.tool_count)
+    return f"{STATE_GLYPHS[snapshot.state]} {prefix}{label:<{_MAX_ROW_LABEL}} {count:>3}"
 
 
 class MCPRail(Vertical):
@@ -165,10 +171,15 @@ class MCPRail(Vertical):
         all_row.set_class(self.selected_server_key is None, "is-active")
         yield all_row
         for index, snap in enumerate(self.snapshots, start=1):
+            # Task 11: each row carries its readiness state's CSS class
+            # (STATE_CSS_CLASSES, Task 3) so it can be colored by status --
+            # constructed fresh on every compose() (sync_state() always
+            # recomposes), so there is no stale class from a prior render to
+            # remove first.
             row = Button(
                 _row_label(snap),
                 id=f"{MCP_RAIL_ROW_PREFIX}{index}",
-                classes="mcp-rail-row console-action-subdued",
+                classes=f"mcp-rail-row console-action-subdued {STATE_CSS_CLASSES[snap.state]}",
                 compact=True,
             )
             row.tooltip = escape_markup(snap.message or snap.label)

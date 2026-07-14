@@ -3,6 +3,7 @@ from __future__ import annotations
 from tldw_chatbook.MCP.readiness import (
     BUILTIN_SERVER_KEY,
     HubAction,
+    ReadinessSnapshot,
     ReadinessState,
     ReasonCode,
     builtin_readiness,
@@ -10,6 +11,7 @@ from tldw_chatbook.MCP.readiness import (
     local_profile_readiness,
     server_external_record_readiness,
     server_target_readiness,
+    worst_state,
 )
 
 
@@ -233,3 +235,54 @@ def test_auth_missing_outranks_runtime_error():
     record["runtime_state"] = {"ok": False, "last_error": "boom"}
     snap = local_profile_readiness(record, environ={})
     assert snap.primary_reason is ReasonCode.AUTH_MISSING
+
+
+# -- Task 11: per-source Auth column copy ------------------------------------
+
+
+def test_local_profile_auth_display_singular_for_one_env_var():
+    record = _local_record(env_placeholders={"API_KEY": "$X"})
+    snap = local_profile_readiness(record, environ={"X": "1"})
+    assert snap.auth_display == "1 env var"
+
+
+def test_local_profile_auth_display_plural_for_multiple_env_vars():
+    record = _local_record(
+        env_placeholders={"API_KEY": "$X", "OTHER": "$Y"}
+    )
+    snap = local_profile_readiness(record, environ={"X": "1", "Y": "2"})
+    assert snap.auth_display == "2 env vars"
+
+
+def test_local_profile_auth_display_none_for_no_env_vars():
+    snap = local_profile_readiness(_local_record(), environ={})
+    assert snap.auth_display == "none"
+
+
+# -- Task 11: worst_state() for the aggregate status badge -------------------
+
+
+def _raw_snap(state: ReadinessState) -> ReadinessSnapshot:
+    return ReadinessSnapshot(
+        server_key="k", label="k", source="local", state=state, reasons=(), message=""
+    )
+
+
+def test_worst_state_empty_or_all_ready_is_ready():
+    assert worst_state([]) is ReadinessState.READY
+    assert worst_state([_raw_snap(ReadinessState.READY)]) is ReadinessState.READY
+
+
+def test_worst_state_prioritizes_needs_attention_over_everything_else():
+    snaps = [
+        _raw_snap(ReadinessState.READY),
+        _raw_snap(ReadinessState.STALE),
+        _raw_snap(ReadinessState.CHECKING),
+        _raw_snap(ReadinessState.NEEDS_ATTENTION),
+    ]
+    assert worst_state(snaps) is ReadinessState.NEEDS_ATTENTION
+
+
+def test_worst_state_checking_outranks_ready_only():
+    snaps = [_raw_snap(ReadinessState.READY), _raw_snap(ReadinessState.CHECKING)]
+    assert worst_state(snaps) is ReadinessState.CHECKING
