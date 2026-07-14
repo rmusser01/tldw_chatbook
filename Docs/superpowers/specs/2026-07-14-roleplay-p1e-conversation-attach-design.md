@@ -1,6 +1,6 @@
 # Roleplay P1e — dictionary conversation-attach (design)
 
-**Status:** Design approved (brainstorm), pending spec review.
+**Status:** Implemented (P1e).
 **Program:** Personas→Roleplay redesign. P0 #619, P1a #622, P1b #625, P1c #627, P1d #630 MERGED (Dictionaries mode otherwise feature-complete). This slice = **conversation-attach core**; character-level attachment + cross-mode "What's in play" were decomposed to **P1f** (net-new data model + a chat_events runtime change — its own cycle).
 **Worktree/branch:** `.claude/worktrees/personas-redesign`, `claude/roleplay-p1e-attachments` off dev `b7bc52e4`.
 
