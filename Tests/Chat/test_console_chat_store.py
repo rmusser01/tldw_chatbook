@@ -1287,3 +1287,69 @@ def test_legacy_set_pending_attachment_replaces_all():
     store.set_pending_attachment(session.id, _pending("only.png"))
     names = [p.display_name for p in store.pending_attachments(session.id)]
     assert names == ["only.png"]
+
+
+# RecordingPersistence is defined in a pre-existing (origin/dev) region of
+# this file, so it is subclassed here rather than edited. Its **kwargs-based
+# create_message/update_message_content already record every kwarg the store
+# sends, including the new ``attachments`` parameter.
+class RecordingAttachmentPersistence(RecordingPersistence):
+    pass  # create_message / update_message_content already record kwargs
+
+
+def test_persist_new_message_sends_full_attachment_list():
+    persistence = RecordingAttachmentPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="multi",
+        attachments=(
+            _att("a.png", b"img-0"),
+            _att("b.png", b"img-1"),
+        ),
+        persist=True,
+    )
+    sent = persistence.created[-1]["attachments"]
+    assert [a["position"] for a in sent] == [0, 1]
+    assert sent[0]["data"] == b"img-0"
+    assert sent[1]["display_name"] == "b.png"
+    # The service derives the legacy image columns from position 0, so the
+    # scalar image kwargs are dropped when the attachments list is sent.
+    assert "image_data" not in persistence.created[-1]
+    assert "image_mime_type" not in persistence.created[-1]
+
+
+def test_persist_new_message_sends_data_bearing_attachments_only():
+    persistence = RecordingAttachmentPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="multi",
+        attachments=(
+            _att("a.png", b"img-0"),
+            _att("hollow.png", None),
+            _att("c.png", b"img-2"),
+        ),
+        persist=True,
+    )
+    sent = persistence.created[-1]["attachments"]
+    # The hollow (data=None) attachment is skipped; surviving entries keep
+    # their re-based positions rather than being compacted.
+    assert [a["position"] for a in sent] == [0, 2]
+    assert [a["display_name"] for a in sent] == ["a.png", "c.png"]
+
+
+def test_persist_edit_leaves_attachments_none():
+    persistence = RecordingAttachmentPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="x",
+        attachments=(_att("a.png", b"img"),), persist=True,
+    )
+    store.update_message_content(message.id, "edited")
+    assert persistence.updated[-1]["attachments"] is None

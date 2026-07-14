@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping, Protocol, Sequence
@@ -58,8 +59,15 @@ class ConsoleChatPersistence(Protocol):
         message_id: str | None = None,
         parent_message_id: str | None = None,
         feedback: str | None = None,
+        attachments: Sequence[Mapping[str, Any]] | None = None,
     ) -> str:
-        """Create a persisted message and return its ID."""
+        """Create a persisted message and return its ID.
+
+        ``attachments``, when given, covers ALL positions (0..N-1) and is
+        authoritative over the scalar ``image_data``/``image_mime_type``
+        kwargs; ``None`` leaves the pre-split legacy behavior unchanged.
+        Optional: fakes used in tests may omit this parameter entirely.
+        """
 
     def update_message_content(
         self,
@@ -72,8 +80,15 @@ class ConsoleChatPersistence(Protocol):
         feedback: str | None = None,
         update_parent: bool = False,
         update_feedback: bool = False,
+        attachments: Sequence[Mapping[str, Any]] | None = None,
     ) -> bool:
-        """Update persisted message content."""
+        """Update persisted message content.
+
+        ``attachments`` follows the same split-addressing contract as
+        ``create_message``; ``None`` (the Console store's edit path always
+        passes this) leaves attachments untouched. Optional: fakes used in
+        tests may omit this parameter entirely.
+        """
 
     def update_conversation_system_prompt(
         self,
@@ -82,6 +97,16 @@ class ConsoleChatPersistence(Protocol):
         system_prompt: str | None,
     ) -> bool:
         """Persist a changed system prompt for an already-saved conversation."""
+
+    def get_attachments_for_messages(
+        self, message_ids: Sequence[str]
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Batch-fetch extra (position >= 1) attachments for messages.
+
+        Optional: not all persistence fakes implement this. Callers should
+        probe with ``getattr(persistence, "get_attachments_for_messages", None)``
+        before invoking it (see Task 5).
+        """
 
 
 class ConsoleChatSyncProducer(Protocol):
@@ -902,22 +927,67 @@ class ConsoleChatStore:
             return
         self._persist_new_message(session_id=session_id, message=message)
 
+    @staticmethod
+    def _persistence_accepts_kwarg(func: Any, name: str) -> bool:
+        """Return True when ``func`` can be called with keyword ``name``.
+
+        The ``attachments`` parameter was added to
+        :class:`ConsoleChatPersistence` after several persistence fakes were
+        already written in tests; those fakes are entitled to omit it (see
+        the Protocol docstrings above). Probing the declared signature lets
+        the two persist methods below pass ``attachments`` only to
+        implementations that actually declare it (or accept ``**kwargs``),
+        instead of raising ``TypeError`` against older/narrower fakes.
+        """
+        try:
+            parameters = inspect.signature(func).parameters
+        except (TypeError, ValueError):
+            return True
+        if name in parameters:
+            return True
+        return any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
+
     def _persist_new_message(self, *, session_id: str, message: ConsoleChatMessage) -> None:
         if self.persistence is None:
             return
         conversation_id = self.persist_session_if_needed(session_id)
         if conversation_id is None:
             return
-        message.persisted_message_id = self.persistence.create_message(
+        create_kwargs: dict[str, Any] = dict(
             conversation_id=conversation_id,
             sender=message.role.value,
             content=message.content,
-            image_data=message.image_data,
-            image_mime_type=message.image_mime_type,
             message_id=None,
             parent_message_id=None,
             feedback=message.feedback,
         )
+        # Only engage split addressing when there is something beyond the
+        # legacy position-0 slot to address -- a lone image (whether staged
+        # via scalar kwargs or a single-item attachments tuple) keeps using
+        # the scalar image_data/image_mime_type kwargs exactly as before.
+        attachments_payload = None
+        if len(message.attachments) > 1:
+            attachments_payload = [
+                {
+                    "position": attachment.position,
+                    "data": attachment.data,
+                    "mime_type": attachment.mime_type,
+                    "display_name": attachment.display_name,
+                }
+                for attachment in message.attachments
+                if attachment.data is not None
+            ]
+        if attachments_payload and self._persistence_accepts_kwarg(
+            self.persistence.create_message, "attachments"
+        ):
+            create_kwargs["attachments"] = attachments_payload
+        else:
+            create_kwargs["image_data"] = message.image_data
+            create_kwargs["image_mime_type"] = message.image_mime_type
+        message.persisted_message_id = self.persistence.create_message(**create_kwargs)
         self._pending_persistence_message_ids.discard(message.id)
         self._enqueue_sync_v2_message_if_ready(message)
 
@@ -932,7 +1002,7 @@ class ConsoleChatStore:
         if message.persisted_message_id is None:
             self._persist_pending_message_if_ready(message)
             return
-        self.persistence.update_message_content(
+        update_kwargs: dict[str, Any] = dict(
             message_id=message.persisted_message_id,
             content=message.content,
             image_data=message.image_data,
@@ -942,6 +1012,16 @@ class ConsoleChatStore:
             update_parent=False,
             update_feedback=update_feedback,
         )
+        # Edits never change attachments -- the scalar image kwargs above
+        # continue to carry the #0 mirror (pre-existing preserve semantics).
+        # attachments=None is sent whenever the implementation supports the
+        # kwarg, telling split-addressed backends to leave the attachments
+        # table alone.
+        if self._persistence_accepts_kwarg(
+            self.persistence.update_message_content, "attachments"
+        ):
+            update_kwargs["attachments"] = None
+        self.persistence.update_message_content(**update_kwargs)
         self._enqueue_sync_v2_message_if_ready(message)
 
     def _persist_pending_message_if_ready(self, message: ConsoleChatMessage) -> None:
