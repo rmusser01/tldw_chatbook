@@ -174,7 +174,13 @@ class LoopDeps:
 
     call_model: Callable[[list, tuple], ModelTurn]
     invoke_tool: Callable[..., ToolResult]
-    spawn: Callable[[str], ToolResult]
+    # Callable[..., ...] (not Callable[[str], ...]): the loop itself only
+    # ever calls spawn(task) positionally, but the real implementation
+    # (agent_service._run_one's spawn closure) also accepts a keyword-only
+    # `allowed_tools` override, used by the skill-tool dispatch path
+    # (SkillRunner.run) to narrow a spawned child's allow-list. The loop
+    # never passes it and never needs to.
+    spawn: Callable[..., ToolResult]
     find_tools: Callable[[str], list]
     load_schemas: Callable[[list], list]
     should_cancel: Callable[[], bool]

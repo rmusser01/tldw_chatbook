@@ -208,8 +208,27 @@ class AgentService:
                 disclosed_names.add(schema.name)
             return accepted
 
+        sub_agent_spawns = 0
+
         def spawn(spawn_task: str, *,
                   allowed_tools: tuple[str, ...] | None = None) -> ToolResult:
+            nonlocal sub_agent_spawns
+            # Task-12 review Finding 2: this closure is THE single spawn
+            # path -- the loop calls it directly for the native
+            # spawn_subagent tool (agent_runtime.py), and invoke_tool's
+            # skill branch below calls it via skill_runner.run. Gating and
+            # incrementing the shared counter HERE, before any child run is
+            # created, enforces one combined sub-agent ceiling across both
+            # paths regardless of call order. (Previously each path checked
+            # its own independent counter -- the loop's own `spawned` and
+            # this service's now-removed `skill_spawns` -- so an operator
+            # ceiling of 1 could permit 2 sub-agent runs.) The loop's own
+            # counter stays untouched as a redundant secondary bound that
+            # is never reached first.
+            if sub_agent_spawns >= config.budget.max_subagents:
+                return ToolResult(
+                    ok=False, error="sub-agent budget exhausted")
+            sub_agent_spawns += 1
             remaining = config.budget.max_wall_seconds - (
                 self.clock() - started)
             # Q6/Task-12: an explicit override (a skill's own narrowed,
@@ -249,31 +268,36 @@ class AgentService:
         # path (SkillToolProvider.invoke raises by design -- Task 11 traced
         # that pre-wiring path as a loud full-run abort). Instead it routes
         # through skill_runner.run, which renders the skill and calls THIS
-        # run's spawn -- so it is budget-counted, cancellable, and
-        # DB-lineage-tracked exactly like a spawn_subagent call, just with
-        # its own independent counter (skill_spawns) rather than the loop's
-        # own spawn_subagent counter (documented v1 simplification: both
-        # are bounded and depth-1, but not shared).
+        # run's spawn -- so it is budget-counted (via spawn's own shared
+        # sub_agent_spawns counter -- see Finding 2 above), cancellable, and
+        # DB-lineage-tracked exactly like a spawn_subagent call.
         builtin_invoke_tool = self._make_invoke_tool(config, disclosed_names)
-        skill_spawns = 0
 
         def invoke_tool(call: ToolCall) -> ToolResult:
-            nonlocal skill_spawns
             if (self.skill_runner is not None
                     and self.skill_runner.is_skill_tool(call.name)):
-                # Mirrors the SPAWN_TOOL_NAME gate (Q6 above): allowed_tools
-                # is the authoritative permission boundary for a skill
-                # tool -- the bridge computes it fresh per run from
-                # trusted + model-invocable skills, so it is already the
-                # backstop the catalog's disclosed_names check exists for
-                # ordinary catalog tools.
-                if call.name not in config.allowed_tools:
+                # Task-12 review Finding 1: a skill tool must pass the SAME
+                # two-part gate as an ordinary catalog tool (mirrors
+                # _make_invoke_tool above) -- allowed_tools is the
+                # permission boundary, but disclosed_names (seeded by
+                # initial disclosure and grown only via load_tools, exactly
+                # like a builtin) is the other half. Checking allowed_tools
+                # alone let an undisclosed skill name execute the instant
+                # the model guessed it, even behind a >8-tool catalog where
+                # progressive disclosure is supposed to gate exactly this.
+                if (call.name not in config.allowed_tools
+                        or call.name not in disclosed_names):
                     return ToolResult(
                         ok=False, error=f"Tool not permitted: {call.name}")
-                if skill_spawns >= config.budget.max_subagents:
+                # Cheap early exit before rendering the skill: the
+                # authoritative check-and-increment lives in `spawn` itself
+                # (shared with the native spawn_subagent path), so the
+                # combined ceiling holds regardless of call order even
+                # without this line -- it only saves an unnecessary
+                # render/trust round-trip once the shared budget is spent.
+                if sub_agent_spawns >= config.budget.max_subagents:
                     return ToolResult(
                         ok=False, error="sub-agent budget exhausted")
-                skill_spawns += 1
                 return self.skill_runner.run(
                     call.name, str(call.args.get("args", "")), spawn)
             return builtin_invoke_tool(call)
