@@ -14,14 +14,20 @@ inputs for the Phase 2 spec/plan, not yet backlog tasks.
    occupies most of the inspector at all times, and its section dumps can
    describe a different object than the selected server (e.g. built-in inventory
    shown while docs-server is selected) — two objects' facts in one pane with no
-   boundary. Default collapsed ("▸ Advanced"), remember open state, and label
-   the object its content describes. Phase 2's structured forms shrink its role.
+   boundary. Default collapsed ("▸ Advanced"); remember the open/collapsed
+   state per user globally (Console rail section-preference precedent), NOT per
+   server; rebind or reset the section content whenever the selection changes
+   so reopening never shows a previous object's facts; and label the object the
+   content describes. Phase 2's structured forms shrink its role.
 
 2. **Canvas vertical field is wasted; master-detail loses the master.** Overview
    content occupies the top quarter; the detail view replaces the table entirely
-   with no path back except knowing "All servers" in the rail. Add a breadcrumb
-   ("← All servers") or keep a slim table above the detail. Let the table grow
-   into available height.
+   with no path back except knowing "All servers" in the rail. Candidate
+   patterns: a breadcrumb ("← All servers") or a slim persistent table above the
+   detail — the Phase 2 spec must pick ONE and define focus/selection
+   restoration for it (returning to the overview restores the previously
+   selected row for both keyboard and pointer users). Let the table grow into
+   available height.
 
 3. **Recovery callouts: compact + actionable.** Three separately-bordered
    three-row boxes for three one-line facts, none actionable. Target: one-line
@@ -56,9 +62,16 @@ inputs for the Phase 2 spec/plan, not yet backlog tasks.
 ## Engineering watch-items already recorded for Phase 2 (from reviews)
 
 - Rail mount-echo guard must become one-shot-consume before real multi-option
-  scopes land (A→B→A change would be swallowed as an echo today).
+  scopes land. Acceptance criterion: a user sequence scope A→B→A (no
+  intervening recompose) dispatches THREE `ScopeChanged` messages (the second
+  A must not be swallowed as an echo), while mount-time constructor-value
+  `Changed` events still dispatch zero. Extend
+  `Tests/UI/test_mcp_rail.py`'s echo-suppression tests.
 - `asyncio.Lock` hardening around the inspector's remove→mount window
-  (worker-vs-pump interleave).
+  (worker-vs-pump interleave). Acceptance criterion: a worker-driven
+  `reload()` interleaved with a pump-driven selection change never raises
+  `DuplicateIds` and the inspector ends on the last-written snapshot's
+  buttons exactly once.
 - Textual 8.2.7 gotchas now proven on this surface: `Select` posts `Changed`
   for its constructor value at mount; `Select.BLANK` is not a real API; Message
   classes in MCP-acronym widgets need explicit `namespace=`; round borders need
