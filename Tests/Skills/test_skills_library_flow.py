@@ -351,6 +351,84 @@ async def test_trust_panel_review_then_approve_moves_skill_to_available(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_skill_editor_canvas_scrolls_trust_panel_into_view(tmp_path):
+    """Gate fix wave FIX 1: at the recipe's default terminal size the
+    editor's lower content (Trust panel, Save/Delete) sits below the fold.
+    Before the fix, ``LibrarySkillsListCanvas`` was a plain ``Vertical``
+    (clips overflow, no scrollbar, no mouse-wheel/keyboard scroll); the fix
+    makes it a real ``VerticalScroll`` (the same house pattern already used
+    by ``LibraryExportCanvas``/``LibraryIngestCanvas``). Mirrors
+    ``test_personas_dictionaries.py``'s AC5b Entries-tab scroll geometry
+    test: geometry + a real keyboard scroll + a real focus-jump, not a
+    hand-simulated mouse event.
+    """
+    from textual.containers import VerticalScroll
+
+    trust_service = _real_trust_service(tmp_path)
+    local_service = LocalSkillsService(store_dir=tmp_path, trust_service=trust_service)
+    service = SkillsScopeService(local_service=local_service, server_service=None)
+    await local_service.create_skill(
+        name="scroll-check", content=_skill_content(title="Scroll", description="v1"),
+    )
+    trust_service.bootstrap_trust()
+    # Re-quarantine after bootstrap so the Trust panel's "Review changes"
+    # button is enabled (focusable) -- a disabled Button cannot take focus,
+    # so the focus-jump-into-view assertion below needs a real target.
+    await local_service.update_skill(
+        "scroll-check", content=_skill_content(title="Scroll", description="v2"),
+    )
+
+    app = _build_test_app()
+    _wire_empty_non_skill_services(app)
+    app.skills_scope_service = service
+    app.local_skill_trust_service = trust_service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_skill_editor(screen, pilot, "scroll-check")
+
+        canvas = screen.query_one("#library-skills-canvas", VerticalScroll)
+        # Structural proof this is a real scrolling container (the fix),
+        # not a clipping plain Vertical -- and that mouse-wheel scroll is
+        # actually enabled (the same flag Textual's own mouse-wheel handler
+        # checks before scrolling at all).
+        assert isinstance(canvas, VerticalScroll)
+        assert canvas.allow_vertical_scroll is True
+        # Prove there's genuinely content below the fold to scroll to --
+        # otherwise the rest of this test would pass vacuously.
+        assert canvas.max_scroll_y > 0
+        assert canvas.scroll_offset.y == 0
+
+        # Keyboard scrolling: focus the canvas itself and page down, the
+        # same key binding a real terminal user gets for free from
+        # ``VerticalScroll``.
+        canvas.focus()
+        await pilot.pause()
+        await pilot.press("pagedown")
+        await pilot.pause()
+        assert canvas.scroll_offset.y > 0
+
+        # Reset, then prove a focus JUMP (e.g. tabbing into the Trust
+        # panel) auto-scrolls it into view -- not just a manual scroll.
+        canvas.scroll_to(y=0, animate=False)
+        await pilot.pause()
+        assert canvas.scroll_offset.y == 0
+
+        review_button = screen.query_one("#library-skill-trust-review", Button)
+        assert review_button.disabled is False
+        review_button.focus()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert canvas.scroll_offset.y > 0
+        canvas_region = canvas.region
+        button_region = review_button.region
+        assert canvas_region.y <= button_region.y < canvas_region.y + canvas_region.height
+
+
+@pytest.mark.asyncio
 async def test_delete_skill_returns_to_list_and_decrements_count(tmp_path):
     local_service, service = _real_skills_scope_service(tmp_path)
     await local_service.create_skill(

@@ -31,7 +31,7 @@ from typing import Any, Mapping
 
 from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Input, Static, TextArea
 
 from tldw_chatbook.Library.library_skills_state import (
@@ -160,8 +160,17 @@ def skill_supporting_files_text(supporting_files: tuple[tuple[str, int], ...]) -
     return "\n".join(f"{name} ({size} bytes)" for name, size in supporting_files)
 
 
-class LibrarySkillsListCanvas(Vertical):
+class LibrarySkillsListCanvas(VerticalScroll):
     """Render the Library skills canvas: the list view, or the skill editor.
+
+    ``VerticalScroll`` root (the L3a clipping lesson -- a plain ``Vertical``
+    canvas clips content past the fold, and the editor's Trust panel/
+    Save-Delete row sit below the fold at ordinary terminal sizes): same
+    house pattern already used by ``LibraryExportCanvas``/
+    ``LibraryIngestCanvas``. This gives mouse-wheel scroll, the default
+    keyboard scroll bindings (up/down/pageup/pagedown/home/end), and
+    focus-jump-into-view (e.g. tabbing into the Trust panel) for free --
+    all built into Textual's ``ScrollableContainer``, not custom code here.
 
     Attributes:
         state: List-view display state (rows, count, sort). ``None``
