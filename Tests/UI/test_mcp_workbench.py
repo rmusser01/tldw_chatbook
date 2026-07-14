@@ -12,6 +12,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button, Checkbox, ContentSwitcher, Input, Select, Static, TextArea
 
 import tldw_chatbook.UI.MCP_Modules.mcp_inspector as mcp_inspector_module
+import tldw_chatbook.UI.MCP_Modules.mcp_workbench as mcp_workbench_module
 from tldw_chatbook.MCP.unified_control_models import UnifiedMCPContext
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
 from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel, MCPProfileForm
@@ -1968,11 +1969,21 @@ async def test_import_cancel_closes_panel_without_saving():
 
 
 @pytest.mark.asyncio
-async def test_file_requested_pushes_picker_and_loads_selected_file_into_panel(tmp_path):
+async def test_file_requested_pushes_picker_and_loads_selected_file_into_panel(
+    tmp_path, monkeypatch
+):
     """Workbench's FileRequested handler pushes EnhancedFileOpen filtered to
     JSON and, once a file is picked, writes its text into the panel's
     TextArea (Interfaces: "workbench pushes EnhancedFileOpen(...) and writes
-    the file's text into the TextArea")."""
+    the file's text into the TextArea").
+
+    F1: `_load_import_file` now validates the picked path with
+    `is_safe_path(file_path, home_dir)` -- pytest's `tmp_path` fixture lives
+    outside the real home directory, so `expanduser("~")` is patched to
+    treat `tmp_path` as home for this test, mirroring the picked file
+    legitimately living under the user's home tree in production.
+    """
+    monkeypatch.setattr(mcp_workbench_module.os.path, "expanduser", lambda _: str(tmp_path))
     app = ImportApp()
     config_path = tmp_path / "mcp.json"
     config_path.write_text(json.dumps({"mcpServers": {"docs": {"command": "npx"}}}))
@@ -2005,7 +2016,7 @@ async def test_file_requested_pushes_picker_and_loads_selected_file_into_panel(t
 
 
 @pytest.mark.asyncio
-async def test_non_utf8_import_file_does_not_crash_app(tmp_path):
+async def test_non_utf8_import_file_does_not_crash_app(tmp_path, monkeypatch):
     """C1 regression (review probe): `_load_import_file` previously only
     caught `OSError`. `Path.read_text(encoding="utf-8")` raises
     `UnicodeDecodeError` (a `ValueError` subclass, NOT an `OSError`) for any
@@ -2015,7 +2026,13 @@ async def test_non_utf8_import_file_does_not_crash_app(tmp_path):
     exact `run_worker(..., group="mcp-import-file", exclusive=True)` call
     the real file-picker callback uses (not a bare `await`) -- the crash
     only manifests via that worker boundary.
+
+    F1: `expanduser("~")` is patched to treat `tmp_path` as home so path
+    validation doesn't short-circuit before the read is even attempted --
+    this test is specifically about the UnicodeDecodeError path, not F1's
+    own rejection path (covered separately).
     """
+    monkeypatch.setattr(mcp_workbench_module.os.path, "expanduser", lambda _: str(tmp_path))
     bad = tmp_path / "bad.json"
     bad.write_bytes(b"\xff\xfe{\"mcpServers\": {}}")
     app = WorkbenchApp()
@@ -2036,6 +2053,97 @@ async def test_non_utf8_import_file_does_not_crash_app(tmp_path):
             "could not read" in msg.lower() and severity == "error"
             for msg, severity in notifications
         ), f"expected an error notify for the unreadable file, got: {notifications!r}"
+
+
+@pytest.mark.asyncio
+async def test_load_import_file_rejects_path_outside_home_directory(tmp_path, monkeypatch):
+    """F1 (Qodo compliance finding): the picked import file's path must
+    route through `path_validation.is_safe_path()` before it is ever read.
+    A path outside the validated root (here, `home`, standing in for
+    `expanduser("~")`) is rejected with a plain validation-failure toast --
+    no I/O is attempted, and no unread-error message (which would leak the
+    fact the path exists) is shown instead.
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(mcp_workbench_module.os.path, "expanduser", lambda _: str(home))
+    outside = tmp_path / "outside" / "mcp.json"
+    outside.parent.mkdir()
+    outside.write_text(json.dumps({"mcpServers": {}}))
+
+    app = WorkbenchApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        notifications = _capture_notifications(app)
+        workbench = app.query_one(MCPWorkbench)
+        workbench.run_worker(
+            workbench._load_import_file(str(outside)),
+            group="mcp-import-file",
+            exclusive=True,
+        )
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert notifications == [("Import file path failed validation.", "error")], (
+            f"expected exactly one path-validation error toast, got: {notifications!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_load_import_file_rejects_oversized_file(tmp_path, monkeypatch):
+    """F1 (Qodo compliance finding): a config JSON over the size cap must be
+    rejected with a clear size-limit error before its contents are ever read
+    into the import panel -- mirrors `attachment_core.MAX_ATTACHMENT_BYTES`'s
+    reject-oversized-files precedent (`Tests/Chat/test_attachment_core.py::
+    test_process_attachment_path_rejects_oversized_files`), lowering the cap
+    via monkeypatch so the test file itself stays small.
+    """
+    monkeypatch.setattr(mcp_workbench_module.os.path, "expanduser", lambda _: str(tmp_path))
+    monkeypatch.setattr(mcp_workbench_module, "MAX_MCP_IMPORT_FILE_BYTES", 16)
+    big = tmp_path / "big.json"
+    big.write_text("x" * 64)
+
+    app = WorkbenchApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        notifications = _capture_notifications(app)
+        workbench = app.query_one(MCPWorkbench)
+        workbench.run_worker(
+            workbench._load_import_file(str(big)),
+            group="mcp-import-file",
+            exclusive=True,
+        )
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert any(
+            "too large" in msg.lower() and severity == "error"
+            for msg, severity in notifications
+        ), f"expected an oversized-file error notify, got: {notifications!r}"
+
+
+@pytest.mark.asyncio
+async def test_delete_local_profile_notify_escapes_markup_in_profile_id():
+    """F3 (Gemini finding, adapted): the local store keeps a profile id RAW
+    on purpose, so a profile id shaped like Rich markup (e.g. embedded via a
+    hand-edited config or import) must be escaped by `_toast()` before it
+    reaches the "Deleted ..." `app.notify()` toast -- otherwise
+    `[red]x[/red]` would be interpreted as styling/control markup instead of
+    displayed literally.
+    """
+    app = ProfileFormApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        notifications = _capture_notifications(app)
+        workbench = app.query_one(MCPWorkbench)
+        await workbench._delete_local_profile("local:[red]x[/red]", "[red]x[/red]")
+        await pilot.pause()
+        assert any("\\[red]x\\[/red]" in msg for msg, _ in notifications), (
+            f"expected the escaped literal in the toast, got: {notifications!r}"
+        )
+        assert not any(msg == "Deleted [red]x[/red]." for msg, _ in notifications), (
+            f"profile id markup must not reach notify() unescaped, got: {notifications!r}"
+        )
 
 
 @pytest.mark.asyncio

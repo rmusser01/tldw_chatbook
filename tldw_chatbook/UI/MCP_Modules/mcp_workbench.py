@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
+from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.message import Message
@@ -32,10 +34,33 @@ from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel, MCPPro
 from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCPRail
 from tldw_chatbook.UI.MCP_Modules.mcp_server_mutations import MCPServerMutationsPanel
 from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
+from tldw_chatbook.Utils.path_validation import is_safe_path
 
 # Sentinel distinguishing "key absent from a restore blob" from "key present
 # with value None" -- see `_apply_view_state()`'s scope_ref handling.
 _UNSET: Any = object()
+
+# A pasted/imported mcpServers config JSON. 1MB comfortably covers even a
+# large hand-authored config while catching anything clearly not one --
+# mirrors attachment_core.MAX_ATTACHMENT_BYTES's constant style (a fixed
+# cap, not a config knob, since this is a hard sanity limit not a user
+# preference).
+MAX_MCP_IMPORT_FILE_BYTES = 1024 * 1024  # 1MB cap for an imported config JSON
+
+
+def _toast(text: str) -> str:
+    """Escape a `notify()`-bound message before Rich's markup interpreter sees it.
+
+    The local/service-backed stores keep profile ids, exception text, and
+    import summaries RAW on purpose -- Static surfaces already render with
+    `markup=False`, and inline callouts escape at their own render time --
+    but `app.notify()` DOES interpret Rich markup in its message, so any of
+    that stored text reaching a toast unescaped could inject markup/styling
+    (e.g. a profile id of `"[red]x[/red]"`). This is the one additional
+    layer that needs its own guard.
+    """
+    return escape_markup(text)
+
 
 MCP_HUB_MODES: dict[str, dict[str, str]] = {
     "servers": {"label": "Servers", "button_id": "mcp-mode-servers", "placeholder": ""},
@@ -1112,7 +1137,7 @@ class MCPWorkbench(Container):
             saved = await asyncio.to_thread(save_setting_to_cli_config, "mcp", key, value)
         except Exception as exc:
             logger.warning(f"MCP built-in flag save failed: {exc}")
-            self.app.notify(f"Failed to save {key}: {exc}", severity="error")
+            self.app.notify(_toast(f"Failed to save {key}: {exc}"), severity="error")
             return
         if not saved:
             self.app.notify(f"Failed to save {key}.", severity="error")
@@ -1139,7 +1164,7 @@ class MCPWorkbench(Container):
             return
         profile_id = event.server_key.split(":", 1)[1]
         if self._profile_delete_in_flight:
-            self.app.notify(f"{profile_id}: delete already running.", severity="warning")
+            self.app.notify(_toast(f"{profile_id}: delete already running."), severity="warning")
             return
         self._profile_delete_in_flight = True
         self.run_worker(
@@ -1157,9 +1182,9 @@ class MCPWorkbench(Container):
                 await service.delete_local_profile(profile_id)
             except Exception as exc:
                 logger.warning(f"MCP profile delete failed: {exc}")
-                self.app.notify(f"Delete failed: {exc}", severity="error")
+                self.app.notify(_toast(f"Delete failed: {exc}"), severity="error")
                 return
-            self.app.notify(f"Deleted {profile_id}.")
+            self.app.notify(_toast(f"Deleted {profile_id}."))
             if self._selected_server_key == server_key:
                 self._selected_server_key = None
             self._snapshots = await self._collect_snapshots()
@@ -1223,7 +1248,7 @@ class MCPWorkbench(Container):
                 if form is not None:
                     form.show_error(str(exc))
                 else:
-                    self.app.notify(str(exc), severity="error")
+                    self.app.notify(_toast(str(exc)), severity="error")
                 return
             except Exception as exc:
                 logger.warning(f"MCP profile save failed: {exc}")
@@ -1233,11 +1258,11 @@ class MCPWorkbench(Container):
                 if form is not None:
                     form.show_error(f"Save failed: {exc}")
                 else:
-                    self.app.notify(f"Save failed: {exc}", severity="error")
+                    self.app.notify(_toast(f"Save failed: {exc}"), severity="error")
                 return
             canvas = self.query_one(MCPServersMode)
             await canvas.hide_form()
-            self.app.notify(f"Saved {payload.get('profile_id')}.")
+            self.app.notify(_toast(f"Saved {payload.get('profile_id')}."))
             if warning:
                 self.app.notify(warning, severity="warning")
             self._snapshots = await self._collect_snapshots()
@@ -1292,7 +1317,7 @@ class MCPWorkbench(Container):
                 if panel is not None:
                     panel.show_error(str(exc))
                 else:
-                    self.app.notify(f"{action} failed: {exc}", severity="error")
+                    self.app.notify(_toast(f"{action} failed: {exc}"), severity="error")
                 return
             self.app.notify(
                 _SERVER_MUTATION_MESSAGES.get(
@@ -1376,6 +1401,31 @@ class MCPWorkbench(Container):
         )
 
     async def _load_import_file(self, file_path: str) -> None:
+        """Read a user-picked mcpServers config file into the import panel.
+
+        F1 fix: `EnhancedFileOpen` lets the user browse anywhere on disk, so
+        the picked path is validated the same way the Console attachments
+        flow validates a picked attachment (`attachment_core.load_processed_
+        file()`'s `is_safe_path(file_path, home_dir)` + size-cap pattern)
+        before this ever touches the filesystem.
+        """
+        if not is_safe_path(file_path, os.path.expanduser("~")):
+            self.app.notify("Import file path failed validation.", severity="error")
+            return
+        try:
+            file_size = await asyncio.to_thread(os.path.getsize, file_path)
+        except OSError as exc:
+            self.app.notify(_toast(f"Could not read {file_path}: {exc}"), severity="error")
+            return
+        if file_size > MAX_MCP_IMPORT_FILE_BYTES:
+            self.app.notify(
+                _toast(
+                    f"Import file too large: {file_size / 1024 / 1024:.1f}MB "
+                    f"(max {MAX_MCP_IMPORT_FILE_BYTES / 1024 / 1024:.0f}MB)."
+                ),
+                severity="error",
+            )
+            return
         try:
             text = await asyncio.to_thread(Path(file_path).read_text, encoding="utf-8")
         except (OSError, UnicodeDecodeError) as exc:
@@ -1384,7 +1434,7 @@ class MCPWorkbench(Container):
             # Claude-Desktop config saved with a BOM/legacy encoding. Left
             # uncaught, it escapes this worker and, with Textual's default
             # `exit_on_error=True`, takes down the whole app (C1).
-            self.app.notify(f"Could not read {file_path}: {exc}", severity="error")
+            self.app.notify(_toast(f"Could not read {file_path}: {exc}"), severity="error")
             return
         panel = self._import_panel_or_none()
         if panel is not None:
@@ -1431,7 +1481,10 @@ class MCPWorkbench(Container):
                     failed.append((candidate.profile_id, str(exc)))
                 else:
                     succeeded.append(candidate.profile_id)
-            self.app.notify(_import_summary(succeeded, failed), severity=_import_severity(succeeded, failed))
+            self.app.notify(
+                _toast(_import_summary(succeeded, failed)),
+                severity=_import_severity(succeeded, failed),
+            )
             canvas = self.query_one(MCPServersMode)
             await canvas.hide_form()
             self._snapshots = await self._collect_snapshots()
@@ -1475,7 +1528,7 @@ class MCPWorkbench(Container):
         leaving a window where the guard/cancel logic would see stale state.
         """
         if server_key in self._in_flight:
-            self.app.notify(f"{profile_id}: {action} already running.", severity="warning")
+            self.app.notify(_toast(f"{profile_id}: {action} already running."), severity="warning")
             return
         service = self._service()
         method_name = _LIFECYCLE_METHOD_NAMES.get(action)
@@ -1518,15 +1571,15 @@ class MCPWorkbench(Container):
         try:
             result = await coro
         except Exception as exc:
-            self.app.notify(f"{profile_id}: {action} failed — {exc}", severity="error")
+            self.app.notify(_toast(f"{profile_id}: {action} failed — {exc}"), severity="error")
         else:
             verb = _LIFECYCLE_PAST_TENSE.get(action, action)
             tool_count = self._lifecycle_tool_count(result)
             if tool_count is None:
-                self.app.notify(f"{profile_id}: {verb}.")
+                self.app.notify(_toast(f"{profile_id}: {verb}."))
             else:
                 noun = "tool" if tool_count == 1 else "tools"
-                self.app.notify(f"{profile_id}: {verb} — {tool_count} {noun}.")
+                self.app.notify(_toast(f"{profile_id}: {verb} — {tool_count} {noun}."))
         finally:
             self._in_flight.pop(server_key, None)
             self._in_flight_action.pop(server_key, None)

@@ -22,6 +22,8 @@ from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import Button, Checkbox, Input, Select, Static
 
+from tldw_chatbook.Utils.input_validation import validate_url
+
 _TRANSPORT_OPTIONS: list[tuple[str, str]] = [
     ("HTTP", "http"), ("SSE", "sse"), ("stdio", "stdio"),
 ]
@@ -214,6 +216,14 @@ class MCPServerMutationsPanel(Vertical):
         if not transport:
             raise ValueError("Transport is required.")
         url = self.query_one("#mcp-srv-url", Input).value.strip()
+        # F2 fix: an unvalidated URL flows straight into the create payload
+        # and on to `run_action()` -- reject an invalid/unsupported-scheme
+        # value here (routed by the caller through `show_error()`, same as
+        # every other `build_payload()` `ValueError`) rather than forwarding
+        # it. Blank stays allowed -- `config` was `{}` before this fix and
+        # must remain so.
+        if url and not validate_url(url):
+            raise ValueError("URL must be a valid http(s) address.")
         config: dict[str, Any] = {"url": url} if url else {}
         return {
             "server_id": server_id,
