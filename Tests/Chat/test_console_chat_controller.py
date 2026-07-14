@@ -1325,3 +1325,66 @@ def test_non_vision_history_stays_plain_strings(monkeypatch):
 
     for message in gateway.messages_seen:
         assert isinstance(message["content"], str)
+
+
+def test_submit_stages_all_pendings_and_clears(monkeypatch):
+    monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: True)
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway, model="vision-model")
+    session = store.ensure_session()
+    store.add_pending_attachment(session.id, _pending_image("a.png"))
+    store.add_pending_attachment(session.id, _pending_image("b.png"))
+
+    result = asyncio.run(controller.submit_draft("two pics"))
+
+    assert result.accepted
+    user_payload = gateway.messages_seen[-1]
+    image_parts = [p for p in user_payload["content"] if p["type"] == "image_url"]
+    assert len(image_parts) == 2
+    assert store.pending_attachments(session.id) == []
+    messages = store.messages_for_session(session.id)
+    user_message = [m for m in messages if m.role is ConsoleMessageRole.USER][-1]
+    assert len(user_message.attachments) == 2
+    assert user_message.image_data is not None  # mirror holds
+
+
+def test_image_budget_counts_images_newest_first(monkeypatch):
+    monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: True)
+    monkeypatch.setattr(controller_module, "max_history_images", lambda p, m: 3)
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway, model="vision-model")
+    session = store.ensure_session()
+    from tldw_chatbook.Chat.console_chat_models import MessageAttachment
+
+    def _atts(n, tag):
+        return tuple(
+            MessageAttachment(data=f"{tag}-{i}".encode(), mime_type="image/png",
+                              display_name=f"{tag}{i}.png", position=i)
+            for i in range(n)
+        )
+
+    store.append_message(session.id, role=ConsoleMessageRole.USER,
+                         content="older", attachments=_atts(2, "old"))
+    store.append_message(session.id, role=ConsoleMessageRole.USER,
+                         content="newer", attachments=_atts(2, "new"))
+
+    asyncio.run(controller.submit_draft("go"))
+
+    user_payloads = [m for m in gateway.messages_seen if m["role"] == "user"]
+    # newest ("newer") gets both images; "older" gets 1 (budget 3), oldest first-dropped.
+    newer = user_payloads[1]
+    older = user_payloads[0]
+    newer_images = [p for p in newer["content"] if p["type"] == "image_url"] if isinstance(newer["content"], list) else []
+    older_images = [p for p in older["content"] if p["type"] == "image_url"] if isinstance(older["content"], list) else []
+    assert len(newer_images) == 2
+    assert len(older_images) == 1
+    # Budget-rule resolution: reservation walks messages newest-first, but a
+    # partially-budgeted message emits its images in POSITION order up to the
+    # reserved count -- "older" keeps its position-0 image ("old-0"), not its
+    # newest-added one.
+    import base64
+
+    decoded = base64.b64decode(older_images[0]["image_url"]["url"].split(",", 1)[1])
+    assert decoded == b"old-0"
