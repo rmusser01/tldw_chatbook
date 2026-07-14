@@ -106,6 +106,9 @@ class PersonasDictionaryDetailWidget(Vertical):
         height: auto;
         max-height: 5;
     }
+    PersonasDictionaryDetailWidget #personas-dict-stats-body {
+        height: auto;
+    }
     """
 
     def __init__(self, **kwargs: Any) -> None:
@@ -160,6 +163,8 @@ class PersonasDictionaryDetailWidget(Vertical):
                     yield Static("Enabled", markup=False)
                     yield Switch(value=True, id="personas-dict-enabled")
                 yield Button("Save settings", id="personas-dict-settings-save", classes="console-action-secondary")
+            with TabPane("Stats", id="personas-dict-tab-stats"):
+                yield Static("", id="personas-dict-stats-body", markup=False)
         yield Static("", id="personas-dict-status", markup=False)
 
     def on_mount(self) -> None:
@@ -226,6 +231,31 @@ class PersonasDictionaryDetailWidget(Vertical):
         self.query_one("#personas-dict-entry-error", Static).update("")
         self._refresh_validation()
 
+    def load_statistics(self, stats: dict | None, entries: list[dict]) -> None:
+        """Render the Stats tab from service stats plus client-side enrichment.
+
+        Args:
+            stats: The service's get_statistics payload, or None when the
+                fetch failed (entries-only rendering with a note).
+            entries: The currently loaded API-named entry dicts.
+        """
+        literal = sum(1 for e in entries if (e.get("type") or "literal") != "regex")
+        regex = len(entries) - literal
+        disabled = sum(1 for e in entries if not e.get("enabled", True))
+        tokens = sum(len(str(e.get("replacement") or "").split()) for e in entries)
+        priorities = [int(e.get("priority") or 0) for e in entries] or [0]
+        lines = [
+            f"Entries: {stats.get('entry_count', len(entries)) if stats else len(entries)}"
+            + ("" if stats else "  (service stats unavailable)"),
+            f"Types — literal: {literal} · regex: {regex} · disabled: {disabled}",
+            f"Approx. replacement tokens: {tokens}",
+        ]
+        if any(priorities):
+            lines.append(f"Priority: {min(priorities)}..{max(priorities)}")
+        if stats is not None:
+            lines.append(f"Dictionary enabled: {'yes' if stats.get('enabled', True) else 'no'}")
+        self.query_one("#personas-dict-stats-body", Static).update("\n".join(lines))
+
     def _refresh_validation(self) -> None:
         """Recompute advisory findings for the current entry list.
 
@@ -277,7 +307,6 @@ class PersonasDictionaryDetailWidget(Vertical):
         self._last_dirty_sent = False
         self._validation_findings = []
         self.query_one("#personas-dict-entries-table", DataTable).clear()
-        self._validation_findings = []
         try:
             panel = self.query_one("#personas-dict-validation", OptionList)
         except Exception:

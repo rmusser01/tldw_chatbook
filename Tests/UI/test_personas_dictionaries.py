@@ -223,6 +223,15 @@ class FakeDictScopeService:
         self.calls.append(("reorder", int(dictionary_id), list(payload.get("entry_ids") or [])))
         return {"dictionary_id": int(dictionary_id), "entry_ids": payload.get("entry_ids"), "source": "local"}
 
+    async def get_statistics(self, dictionary_id: int, mode: str = "local") -> dict:
+        record = self.records[int(dictionary_id)]
+        return {
+            "dictionary_id": int(dictionary_id),
+            "entry_count": len(record["entries"]),
+            "enabled": bool(record.get("enabled", True)),
+            "source": "local",
+        }
+
     async def process_text(self, request_data: Any, mode: str = "local") -> dict:
         payload = dict(request_data)
         text = payload["text"]
@@ -1505,3 +1514,26 @@ class TestDictionaryValidationMarkupSafety:
             rendered = panel.render_line(0).text
             assert "duplicate_pattern" in rendered
             assert "[x]" in rendered
+
+
+class TestDictionaryStatsTab:
+    async def _select_first(self, pilot, screen):
+        rows = screen.query_one("#personas-library-rows", ListView)
+        rows.index = 0
+        rows.action_select_cursor()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+    async def test_stats_render_service_plus_client_enrichment(self, mock_app_instance, stub_characters, fake_dict_service):
+        fake_dict_service.records[1]["entries"][1].update({"type": "regex", "pattern": "/hr/i", "enabled": False, "priority": 5})
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            body = str(screen.query_one("#personas-dict-stats-body", Static).renderable)
+            assert "Entries: 2" in body
+            assert "literal: 1" in body and "regex: 1" in body
+            assert "disabled: 1" in body
+            assert "Priority: 0..5" in body
+            assert "tokens" in body  # approximate token total line

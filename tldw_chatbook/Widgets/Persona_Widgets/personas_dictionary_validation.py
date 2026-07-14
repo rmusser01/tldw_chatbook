@@ -18,7 +18,7 @@ class ValidationFinding:
 
     Args:
         code: Stable machine code (invalid_regex, duplicate_pattern,
-            probability_zero, case_flag_on_regex).
+            probability_zero, case_flag_on_regex, malformed_probability).
         field: The entry field the finding is about.
         message: Human-readable explanation.
         entry_id: The positional entry id, or None when unavailable.

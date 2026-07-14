@@ -1131,6 +1131,12 @@ class PersonasScreen(BaseAppScreen):
         )
         detail = self.query_one(PersonasDictionaryDetailWidget)
         detail.load_dictionary(record)
+        stats = None
+        try:
+            stats = await service.get_statistics(int(entity_id), mode="local")
+        except Exception:
+            logger.opt(exception=True).warning(f"Could not load dictionary {entity_id} statistics.")
+        detail.load_statistics(stats, list(record.get("entries") or []))
         self._show_center("#personas-dictionary-detail")
         library = self.query_one(PersonasLibraryPane)
         library.mark_active_row("dictionary", entity_id)
@@ -1218,6 +1224,12 @@ class PersonasScreen(BaseAppScreen):
         raw_version = record.get("version")
         self._selected_dictionary_version = int(raw_version) if raw_version is not None else None
         detail.update_entries(list(record.get("entries") or []))
+        stats = None
+        try:
+            stats = await service.get_statistics(int(entity_id), mode="local")
+        except Exception:
+            logger.opt(exception=True).warning(f"Could not load dictionary {entity_id} statistics.")
+        detail.load_statistics(stats, list(record.get("entries") or []))
         await self._render_dictionary_rows(query=self.state.search_query)
         self.query_one(PersonasLibraryPane).mark_active_row("dictionary", entity_id)
         return True
