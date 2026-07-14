@@ -133,24 +133,34 @@ reproduced live in this session's seeding output (see `seed_home_skills.py` cons
 
 ## Caveats (honest, not glossed over)
 
-- **The Library Skills editor's Trust panel is unreachable at the recipe's default font size.**
-  At 2050×1240 without `?fontsize=12`, the editor's lower content (warnings, Trust panel,
-  Save/Delete) renders below the viewport and this canvas (a plain `Vertical`, not a
-  `VerticalScroll`) does not respond to mouse-wheel scroll at all — confirmed by testing wheel
-  scroll on the (also overflowing) list view with a 2000px delta with no effect. `?fontsize=12`
-  is the same real textual-serve feature the brief names in its recipe; it is not optional for
-  this screen, it is required. This matches a previously-noted constraint (plain-Vertical canvas
-  clipping) rather than a new one.
-- **A brand-new install cannot bootstrap trust from the Library UI at all.** The Library skill
-  editor's "Unlock" button only ever calls `unlock_with_passphrase` (never `bootstrap_trust`,
-  confirmed by its own docstring: "never bootstraps from this editor"), and is only enabled when
-  `trust_status == "trust_locked"` — never the true first-run `trust_uninitialized` state. The
-  standalone `SkillsScreen`'s "Bootstrap trust" button is the only in-app bootstrap entry point,
-  but that screen is no longer reachable via any live route (Task 5 retired the `skills` route
-  behind the Library alias). This QA session worked around the gap with a headless
-  `bootstrap_trust` call (the same pattern the product's own tests use); it is not a capture
-  artifact — it is a genuine Phase-1 product gap worth a decision before Phase 2, flagged here
-  rather than silently fixed (out of this gate task's scope).
+- **FIXED (commit `9370f381`) — The Library Skills editor's Trust panel is unreachable at the
+  recipe's default font size.** At 2050×1240 without `?fontsize=12`, the editor's lower content
+  (warnings, Trust panel, Save/Delete) renders below the viewport and this canvas (a plain
+  `Vertical`, not a `VerticalScroll`) does not respond to mouse-wheel scroll at all — confirmed by
+  testing wheel scroll on the (also overflowing) list view with a 2000px delta with no effect.
+  `?fontsize=12` is the same real textual-serve feature the brief names in its recipe; it is not
+  optional for this screen, it is required. This matches a previously-noted constraint
+  (plain-Vertical canvas clipping) rather than a new one. **Fix:** `LibrarySkillsListCanvas` now
+  subclasses `VerticalScroll` (the same house pattern already used by
+  `LibraryExportCanvas`/`LibraryIngestCanvas`), giving mouse-wheel scroll, the default keyboard
+  scroll bindings, and automatic focus-jump-into-view for free via Textual's own
+  `ScrollableContainer`. Re-captured at DEFAULT font (no `?fontsize=12`) — see "Fix wave
+  (2026-07-14)" below.
+- **FIXED (commit `afe122d7`) — A brand-new install cannot bootstrap trust from the Library UI at
+  all.** The Library skill editor's "Unlock" button only ever calls `unlock_with_passphrase`
+  (never `bootstrap_trust`, confirmed by its own docstring: "never bootstraps from this editor"),
+  and is only enabled when `trust_status == "trust_locked"` — never the true first-run
+  `trust_uninitialized` state. The standalone `SkillsScreen`'s "Bootstrap trust" button is the
+  only in-app bootstrap entry point, but that screen is no longer reachable via any live route
+  (Task 5 retired the `skills` route behind the Library alias). This QA session worked around the
+  gap with a headless `bootstrap_trust` call (the same pattern the product's own tests use); it
+  was not a capture artifact — it was a genuine Phase-1 product gap, flagged here rather than
+  silently fixed at the time (out of that gate task's scope). **Fix:** the Trust panel now renders
+  a dedicated first-run "Set up skill trust" state whenever `trust_status ==
+  "trust_uninitialized"` — an explanation line plus a single action driving a new
+  `SkillTrustBootstrapModal` (twice-entry passphrase confirmation; refuses to dismiss on a
+  mismatch) that calls the real `SkillTrustService.bootstrap_trust(passphrase)` directly. See "Fix
+  wave (2026-07-14)" below for the live end-to-end capture.
 - **`Ctrl+P` does not open the command palette in this browser-driven harness** — Chromium
   intercepts it as its native print shortcut before it reaches the page. Worked around by
   clicking the footer's "Palette Menu" label directly (`^p Palette Menu`), which does dispatch
@@ -160,6 +170,66 @@ reproduced live in this session's seeding output (see `seed_home_skills.py` cons
   smaller cell grid) landed inside the Body `TextArea` instead of the Unlock button; verified via
   screenshot that no text was actually inserted and Save was never pressed, so no skill content
   was mutated. Not included in the final capture set.
+
+## Fix wave (2026-07-14) — re-capture of both fixed states
+
+User directive: fix both gate findings above before Phase 2, then re-capture the fixed states at
+DEFAULT font (no `?fontsize=12`) to prove the fold problem is genuinely gone, not merely worked
+around. Recipe reused verbatim: scratchpad `serve_qa.py`/`cap.py`, viewport 2050×1240, port 9092,
+`https://**` route-abort, `body.-first-byte` gate, `1.02`-corrected click/scroll coordinates. CSS
+prebuilt (`$PY tldw_chatbook/css/build_css.py`) before capture. Stale servers killed between runs
+(one port, one profile at a time).
+
+### Profile A — `qa-home-skills-2` (bootstrapped, for the FIX 1 scroll proof)
+
+Seeded (scratchpad `seed_home_skills2.py`, a trimmed copy of the original `seed_home_skills.py`
+with the same real production construction path and the same real obra/superpowers corpus):
+`bootstrap_trust` first (empty baseline), then 4 real skills imported
+(`brainstorming`/`test-driven-development`/`using-superpowers`/`writing-skills`), then 2 approved
+(`test-driven-development`/`using-superpowers`).
+
+- **`fix1-editor-below-fold-default-font-2026-07-14.png`** — `test-driven-development`'s editor
+  opened at DEFAULT font, unscrolled: the field stack runs off the bottom of the viewport
+  ("Supporting files" sits right at the fold) — the same overflow the original gate found — but
+  a scrollbar is now visibly present on the canvas's right edge (the structural proof the
+  container is a real `VerticalScroll`, not the old clipping `Vertical`).
+- **`fix1-trust-panel-scrolled-into-view-default-font-2026-07-14.png`** — the SAME editor, SAME
+  DEFAULT font, after mouse-wheel scroll (repeated wheel deltas over the canvas's own scrollbar
+  gutter, not over the Body `TextArea`, which has its own independent inner scroll and would
+  otherwise absorb the wheel events): the full Trust panel (`Trust: locked`,
+  Unlock/Review changes/Approve) AND the Save/Delete row are now both visible in one screenshot —
+  reachable without `?fontsize=12` for the first time.
+
+### Profile B — `qa-home-skills-2-fresh` (never bootstrapped, for the FIX 2 live bootstrap proof)
+
+Seeded (scratchpad `seed_home_skills2_fresh.py`): one real skill (`brainstorming`) imported;
+`SkillTrustService.bootstrap_trust` deliberately **never called** — the true first-run shape.
+`PYTHON_KEYRING_BACKEND=keyring.backends.fail.Keyring` set for the served app subprocess this
+time too (a first pass without it left the served app's real trust construction resolving to the
+actual macOS Keychain, which silently failed partway through `bootstrap_trust` — a snapshot file
+was written but no manifest; re-ran clean after exporting the same env var the original gate used
+for both processes).
+
+- **`fix2-trust-setup-state-uninitialized-2026-07-14.png`** — `brainstorming`'s editor, scrolled
+  to the Trust panel: `Trust: not initialized`, the exact `_TRUST_SETUP_EXPLANATION_COPY` line,
+  and a single **"Set up skill trust"** action — no Unlock/Review changes/Approve row at all (the
+  first-run setup state).
+- **`fix2-trust-setup-passphrase-modal-2026-07-14.png`** — pressing that action opens the real
+  `SkillTrustBootstrapModal` ("Set Up Local Skill Trust", "New trust passphrase" (focused) +
+  "Confirm trust passphrase", Cancel/Submit).
+- **`fix2-trust-setup-after-bootstrap-recompose-2026-07-14.png`** — immediately after submitting
+  matching passphrases (via the confirm field's `Input.Submitted`, i.e. Enter): the editor
+  recomposed back to the TOP (Name/Description/…), proving a real state change occurred (a
+  no-op/cancelled submit leaves the scroll position and setup state untouched, which is exactly
+  what happened on the first mis-configured attempt).
+- **`fix2-trust-panel-after-live-bootstrap-2026-07-14.png`** — a fresh reload of the same skill
+  (new `cap.py` session = new app process, in-memory keys cleared, on-disk manifest persists):
+  `Trust: locked` with the NORMAL Unlock/Review changes/Approve row now rendered — the
+  "Set up skill trust" state never reappears once the store is genuinely bootstrapped on disk.
+
+Service-read confirmation: `.../qa-home-skills-2-fresh/.../skills/trust/skill_trust_manifest.json`
+exists after the live bootstrap (it did not before); `.../trust/snapshots/brainstorming-1.json`
+present, generation 1.
 
 ## Verification
 
