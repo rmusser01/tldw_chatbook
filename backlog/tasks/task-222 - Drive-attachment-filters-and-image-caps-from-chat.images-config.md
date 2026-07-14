@@ -1,8 +1,8 @@
 ---
 id: TASK-222
 title: Drive attachment filters and image caps from chat.images config
-status: To Do
-assignee: []
+status: In Progress
+assignee: ['@claude']
 created_date: '2026-07-13 11:15'
 labels:
   - chat
@@ -21,5 +21,8 @@ PR #621's spec claims the attachment format allowlist and caps read from [chat.i
 <!-- AC:BEGIN -->
 - [ ] #1 Picker image filter and ChatImageHandler format allowlist derive from [chat.images].supported_formats (no tiff/svg mismatch)
 - [ ] #2 Image size cap and resize dimension honor max_size_mb / resize_max_dimension
-- [ ] #3 Legacy regression gate stays green (defaults must reproduce current behavior)
+- [ ] #3 Legacy regression gate stays green (defaults must reproduce current behavior; zero edits to existing gate tests)
+- [ ] #4 .tiff/.tif attach end-to-end: decoded and delivered to providers as a payload-safe format (png/jpeg/webp/gif) with mime matching the actual bytes
+- [ ] #5 .svg attach end-to-end via cairosvg rasterization when available; .svg absent from picker, routing, and allowlist when cairosvg is unavailable (capability gate)
+- [ ] #6 Payload images always carry provider-safe formats with mime matching bytes (repairs latent bmp passthrough and resized-gif mime mismatch)
 <!-- AC:END -->
