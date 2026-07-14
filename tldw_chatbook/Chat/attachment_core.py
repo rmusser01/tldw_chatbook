@@ -276,26 +276,33 @@ async def process_attachment_bytes(
     from PIL import Image as PILImage
 
     from tldw_chatbook.Event_Handlers.Chat_Events.chat_image_events import (
+        PAYLOAD_FORMAT_MIME,
         ChatImageHandler,
     )
 
-    if len(data) > MAX_IMAGE_BYTES:
+    size_cap = max_image_bytes()
+    if len(data) > size_cap:
         raise ValueError(
             f"Image too large ({len(data) / 1024 / 1024:.1f}MB). "
-            f"Maximum size: {MAX_IMAGE_BYTES / 1024 / 1024:.0f}MB"
+            f"Maximum size: {size_cap / 1024 / 1024:.0f}MB"
         )
     try:
-        PILImage.open(BytesIO(data)).verify()
+        probe = PILImage.open(BytesIO(data))
+        probe.verify()
+        probed_format = (probe.format or "").upper()
     except Exception as exc:
         raise ValueError("Clipboard data is not a valid image.") from exc
     extension = ".png" if "png" in mime_type else ".jpg"
     try:
-        processed = await ChatImageHandler._process_image_data(data, extension, mime_type)
+        processed, mime_type = await ChatImageHandler.prepare_image_payload(
+            data, extension
+        )
     except Exception:
         logger.opt(exception=True).warning(
             "Failed to process clipboard image data, using original bytes."
         )
         processed = data
+        mime_type = PAYLOAD_FORMAT_MIME.get(probed_format, mime_type)
     return PendingAttachment(
         file_path="",
         display_name=display_name,
