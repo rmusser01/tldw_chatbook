@@ -4115,6 +4115,17 @@ Button.mcp-callout {
     min-height: 0;
 }
 
+/* Kept in lockstep with the baseline copy in MCPServersMode.DEFAULT_CSS
+   (mcp_servers_mode.py) -- without an explicit height override here too,
+   Textual's Vertical default (height: 1fr) expands this container to fill
+   the rest of #mcp-detail-scroll, pushing its sibling "Copy client config"
+   Button roughly 800px below the built-in enable/expose checkboxes it
+   should sit directly under. QA defect 1, mcp-hub-phase2-2026-07 round. */
+#mcp-detail-builtin-toggles {
+    height: auto;
+    min-height: 0;
+}
+
 #mcp-detail-toolbar Button {
     height: 1;
     min-height: 1;

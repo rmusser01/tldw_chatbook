@@ -85,6 +85,10 @@ class MCPServersMode(Vertical):
     #mcp-detail-header #mcp-detail-title {
         width: 1fr;
     }
+    #mcp-detail-builtin-toggles {
+        height: auto;
+        min-height: 0;
+    }
     """
 
     class ServerRowSelected(Message, namespace="mcp_servers_mode"):

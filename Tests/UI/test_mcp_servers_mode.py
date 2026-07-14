@@ -366,6 +366,41 @@ async def test_builtin_detail_shows_enable_expose_checkboxes_with_values_and_not
 
 
 @pytest.mark.asyncio
+async def test_builtin_toggles_container_does_not_expand_past_content():
+    """QA defect 1 (mcp-hub-phase2-2026-07 round, P3 cosmetic): `Vertical(id=
+    "mcp-detail-builtin-toggles")` had no height override, so it silently
+    inherited Textual's Vertical default (`height: 1fr`) and expanded to
+    fill the rest of `#mcp-detail-scroll` -- pushing the sibling "Copy
+    client config" Button roughly 800px below the four checkboxes it should
+    render directly under. Guards both halves of the fix: the container is
+    sized to its content (not the pane remainder), and the copy button
+    renders immediately below it rather than far down the scroll region.
+    """
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.show_detail(
+            builtin_readiness(
+                enabled=True, expose_tools=True, expose_resources=True, expose_prompts=True
+            )
+        )
+        await pilot.pause()
+
+        toggles = app.query_one("#mcp-detail-builtin-toggles")
+        copy_button = app.query_one("#mcp-detail-copy-snippet", Button)
+
+        # Four checkboxes + the next-launch note is a handful of rows --
+        # nowhere near the height of an expanding 1fr container consuming
+        # whatever vertical space the scroll pane has left.
+        assert toggles.size.height < 12
+
+        # The copy button must sit directly under the toggles container,
+        # not dozens of rows further down the scroll pane.
+        gap = copy_button.region.y - (toggles.region.y + toggles.region.height)
+        assert 0 <= gap <= 2
+
+
+@pytest.mark.asyncio
 async def test_builtin_checkboxes_do_not_appear_for_non_builtin_detail():
     app = CanvasApp()
     async with app.run_test() as pilot:

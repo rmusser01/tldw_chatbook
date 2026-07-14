@@ -224,9 +224,11 @@ All at 2050×1240, real app CSS, MCP nav destination (`nav-mcp` → route
    selected. Four checkboxes (`Enabled`, `Expose tools`, `Expose
    resources`, `Expose prompts`), all checked (config default), the note
    **"Applies to the next client launch — the built-in server reads config
-   at start."**, and the **"Copy client config"** button — all present, but
-   see Defect 1 below for a real layout issue affecting this capture (a
-   large, unintended empty gap between the note and the button).
+   at start."**, and the **"Copy client config"** button — all present,
+   directly under the note with no gap between them. (This capture was
+   retaken after Defect 1's fix landed — see Defect 1 below; the original
+   2026-07-14 01:34 capture showed a large, unintended empty gap between the
+   note and the button.)
 
 10. **`advanced-collapsed`** / **`advanced-open-object-label`** — built-in
     server still selected. First capture: Inspector's Advanced disclosure
@@ -266,7 +268,13 @@ All at 2050×1240, real app CSS, MCP nav destination (`nav-mcp` → route
 
 ## Defects / observations found (documented, not fixed, per task scope)
 
-### Defect 1 (P3, cosmetic layout) — built-in detail: large dead gap before "Copy client config"
+### Defect 1 (P3, cosmetic layout) — built-in detail: large dead gap before "Copy client config" — FIXED
+
+Fixed by the `fix(mcp-hub): give built-in detail toggles container a
+bounded height` commit (this same commit also carries this README update
+and the re-capture below, so it has no fixed SHA to cite from within
+itself — see `git log --oneline -- tldw_chatbook/UI/MCP_Modules/
+mcp_servers_mode.py` for the actual hash).
 
 Reproduction: select the built-in `tldw_chatbook (built-in)` server (any
 session, this is fully deterministic, not a race). The four expose/enable
@@ -300,14 +308,42 @@ sibling, not its child) pushed down below that expanded box.
 
 Fix would be a one-line CSS addition (e.g. `#mcp-detail-builtin-toggles {
 height: auto; }` in `MCPServersMode.DEFAULT_CSS`), mirroring the pattern
-already used for every other container in the same file — not applied here
-per this task's no-fix scope.
+already used for every other container in the same file — not applied at
+capture time, per that round's no-fix scope.
 
 Impact: purely cosmetic (the button is still present, clickable, and
 functionally correct — confirmed via DOM text search, not just a visual
 guess), but on a real terminal window shorter than ~80 rows the button could
 scroll out of view or require scrolling to reach, and the huge empty gap
 reads as a broken/incomplete panel at a glance.
+
+**FIXED**: added `#mcp-detail-builtin-toggles { height:
+auto; min-height: 0; }` in both layers, matching this file's existing
+`#mcp-servers-form` lockstep pattern — the baseline copy in
+`MCPServersMode.DEFAULT_CSS` (`mcp_servers_mode.py`) and the bundle-source
+copy in `tldw_chatbook/css/components/_agentic_terminal.tcss` (rebuilt into
+`tldw_cli_modular.tcss`). Regression coverage added:
+`Tests/UI/test_mcp_servers_mode.py::
+test_builtin_toggles_container_does_not_expand_past_content` asserts the
+toggles container renders at content height (`< 12` rows, not the 18 rows
+an unbounded `1fr` produced pre-fix in the default 80×24 test harness) and
+that the copy button sits within 2 rows of the container's bottom edge;
+confirmed red (`18 < 12` failing) against the pre-fix widget and green
+after. **Re-captured**: `mcp-p2-builtin-toggles-2026-07-14.png` was
+retaken in place against the same isolated HOME
+(`/private/tmp/tldw-qa-mcp-hub-p2-20260714`, `local_mcp_store.json`
+unchanged) and the same recipe (textual-serve, Playwright bundled Chromium,
+2050×1240, non-localhost routes aborted) — the "Copy client config" button
+now renders one row (15px) below the "Applies to the next client
+launch…" note, i.e. immediately adjacent, with no dead gap. Verified via
+DOM `Range` rects (`note` bottom `y=315` → `copy button` top `y=330`) in
+addition to the visual diff.
+`mcp-p2-advanced-open-object-label-2026-07-14.png` (the other capture that
+showed this same gap) was left as originally captured — the built-in
+toggles/button region visible in its left-hand canvas is unaffected by
+Advanced-panel state and would show the same fix, but that capture's
+purpose was the Advanced disclosure, not this pane, so it was not
+re-taken.
 
 ### Observations (not filed as defects)
 
