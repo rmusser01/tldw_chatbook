@@ -144,9 +144,15 @@ class PersonasLibraryPane(Vertical):
         yield Static("", id="personas-library-count", classes="destination-purpose")
 
     def set_mode(self, mode: str) -> None:
-        """Show Import only where it applies (Characters mode); Duplicate is dictionaries-only."""
-        self._import_visible = mode == "characters"
-        self.query_one("#personas-library-import", Button).display = self._import_visible
+        """Gate the toolbar per mode: Import for characters+dictionaries, Duplicate for dictionaries."""
+        self._import_visible = mode in ("characters", "dictionaries")
+        import_button = self.query_one("#personas-library-import", Button)
+        import_button.display = self._import_visible
+        import_button.tooltip = (
+            "Import a dictionary (JSON or Markdown)."
+            if mode == "dictionaries"
+            else "Import a character card (PNG or JSON)."
+        )
         self.query_one("#personas-library-duplicate", Button).display = mode == "dictionaries"
 
     async def update_rows(

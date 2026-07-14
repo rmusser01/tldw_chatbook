@@ -54,6 +54,7 @@ class FakeDictScopeService:
     def __init__(self, records: list[dict] | None = None) -> None:
         self.records: dict[int, dict] = {}
         self.calls: list[tuple] = []
+        self.history: dict[int, list[dict]] = {}
         for record in records or []:
             self.records[int(record["id"])] = copy.deepcopy(record)
         self._next_id = max(self.records, default=0) + 1
@@ -153,6 +154,7 @@ class FakeDictScopeService:
                 for e in payload["entries"] or []
             ]
         record["version"] += 1
+        self._record_version(record, "update")
         self.calls.append(("update", int(dictionary_id), payload))
         return self._summary(record)
 
@@ -222,6 +224,63 @@ class FakeDictScopeService:
         record["version"] += 1
         self.calls.append(("reorder", int(dictionary_id), list(payload.get("entry_ids") or [])))
         return {"dictionary_id": int(dictionary_id), "entry_ids": payload.get("entry_ids"), "source": "local"}
+
+    async def get_statistics(self, dictionary_id: int, mode: str = "local") -> dict:
+        record = self.records[int(dictionary_id)]
+        return {
+            "dictionary_id": int(dictionary_id),
+            "entry_count": len(record["entries"]),
+            "enabled": bool(record.get("enabled", True)),
+            "source": "local",
+        }
+
+    def _record_version(self, record: dict, action: str) -> None:
+        history = self.history.setdefault(int(record["id"]), [])
+        entry = {
+            "dictionary_id": int(record["id"]),
+            "revision": int(record["version"]),
+            "action": action,
+            "name": record["name"],
+            "created_at": "2026-07-15T00:00:00Z",
+            "snapshot": copy.deepcopy(
+                {k: record[k] for k in ("id", "name", "description", "strategy",
+                                         "max_tokens", "enabled", "version", "entries")}
+            ),
+        }
+        history[:] = [h for h in history if h["revision"] != entry["revision"]]
+        history.append(entry)
+
+    async def list_versions(self, dictionary_id: int, mode: str = "local", **kwargs: Any) -> dict:
+        self._ensure_baseline(int(dictionary_id))
+        versions = sorted(self.history.get(int(dictionary_id), []), key=lambda h: -h["revision"])
+        return {
+            "dictionary_id": int(dictionary_id),
+            "versions": [{k: h[k] for k in ("dictionary_id", "revision", "action", "name", "created_at")}
+                          for h in versions],
+            "total": len(versions), "limit": 20, "offset": 0, "source": "local",
+        }
+
+    async def get_version(self, dictionary_id: int, revision: int, mode: str = "local") -> dict:
+        self._ensure_baseline(int(dictionary_id))
+        for h in self.history.get(int(dictionary_id), []):
+            if h["revision"] == int(revision):
+                return {**h, "source": "local"}
+        raise ValueError(f"local_chat_dictionary_version_not_found:{revision}")
+
+    async def revert_version(self, dictionary_id: int, revision: int, mode: str = "local") -> dict:
+        target = await self.get_version(dictionary_id, revision)
+        record = self.records[int(dictionary_id)]
+        snapshot = target["snapshot"]
+        for k in ("name", "description", "strategy", "max_tokens", "enabled"):
+            record[k] = snapshot[k]
+        record["entries"] = copy.deepcopy(snapshot["entries"])
+        record["version"] += 1
+        self._record_version(record, "revert")
+        return {**self._summary(record), "reverted_to_revision": int(revision)}
+
+    def _ensure_baseline(self, dictionary_id: int) -> None:
+        if not self.history.get(dictionary_id):
+            self._record_version(self.records[dictionary_id], "baseline")
 
     async def process_text(self, request_data: Any, mode: str = "local") -> dict:
         payload = dict(request_data)
@@ -307,6 +366,58 @@ class FakeDictScopeService:
                 "budget_exceeded": budget_exceeded,
             }
         return response
+
+    async def export_json(self, dictionary_id: int, mode: str = "local") -> dict:
+        record = self.records[int(dictionary_id)]
+        return {
+            "dictionary_id": int(dictionary_id),
+            "data": {
+                "name": record["name"], "description": record.get("description") or "",
+                "content": None,
+                "entries": copy.deepcopy(record["entries"]),
+                "strategy": record.get("strategy") or "sorted_evenly",
+                "max_tokens": record.get("max_tokens") or 1000,
+                "enabled": bool(record.get("enabled", True)),
+                "version": record.get("version", 1),
+            },
+            "source": "local",
+        }
+
+    async def export_markdown(self, dictionary_id: int, mode: str = "local") -> dict:
+        record = self.records[int(dictionary_id)]
+        lines = [f"{e.get('pattern')}: {e.get('replacement')}" for e in record["entries"]]
+        return {"dictionary_id": int(dictionary_id), "name": record["name"],
+                "content": "\n".join(lines) + ("\n" if lines else ""), "source": "local"}
+
+    async def import_json(self, request_data: Any, mode: str = "local") -> dict:
+        payload = dict(request_data)
+        data = dict(payload.get("data") or {})
+        name = data.get("name") or payload.get("name") or "Imported Dictionary"  # data.name WINS
+        created = await self.create_dictionary(
+            {"name": name, "description": data.get("description") or "",
+             "max_tokens": data.get("max_tokens") or 1000,
+             "enabled": bool(data.get("enabled", True)),
+             "entries": data.get("entries") or []}
+        )
+        if (data.get("strategy") or "sorted_evenly") != "sorted_evenly":
+            await self.update_dictionary(created["id"], {"strategy": data["strategy"]})
+        self.calls.append(("import_json", name))
+        return {"dictionary_id": created["id"], "source": "local"}
+
+    async def import_markdown(self, request_data: Any, mode: str = "local") -> dict:
+        payload = dict(request_data)
+        name = payload["name"]  # REQUIRED, like the real service
+        entries = []
+        for line in str(payload.get("content") or "").splitlines():
+            if ":" in line:
+                key, _, value = line.partition(":")
+                entries.append({"pattern": key.strip(), "replacement": value.strip(),
+                                "probability": 1.0, "group": None, "timed_effects": None,
+                                "max_replacements": 1, "type": "literal",
+                                "enabled": True, "case_sensitive": False, "priority": 0})
+        created = await self.create_dictionary({"name": name, "entries": entries})
+        self.calls.append(("import_markdown", name))
+        return {"dictionary_id": created["id"], "source": "local"}
 
 
 def make_dict_record(
@@ -1390,6 +1501,26 @@ class TestDictionaryValidationPanel:
             assert container_region.y <= add_region.y < container_region.y + container_region.height
             assert scroll.scroll_offset.y > 0  # the scroll genuinely moved
 
+    async def test_clear_empties_validation_panel(self, mock_app_instance, stub_characters, fake_dict_service):
+        from textual.widgets import OptionList
+
+        fake_dict_service.records[1]["entries"].append(
+            {"pattern": "BP", "replacement": "dup", "probability": 1.0, "group": None,
+             "timed_effects": None, "max_replacements": 1, "type": "literal",
+             "enabled": True, "case_sensitive": False, "priority": 0}
+        )
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            panel = screen.query_one("#personas-dict-validation", OptionList)
+            assert panel.option_count == 1
+            detail = screen.query_one("#personas-dictionary-detail")
+            detail.clear()
+            await pilot.pause()
+            assert panel.option_count == 0
+            assert detail._validation_findings == []
+
 
 class TestTryItDisabledReason:
     async def test_disabled_entry_renders_reason(self, mock_app_instance, stub_characters, fake_dict_service):
@@ -1485,3 +1616,497 @@ class TestDictionaryValidationMarkupSafety:
             rendered = panel.render_line(0).text
             assert "duplicate_pattern" in rendered
             assert "[x]" in rendered
+
+
+class TestDictionaryStatsTab:
+    async def _select_first(self, pilot, screen):
+        rows = screen.query_one("#personas-library-rows", ListView)
+        rows.index = 0
+        rows.action_select_cursor()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+    async def test_stats_render_service_plus_client_enrichment(self, mock_app_instance, stub_characters, fake_dict_service):
+        fake_dict_service.records[1]["entries"][1].update({"type": "regex", "pattern": "/hr/i", "enabled": False, "priority": 5})
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            body = str(screen.query_one("#personas-dict-stats-body", Static).renderable)
+            assert "Entries: 2" in body
+            assert "literal: 1" in body and "regex: 1" in body
+            assert "disabled: 1" in body
+            assert "Priority: 0..5" in body
+            assert "tokens" in body  # approximate token total line
+
+    async def test_stats_refreshed_after_settings_save(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
+        """load_statistics() runs on select and on entry mutations, but a
+        settings-only save (e.g. toggling enabled) must also re-feed the
+        Stats tab - otherwise it goes stale without requiring a reselect."""
+        from textual.widgets import TabbedContent
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            body_before = str(screen.query_one("#personas-dict-stats-body", Static).renderable)
+            assert "Dictionary enabled: yes" in body_before
+
+            screen.query_one("#personas-dict-tabs", TabbedContent).active = "personas-dict-tab-settings"
+            await pilot.pause()
+            screen.query_one("#personas-dict-enabled", Switch).value = False
+            await pilot.click("#personas-dict-settings-save")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert fake_dict_service.records[1]["enabled"] is False
+            body_after = str(screen.query_one("#personas-dict-stats-body", Static).renderable)
+            assert "Dictionary enabled: no" in body_after
+
+
+class TestDictionaryVersionsTab:
+    async def _select_first(self, pilot, screen):
+        rows = screen.query_one("#personas-library-rows", ListView)
+        rows.index = 0
+        rows.action_select_cursor()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+    async def test_versions_listed_with_baseline(self, mock_app_instance, stub_characters, fake_dict_service):
+        from textual.widgets import DataTable
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            table = screen.query_one("#personas-dict-versions-table", DataTable)
+            assert table.row_count >= 1
+            assert str(table.get_cell_at((0, 1))) == "baseline"
+
+    async def test_view_shows_snapshot_summary(self, mock_app_instance, stub_characters, fake_dict_service):
+        from textual.widgets import DataTable, TabbedContent
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            screen.query_one("#personas-dict-tabs", TabbedContent).active = "personas-dict-tab-versions"
+            await pilot.pause()
+            screen.query_one("#personas-dict-versions-table", DataTable).move_cursor(row=0)
+            await pilot.click("#personas-dict-version-view")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            snapshot = str(screen.query_one("#personas-dict-version-snapshot", Static).renderable)
+            assert "rev 1" in snapshot and "entries: 2" in snapshot and "sorted_evenly" in snapshot
+
+    async def test_revert_confirms_then_restores(self, mock_app_instance, stub_characters, fake_dict_service, monkeypatch):
+        from textual.widgets import DataTable, TabbedContent
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            # Mutate: rename via settings save to create revision 2.
+            screen.query_one("#personas-dict-tabs", TabbedContent).active = "personas-dict-tab-settings"
+            await pilot.pause()
+            screen.query_one("#personas-dict-name", Input).value = "Renamed"
+            await pilot.click("#personas-dict-settings-save")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert fake_dict_service.records[1]["name"] == "Renamed"
+
+            async def _yes(name):
+                return True
+
+            monkeypatch.setattr(screen, "_confirm_dictionary_revert", _yes)
+            # The Save button still holds focus from the click above; a
+            # DescendantFocus event it triggers is still working through the
+            # message queue and would otherwise re-fire TabPane.Focused ->
+            # TabbedContent._on_tab_pane_focused, snapping .active back to
+            # "personas-dict-tab-settings" on the very next pause. Blur first
+            # so the tab switch below actually sticks.
+            screen.set_focus(None)
+            await pilot.pause()
+            screen.query_one("#personas-dict-tabs", TabbedContent).active = "personas-dict-tab-versions"
+            await pilot.pause()
+            table = screen.query_one("#personas-dict-versions-table", DataTable)
+            # list_versions() sorts newest-first (matching the real local
+            # backend's reverse=True), so after the rename row 0 is revision
+            # 2 ("update") and row 1 is revision 1 (baseline, pre-rename).
+            assert str(table.get_cell_at((1, 1))) == "baseline"
+            table.move_cursor(row=1)  # revision 1 (baseline, pre-rename)
+            await pilot.click("#personas-dict-version-revert")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert fake_dict_service.records[1]["name"] == "Medical Abbrev"  # restored
+            assert screen.query_one("#personas-dict-name", Input).value == "Medical Abbrev"  # detail reloaded
+
+    async def test_revert_refreshes_inspector_name(
+        self, mock_app_instance, stub_characters, fake_dict_service, monkeypatch
+    ):
+        """A revert restores the pre-rename name in the center detail (as
+        covered above), but the inspector's 'Selected:' line is a separate
+        widget the revert worker must also re-drive - otherwise it keeps
+        showing the renamed value even though the record itself reverted."""
+        from textual.widgets import DataTable, TabbedContent
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            # Mutate: rename via settings save to create revision 2.
+            screen.query_one("#personas-dict-tabs", TabbedContent).active = "personas-dict-tab-settings"
+            await pilot.pause()
+            screen.query_one("#personas-dict-name", Input).value = "Renamed"
+            await pilot.click("#personas-dict-settings-save")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert fake_dict_service.records[1]["name"] == "Renamed"
+            assert "Renamed" in str(
+                screen.query_one("#personas-selected-name", Static).renderable
+            )
+
+            async def _yes(name):
+                return True
+
+            monkeypatch.setattr(screen, "_confirm_dictionary_revert", _yes)
+            # See the comment in test_revert_confirms_then_restores: blur
+            # first so the tab switch below actually sticks.
+            screen.set_focus(None)
+            await pilot.pause()
+            screen.query_one("#personas-dict-tabs", TabbedContent).active = "personas-dict-tab-versions"
+            await pilot.pause()
+            table = screen.query_one("#personas-dict-versions-table", DataTable)
+            table.move_cursor(row=1)  # revision 1 (baseline, pre-rename)
+            await pilot.click("#personas-dict-version-revert")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert fake_dict_service.records[1]["name"] == "Medical Abbrev"  # restored
+            assert str(
+                screen.query_one("#personas-selected-name", Static).renderable
+            ) == "Selected: Medical Abbrev"
+
+    async def test_versions_table_renders_bracketed_name_safely(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
+        """Bare str cells are markup-parsed by DataTable's idle render pass.
+        A dictionary name containing an unmatched closing tag (e.g. '[/]')
+        raises an uncaught rich.errors.MarkupError there - not caught by
+        anything, so it corrupts/crashes the widget on selection. Cells must
+        be pre-wrapped in Text() so they're never markup-parsed. This name
+        also carries a plain '[WIP]' prefix to confirm ordinary bracketed
+        text still renders through intact.
+        """
+        from textual.widgets import DataTable
+
+        fake_dict_service.records[1]["name"] = "[WIP] [/] Meds"
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            table = screen.query_one("#personas-dict-versions-table", DataTable)
+            cell = table.get_cell_at((0, 2))
+            assert "[WIP]" in str(cell)
+
+
+class TestDictionaryExport:
+    async def _select_first(self, pilot, screen):
+        rows = screen.query_one("#personas-library-rows", ListView)
+        rows.index = 0
+        rows.action_select_cursor()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+    async def test_export_json_writes_file_and_reports_path(self, mock_app_instance, stub_characters, fake_dict_service, tmp_path, monkeypatch):
+        from textual.widgets import TabbedContent
+        import tldw_chatbook.UI.Screens.personas_screen as screen_module
+
+        monkeypatch.setattr(screen_module, "get_user_data_dir", lambda: tmp_path)
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            screen.query_one("#personas-dict-tabs", TabbedContent).active = "personas-dict-tab-settings"
+            await pilot.pause()
+            await pilot.click("#personas-dict-export-json")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            files = list((tmp_path / "exports").glob("medical-abbrev-*.json"))
+            assert len(files) == 1
+            import json as jsonlib
+            payload = jsonlib.loads(files[0].read_text())
+            assert payload["data"]["name"] == "Medical Abbrev"
+            assert payload["data"]["strategy"] == "sorted_evenly"
+            status = str(screen.query_one("#personas-dict-status", Static).renderable)
+            assert "Exported to" in status and str(files[0]) in status
+
+    async def test_markdown_export_gates_on_lossy_confirm(self, mock_app_instance, stub_characters, fake_dict_service, tmp_path, monkeypatch):
+        from textual.widgets import TabbedContent
+        import tldw_chatbook.UI.Screens.personas_screen as screen_module
+
+        monkeypatch.setattr(screen_module, "get_user_data_dir", lambda: tmp_path)
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+
+            async def _declined():
+                return False
+
+            monkeypatch.setattr(screen, "_confirm_lossy_markdown_export", _declined)
+            screen.query_one("#personas-dict-tabs", TabbedContent).active = "personas-dict-tab-settings"
+            await pilot.pause()
+            await pilot.click("#personas-dict-export-md")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert list((tmp_path / "exports").glob("*.md")) == []  # declined -> no file
+
+            async def _accepted():
+                return True
+
+            monkeypatch.setattr(screen, "_confirm_lossy_markdown_export", _accepted)
+            # Button.press() flags "-active" for active_effect_duration (0.2s) and
+            # _on_click() no-ops a second click while that class is set; a real-time
+            # pause (pilot.pause() alone only yields to the event loop, it doesn't
+            # advance the clock) lets the flash clear so this second click registers.
+            await pilot.pause(0.3)
+            await pilot.click("#personas-dict-export-md")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            files = list((tmp_path / "exports").glob("medical-abbrev-*.md"))
+            assert len(files) == 1
+            assert "BP: blood pressure" in files[0].read_text()
+
+
+class TestDictionaryImport:
+    @staticmethod
+    def _capture_notifications(app) -> list[tuple[str, str]]:
+        """Shadow App.notify with an instance attribute, like _notify resolves it."""
+        captured: list[tuple[str, str]] = []
+        app.notify = lambda message, severity="information", **kwargs: captured.append(
+            (str(message), severity)
+        )
+        return captured
+
+    async def test_import_button_visible_in_dictionaries_mode(self, mock_app_instance, stub_characters, fake_dict_service):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _enter_dictionaries(pilot)
+            btn = screen.query_one("#personas-library-import", Button)
+            assert btn.display is True
+            assert "dictionary" in str(btn.tooltip).lower()
+
+    async def test_import_json_file_selects_new_dictionary(self, mock_app_instance, stub_characters, fake_dict_service, tmp_path):
+        import json as jsonlib
+
+        payload = {"data": {"name": "Shipped In", "description": "", "content": None,
+                             "entries": [{"pattern": "RR", "replacement": "resp rate",
+                                          "probability": 1.0, "group": None, "timed_effects": None,
+                                          "max_replacements": 1, "type": "literal",
+                                          "enabled": True, "case_sensitive": False, "priority": 0}],
+                             "strategy": "character_lore_first", "max_tokens": 500,
+                             "enabled": True, "version": 3}}
+        source = tmp_path / "shipped.json"
+        source.write_text(jsonlib.dumps(payload))
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await screen._import_dictionary_from_path(str(source))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            names = [r["name"] for r in fake_dict_service.records.values()]
+            assert "Shipped In" in names
+            assert screen.state.selected_entity_name == "Shipped In"
+            imported = next(r for r in fake_dict_service.records.values() if r["name"] == "Shipped In")
+            assert imported["strategy"] == "character_lore_first"
+
+    async def test_import_conflict_renames_and_succeeds(self, mock_app_instance, stub_characters, fake_dict_service, tmp_path):
+        import json as jsonlib
+
+        payload = {"data": {"name": "Medical Abbrev", "description": "", "content": None,
+                             "entries": [], "strategy": "sorted_evenly", "max_tokens": 1000,
+                             "enabled": True, "version": 1}}
+        source = tmp_path / "clash.json"
+        source.write_text(jsonlib.dumps(payload))
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await screen._import_dictionary_from_path(str(source))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            names = [r["name"] for r in fake_dict_service.records.values()]
+            assert "Medical Abbrev (imported)" in names  # data.name mutated, retried
+
+    async def test_import_markdown_uses_filename_stem(self, mock_app_instance, stub_characters, fake_dict_service, tmp_path):
+        source = tmp_path / "field-notes.md"
+        source.write_text("RR: resp rate\n")
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await screen._import_dictionary_from_path(str(source))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            names = [r["name"] for r in fake_dict_service.records.values()]
+            assert "field-notes" in names
+
+    async def test_import_bad_json_creates_nothing(self, mock_app_instance, stub_characters, fake_dict_service, tmp_path):
+        source = tmp_path / "broken.json"
+        source.write_text("{not json")
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            before = len(fake_dict_service.records)
+            await screen._import_dictionary_from_path(str(source))
+            await pilot.pause()
+            assert len(fake_dict_service.records) == before
+
+    async def test_import_non_utf8_file_notifies_no_crash(
+        self, mock_app_instance, stub_characters, fake_dict_service, tmp_path
+    ):
+        """UnicodeDecodeError is a ValueError, not an OSError - the read
+        try/except must catch it too or this worker-hosted coroutine
+        crashes the whole TUI (exit_on_error=True on the default worker)."""
+        source = tmp_path / "binary.json"
+        source.write_bytes(b"\xff\xfe bad")
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            before = len(fake_dict_service.records)
+            await screen._import_dictionary_from_path(str(source))
+            await pilot.pause()
+            assert len(fake_dict_service.records) == before
+            assert any(severity == "error" for _, severity in notifications)
+
+    async def test_import_json_array_notifies_no_crash(
+        self, mock_app_instance, stub_characters, fake_dict_service, tmp_path
+    ):
+        """A structurally-valid JSON array has no 'data' key, so the coercion
+        falls through to dict(parsed) - which raises on a non-dict payload
+        unless it's explicitly guarded."""
+        source = tmp_path / "array.json"
+        source.write_text("[1, 2, 3]")
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            before = len(fake_dict_service.records)
+            await screen._import_dictionary_from_path(str(source))
+            await pilot.pause()
+            assert len(fake_dict_service.records) == before
+            assert any(severity == "error" for _, severity in notifications)
+
+    async def test_import_json_null_data_notifies_no_crash(
+        self, mock_app_instance, stub_characters, fake_dict_service, tmp_path
+    ):
+        """An envelope with a non-dict 'data' field (here: null) must also be
+        guarded - dict(None) raises the same as dict(parsed) on a list."""
+        import json as jsonlib
+
+        source = tmp_path / "null-data.json"
+        source.write_text(jsonlib.dumps({"data": None}))
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            before = len(fake_dict_service.records)
+            await screen._import_dictionary_from_path(str(source))
+            await pilot.pause()
+            assert len(fake_dict_service.records) == before
+            assert any(severity == "error" for _, severity in notifications)
+
+    async def test_import_oversized_file_notifies_no_crash(
+        self, mock_app_instance, stub_characters, fake_dict_service, tmp_path, monkeypatch
+    ):
+        """A huge import file must be rejected before the read - MemoryError
+        from `source.read_text` on a genuinely oversized file is not an
+        OSError, so it would otherwise escape the existing read guard and
+        crash the whole TUI (exit_on_error=True on the default worker).
+        Exercises the guard by lowering the byte ceiling instead of writing
+        a multi-MB fixture."""
+        import tldw_chatbook.UI.Screens.personas_screen as screen_module
+
+        monkeypatch.setattr(screen_module, "PERSONAS_DICTIONARY_IMPORT_MAX_BYTES", 5)
+        source = tmp_path / "toobig.json"
+        source.write_text('{"data": {}}')
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            before = len(fake_dict_service.records)
+            await screen._import_dictionary_from_path(str(source))
+            await pilot.pause()
+            assert len(fake_dict_service.records) == before
+            assert any(
+                "larger than" in message and severity == "error"
+                for message, severity in notifications
+            )
+
+    async def test_import_deeply_nested_json_notifies_no_crash(
+        self, mock_app_instance, stub_characters, fake_dict_service, tmp_path
+    ):
+        """Deeply nested JSON blows the recursive-descent parser's stack -
+        RecursionError is not a JSONDecodeError, so the parse guard must
+        catch it too or the worker crashes the whole TUI."""
+        source = tmp_path / "nested.json"
+        source.write_text("[" * 20000 + "]" * 20000)
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            before = len(fake_dict_service.records)
+            await screen._import_dictionary_from_path(str(source))
+            await pilot.pause()
+            assert len(fake_dict_service.records) == before
+            assert any(severity == "error" for _, severity in notifications)
+
+    async def test_import_completion_skipped_when_mode_changed(
+        self, mock_app_instance, stub_characters, fake_dict_service, tmp_path
+    ):
+        """The import coroutine awaits the DB call mid-flight; if the user
+        switches away from Dictionaries mode before it resumes, completion
+        must not yank them back into Dictionaries mode and select the newly
+        imported dictionary out from under them. The import itself (a DB
+        write, already committed by the time the mode is checked) must
+        still succeed."""
+        import json as jsonlib
+
+        payload = {"data": {"name": "Late Arrival", "description": "", "content": None,
+                             "entries": [], "strategy": "sorted_evenly", "max_tokens": 1000,
+                             "enabled": True, "version": 1}}
+        source = tmp_path / "late.json"
+        source.write_text(jsonlib.dumps(payload))
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            # Simulate the user having navigated away while the import ran.
+            screen.state.active_mode = "characters"
+            await screen._import_dictionary_from_path(str(source))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            names = [r["name"] for r in fake_dict_service.records.values()]
+            assert "Late Arrival" in names  # the import itself still succeeded
+            assert screen.state.selected_entity_kind != "dictionary"  # no yank-back
+            assert any(
+                "open Dictionaries" in message and severity == "information"
+                for message, severity in notifications
+            )

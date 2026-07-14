@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
@@ -25,6 +27,7 @@ from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...DB.ChaChaNotes_DB import ConflictError
 from ...tldw_api import PersonaProfileCreate, PersonaProfileUpdate
 from ...Utils.path_validation import validate_path_simple
+from ...Utils.paths import get_user_data_dir
 from ...Widgets.Console.console_rail_handle import ConsoleRailHandle
 from ...Widgets.confirmation_dialog import ConfirmationDialog, UnsavedChangesDialog
 from ...Widgets.destination_workbench import DestinationModeStrip
@@ -65,8 +68,11 @@ from ...Widgets.Persona_Widgets.personas_dictionary_detail import (
     DictionaryEntryAddRequested,
     DictionaryEntryDeleteRequested,
     DictionaryEntryUpdateRequested,
+    DictionaryExportRequested,
     DictionarySettingsEdited,
     DictionarySettingsSaveRequested,
+    DictionaryVersionRevertRequested,
+    DictionaryVersionViewRequested,
     PersonasDictionaryDetailWidget,
 )
 from ...Widgets.Persona_Widgets.personas_dictionary_tryit import (
@@ -124,6 +130,7 @@ PERSONAS_AVATAR_IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp", ".
 PERSONAS_AVATAR_IMAGE_SUFFIX_COPY = "PNG, JPG, JPEG, WEBP, or GIF"
 PERSONAS_AVATAR_MAX_BYTES = 5 * 1024 * 1024
 PERSONAS_AVATAR_MAX_SIZE_COPY = "5 MB"
+PERSONAS_DICTIONARY_IMPORT_MAX_BYTES = 10 * 1024 * 1024
 
 # 80-column terminals need a tighter three-pane split than the default
 # 2:4:2 workbench minimums. Keep this screen-owned so a later rail-collapse
@@ -1131,6 +1138,12 @@ class PersonasScreen(BaseAppScreen):
         )
         detail = self.query_one(PersonasDictionaryDetailWidget)
         detail.load_dictionary(record)
+        stats = None
+        try:
+            stats = await service.get_statistics(int(entity_id), mode="local")
+        except Exception:
+            logger.opt(exception=True).warning(f"Could not load dictionary {entity_id} statistics.")
+        detail.load_statistics(stats, list(record.get("entries") or []))
         self._show_center("#personas-dictionary-detail")
         library = self.query_one(PersonasLibraryPane)
         library.mark_active_row("dictionary", entity_id)
@@ -1142,6 +1155,25 @@ class PersonasScreen(BaseAppScreen):
         self._sync_inspector_console_actions()
         self._update_title()
         self._update_status_row()
+        await self._refresh_dictionary_versions()
+
+    async def _refresh_dictionary_statistics(self, record: dict) -> None:
+        """Re-feed the Stats tab for the given loaded record (best-effort).
+
+        Args:
+            record: The freshly loaded dictionary record (post save/revert)
+                whose entries seed the client-side stats enrichment.
+        """
+        entity_id = self.state.selected_entity_id
+        service = self._dictionary_scope_service()
+        if service is None or not entity_id:
+            return
+        stats = None
+        try:
+            stats = await service.get_statistics(int(entity_id), mode="local")
+        except Exception:
+            logger.opt(exception=True).warning("Could not refresh dictionary statistics.")
+        self.query_one(PersonasDictionaryDetailWidget).load_statistics(stats, list(record.get("entries") or []))
 
     @on(DictionarySettingsEdited)
     def _handle_dictionary_settings_edited(self, message: DictionarySettingsEdited) -> None:
@@ -1190,11 +1222,97 @@ class PersonasScreen(BaseAppScreen):
             name=self.state.selected_entity_name, kind="dictionary", authority="Local"
         )
         detail.load_dictionary(record)
+        await self._refresh_dictionary_statistics(record)
         detail.set_status("Saved.")
         self._update_title()
         await self._render_dictionary_rows(query=self.state.search_query)
         self.query_one(PersonasLibraryPane).mark_active_row("dictionary", entity_id)
         self._sync_inspector_console_actions()
+        await self._refresh_dictionary_versions()
+
+    _MARKDOWN_LOSSY_FIELDS = (
+        "regex/type, probability, group, max replacements, timed effects, "
+        "enabled, case-sensitivity, priority"
+    )
+
+    @on(DictionaryExportRequested)
+    async def _handle_dictionary_export(self, message: DictionaryExportRequested) -> None:
+        message.stop()
+        if self.state.selected_entity_kind != "dictionary" or not self.state.selected_entity_id:
+            return
+        if self._io_dialog_active:
+            return
+        self._io_dialog_active = True
+        self.run_worker(self._dictionary_export_worker(message.fmt), group="personas-io")
+
+    async def _confirm_lossy_markdown_export(self) -> bool:
+        """True when the user accepted the lossy-markdown warning."""
+        dialog = ConfirmationDialog(
+            title="Export Markdown",
+            message=(
+                "Markdown keeps only pattern and replacement text. These fields "
+                f"are DROPPED: {self._MARKDOWN_LOSSY_FIELDS}. Use JSON for a full backup."
+            ),
+            confirm_label="Export anyway",
+            cancel_label="Cancel",
+        )
+        try:
+            return bool(await self.app.push_screen_wait(dialog))
+        except Exception:
+            logger.opt(exception=True).warning("Could not show the lossy-export dialog.")
+            return False
+
+    async def _dictionary_export_worker(self, fmt: str) -> None:
+        """Export the selected dictionary to a JSON or markdown file.
+
+        Args:
+            fmt: Export format - ``"json"`` for a full-fidelity backup or
+                ``"markdown"`` for a lossy, human-readable summary.
+        """
+        try:
+            if fmt == "markdown" and not await self._confirm_lossy_markdown_export():
+                return
+            entity_id = self.state.selected_entity_id
+            service = self._dictionary_scope_service()
+            if service is None or not entity_id:
+                return
+            detail = self.query_one(PersonasDictionaryDetailWidget)
+            try:
+                if fmt == "json":
+                    response = await service.export_json(int(entity_id), mode="local")
+                    body = json.dumps(response, indent=2, ensure_ascii=False)
+                    extension = "json"
+                else:
+                    response = await service.export_markdown(int(entity_id), mode="local")
+                    body = str(response.get("content") or "")
+                    extension = "md"
+            except Exception as exc:
+                logger.opt(exception=True).warning(f"Could not export dictionary {entity_id}.")
+                detail.set_status(f"Export failed: {exc}")
+                return
+            name = str(self.state.selected_entity_name or "dictionary")
+            slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "dictionary"
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            exports_dir = get_user_data_dir() / "exports"
+            temp = None
+            try:
+                exports_dir.mkdir(parents=True, exist_ok=True)
+                target = exports_dir / f"{slug}-{stamp}.{extension}"
+                temp = exports_dir / f".{slug}-{stamp}.{extension}.tmp"
+                temp.write_text(body, encoding="utf-8")
+                temp.replace(target)
+            except OSError as exc:
+                logger.opt(exception=True).warning("Could not write the export file.")
+                if temp is not None:
+                    temp.unlink(missing_ok=True)
+                detail.set_status(f"Export failed: {exc}")
+                return
+            detail.set_status(f"Exported to {target}")
+        except Exception as exc:
+            logger.opt(exception=True).error(f"Unexpected error exporting dictionary {fmt!r}.")
+            self._notify(f"Export failed: {exc}", "error")
+        finally:
+            self._io_dialog_active = False
 
     async def _reload_selected_dictionary_entries(self) -> bool:
         """Re-fetch entries + version after a mutation (positional ids shift).
@@ -1218,9 +1336,115 @@ class PersonasScreen(BaseAppScreen):
         raw_version = record.get("version")
         self._selected_dictionary_version = int(raw_version) if raw_version is not None else None
         detail.update_entries(list(record.get("entries") or []))
+        stats = None
+        try:
+            stats = await service.get_statistics(int(entity_id), mode="local")
+        except Exception:
+            logger.opt(exception=True).warning(f"Could not load dictionary {entity_id} statistics.")
+        detail.load_statistics(stats, list(record.get("entries") or []))
         await self._render_dictionary_rows(query=self.state.search_query)
         self.query_one(PersonasLibraryPane).mark_active_row("dictionary", entity_id)
+        await self._refresh_dictionary_versions()
         return True
+
+    async def _refresh_dictionary_versions(self) -> None:
+        """Feed the Versions tab for the selected dictionary (best-effort)."""
+        entity_id = self.state.selected_entity_id
+        service = self._dictionary_scope_service()
+        if service is None or self.state.selected_entity_kind != "dictionary" or not entity_id:
+            return
+        detail = self.query_one(PersonasDictionaryDetailWidget)
+        try:
+            response = await service.list_versions(int(entity_id), mode="local")
+        except Exception:
+            logger.opt(exception=True).warning(f"Could not list dictionary {entity_id} versions.")
+            detail.load_versions([])
+            return
+        detail.load_versions(list(response.get("versions") or []))
+
+    @on(DictionaryVersionViewRequested)
+    async def _handle_dictionary_version_view(self, message: DictionaryVersionViewRequested) -> None:
+        message.stop()
+        entity_id = self.state.selected_entity_id
+        service = self._dictionary_scope_service()
+        if service is None or not entity_id:
+            return
+        detail = self.query_one(PersonasDictionaryDetailWidget)
+        try:
+            record = await service.get_version(int(entity_id), message.revision, mode="local")
+        except Exception as exc:
+            logger.opt(exception=True).warning(f"Could not load version {message.revision}.")
+            detail.set_status(f"Could not load version: {exc}")
+            return
+        detail.show_version_snapshot(record)
+
+    @on(DictionaryVersionRevertRequested)
+    async def _handle_dictionary_version_revert(self, message: DictionaryVersionRevertRequested) -> None:
+        message.stop()
+        if self._io_dialog_active:
+            return
+        self._io_dialog_active = True
+        self.run_worker(self._dictionary_revert_worker(message.revision), group="personas-io")
+
+    async def _confirm_dictionary_revert(self, revision: int) -> bool:
+        """True when the user confirmed the revert (worker context required)."""
+        dialog = ConfirmationDialog(
+            title="Revert",
+            message=f"Revert to revision {revision}? Current settings and entries are replaced.",
+            confirm_label="Revert",
+            cancel_label="Cancel",
+        )
+        try:
+            return bool(await self.app.push_screen_wait(dialog))
+        except Exception:
+            logger.opt(exception=True).warning("Could not show the revert confirmation dialog.")
+            return False
+
+    async def _dictionary_revert_worker(self, revision: int) -> None:
+        """Confirm, then revert the selected dictionary to a prior version.
+
+        Args:
+            revision: The version number to revert the dictionary to.
+        """
+        try:
+            if not await self._confirm_dictionary_revert(revision):
+                return
+            entity_id = self.state.selected_entity_id
+            service = self._dictionary_scope_service()
+            if service is None or not entity_id:
+                return
+            detail = self.query_one(PersonasDictionaryDetailWidget)
+            try:
+                record = await service.revert_version(int(entity_id), revision, mode="local")
+            except ConflictError:
+                detail.set_status(
+                    "Revert failed: the dictionary changed since it was loaded. Reselect and try again."
+                )
+                return
+            except Exception as exc:
+                logger.opt(exception=True).warning(f"Could not revert to revision {revision}.")
+                detail.set_status(f"Revert failed: {exc}")
+                return
+            raw_version = record.get("version")
+            self._selected_dictionary_version = int(raw_version) if raw_version is not None else None
+            self.state.selected_entity_name = str(record.get("name") or "")
+            self.query_one(PersonasInspectorPane).show_selection(
+                name=self.state.selected_entity_name, kind="dictionary", authority="Local"
+            )
+            detail.load_dictionary(record)
+            await self._refresh_dictionary_statistics(record)
+            detail.set_status(f"Reverted to revision {revision}.")
+            await self._render_dictionary_rows(query=self.state.search_query)
+            self.query_one(PersonasLibraryPane).mark_active_row("dictionary", entity_id)
+            await self._refresh_dictionary_versions()
+        except Exception as exc:
+            # The revert call itself is already guarded above; this covers the
+            # post-revert refresh steps (widget/state updates, row re-render),
+            # which were previously unguarded and could crash the app.
+            logger.opt(exception=True).error(f"Unexpected error reverting to revision {revision}.")
+            self._notify(f"Revert failed: {exc}", "error")
+        finally:
+            self._io_dialog_active = False
 
     async def _run_dictionary_entry_op(self, op: Callable[[Any], Awaitable[Any]], failure: str) -> None:
         """One guarded service mutation + the mandatory entries reload."""
@@ -1556,11 +1780,10 @@ class PersonasScreen(BaseAppScreen):
                 await self._run_guarded(self._begin_create_dictionary)
             # Creation in the remaining modes is wired in follow-up tasks.
         elif message.action == "import":
-            # Character-card import only; the library pane hides the Import
-            # button outside Characters mode, so other modes are a no-op.
-            if self.state.active_mode != "characters":
-                return
-            await self._run_guarded(self._open_import_dialog)
+            if self.state.active_mode == "characters":
+                await self._run_guarded(self._open_import_dialog)
+            elif self.state.active_mode == "dictionaries":
+                await self._run_guarded(self._open_dictionary_import_dialog)
         elif message.action == "duplicate":
             if self.state.active_mode == "dictionaries":
                 await self._run_guarded(self._duplicate_selected_dictionary)
@@ -2039,6 +2262,135 @@ class PersonasScreen(BaseAppScreen):
             self._notify("Character already existed; selected it.", "information")
         else:
             self._notify("Character imported.", "information")
+
+    async def _open_dictionary_import_dialog(self) -> None:
+        """Continuation for the guarded dictionaries-import action."""
+        if self._io_dialog_active:
+            logger.debug("Import/export dialog already active; ignoring import request.")
+            return
+        self._io_dialog_active = True
+        self.run_worker(self._dictionary_import_dialog_worker(), group="personas-io")
+
+    async def _dictionary_import_dialog_worker(self) -> None:
+        """Show the import file picker and hand the chosen path off to import."""
+        from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
+
+        try:
+            picker = EnhancedFileOpen(
+                title="Import Dictionary",
+                filters=Filters(
+                    ("Dictionaries", lambda p: p.suffix.lower() in (".json", ".md", ".markdown")),
+                    ("JSON Files", lambda p: p.suffix.lower() == ".json"),
+                    ("Markdown Files", lambda p: p.suffix.lower() in (".md", ".markdown")),
+                    ("All Files", lambda p: True),
+                ),
+                context="dictionary_import",
+            )
+            try:
+                file_path = await self.app.push_screen_wait(picker)
+            except Exception:
+                logger.opt(exception=True).warning("Could not show the dictionary import dialog.")
+                return
+            if file_path:
+                await self._import_dictionary_from_path(str(file_path))
+        except Exception as exc:
+            logger.opt(exception=True).error("Unexpected error in the dictionary import worker.")
+            self._notify(f"Import failed: {exc}", "error")
+        finally:
+            self._io_dialog_active = False
+
+    async def _import_dictionary_from_path(self, path: str) -> None:
+        """Import a dictionary file; on a name conflict, auto-rename and retry.
+
+        Args:
+            path: Filesystem path to the ``.json`` or ``.md``/``.markdown``
+                file to import, as chosen via the file picker.
+        """
+        service = self._dictionary_scope_service()
+        if service is None:
+            self._notify("Dictionaries service is not configured.", "error")
+            return
+        try:
+            source = validate_path_simple(path, require_exists=True)
+        except (ValueError, OSError) as exc:
+            logger.opt(exception=True).warning(f"Rejected dictionary import path {path}.")
+            self._notify(f"Import failed: {exc}", "error")
+            return
+        try:
+            if source.stat().st_size > PERSONAS_DICTIONARY_IMPORT_MAX_BYTES:
+                self._notify(
+                    f"Import failed: file is larger than "
+                    f"{PERSONAS_DICTIONARY_IMPORT_MAX_BYTES // (1024 * 1024)} MB.",
+                    "error",
+                )
+                return
+        except OSError as exc:
+            self._notify(f"Import failed: {exc}", "error")
+            return
+        try:
+            text = await asyncio.to_thread(source.read_text, "utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.opt(exception=True).warning(f"Could not read import file {path}.")
+            self._notify(f"Import failed: {exc}", "error")
+            return
+        suffix = source.suffix.lower()
+        if suffix == ".json":
+            try:
+                parsed = json.loads(text)
+            except (json.JSONDecodeError, RecursionError, ValueError) as exc:
+                self._notify(f"Import failed: not valid JSON ({exc})", "error")
+                return
+            raw = parsed.get("data") if isinstance(parsed, dict) and "data" in parsed else parsed
+            if not isinstance(raw, dict):
+                self._notify("Import failed: JSON must be a dictionary object.", "error")
+                return
+            data = dict(raw)
+            request = {"data": data}
+            def _rename(new_name: str) -> None:
+                data["name"] = new_name          # data.name WINS - mutate it
+            base_name = str(data.get("name") or "Imported Dictionary")
+            importer = service.import_json
+        elif suffix in (".md", ".markdown"):
+            request = {"name": source.stem, "content": text}  # name REQUIRED
+            def _rename(new_name: str) -> None:
+                request["name"] = new_name
+            base_name = source.stem
+            importer = service.import_markdown
+        else:
+            self._notify("Import supports .json and .md files.", "warning")
+            return
+        try:
+            result = await importer(request, mode="local")
+        except ConflictError:
+            renamed = self._unique_dictionary_name(f"{base_name} (imported)")
+            _rename(renamed)
+            try:
+                result = await importer(request, mode="local")
+            except Exception as exc:
+                logger.opt(exception=True).warning("Dictionary import retry failed.")
+                self._notify(f"Import failed: {exc}", "error")
+                return
+            self._notify(f"Name in use - imported as '{renamed}'.", "information")
+        except Exception as exc:
+            logger.opt(exception=True).warning(f"Dictionary import failed for {path}.")
+            self._notify(f"Import failed: {exc}", "error")
+            return
+        record = None
+        try:
+            record = await service.get_dictionary(int(result["dictionary_id"]), mode="local")
+        except Exception:
+            logger.opt(exception=True).warning("Imported dictionary could not be reloaded.")
+            self._notify("Import succeeded, but the dictionary could not be reloaded.", "warning")
+            return
+        if self.state.active_mode != "dictionaries":
+            # The user navigated away while the import ran; don't yank them back.
+            self._notify(
+                f"Imported '{record.get('name') or ''}' — open Dictionaries to see it.",
+                "information",
+            )
+            return
+        await self._render_dictionary_rows(query="")
+        await self._select_dictionary(str(record.get("id")), str(record.get("name") or ""))
 
     @on(Button.Pressed, "#personas-export-json")
     async def _handle_export_json_pressed(self, event: Button.Pressed) -> None:
