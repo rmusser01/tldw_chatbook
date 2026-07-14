@@ -1,6 +1,6 @@
 # Roleplay P1d — portability + history (design)
 
-**Status:** Design approved (brainstorm), pending spec review.
+**Status:** Implemented (P1d). Task 6 took the auto-rename route (no reusable input dialog exists) — AC2's "pre-filled rename dialog" is realized as auto-rename + notify.
 **Program:** Personas→Roleplay redesign. P0 #619, P1a #622, P1b #625, P1c #627 MERGED. The old "P1d bundle" was decomposed in brainstorm: **this slice = import/export + Versions + Stats tabs + two carried riders**; **P1e = attachments** (metadata-contract attach UI, reverse used-by, character-level attachment, dead-code disposition — its own design cycle). Local/server toggle: post-P1e backlog.
 **Worktree/branch:** `.claude/worktrees/personas-redesign`, `claude/roleplay-p1d-portability` off dev `700f79c9`.
 
