@@ -6950,3 +6950,82 @@ async def test_prose_paste_still_lands_in_draft():
         console.on_paste(Paste(text="what does /etc/hosts do?"))
         await pilot.pause()
         assert composer.draft_text() == "what does /etc/hosts do?"
+
+
+@pytest.mark.asyncio
+async def test_alt_v_grabs_clipboard_image_into_pending(monkeypatch):
+    from io import BytesIO
+
+    from PIL import Image as PILImage
+
+    import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+
+    buffer = BytesIO()
+    PILImage.new("RGB", (16, 16), (10, 200, 10)).save(buffer, format="PNG")
+    png = buffer.getvalue()
+
+    from tldw_chatbook.Chat.console_paste_attach import ClipboardGrab
+
+    monkeypatch.setattr(
+        chat_screen_module,
+        "grab_clipboard_image",
+        lambda: ClipboardGrab(kind="image", png_bytes=png),
+    )
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        console.query_one("#console-native-composer", ConsoleComposerBar).focus()
+        await pilot.pause()
+
+        await pilot.press("alt+v")
+        for _ in range(80):
+            store = console._ensure_console_chat_store()
+            sid = store.active_session_id
+            if sid and store.pending_attachment(sid) is not None:
+                break
+            await pilot.pause(0.05)
+
+        store = console._ensure_console_chat_store()
+        pending = store.pending_attachment(store.active_session_id)
+        assert pending is not None
+        assert pending.file_type == "image"
+        assert pending.display_name.startswith("clipboard-")
+
+
+@pytest.mark.asyncio
+async def test_alt_v_unavailable_platform_toasts(monkeypatch):
+    import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+
+    from tldw_chatbook.Chat.console_paste_attach import ClipboardGrab
+
+    monkeypatch.setattr(
+        chat_screen_module,
+        "grab_clipboard_image",
+        lambda: ClipboardGrab(kind="unavailable"),
+    )
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    notifications: list[str] = []
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        monkeypatch.setattr(
+            console.app_instance,
+            "notify",
+            lambda message, **kwargs: notifications.append(str(message)),
+        )
+        await pilot.press("alt+v")
+        for _ in range(40):
+            if notifications:
+                break
+            await pilot.pause(0.05)
+        assert any("aren't readable on this platform" in n for n in notifications)
+        store = console._ensure_console_chat_store()
+        sid = store.active_session_id
+        assert sid is None or store.pending_attachment(sid) is None

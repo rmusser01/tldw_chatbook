@@ -15,7 +15,7 @@
 |---|---|
 | Mechanisms | Both: path-paste interception (drag-drop + copied paths) AND explicit clipboard-image grab. |
 | Path-paste UX | Auto-attach + easy undo: a single pasted path that exists, is in-root, and matches supported types routes straight to the attach pipeline (toast + existing ✕ undo). Prose containing paths, multi-line text, unknown/missing paths stay text. |
-| Image trigger | Alt+V on the composer (kitty-safe, mirrors alt+m precedent; verified unbound) + a command-palette entry. No new composer button. |
+| Image trigger | Alt+V on the composer (kitty-safe, mirrors alt+m precedent; verified unbound) + a footer-visible binding (show=True) — the app's ^p palette is a custom app-level modal, not Textual's CommandPalette; the footer hint is the same discoverability mechanism alt+m uses (approved deviation). No new composer button. |
 | Architecture | Pure helper module + a bytes entry in attachment_core (Approach A). |
 
 ## Components
