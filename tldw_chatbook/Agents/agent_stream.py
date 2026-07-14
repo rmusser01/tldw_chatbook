@@ -73,7 +73,18 @@ class StreamGate:
         return cutoff
 
     def feed(self, chunk: str) -> str:
-        """Add a chunk and return newly-flushable visible text (may be empty)."""
+        """Add a chunk and return newly-flushable visible text (may be empty).
+
+        Args:
+            chunk: The next raw text chunk received from the provider
+                stream.
+
+        Returns:
+            Visible text that is safe to flush to the UI right now --
+            empty when nothing new can be committed yet (a candidate fence
+            is still undecided, or the turn is sealed as a leading tool
+            call).
+        """
         if not chunk:
             return ""
         self._buf += chunk
@@ -136,6 +147,11 @@ class StreamGate:
         full buffer — the single source of truth — so a held candidate
         that turns out to be a look-alike or malformed JSON still flushes
         its full text here; nothing is silently dropped.
+
+        Returns:
+            Whatever visible text ``feed()`` has not already streamed --
+            empty when everything visible has already streamed. Never
+            negative-length.
         """
         visible, _call = split_visible_text_and_tool_call(self._buf)
         if len(visible) <= self._streamed_len:
@@ -149,5 +165,11 @@ class StreamGate:
         return tail
 
     def result(self) -> tuple[str, ToolCall | None]:
-        """Authoritative (visible_text, tool_call) over the full buffer."""
+        """Authoritative (visible_text, tool_call) over the full buffer.
+
+        Returns:
+            A ``(visible_text, tool_call)`` pair covering the whole turn:
+            the full visible text and, when the turn ended in a genuine
+            tool call, the parsed ``ToolCall`` -- otherwise ``None``.
+        """
         return split_visible_text_and_tool_call(self._buf)

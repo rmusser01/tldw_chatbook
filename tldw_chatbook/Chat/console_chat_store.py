@@ -647,7 +647,20 @@ class ConsoleChatStore:
         return self._snapshot(message)
 
     def begin_variant_stream(self, message_id: str) -> ConsoleChatMessage:
-        """Snapshot current content as the base and reset the buffer for a new variant."""
+        """Snapshot current content as the base and reset the buffer for a new variant.
+
+        Args:
+            message_id: ID of the assistant message being regenerated.
+
+        Returns:
+            A snapshot of the message with its content cleared and status
+            set to ``"streaming"``, ready to receive the new variant's
+            chunks.
+
+        Raises:
+            KeyError: ``message_id`` does not reference a known message.
+            ValueError: The message is not an assistant message.
+        """
         message = self._message_or_raise(message_id)
         if message.role is not ConsoleMessageRole.ASSISTANT:
             raise ValueError("Only assistant messages can be regenerated.")
@@ -663,7 +676,19 @@ class ConsoleChatStore:
         return self._snapshot(message)
 
     def finalize_variant_stream(self, message_id: str) -> ConsoleChatMessage:
-        """Store the streamed buffer as a new selected variant beside the snapshot base."""
+        """Store the streamed buffer as a new selected variant beside the snapshot base.
+
+        Args:
+            message_id: ID of the assistant message previously passed to
+                ``begin_variant_stream``.
+
+        Returns:
+            A snapshot of the message with the new variant selected as
+            current and status set to ``"complete"``.
+
+        Raises:
+            KeyError: ``message_id`` does not reference a known message.
+        """
         message = self._message_or_raise(message_id)
         self._materialize_stream_buffer(message)
         new_content = message.content

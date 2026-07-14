@@ -36,7 +36,16 @@ _QUIET_STEP_TOOLS = {FIND_TOOLS_NAME, LOAD_TOOLS_NAME}
 
 
 def compose_agent_system_prompt(session_prompt: str) -> str:
-    """Compose the primary system prompt: session prompt first, agent prompt appended."""
+    """Compose the primary system prompt: session prompt first, agent prompt appended.
+
+    Args:
+        session_prompt: The Console session's own system prompt, if any.
+
+    Returns:
+        ``session_prompt`` followed by ``CONSOLE_AGENT_OPERATING_PROMPT``
+        (blank-line separated), or just the operating prompt when
+        ``session_prompt`` is blank.
+    """
     base = (session_prompt or "").strip()
     if not base:
         return CONSOLE_AGENT_OPERATING_PROMPT
@@ -145,6 +154,19 @@ def inject_resume_agent_markers(
 
 @dataclass(frozen=True)
 class AgentLiveStep:
+    """One in-flight agent step, as rendered on the rail's live poll.
+
+    Attributes:
+        kind: The step kind (one of ``agent_models``'s ``STEP_*``
+            constants, e.g. ``STEP_TOOL_RESULT``/``STEP_SPAWN``/
+            ``STEP_ERROR``).
+        text: Rendered summary text for this step (see
+            ``ConsoleAgentBridge._summarize``); already truncated and left
+            raw/unescaped for the rail's markup-off ``Static``.
+        agent_kind: Which agent produced the step -- ``AGENT_KIND_PRIMARY``
+            or ``AGENT_KIND_SUBAGENT``.
+    """
+
     kind: str
     text: str
     agent_kind: str
@@ -152,12 +174,38 @@ class AgentLiveStep:
 
 @dataclass(frozen=True)
 class SubAgentSummary:
+    """A spawned sub-agent's rail summary, as of the last observed step.
+
+    Attributes:
+        text: Rendered summary of the sub-agent's task (live) or its
+            recorded ``task`` (historical, resume-derived).
+        status: The sub-agent run's status -- ``"running"`` while the
+            primary's step log has not yet recorded its outcome.
+    """
+
     text: str
     status: str = "running"
 
 
 @dataclass(frozen=True)
 class AgentLiveSnapshot:
+    """Rail-facing snapshot of one conversation's primary agent run.
+
+    Returned by both ``ConsoleAgentBridge.live_snapshot`` (this process's
+    own in-flight/just-finished run) and ``historical_snapshot`` (re-derived
+    from ``AgentRunsDB`` after a restart) -- callers read whichever is not
+    idle, so both must expose the same shape.
+
+    Attributes:
+        status: Run status -- ``"idle"``, ``"running"``, or a terminal
+            ``RunOutcome.status`` value (``"done"``/``"error"``/
+            ``"cancelled"``/``"stuck"``).
+        step: Total number of steps observed so far for this run.
+        steps: The most recent steps (bounded to the last 5), oldest first.
+        subagents: Summaries of this run's spawned sub-agents, in the order
+            they were spawned/recorded.
+    """
+
     status: str = "idle"
     step: int = 0
     steps: tuple[AgentLiveStep, ...] = ()
