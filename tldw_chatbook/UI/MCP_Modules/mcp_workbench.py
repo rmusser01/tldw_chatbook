@@ -11,11 +11,13 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import ContentSwitcher, Static
+from textual.worker import Worker
 
 from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.MCP.readiness import (
     HubAction,
     ReadinessSnapshot,
+    as_checking,
     builtin_readiness,
     local_profile_readiness,
     server_target_readiness,
@@ -64,6 +66,35 @@ _LEGACY_SECTIONS = [
     ("Governance", "governance"),
     ("Advanced", "advanced"),
 ]
+
+# T5: local-profile lifecycle actions this workbench can dispatch, keyed by
+# the short verb used throughout `_in_flight_action`/notifications. Maps to
+# the typed T2 methods on `UnifiedMCPControlPlaneService` -- each raises with
+# a user-ready message on failure and records its own attempt state, so the
+# wrapper below must not re-record anything, just surface the result.
+_LIFECYCLE_METHOD_NAMES: dict[str, str] = {
+    "connect": "connect_local_profile",
+    "test": "test_local_profile",
+    "refresh": "refresh_local_profile",
+    "disconnect": "disconnect_local_profile",
+}
+
+# Verb map from the inspector's HubActionRequested action to the lifecycle
+# verb keys above -- only these three ever originate from the readiness
+# action buttons (disconnect is a detail-view-only action, wired in T7).
+_HUB_ACTION_TO_LIFECYCLE_VERB: dict[HubAction, str] = {
+    HubAction.CONNECT: "connect",
+    HubAction.VALIDATE: "test",
+    HubAction.REFRESH_DISCOVERY: "refresh",
+}
+
+# Past-tense verb used in the success notification, e.g. "docs: connected — 3 tools."
+_LIFECYCLE_PAST_TENSE: dict[str, str] = {
+    "connect": "connected",
+    "test": "checked",
+    "refresh": "refreshed",
+    "disconnect": "disconnected",
+}
 
 
 def _redact_external_server_record(record: Any) -> Any:
@@ -195,6 +226,17 @@ class MCPWorkbench(Container):
         self._scope: str = "personal"
         self._scope_ref: str | None = None
         self._snapshots: list[ReadinessSnapshot] = []
+        # T5: in-flight local-profile lifecycle operations, keyed by
+        # server_key ("local:<profile_id>"). While a key is present here,
+        # `_snapshot_for_display()`/`_sync_children()` render that server as
+        # CHECKING (see `as_checking()`) regardless of its last-known
+        # readiness, and the inspector shows a Cancel button instead of the
+        # normal action set.
+        self._in_flight: dict[str, Worker] = {}
+        # The lifecycle verb ("connect"/"test"/"refresh"/"disconnect") each
+        # in-flight key is running, so the CHECKING badge's message and the
+        # eventual notification can say what's actually happening.
+        self._in_flight_action: dict[str, str] = {}
         self._pending_view_state: dict[str, Any] | None = None
         # Guards the post-mount restore race: `on_mount` awaits `reload()`
         # inline, but a caller (e.g. the destination screen) can call
@@ -302,8 +344,18 @@ class MCPWorkbench(Container):
                 )
             )
             if service is not None:
+                # T5: `local_external_catalog()` (T2) additionally attaches
+                # each record's persisted `runtime_state` (last connect/test/
+                # refresh attempt), which `local_profile_readiness()` uses to
+                # surface a specific failure reason instead of the generic
+                # "not currently connected". Fall back to the Phase 1 path
+                # for any service that doesn't expose it yet (older fakes).
+                catalog_loader = getattr(service, "local_external_catalog", None)
                 try:
-                    records = await service.load_section("external_servers")
+                    if callable(catalog_loader):
+                        records = await catalog_loader()
+                    else:
+                        records = await service.load_section("external_servers")
                 except Exception as exc:
                     logger.warning(f"MCP local profile listing failed: {exc}")
                     records = []
@@ -325,6 +377,24 @@ class MCPWorkbench(Container):
                 return snap
         return None
 
+    def _display_snapshot(self, snapshot: ReadinessSnapshot) -> ReadinessSnapshot:
+        """Overlay the in-flight CHECKING state onto a snapshot for rendering.
+
+        `self._snapshots` itself always holds the last *derived* readiness
+        (from `_collect_snapshots()`) so a cancelled or failed lifecycle
+        action has something correct to fall back to -- this wraps it with
+        `as_checking()` only for display, purely based on whether the key is
+        currently in `self._in_flight`.
+        """
+        if snapshot.server_key in self._in_flight:
+            action = self._in_flight_action.get(snapshot.server_key, "update")
+            return as_checking(snapshot, action)
+        return snapshot
+
+    def _snapshot_for_display(self, server_key: str | None) -> ReadinessSnapshot | None:
+        snapshot = self._snapshot_for(server_key)
+        return None if snapshot is None else self._display_snapshot(snapshot)
+
     async def _sync_children(self) -> None:
         """Push current state into the rail/canvas/inspector children.
 
@@ -335,10 +405,11 @@ class MCPWorkbench(Container):
         while the first's inspector refresh is still settling
         (`DuplicateIds` regression; see test_mcp_inspector.py).
         """
+        display_snapshots = [self._display_snapshot(snap) for snap in self._snapshots]
         rail = self.query_one(MCPRail)
         rail.sync_state(
             source=self._source,
-            snapshots=self._snapshots,
+            snapshots=display_snapshots,
             selected_server_key=self._selected_server_key,
             scope_options=[("Personal", "personal")],
             scope_value=self._scope,
@@ -346,8 +417,8 @@ class MCPWorkbench(Container):
             scope_ref_value=self._scope_ref,
         )
         canvas = self.query_one(MCPServersMode)
-        await canvas.update_overview(self._snapshots)
-        selected = self._snapshot_for(self._selected_server_key)
+        await canvas.update_overview(display_snapshots)
+        selected = self._snapshot_for_display(self._selected_server_key)
         canvas.show_detail(selected)
         await self.query_one(MCPInspector).update_readiness(selected)
 
@@ -504,3 +575,119 @@ class MCPWorkbench(Container):
             self.set_mode("tools")
         elif event.action is HubAction.OPEN_AUDIT:
             self.set_mode("audit")
+        elif (
+            event.action in _HUB_ACTION_TO_LIFECYCLE_VERB
+            and event.server_key
+            and event.server_key.startswith("local:")
+        ):
+            profile_id = event.server_key.split(":", 1)[1]
+            self._start_lifecycle(
+                event.server_key, profile_id, _HUB_ACTION_TO_LIFECYCLE_VERB[event.action]
+            )
+
+    def on_mcp_inspector_cancel_requested(self, event: MCPInspector.CancelRequested) -> None:
+        """Cancel an in-flight lifecycle worker.
+
+        Synchronous (not `async def`): `Worker.cancel()` is itself
+        synchronous, and the caller (Textual's message pump, or a test
+        calling this directly) doesn't need to await anything here -- the
+        display resync is fired off as its own worker below instead of being
+        awaited inline.
+        """
+        event.stop()
+        worker = self._in_flight.pop(event.server_key, None)
+        self._in_flight_action.pop(event.server_key, None)
+        if worker is not None:
+            worker.cancel()
+        self.app.notify("Cancelled.")
+        self.run_worker(self._sync_children(), group="mcp-lifecycle-sync", exclusive=True)
+
+    # -- lifecycle actions (T5: connect/test/refresh/disconnect) --------------
+
+    def _start_lifecycle(self, server_key: str, profile_id: str, action: str) -> None:
+        """Dispatch a local-profile lifecycle action in the background.
+
+        Synchronous (not `async def`): must register `self._in_flight`
+        synchronously, before returning to the caller, so a `CancelRequested`
+        arriving right after this call (or a second click of the same
+        action) reliably observes the worker that was just started -- if
+        this were `async def` and awaited only later, the bookkeeping below
+        wouldn't run until the event loop actually scheduled this coroutine,
+        leaving a window where the guard/cancel logic would see stale state.
+        """
+        if server_key in self._in_flight:
+            self.app.notify(f"{profile_id}: {action} already running.", severity="warning")
+            return
+        service = self._service()
+        method_name = _LIFECYCLE_METHOD_NAMES.get(action)
+        method = getattr(service, method_name, None) if service is not None and method_name else None
+        if not callable(method):
+            logger.warning(
+                f"MCP workbench: no lifecycle method for action={action!r} "
+                f"(server_key={server_key!r})"
+            )
+            return
+        coro = method(profile_id)
+        worker = self.run_worker(
+            self._lifecycle_wrapper(server_key, profile_id, action, coro),
+            group="mcp-lifecycle",
+            exclusive=False,
+        )
+        self._in_flight[server_key] = worker
+        self._in_flight_action[server_key] = action
+        # Render the CHECKING badge + inspector Cancel button immediately --
+        # decoupled from the lifecycle worker above, which may be sitting on
+        # a slow (or, in tests, gated) network/subprocess call and must not
+        # block this optimistic UI update.
+        self.run_worker(self._sync_children(), group="mcp-lifecycle-sync", exclusive=True)
+
+    async def _lifecycle_wrapper(
+        self, server_key: str, profile_id: str, action: str, coro: Any
+    ) -> None:
+        """Run one lifecycle coroutine, then always clean up and resync.
+
+        The T2 typed methods (`connect_local_profile` etc.) already record
+        their own attempt state and raise a user-ready message on failure --
+        this must not duplicate that recording, only surface the outcome and
+        drop the in-flight marker. `except Exception` deliberately does not
+        catch `asyncio.CancelledError` (a `BaseException` since Python 3.8):
+        a cancelled worker skips straight to `finally`, which is exactly the
+        cleanup `on_mcp_inspector_cancel_requested()` needs and which the
+        cancel handler's own notify()/resync above already covers, so no
+        redundant "cancelled" notification is sent from here.
+        """
+        try:
+            result = await coro
+        except Exception as exc:
+            self.app.notify(f"{profile_id}: {action} failed — {exc}", severity="error")
+        else:
+            verb = _LIFECYCLE_PAST_TENSE.get(action, action)
+            tool_count = self._lifecycle_tool_count(result)
+            if tool_count is None:
+                self.app.notify(f"{profile_id}: {verb}.")
+            else:
+                noun = "tool" if tool_count == 1 else "tools"
+                self.app.notify(f"{profile_id}: {verb} — {tool_count} {noun}.")
+        finally:
+            self._in_flight.pop(server_key, None)
+            self._in_flight_action.pop(server_key, None)
+            self._snapshots = await self._collect_snapshots()
+            await self._sync_children()
+
+    @staticmethod
+    def _lifecycle_tool_count(result: Any) -> int | None:
+        """Best-effort tool count from a lifecycle result for the success notice.
+
+        `connect_local_profile`/`refresh_local_profile` return a dict with a
+        `tools` list; `test_local_profile` returns a dict with a `tools`
+        *count* (int); `disconnect_local_profile` returns a bare bool. Any
+        other shape just omits the tool count from the notification.
+        """
+        if not isinstance(result, Mapping):
+            return None
+        tools = result.get("tools")
+        if isinstance(tools, list):
+            return len(tools)
+        if isinstance(tools, int) and not isinstance(tools, bool):
+            return tools
+        return None

@@ -68,6 +68,21 @@ def _stale_snap() -> ReadinessSnapshot:
     )
 
 
+def _stale_server_snap() -> ReadinessSnapshot:
+    """Same RUNTIME_UNAVAILABLE reason as `_stale_snap()`, but server-source.
+
+    T5 only wires CONNECT/VALIDATE/REFRESH_DISCOVERY for local-source
+    snapshots (the workbench can only run the typed T2 lifecycle methods
+    against local profiles) -- a server-source server with the same reason
+    keeps those actions disabled, pointed at Advanced instead.
+    """
+    return ReadinessSnapshot(
+        server_key="server:main/docs", label="docs", source="server",
+        state=ReadinessState.STALE, reasons=(ReasonCode.RUNTIME_UNAVAILABLE,),
+        message="2 tools discovered; not currently connected.",
+    )
+
+
 def _ready_snap() -> ReadinessSnapshot:
     return ReadinessSnapshot(
         server_key="local:notes", label="notes", source="local",
@@ -86,14 +101,24 @@ async def test_readiness_block_shows_state_message_and_action_buttons():
         badge = str(app.query_one("#mcp-inspector-state", Static).renderable)
         assert "Stale" in badge
         buttons = {b.id: b for b in app.query("Button.mcp-inspector-action")}
-        # connect: not wired in Phase 1 -> disabled; view_details: wired -> enabled
-        assert buttons["mcp-inspector-action-connect"].disabled
+        # T5: connect is wired for local-source snapshots (was disabled in
+        # Phase 1); view_details was already wired in Phase 1.
+        assert not buttons["mcp-inspector-action-connect"].disabled
         assert not buttons["mcp-inspector-action-view_details"].disabled
         # Every rendered action button -- wired or not -- must explain its
         # outcome via a tooltip (destination-wide "every button explains
         # itself" contract; wired buttons previously had none).
         for button in buttons.values():
             assert button.tooltip, f"{button.id} has no tooltip"
+
+        # T5: the same lifecycle action on a server-source snapshot stays
+        # disabled -- it's managed server-side, not from this local-lifecycle
+        # pane -- with a distinct "use Advanced" tooltip.
+        await inspector.update_readiness(_stale_server_snap())
+        await pilot.pause()
+        server_connect = app.query_one("#mcp-inspector-action-connect", Button)
+        assert server_connect.disabled
+        assert "server" in (server_connect.tooltip or "").lower()
 
 
 # -- A2: disabled action buttons must stay legible ---------------------------
@@ -127,7 +152,10 @@ async def test_disabled_action_buttons_stay_legible_with_bundled_css():
     app = InspectorAppWithBundledCSS()
     async with app.run_test(size=(100, 60)) as pilot:
         inspector = app.query_one(MCPInspector)
-        await inspector.update_readiness(_stale_snap())
+        # T5 wires CONNECT for local-source snapshots -- use the
+        # server-source variant here so this button is still disabled and
+        # the legibility contract under test still has something to check.
+        await inspector.update_readiness(_stale_server_snap())
         await pilot.pause()
         connect_button = app.query_one("#mcp-inspector-action-connect", Button)
         assert connect_button.disabled

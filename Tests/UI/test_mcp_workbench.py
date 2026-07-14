@@ -1,6 +1,7 @@
 # Tests/UI/test_mcp_workbench.py
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 
 import pytest
@@ -8,6 +9,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import ContentSwitcher, Select, Static
 
 from tldw_chatbook.MCP.unified_control_models import UnifiedMCPContext
+from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
 from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCP_RAIL_ROW_PREFIX, MCPRail
 from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
 from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCP_HUB_MODES, MCPWorkbench
@@ -530,3 +532,120 @@ async def test_advanced_external_servers_section_redacts_secret_args():
         )
         # Non-secret fields must still render -- this isn't just an empty pane.
         assert "npx" in rendered
+
+
+# -- T5: connect/test/refresh lifecycle wiring, in-flight CHECKING, cancel --
+
+
+class LifecycleFakeHubService(FakeHubService):
+    """Like `FakeHubService`, but wires the typed T2 lifecycle methods and
+    records every call so the workbench's dispatch can be asserted on."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.lifecycle_calls: list[tuple[str, str]] = []
+        self.connect_gate: asyncio.Event | None = None
+
+    async def load_section(self, section=None):
+        # Same shape as FakeHubService.load_section(), except the docs
+        # profile fixture is disconnected -- so it derives STALE
+        # (RUNTIME_UNAVAILABLE) rather than READY, which is what makes
+        # CONNECT a wired, enabled action to click in the first test below.
+        effective_section = section or self.context.selected_section or "overview"
+        if self.context.selected_source == "local":
+            if effective_section == "external_servers":
+                return [
+                    {
+                        "profile_id": "docs",
+                        "command": "python",
+                        "args": [],
+                        "env_placeholders": {},
+                        "discovery_snapshot": {"tools": [{"name": "a"}], "resources": [], "prompts": []},
+                        "is_connected": False,
+                    }
+                ]
+            return {"source": "local", "section": effective_section}
+        return {"external_servers": [], "source": "server", "section": "external_servers"}
+
+    async def local_external_catalog(self):
+        return await self.load_section("external_servers")
+
+    async def connect_local_profile(self, profile_id):
+        self.lifecycle_calls.append(("connect", profile_id))
+        if self.connect_gate is not None:
+            await self.connect_gate.wait()
+        return {"server_id": profile_id, "tools": [{"name": "a"}], "resources": [], "prompts": []}
+
+    async def test_local_profile(self, profile_id):
+        self.lifecycle_calls.append(("test", profile_id))
+        return {"ok": True, "profile_id": profile_id, "tools": 1, "resources": 0, "prompts": 0}
+
+    async def refresh_local_profile(self, profile_id):
+        self.lifecycle_calls.append(("refresh", profile_id))
+        return {"server_id": profile_id, "tools": [], "resources": [], "prompts": []}
+
+
+class LifecycleApp(App):
+    def __init__(self) -> None:
+        super().__init__()
+        self.unified_mcp_service = LifecycleFakeHubService()
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+@pytest.mark.asyncio
+async def test_connect_action_runs_lifecycle_and_notifies():
+    app = LifecycleApp()
+    # Default 80x24 leaves the inspector pane's action buttons out of the
+    # visible region (rail+canvas+inspector min-widths sum to 90 > 80) --
+    # see test_workbench_panes_have_nonzero_geometry for the same fix.
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        # select docs (local profile, disconnected -> STALE -> CONNECT wired)
+        await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}2")
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-action-connect")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert ("connect", "docs") in app.unified_mcp_service.lifecycle_calls
+        assert "local:docs" not in workbench._in_flight
+
+
+@pytest.mark.asyncio
+async def test_in_flight_shows_checking_and_cancel_then_completes():
+    app = LifecycleApp()
+    app.unified_mcp_service.connect_gate = asyncio.Event()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench._selected_server_key = "local:docs"
+        workbench._start_lifecycle("local:docs", "docs", "connect")
+        await pilot.pause()
+        selected = workbench._snapshot_for_display("local:docs")
+        assert selected.state.value == "checking"
+        assert list(app.query("#mcp-inspector-cancel"))
+        app.unified_mcp_service.connect_gate.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert ("connect", "docs") in app.unified_mcp_service.lifecycle_calls
+        assert "local:docs" not in workbench._in_flight
+
+
+@pytest.mark.asyncio
+async def test_cancel_requested_cancels_worker():
+    app = LifecycleApp()
+    app.unified_mcp_service.connect_gate = asyncio.Event()  # never set -> hangs
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench._selected_server_key = "local:docs"
+        workbench._start_lifecycle("local:docs", "docs", "connect")
+        await pilot.pause()
+        workbench.on_mcp_inspector_cancel_requested(
+            MCPInspector.CancelRequested("local:docs")
+        )
+        await pilot.pause()
+        assert "local:docs" not in workbench._in_flight

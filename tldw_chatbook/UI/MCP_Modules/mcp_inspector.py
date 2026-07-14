@@ -12,13 +12,28 @@ from textual.containers import Vertical, VerticalScroll
 from textual.message import Message
 from textual.widgets import Button, Label, Select, Static, TextArea
 
-from tldw_chatbook.MCP.readiness import REASON_LABELS, HubAction, ReadinessSnapshot
+from tldw_chatbook.MCP.readiness import REASON_LABELS, HubAction, ReadinessSnapshot, ReadinessState
 from tldw_chatbook.MCP.redaction import redact_mapping
 from tldw_chatbook.UI.MCP_Modules.unified_mcp_sections import render_unified_mcp_section
 
-# Actions that have first-class UI in Phase 1. Everything else renders
+# Actions that have first-class UI in every source. Everything else renders
 # disabled and points at the Advanced runner below (capability preserved).
-_WIRED_ACTIONS = {HubAction.VIEW_DETAILS, HubAction.OPEN_TOOL_CATALOG, HubAction.OPEN_AUDIT}
+_BASE_WIRED_ACTIONS = {HubAction.VIEW_DETAILS, HubAction.OPEN_TOOL_CATALOG, HubAction.OPEN_AUDIT}
+
+# Local-profile lifecycle actions (Task 5): wired only for local-source
+# snapshots, where MCPWorkbench._start_lifecycle() can actually run them
+# against the typed T2 control-plane methods. Server-source servers are
+# mutated on the server side (Advanced), not from this pane.
+_LIFECYCLE_ACTIONS = {HubAction.CONNECT, HubAction.VALIDATE, HubAction.REFRESH_DISCOVERY}
+
+
+def _wired_actions(snapshot: ReadinessSnapshot | None) -> set[HubAction]:
+    """Actions this inspector renders enabled for the given snapshot."""
+    wired = set(_BASE_WIRED_ACTIONS)
+    if snapshot is not None and snapshot.source == "local":
+        wired |= _LIFECYCLE_ACTIONS
+    return wired
+
 
 _ACTION_LABELS: dict[HubAction, str] = {
     HubAction.ADD_SERVER: "Add server",
@@ -32,14 +47,23 @@ _ACTION_LABELS: dict[HubAction, str] = {
     HubAction.OPEN_AUDIT: "Open audit",
 }
 
-# Tooltips for the actions that have first-class UI in Phase 1 (_WIRED_ACTIONS).
+# Tooltips for the actions that have first-class UI (see _wired_actions()).
 # Every rendered action button must explain its outcome -- disabled buttons get
 # a tooltip below; these cover the wired, enabled ones.
 _WIRED_ACTION_TOOLTIPS: dict[HubAction, str] = {
     HubAction.VIEW_DETAILS: "Show this server's detail view in Servers mode.",
     HubAction.OPEN_TOOL_CATALOG: "Switch to Tools mode.",
     HubAction.OPEN_AUDIT: "Switch to Audit mode.",
+    HubAction.CONNECT: "Connect to this server and discover its tools.",
+    HubAction.VALIDATE: "Test the connection without changing the cached catalog.",
+    HubAction.REFRESH_DISCOVERY: "Reconnect and refresh the tool/resource/prompt catalog.",
 }
+
+# Disabled-button tooltip for a lifecycle action on a server-source snapshot
+# (managed server-side, not from this local-lifecycle pane).
+_SERVER_MANAGED_TOOLTIP = "Managed on the server — use Advanced."
+# Disabled-button tooltip for every other still-unwired action.
+_LATER_PHASE_TOOLTIP = "Available in a later phase — use Advanced below."
 
 
 def _is_blank(value: Any) -> bool:
@@ -119,6 +143,16 @@ class MCPInspector(Vertical):
         def __init__(self, action: HubAction, server_key: str | None) -> None:
             super().__init__()
             self.action = action
+            self.server_key = server_key
+
+    class CancelRequested(Message, namespace="mcp_inspector"):
+        """Posted when the user clicks Cancel on an in-flight (CHECKING)
+        lifecycle operation. `MCPWorkbench` owns the actual worker and
+        cancels it -- this pane only knows which server the button belongs
+        to."""
+
+        def __init__(self, server_key: str) -> None:
+            super().__init__()
             self.server_key = server_key
 
     def __init__(self, **kwargs: Any) -> None:
@@ -202,13 +236,33 @@ class MCPInspector(Vertical):
             # ReasonCode value (e.g. "runtime_unavailable") into user-facing
             # copy.
             reason = snapshot.primary_reason
-            if reason is not None:
+            if snapshot.state is ReadinessState.CHECKING:
+                # as_checking() clears reasons but leaves tool_count from the
+                # underlying snapshot alone -- lead with its own working
+                # message instead of falling through to a stale "Ready"/reason
+                # line that would contradict the "Checking" badge above.
+                why_line = snapshot.message
+            elif reason is not None:
                 why_line = f"Why · {REASON_LABELS[reason]}"
             elif snapshot.tool_count is not None:
                 why_line = f"Why · Ready — {snapshot.tool_count} tools available"
             else:
                 why_line = "Why · Ready"
             message.update(why_line)
+            if snapshot.state is ReadinessState.CHECKING:
+                # T5: an in-flight lifecycle action replaces the action set
+                # with a single Cancel button -- nothing else is actionable
+                # on this server until the worker finishes or is cancelled.
+                cancel_button = Button(
+                    "Cancel",
+                    id="mcp-inspector-cancel",
+                    classes="mcp-inspector-action console-action-secondary",
+                    compact=True,
+                    tooltip="Cancel the in-flight operation.",
+                )
+                await actions.mount_all([cancel_button])
+                return
+            wired = _wired_actions(snapshot)
             buttons = []
             for action in snapshot.allowed_actions:
                 button = Button(
@@ -217,9 +271,12 @@ class MCPInspector(Vertical):
                     classes="mcp-inspector-action console-action-secondary",
                     compact=True,
                 )
-                if action not in _WIRED_ACTIONS:
+                if action not in wired:
                     button.disabled = True
-                    button.tooltip = "Available in a later phase — use Advanced below."
+                    if action in _LIFECYCLE_ACTIONS and snapshot.source != "local":
+                        button.tooltip = _SERVER_MANAGED_TOOLTIP
+                    else:
+                        button.tooltip = _LATER_PHASE_TOOLTIP
                 else:
                     button.tooltip = _WIRED_ACTION_TOOLTIPS.get(action, _ACTION_LABELS[action])
                 buttons.append(button)
@@ -341,6 +398,11 @@ class MCPInspector(Vertical):
         if button_id == "mcp-adv-run":
             event.stop()
             self.run_worker(self._run_advanced_action(), group="mcp-adv-run", exclusive=True)
+            return
+        if button_id == "mcp-inspector-cancel":
+            event.stop()
+            if self._snapshot is not None:
+                self.post_message(self.CancelRequested(self._snapshot.server_key))
             return
         if button_id.startswith("mcp-inspector-action-"):
             event.stop()
