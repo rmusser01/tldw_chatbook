@@ -1855,11 +1855,17 @@ class UnifiedMCPControlPlaneService:
         return bool(self.local_service.delete_external_profile(profile_id))
 
     async def local_external_catalog(self) -> list[dict]:
+        # Records (profile fields + discovery_snapshot + is_connected) still
+        # come from the local service so governance enforcement and
+        # is_connected (read from the live client sessions) are unchanged.
+        # `runtime_state` is merged in from a single store bundle load
+        # rather than one `get_profile_runtime_state()` load per record.
         records = list(self.local_service.get_external_servers() or [])
         store = getattr(self.local_service, "store", None)
+        runtime_state_by_profile: dict[str, Any] = (
+            store.get_catalog_bundle()["profile_runtime_state"] if store else {}
+        )
         for record in records:
             profile_id = str(record.get("profile_id") or "")
-            record["runtime_state"] = (
-                store.get_profile_runtime_state(profile_id) if store else None
-            )
+            record["runtime_state"] = runtime_state_by_profile.get(profile_id)
         return records

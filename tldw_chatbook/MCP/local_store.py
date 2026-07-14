@@ -743,6 +743,28 @@ class LocalMCPStore:
         )
         return profile_runtime_state[normalized_profile_id]
 
+    def get_catalog_bundle(self) -> dict[str, Any]:
+        """Return the catalog-relevant state in one read.
+
+        Batches the profile list, discovery snapshots, and lifecycle-attempt
+        (runtime state) records that a full external-server catalog view
+        needs. Callers that would otherwise issue one `load()` per profile
+        for each of `get_discovery_snapshot()` and `get_profile_runtime_state()`
+        (2N+1 total loads across N profiles) can use this single-`load()`
+        accessor instead.
+
+        Returns:
+            Mapping with `profiles` (list of profile dicts via `to_dict()`),
+            `discovery_snapshots` (profile_id -> snapshot dict), and
+            `profile_runtime_state` (profile_id -> lifecycle record dict).
+        """
+        state = self.load()
+        return {
+            "profiles": [profile.to_dict() for profile in state.profiles],
+            "discovery_snapshots": dict(state.discovery_snapshots),
+            "profile_runtime_state": dict(state.profile_runtime_state),
+        }
+
     def list_governance_rules(self) -> list[LocalGovernanceRule]:
         return list(self.load().governance_rules)
 
