@@ -121,6 +121,9 @@ local_transformers = ["transformers"]
 mcp = [
     "mcp[cli]>=1.0.0",
 ]
+svg = [
+    "cairosvg",  # SVG rasterization for image attachments; needs the cairo C library (e.g. `brew install cairo`)
+]
 pdf = [
     "pymupdf",
     "pymupdf4llm",

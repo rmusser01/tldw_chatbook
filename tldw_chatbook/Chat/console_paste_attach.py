@@ -21,14 +21,16 @@ from urllib.parse import unquote, urlparse
 
 from loguru import logger
 
-from tldw_chatbook.Chat.attachment_core import ATTACHMENT_FILTER_SPECS
+from tldw_chatbook.Chat.attachment_core import attachment_filter_specs
 from tldw_chatbook.Utils.path_validation import is_safe_path
 
-_SUPPORTED_PATTERNS: tuple[str, ...] = tuple(
-    pattern
-    for _label, patterns in ATTACHMENT_FILTER_SPECS
-    for pattern in patterns.split(";")
-)
+def _supported_patterns() -> tuple[str, ...]:
+    """Glob patterns for attachable files, from the call-time picker specs."""
+    return tuple(
+        pattern
+        for _label, patterns in attachment_filter_specs()
+        for pattern in patterns.split(";")
+    )
 
 
 @dataclass(frozen=True)
@@ -156,7 +158,7 @@ def looks_attachable(path: str, allowed_root: str | None = None) -> bool:
     if not os.path.isfile(path):
         return False
     name = os.path.basename(path).lower()
-    return any(fnmatch(name, pattern) for pattern in _SUPPORTED_PATTERNS)
+    return any(fnmatch(name, pattern) for pattern in _supported_patterns())
 
 
 def _grabclipboard():
