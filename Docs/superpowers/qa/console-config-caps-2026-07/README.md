@@ -154,3 +154,103 @@ Scripts (session scratchpad, not committed) under
 **CLEAN.** All four required captures delivered and visually verified;
 config-driven filters/caps and tiff+svg attachment support are proven live in
 the Console attach flow. No defects.
+
+---
+
+## Vision re-run (2026-07-14, same HEAD b578c3b1)
+
+The llama.cpp server at `127.0.0.1:9099` was restarted **with the mmproj vision
+projector loaded** — `/v1/models` now reports
+`capabilities: ["completion","multimodal"]` (verified before capturing), and a
+direct API vision request (red 64×64 PNG → *"Red"*) completed end-to-end in
+**33.4 s**. The two send captures were re-run on the same rig/HOME to replace
+the honest-500 frames above with real assistant vision responses. The original
+four captures and their disclosures are preserved unchanged for the record.
+
+### Re-run captures
+
+- **`tiff-sent-vision-response.png`** — `scan.tiff` staged via the real picker,
+  sent with *"Describe this image in one short sentence."* User message shows
+  the **`🖼 scan.tiff · 326 B`** chip + the inline transcoded-PNG render, and
+  the Assistant replies (verbatim from the xterm buffer):
+
+  > **A rectangular design featuring orange and teal quadrants separated by a
+  > vertical white stripe.**
+
+  That is an accurate description of the test TIFF — the model **saw the
+  transcoded PNG payload**. (Reply took ~3 min wall-clock — thinking model.)
+- **`svg-sent-vision-response.png`** — same flow with `logo.svg`. Chip
+  **`🖼 logo.svg · 2 KB`** + inline rasterized render, Assistant (verbatim):
+
+  > **The image features a white circle containing a centered white square,
+  > set against a solid blue background.**
+
+  Blue background + white circle named = the **cairosvg-rasterized PNG reached
+  the model**. (The inner square is actually blue, not white — a minor
+  model-side color misread, irrelevant to the transport proof; the reply took
+  ~22 s server-side.)
+
+Both frames carry a **`[streaming]` suffix** on the assistant message and a
+highlighted **Stop** button — that is Defect V1 below, not an in-progress
+generation: the replies shown are complete, and for the tiff run the full
+sentence was already **persisted to the DB minutes before** the frame was shot.
+
+### Vision re-run defects (Console streaming finalize — NOT the TASK-222 surface)
+
+The attachment feature under test (config filters, tiff transcode, svg
+rasterize, chips, inline render, payload delivery) worked in every run. The
+defects below are in the Console **run-finalization path for successful
+image-payload streams**, discovered because this re-run exercised the success
+path for the first time (all prior rounds got honest non-vision 500s, and the
+`[failed]` path finalizes correctly).
+
+- **DEFECT V1 — successful vision runs never finalize in the UI.** After the
+  assistant reply fully streams in, the message keeps its `[streaming]` status
+  and the run stays active (Stop shown, Send disabled with the "Wait for the
+  active Console run to finish" tooltip) indefinitely — observed >5 min past
+  completion in both re-run captures. Hard evidence: for the tiff run the
+  complete assistant sentence was persisted to ChaChaNotes at **09:54:41**
+  (`conversation dff0b907…`, verified by direct DB query) while the UI at
+  **09:57:11** still showed `[streaming]` + Stop. **Control:** a text-only send
+  ("Reply with exactly one word: hello") finalized cleanly in **18 s** —
+  `[streaming]` cleared, Stop gone — so the stall is specific to
+  **image-payload success streams**. `[failed]` image sends also finalize fine
+  (see the original captures above).
+- **DEFECT V2 — assistant DB row can persist a mid-stream fragment.** The svg
+  run's assistant row in the DB contains only **`The ima`** (persisted
+  09:57:53, `conversation 3275e449…`) while the UI showed the full sentence.
+  A resume of that conversation would show a 7-character reply. (The tiff
+  run's row is complete, so persistence timing appears racy, not always-broken.)
+- **DEFECT V3 — some vision sends stall entirely (no tokens ever).** Two
+  consecutive re-run attempts (fresh app processes, 10:05 and 10:15) posted the
+  user message and entered the active-run state, then rendered **no assistant
+  token in 480 s**; no assistant DB row was ever written; the app logged
+  nothing between the user-message persist and shutdown, while the server was
+  independently **idle** and answered a direct identical vision request in
+  33 s. Frame: **`DEFECT-tiff-sent-vision-response.png`** (8-minute-old run
+  still spinning, empty assistant slot). The delivered vision frames come from
+  the runs that did stream; roughly half of the observed vision sends hit this
+  total stall.
+
+Impact assessment: for a real user on a vision model, an image send that
+succeeds looks **permanently stuck streaming** (and blocks further sends in
+that session) even though the reply arrived, and may lose the reply text on
+resume (V2) — or produce nothing at all (V3). Recommend filing V1–V3 as a
+Console vision-streaming follow-up before advertising vision support; they are
+adjacent to the TASK-222 acceptance criteria but do not falsify any of them.
+
+### Re-run rig notes
+
+Same serve/driver/HOME as above (port 9141, fresh app process per capture).
+Additions: after clicking Send the mouse is parked over the transcript so the
+disabled-Send tooltip cannot render into the frame; completion gate polls the
+xterm buffer for reply text and the `[streaming]`/Stop markers (no sleeps);
+server-side state was cross-checked via `GET /slots` (`is_processing`) and
+direct `/v1/chat/completions` probes. Scripts: `cap5_vision.py`–`cap8_control.py`
+in the session scratchpad.
+
+### Re-run verdict
+
+**Vision captures DELIVERED — with DEFECTS FOUND in Console stream
+finalization (V1–V3).** The TASK-222 feature surface itself remains **CLEAN**:
+both new formats produced payloads the vision model demonstrably understood.
