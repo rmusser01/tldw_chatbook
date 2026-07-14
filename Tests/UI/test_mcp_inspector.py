@@ -1,6 +1,7 @@
 # Tests/UI/test_mcp_inspector.py
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -539,3 +540,42 @@ async def test_gate_denied_decision_filters_action():
         assert select.value is Select.BLANK
         offered_values = [value for _, value in select._options]
         assert "profile.connect" not in offered_values
+
+
+# -- Task 4: serialized readiness refresh + zero-descriptor Advanced hint ---
+
+
+@pytest.mark.asyncio
+async def test_concurrent_refreshes_serialize_and_last_writer_wins():
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        inspector = app.query_one(MCPInspector)
+        first = _stale_snap()
+        second = ReadinessSnapshot(
+            server_key="local:web", label="web", source="local",
+            state=ReadinessState.READY, reasons=(), message="Connected.",
+        )
+        await asyncio.gather(
+            inspector.update_readiness(first),
+            inspector.update_readiness(second),
+        )
+        await pilot.pause()
+        buttons = list(app.query("Button.mcp-inspector-action"))
+        assert buttons, "actions must render"
+        # last writer wins exactly once: READY action set, no duplicates
+        ids = [b.id for b in buttons]
+        assert len(ids) == len(set(ids))
+        assert inspector._snapshot.server_key == "local:web"
+
+
+@pytest.mark.asyncio
+async def test_zero_descriptor_sections_show_guidance_hint():
+    app = InspectorApp()  # FakeAdvService returns one action; override to none
+    app.service.available_actions = lambda: []
+    async with app.run_test() as pilot:
+        inspector = app.query_one(MCPInspector)
+        inspector.set_service_context(app.service, [("Overview", "overview")])
+        await pilot.pause()
+        hint = app.query_one("#mcp-adv-empty-hint", Static)
+        assert hint.display
+        assert "Inventory" in str(hint.renderable)

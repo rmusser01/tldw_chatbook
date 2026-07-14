@@ -52,6 +52,9 @@ class RailApp(App):
     def on_mcp_rail_source_changed(self, event: MCPRail.SourceChanged) -> None:
         self.events.append(event)
 
+    def on_mcp_rail_scope_changed(self, event: MCPRail.ScopeChanged) -> None:
+        self.events.append(event)
+
 
 @pytest.mark.asyncio
 async def test_rail_renders_all_servers_row_plus_one_row_per_snapshot():
@@ -265,3 +268,34 @@ async def test_rail_rows_are_left_aligned_with_bundled_css():
         row = app.query_one(f"#{MCP_RAIL_ROW_PREFIX}0", Button)
         assert row.styles.text_align == "left"
         assert row.styles.content_align_horizontal == "left"
+
+
+# -- Task 4: one-shot mount-echo guard (A -> B -> A must not be swallowed) --
+
+
+@pytest.mark.asyncio
+async def test_scope_a_b_a_dispatches_three_changes_and_mount_echo_zero():
+    app = RailApp()
+    async with app.run_test() as pilot:
+        rail = app.query_one(MCPRail)
+        rail.sync_state(
+            source="server",
+            snapshots=[_snap("server:main", "Main Server")],
+            selected_server_key=None,
+            scope_options=[("Personal", "personal"), ("Team", "team")],
+            scope_value="personal",
+            scope_ref_options=[],
+            scope_ref_value=None,
+        )
+        await pilot.pause()
+        changes = [e for e in app.events if isinstance(e, MCPRail.ScopeChanged)]
+        assert changes == []  # mount echo suppressed
+        select = app.query_one("#mcp-rail-scope-select", Select)
+        select.value = "team"       # A -> B
+        await pilot.pause()
+        select.value = "personal"   # B -> A (must NOT be swallowed as echo)
+        await pilot.pause()
+        select.value = "team"       # A -> B again
+        await pilot.pause()
+        changes = [e.scope for e in app.events if isinstance(e, MCPRail.ScopeChanged)]
+        assert changes == ["team", "personal", "team"]

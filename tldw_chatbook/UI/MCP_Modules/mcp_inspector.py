@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -127,6 +128,14 @@ class MCPInspector(Vertical):
         self._service: Any = None
         self._sections: list[tuple[str, str]] = [("Overview", "overview")]
         self._action_templates: dict[str, str] = {}
+        # Task 4: serializes `update_readiness()`'s remove+mount cycle. Two
+        # calls awaited concurrently (a worker-driven refresh interleaved
+        # with a pump-driven one) previously could both be mid-flight at
+        # once even though each call itself awaits remove/mount in order --
+        # this lock ensures the second call's whole body only starts once the
+        # first has fully finished, so the last writer's buttons win exactly
+        # once instead of racing into `DuplicateIds`.
+        self._refresh_lock = asyncio.Lock()
 
     def compose(self) -> ComposeResult:
         yield Static("Inspector", classes="destination-section")
@@ -143,6 +152,11 @@ class MCPInspector(Vertical):
             yield Label("Action", classes="form-label")
             yield Select([("No actions available", Select.BLANK)], id="mcp-adv-action-select",
                          value=Select.BLANK)
+            # Task 4: guidance shown only while the section above has zero
+            # runnable action descriptors (see `_refresh_advanced_actions`),
+            # so a user landing on e.g. Overview isn't left staring at a
+            # disabled "No actions available" select with no next step.
+            yield Static("", id="mcp-adv-empty-hint", classes="ds-field-row", markup=False)
             yield Label("Payload (JSON)", classes="form-label")
             yield TextArea("{}", id="mcp-adv-payload")
             yield Button("Run Action", id="mcp-adv-run", classes="console-action-primary",
@@ -163,46 +177,54 @@ class MCPInspector(Vertical):
         reason's action set) into `DuplicateIds`, crashing the whole app.
         Mirrors the fix in `console_session_switcher_modal.py`
         (`_refresh_results`) for the same bug class.
+
+        Task 4: the whole body additionally runs under `self._refresh_lock`
+        so two concurrently-awaited calls (e.g. a worker-driven refresh
+        racing a pump-driven one) can't interleave their remove/mount
+        cycles -- the second call's remove_children()/mount_all() only
+        begins once the first has fully completed.
         """
-        self._snapshot = snapshot
-        state = self.query_one("#mcp-inspector-state", Static)
-        message = self.query_one("#mcp-inspector-message", Static)
-        actions = self.query_one("#mcp-inspector-actions", Vertical)
-        await actions.remove_children()
-        if snapshot is None:
-            state.update("Select a server to see its readiness.")
-            message.update("")
-            return
-        state.update(f"{snapshot.badge_text()}  {snapshot.label}")
-        # A5: lead with the humanized *reason*, not a repeat of the canvas's
-        # own snapshot.message -- the inspector should add "why", which the
-        # canvas detail view doesn't say, rather than mirror what it already
-        # shows. A3a: never leak the internal ReasonCode value (e.g.
-        # "runtime_unavailable") into user-facing copy.
-        reason = snapshot.primary_reason
-        if reason is not None:
-            why_line = f"Why · {REASON_LABELS[reason]}"
-        elif snapshot.tool_count is not None:
-            why_line = f"Why · Ready — {snapshot.tool_count} tools available"
-        else:
-            why_line = "Why · Ready"
-        message.update(why_line)
-        buttons = []
-        for action in snapshot.allowed_actions:
-            button = Button(
-                _ACTION_LABELS[action],
-                id=f"mcp-inspector-action-{action.value}",
-                classes="mcp-inspector-action console-action-secondary",
-                compact=True,
-            )
-            if action not in _WIRED_ACTIONS:
-                button.disabled = True
-                button.tooltip = "Available in a later phase — use Advanced below."
+        async with self._refresh_lock:
+            self._snapshot = snapshot
+            state = self.query_one("#mcp-inspector-state", Static)
+            message = self.query_one("#mcp-inspector-message", Static)
+            actions = self.query_one("#mcp-inspector-actions", Vertical)
+            await actions.remove_children()
+            if snapshot is None:
+                state.update("Select a server to see its readiness.")
+                message.update("")
+                return
+            state.update(f"{snapshot.badge_text()}  {snapshot.label}")
+            # A5: lead with the humanized *reason*, not a repeat of the
+            # canvas's own snapshot.message -- the inspector should add
+            # "why", which the canvas detail view doesn't say, rather than
+            # mirror what it already shows. A3a: never leak the internal
+            # ReasonCode value (e.g. "runtime_unavailable") into user-facing
+            # copy.
+            reason = snapshot.primary_reason
+            if reason is not None:
+                why_line = f"Why · {REASON_LABELS[reason]}"
+            elif snapshot.tool_count is not None:
+                why_line = f"Why · Ready — {snapshot.tool_count} tools available"
             else:
-                button.tooltip = _WIRED_ACTION_TOOLTIPS.get(action, _ACTION_LABELS[action])
-            buttons.append(button)
-        if buttons:
-            await actions.mount_all(buttons)
+                why_line = "Why · Ready"
+            message.update(why_line)
+            buttons = []
+            for action in snapshot.allowed_actions:
+                button = Button(
+                    _ACTION_LABELS[action],
+                    id=f"mcp-inspector-action-{action.value}",
+                    classes="mcp-inspector-action console-action-secondary",
+                    compact=True,
+                )
+                if action not in _WIRED_ACTIONS:
+                    button.disabled = True
+                    button.tooltip = "Available in a later phase — use Advanced below."
+                else:
+                    button.tooltip = _WIRED_ACTION_TOOLTIPS.get(action, _ACTION_LABELS[action])
+                buttons.append(button)
+            if buttons:
+                await actions.mount_all(buttons)
 
     # -- advanced escape hatch -----------------------------------------------
 
@@ -234,6 +256,7 @@ class MCPInspector(Vertical):
         self._action_templates = {
             str(d["name"]): str(d.get("payload_template") or "{}") for d in descriptors
         }
+        hint = self.query_one("#mcp-adv-empty-hint", Static)
         with action_select.prevent(Select.Changed):
             if not descriptors:
                 action_select.set_options([("No actions available", Select.BLANK)])
@@ -243,6 +266,11 @@ class MCPInspector(Vertical):
                 # Legacy behavior: a section with nothing to run resets the
                 # payload editor rather than leaving a stale template behind.
                 payload.text = "{}"
+                hint.update(
+                    "No actions for this section. Select External Servers or "
+                    "Inventory to see runnable actions."
+                )
+                hint.display = True
                 return
             options = [(str(d["label"]), str(d["name"])) for d in descriptors]
             option_values = [value for _, value in options]
@@ -252,6 +280,7 @@ class MCPInspector(Vertical):
             action_select.disabled = False
             run_button.disabled = False
             payload.text = self._action_templates.get(selected, "{}")
+            hint.display = False
 
     def _action_allowed(self, descriptor: dict[str, Any]) -> bool:
         """Mirror the legacy panel's policy gate; permissive only when seams absent.

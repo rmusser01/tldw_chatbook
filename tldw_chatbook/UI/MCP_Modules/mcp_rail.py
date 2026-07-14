@@ -12,6 +12,18 @@ from textual.widgets import Button, Label, Select, Static
 
 from tldw_chatbook.MCP.readiness import STATE_GLYPHS, ReadinessSnapshot
 
+# Task 4: one-shot mount-echo consumption sentinel. `on_select_changed`'s
+# scope/scope-ref guards compare an incoming Select.Changed value against the
+# value each Select was actually constructed with at the last compose()
+# (`_displayed_scope_value`/`_displayed_scope_ref_value`) to swallow that
+# constructor-triggered echo. A *standing* sentinel would keep swallowing any
+# later user selection that happens to match the same value again (e.g. an
+# A -> B -> A round trip's final "A" looks identical to the mount echo), so
+# once a guard actually consumes an echo it overwrites the sentinel with this
+# unique object instead of leaving the matched value in place -- no real
+# Select value can ever equal it, so every subsequent change dispatches.
+_ECHO_CONSUMED = object()
+
 MCP_RAIL_ROW_PREFIX = "mcp-rail-row-"
 # A4: wide enough that the built-in server's full label ("tldw_chatbook
 # (built-in)", 24 chars) always fits without an ellipsis at the rail's real
@@ -243,13 +255,24 @@ class MCPRail(Vertical):
             # against `self.scope_value` directly would miss this — that
             # attribute holds the true, un-clamped tracked scope, which can
             # differ from what was actually displayed/selected.
-            if event.value == self._displayed_scope_value:
+            # Task 4: one-shot -- consume at most the first matching echo,
+            # then flip the sentinel to `_ECHO_CONSUMED` so a later user
+            # selection that happens to land back on the same value (an
+            # A -> B -> A round trip) is never mistaken for a second echo.
+            if event.value == self._displayed_scope_value and (
+                self._displayed_scope_value is not _ECHO_CONSUMED
+            ):
+                self._displayed_scope_value = _ECHO_CONSUMED
                 return
             self.post_message(self.ScopeChanged(str(event.value), None))
         elif select_id == "mcp-rail-scope-ref":
             event.stop()
-            # Same mount-echo guard as above, for the scope-ref select.
-            if event.value == self._displayed_scope_ref_value:
+            # Same one-shot mount-echo guard as above, for the scope-ref
+            # select.
+            if event.value == self._displayed_scope_ref_value and (
+                self._displayed_scope_ref_value is not _ECHO_CONSUMED
+            ):
+                self._displayed_scope_ref_value = _ECHO_CONSUMED
                 return
             # Both our synthetic placeholder sentinel (Select.BLANK, used when
             # there are no ref options) and the auto-added blank row
