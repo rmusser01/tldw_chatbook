@@ -15,7 +15,7 @@ from textual.message import Message
 from textual.widgets import ContentSwitcher, Static
 from textual.worker import Worker
 
-from tldw_chatbook.config import get_cli_setting
+from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
 from tldw_chatbook.MCP.mcp_import import ImportCandidate
 from tldw_chatbook.MCP.readiness import (
     HubAction,
@@ -980,6 +980,60 @@ class MCPWorkbench(Container):
         if event.server_key and event.server_key.startswith("local:"):
             profile_id = event.server_key.split(":", 1)[1]
             self._start_lifecycle(event.server_key, profile_id, "disconnect")
+
+    def on_mcp_servers_mode_builtin_flag_changed(
+        self, event: MCPServersMode.BuiltinFlagChanged
+    ) -> None:
+        """Dispatch a built-in server enable/expose toggle in the background.
+
+        Synchronous (not `async def`), mirroring
+        `on_mcp_servers_mode_delete_confirmed()`/`on_mcp_profile_form_
+        submit_requested()`: the handler returns immediately so the message
+        pump stays responsive while the config write + catalog reload run.
+        No in-flight guard (unlike those two): each Checkbox already
+        displays its own last-known value between toggles, so a rapid
+        second toggle -- of the same or a different flag -- simply cancels
+        the still-running worker via `exclusive=True` (safe: `Checkbox.
+        Changed` is idempotent config state, not an append-only mutation)
+        and starts fresh from the latest event.
+        """
+        event.stop()
+        self.run_worker(
+            self._save_builtin_flag(event.key, event.value),
+            group="mcp-builtin-flag",
+            exclusive=True,
+        )
+
+    async def _save_builtin_flag(self, key: str, value: bool) -> None:
+        """Persist one `[mcp]` enable/expose flag, then reload the catalog.
+
+        The write itself is the blocking part (TOML read-modify-write to
+        disk, `save_setting_to_cli_config()` in config.py) -- offloaded via
+        `asyncio.to_thread` rather than Textual's `@work(thread=True)`
+        decorator (the fire-and-forget precedent at
+        library_screen.py:5534's `_save_library_rail_preferences()`)
+        because this call, unlike that one, MUST follow the write with
+        async work that touches live widgets (`_collect_snapshots()` +
+        `_sync_children()`, so the built-in row's readiness badge and this
+        detail pane's own checkboxes reflect the change). Keeping both
+        steps in one coroutine dispatched via `run_worker(coroutine, ...)`
+        mirrors this file's own `_load_import_file()` (`asyncio.to_thread`
+        for a blocking `Path.read_text` followed by an in-coroutine UI
+        update) instead of adding a `call_from_thread` marshaling hop back
+        onto the event loop that a sync `@work(thread=True)` method would
+        need for the same follow-up.
+        """
+        try:
+            saved = await asyncio.to_thread(save_setting_to_cli_config, "mcp", key, value)
+        except Exception as exc:
+            logger.warning(f"MCP built-in flag save failed: {exc}")
+            self.app.notify(f"Failed to save {key}: {exc}", severity="error")
+            return
+        if not saved:
+            self.app.notify(f"Failed to save {key}.", severity="error")
+            return
+        self._snapshots = await self._collect_snapshots()
+        await self._sync_children()
 
     def on_mcp_servers_mode_delete_confirmed(
         self, event: MCPServersMode.DeleteConfirmed

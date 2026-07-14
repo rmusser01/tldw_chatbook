@@ -474,6 +474,15 @@ def builtin_readiness(
         auth_display="none",
         scope_display="—",
         detail={
+            # Task 10: stored directly rather than left for callers to
+            # re-derive from `state is not NEEDS_SETUP` -- today those are
+            # equivalent (NOT_CONFIGURED is the only reason this function
+            # ever attaches), but the detail toggles UI needs the raw
+            # enabled flag decoupled from readiness-state classification so
+            # a future reason code reusing NEEDS_SETUP for the built-in
+            # server (e.g. an invalid expose combination) can't silently
+            # flip the "Enabled" checkbox's displayed value.
+            "enabled": enabled,
             "expose_tools": expose_tools,
             "expose_resources": expose_resources,
             "expose_prompts": expose_prompts,

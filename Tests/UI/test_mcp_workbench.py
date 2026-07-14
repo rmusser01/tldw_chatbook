@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button, ContentSwitcher, Input, Select, Static, TextArea
+from textual.widgets import Button, Checkbox, ContentSwitcher, Input, Select, Static, TextArea
 
 from tldw_chatbook.MCP.unified_control_models import UnifiedMCPContext
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
@@ -331,6 +331,109 @@ async def test_detail_disconnect_button_routes_through_start_lifecycle():
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert app.unified_mcp_service.disconnect_calls == ["docs"]
+
+
+@pytest.mark.asyncio
+async def test_builtin_flag_toggle_saves_setting_and_reloads_catalog(monkeypatch):
+    """Task 10: toggling the built-in detail's "Enabled" Checkbox must call
+    `save_setting_to_cli_config("mcp", "enabled", False)` (monkeypatched
+    here, per the task interfaces) and then reload the catalog so the
+    checkbox itself -- rebuilt fresh from the post-reload snapshot by
+    `MCPServersMode.show_detail()` -- reflects the round trip rather than an
+    optimistic local flip. A tiny in-memory `flags` dict stands in for the
+    `[mcp]` config section on both the read (`get_cli_setting`) and write
+    (`save_setting_to_cli_config`) sides so the reload assertion is a real
+    signal instead of coincidentally matching a mocked return value.
+    """
+    from tldw_chatbook.UI.MCP_Modules import mcp_workbench as workbench_module
+
+    flags: dict[str, Any] = {
+        "enabled": True,
+        "expose_tools": True,
+        "expose_resources": True,
+        "expose_prompts": True,
+    }
+    save_calls: list[tuple[str, str, Any]] = []
+
+    def fake_get_cli_setting(section, key=None, default=None):
+        if section == "mcp" and key in flags:
+            return flags[key]
+        return default
+
+    def fake_save_setting_to_cli_config(section, key, value):
+        save_calls.append((section, key, value))
+        if section == "mcp":
+            flags[key] = value
+        return True
+
+    monkeypatch.setattr(workbench_module, "get_cli_setting", fake_get_cli_setting)
+    monkeypatch.setattr(
+        workbench_module, "save_setting_to_cli_config", fake_save_setting_to_cli_config
+    )
+
+    app = WorkbenchApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}1")  # builtin row
+        await pilot.pause()
+        checkbox = app.query_one("#mcp-builtin-enabled", Checkbox)
+        assert checkbox.value is True
+
+        await pilot.click("#mcp-builtin-enabled")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert ("mcp", "enabled", False) in save_calls
+        # Reload picked up the write: the rebuilt checkbox now shows False,
+        # not just an optimistic client-side flip.
+        reloaded_checkbox = app.query_one("#mcp-builtin-enabled", Checkbox)
+        assert reloaded_checkbox.value is False
+        workbench = app.query_one(MCPWorkbench)
+        builtin_snap = next(
+            s for s in workbench._snapshots if s.server_key == "builtin:tldw_chatbook"
+        )
+        assert builtin_snap.state.value == "needs_setup"
+
+
+@pytest.mark.asyncio
+async def test_builtin_expose_flag_toggle_saves_matching_key(monkeypatch):
+    from tldw_chatbook.UI.MCP_Modules import mcp_workbench as workbench_module
+
+    flags: dict[str, Any] = {
+        "enabled": True,
+        "expose_tools": True,
+        "expose_resources": True,
+        "expose_prompts": True,
+    }
+    save_calls: list[tuple[str, str, Any]] = []
+
+    def fake_get_cli_setting(section, key=None, default=None):
+        if section == "mcp" and key in flags:
+            return flags[key]
+        return default
+
+    def fake_save_setting_to_cli_config(section, key, value):
+        save_calls.append((section, key, value))
+        if section == "mcp":
+            flags[key] = value
+        return True
+
+    monkeypatch.setattr(workbench_module, "get_cli_setting", fake_get_cli_setting)
+    monkeypatch.setattr(
+        workbench_module, "save_setting_to_cli_config", fake_save_setting_to_cli_config
+    )
+
+    app = WorkbenchApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}1")  # builtin row
+        await pilot.pause()
+        await pilot.click("#mcp-builtin-expose-resources")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert ("mcp", "expose_resources", False) in save_calls
 
 
 @pytest.mark.asyncio

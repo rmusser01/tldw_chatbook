@@ -9,7 +9,8 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
-from textual.widgets import Button, DataTable, Static
+from textual.widget import Widget
+from textual.widgets import Button, Checkbox, DataTable, Static
 
 from tldw_chatbook.MCP.readiness import (
     HubAction,
@@ -26,6 +27,15 @@ from tldw_chatbook.UI.MCP_Modules.mcp_server_mutations import MCPServerMutations
 _MUTATIONS_GATED_TOOLTIP = "Requires team, org, or system-admin scope."
 
 _TABLE_COLUMNS = ("Name", "Transport", "Status", "Tools", "Auth", "Scope")
+
+# Task 10: the built-in detail view's Checkbox ids -> the `[mcp]` config key
+# (and `BuiltinFlagChanged.key`) each one edits.
+_BUILTIN_CHECKBOX_KEYS: dict[str, str] = {
+    "mcp-builtin-enabled": "enabled",
+    "mcp-builtin-expose-tools": "expose_tools",
+    "mcp-builtin-expose-resources": "expose_resources",
+    "mcp-builtin-expose-prompts": "expose_prompts",
+}
 
 
 class MCPServersMode(Vertical):
@@ -81,6 +91,22 @@ class MCPServersMode(Vertical):
             super().__init__()
             self.server_key = server_key
 
+    class BuiltinFlagChanged(Message, namespace="mcp_servers_mode"):
+        """Posted when a built-in server enable/expose Checkbox is toggled.
+
+        `key` is one of `enabled|expose_tools|expose_resources|
+        expose_prompts` -- the workbench owns writing it via
+        `save_setting_to_cli_config("mcp", key, value)` (a thread-offloaded
+        config write; see `MCPWorkbench._save_builtin_flag()`) and then
+        reloading the catalog so the built-in row's readiness reflects the
+        change (Phase 1 derivation: `enabled=False` -> NEEDS_SETUP).
+        """
+
+        def __init__(self, key: str, value: bool) -> None:
+            super().__init__()
+            self.key = key
+            self.value = value
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._snapshots: list[ReadinessSnapshot] = []
@@ -134,6 +160,7 @@ class MCPServersMode(Vertical):
             yield Horizontal(id="mcp-detail-toolbar", classes="ds-toolbar")
             with VerticalScroll(id="mcp-detail-scroll"):
                 yield Static("", id="mcp-detail-body", classes="ds-field-row", markup=False)
+                yield Vertical(id="mcp-detail-builtin-toggles")
                 yield Button(
                     "Copy client config",
                     id="mcp-detail-copy-snippet",
@@ -348,6 +375,7 @@ class MCPServersMode(Vertical):
         self._delete_armed = False
         if snapshot is None:
             self._show_overview_container(True)
+            await self._rebuild_builtin_toggles()
             await self._rebuild_detail_toolbar()
             return
         self._show_overview_container(False)
@@ -360,6 +388,7 @@ class MCPServersMode(Vertical):
         self.query_one("#mcp-detail-copy-snippet", Button).display = (
             snapshot.source == "builtin"
         )
+        await self._rebuild_builtin_toggles()
         await self._rebuild_detail_toolbar()
 
     def _detail_toolbar_widgets(self) -> list[Button]:
@@ -455,6 +484,76 @@ class MCPServersMode(Vertical):
         if widgets:
             await toolbar.mount_all(widgets)
 
+    def _builtin_toggle_widgets(self) -> list[Widget]:
+        """Build the built-in detail's enable/expose Checkbox rows + note.
+
+        Builtin-source snapshots only -- local and server-source detail
+        views render no toggles at all (empty list, mirrors
+        `_detail_toolbar_widgets()`'s source gate).
+        """
+        snapshot = self._detail_snapshot
+        if snapshot is None or snapshot.source != "builtin":
+            return []
+        detail = snapshot.detail or {}
+        # `enabled` is read directly off `detail["enabled"]` (populated by
+        # `builtin_readiness()`, Task 10) rather than re-derived from
+        # `snapshot.state is not ReadinessState.NEEDS_SETUP` -- see the
+        # comment on that call site for why. The `True` fallback only
+        # matters for a hypothetical builtin-source snapshot built without
+        # going through `builtin_readiness()` at all (none do today).
+        enabled = bool(detail.get("enabled", True))
+        return [
+            Checkbox(
+                "Enabled",
+                value=enabled,
+                id="mcp-builtin-enabled",
+                compact=True,
+                tooltip="Enable the built-in MCP server so an MCP client can launch it.",
+            ),
+            Checkbox(
+                "Expose tools",
+                value=bool(detail.get("expose_tools", True)),
+                id="mcp-builtin-expose-tools",
+                compact=True,
+                tooltip="Expose tldw_chatbook's tools to MCP clients.",
+            ),
+            Checkbox(
+                "Expose resources",
+                value=bool(detail.get("expose_resources", True)),
+                id="mcp-builtin-expose-resources",
+                compact=True,
+                tooltip="Expose tldw_chatbook's resources to MCP clients.",
+            ),
+            Checkbox(
+                "Expose prompts",
+                value=bool(detail.get("expose_prompts", True)),
+                id="mcp-builtin-expose-prompts",
+                compact=True,
+                tooltip="Expose tldw_chatbook's prompts to MCP clients.",
+            ),
+            Static(
+                "Applies to the next client launch — the built-in server "
+                "reads config at start.",
+                id="mcp-builtin-toggles-note",
+                classes="ds-field-row",
+                markup=False,
+            ),
+        ]
+
+    async def _rebuild_builtin_toggles(self) -> None:
+        """Rebuild `#mcp-detail-builtin-toggles` from `_builtin_toggle_widgets()`.
+
+        Mirrors `_rebuild_detail_toolbar()`'s awaited remove-then-mount
+        discipline so a second `show_detail()` queued right behind this one
+        cannot interleave its own removal/mount with this call's.
+        """
+        container = self.query_one("#mcp-detail-builtin-toggles", Vertical)
+        await container.remove_children()
+        widgets = self._builtin_toggle_widgets()
+        container.display = bool(widgets)
+        if widgets:
+            await container.mount_all(widgets)
+
     def _detail_text(self, snapshot: ReadinessSnapshot, *, mutations_available: bool = False) -> str:
         detail = snapshot.detail or {}
         lines: list[str] = [snapshot.message, ""]
@@ -502,18 +601,10 @@ class MCPServersMode(Vertical):
         else:  # builtin
             lines.append("Runs over stdio when an MCP client launches it:")
             lines.append("  python3 -m tldw_chatbook.MCP")
-            # A3c: human copy, not a dump of internal config flag names and
-            # raw booleans (was "expose_tools · True").
-            exposed = [
-                name
-                for flag, name in (
-                    ("expose_tools", "tools"),
-                    ("expose_resources", "resources"),
-                    ("expose_prompts", "prompts"),
-                )
-                if detail.get(flag, True)
-            ]
-            lines.append(f"Exposes · {', '.join(exposed)}" if exposed else "Exposes · nothing")
+            # A3c/Task 10: the old "Exposes · tools, resources" prose line
+            # (a human-readable summary of the expose_* flags) is now the
+            # four Checkbox rows built by `_builtin_toggle_widgets()` --
+            # this body text no longer dumps flags at all, raw or humanized.
         return "\n".join(lines)
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
@@ -524,6 +615,25 @@ class MCPServersMode(Vertical):
             # to the canonical server_key -- see F3 in update_overview().
             server_key = self._row_key_to_server_key.get(raw_key, raw_key)
             self.post_message(self.ServerRowSelected(server_key))
+
+    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        """Forward a built-in enable/expose Checkbox toggle as `BuiltinFlagChanged`.
+
+        Mount-echo note (verified against `textual.widgets._toggle_button.
+        ToggleButton`, Task 10): the base class wraps its constructor's
+        initial `value` set in `self.prevent(self.Changed)` AND declares the
+        `value` reactive with `init=False` -- unlike `Select` (see
+        mcp_rail.py's `_ECHO_CONSUMED`/`_displayed_scope_value` sentinels),
+        constructing/mounting a Checkbox with a non-default initial value
+        does NOT itself fire `Changed`. No compare-before-post guard is
+        needed here; `test_showing_builtin_detail_does_not_post_builtin_
+        flag_changed` in test_mcp_servers_mode.py pins this down.
+        """
+        key = _BUILTIN_CHECKBOX_KEYS.get(event.checkbox.id or "")
+        if key is None:
+            return
+        event.stop()
+        self.post_message(self.BuiltinFlagChanged(key, event.value))
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""

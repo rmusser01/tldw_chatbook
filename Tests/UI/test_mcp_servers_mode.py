@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import DataTable, Static
+from textual.widgets import Checkbox, DataTable, Static
 
 from tldw_chatbook.MCP.readiness import (
     HubAction,
@@ -48,6 +48,9 @@ class CanvasApp(App):
         self.events.append(event)
 
     def on_mcp_servers_mode_import_servers_requested(self, event) -> None:
+        self.events.append(event)
+
+    def on_mcp_servers_mode_builtin_flag_changed(self, event) -> None:
         self.events.append(event)
 
 
@@ -289,10 +292,11 @@ async def test_detail_renders_redacted_config_and_builtin_snippet():
 
 
 @pytest.mark.asyncio
-async def test_builtin_detail_summarizes_exposed_capabilities_in_human_copy():
-    """A3c: the builtin detail pane must read as prose ("Exposes · tools,
-    resources") instead of dumping internal config flag names and raw
-    booleans ("expose_tools · True").
+async def test_builtin_detail_no_longer_dumps_raw_expose_flags_in_body_text():
+    """A3c (carried forward from Task 6): the builtin detail body must not
+    dump internal config flag names/raw booleans. Task 10 replaces the old
+    "Exposes · tools, resources" prose line with the four checkboxes
+    asserted below -- this only guards the body Static itself stays clean.
     """
     app = CanvasApp()
     async with app.run_test() as pilot:
@@ -304,21 +308,121 @@ async def test_builtin_detail_summarizes_exposed_capabilities_in_human_copy():
         )
         await pilot.pause()
         body = str(app.query_one("#mcp-detail-body", Static).renderable)
-        assert "Exposes · tools, resources" in body
         assert "expose_tools" not in body
         assert "expose_resources" not in body
         assert "expose_prompts" not in body
         assert "True" not in body
         assert "False" not in body
 
+
+@pytest.mark.asyncio
+async def test_builtin_detail_shows_enable_expose_checkboxes_with_values_and_note():
+    """Task 10 Step 1: the builtin detail view renders four Checkboxes
+    (enabled/expose_tools/expose_resources/expose_prompts), each seeded from
+    the snapshot's detail flags, plus the next-launch note. Every checkbox
+    must carry a tooltip.
+    """
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
         await canvas.show_detail(
             builtin_readiness(
-                enabled=True, expose_tools=False, expose_resources=False, expose_prompts=False
+                enabled=True, expose_tools=True, expose_resources=False, expose_prompts=True
             )
         )
         await pilot.pause()
-        body_none = str(app.query_one("#mcp-detail-body", Static).renderable)
-        assert "Exposes · nothing" in body_none
+
+        enabled_cb = app.query_one("#mcp-builtin-enabled", Checkbox)
+        tools_cb = app.query_one("#mcp-builtin-expose-tools", Checkbox)
+        resources_cb = app.query_one("#mcp-builtin-expose-resources", Checkbox)
+        prompts_cb = app.query_one("#mcp-builtin-expose-prompts", Checkbox)
+        assert enabled_cb.value is True
+        assert tools_cb.value is True
+        assert resources_cb.value is False
+        assert prompts_cb.value is True
+        for checkbox in (enabled_cb, tools_cb, resources_cb, prompts_cb):
+            assert checkbox.tooltip, f"{checkbox.id} missing a tooltip"
+
+        note = str(app.query_one("#mcp-builtin-toggles-note", Static).renderable)
+        assert (
+            "Applies to the next client launch — the built-in server reads config at start."
+            in note
+        )
+
+        # Copy-snippet button survives the conversion to widget-composed rows.
+        assert list(app.query("#mcp-detail-copy-snippet"))
+
+
+@pytest.mark.asyncio
+async def test_builtin_checkboxes_do_not_appear_for_non_builtin_detail():
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.show_detail(_snap("local:docs", "docs"))
+        await pilot.pause()
+        assert not list(app.query("#mcp-builtin-enabled"))
+        assert not list(app.query("#mcp-builtin-toggles-note"))
+
+
+@pytest.mark.asyncio
+async def test_showing_builtin_detail_does_not_post_builtin_flag_changed():
+    """Mount-echo guard: Checkbox's own constructor wraps its initial
+    `value` set in `self.prevent(self.Changed)` and declares the reactive
+    with `init=False` (see textual.widgets._toggle_button.ToggleButton), so
+    composing these four Checkboxes with non-default values must not itself
+    fire `Changed` -- and therefore must not post `BuiltinFlagChanged` --
+    for any of them.
+    """
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.show_detail(
+            builtin_readiness(
+                enabled=False, expose_tools=False, expose_resources=True, expose_prompts=False
+            )
+        )
+        await pilot.pause()
+        assert not app.events
+
+
+@pytest.mark.asyncio
+async def test_toggling_builtin_enabled_checkbox_posts_builtin_flag_changed():
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.show_detail(builtin_readiness(enabled=True))
+        await pilot.pause()
+        await pilot.click("#mcp-builtin-enabled")
+        await pilot.pause()
+        posted = [e for e in app.events if type(e).__name__ == "BuiltinFlagChanged"]
+        assert posted, "expected a BuiltinFlagChanged event"
+        assert posted[-1].key == "enabled"
+        assert posted[-1].value is False
+
+
+@pytest.mark.asyncio
+async def test_toggling_builtin_expose_checkboxes_posts_matching_keys():
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.show_detail(
+            builtin_readiness(
+                enabled=True, expose_tools=True, expose_resources=True, expose_prompts=True
+            )
+        )
+        await pilot.pause()
+        for checkbox_id, key in (
+            ("#mcp-builtin-expose-tools", "expose_tools"),
+            ("#mcp-builtin-expose-resources", "expose_resources"),
+            ("#mcp-builtin-expose-prompts", "expose_prompts"),
+        ):
+            app.events.clear()
+            await pilot.click(checkbox_id)
+            await pilot.pause()
+            posted = [e for e in app.events if type(e).__name__ == "BuiltinFlagChanged"]
+            assert posted, f"expected a BuiltinFlagChanged event for {checkbox_id}"
+            assert posted[-1].key == key
+            assert posted[-1].value is False
 
 
 # -- T7: detail-view toolbar (Edit/Disconnect/Delete arm-then-confirm) ------
