@@ -284,8 +284,12 @@ CONSOLE_SYSTEM_PROMPT_SAVE_STATUS_COPY = {
 CONSOLE_SYSTEM_PROMPT_NO_SYSTEM_PART_TEMPLATE = 'Prompt "{name}" has no system part.'
 # Task 9 (Skills Console dispatch): a resolved-single skill run's raw command
 # is submitted as the actual user turn (Task 10 renders the substitution at
-# payload build); this TOOL-role marker is appended right after that submit
-# is queued so the transcript records which skill is "driving" the turn.
+# payload build); this TOOL-role marker is appended once that submit is
+# ACCEPTED (the USER message has actually landed in the store -- see
+# `_on_console_submission_accepted`, never right after `run_worker` merely
+# *schedules* the submit, which raced the scheduled coroutine and could
+# append this marker before the user turn it is meant to follow) so the
+# transcript records which skill is "driving" the turn.
 CONSOLE_SKILL_RUN_MARKER_TEMPLATE = "skill {name} → driving this turn"
 # "Absent" bucket of the untrusted-refuse copy (Task 7's SKILL_UNTRUSTED_REFUSE):
 # a typed skill name that matches nothing at all -- not a trusted candidate,
@@ -1221,6 +1225,14 @@ class ChatScreen(BaseAppScreen):
             make_skill_fallback_resolver(lambda: self._console_skill_candidates)
         )
         self._console_unknown_send_armed: str | None = None
+        # Task 9 fix-wave (reviewer repro): the skill name to append as a
+        # TOOL "driving this turn" marker once the submit it was staged for
+        # is actually ACCEPTED (consumed by `_on_console_submission_accepted`,
+        # fired synchronously right after the USER message lands and before
+        # the ASSISTANT placeholder -- see `_run_resolved_console_skill`).
+        # Cleared on consume and on any dispatch failure so a refused/
+        # blocked run never leaks its marker onto a later, unrelated send.
+        self._console_pending_skill_marker_name: str | None = None
         self._console_image_view_state: ConsoleImageViewState | None = None
         self._console_image_cache: ConsoleImageRenderCache | None = None
         self._console_image_default_mode: Literal["pixels", "graphics"] | None = None
@@ -7171,6 +7183,19 @@ class ChatScreen(BaseAppScreen):
         controller = self._ensure_console_chat_controller()
         self._start_console_transcript_sync_timer()
         result = await controller.submit_draft(draft)
+        if not result.accepted:
+            # A resolved skill run (`_run_resolved_console_skill`) stages its
+            # TOOL marker name BEFORE this worker even runs. `submit_draft`
+            # can still refuse/block the submit for reasons only known once
+            # it actually executes (provider not ready, policy block, an
+            # active-run race) -- entirely separate from the composer-level
+            # gate `_dispatch_console_draft_send` already passed to get here.
+            # None of those paths ever reach the accepted-hook
+            # (`_on_console_submission_accepted`) that would otherwise
+            # consume and clear the staged name, so it must be cleared here
+            # too -- otherwise it would silently leak onto whatever the
+            # NEXT, unrelated accepted send turns out to be.
+            self._console_pending_skill_marker_name = None
         try:
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
         except QueryError:
@@ -7192,12 +7217,25 @@ class ChatScreen(BaseAppScreen):
         Keeping the sent text in the composer for the whole run reads as
         "not sent" during long local-model generations; blocked submits never
         reach this hook, so their draft is preserved for correction.
+
+        Also the sole consume point for a staged resolved-skill "driving this
+        turn" TOOL marker (Task 9 fix-wave): ``ConsoleChatController.
+        submit_draft`` invokes this hook synchronously right after the USER
+        message is appended and before the ASSISTANT placeholder, so
+        appending the marker here -- rather than back at the dispatch call
+        site -- guarantees store order ``[USER, TOOL, ASSISTANT]`` instead of
+        racing the ``run_worker``-scheduled submit.
         """
         try:
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
         except QueryError:
-            return
-        composer.clear_draft()
+            composer = None
+        if composer is not None:
+            composer.clear_draft()
+        pending_skill_name = self._console_pending_skill_marker_name
+        if pending_skill_name is not None:
+            self._console_pending_skill_marker_name = None
+            self._append_console_skill_run_marker(pending_skill_name)
 
     def _console_pending_image_attachment(self):
         """Return the active session's staged image attachment, if any."""
@@ -7284,6 +7322,24 @@ class ChatScreen(BaseAppScreen):
             return
 
         if parse.kind == KIND_UNKNOWN:
+            # Fold-in (Task 9 fix-wave review): the fallback resolver only
+            # ever claims a word against the trusted-only cached
+            # `_console_skill_candidates` snapshot -- a typed `/name` that
+            # matches ONLY needs-review (trust-blocked) skills therefore
+            # always reaches here as KIND_UNKNOWN, previously falling
+            # through to the generic "Unknown command" hint just like any
+            # other unrecognized word. Re-checking against a FRESH context
+            # (never that cached snapshot) surfaces the same
+            # `/skills <name>` needs-review response instead, before the
+            # unknown-command arm/hint logic ever runs. This never arms the
+            # unknown-command escape: a blocked match is a known-but-blocked
+            # command, not an unrecognized one, so a repeated Enter shows
+            # the same response again rather than silently falling through
+            # to a literal send.
+            context = await self._fetch_console_skill_context()
+            blocked_summaries = self._console_skill_blocked_summaries(context)
+            if await self._console_skill_blocked_match_response(parse.name, blocked_summaries):
+                return
             if self._console_unknown_send_armed == draft:
                 # Second consecutive Enter on the *same* unmodified draft:
                 # disarm and fall through to a normal send below.
@@ -7918,16 +7974,57 @@ class ChatScreen(BaseAppScreen):
         # "exists but needs review" before falling back to the picker --
         # review-mandated addition (Task 8 review): a typed name/prefix that
         # matches ONLY needs-review skills must not read like the generic
-        # empty state.
+        # empty state. Shared with the bare `/skill-name` KIND_UNKNOWN
+        # fallback dispatch site (fix-wave fold-in below) via
+        # `_console_skill_blocked_match_response`.
+        if await self._console_skill_blocked_match_response(name, blocked_summaries):
+            return
+        if args:
+            await self._open_console_skill_picker(name, args)
+            return
+        await self._append_skill_refuse_row(name, CONSOLE_SKILL_RUN_REFUSE_REASON_ABSENT)
+
+    async def _console_skill_blocked_match_response(
+        self, name: str, blocked_summaries: tuple[Mapping[str, Any], ...]
+    ) -> bool:
+        """Surface the needs-review response for ``name`` against blocked skill summaries.
+
+        Shared by `/skills <name>`'s "none" branch above and the bare
+        `/skill-name` `KIND_UNKNOWN` fallback dispatch site
+        (``_send_console_message_from_visible_action``) -- fold-in from the
+        Task 9 fix-wave review -- so a typed name/prefix that matches ONLY
+        needs-review (trust-blocked) skills reads the same way from either
+        surface, instead of the generic "genuinely absent"/unknown-command
+        copy the fallback resolver's own trusted-only cached snapshot would
+        otherwise fall through to.
+
+        Args:
+            name: The typed command word (no leading slash).
+            blocked_summaries: Fresh ``get_context``-derived blocked-skill
+                summaries (never the fallback resolver's cached trusted-only
+                snapshot).
+
+        Returns:
+            ``True`` when a blocked match was found and a response was
+            appended (an exact match appends the ``SKILL_UNTRUSTED_REFUSE``
+            row; one or more prefix matches append the
+            ``CONSOLE_SKILL_NEEDS_REVIEW_HINT_TEMPLATE`` hint) -- the caller
+            should stop further handling. ``False`` when ``name`` matches no
+            blocked skill at all, so the caller falls through to its own
+            default (the skill picker for `/skills <name>`, the generic
+            unknown-command hint for bare fallback).
+        """
         name_lower = name.lower()
         exact_blocked = next(
             (item for item in blocked_summaries if str(item.get("name") or "").lower() == name_lower),
             None,
         )
         if exact_blocked is not None:
-            reason = str(exact_blocked.get("trust_reason_code") or exact_blocked.get("trust_status") or "needs review")
+            reason = str(
+                exact_blocked.get("trust_reason_code") or exact_blocked.get("trust_status") or "needs review"
+            )
             await self._append_skill_refuse_row(str(exact_blocked.get("name") or name), reason)
-            return
+            return True
         prefix_blocked = [
             item for item in blocked_summaries if str(item.get("name") or "").lower().startswith(name_lower)
         ]
@@ -7935,11 +8032,8 @@ class ChatScreen(BaseAppScreen):
             await self._append_native_console_system_message(
                 CONSOLE_SKILL_NEEDS_REVIEW_HINT_TEMPLATE.format(count=len(prefix_blocked))
             )
-            return
-        if args:
-            await self._open_console_skill_picker(name, args)
-            return
-        await self._append_skill_refuse_row(name, CONSOLE_SKILL_RUN_REFUSE_REASON_ABSENT)
+            return True
+        return False
 
     async def _run_resolved_console_skill(self, name: str, args: str) -> None:
         """Submit a resolved skill's raw `/name [args]` command as the user turn.
@@ -7947,13 +8041,27 @@ class ChatScreen(BaseAppScreen):
         Task 10 (the substitution rule) renders this at payload build time --
         this method only sends the literal, unmodified command text through
         the exact same send-blocked/readiness gate a normal Enter-to-send
-        goes through, then appends the "driving this turn" TOOL marker once
-        the send has actually been queued (never on a blocked/no-op send).
+        goes through.
+
+        Fix-wave note (reviewer repro): the "driving this turn" TOOL marker
+        is NOT appended here anymore. ``_dispatch_console_draft_send``
+        returning ``True`` only means ``run_worker`` *scheduled* the actual
+        submit -- the USER message it appends has not necessarily landed yet
+        by the time this coroutine resumes, so appending the marker
+        immediately after could (and, per the repro, reliably did) land it
+        BEFORE the user turn it is meant to follow. Instead, ``name`` is
+        staged here and consumed by ``_on_console_submission_accepted``,
+        which fires synchronously from inside the real submit -- right after
+        the USER message is appended and before the ASSISTANT placeholder --
+        guaranteeing store order ``[USER, TOOL, ASSISTANT]``. A dispatch that
+        never even gets queued (blocked send, run already in progress) must
+        not leave a stale marker staged for some later, unrelated send.
         """
         raw_command = f"/{name} {args}" if args else f"/{name}"
+        self._console_pending_skill_marker_name = name
         queued = await self._dispatch_console_draft_send(raw_command)
-        if queued:
-            self._append_console_skill_run_marker(name)
+        if not queued:
+            self._console_pending_skill_marker_name = None
 
     def _append_console_skill_run_marker(self, name: str) -> None:
         """Append the TOOL-role "driving this turn" marker for a resolved skill run.

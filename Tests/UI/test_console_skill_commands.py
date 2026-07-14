@@ -10,13 +10,19 @@ store.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any, Mapping
 from unittest.mock import AsyncMock
 
 import pytest
 from textual.widgets import Button
 
-from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
+from Tests.UI.test_console_command_composer import _spy_submit_draft
+from Tests.UI.test_console_native_chat_flow import (
+    CapturingGateway,
+    _configure_native_ready_console,
+    _wait_for_text,
+)
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import ConsoleHarness
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
@@ -189,6 +195,8 @@ async def test_bare_fallback_trusted_skill_submits_raw_command_and_appends_marke
     app.skills_scope_service = FakeSkillsScopeService(
         available_skills=[_skill("code-review", "Reviews a diff.")]
     )
+    gateway = CapturingGateway(chunks=("accepted",))
+    app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -204,15 +212,142 @@ async def test_bare_fallback_trusted_skill_submits_raw_command_and_appends_marke
 
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("/code-review fix it")
-        submit_spy = AsyncMock()
-        console._submit_console_native_draft = submit_spy
+        # `wraps=` keeps the real submit path running (needed for the
+        # accepted-hook that now appends the marker -- see below) while
+        # still letting us assert what was actually submitted.
+        submit_spy = await _spy_submit_draft(console)
 
         console.query_one("#console-send-message", Button).press()
-        await pilot.pause(0.2)
+        await _wait_for_text(console, pilot, "accepted")
 
         submit_spy.assert_called_once_with("/code-review fix it")
         marker_expected = CONSOLE_SKILL_RUN_MARKER_TEMPLATE.format(name="code-review")
         assert marker_expected in _console_message_contents(console, ConsoleMessageRole.TOOL)
+
+
+@pytest.mark.asyncio
+async def test_bare_fallback_skill_marker_lands_after_user_message_not_before():
+    """Reviewer repro (Task 9 fix-wave): appending the TOOL "driving this
+    turn" marker right after `_dispatch_console_draft_send` merely
+    *schedules* the real submit via `run_worker` -- not after it actually
+    runs -- so the marker could land BEFORE the user turn it is meant to
+    follow. Store order must always be [USER, TOOL, ASSISTANT]."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.skills_scope_service = FakeSkillsScopeService(
+        available_skills=[_skill("code-review", "Reviews a diff.")]
+    )
+    gateway = CapturingGateway(chunks=("accepted",))
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        for _ in range(40):
+            if console._console_skill_candidates:
+                break
+            await pilot.pause(0.05)
+        assert console._console_skill_candidates, "candidate snapshot never populated"
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("/code-review fix it")
+
+        console.query_one("#console-send-message", Button).press()
+        await _wait_for_text(console, pilot, "accepted")
+
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        assert session_id is not None
+        messages = store.messages_for_session(session_id)
+
+        marker_expected = CONSOLE_SKILL_RUN_MARKER_TEMPLATE.format(name="code-review")
+        assert [message.role for message in messages] == [
+            ConsoleMessageRole.USER,
+            ConsoleMessageRole.TOOL,
+            ConsoleMessageRole.ASSISTANT,
+        ]
+        assert messages[0].content == "/code-review fix it"
+        assert messages[1].content == marker_expected
+
+
+class _ToggleReadinessGateway:
+    """First ``resolve_for_send`` call is blocked; every later call is ready.
+
+    Lets a single test drive "the skill run's submit is refused inside
+    `submit_draft`" followed immediately by a normal successful send,
+    without needing to tear down/rebuild the Console controller (whose
+    ``provider_gateway`` is cached at construction) mid test.
+    """
+
+    def __init__(self) -> None:
+        self._calls = 0
+
+    async def resolve_for_send(self, selection):
+        self._calls += 1
+        ready = self._calls > 1
+        return SimpleNamespace(
+            provider=selection.provider,
+            base_url=selection.base_url or "",
+            model=selection.explicit_model or selection.configured_model or "test-model",
+            ready=ready,
+            visible_copy="" if ready else "Provider blocked: test setup incomplete.",
+        )
+
+    async def stream_chat(self, resolution, messages):
+        yield "accepted"
+
+
+@pytest.mark.asyncio
+async def test_blocked_skill_run_does_not_leak_marker_into_next_send():
+    """Leak test: a refused/blocked submit must never leave its staged skill
+    marker name to attach itself to the NEXT, unrelated accepted send."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.skills_scope_service = FakeSkillsScopeService(
+        available_skills=[_skill("code-review", "Reviews a diff.")]
+    )
+    gateway = _ToggleReadinessGateway()
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        for _ in range(40):
+            if console._console_skill_candidates:
+                break
+            await pilot.pause(0.05)
+        assert console._console_skill_candidates, "candidate snapshot never populated"
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("/code-review fix it")
+        console.query_one("#console-send-message", Button).press()
+        await pilot.pause(0.2)
+
+        # The blocked first attempt must have cleared the staged marker name
+        # rather than leaving it consumed by whatever sends next.
+        assert console._console_pending_skill_marker_name is None
+
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        assert session_id is not None
+        assert not [
+            message
+            for message in store.messages_for_session(session_id)
+            if message.role is ConsoleMessageRole.TOOL
+        ]
+
+        composer.load_draft("just a normal message")
+        console.query_one("#console-send-message", Button).press()
+        await _wait_for_text(console, pilot, "accepted")
+
+        tool_rows = [
+            message.content
+            for message in store.messages_for_session(session_id)
+            if message.role is ConsoleMessageRole.TOOL
+        ]
+        assert tool_rows == []
 
 
 @pytest.mark.asyncio
@@ -241,6 +376,37 @@ async def test_run_skill_prefix_matching_only_blocked_skills_shows_needs_review_
         expected = CONSOLE_SKILL_NEEDS_REVIEW_HINT_TEMPLATE.format(count=2)
         assert expected in _console_message_contents(console, ConsoleMessageRole.SYSTEM)
         assert len(host.screen_stack) == baseline_depth, "no picker should have opened"
+
+
+@pytest.mark.asyncio
+async def test_bare_fallback_prefix_matching_only_blocked_skills_shows_needs_review_hint():
+    """Fold-in (Task 9 fix-wave review): a bare `/name` draft that the
+    fallback resolver leaves as KIND_UNKNOWN (its cached candidate snapshot
+    is trusted-only, so a needs-review-only match never gets claimed) must
+    surface the same distinguishing hint `/skills <name>` shows, not the
+    generic "Unknown command" hint."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.skills_scope_service = FakeSkillsScopeService(
+        available_skills=[_skill("release-notes")],
+        blocked_skills=[_blocked_skill("review-helper"), _blocked_skill("review-tool")],
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("/review")
+
+        console.query_one("#console-send-message", Button).press()
+        await pilot.pause(0.2)
+
+        expected = CONSOLE_SKILL_NEEDS_REVIEW_HINT_TEMPLATE.format(count=2)
+        system_rows = _console_message_contents(console, ConsoleMessageRole.SYSTEM)
+        assert expected in system_rows
+        assert not any(row.startswith("Unknown command") for row in system_rows)
+        assert console._console_unknown_send_armed is None
 
 
 @pytest.mark.asyncio
