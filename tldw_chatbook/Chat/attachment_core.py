@@ -179,7 +179,13 @@ async def process_attachment_bytes(
     except Exception as exc:
         raise ValueError("Clipboard data is not a valid image.") from exc
     extension = ".png" if "png" in mime_type else ".jpg"
-    processed = await ChatImageHandler._process_image_data(data, extension, mime_type)
+    try:
+        processed = await ChatImageHandler._process_image_data(data, extension, mime_type)
+    except Exception:
+        logger.opt(exception=True).warning(
+            "Failed to process clipboard image data, using original bytes."
+        )
+        processed = data
     return PendingAttachment(
         file_path="",
         display_name=display_name,

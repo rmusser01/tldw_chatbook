@@ -149,3 +149,33 @@ def test_process_attachment_bytes_rejects_corrupt_and_oversized(monkeypatch):
         asyncio.run(
             process_attachment_bytes(b"12345678", display_name="big.png")
         )
+
+
+def test_process_attachment_bytes_falls_back_to_original_on_processing_failure(monkeypatch):
+    """When ChatImageHandler._process_image_data raises, keep the original
+    bytes instead of failing the attachment (mirrors process_image_file's
+    fallback at chat_image_events.py:71-80)."""
+    import asyncio
+    from io import BytesIO
+
+    from PIL import Image as PILImage
+
+    from tldw_chatbook.Chat.attachment_core import process_attachment_bytes
+    from tldw_chatbook.Event_Handlers.Chat_Events.chat_image_events import (
+        ChatImageHandler,
+    )
+
+    async def _boom(*args, **kwargs):
+        raise RuntimeError("simulated processing failure")
+
+    monkeypatch.setattr(ChatImageHandler, "_process_image_data", _boom)
+
+    buffer = BytesIO()
+    PILImage.new("RGB", (16, 16), (10, 20, 30)).save(buffer, format="PNG")
+    data = buffer.getvalue()
+
+    attachment = asyncio.run(
+        process_attachment_bytes(data, display_name="clipboard-fallback.png")
+    )
+    assert attachment.data == data
+    assert attachment.processed_size == len(data)

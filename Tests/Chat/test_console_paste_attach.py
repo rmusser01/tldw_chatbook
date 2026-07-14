@@ -142,3 +142,46 @@ def test_grab_maps_unencodable_image_to_unavailable(monkeypatch):
 
     monkeypatch.setattr(cpa, "_grabclipboard", lambda: _Unencodable())
     assert grab_clipboard_image().kind == "unavailable"
+
+
+# --- looks_attachable is case-insensitive on extension (PR #628 review) ---
+
+def test_looks_attachable_true_for_uppercase_extension(tmp_path):
+    target = tmp_path / "PHOTO.PNG"
+    target.write_bytes(b"x")
+    assert looks_attachable(str(target), allowed_root=str(tmp_path)) is True
+
+
+# --- Windows drive/UNC path recognition (platform-independent, PR #628 review) ---
+
+def test_extracts_windows_drive_path_backslash():
+    result = extract_dropped_path(r"C:\Users\me\pic.png")
+    assert result is not None and result.path == r"C:\Users\me\pic.png"
+
+
+def test_extracts_windows_drive_path_forward_slash():
+    result = extract_dropped_path("C:/Users/me/pic.png")
+    assert result is not None and result.path == "C:/Users/me/pic.png"
+
+
+def test_extracts_windows_unc_path():
+    result = extract_dropped_path(r"\\server\share\file.png")
+    assert result is not None and result.path == r"\\server\share\file.png"
+
+
+def test_extracts_windows_drive_file_uri():
+    result = extract_dropped_path("file:///C:/Users/me/pic.png")
+    assert result is not None and result.path == "C:/Users/me/pic.png"
+
+
+def test_extracts_quoted_windows_path_with_spaces():
+    result = extract_dropped_path(r'"C:\Users\me\My Files\pic.png"')
+    assert result is not None and result.path == r"C:\Users\me\My Files\pic.png"
+
+
+def test_bare_drive_letter_alone_is_not_a_drop():
+    assert extract_dropped_path("C:") is None
+
+
+def test_prose_with_windows_path_fragment_is_not_a_drop():
+    assert extract_dropped_path(r"word C:\x") is None

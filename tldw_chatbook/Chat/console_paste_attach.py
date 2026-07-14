@@ -12,6 +12,7 @@ and callers must run it off the event loop.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from fnmatch import fnmatch
 from io import BytesIO
@@ -47,6 +48,37 @@ class ClipboardGrab:
     paths: tuple[str, ...] = ()
 
 
+# Windows drive-letter path, either separator: C:\Users\me\pic.png or C:/Users/me/pic.png
+_WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
+# UNC path: \\server\share\file.png
+_WINDOWS_UNC_RE = re.compile(r"^\\\\[^\\]+\\")
+# file:// URI path component carrying a Windows drive letter: /C:/Users/...
+_WINDOWS_DRIVE_URI_RE = re.compile(r"^/[A-Za-z]:[\\/]")
+
+
+def _is_absolute_token(candidate: str) -> bool:
+    """Return whether candidate is a Unix-absolute or Windows-style path.
+
+    Recognition is platform-independent (regex-based, not ``os.path.isabs``)
+    so drag-drop paths from Windows terminals are recognized even when this
+    process runs on macOS/Linux.
+
+    Args:
+        candidate: A decoded (unquoted/unescaped) path candidate.
+
+    Returns:
+        True when the candidate looks like a Unix-absolute path, a Windows
+        drive-letter path, or a Windows UNC path.
+    """
+    if candidate.startswith("/"):
+        return True
+    if _WINDOWS_DRIVE_RE.match(candidate):
+        return True
+    if _WINDOWS_UNC_RE.match(candidate):
+        return True
+    return False
+
+
 def _decode_token(token: str) -> str | None:
     """Return the path a single pasted token denotes, or None.
 
@@ -55,21 +87,26 @@ def _decode_token(token: str) -> str | None:
 
     Returns:
         An absolute path string when the token is path-like (quoted,
-        backslash-escaped, ``file://`` URI, or plain absolute), else None.
+        backslash-escaped, ``file://`` URI, or plain absolute — Unix or
+        Windows), else None.
     """
     if not token:
         return None
     if token.startswith("file://"):
         parsed = urlparse(token)
         candidate = unquote(parsed.path)
+        if _WINDOWS_DRIVE_URI_RE.match(candidate):
+            # file:///C:/Users/... decodes to "/C:/Users/..."; strip the
+            # leading slash to yield the Windows-native "C:/Users/...".
+            return candidate[1:]
         return candidate if candidate.startswith("/") else None
     if len(token) >= 2 and token[0] == token[-1] and token[0] in ("'", '"'):
         candidate = token[1:-1]
-        return candidate if candidate.startswith("/") else None
+        return candidate if _is_absolute_token(candidate) else None
     if "\\ " in token:
         candidate = token.replace("\\ ", " ")
-        return candidate if candidate.startswith("/") else None
-    if token.startswith("/"):
+        return candidate if _is_absolute_token(candidate) else None
+    if _is_absolute_token(token):
         # A bare absolute path must not contain unescaped spaces — pasted
         # prose like "what does /etc/hosts do?" never reaches here because
         # the caller splits per line and rejects lines with spaces.
@@ -114,11 +151,11 @@ def looks_attachable(path: str, allowed_root: str | None = None) -> bool:
         advertise tiff/svg the image pipeline rejects — TASK-222.)
     """
     root = allowed_root or os.path.expanduser("~")
-    if not os.path.isfile(path):
-        return False
     if not is_safe_path(path, root):
         return False
-    name = os.path.basename(path)
+    if not os.path.isfile(path):
+        return False
+    name = os.path.basename(path).lower()
     return any(fnmatch(name, pattern) for pattern in _SUPPORTED_PATTERNS)
 
 
