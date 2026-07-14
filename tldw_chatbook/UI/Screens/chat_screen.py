@@ -63,6 +63,7 @@ from ...Chat.console_chat_models import (
     ConsoleVariantSet,
     ConsoleWorkspaceContext,
     ConsoleStagedSource,
+    MessageAttachment,
 )
 from ...Chat.console_session_settings import (
     ConsoleSessionSettings,
@@ -76,7 +77,11 @@ from ...Chat.console_session_settings import (
     build_console_settings_readiness,
     build_console_settings_summary_state,
 )
-from ...Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from ...Chat.console_chat_store import (
+    MAX_PENDING_ATTACHMENTS,
+    ConsoleChatSession,
+    ConsoleChatStore,
+)
 from ...Chat.console_provider_gateway import (
     DEFAULT_LLAMACPP_BASE_URL,
     ConsoleProviderGateway,
@@ -399,6 +404,32 @@ def _sanitize_console_library_rag_query(value: Any) -> str:
     ):
         return ""
     return query
+
+
+def _apply_console_message_attachments(
+    message: ConsoleChatMessage,
+    attachments: "Iterable[MessageAttachment]",
+) -> None:
+    """Set a message's attachments tuple and mirror position 0 into scalars.
+
+    Mirrors ``ConsoleChatStore._set_message_attachments``'s invariant --
+    every attachments mutation sets the tuple AND the scalar image fields
+    (``image_data``, ``image_mime_type``, ``attachment_label``) together --
+    for call sites that build or rehydrate ``ConsoleChatMessage`` objects
+    directly (screen-state restore, saved-conversation resume), outside the
+    store, where that helper isn't reachable.
+    """
+    rebased = tuple(
+        replace(attachment, position=index)
+        for index, attachment in enumerate(attachments)
+    )
+    message.attachments = rebased
+    first = rebased[0] if rebased else None
+    message.image_data = first.data if first else None
+    message.image_mime_type = first.mime_type if first else None
+    message.attachment_label = (
+        first.display_name if first and first.display_name else None
+    )
 
 
 def _has_selected_text(value: Any) -> bool:
@@ -2567,6 +2598,21 @@ class ChatScreen(BaseAppScreen):
             if not content and image_data is None:
                 continue
             persisted_message_id = row.get("id")
+            # The tree only carries the legacy position-0 columns; positions
+            # >= 1 (multi-attachment table rows) are batch-fetched below,
+            # once for the whole resumed list.
+            attachments: tuple[MessageAttachment, ...] = (
+                (
+                    MessageAttachment(
+                        data=image_data,
+                        mime_type=image_mime_type or "",
+                        display_name="",
+                        position=0,
+                    ),
+                )
+                if image_data is not None
+                else ()
+            )
             messages.append(
                 ConsoleChatMessage(
                     role=self._console_message_role_from_persisted(row),
@@ -2579,8 +2625,10 @@ class ChatScreen(BaseAppScreen):
                     ),
                     image_data=image_data,
                     image_mime_type=image_mime_type,
+                    attachments=attachments,
                 )
             )
+        self._batch_fetch_console_resume_attachments(messages)
         return messages
 
     def _inject_resume_agent_markers(
@@ -2613,6 +2661,55 @@ class ChatScreen(BaseAppScreen):
 
         return inject_resume_agent_markers(
             messages, bridge.resume_marker_messages(conversation_id))
+
+    def _batch_fetch_console_resume_attachments(
+        self, messages: list[ConsoleChatMessage]
+    ) -> None:
+        """Fill positions >= 1 for resumed multi-attachment messages, once.
+
+        ``get_conversation_tree`` only returns the legacy image columns
+        (position 0); the ``message_attachments`` table (positions >= 1) is
+        fetched here in a SINGLE batched call covering every message this
+        resume produced, then folded into each message's attachments tuple
+        via ``_apply_console_message_attachments`` (see that helper for the
+        store mirror invariant it replicates by hand).
+        """
+        ids = [m.persisted_message_id for m in messages if m.persisted_message_id]
+        if not ids:
+            return
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        getter = getattr(db, "get_attachments_for_messages", None)
+        if not callable(getter):
+            return
+        try:
+            rows_by_id = getter(ids)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Console resume attachment batch fetch failed."
+            )
+            return
+        if not isinstance(rows_by_id, dict):
+            return
+        for message in messages:
+            extra_rows = (
+                rows_by_id.get(message.persisted_message_id)
+                if message.persisted_message_id
+                else None
+            )
+            if not extra_rows:
+                continue
+            extras = [
+                MessageAttachment(
+                    data=row.get("data"),
+                    mime_type=row.get("mime_type") or "",
+                    display_name=row.get("display_name") or "",
+                    position=int(row.get("position", 0)),
+                )
+                for row in extra_rows
+            ]
+            _apply_console_message_attachments(
+                message, list(message.attachments) + extras
+            )
 
     def _console_session_settings_for_resume(
         self,
@@ -6247,6 +6344,16 @@ class ChatScreen(BaseAppScreen):
             "variants": cls._serialize_console_variants(message.variants),
             "image_mime_type": getattr(message, "image_mime_type", None),
             "attachment_label": getattr(message, "attachment_label", None),
+            # Labels only -- bytes are dropped from screen-state snapshots
+            # the same way the legacy `image_data` scalar always has been.
+            # `getattr` (not `message.attachments`) tolerates plain-object
+            # stand-ins (e.g. a bare SimpleNamespace) that predate the
+            # `attachments` field, matching this method's existing
+            # tolerance for `image_mime_type`/`attachment_label` above.
+            "attachment_labels": [
+                attachment.display_name
+                for attachment in getattr(message, "attachments", ())
+            ],
         }
 
     @classmethod
@@ -6264,6 +6371,34 @@ class ChatScreen(BaseAppScreen):
         feedback = payload.get("feedback")
         if feedback not in {None, "up", "down"}:
             feedback = None
+        image_mime_type = (
+            str(payload["image_mime_type"]) if payload.get("image_mime_type") else None
+        )
+        attachment_label = (
+            str(payload["attachment_label"]) if payload.get("attachment_label") else None
+        )
+        raw_labels = payload.get("attachment_labels")
+        if isinstance(raw_labels, list):
+            attachment_labels = [str(label) for label in raw_labels]
+        else:
+            # Legacy payloads (saved before `attachment_labels` existed)
+            # carried at most one label -- the singular `attachment_label`.
+            attachment_labels = [attachment_label] if attachment_label else []
+        # Metadata-only: bytes were never serialized, so every reconstructed
+        # attachment starts with `data=None` (refilled by
+        # `_rehydrate_console_message_image`/`_rehydrate_console_message_attachments`
+        # after restore). `image_mime_type` is the only mime carried across
+        # a screen-state snapshot, so it stands in for every position until
+        # per-attachment mime types come back from the DB.
+        attachments = tuple(
+            MessageAttachment(
+                data=None,
+                mime_type=image_mime_type or "",
+                display_name=label,
+                position=index,
+            )
+            for index, label in enumerate(attachment_labels)
+        )
         return ConsoleChatMessage(
             role=role,
             content=str(payload.get("content") or ""),
@@ -6281,16 +6416,9 @@ class ChatScreen(BaseAppScreen):
             ),
             variants=cls._restore_console_variants(payload.get("variants")),
             feedback=feedback,  # type: ignore[arg-type]
-            image_mime_type=(
-                str(payload["image_mime_type"])
-                if payload.get("image_mime_type")
-                else None
-            ),
-            attachment_label=(
-                str(payload["attachment_label"])
-                if payload.get("attachment_label")
-                else None
-            ),
+            image_mime_type=image_mime_type,
+            attachment_label=attachment_label,
+            attachments=attachments,
         )
 
     def _serialize_native_console_state(self) -> dict[str, Any] | None:
@@ -6396,6 +6524,17 @@ class ChatScreen(BaseAppScreen):
                 self._rehydrate_console_message_image(message)
                 restored_messages_by_session[session.id].append(message)
 
+        # One batched `get_attachments_for_messages` call covers every
+        # restored message across every session in this pass, instead of a
+        # per-message round trip.
+        self._rehydrate_console_message_attachments(
+            [
+                message
+                for messages in restored_messages_by_session.values()
+                for message in messages
+            ]
+        )
+
         active_session_id = payload.get("active_session_id")
         active_session_id = str(active_session_id) if active_session_id is not None else ""
         store.restore_state(
@@ -6444,6 +6583,69 @@ class ChatScreen(BaseAppScreen):
             return
         message.image_data = image_data
         message.image_mime_type = row.get("image_mime_type") or message.image_mime_type
+
+    def _rehydrate_console_message_attachments(
+        self, messages: list[ConsoleChatMessage]
+    ) -> None:
+        """Batch-refill ``message_attachments`` table rows for restored messages.
+
+        ``_rehydrate_console_message_image`` (still called per message, see
+        its own docstring/tests) already refilled the legacy position-0
+        bytes into each message's scalar mirror; this pass runs ONE batched
+        ``get_attachments_for_messages`` call covering every message in this
+        restore, then folds the now-current scalar mirror plus any table
+        rows (positions >= 1) back into each message's attachments tuple.
+        Any failure (missing DB, unreachable batch call) leaves messages
+        metadata-only -- graceful degradation, matching
+        ``_rehydrate_console_message_image``'s own contract.
+        """
+        ids = [m.persisted_message_id for m in messages if m.persisted_message_id]
+        rows_by_id: Dict[str, list[dict[str, Any]]] = {}
+        if ids:
+            db = getattr(self.app_instance, "chachanotes_db", None)
+            getter = getattr(db, "get_attachments_for_messages", None)
+            if callable(getter):
+                try:
+                    fetched = getter(ids)
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        "Console restore attachment batch fetch failed."
+                    )
+                    fetched = None
+                if isinstance(fetched, dict):
+                    rows_by_id = fetched
+
+        for message in messages:
+            if not message.attachments:
+                continue
+            entries = list(message.attachments)
+            # Position 0 mirrors whatever `_rehydrate_console_message_image`
+            # just refilled into the scalar fields (bytes included, when it
+            # found a row).
+            entries[0] = replace(
+                entries[0],
+                data=message.image_data,
+                mime_type=message.image_mime_type or entries[0].mime_type,
+            )
+            extra_rows = (
+                rows_by_id.get(message.persisted_message_id, [])
+                if message.persisted_message_id
+                else []
+            )
+            rows_by_position = {
+                int(row.get("position", 0)): row for row in extra_rows
+            }
+            for index in range(1, len(entries)):
+                row = rows_by_position.get(index)
+                if row is None:
+                    continue
+                entries[index] = replace(
+                    entries[index],
+                    data=row.get("data"),
+                    mime_type=row.get("mime_type") or entries[index].mime_type,
+                    display_name=row.get("display_name") or entries[index].display_name,
+                )
+            _apply_console_message_attachments(message, entries)
 
     def save_state(self) -> Dict[str, Any]:
         """
@@ -7162,22 +7364,28 @@ class ChatScreen(BaseAppScreen):
         composer.clear_draft()
 
     def _console_pending_image_attachment(self):
-        """Return the active session's staged image attachment, if any."""
+        """Return a staged image attachment, if any staged item qualifies.
+
+        Scans the whole staged list (not just the first item) so a
+        multi-attachment session still gates vision-capability/blocked-send
+        checks correctly when the qualifying image isn't staged first.
+        """
         store = self._console_chat_store
         if store is None or store.active_session_id is None:
             return None
         try:
-            pending = store.pending_attachment(store.active_session_id)
+            pendings = store.pending_attachments(store.active_session_id)
         except KeyError:
             return None
-        if (
-            pending is None
-            or pending.insert_mode != "attachment"
-            or pending.file_type != "image"
-            or pending.data is None
-        ):
-            return None
-        return pending
+        for pending in pendings:
+            if (
+                pending is not None
+                and pending.insert_mode == "attachment"
+                and pending.file_type == "image"
+                and pending.data is not None
+            ):
+                return pending
+        return None
 
     def _console_attachment_blocked_reason(self) -> str:
         """Return blocked-send copy when a staged image can't reach the model."""
@@ -7814,15 +8022,28 @@ class ChatScreen(BaseAppScreen):
             self.app_instance.notify("No image on the clipboard.")
             return
         if grab.kind == "paths":
-            candidate = grab.paths[0] if grab.paths else ""
-            if candidate and looks_attachable(candidate):
-                if len(grab.paths) > 1:
-                    self.app_instance.notify(
-                        f"Attached first of {len(grab.paths)} dropped files."
-                    )
-                await self._process_console_attachment(candidate)
-            else:
+            total_dropped = len(grab.paths)
+            attachable_paths = [p for p in grab.paths if looks_attachable(p)]
+            if not attachable_paths:
                 self.app_instance.notify("No image on the clipboard.")
+                return
+            store = self._ensure_console_chat_store()
+            session = store.ensure_session(
+                workspace_id=store.workspace_context.active_workspace_id
+            )
+            # Attach sequentially, stopping as soon as the cap is hit, so a
+            # capacity-exhausted drop gets ONE truncation toast here instead
+            # of one "limit reached" toast per remaining file.
+            attached_count = 0
+            for candidate in attachable_paths:
+                if len(store.pending_attachments(session.id)) >= MAX_PENDING_ATTACHMENTS:
+                    break
+                await self._process_console_attachment(candidate)
+                attached_count += 1
+            if attached_count < total_dropped:
+                self.app_instance.notify(
+                    f"Attached first {attached_count} of {total_dropped} dropped files."
+                )
             return
         from tldw_chatbook.Chat.attachment_core import process_attachment_bytes
 
@@ -7848,10 +8069,16 @@ class ChatScreen(BaseAppScreen):
         session = store.ensure_session(
             workspace_id=store.workspace_context.active_workspace_id
         )
-        store.set_pending_attachment(session.id, attachment)
-        composer = self._console_composer_or_none()
-        if composer is not None:
-            composer.set_pending_attachment_label(attachment.label)
+        if not store.add_pending_attachment(session.id, attachment):
+            self.app_instance.notify(
+                "Attachment limit reached (5 per message).", severity="warning"
+            )
+            self._sync_console_control_bar()
+            return
+        # Composer label reflects the whole staged list (1 vs N) and is
+        # recomputed centrally by `_sync_console_composer_action_state`
+        # (called via `_sync_console_control_bar` below) -- no direct
+        # `set_pending_attachment_label` call needed here.
         self.app_instance.notify(
             f"{escape_markup(attachment.display_name)} attached"
         )
@@ -7889,9 +8116,15 @@ class ChatScreen(BaseAppScreen):
             session = store.ensure_session(
                 workspace_id=store.workspace_context.active_workspace_id
             )
-            store.set_pending_attachment(session.id, attachment)
-            if composer is not None:
-                composer.set_pending_attachment_label(attachment.label)
+            if not store.add_pending_attachment(session.id, attachment):
+                self.app_instance.notify(
+                    "Attachment limit reached (5 per message).", severity="warning"
+                )
+                self._sync_console_control_bar()
+                return
+            # Composer label reflects the whole staged list (1 vs N) and is
+            # recomputed centrally by `_sync_console_composer_action_state`
+            # (called via `_sync_console_control_bar` below).
             self.app_instance.notify(f"{escape_markup(attachment.display_name)} attached")
         self._sync_console_control_bar()
 
@@ -8180,7 +8413,14 @@ class ChatScreen(BaseAppScreen):
         return str(getattr(session, "title", "") or "").strip()
 
     async def _save_console_message_image(self, message_id: str) -> None:
-        """Write a Console message's image to the configured save location."""
+        """Write ALL of a Console message's image attachments to disk.
+
+        In-memory bytes are used first; any attachment still dataless (e.g.
+        a metadata-only entry left by screen-state restore) falls back to
+        one batched DB fetch -- the legacy `messages.image_data` column for
+        position 0, `get_attachments_for_messages` for positions >= 1 --
+        per the HARD interface contract split addressing.
+        """
         import mimetypes as _mimetypes
         from datetime import datetime as _datetime
 
@@ -8192,15 +8432,32 @@ class ChatScreen(BaseAppScreen):
                 "Console message no longer exists.", severity="warning"
             )
             return
-        image_data = message.image_data
-        mime_type = message.image_mime_type
-        if image_data is None and message.persisted_message_id is not None:
+
+        attachments = list(message.attachments)
+        if not attachments and (
+            message.image_data is not None or message.persisted_message_id is not None
+        ):
+            # Legacy/raw-constructed messages may carry the scalar image
+            # fields without a populated attachments tuple; synthesize a
+            # position-0 entry so the fallback below still covers them.
+            attachments = [
+                MessageAttachment(
+                    data=message.image_data,
+                    mime_type=message.image_mime_type or "image/png",
+                    display_name=message.attachment_label or "",
+                    position=0,
+                )
+            ]
+
+        missing_positions = any(a.data is None for a in attachments)
+        if missing_positions and message.persisted_message_id is not None:
             db = getattr(self.app_instance, "chachanotes_db", None)
             persisted_message_id = message.persisted_message_id
 
-            def _fetch_persisted_row() -> Optional[dict]:
+            def _fetch_persisted_attachment_data() -> dict[int, tuple[Any, Optional[str]]]:
+                fetched: dict[int, tuple[Any, Optional[str]]] = {}
                 try:
-                    return (
+                    row = (
                         db.get_message_by_id(persisted_message_id)
                         if db is not None
                         else None
@@ -8209,19 +8466,48 @@ class ChatScreen(BaseAppScreen):
                     logger.opt(exception=True).warning(
                         "Console save-image DB fallback lookup failed."
                     )
-                    return None
+                    row = None
+                if row and row.get("image_data") is not None:
+                    fetched[0] = (row.get("image_data"), row.get("image_mime_type"))
+                getter = getattr(db, "get_attachments_for_messages", None)
+                if callable(getter):
+                    try:
+                        batch = getter([persisted_message_id])
+                    except Exception:
+                        logger.opt(exception=True).warning(
+                            "Console save-image attachment batch fetch failed."
+                        )
+                        batch = None
+                    if isinstance(batch, dict):
+                        for row_dict in batch.get(persisted_message_id, []) or []:
+                            position = int(row_dict.get("position", 0))
+                            fetched[position] = (
+                                row_dict.get("data"),
+                                row_dict.get("mime_type"),
+                            )
+                return fetched
 
-            row = await asyncio.to_thread(_fetch_persisted_row)
-            if row:
-                image_data = row.get("image_data")
-                mime_type = row.get("image_mime_type") or mime_type
-        if not image_data:
+            fetched = await asyncio.to_thread(_fetch_persisted_attachment_data)
+            if fetched:
+                attachments = [
+                    replace(
+                        attachment,
+                        data=fetched[attachment.position][0],
+                        mime_type=fetched[attachment.position][1] or attachment.mime_type,
+                    )
+                    if attachment.data is None and attachment.position in fetched
+                    else attachment
+                    for attachment in attachments
+                ]
+
+        saveable = [a for a in attachments if a.data]
+        if not saveable:
             self.app_instance.notify(
                 "No image data available for this message.", severity="warning"
             )
             return
 
-        def _write_image_to_disk() -> Path:
+        def _write_images_to_disk() -> tuple[list[Path], Path]:
             from tldw_chatbook.Utils.path_validation import validate_path_simple
 
             save_location = validate_path_simple(
@@ -8230,25 +8516,34 @@ class ChatScreen(BaseAppScreen):
                 )
             )
             save_location.mkdir(parents=True, exist_ok=True)
-            extension = _mimetypes.guess_extension(mime_type or "image/png") or ".png"
             base_name = f"console_image_{_datetime.now().strftime('%Y%m%d_%H%M%S')}"
-            target = save_location / f"{base_name}{extension}"
-            counter = 1
-            while target.exists():
-                target = save_location / f"{base_name}_{counter}{extension}"
-                counter += 1
-            target.write_bytes(bytes(image_data))
-            return target
+            written: list[Path] = []
+            for attachment in saveable:
+                extension = (
+                    _mimetypes.guess_extension(attachment.mime_type or "image/png")
+                    or ".png"
+                )
+                target = save_location / f"{base_name}{extension}"
+                counter = 1
+                while target.exists() or target in written:
+                    target = save_location / f"{base_name}_{counter}{extension}"
+                    counter += 1
+                target.write_bytes(bytes(attachment.data))
+                written.append(target)
+            return written, save_location
 
         try:
-            target = await asyncio.to_thread(_write_image_to_disk)
+            written, save_location = await asyncio.to_thread(_write_images_to_disk)
         except Exception as exc:
             logger.opt(exception=True).warning("Console save-image write failed.")
             self.app_instance.notify(
                 f"Could not save image: {escape_markup(str(exc))}", severity="error"
             )
             return
-        self.app_instance.notify(f"Image saved to {target}")
+        if len(written) == 1:
+            self.app_instance.notify(f"Image saved to {written[0]}")
+        else:
+            self.app_instance.notify(f"Saved {len(written)} images to {save_location}")
 
     async def _save_console_message_as_note(self, message_id: str) -> None:
         """Persist one selected Console message as a local Note."""
@@ -8763,7 +9058,28 @@ class ChatScreen(BaseAppScreen):
         # sync_action_state resets the attach button's tooltip to generic copy
         # (console_composer_bar.py L303); apply the pending-attachment label
         # after, not before, so "Attached: ..." wins over the generic tooltip.
-        composer.set_pending_attachment_label(pending.label if pending else None)
+        # One staged item keeps its own descriptive label ("photo.png ·
+        # 240 KB"); more than one collapses to an "N files" summary. The
+        # composer prepends its own 📎 glyph to whatever label it's given
+        # (console_composer_bar.py's `set_pending_attachment_label`, which
+        # stays untouched), so the label passed here carries NO glyph and
+        # the rendered indicator reads exactly "📎 {N} files". The full
+        # per-file name list is surfaced via the "<name> attached" toast
+        # each staged file already fires, not a composer tooltip.
+        store = self._console_chat_store
+        pendings: list[Any] = []
+        if store is not None and store.active_session_id is not None:
+            try:
+                pendings = store.pending_attachments(store.active_session_id)
+            except KeyError:
+                pendings = []
+        if not pendings:
+            attachment_label = None
+        elif len(pendings) == 1:
+            attachment_label = pendings[0].label
+        else:
+            attachment_label = f"{len(pendings)} files"
+        composer.set_pending_attachment_label(attachment_label)
 
     def _hide_console_legacy_chat_inputs(self) -> None:
         """Keep Console on a single native composer surface."""
@@ -8901,8 +9217,12 @@ class ChatScreen(BaseAppScreen):
             event.stop()
             self._dismiss_console_guidance()
             if dropped.total_dropped > 1:
+                # `extract_dropped_path` only ever surfaces the first
+                # decoded path (plus the total line count); terminal
+                # drag-drop paste can attach at most that one file, so the
+                # truncation toast's "n" is always 1 here.
                 self.app_instance.notify(
-                    f"Attached first of {dropped.total_dropped} dropped files."
+                    f"Attached first 1 of {dropped.total_dropped} dropped files."
                 )
             self.run_worker(
                 self._process_console_attachment(dropped.path),
