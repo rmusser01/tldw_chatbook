@@ -3963,3 +3963,102 @@ ListItem.personas-library-row.is-active.-highlight {
     border: dashed $ds-grid-line;
     color: $ds-text-muted;
 }
+
+/* --- MCP Hub (Phase 1 workbench) ------------------------------------- */
+
+#mcp-mode-strip Button.mcp-mode-chip {
+    width: auto;
+    min-width: 10;
+    height: 1;
+    padding: 0 1;
+    border: none;
+}
+
+#mcp-mode-strip .mcp-mode-chip.is-active {
+    text-style: bold underline;
+}
+
+/* A1: focus must not impersonate .is-active above (bold underline). Kept in
+   lockstep with the lower-specificity baseline copy in MCPScreen.DEFAULT_CSS
+   (mcp_screen.py) -- see that copy's comment for why it uses raw
+   $surface/$text/$text-muted tokens instead of these $ds- aliases. */
+#mcp-mode-strip .mcp-mode-chip:focus,
+#mcp-mode-strip .mcp-mode-chip:hover:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold;
+    outline: none;
+}
+
+#mcp-mode-strip .mcp-mode-chip.is-active:focus,
+#mcp-mode-strip .mcp-mode-chip.is-active:hover:focus {
+    background: $ds-surface-raised;
+    color: $ds-text-muted;
+    text-style: bold underline;
+    outline: none;
+}
+
+#mcp-hub-rail {
+    width: 3fr;
+    min-width: 24;
+}
+
+#mcp-hub-rail .mcp-rail-heading {
+    height: 1;
+    min-height: 1;
+    margin-top: 1;
+}
+
+/* Override border away from the generic `.is-active` rule (`border: round
+   $ds-action-focus`, earlier in this sheet). Button.mcp-rail-row rows are
+   fixed at height 1 (see MCPRail.DEFAULT_CSS); a round border needs at
+   least 2 lines to render, so on a height-1 button it consumes the row's
+   only line and the content area collapses to height 0 -- the label never
+   renders, leaving a blank bordered box for the selected row. Mirrors the
+   sibling `.mcp-mode-chip.is-active` rule below (and MCPScreen.DEFAULT_CSS's
+   copy of it), which already carries this same `border: none` override. */
+#mcp-hub-rail Button.mcp-rail-row.is-active {
+    border: none;
+    text-style: bold;
+}
+
+#mcp-hub-canvas {
+    width: 5fr;
+    min-width: 38;
+}
+
+#mcp-hub-inspector {
+    width: 3fr;
+    min-width: 28;
+}
+
+#mcp-overview-summary,
+#mcp-detail-title {
+    height: 1;
+    min-height: 1;
+}
+
+#mcp-overview-callouts .ds-recovery-callout {
+    margin-top: 1;
+}
+
+/* A2: disabled inspector action buttons must stay legible. The generic
+   `Button:disabled` rule above (from _buttons.tcss, same "user CSS" tier as
+   this file -- see MCPInspector.DEFAULT_CSS's matching rule and comment for
+   why a widget-level DEFAULT_CSS override alone can never win this fight)
+   stacks `opacity: 50%` on `$text-disabled` on a dark surface, which reads
+   as functionally invisible on top of `.console-action-secondary`. Restore
+   full opacity and use a dim-but-still-readable color instead. */
+#mcp-hub-inspector Button.mcp-inspector-action:disabled {
+    opacity: 100%;
+    background: $ds-surface-raised;
+    color: $ds-text-muted;
+    text-style: none;
+}
+
+#mcp-hub-inspector Button.mcp-inspector-action:disabled:hover {
+    opacity: 100%;
+    background: $ds-surface-raised;
+    color: $ds-text-muted;
+    text-style: none;
+}
