@@ -3,6 +3,10 @@
 Branch: `claude/mcp-hub-phase2`, HEAD `aa2cddcd` ("fix(mcp-hub): surface args
 secret-lint warning as toast on save success"). Worktree:
 `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/mcp-hub-phase2`.
+**Updated below (see "A-batch re-capture" near the bottom): five of these
+PNGs were re-taken in place, and one new capture added, after the
+`fix(mcp-hub): six Phase 2 UX polish fixes (A1-A6)` commit (`5f265eb7`)
+landed on top of everything else described in this file.**
 
 Captured live from textual-serve (real app CSS, worktree code) in headless
 bundled Chromium (Playwright, CDP-attached), viewport **2050×1240**, isolated
@@ -396,6 +400,92 @@ flush under the table.
   arm-then-confirm delete, built-in toggles' functional behavior, Advanced
   disclosure persistence/object-label, Source-switch gating) matched its
   Phase 1/Phase 2 spec exactly with no further defects observed.
+
+## A-batch re-capture — six Phase 2 UX polish fixes (A1-A6, commit `5f265eb7`)
+
+Re-captured after `fix(mcp-hub): six Phase 2 UX polish fixes (A1-A6)`
+(`5f265eb7`) landed on top of the Defect 1/2 fixes documented above (working
+tree HEAD at capture time: `6f2b1bdf`, a docs-only commit on top of
+`5f265eb7` that doesn't touch any MCP UI code). Same recipe as the rest of
+this file: killed any stale `tldw_chatbook`/`run_web_server` processes
+first, then served via `HOME=/private/tmp/tldw-qa-mcp-hub-p2-20260714
+PYTHONPATH=. python3 -c "from tldw_chatbook.Web_Server.serve import
+run_web_server; run_web_server(host='127.0.0.1', port=9187)"`, Playwright
+**bundled** Chromium headless (a persistent instance launched with
+`--remote-debugging-port`, attached to across steps via
+`connect_over_cdp` so the same page/session could be driven from several
+short `python3 -c` snippets), DOM-rendered xterm (`.xterm-rows`, real text
+nodes — `Web_Server/serve.py`'s own WebGL/Canvas-addon strip means no
+`window.__drv` xterm-buffer patch is needed), route-abort non-localhost,
+2050×1240. The isolated HOME's `local_mcp_store.json` had **no** leftover
+`cli-secret-server-*` rows this round — it already matched the documented
+4-row seed exactly — and was re-diffed after every Add/Import-form capture
+below to confirm it still does (every such form was cancelled, never
+saved).
+
+Five captures were re-taken **in place** (identical filenames) and one new
+capture was added, all from one continuous browser session. Each finding
+was confirmed two ways: a DOM `Range`/`getComputedStyle` numeric check
+(pixel positions, `color` values, read straight from the live page) at
+capture time, and a visual read of the resulting PNG.
+
+1. **A5/A6 — `mcp-p2-overview-colored-2026-07-14.png`** (fresh mount, no
+   selection). **A5:** the aggregate line "1 of 4 servers ready — 1 needs
+   attention, 2 needs setup." now renders in neutral text
+   (`rgb(225, 225, 225)`) with a single colored `!` glyph immediately in
+   front of it (`rgb(185, 60, 91)`, the same red as `mcp-status-error`
+   elsewhere) — previously the whole sentence took the worst-state color.
+   **A6:** the rail's per-row tool-count column pad width is now this
+   compose() call's longest visible label (`len("⌂ tldw_chatbook
+   (built-in)") == 26`, not the old fixed 36-char budget): `docs-server`'s
+   count digit `3` sits at DOM column 35, only 3 columns past where
+   `tldw_chatbook (built-in)`'s own label ends (column 32) — the count
+   column now tracks the longest visible label instead of stranding short
+   labels' counts far to the right at a fixed offset.
+2. **A1 — `mcp-p2-import-preview-2026-07-14.png`.** Previewed
+   `search-server` from a pasted `{"mcpServers": ...}` payload with an
+   `API_KEY` literal (same fixture shape as the original capture, which
+   converts to a placeholder warning). The "Import 1 server"/Cancel row's
+   top edge (`y=345`) sits exactly at the preview warning line's bottom
+   edge (`y=330+15=345`) — **0px gap** — replacing the original
+   `#mcp-import-list` unbounded-`1fr` bug that stranded the action row far
+   below the preview list.
+3. **A2 — `mcp-p2-form-error-2026-07-14.png`.** Add-server form filled
+   `bad-server`/`npx`/args unchanged/`API_KEY=hunter2secret`, Save clicked.
+   The store's rejection line ("Secret-bearing env key 'API_KEY' cannot be
+   stored as a literal") renders in `rgb(185, 60, 91)` (`mcp-status-error`
+   red); the guidance copy above it ("Secrets are never stored…") stays
+   `rgb(224, 224, 224)` (neutral) — visually and numerically distinct,
+   where before both were the same plain body-text color.
+4. **A3 — `mcp-p2-detail-breadcrumb-2026-07-14.png`.** docs-server detail
+   (selected via the rail row, two clicks per this round's
+   DataTable/rail-row convention). Inspector action buttons "Refresh
+   tools" and "View details" both start at DOM `x=1507.8` (the `.04`/`.08`
+   difference is sub-pixel rounding) — a true left-aligned stack, where
+   `Button`'s own `DEFAULT_CSS` previously centered both `text-align` and
+   `content-align`, the same lesson already documented on
+   `Button.mcp-rail-row`/`Button.mcp-callout`.
+5. **A4 — NEW `mcp-p2-add-form-empty-save-disabled-2026-07-14.png`.**
+   Add-server form opened with every field left at its placeholder-only
+   empty state (Profile id/Command/Args/Env all blank — see this file's
+   own placeholder-vs-value gotcha above). Save renders visibly dimmed
+   (`rgb(51, 51, 51)` text on the button's `rgb(25, 25, 25)` background —
+   low-contrast by design for a disabled control, but still legible in the
+   screenshot, unlike the enabled Cancel button's `rgb(225, 225, 225)`)
+   and is inert (`disabled=True`). Hovered Save for >0.5s
+   (`Screen.TOOLTIP_DELAY`) and captured Textual's own tooltip overlay
+   rendering **"Enter a profile id and command first."** directly in the
+   terminal buffer below the toolbar row — the tooltip text is visible in
+   the PNG itself, no DOM-only fallback needed this round.
+
+The Add-server and Import forms used for captures 2/3/5 were cancelled
+(never saved) immediately after each capture; `local_mcp_store.json` was
+re-read after the round and still lists exactly `docs-server`/
+`weather-api`/`slow-server` (3 profiles, matching the documented seed) —
+no stray profiles were persisted.
+
+No new defects were found this round — all six A1-A6 fixes render exactly
+as their commit message and regression tests describe.
 
 ## Isolated HOME
 
