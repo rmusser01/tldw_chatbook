@@ -22,6 +22,7 @@ from tldw_chatbook.runtime_policy.types import PolicyDeniedError
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
 from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCPRail
 from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
+from tldw_chatbook.UI.MCP_Modules.mcp_tools_mode import MCPToolsMode
 from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCPWorkbench
 from tldw_chatbook.UI.MCP_Modules.unified_mcp_panel import UnifiedMCPPanel
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
@@ -2533,8 +2534,8 @@ async def test_mcp_destination_runtime_refresh_uses_exclusive_worker(monkeypatch
     assert scheduled["kwargs"]["exclusive"] is True
 
 
-def test_mcp_screen_bindings_include_add_and_refresh_shortcuts():
-    """T13: `a`/`r` map to the documented actions, both hidden from the
+def test_mcp_screen_bindings_include_add_refresh_and_test_tool_shortcuts():
+    """T13/T8: `a`/`r`/`t` map to the documented actions, all hidden from the
     Footer widget's own binding list (`show=False`) -- the Phase 2 footer
     shortcut hint (`MCP_SHORTCUTS`) documents them instead."""
     bindings = {b.key: b for b in MCPScreen.BINDINGS}
@@ -2542,6 +2543,8 @@ def test_mcp_screen_bindings_include_add_and_refresh_shortcuts():
     assert bindings["a"].show is False
     assert bindings["r"].action == "mcp_refresh"
     assert bindings["r"].show is False
+    assert bindings["t"].action == "mcp_test_tool"
+    assert bindings["t"].show is False
 
 
 def test_mcp_destination_manual_refresh_uses_exclusive_worker(monkeypatch):
@@ -2636,6 +2639,83 @@ async def test_mcp_destination_add_server_binding_opens_real_form_end_to_end():
         assert canvas.query_one("#mcp-servers-form").display is True
 
 
+def test_mcp_destination_test_tool_binding_schedules_worker(monkeypatch):
+    """T8: the `t` keybinding dispatches `MCPWorkbench.open_test_for_
+    selected_tool()` via a named, exclusive worker -- mirrors
+    `action_mcp_add_server`'s dispatch pattern
+    (`test_mcp_destination_add_server_binding_switches_mode_and_schedules_
+    worker`). Unlike that action, the Tools-mode switch happens INSIDE
+    `open_test_for_selected_tool()` itself (see its own docstring) rather
+    than synchronously in the screen action, so there's no `mode_calls`
+    side effect to assert here before the (never-run, closed) coroutine --
+    the real mode switch + panel-open path is covered end-to-end below.
+    """
+    app = _build_test_app()
+    screen = MCPScreen(app)
+    scheduled = {}
+
+    class FakeWorkbench:
+        async def open_test_for_selected_tool(self) -> None:
+            return None
+
+    def capture_worker(coro, **kwargs):
+        scheduled["kwargs"] = kwargs
+        coro.close()
+
+    screen.workbench = FakeWorkbench()
+    monkeypatch.setattr(screen, "run_worker", capture_worker)
+
+    screen.action_mcp_test_tool()
+
+    assert scheduled["kwargs"]["name"] == "mcp-screen-test-tool"
+    assert scheduled["kwargs"]["group"] == "mcp-screen-test-tool"
+    assert scheduled["kwargs"]["exclusive"] is True
+
+
+@pytest.mark.asyncio
+async def test_mcp_destination_test_tool_binding_opens_panel_for_selected_tool_end_to_end():
+    """T8: end-to-end (real `MCPScreen` + `MCPWorkbench` + `MCPInspector`,
+    no fakes) -- with a tool already selected in the inspector, pressing the
+    `t` keybinding's action opens the SAME Test Tool panel the button's own
+    press handler mounts (`MCPInspector._mount_test_tool_panel()`, reused
+    via `open_test_panel()`). No selection -> notify is unit-tested
+    directly against `MCPWorkbench.open_test_for_selected_tool()` in
+    test_mcp_workbench.py, mirroring how T13's gated add-server notify path
+    is tested at the workbench layer rather than re-tested here.
+    """
+    from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "mcp")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#mcp-hub-rail")
+        screen.action_mcp_mode("tools")
+        await pilot.pause()
+
+        tool = HubTool(
+            name="search", server_key="local:docs", server_label="docs",
+            source="local", description="Search docs", tags=(),
+            input_schema=None, executable=True, stale=False,
+        )
+        screen.workbench._last_hub_tools = [tool]
+        await screen.workbench.on_mcp_tools_mode_tool_selected(
+            MCPToolsMode.ToolSelected(tool.tool_id)
+        )
+        await pilot.pause()
+
+        screen.action_mcp_test_tool()
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert screen.workbench.active_mode == "tools"
+        panel = screen.query_one("#mcp-inspector-test-panel")
+        assert panel.display is not False
+        assert screen.query_one("#mcp-inspector-test-tool", Button).disabled is True
+
+
 class MCPFooterHarness(App):
     """Mirrors `test_console_workbench_contract.py`'s `ConsoleFooterHarness`
     for the MCP destination: composes a real `AppFooterStatus` alongside the
@@ -2667,7 +2747,7 @@ async def test_mcp_destination_registers_footer_workbench_shortcuts():
         await _wait_for_selector(screen, pilot, "#mcp-shell")
         footer = host.query_one(AppFooterStatus)
 
-        assert footer.shortcut_text == "1-4 mode | a add server | r refresh"
+        assert footer.shortcut_text == "1-4 mode | a add server | r refresh | t test tool"
 
 
 @pytest.mark.asyncio
@@ -2685,7 +2765,7 @@ async def test_mcp_destination_footer_shortcuts_clear_and_restore_across_suspend
         screen = host.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#mcp-shell")
         footer = host.query_one(AppFooterStatus)
-        assert footer.shortcut_text == "1-4 mode | a add server | r refresh"
+        assert footer.shortcut_text == "1-4 mode | a add server | r refresh | t test tool"
 
         overlay = TextualScreen()
         await host.push_screen(overlay)
@@ -2694,7 +2774,7 @@ async def test_mcp_destination_footer_shortcuts_clear_and_restore_across_suspend
 
         await host.pop_screen()
         await pilot.pause()
-        assert footer.shortcut_text == "1-4 mode | a add server | r refresh"
+        assert footer.shortcut_text == "1-4 mode | a add server | r refresh | t test tool"
 
 
 def test_skills_screen_public_initializer_is_typed():

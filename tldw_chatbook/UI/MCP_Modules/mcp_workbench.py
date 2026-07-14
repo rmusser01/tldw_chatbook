@@ -1212,6 +1212,29 @@ class MCPWorkbench(Container):
         event.stop()
         await self.query_one(MCPInspector).show_tool(self._tool_for(event.tool_id))
 
+    async def open_test_for_selected_tool(self) -> None:
+        """T8: entry point for the `t` keybinding (mcp_screen.py's
+        `action_mcp_test_tool`) -- switch to Tools mode and open the Test
+        Tool panel for whatever tool the inspector currently has selected.
+
+        Mirrors `open_add_server_form()`'s T13 rationale for a keybinding
+        that can reach a state a disabled/absent button would otherwise
+        gate: with nothing selected (or a selected-but-non-executable,
+        Phase-4 server-source tool -- `MCPInspector.open_test_panel()`
+        treats both the same, since neither has a `Test Tool` button to
+        press), this notifies instead of silently no-opping.
+
+        `set_mode("tools")` is a no-op once already there (no mode change
+        means `_clear_tool_view()` never fires -- see its own docstring),
+        so pressing `t` again on an already-selected tool re-opens/no-ops
+        cleanly rather than clearing the very selection it's about to test.
+        """
+        self.set_mode("tools")
+        inspector = self.query_one(MCPInspector)
+        opened = await inspector.open_test_panel()
+        if not opened:
+            self.app.notify("Select a tool first.", severity="warning")
+
     def on_mcp_inspector_tool_test_requested(
         self, event: MCPInspector.ToolTestRequested
     ) -> None:

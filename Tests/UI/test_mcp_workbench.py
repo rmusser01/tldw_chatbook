@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.containers import Vertical
 from textual.widgets import Button, Checkbox, ContentSwitcher, DataTable, Input, Select, Static, TextArea
 
 import tldw_chatbook.UI.MCP_Modules.mcp_inspector as mcp_inspector_module
@@ -2888,3 +2889,85 @@ async def test_raw_mode_tool_run_posts_parsed_json_to_service():
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert ("local:docs", "fetch", {"id": 42}) in app.unified_mcp_service.test_calls
+
+
+# -- Task 8: `t` keybinding entry point (open_test_for_selected_tool) --------
+
+
+@pytest.mark.asyncio
+async def test_open_test_for_selected_tool_with_no_selection_notifies():
+    """T8: the `t` keybinding's workbench entry point -- with nothing
+    selected in the inspector's tool-detail view, notifies instead of
+    silently no-opping, mirroring `open_add_server_form()`'s T13 rationale
+    for a keybinding that can reach a state no disabled button gates. Also
+    switches to Tools mode even though nothing is selected there yet --
+    same "the keybinding always lands you in the right mode" contract as
+    `action_mcp_add_server`.
+    """
+    app = ToolTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        notifications = _capture_notifications(app)
+        workbench = app.query_one(MCPWorkbench)
+        assert workbench.active_mode == "servers"
+
+        await workbench.open_test_for_selected_tool()
+        await pilot.pause()
+
+        assert workbench.active_mode == "tools"
+        assert not list(app.query("#mcp-inspector-test-panel"))
+        assert notifications
+        message, severity = notifications[-1]
+        assert message == "Select a tool first."
+        assert severity == "warning"
+
+
+@pytest.mark.asyncio
+async def test_open_test_for_selected_tool_with_selection_opens_panel():
+    """T8: with a tool already selected in the inspector (Tools mode,
+    row already clicked), `open_test_for_selected_tool()` opens the SAME
+    Test Tool panel the button's own press handler mounts
+    (`MCPInspector._mount_test_tool_panel()`, reused via
+    `MCPInspector.open_test_panel()`) -- not a second, duplicate mount path.
+    """
+    app = ToolTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 1)  # docs::search (form schema)
+
+        await workbench.open_test_for_selected_tool()
+        await pilot.pause()
+
+        assert workbench.active_mode == "tools"
+        panel = app.query_one("#mcp-inspector-test-panel", Vertical)
+        assert panel.display is not False
+        assert app.query_one("#mcp-inspector-test-tool", Button).disabled is True
+        # The mounted panel carries the selected tool's schema-driven form,
+        # not a blank/duplicate one.
+        assert app.query_one("#mcp-inspector-test-form")
+
+
+@pytest.mark.asyncio
+async def test_open_test_for_selected_tool_does_not_duplicate_already_open_panel():
+    """T8: pressing `t` a second time while the panel is already open (same
+    tool still selected) must not raise `DuplicateIds` -- relies on
+    `_mount_test_tool_panel()`'s own existence-check guard, exercised here
+    through the keybinding's entry point rather than the button.
+    """
+    app = ToolTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
+
+        await workbench.open_test_for_selected_tool()
+        await pilot.pause()
+        await workbench.open_test_for_selected_tool()
+        await pilot.pause()
+
+        assert len(list(app.query("#mcp-inspector-test-panel"))) == 1

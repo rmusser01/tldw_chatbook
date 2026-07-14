@@ -554,6 +554,42 @@ class MCPInspector(Vertical):
         )
         await container.mount(panel)
 
+    @property
+    def current_tool(self) -> HubTool | None:
+        """The `HubTool` `#mcp-inspector-tool` currently describes, or `None`.
+
+        Read-only accessor for `MCPWorkbench.open_test_for_selected_tool()`
+        (the `t` keybinding's entry point, mcp_screen.py) to check whether
+        there's anything to test before dispatching -- mirrors how every
+        other cross-widget read here goes through a public method rather
+        than reaching into `_current_tool` directly.
+        """
+        return self._current_tool
+
+    async def open_test_panel(self) -> bool:
+        """Open the Test Tool panel for the currently selected tool, via the
+        SAME path the Test Tool button's own press handler uses
+        (`on_button_pressed`'s `mcp-inspector-test-tool` branch: disable the
+        button synchronously, then `_mount_test_tool_panel()`) -- the `t`
+        keybinding's entry point never duplicates that mount logic.
+
+        Returns `False` (no-op) when nothing is selected, or the selected
+        tool isn't executable -- `show_tool()` never renders a `Test Tool`
+        button for a non-executable (server-source, Phase 4) tool, so there
+        is nothing this keybinding could open for one either. The caller
+        (`MCPWorkbench.open_test_for_selected_tool()`) notifies "Select a
+        tool first." on `False`.
+        """
+        tool = self._current_tool
+        if tool is None or not tool.executable:
+            return False
+        try:
+            self.query_one("#mcp-inspector-test-tool", Button).disabled = True
+        except NoMatches:
+            pass
+        await self._mount_test_tool_panel()
+        return True
+
     async def _close_test_tool_panel(self) -> None:
         try:
             panel = self.query_one("#mcp-inspector-test-panel", Vertical)
