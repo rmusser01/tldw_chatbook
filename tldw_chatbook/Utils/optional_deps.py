@@ -6,6 +6,7 @@ import sys
 import importlib.util
 from dataclasses import dataclass
 from typing import Dict, Any, Optional, Callable
+
 from loguru import logger
 
 # Global flags for optional dependency availability
@@ -450,13 +451,34 @@ def ensure_svg_rendering() -> bool:
 
     Applies the macOS Homebrew dyld fix before the first import attempt.
     The result is cached for the life of the process.
+
+    check_dependency() only catches ImportError/ModuleNotFoundError, but a
+    missing native cairo library (e.g. on a Mac without cairo installed) can
+    make `import cairosvg` raise OSError instead (cairocffi's dlopen
+    failure). That is caught here — locally, rather than widening
+    check_dependency() for its many other callers — so a native load
+    failure gates SVG support off instead of crashing every caller of
+    supported_image_formats()/the picker/attachment routing.
+
+    Returns:
+        True when cairosvg-based SVG rasterization is available and
+        importable; False when the dependency is missing or any exception
+        (including a native-library OSError) occurs while checking it.
     """
     global _svg_rendering_available
     if _svg_rendering_available is not None:
         return _svg_rendering_available
     if sys.platform == 'darwin':
         _ensure_homebrew_dyld_path()
-    _svg_rendering_available = check_dependency('cairosvg', 'svg_rendering')
+    try:
+        _svg_rendering_available = check_dependency('cairosvg', 'svg_rendering')
+    except Exception as exc:
+        logger.warning(
+            f"cairosvg availability check raised an unexpected error; "
+            f"treating SVG rendering as unavailable: {exc!r}"
+        )
+        DEPENDENCIES_AVAILABLE['svg_rendering'] = False
+        _svg_rendering_available = False
     return _svg_rendering_available
 
 def check_embeddings_rag_deps() -> bool:

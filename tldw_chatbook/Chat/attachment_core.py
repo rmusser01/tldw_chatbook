@@ -60,7 +60,12 @@ def _format_size(size: int) -> str:
 
 
 def svg_rendering_available() -> bool:
-    """Capability seam for the SVG gate; tests monkeypatch this name."""
+    """Capability seam for the SVG gate; tests monkeypatch this name.
+
+    Returns:
+        True when cairosvg-based SVG rasterization is available, False
+        otherwise.
+    """
     from tldw_chatbook.Utils.optional_deps import ensure_svg_rendering
 
     return ensure_svg_rendering()
@@ -69,7 +74,16 @@ def svg_rendering_available() -> bool:
 def _chat_images_setting(key: str, default):
     """Read one [chat.images] key. get_cli_setting resolves top-level sections
     only (flat lookup), so the nested table is fetched via ("chat", "images")
-    and the key resolved locally; a missing section or key yields the default."""
+    and the key resolved locally; a missing section or key yields the default.
+
+    Args:
+        key: The [chat.images] key to read (e.g. "max_size_mb").
+        default: Value returned when the section or key is absent.
+
+    Returns:
+        The configured value for `key`, or `default` when the [chat.images]
+        section or the key itself is missing.
+    """
     from tldw_chatbook.config import get_cli_setting
 
     section = get_cli_setting("chat", "images", None)
@@ -84,6 +98,10 @@ def supported_image_formats() -> tuple[str, ...]:
     Entries are normalized (lowercased, dotted, deduped in order); .svg is
     dropped when cairosvg is unavailable. Invalid or empty config values fall
     back to DEFAULT_SUPPORTED_IMAGE_FORMATS.
+
+    Returns:
+        Dotted, lowercased, deduplicated image extensions accepted for
+        attachment, in configured order.
     """
     raw = _chat_images_setting(
         "supported_formats", list(DEFAULT_SUPPORTED_IMAGE_FORMATS)
@@ -117,7 +135,11 @@ def supported_image_formats() -> tuple[str, ...]:
 
 
 def max_image_bytes() -> int:
-    """Image byte cap from [chat.images].max_size_mb (default 10 MB)."""
+    """Image byte cap from [chat.images].max_size_mb (default 10 MB).
+
+    Returns:
+        The maximum allowed image size in bytes.
+    """
     raw = _chat_images_setting("max_size_mb", MAX_IMAGE_BYTES / (1024 * 1024))
     try:
         value = float(raw)
@@ -130,7 +152,11 @@ def max_image_bytes() -> int:
 
 
 def image_resize_max_dimension() -> int:
-    """Resize bound from [chat.images].resize_max_dimension (default 2048)."""
+    """Resize bound from [chat.images].resize_max_dimension (default 2048).
+
+    Returns:
+        The maximum width/height, in pixels, images are resized to.
+    """
     raw = _chat_images_setting(
         "resize_max_dimension", DEFAULT_RESIZE_MAX_DIMENSION
     )
@@ -148,7 +174,14 @@ def image_resize_max_dimension() -> int:
 
 
 def attachment_filter_specs() -> tuple[tuple[str, str], ...]:
-    """Picker filter rows with image patterns derived from the effective formats."""
+    """Picker filter rows with image patterns derived from the effective formats.
+
+    Returns:
+        Ordered (label, glob_pattern) rows for the attachment file picker:
+        "All Supported Files" and "Image Files" (both built from the
+        effective image formats) followed by the fixed non-image
+        document/e-book/text/code/data rows.
+    """
     image_patterns = ";".join(f"*{ext}" for ext in supported_image_formats())
     return (
         ("All Supported Files", f"{image_patterns};{_ALL_FILES_NON_IMAGE_PATTERNS}"),
@@ -304,6 +337,11 @@ async def process_attachment_bytes(
         )
         processed = data
         mime_type = PAYLOAD_FORMAT_MIME.get(probed_format, mime_type)
+    if len(processed) > size_cap:
+        raise ValueError(
+            f"Processed image too large ({len(processed) / 1024 / 1024:.1f}MB). "
+            f"Maximum size: {size_cap / 1024 / 1024}MB"
+        )
     return PendingAttachment(
         file_path="",
         display_name=display_name,

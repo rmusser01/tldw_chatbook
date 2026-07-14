@@ -88,3 +88,20 @@ def test_non_darwin_leaves_env_alone(monkeypatch):
     monkeypatch.delenv("DYLD_FALLBACK_LIBRARY_PATH", raising=False)
     optional_deps.ensure_svg_rendering()
     assert "DYLD_FALLBACK_LIBRARY_PATH" not in os.environ
+
+
+def test_oserror_from_check_dependency_is_gated_off_and_cached(monkeypatch):
+    """A native dlopen failure (cairocffi -> OSError on a cairo-less Mac)
+    must gate SVG support off instead of crashing callers, and must not be
+    re-attempted once cached."""
+    calls = []
+
+    def fake_check(module, feature=None):
+        calls.append(module)
+        raise OSError('cannot load library \'libcairo.so.2\': dlopen failed')
+
+    monkeypatch.setattr(optional_deps, "check_dependency", fake_check)
+    assert optional_deps.ensure_svg_rendering() is False
+    assert optional_deps.ensure_svg_rendering() is False
+    assert calls == ["cairosvg"]  # second call served from cache, no re-raise
+    assert optional_deps.DEPENDENCIES_AVAILABLE["svg_rendering"] is False

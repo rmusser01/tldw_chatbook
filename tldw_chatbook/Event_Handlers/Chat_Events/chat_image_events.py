@@ -85,15 +85,31 @@ class ChatImageHandler:
 
         if extension == '.svg':
             # No usable fallback for un-rasterized SVG bytes — errors reject.
-            return await ChatImageHandler.prepare_image_payload(image_data, extension)
+            final_bytes, final_mime = await ChatImageHandler.prepare_image_payload(
+                image_data, extension
+            )
+        else:
+            mime_type = mimetypes.guess_type(str(path))[0] or 'image/png'
+            try:
+                final_bytes, final_mime = await ChatImageHandler.prepare_image_payload(
+                    image_data, extension
+                )
+            except Exception as e:
+                logging.warning(f"Failed to process image, using original: {e}")
+                # If processing fails, use original data
+                final_bytes, final_mime = image_data, mime_type
 
-        mime_type = mimetypes.guess_type(str(path))[0] or 'image/png'
-        try:
-            return await ChatImageHandler.prepare_image_payload(image_data, extension)
-        except Exception as e:
-            logging.warning(f"Failed to process image, using original: {e}")
-            # If processing fails, use original data
-            return image_data, mime_type
+        # Processing (SVG rasterization, transcodes) can GROW bytes past the
+        # source cap checked above — enforce the cap on the final payload too.
+        # This must stay outside the try/except above: a policy rejection is
+        # not a processing failure and must not trigger the original-bytes
+        # fallback.
+        if len(final_bytes) > size_cap:
+            raise ValueError(
+                f"Processed image too large ({len(final_bytes) / 1024 / 1024:.1f}MB). "
+                f"Maximum size: {size_cap / 1024 / 1024}MB"
+            )
+        return final_bytes, final_mime
 
     @staticmethod
     def _svg_raster_kwargs(svg_bytes: bytes, cap: int) -> dict:

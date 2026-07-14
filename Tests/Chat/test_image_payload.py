@@ -222,3 +222,50 @@ async def test_svg_unparseable_aspect_hard_bounds(tmp_path, defaults_config):
     )
     data, _mime = await ChatImageHandler.process_image_file(str(svg))
     assert PILImage.open(BytesIO(data)).size == (2048, 2048)
+
+
+@svg_required
+@pytest.mark.asyncio
+async def test_post_process_size_cap_rejects_grown_svg_raster(tmp_path, monkeypatch):
+    """SVG rasterization can GROW bytes past the source cap (small source,
+    larger raster). max_size_mb must be enforced on the FINAL payload, not
+    just the source bytes, or an oversized-after-processing image slips
+    through with a rejection copy that only ever checked the source."""
+    monkeypatch.setattr(
+        config_mod, "get_cli_setting",
+        lambda section, key=None, default=None: (
+            {"max_size_mb": 0.0005}  # ~524 bytes
+            if (section, key) == ("chat", "images") else default
+        ),
+    )
+    svg = tmp_path / "grown.svg"
+    # Source is well under the 524-byte cap; the rasterized PNG is not.
+    svg.write_bytes(
+        b'<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200">'
+        b'<rect width="200" height="200" fill="red"/>'
+        b'<circle cx="100" cy="100" r="80" fill="blue"/>'
+        b'</svg>'
+    )
+    assert len(svg.read_bytes()) < 524
+    with pytest.raises(ValueError, match="Processed image too large"):
+        await ChatImageHandler.process_image_file(str(svg))
+
+
+@pytest.mark.asyncio
+async def test_process_attachment_bytes_rejects_grown_processed_payload(
+    defaults_config, monkeypatch
+):
+    """process_attachment_bytes must also cap the FINAL (post-processing)
+    payload, not just the source bytes handed in."""
+    huge = b"x" * (11 * 1024 * 1024)  # exceeds the default 10MB cap
+
+    async def fake_prepare(data, extension):
+        return huge, "image/png"
+
+    monkeypatch.setattr(ChatImageHandler, "prepare_image_payload", fake_prepare)
+    buffer = BytesIO()
+    PILImage.new("RGB", (32, 32), "blue").save(buffer, format="PNG")
+    with pytest.raises(ValueError, match="Processed image too large"):
+        await attachment_core.process_attachment_bytes(
+            buffer.getvalue(), display_name="clip.png", mime_type="image/png"
+        )
