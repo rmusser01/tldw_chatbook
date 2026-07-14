@@ -65,7 +65,8 @@ class TokenBudgetExceededWarning(Warning):
 
 class ChatDictionary:
     def __init__(self, key: str, content: str, probability: int = 100, group: Optional[str] = None,
-                 timed_effects: Optional[Dict[str, int]] = None, max_replacements: int = 1):
+                 timed_effects: Optional[Dict[str, int]] = None, max_replacements: int = 1, enabled: bool = True,
+                 case_sensitive: bool = False, priority: int = 0):
         self.raw_key = key # Store the original key string
         self.content = content
         self.is_regex = False
@@ -78,6 +79,9 @@ class ChatDictionary:
         self.timed_effects = timed_effects or {"sticky": 0, "cooldown": 0, "delay": 0}
         self.last_triggered: Optional[datetime] = None
         self.max_replacements = max_replacements
+        self.enabled = bool(enabled)
+        self.case_sensitive = bool(case_sensitive)
+        self.priority = int(priority)
 
     def _compile_key_internal(self, key_str: str) -> Union[re.Pattern, str]:
         self.is_regex = False # Reset for this compilation
@@ -140,7 +144,10 @@ class ChatDictionary:
             'group': self.group,
             'timed_effects': self.timed_effects,
             'max_replacements': self.max_replacements,
-            'is_regex': self.is_regex
+            'is_regex': self.is_regex,
+            'enabled': self.enabled,
+            'case_sensitive': self.case_sensitive,
+            'priority': self.priority,
         }
 
     @classmethod
@@ -152,7 +159,10 @@ class ChatDictionary:
             probability=data.get('probability', 100),
             group=data.get('group'),
             timed_effects=data.get('timed_effects', {"sticky": 0, "cooldown": 0, "delay": 0}),
-            max_replacements=data.get('max_replacements', 1)
+            max_replacements=data.get('max_replacements', 1),
+            enabled=data.get('enabled', True),
+            case_sensitive=data.get('case_sensitive', False),
+            priority=data.get('priority', 0),
         )
 
 
