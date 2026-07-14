@@ -107,7 +107,7 @@ def _human_size(size: int) -> str:
     return f"{size} B"
 
 
-def _message_image_chip(message: ConsoleChatMessage) -> str | None:
+def _message_image_chip_legacy(message: ConsoleChatMessage) -> str | None:
     """Return the placeholder chip line for a message carrying an image.
 
     ``attachment_label`` (e.g. "photo.png · 11 B") only exists in
@@ -129,6 +129,29 @@ def _message_image_chip(message: ConsoleChatMessage) -> str | None:
     return f"🖼 {label}"
 
 
+def _message_attachment_chips(message: ConsoleChatMessage) -> list[str]:
+    """Return one placeholder chip line per attachment (position order).
+
+    If no attachments are present, fall back to the legacy image chip logic
+    (zero-attachment behavior unchanged).
+    """
+    attachments = getattr(message, "attachments", ()) or ()
+    if not attachments:
+        legacy = _message_image_chip_legacy(message)
+        return [legacy] if legacy else []
+    chips: list[str] = []
+    for attachment in attachments:
+        if attachment.display_name:
+            chips.append(f"🖼 {attachment.display_name}")
+        elif attachment.data is not None:
+            chips.append(
+                f"🖼 {attachment.mime_type or 'image'} · {_human_size(len(attachment.data))}"
+            )
+        else:
+            chips.append(f"🖼 {attachment.mime_type or 'image'}")
+    return chips
+
+
 def _message_render_text(message: ConsoleChatMessage, *, selected: bool) -> Content:
     """Return the compact transcript row renderable for a message.
 
@@ -147,9 +170,10 @@ def _message_render_text(message: ConsoleChatMessage, *, selected: bool) -> Cont
     """
     role_label = _message_role_label(message)
     body = _message_body(message)
-    chip = _message_image_chip(message)
-    if chip:
-        body = f"{body}\n{chip}" if body else chip
+    chips = _message_attachment_chips(message)
+    if chips:
+        chip_lines = "\n".join(chips)
+        body = f"{body}\n{chip_lines}" if body else chip_lines
     body_part: tuple[str, str] | str = body
     if _is_generating_placeholder_body(message, body):
         body_part = (body, "dim")
