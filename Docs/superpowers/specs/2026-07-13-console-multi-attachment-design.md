@@ -19,16 +19,17 @@
 
 ```sql
 CREATE TABLE message_attachments (
-  id           INTEGER PRIMARY KEY AUTOINCREMENT,
   message_id   TEXT    NOT NULL REFERENCES messages(id) ON DELETE CASCADE ON UPDATE CASCADE,
   position     INTEGER NOT NULL CHECK (position >= 1),
   data         BLOB    NOT NULL,
   mime_type    TEXT    NOT NULL,
   display_name TEXT    NOT NULL DEFAULT '',
-  UNIQUE (message_id, position)
+  PRIMARY KEY (message_id, position)
 );
 CREATE INDEX idx_message_attachments_message ON message_attachments(message_id);
 ```
+
+(Composite PK, no surrogate id, no sync/version columns — matching the repo's bare-association-table precedent, `conversation_keywords`. Migration implementation shape verified: SQL as a `_MIGRATE_V18_TO_V19_SQL` class attribute run via `executescript` with the version bump inside the script, plus the `DB/migrations/*.sql` documentation mirror; the fresh-create path applies `_apply_schema_v4` then the migration chain, so one definition covers fresh and upgrading DBs.)
 
 - **Positions ≥ 1 only** (CHECK-enforced): position 0 lives in the legacy message columns. Single-attachment messages never touch this table.
 - **No backfill**: the table starts empty; pre-migration data is already complete (every existing message has ≤ 1 attachment, in the legacy columns).
@@ -70,6 +71,7 @@ CREATE INDEX idx_message_attachments_message ON message_attachments(message_id);
 - Metadata-only restore (DB unavailable): tuple of dataless attachments; chips render from names; payload skips dataless images (existing behavior generalized).
 - Cap interactions: multi-path drop respects remaining capacity ("Attached first N of M dropped files." when truncated by the cap).
 - Editing text of a multi-attachment message: attachments untouched (None-means-don't-touch rule).
+- Payload size: the pre-existing exposure (base64 images × `max_history_images` budget) is unchanged by this feature, but multi-attach makes it easier to reach; acknowledged here rather than silently inherited — a payload-size guard would be its own follow-up if it ever bites.
 
 ## Testing
 
