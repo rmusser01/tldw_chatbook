@@ -1,9 +1,13 @@
 # Tests/UI/test_mcp_servers_mode.py
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Checkbox, DataTable, Static
+
+import tldw_chatbook
 
 from tldw_chatbook.MCP.readiness import (
     HubAction,
@@ -15,6 +19,8 @@ from tldw_chatbook.MCP.readiness import (
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
 from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel
 from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
+
+_BUNDLED_CSS_PATH = str(Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss")
 
 
 def _snap(key: str, label: str, state=ReadinessState.READY, reasons=(), message="", **kw):
@@ -54,6 +60,15 @@ class CanvasApp(App):
         self.events.append(event)
 
 
+class CanvasAppWithBundledCSS(CanvasApp):
+    """Same harness but with the real bundled stylesheet loaded, so rules
+    that only exist in _agentic_terminal.tcss (e.g. `Button.mcp-callout`)
+    resolve exactly as they do in the live app -- mirrors
+    `RailAppWithBundledCSS` in test_mcp_rail.py."""
+
+    CSS_PATH = _BUNDLED_CSS_PATH
+
+
 @pytest.mark.asyncio
 async def test_overview_renders_aggregate_table_and_callouts():
     app = CanvasApp()
@@ -81,6 +96,34 @@ async def test_overview_renders_aggregate_table_and_callouts():
         assert len(callouts) == 1  # one problem row -> one callout
         assert "web" in str(callouts[0].label)
         assert "Missing environment variables" in str(callouts[0].label)
+
+
+@pytest.mark.asyncio
+async def test_overview_callouts_are_left_aligned_with_bundled_css():
+    """Button defaults BOTH `text-align` and `content-align` to center (see
+    Textual's own Button.DEFAULT_CSS -- the exact lesson documented on
+    `Button.mcp-rail-row` in MCPRail.DEFAULT_CSS and covered by
+    test_mcp_rail.py's sibling test). `Button.mcp-callout` in
+    _agentic_terminal.tcss must override both, or the one-line callout
+    strips under the overview table render centered instead of flush-left.
+    """
+    app = CanvasAppWithBundledCSS()
+    async with app.run_test(size=(80, 30)) as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.update_overview(
+            [
+                _snap(
+                    "local:web", "web",
+                    state=ReadinessState.NEEDS_SETUP,
+                    reasons=(ReasonCode.AUTH_MISSING,),
+                    message="Missing environment variables: KEY.",
+                ),
+            ]
+        )
+        await pilot.pause()
+        callout = app.query_one("#mcp-callout-0", Button)
+        assert callout.styles.text_align == "left"
+        assert callout.styles.content_align_horizontal == "left"
 
 
 @pytest.mark.asyncio

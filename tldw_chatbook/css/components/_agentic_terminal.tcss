@@ -4107,7 +4107,13 @@ Button.mcp-callout {
     min-height: 1;
     padding: 0 1;
     border: none;
+    /* Button defaults BOTH text-align AND content-align to center (see
+       Textual's own Button.DEFAULT_CSS, and the same lesson documented on
+       Button.mcp-rail-row in MCPRail.DEFAULT_CSS) -- text-align alone does
+       not left-align a one-line Button label; without content-align the
+       whole callout line still rendered centered under the table. */
     text-align: left;
+    content-align: left middle;
 }
 
 #mcp-servers-form {

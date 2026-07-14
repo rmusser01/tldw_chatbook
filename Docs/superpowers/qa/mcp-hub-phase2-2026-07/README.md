@@ -117,9 +117,12 @@ All at 2050×1240, real app CSS, MCP nav destination (`nav-mcp` → route
    reads "1 env var"; 3 compact one-line actionable callouts under the table
    (one per non-ready server: `! docs-server: Timed out after 45s`, `○
    weather-api: Missing environment variables: QA_MISSING_KEY.`, `○
-   slow-server: Not validated yet — connect or test to discover tools.`).
+   slow-server: Not validated yet — connect or test to discover tools.`),
+   all flush-left. (Retaken after Defect 2's fix landed — see Defect 2
+   below; the original 2026-07-14 01:18 capture showed the callout lines
+   centered in the strip instead of left-aligned.)
    Look for: badge colors matching state, no Scope column, "1 env var"
-   copy, callouts present only for non-ready rows.
+   copy, callouts present only for non-ready rows and left-aligned.
 
 2. **`detail-breadcrumb`** — docs-server detail (two clicks on the rail
    row — see DataTable two-click note above). Shows `← All servers  !
@@ -266,7 +269,7 @@ All at 2050×1240, real app CSS, MCP nav destination (`nav-mcp` → route
     `_TABLE_COLUMNS` vs `_TABLE_COLUMNS_NO_SCOPE`). Look for: both buttons
     visually dimmed, Add-server tooltip text, Scope column present.
 
-## Defects / observations found (documented, not fixed, per task scope)
+## Defects / observations found (documented at capture time; both defects since fixed in follow-up commits)
 
 ### Defect 1 (P3, cosmetic layout) — built-in detail: large dead gap before "Copy client config" — FIXED
 
@@ -344,6 +347,39 @@ toggles/button region visible in its left-hand canvas is unaffected by
 Advanced-panel state and would show the same fix, but that capture's
 purpose was the Advanced disclosure, not this pane, so it was not
 re-taken.
+
+### Defect 2 (P3, cosmetic layout) — overview callout strips render centered instead of flush-left — FIXED
+
+Found by controller inspection of the original `overview-colored` capture:
+the three one-line recovery callouts under the overview table (`!
+docs-server: Timed out after 45s` etc.) rendered horizontally CENTERED in
+their full-width strips instead of flush-left under the table.
+
+Root cause: `Button.mcp-callout` in
+`tldw_chatbook/css/components/_agentic_terminal.tcss` set `text-align:
+left` but not `content-align: left middle`. Textual's `Button.DEFAULT_CSS`
+defaults BOTH to center — `text-align` only aligns text within the
+content box, while `content-align` positions the content box itself, so
+for a one-line label `text-align: left` alone changes nothing visible.
+This is the exact lesson already documented on `Button.mcp-rail-row` in
+`MCPRail.DEFAULT_CSS` (`mcp_rail.py`, the A4 comment) and covered by
+`test_mcp_rail.py::test_rail_rows_are_left_aligned_with_bundled_css`.
+
+**FIXED**: added `content-align: left middle;` to the `Button.mcp-callout`
+rule (bundle source, rebuilt into `tldw_cli_modular.tcss`; this rule has
+no DEFAULT_CSS twin — the callout styling lives only in the sheet, so a
+single-layer fix is complete). Regression coverage: extended the rail
+test's family with `Tests/UI/test_mcp_servers_mode.py::
+test_overview_callouts_are_left_aligned_with_bundled_css` (a
+bundled-stylesheet harness asserting both `text_align` and
+`content_align_horizontal` resolve to `left` on a mounted callout);
+confirmed red (`'center' == 'left'` failing) against the pre-fix bundle
+and green after. **Re-captured**:
+`mcp-p2-overview-colored-2026-07-14.png` retaken in place, same recipe and
+isolated HOME as Defect 1's re-capture — all three callout lines now start
+at the same left edge (DOM `Range` rect x=598.8 for all three despite very
+different line lengths; centered rendering would give each a different x),
+flush under the table.
 
 ### Observations (not filed as defects)
 
