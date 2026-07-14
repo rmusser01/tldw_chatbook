@@ -68,7 +68,7 @@ class TestDiagnosticsCore:
     def test_budget_truncation_marks_survivor_accounting_and_flag(self):
         # Costs: big=6 tokens, small=1 token. Budget 5: big fits? 6 > 5 -> break
         # at big; small (after the break) is ALSO dropped (walk-and-stop).
-        cheap = _entry("aa", "one")                     # cost 1 - fits first (alphabetical strategy is later; budget uses MATCH order)
+        cheap = _entry("aa", "one")                     # cost 1 - fits first (budget walks the unified (strategy+priority) order; alphabetical == stored in this fixture)
         big = _entry("bb", "w1 w2 w3 w4 w5 w6")         # cost 6
         small = _entry("cc", "tiny")                    # cost 1, after the break
         _, diag = process_user_input_with_diagnostics("aa bb cc", [cheap, big, small], max_tokens=5)

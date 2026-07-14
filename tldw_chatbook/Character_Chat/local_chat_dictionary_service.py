@@ -38,6 +38,9 @@ def _entry_from_payload(value: Any) -> cdl.ChatDictionary:
         group=data.get("group"),
         timed_effects=data.get("timed_effects"),
         max_replacements=int(data.get("max_replacements", 1) or 1),
+        enabled=data.get("enabled", True),
+        case_sensitive=data.get("case_sensitive", False),
+        priority=data.get("priority", 0),
     )
 
 
@@ -54,7 +57,9 @@ def _entry_to_response(entry: cdl.ChatDictionary, *, dictionary_id: int, index: 
         "timed_effects": entry.timed_effects,
         "max_replacements": entry.max_replacements,
         "type": entry_type,
-        "enabled": True,
+        "enabled": entry.enabled,
+        "case_sensitive": entry.case_sensitive,
+        "priority": entry.priority,
         "source": "local",
     }
 

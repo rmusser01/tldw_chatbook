@@ -20,6 +20,7 @@ _SKIP_REASON_COPY = {
     "skipped:probability": "skipped: probability roll — re-running may differ",
     "skipped:timed_effects": "skipped: cooldown or delay",
     "skipped:token_budget": "skipped: token budget",
+    "skipped:disabled": "skipped: disabled",
     "error:replacement": "replacement failed — see logs",
     "no_replacement": "no replacement — text changed by an earlier entry",
 }
