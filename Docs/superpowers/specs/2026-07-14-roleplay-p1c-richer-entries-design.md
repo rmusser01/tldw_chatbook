@@ -1,6 +1,6 @@
 # Roleplay P1c — richer entries + validation (design)
 
-**Status:** Design approved (brainstorm), pending spec review.
+**Status:** Implemented (P1c).
 **Program:** Personas→Roleplay redesign. P0 #619, P1a #622, P1b #625 MERGED; Prompts→Library landed (4-mode strip). This is **P1c**: per-entry `enabled`/`case_sensitive`/`priority`, the structured validation panel, and the unified-ordering fix for the documented budget-before-strategy quirk. P1d (tabs + portability) follows.
 **Worktree/branch:** `.claude/worktrees/personas-redesign`, `claude/roleplay-p1c-entries` off dev `a2de830c`.
 
@@ -35,7 +35,7 @@ Dictionary entries can't be individually disabled, are always case-insensitive f
 - **AC5 — Entries tab.** Form gains Enabled Switch, Case-sensitive Switch, Priority Input (any integer; integer-ness validated like the existing numeric fields). Table gains a `pri` column and shows disabled rows dimmed with an `off` marker. A compact validation `OptionList` (`#personas-dict-validation`) under the table lists findings as `[code] pattern — message`; selecting one moves the table cursor to that entry. Recomputed on `load_dictionary`/`update_entries`. Validation is **wholly Entries-tab-local** — the inspector is untouched (no dictionary path calls `show_validation` today, and mirroring a count that sits directly under the table would add a message + handler for nothing).
 - **AC5b — pay the clipping debt.** P1c adds height to the Entries tab, so the P1a-ledgered Important (tab needs ~19 rows, no scroll escape, buttons unreachable by mouse at 80×24) is paid NOW: the Entries `TabPane` content gets a scrollable container (`overflow-y: auto` + sensible max-height), verified by a geometry test that the button row and validation list are reachable at a constrained size.
 - **AC6 — Try-it.** Reason map gains `skipped:disabled` → "skipped: disabled". Diagnostics enum in the P1b spec's AC2 sense grows the same status.
-- **AC7 — Duplicate integrity.** The Duplicate payload carries all NINE entry fields (existing six + the three new); the duplicate round-trip test asserts every field survives (promoting the P1a-deferred assertion gap to mandatory).
+- **AC7 — Duplicate integrity.** The Duplicate payload carries all TEN entry fields (existing seven + the three new); the duplicate round-trip test asserts every field survives (promoting the P1a-deferred assertion gap to mandatory).
 - **AC8 — deferred P1b minors.** The UI test fake's budget branch aligns to real walk-and-stop (`break` semantics) and mirrors the new ordering/fields; `content_preview` whitespace-flattens (`" ".join(content.split())[:40]`) so multi-line content can't break the fired-line layout.
 - **AC9 — scope guard.** Only Personas-owned + Character_Chat dictionary files change. No shared-shell files, no DB schema version change, no server-service changes beyond the shared seam file if trivially required (report if so).
 
