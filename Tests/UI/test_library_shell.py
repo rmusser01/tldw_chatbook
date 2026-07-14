@@ -4667,9 +4667,9 @@ async def test_library_shell_skills_rail_row_shows_exact_count():
     is wired into the Library screen's local-source snapshot fetch (Task 1).
     The count spans BOTH ``available_skills`` (trusted) and
     ``blocked_skills`` (needs-review) per the spec's blocked-skills
-    visibility rule. Row selection shows the empty-canvas landing path
-    (no dedicated Skills canvas exists yet -- that's Task 3), same as any
-    other unhandled ``canvas_kind`` -- the row is inert-but-selectable."""
+    visibility rule. Row selection renders the Task 3 list canvas (see
+    ``Tests/UI/test_library_skills_canvas.py`` for the canvas's own
+    dedicated coverage) instead of the old empty-canvas landing path."""
     app = _build_test_app()
     app.notes_scope_service = StaticLibraryNotesListScopeService([])
     app.media_reading_scope_service = StaticLibraryMediaScopeService([])
@@ -4698,7 +4698,9 @@ async def test_library_shell_skills_rail_row_shows_exact_count():
         await pilot.pause()
 
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
-        assert screen.query_one("#library-canvas-landing")
+        assert screen.query_one("#library-skills-canvas")
+        assert screen.query_one("#library-skill-row-code-review")
+        assert screen.query_one("#library-skill-row-summarize")
     assert app.skills_scope_service.get_context_calls
 
 

@@ -21,6 +21,7 @@ from .library_search_rag_panel import (
     library_rag_scope_shows_recovery,
     library_rag_scope_toggle_children,
 )
+from .library_skills_canvas import LibrarySkillsListCanvas
 
 __all__ = [
     "LIBRARY_RAIL_ROW_PREFIX",
@@ -35,6 +36,7 @@ __all__ = [
     "LibraryRail",
     "LibrarySearchRagInspectorPanel",
     "LibrarySearchRagPanel",
+    "LibrarySkillsListCanvas",
     "library_dim_label_text",
     "library_rag_history_children",
     "library_rag_query_shows_full_recovery",

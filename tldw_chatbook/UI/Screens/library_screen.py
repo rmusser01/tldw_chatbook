@@ -104,6 +104,7 @@ from ...Library.library_prompts_state import (
     classify_prompt_save_error,
     prompt_editor_meta_line,
 )
+from ...Library.library_skills_state import build_skills_list_state
 from ...Prompt_Management.prompt_markdown_export import render_prompt_markdown
 from ...Prompt_Management.Prompts_Interop import (
     parse_json_prompts_from_content,
@@ -171,6 +172,7 @@ from ...Widgets.Library import (
     LibraryRail,
     LibrarySearchRagInspectorPanel,
     LibrarySearchRagPanel,
+    LibrarySkillsListCanvas,
     library_dim_label_text,
     library_rag_history_children,
     library_rag_query_shows_full_recovery,
@@ -198,6 +200,12 @@ LIBRARY_SOURCE_PAGE_SIZES = {"notes": 100, "media": 50, "conversations": 50, "pr
 # library_prompts_state.py) since it's screen-toolbar-cycling concern, not
 # pure list-state-building logic.
 _LIBRARY_PROMPTS_SORT_MODES = ("newest", "name")
+# Skills sort modes (Task 3 of the Skills sub-project): "name" (pure
+# alphabetical) <-> "status" (needs-review first, then alphabetical) --
+# cycled by handle_library_skills_sort. Same "screen-toolbar-cycling
+# concern, not pure list-state-building logic" posture as the prompts modes
+# above, kept local rather than in library_skills_state.py.
+_LIBRARY_SKILLS_SORT_MODES = ("name", "status")
 # Toolbar Import… (Task 5): which parser handles which file extension.
 # Mirrors ``Prompts_Interop._get_file_type``'s extension map, but writes
 # through ``prompt_scope_service``/``LocalPromptService`` per-prompt
@@ -689,6 +697,17 @@ class LibraryScreen(BaseAppScreen):
         # ``call_after_refresh`` after every prompt-editor (re)compose,
         # mirroring ``_library_note_editor_armed``.
         self._library_prompt_editor_armed: bool = False
+        # Skills list canvas (Task 3 of the Skills sub-project): sort/filter
+        # are pure in-memory operations over the already-fetched
+        # ``get_context`` snapshot payload (mirrors
+        # ``_library_prompts_sort``/``_library_prompts_filter``).
+        # ``_selected_skill_name`` is recording-only for now -- the
+        # in-canvas skill detail/trust editor lands in a later task -- same
+        # posture ``handle_library_prompt_row`` originally had before its
+        # own editor landed.
+        self._library_skills_sort: str = "name"
+        self._library_skills_filter: str = ""
+        self._selected_skill_name: str = ""
         self._library_note_detail: Mapping[str, Any] | None = None
         self._selected_note_id: str = ""
         self._library_note_version: int | None = None
@@ -3085,6 +3104,13 @@ class LibraryScreen(BaseAppScreen):
                         import_status=self._library_prompts_import_status,
                         id="library-prompts-canvas",
                     )
+                elif shell.canvas_kind == "skills":
+                    yield LibrarySkillsListCanvas(
+                        self._build_library_skills_state(),
+                        sort_mode=self._library_skills_sort,
+                        filter_value=self._library_skills_filter,
+                        id="library-skills-canvas",
+                    )
                 elif shell.canvas_kind == "search":
                     yield LibrarySearchRagPanel(
                         self._library_rag_panel_state(),
@@ -3299,6 +3325,30 @@ class LibraryScreen(BaseAppScreen):
             query=self._library_prompts_filter,
             sort=self._library_prompts_sort,
             now=datetime.now(timezone.utc),
+        )
+
+    def _build_library_skills_state(self):
+        """Build the Library skills canvas's list-view display state.
+
+        Reads the ``(count, context_payload)`` snapshot entry seeded by
+        ``_list_local_source_snapshot`` (Task 1's single ``get_context``
+        call, which supplies both the rail count AND this payload) --
+        ``context_payload`` degrades to an empty ``available_skills``/
+        ``blocked_skills`` mapping whenever the local backend has no
+        ``get_context`` seam, the fetch failed, or the snapshot simply
+        hasn't loaded yet, in which case the pure builder below renders an
+        empty list rather than raising.
+        """
+        skills_entry = self._local_source_records.get("skills")
+        context_payload = (
+            skills_entry[1]
+            if isinstance(skills_entry, tuple) and len(skills_entry) == 2
+            else None
+        )
+        return build_skills_list_state(
+            context_payload,
+            query=self._library_skills_filter,
+            sort=self._library_skills_sort,
         )
 
     async def _refresh_library_media_detail(self, media_id: str) -> None:
@@ -6051,6 +6101,65 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         self._library_prompts_filter = self._safe_text(event.value, max_length=200).strip()
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-skills-sort")
+    def handle_library_skills_sort(self, event: Button.Pressed) -> None:
+        """Cycle the Library skills canvas sort mode (name/status).
+
+        Same pure in-memory posture as ``handle_library_prompts_sort``: the
+        already-fetched ``get_context`` snapshot payload is re-sorted by
+        ``_build_library_skills_state`` -> ``build_skills_list_state`` on
+        recompose, no worker needed.
+
+        Args:
+            event: Button press event emitted by the skills sort control.
+        """
+        event.stop()
+        try:
+            index = _LIBRARY_SKILLS_SORT_MODES.index(self._library_skills_sort)
+        except ValueError:
+            index = -1
+        self._library_skills_sort = _LIBRARY_SKILLS_SORT_MODES[
+            (index + 1) % len(_LIBRARY_SKILLS_SORT_MODES)
+        ]
+        self.refresh(recompose=True)
+
+    @on(Input.Submitted, "#library-skills-filter")
+    def handle_library_skills_filter(self, event: Input.Submitted) -> None:
+        """Apply the Library skills filter on Enter.
+
+        Purely in-memory (see ``handle_library_skills_sort``'s note): the
+        submitted text is stored and the canvas recomposes, re-running
+        ``build_skills_list_state`` over the already-fetched snapshot
+        payload with the new query -- no service call or worker involved.
+
+        Args:
+            event: Input submission event emitted by the skills filter box.
+        """
+        event.stop()
+        self._library_skills_filter = self._safe_text(event.value, max_length=200).strip()
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, ".library-skill-row")
+    def handle_library_skill_row(self, event: Button.Pressed) -> None:
+        """Select a skill row in the Library skills canvas.
+
+        Recording-only for now (mirrors ``handle_library_prompt_row``'s
+        original, pre-editor shape): the in-canvas skill detail/trust
+        editor lands in a later task, so this stores the selection for
+        that task to pick up rather than navigating anywhere. Works for
+        both trusted and needs-review (blocked) rows alike -- a
+        trust-blocked skill is still selectable, just not yet invocable.
+
+        Args:
+            event: Button press event emitted by a skill row button.
+        """
+        event.stop()
+        skill_name = getattr(event.button, "skill_name", None)
+        if isinstance(skill_name, str):
+            self._selected_skill_name = skill_name
+        self._library_selected_row_id = LIBRARY_ROW_BROWSE_SKILLS
         self.refresh(recompose=True)
 
     @on(Button.Pressed, "#library-prompts-import")
