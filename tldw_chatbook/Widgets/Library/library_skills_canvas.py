@@ -1,44 +1,190 @@
-"""Library skills canvas: list mode (rows + filter + sort).
+"""Library skills canvas: list mode (rows + filter + sort) + detail editor.
 
 Structural template copy of ``library_prompts_canvas.py``'s list-view
 ``compose`` -- only the list shape (header count line, filter Input, single
-``ds-toolbar`` toolbar row, escaped row rendering) is mirrored here; skills
-have no in-canvas editor yet (a later Skills task builds the detail/trust
-editor on top of Task 2's ``SkillEditorState``/``build_skill_editor_state``).
-
-Unlike the prompts list (where the secondary line is packed into the same
-Button label as the name), each skill row renders its flags/description
+``ds-toolbar`` toolbar row, escaped row rendering) is mirrored for the list
+view. Unlike the prompts list (where the secondary line is packed into the
+same Button label as the name), each skill row renders its flags/description
 line as a SEPARATE ``Static`` sibling right below the row Button -- per the
 Task 3 brief's interface: the Button label is just ``f"{glyph} {name}"``.
+
+Task 4 adds the in-canvas SKILL.md detail/trust editor (``mode="editor"``),
+structurally templated on ``LibraryPromptsListCanvas._compose_editor``: a
+Back button, stacked full-width fields, a warnings line, a trust panel, and
+a single plain ``ds-toolbar`` action row. Two deliberate deviations from the
+brief's parenthetical widget hints, matching this canvas family's own
+documented render-safety discipline (see
+``library_notes_canvas.py._compose_sync``'s docstring: "Notably absent:
+``Select``... and ``Switch``... neither renders reliably in this canvas"):
+``user_invocable``/``disable_model_invocation`` are toggle Buttons (not
+Checkbox/Switch) and ``context`` is a cycling Button (not Select), the same
+"cycling/toggle Buttons instead" posture the media type filter and notes
+sort control already use.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Mapping
 
 from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, Static, TextArea
 
-from tldw_chatbook.Library.library_skills_state import SkillsListState
+from tldw_chatbook.Library.library_skills_state import (
+    SkillEditorState,
+    SkillsListState,
+    save_marks_needs_review,
+    skill_name_shadows_builtin,
+)
 
 _SORT_LABELS = {"name": "Name", "status": "Status"}
 _EMPTY_SKILLS_COPY = "No skills yet — create them in Library ▸ Skills."
 _EMPTY_SKILLS_FILTER_COPY = "No skills match your filter."
 
+# Trust panel copy/gating (Task 4). Mirrors ``skills_screen.py``'s own
+# ``_skill_trust_copy``/``SKILLS_TRUST_REVIEWABLE_STATUSES`` values (kept a
+# separate, smaller copy here rather than importing that screen's private
+# helpers -- this editor only needs the trust STATE line + two gating
+# predicates, not that screen's fuller blocked-reason copy).
+_TRUST_REVIEWABLE_STATUSES = frozenset((
+    "quarantined_modified",
+    "quarantined_added",
+    "quarantined_deleted",
+))
+_TRUST_STATE_COPY = {
+    "trusted": "Trust: trusted",
+    "trust_uninitialized": "Trust: not initialized",
+    "trust_locked": "Trust: locked",
+    "quarantined_modified": "Trust: changed since trusted baseline",
+    "quarantined_added": "Trust: new untrusted file",
+    "quarantined_deleted": "Trust: trusted file missing",
+    "quarantined_manifest_error": "Trust: manifest cannot be verified",
+    "quarantined_unsupported_path": "Trust: unsupported file path",
+}
+# Exact copy pinned by the Task 4 brief -- both the canvas's initial render
+# and the screen's targeted (no-recompose) live updates
+# (``LibraryScreen._update_library_skill_warnings_static``) must agree on
+# this literal text, so it lives in ONE place (``skill_editor_warning_lines``
+# below), imported by both.
+_SHADOW_WARNING_TEMPLATE = (
+    'Name shadows a built-in command/tool ("{name}") — it will not be '
+    "invocable as /{name} or as an agent tool."
+)
+_NEEDS_REVIEW_WARNING = (
+    'Saving marks this skill "needs review" — re-approve it in the trust '
+    "panel after saving."
+)
+MODEL_HINT_COPY = "Not applied in v1."
+
+
+def skill_trust_state_line(trust_status: str, changed_files: tuple[str, ...] = ()) -> str:
+    """Render the trust panel's current-state line.
+
+    Args:
+        trust_status: The skill's current trust status.
+        changed_files: Files changed since the trusted baseline (only
+            meaningful while blocked); appended parenthetically when
+            non-empty.
+
+    Returns:
+        A one-line human-readable trust state summary.
+    """
+    line = _TRUST_STATE_COPY.get(trust_status, "Trust: blocked")
+    if changed_files:
+        line = f"{line} ({', '.join(changed_files)})"
+    return line
+
+
+def skill_trust_unlock_enabled(trust_status: str) -> bool:
+    """Return whether the trust panel's Unlock action should be enabled."""
+    return trust_status == "trust_locked"
+
+
+def skill_trust_review_enabled(trust_status: str, trust_blocked: bool) -> bool:
+    """Return whether the trust panel's Review changes action should be enabled."""
+    return bool(trust_blocked) and trust_status in _TRUST_REVIEWABLE_STATUSES
+
+
+def skill_editor_warning_lines(
+    *, live_name: str, trust_status: str, trust_blocked: bool,
+) -> tuple[str, ...]:
+    """Build the editor's non-blocking warning lines.
+
+    Args:
+        live_name: The Name field's current (possibly unsaved) value.
+        trust_status: The open skill's current trust status.
+        trust_blocked: Whether the open skill is currently trust-blocked.
+
+    Returns:
+        Zero, one, or both of: the shadow-name warning (live, name-driven)
+        and the save-marks-needs-review warning (only while currently
+        trusted and not already blocked -- see ``save_marks_needs_review``).
+    """
+    lines: list[str] = []
+    shadow = skill_name_shadows_builtin(live_name)
+    if shadow:
+        lines.append(_SHADOW_WARNING_TEMPLATE.format(name=shadow))
+    if save_marks_needs_review(trust_status, trust_blocked):
+        lines.append(_NEEDS_REVIEW_WARNING)
+    return tuple(lines)
+
+
+def skill_user_invocable_label(value: bool) -> str:
+    """Render the user-invocable toggle Button's label."""
+    return f"user invocable: {'yes' if value else 'no'} ▸"
+
+
+def skill_disable_model_label(value: bool) -> str:
+    """Render the disable-model-invocation toggle Button's label."""
+    return f"disable model invocation: {'yes' if value else 'no'} ▸"
+
+
+def skill_context_toggle_label(context: str) -> str:
+    """Render the context-cycling Button's label."""
+    return f"context: {context} ▸"
+
+
+def next_skill_context(context: str) -> str:
+    """Cycle the skill editor's ``context`` field between ``inline``/``fork``."""
+    return "fork" if context == "inline" else "inline"
+
+
+def skill_supporting_files_text(supporting_files: tuple[tuple[str, int], ...]) -> str:
+    """Render the read-only supporting-files list as plain text."""
+    if not supporting_files:
+        return "No supporting files."
+    return "\n".join(f"{name} ({size} bytes)" for name, size in supporting_files)
+
 
 class LibrarySkillsListCanvas(Vertical):
-    """Render the Library skills canvas's list view.
+    """Render the Library skills canvas: the list view, or the skill editor.
 
     Attributes:
         state: List-view display state (rows, count, sort). ``None``
-            renders nothing (mirrors ``LibraryPromptsListCanvas``'s guard
-            for a not-yet-available list state).
+            renders nothing. Only used when ``mode == "list"``.
         sort_mode: Current skills sort mode key (``"name"``/``"status"``),
             used to label the sort control.
         filter_value: Current skills filter text, prefilled into the
             filter ``Input``.
+        mode: ``"list"`` renders the skills list; ``"editor"`` renders the
+            in-canvas SKILL.md detail/trust editor for ``editor_state``.
+        editor_state: The skill to render in editor mode. Required when
+            ``mode == "editor"``.
+        warnings: Screen-computed warning text (see
+            ``skill_editor_warning_lines``), joined with ``"\\n"``; ``""``
+            when there is nothing to warn about.
+        status: Save-outcome status text shown below the warnings line
+            (e.g. ``"Saved."``), or ``""`` when idle. Not shown while
+            ``conflict`` is set.
+        conflict: When ``True`` (editor mode only), renders the save
+            conflict banner (a quiet explanatory line plus a Reload action)
+            in place of the normal Save/Delete action row.
+        active_review: The trust panel's currently-captured review mapping
+            (from ``capture_review``'s result), or ``None`` when no review
+            has been captured for the open skill yet. Only its
+            ``changed_files`` entry is rendered; presence/absence alone
+            gates the Approve action.
     """
 
     def __init__(
@@ -47,16 +193,34 @@ class LibrarySkillsListCanvas(Vertical):
         *,
         sort_mode: str = "name",
         filter_value: str = "",
+        mode: str = "list",
+        editor_state: SkillEditorState | None = None,
+        warnings: str = "",
+        status: str = "",
+        conflict: bool = False,
+        active_review: Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.state = state
         self.sort_mode = sort_mode
         self.filter_value = filter_value
+        self.mode = mode
+        self.editor_state = editor_state
+        self.warnings = warnings
+        self.status = status
+        self.conflict = conflict
+        self.active_review = active_review
         self.styles.width = "1fr"
         self.styles.min_width = 40
 
     def compose(self) -> ComposeResult:
+        if self.mode == "editor":
+            yield from self._compose_editor()
+            return
+        yield from self._compose_list()
+
+    def _compose_list(self) -> ComposeResult:
         state = self.state
         if state is None:
             return
@@ -127,3 +291,154 @@ class LibrarySkillsListCanvas(Vertical):
                         escape_markup(row.secondary),
                         classes="library-skill-row-secondary",
                     )
+
+    def _compose_editor(self) -> ComposeResult:
+        """Render the SKILL.md editor: Back, fields, warnings, trust panel, actions.
+
+        Structural template copy of
+        ``LibraryPromptsListCanvas._compose_editor``: stacked full-width
+        widgets plus a single plain ``ds-toolbar`` action row. See the
+        module docstring for the Checkbox/Switch/Select deviations.
+        """
+        editor_state = self.editor_state
+        if editor_state is None:
+            return
+        yield Button(
+            "‹ Back to list",
+            id="library-skill-back",
+            classes="library-canvas-action",
+            compact=True,
+        )
+        yield Static("Name", classes="library-prompt-field-label", markup=False)
+        yield Input(value=editor_state.name, id="library-skill-name")
+        yield Static("Description", classes="library-prompt-field-label", markup=False)
+        yield Input(value=editor_state.description, id="library-skill-description")
+        yield Static("Argument hint", classes="library-prompt-field-label", markup=False)
+        yield Input(value=editor_state.argument_hint or "", id="library-skill-argument-hint")
+        yield Static("Allowed tools", classes="library-prompt-field-label", markup=False)
+        yield Input(
+            value=editor_state.allowed_tools_csv,
+            placeholder="Allowed tools (comma-separated)",
+            id="library-skill-allowed-tools",
+        )
+        yield Button(
+            skill_user_invocable_label(editor_state.user_invocable),
+            id="library-skill-user-invocable",
+            classes="library-canvas-action",
+            compact=True,
+        )
+        yield Button(
+            skill_disable_model_label(editor_state.disable_model_invocation),
+            id="library-skill-disable-model",
+            classes="library-canvas-action",
+            compact=True,
+        )
+        yield Button(
+            skill_context_toggle_label(editor_state.context),
+            id="library-skill-context",
+            classes="library-canvas-action",
+            compact=True,
+        )
+        yield Static("Model override", classes="library-prompt-field-label", markup=False)
+        yield Input(value=editor_state.model or "", id="library-skill-model")
+        yield Static(
+            MODEL_HINT_COPY,
+            id="library-skill-model-hint",
+            classes="library-prompt-field-hint",
+            markup=False,
+        )
+        yield Static("Body", classes="library-prompt-field-label", markup=False)
+        yield TextArea(editor_state.body, id="library-skill-body")
+        yield Static("Supporting files", classes="library-prompt-field-label", markup=False)
+        yield Static(
+            skill_supporting_files_text(editor_state.supporting_files),
+            id="library-skill-supporting",
+            markup=False,
+        )
+        yield Static(self.warnings, id="library-skill-warnings", markup=False)
+        if self.conflict:
+            yield Static(
+                "This skill changed elsewhere — Reload discards your edit and refetches it.",
+                id="library-skill-conflict-copy",
+                classes="destination-purpose",
+                markup=False,
+            )
+        else:
+            yield Static(self.status, id="library-skill-save-status", markup=False)
+        yield from self._compose_trust_panel(editor_state)
+        toolbar = Horizontal(classes="ds-toolbar")
+        toolbar.styles.height = "auto"
+        with toolbar:
+            if self.conflict:
+                yield Button(
+                    "Reload",
+                    id="library-skill-conflict-reload",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+            else:
+                yield Button(
+                    "Save",
+                    id="library-skill-save",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                yield Button(
+                    "Delete",
+                    id="library-skill-delete",
+                    classes="library-canvas-action library-media-action-danger",
+                    compact=True,
+                )
+
+    def _compose_trust_panel(self, editor_state: SkillEditorState) -> ComposeResult:
+        """Render the trust panel: state line, changed-files, Unlock/Review/Approve.
+
+        The changed-files Static is ALWAYS present (empty text when no
+        review is active) rather than mounted/removed on demand -- simpler
+        than a D3-style targeted mount/remove, and matches how
+        ``#library-skill-save-status`` is always present too.
+        """
+        active_review = self.active_review or {}
+        changed_files = active_review.get("changed_files") or []
+        with Vertical(id="library-skill-trust-panel", classes="ds-panel"):
+            yield Static("Trust", classes="destination-section", markup=False)
+            state_classes = (
+                "library-skill-trust-state-blocked" if editor_state.trust_blocked else ""
+            )
+            yield Static(
+                skill_trust_state_line(editor_state.trust_status, editor_state.trust_changed_files),
+                id="library-skill-trust-state",
+                classes=state_classes,
+                markup=False,
+            )
+            yield Static(
+                ", ".join(str(item) for item in changed_files),
+                id="library-skill-trust-review-files",
+                markup=False,
+            )
+            toolbar = Horizontal(classes="ds-toolbar")
+            toolbar.styles.height = "auto"
+            with toolbar:
+                yield Button(
+                    "Unlock",
+                    id="library-skill-trust-unlock",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=not skill_trust_unlock_enabled(editor_state.trust_status),
+                )
+                yield Button(
+                    "Review changes",
+                    id="library-skill-trust-review",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=not skill_trust_review_enabled(
+                        editor_state.trust_status, editor_state.trust_blocked
+                    ),
+                )
+                yield Button(
+                    "Approve",
+                    id="library-skill-trust-approve",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=self.active_review is None,
+                )

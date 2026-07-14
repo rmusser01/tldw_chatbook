@@ -18,15 +18,27 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, Static, TextArea
 
 from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SKILLS
-from tldw_chatbook.Library.library_skills_state import SkillListRow, SkillsListState
+from tldw_chatbook.Library.library_skills_state import (
+    SkillEditorState,
+    SkillListRow,
+    SkillsListState,
+)
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
-from tldw_chatbook.Widgets.Library.library_skills_canvas import LibrarySkillsListCanvas
+from tldw_chatbook.Widgets.Library.library_skills_canvas import (
+    LibrarySkillsListCanvas,
+    skill_context_toggle_label,
+    skill_disable_model_label,
+    skill_editor_warning_lines,
+    skill_trust_state_line,
+    skill_user_invocable_label,
+)
 
 from Tests.UI.test_destination_shells import (
     StaticLibraryConversationScopeService,
@@ -195,6 +207,189 @@ async def test_skills_canvas_empty_state_with_filter_shows_filter_copy():
 
 
 # ---------------------------------------------------------------------------
+# Editor widget-only tests (Task 4): mounts LibrarySkillsListCanvas directly
+# with mode="editor", mirroring test_library_prompts_canvas.py's own
+# _compose_editor widget tests.
+# ---------------------------------------------------------------------------
+
+
+def _editor_state(
+    *,
+    name: str = "code-review",
+    description: str = "Reviews a diff",
+    argument_hint: str | None = "pr number",
+    allowed_tools_csv: str = "git.diff",
+    user_invocable: bool = True,
+    disable_model_invocation: bool = False,
+    context: str = "inline",
+    model: str | None = None,
+    body: str = "Review the diff.",
+    supporting_files: tuple[tuple[str, int], ...] = (("checklist.md", 42),),
+    version: int | None = 3,
+    trust_status: str = "trusted",
+    trust_blocked: bool = False,
+    trust_changed_files: tuple[str, ...] = (),
+) -> SkillEditorState:
+    return SkillEditorState(
+        name=name,
+        description=description,
+        argument_hint=argument_hint,
+        allowed_tools_csv=allowed_tools_csv,
+        user_invocable=user_invocable,
+        disable_model_invocation=disable_model_invocation,
+        context=context,
+        model=model,
+        body=body,
+        supporting_files=supporting_files,
+        version=version,
+        trust_status=trust_status,
+        trust_blocked=trust_blocked,
+        trust_changed_files=trust_changed_files,
+    )
+
+
+class _EditorHost(App):
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__()
+        self._kwargs = kwargs
+
+    def compose(self):
+        yield LibrarySkillsListCanvas(id="library-skills-canvas", **self._kwargs)
+
+
+@pytest.mark.asyncio
+async def test_skill_editor_renders_all_field_ids_populated():
+    state = _editor_state()
+    app = _EditorHost(mode="editor", editor_state=state)
+    async with app.run_test() as pilot:
+        assert pilot.app.query_one("#library-skill-name", Input).value == "code-review"
+        assert pilot.app.query_one("#library-skill-description", Input).value == "Reviews a diff"
+        assert pilot.app.query_one("#library-skill-argument-hint", Input).value == "pr number"
+        assert pilot.app.query_one("#library-skill-allowed-tools", Input).value == "git.diff"
+        assert pilot.app.query_one("#library-skill-model", Input).value == ""
+        assert pilot.app.query_one("#library-skill-model-hint", Static)
+        model_hint = str(pilot.app.query_one("#library-skill-model-hint", Static).renderable)
+        assert model_hint == "Not applied in v1."
+        body_area = pilot.app.query_one("#library-skill-body", TextArea)
+        assert body_area.text == "Review the diff."
+        supporting = str(pilot.app.query_one("#library-skill-supporting", Static).renderable)
+        assert "checklist.md (42 bytes)" in supporting
+
+
+@pytest.mark.asyncio
+async def test_skill_editor_toggle_and_context_button_labels_reflect_state():
+    state = _editor_state(
+        user_invocable=False, disable_model_invocation=True, context="fork",
+    )
+    app = _EditorHost(mode="editor", editor_state=state)
+    async with app.run_test() as pilot:
+        user_button = pilot.app.query_one("#library-skill-user-invocable", Button)
+        assert str(user_button.label) == skill_user_invocable_label(False)
+        disable_button = pilot.app.query_one("#library-skill-disable-model", Button)
+        assert str(disable_button.label) == skill_disable_model_label(True)
+        context_button = pilot.app.query_one("#library-skill-context", Button)
+        assert str(context_button.label) == skill_context_toggle_label("fork")
+
+
+@pytest.mark.asyncio
+async def test_skill_editor_warnings_static_shows_screen_computed_text():
+    state = _editor_state()
+    app = _EditorHost(mode="editor", editor_state=state, warnings="a warning line")
+    async with app.run_test() as pilot:
+        warnings = str(pilot.app.query_one("#library-skill-warnings", Static).renderable)
+        assert warnings == "a warning line"
+
+
+@pytest.mark.asyncio
+async def test_skill_editor_non_conflict_mode_renders_save_and_delete():
+    state = _editor_state()
+    app = _EditorHost(mode="editor", editor_state=state)
+    async with app.run_test() as pilot:
+        assert pilot.app.query_one("#library-skill-save", Button)
+        assert pilot.app.query_one("#library-skill-delete", Button)
+        assert len(pilot.app.query("#library-skill-conflict-reload")) == 0
+        assert pilot.app.query_one("#library-skill-save-status", Static)
+
+
+@pytest.mark.asyncio
+async def test_skill_editor_conflict_mode_renders_reload_only():
+    state = _editor_state()
+    app = _EditorHost(mode="editor", editor_state=state, conflict=True)
+    async with app.run_test() as pilot:
+        assert pilot.app.query_one("#library-skill-conflict-reload", Button)
+        assert pilot.app.query_one("#library-skill-conflict-copy", Static)
+        assert len(pilot.app.query("#library-skill-save")) == 0
+        assert len(pilot.app.query("#library-skill-delete")) == 0
+        assert len(pilot.app.query("#library-skill-save-status")) == 0
+
+
+@pytest.mark.asyncio
+async def test_skill_editor_trust_panel_shows_state_line_and_gates_buttons():
+    state = _editor_state(
+        trust_status="quarantined_modified", trust_blocked=True,
+        trust_changed_files=("SKILL.md",),
+    )
+    app = _EditorHost(mode="editor", editor_state=state)
+    async with app.run_test() as pilot:
+        state_line = str(pilot.app.query_one("#library-skill-trust-state", Static).renderable)
+        assert state_line == skill_trust_state_line("quarantined_modified", ("SKILL.md",))
+        assert pilot.app.query_one(
+            "#library-skill-trust-state", Static
+        ).has_class("library-skill-trust-state-blocked")
+        unlock_button = pilot.app.query_one("#library-skill-trust-unlock", Button)
+        assert unlock_button.disabled is True
+        review_button = pilot.app.query_one("#library-skill-trust-review", Button)
+        assert review_button.disabled is False
+        approve_button = pilot.app.query_one("#library-skill-trust-approve", Button)
+        assert approve_button.disabled is True
+        review_files = str(
+            pilot.app.query_one("#library-skill-trust-review-files", Static).renderable
+        )
+        assert review_files == ""
+
+
+@pytest.mark.asyncio
+async def test_skill_editor_trust_panel_approve_enabled_with_active_review():
+    state = _editor_state(trust_status="quarantined_modified", trust_blocked=True)
+    app = _EditorHost(
+        mode="editor",
+        editor_state=state,
+        active_review={"review_id": "r1", "changed_files": ["SKILL.md"]},
+    )
+    async with app.run_test() as pilot:
+        approve_button = pilot.app.query_one("#library-skill-trust-approve", Button)
+        assert approve_button.disabled is False
+        review_files = str(
+            pilot.app.query_one("#library-skill-trust-review-files", Static).renderable
+        )
+        assert review_files == "SKILL.md"
+
+
+def test_skill_trust_state_line_appends_changed_files():
+    assert skill_trust_state_line("trusted") == "Trust: trusted"
+    line = skill_trust_state_line("quarantined_modified", ("SKILL.md", "notes.md"))
+    assert line == "Trust: changed since trusted baseline (SKILL.md, notes.md)"
+
+
+def test_skill_editor_warning_lines_shadow_and_needs_review():
+    assert skill_editor_warning_lines(
+        live_name="summarize", trust_status="trusted", trust_blocked=False,
+    ) == (
+        'Saving marks this skill "needs review" — re-approve it in the trust '
+        "panel after saving.",
+    )
+    assert skill_editor_warning_lines(
+        live_name="calculator", trust_status="quarantined_modified", trust_blocked=True,
+    ) == (
+        'Name shadows a built-in command/tool ("calculator") — it will not be '
+        "invocable as /calculator or as an agent tool.",
+    )
+    assert skill_editor_warning_lines(
+        live_name="summarize", trust_status="quarantined_modified", trust_blocked=True,
+    ) == ()
+
+
+# ---------------------------------------------------------------------------
 # Screen-wiring unit tests (direct-method style, mirrors
 # test_library_prompts_canvas.py)
 # ---------------------------------------------------------------------------
@@ -264,23 +459,57 @@ def test_handle_library_skills_filter_submitted_sets_filter():
     assert calls == [True]
 
 
-def test_handle_library_skill_row_records_selected_name():
-    """Recording-only for now (mirrors the prompts canvas's original,
-    pre-editor ``handle_library_prompt_row`` shape): the in-canvas skill
-    detail/trust editor lands in a later task, so this just stores the
-    selection for that task to pick up rather than navigating anywhere."""
-    calls = []
+@pytest.mark.asyncio
+async def test_handle_library_skill_row_opens_editor_and_records_selected_name():
+    """Task 4 supersedes the recording-only shape ``handle_library_skill_row``
+    had in Task 3: pressing a row now also switches into editor mode and
+    kicks the detail-fetch worker (the full real-service open flow is
+    covered end to end by ``Tests/Skills/test_skills_library_flow.py``;
+    this direct-method test pins the SYNCHRONOUS side of the handler --
+    state assignment + worker kickoff -- against a minimal fake ``self``)."""
+    worker_calls = []
+    reset_calls = []
+    refresh_calls = []
     fake = SimpleNamespace(
         _selected_skill_name="",
         _library_selected_row_id="",
-        refresh=lambda recompose=False: calls.append(recompose),
+        _library_skills_view="list",
+        _flush_library_skill_save=AsyncMock(return_value=True),
+        _reset_library_skill_editor_state=lambda: reset_calls.append(True),
+        # ``run_worker``'s first positional arg is evaluated eagerly (it's
+        # the coroutine-producing call itself), so this needs a real (but
+        # inert) callable rather than a bare attribute -- returning ``None``
+        # is fine since the fake ``run_worker`` below never awaits it.
+        _refresh_library_skill_detail=lambda name: None,
+        run_worker=lambda coro, **kwargs: worker_calls.append(kwargs),
+        refresh=lambda recompose=False: refresh_calls.append(recompose),
     )
     button = SimpleNamespace(skill_name="code-review")
     event = SimpleNamespace(stop=lambda: None, button=button)
-    LibraryScreen.handle_library_skill_row(fake, event)
+    await LibraryScreen.handle_library_skill_row(fake, event)
     assert fake._selected_skill_name == "code-review"
     assert fake._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
-    assert calls == [True]
+    assert fake._library_skills_view == "editor"
+    assert reset_calls == [True]
+    assert worker_calls and worker_calls[0]["group"] == "library_skill_detail"
+    assert refresh_calls == [True]
+
+
+@pytest.mark.asyncio
+async def test_handle_library_skill_row_vetoed_while_dirty():
+    """Mirrors ``handle_library_prompt_row``'s dirty veto: switching rows
+    while the currently-open skill is dirty must NOT reset state or open a
+    new fetch."""
+    fake = SimpleNamespace(
+        _selected_skill_name="already-open",
+        _library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS,
+        _library_skills_view="editor",
+        _flush_library_skill_save=AsyncMock(return_value=False),
+    )
+    button = SimpleNamespace(skill_name="code-review")
+    event = SimpleNamespace(stop=lambda: None, button=button)
+    await LibraryScreen.handle_library_skill_row(fake, event)
+    assert fake._selected_skill_name == "already-open"
 
 
 # ---------------------------------------------------------------------------
@@ -478,3 +707,36 @@ def test_library_skills_header_filter_empty_have_css_blocks():
         prompts_empty_block = _css_block(text, "#library-prompts-empty {")
         assert "color: $ds-text-muted;" in empty_block
         assert "color: $ds-text-muted;" in prompts_empty_block
+
+
+def test_library_skill_name_input_css_blocks_match_prompt_name_parity():
+    """``#library-skill-name`` (the editor's Name Input, Task 4) must have a
+    stylesheet block matching its ``#library-prompt-name`` sibling's field
+    look (same tall-border/focus-accent Input styling), dual-pinned against
+    both the source module AND the regenerated bundle -- mirrors
+    ``test_library_skills_header_filter_empty_have_css_blocks`` above."""
+    agentic_terminal = AGENTIC_TERMINAL.read_text(encoding="utf-8")
+    bundled_stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+
+    for text in (agentic_terminal, bundled_stylesheet):
+        assert "#library-skill-name," in text or "#library-skill-name {" in text
+        skill_name_block = _css_block(text, "#library-skill-name")
+        prompt_name_block = _css_block(text, "#library-prompt-name")
+        for pinned in (
+            "height: 3;",
+            "border: tall $ds-grid-line;",
+            "background: $ds-surface-raised;",
+            "color: $ds-text-primary;",
+        ):
+            assert pinned in skill_name_block
+            assert pinned in prompt_name_block
+
+        assert "#library-skill-warnings {" in text
+        warnings_block = _css_block(text, "#library-skill-warnings {")
+        assert "color: $ds-status-warning;" in warnings_block
+
+        assert "#library-skill-trust-state.library-skill-trust-state-blocked {" in text
+        blocked_state_block = _css_block(
+            text, "#library-skill-trust-state.library-skill-trust-state-blocked {"
+        )
+        assert "color: $ds-text-muted;" in blocked_state_block

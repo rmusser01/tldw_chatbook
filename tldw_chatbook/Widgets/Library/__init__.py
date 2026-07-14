@@ -21,7 +21,19 @@ from .library_search_rag_panel import (
     library_rag_scope_shows_recovery,
     library_rag_scope_toggle_children,
 )
-from .library_skills_canvas import LibrarySkillsListCanvas
+from .library_skills_canvas import (
+    LibrarySkillsListCanvas,
+    MODEL_HINT_COPY as SKILL_MODEL_HINT_COPY,
+    next_skill_context,
+    skill_context_toggle_label,
+    skill_disable_model_label,
+    skill_editor_warning_lines,
+    skill_supporting_files_text,
+    skill_trust_review_enabled,
+    skill_trust_state_line,
+    skill_trust_unlock_enabled,
+    skill_user_invocable_label,
+)
 
 __all__ = [
     "LIBRARY_RAIL_ROW_PREFIX",
@@ -37,6 +49,16 @@ __all__ = [
     "LibrarySearchRagInspectorPanel",
     "LibrarySearchRagPanel",
     "LibrarySkillsListCanvas",
+    "SKILL_MODEL_HINT_COPY",
+    "next_skill_context",
+    "skill_context_toggle_label",
+    "skill_disable_model_label",
+    "skill_editor_warning_lines",
+    "skill_supporting_files_text",
+    "skill_trust_review_enabled",
+    "skill_trust_state_line",
+    "skill_trust_unlock_enabled",
+    "skill_user_invocable_label",
     "library_dim_label_text",
     "library_rag_history_children",
     "library_rag_query_shows_full_recovery",
