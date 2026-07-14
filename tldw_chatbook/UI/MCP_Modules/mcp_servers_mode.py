@@ -20,6 +20,9 @@ from tldw_chatbook.MCP.readiness import (
 from tldw_chatbook.MCP.redaction import redact_args, redact_url
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
 from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel, MCPProfileForm
+from tldw_chatbook.UI.MCP_Modules.mcp_server_mutations import MCPServerMutationsPanel
+
+_MUTATIONS_GATED_TOOLTIP = "Requires team, org, or system-admin scope."
 
 _TABLE_COLUMNS = ("Name", "Transport", "Status", "Tools", "Auth", "Scope")
 
@@ -91,6 +94,13 @@ class MCPServersMode(Vertical):
         # disarms rather than leaving a stale "Confirm delete" button armed
         # for whatever server happens to be selected next.
         self._delete_armed: bool = False
+        # T9: mirrors the workbench's own `_source`/`_server_mutations_available`
+        # -- kept here purely for rendering the Add-server button's
+        # disabled/tooltip state (`_update_add_server_button()`), set by
+        # `update_overview()` (full resync) and `set_mutations_available()`
+        # (cheap scope-only update, no resync).
+        self._source: str = "local"
+        self._mutations_available: bool = False
 
     def compose(self) -> ComposeResult:
         with Vertical(id="mcp-servers-overview"):
@@ -133,10 +143,34 @@ class MCPServersMode(Vertical):
         table.add_columns(*_TABLE_COLUMNS)
         self.query_one("#mcp-servers-form").display = False
         self._show_overview_container(True)
+        self._update_add_server_button()
 
     def _show_overview_container(self, show_overview: bool) -> None:
         self.query_one("#mcp-servers-overview").display = show_overview
         self.query_one("#mcp-servers-detail").display = not show_overview
+
+    def set_mutations_available(self, mutations_available: bool) -> None:
+        """Cheap, no-resync update of the Add-server gating (T9).
+
+        Called by the workbench's scope-change handler, which deliberately
+        avoids a full `_sync_children()` resync (see that handler's comment)
+        -- this only touches the Add-server button, not the table/detail/rail.
+        """
+        self._mutations_available = mutations_available
+        self._update_add_server_button()
+
+    def _update_add_server_button(self) -> None:
+        button = self.query_one("#mcp-add-server", Button)
+        if self._source == "server":
+            button.disabled = not self._mutations_available
+            button.tooltip = (
+                "Create a new external server on the active connection."
+                if self._mutations_available
+                else _MUTATIONS_GATED_TOOLTIP
+            )
+        else:
+            button.disabled = False
+            button.tooltip = "Create a new local stdio server profile."
 
     async def show_form(self, profile: dict[str, Any] | None) -> None:
         """Show the add/edit form, hiding overview and detail while it is up."""
@@ -145,6 +179,25 @@ class MCPServersMode(Vertical):
         form_container = self.query_one("#mcp-servers-form", Vertical)
         await form_container.remove_children()
         await form_container.mount(MCPProfileForm(profile=profile))
+        form_container.display = True
+
+    async def show_server_mutations(
+        self, record: dict[str, Any] | None, slots: list[dict[str, Any]]
+    ) -> None:
+        """Show the external-server add/edit + credential-slot panel (T9).
+
+        Hosted in the same `#mcp-servers-form` container as `show_form()`'s
+        local-profile form -- Servers mode only ever has one of
+        overview/detail/form visible at a time, so `hide_form()` also closes
+        this. `record=None` is add mode; a populated record is edit mode
+        with `slots` (already fetched by the workbench via
+        `external_server.slots.list`) rendered as manageable rows.
+        """
+        self.query_one("#mcp-servers-overview").display = False
+        self.query_one("#mcp-servers-detail").display = False
+        form_container = self.query_one("#mcp-servers-form", Vertical)
+        await form_container.remove_children()
+        await form_container.mount(MCPServerMutationsPanel(record=record, slots=slots))
         form_container.display = True
 
     async def hide_form(self) -> None:
@@ -168,7 +221,13 @@ class MCPServersMode(Vertical):
         await form_container.mount(MCPImportPanel(existing_ids=existing_ids))
         form_container.display = True
 
-    async def update_overview(self, snapshots: list[ReadinessSnapshot]) -> None:
+    async def update_overview(
+        self,
+        snapshots: list[ReadinessSnapshot],
+        *,
+        source: str = "local",
+        mutations_available: bool = False,
+    ) -> None:
         """Rebuild the overview table, summary, and recovery callouts.
 
         The callouts container is refreshed the same awaited way
@@ -184,7 +243,15 @@ class MCPServersMode(Vertical):
         Args:
             snapshots: Readiness snapshots for every server currently
                 visible under the active source (local or server).
+            source: The active source ("local" or "server") -- drives the
+                Add-server button's label/gating (T9).
+            mutations_available: Whether `external_server.*` mutation
+                actions are currently usable (server source only; see
+                `MCPWorkbench._compute_server_mutations_available()`).
         """
+        self._source = source
+        self._mutations_available = mutations_available
+        self._update_add_server_button()
         self._snapshots = list(snapshots)
         summary = self.query_one("#mcp-overview-summary", Static)
         summary.update(aggregate_summary(self._snapshots))
@@ -242,7 +309,9 @@ class MCPServersMode(Vertical):
         if self._detail_snapshot is None:
             self._show_overview_container(True)
 
-    async def show_detail(self, snapshot: ReadinessSnapshot | None) -> None:
+    async def show_detail(
+        self, snapshot: ReadinessSnapshot | None, *, mutations_available: bool = False
+    ) -> None:
         self._detail_snapshot = snapshot
         # Any new snapshot -- including re-showing the same server after a
         # lifecycle resync -- disarms a pending delete confirmation rather
@@ -256,7 +325,9 @@ class MCPServersMode(Vertical):
         self.query_one("#mcp-detail-title", Static).update(
             f"{snapshot.badge_text()}  {snapshot.label}"
         )
-        self.query_one("#mcp-detail-body", Static).update(self._detail_text(snapshot))
+        self.query_one("#mcp-detail-body", Static).update(
+            self._detail_text(snapshot, mutations_available=mutations_available)
+        )
         self.query_one("#mcp-detail-copy-snippet", Button).display = (
             snapshot.source == "builtin"
         )
@@ -355,10 +426,24 @@ class MCPServersMode(Vertical):
         if widgets:
             await toolbar.mount_all(widgets)
 
-    def _detail_text(self, snapshot: ReadinessSnapshot) -> str:
+    def _detail_text(self, snapshot: ReadinessSnapshot, *, mutations_available: bool = False) -> str:
         detail = snapshot.detail or {}
         lines: list[str] = [snapshot.message, ""]
-        if snapshot.source == "local":
+        if snapshot.source == "server" and isinstance(detail.get("raw"), dict):
+            # T9: an external-server record (server_external_record_readiness
+            # sets detail["raw"] to the raw record; a plain server-target
+            # snapshot never does). Reached here only when mutations are
+            # gated off -- the workbench routes an available edit straight to
+            # `show_server_mutations()` instead (see
+            # `MCPWorkbench._show_selected_detail()`).
+            raw = detail["raw"]
+            lines.append(f"Transport · {snapshot.transport}")
+            lines.append(f"Enabled · {'yes' if raw.get('enabled', True) else 'no'}")
+            lines.append(f"Credentials · {snapshot.auth_display}")
+            if not mutations_available:
+                lines.append("")
+                lines.append(_MUTATIONS_GATED_TOOLTIP)
+        elif snapshot.source == "local":
             args = redact_args([str(a) for a in detail.get("args") or []])
             lines.append(f"Command · {detail.get('command') or '—'} {' '.join(args)}".rstrip())
             placeholders = detail.get("env_placeholders") or {}

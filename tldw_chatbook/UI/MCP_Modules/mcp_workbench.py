@@ -23,12 +23,14 @@ from tldw_chatbook.MCP.readiness import (
     as_checking,
     builtin_readiness,
     local_profile_readiness,
+    server_external_record_readiness,
     server_target_readiness,
 )
 from tldw_chatbook.MCP.redaction import redact_args, redact_mapping
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
 from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel, MCPProfileForm
 from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCPRail
+from tldw_chatbook.UI.MCP_Modules.mcp_server_mutations import MCPServerMutationsPanel
 from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
 
 # Sentinel distinguishing "key absent from a restore blob" from "key present
@@ -98,6 +100,19 @@ _LIFECYCLE_PAST_TENSE: dict[str, str] = {
     "test": "checked",
     "refresh": "refreshed",
     "disconnect": "disconnected",
+}
+
+# T9: success-notify copy per server-mutation action name. A generic
+# "<last segment> saved." fallback would read as "Create saved."/"Delete
+# saved." for the slot actions -- ambiguous about *what* was created or
+# deleted -- so every wired action gets its own sentence instead.
+_SERVER_MUTATION_MESSAGES: dict[str, str] = {
+    "external_server.create": "External server created.",
+    "external_server.update": "External server updated.",
+    "external_server.slot.create": "Credential slot added.",
+    "external_server.slot.secret.set": "Secret set.",
+    "external_server.slot.secret.clear": "Secret cleared.",
+    "external_server.slot.delete": "Credential slot deleted.",
 }
 
 
@@ -283,6 +298,23 @@ class MCPWorkbench(Container):
         # double-click on "Confirm delete" before the button unmounts)
         # cannot cancel the in-flight delete mid-write.
         self._profile_delete_in_flight: bool = False
+        # T9: True while an external-server-record mutation worker
+        # (external_server.create/update or a credential-slot action) is in
+        # flight. Same synchronous-registration guard as the local-profile
+        # flags above: set before dispatch, cleared in the worker's
+        # `finally`.
+        self._server_mutation_in_flight: bool = False
+        # T9: whether the active server target's scope permits
+        # `external_server.*` mutations (team/org/system-admin only --
+        # `service.available_actions()` returns `[]` for "personal"). Reset
+        # to False for local source and recomputed for server source in
+        # `_collect_snapshots()` (whenever a target's external-servers
+        # section is loaded, which pins the service context's
+        # `selected_section` to "external_servers" -- see that method's
+        # docstring for why this is read directly off `available_actions()`
+        # instead of a synthetic select-then-restore round trip) and again,
+        # cheaply, on scope changes (`on_mcp_rail_scope_changed`).
+        self._server_mutations_available: bool = False
         # T5: in-flight local-profile lifecycle operations, keyed by
         # server_key ("local:<profile_id>"). While a key is present here,
         # `_snapshot_for_display()`/`_sync_children()` render that server as
@@ -419,10 +451,68 @@ class MCPWorkbench(Container):
         # once and always after this reload's own `_sync_children()`.
         await self._consume_pending_view_state()
 
+    def _selected_target_id(self) -> str | None:
+        """The server-target id implied by `_selected_server_key`.
+
+        Handles both a target row directly selected ("server:main") and an
+        external-record row beneath it ("server:main/docs") -- both drill
+        into the same target's external-servers listing.
+        """
+        key = self._selected_server_key
+        if not key or not key.startswith("server:"):
+            return None
+        remainder = key.split(":", 1)[1]
+        return remainder.split("/", 1)[0] if remainder else None
+
+    @staticmethod
+    def _is_external_record_key(server_key: str | None) -> bool:
+        if not server_key or not server_key.startswith("server:"):
+            return False
+        remainder = server_key.split(":", 1)[1]
+        return "/" in remainder
+
+    def _compute_server_mutations_available(self, service: Any) -> bool:
+        """Whether `external_server.*` mutation actions are usable right now.
+
+        `available_actions()` only returns the `external_server.*` set when
+        the service context's `selected_section` is "external_servers"
+        (mirrors the legacy Advanced panel/inspector -- see
+        mcp_inspector.py's `_load_advanced_section` C2 comment). Rather than
+        issuing a synthetic `select_section("external_servers")` +
+        `available_actions()` + restore-previous-section round trip purely
+        to answer this question, this piggybacks on the read that
+        `_collect_snapshots()` already performs for real, functional reasons
+        whenever a server target is selected: loading that target's
+        external-servers section (to render its record rows) pins
+        `selected_section` to "external_servers" as a side effect of real
+        navigation, so `available_actions()` called right after is accurate
+        with no extra round trip and no context left mutated beyond what the
+        UI was already doing. When no target is selected, `selected_section`
+        may not be "external_servers" (stale from prior Advanced-pane
+        navigation, or simply unset) -- this then reads as unavailable,
+        which happens to also be the honest answer: without an active
+        target, `external_server.create` has nowhere to attach anyway.
+        """
+        if service is None:
+            return False
+        loader = getattr(service, "available_actions", None)
+        if not callable(loader):
+            return False
+        try:
+            actions = loader() or []
+        except Exception as exc:
+            logger.warning(f"MCP available_actions check failed: {exc}")
+            return False
+        return any(
+            isinstance(a, Mapping) and a.get("name") == "external_server.create"
+            for a in actions
+        )
+
     async def _collect_snapshots(self) -> list[ReadinessSnapshot]:
         snapshots: list[ReadinessSnapshot] = []
         service = self._service()
         if self._source == "local":
+            self._server_mutations_available = False
             snapshots.append(
                 builtin_readiness(
                     enabled=bool(get_cli_setting("mcp", "enabled", False)),
@@ -460,6 +550,25 @@ class MCPWorkbench(Container):
                 snapshots.extend(
                     server_target_readiness(t) for t in target_store.list_targets()
                 )
+            # T9: with a target selected (either the target row itself or
+            # one of its external-record rows), also load and append that
+            # target's external-server records -- they appear in rail/table
+            # beneath the target, keyed "server:<target>/<ext>".
+            target_id = self._selected_target_id()
+            if service is not None and target_id is not None:
+                try:
+                    payload = await service.load_section("external_servers")
+                except Exception as exc:
+                    logger.warning(f"MCP external server listing failed: {exc}")
+                    payload = None
+                records = payload.get("external_servers") if isinstance(payload, Mapping) else None
+                if isinstance(records, list):
+                    snapshots.extend(
+                        server_external_record_readiness(r, server_id=target_id)
+                        for r in records
+                        if isinstance(r, Mapping)
+                    )
+            self._server_mutations_available = self._compute_server_mutations_available(service)
         return snapshots
 
     def _snapshot_for(self, server_key: str | None) -> ReadinessSnapshot | None:
@@ -520,10 +629,51 @@ class MCPWorkbench(Container):
                 scope_ref_value=self._scope_ref,
             )
             canvas = self.query_one(MCPServersMode)
-            await canvas.update_overview(display_snapshots)
+            await canvas.update_overview(
+                display_snapshots,
+                source=self._source,
+                mutations_available=self._server_mutations_available,
+            )
             selected = self._snapshot_for_display(self._selected_server_key)
-            await canvas.show_detail(selected)
+            await self._show_selected_detail(canvas, selected)
             await self.query_one(MCPInspector).update_readiness(selected)
+
+    async def _show_selected_detail(
+        self, canvas: MCPServersMode, selected: ReadinessSnapshot | None
+    ) -> None:
+        """Route the selected snapshot to the read-only detail pane or,
+        for an external-server record when mutations are available, to the
+        `MCPServerMutationsPanel` edit-mode host (T9).
+
+        Credential slots are fetched fresh on every selection (not cached)
+        -- they can change from other clients/sessions, and this only runs
+        on an actual selection change, not on every keystroke.
+        """
+        if (
+            selected is not None
+            and self._is_external_record_key(selected.server_key)
+            and self._server_mutations_available
+        ):
+            record = dict((selected.detail or {}).get("raw") or {})
+            record.setdefault("server_id", selected.server_key.rsplit("/", 1)[-1])
+            slots = await self._fetch_credential_slots(record.get("server_id"))
+            await canvas.show_server_mutations(record, slots)
+            return
+        await canvas.show_detail(selected, mutations_available=self._server_mutations_available)
+
+    async def _fetch_credential_slots(self, server_id: Any) -> list[dict[str, Any]]:
+        service = self._service()
+        if service is None or not server_id:
+            return []
+        try:
+            result = await service.run_action(
+                "external_server.slots.list", {"server_id": server_id}
+            )
+        except Exception as exc:
+            logger.warning(f"MCP credential slot listing failed: {exc}")
+            return []
+        slots = result.get("credential_slots") if isinstance(result, Mapping) else None
+        return [dict(s) for s in slots if isinstance(s, Mapping)] if isinstance(slots, list) else []
 
     # -- modes & view state ---------------------------------------------------
 
@@ -639,21 +789,37 @@ class MCPWorkbench(Container):
         event.stop()
         await self._switch_source(event.source)
 
-    async def on_mcp_rail_server_selected(self, event: MCPRail.ServerSelected) -> None:
-        event.stop()
-        self._selected_server_key = event.server_key
+    async def _select_server_key(self, server_key: str | None) -> None:
+        """Shared selection path for both the rail and the overview table.
+
+        T9: previously only the rail's handler informed the service which
+        target is active (`select_server_target`) and re-collected
+        snapshots; the table's row-click handler just resynced from the
+        existing `_snapshots`. That gap didn't matter in Phase 1 (nothing
+        was target-scoped), but now that `_collect_snapshots()` loads a
+        selected target's external-server records off the service's *active*
+        target, a table-driven selection had no way to make it active --
+        both entry points now share this one path.
+        """
+        self._selected_server_key = server_key
         service = self._service()
         if (
             service is not None
-            and event.server_key is not None
-            and event.server_key.startswith("server:")
-            and "/" not in event.server_key
+            and server_key is not None
+            and server_key.startswith("server:")
+            and "/" not in server_key
         ):
             try:
-                await service.select_server_target(event.server_key.split(":", 1)[1])
+                await service.select_server_target(server_key.split(":", 1)[1])
             except Exception as exc:
                 logger.warning(f"MCP server target selection failed: {exc}")
+        if self._source == "server":
+            self._snapshots = await self._collect_snapshots()
         await self._sync_children()
+
+    async def on_mcp_rail_server_selected(self, event: MCPRail.ServerSelected) -> None:
+        event.stop()
+        await self._select_server_key(event.server_key)
 
     async def on_mcp_rail_scope_changed(self, event: MCPRail.ScopeChanged) -> None:
         event.stop()
@@ -677,13 +843,21 @@ class MCPWorkbench(Container):
         # explicit sync_state() call), and resyncing would recompose the
         # rail -> remount its Selects -> another mount-echo -> another
         # ScopeChanged, which is exactly the storm this handler used to feed.
+        #
+        # T9: mutation availability IS scope-dependent though -- recompute it
+        # cheaply (no snapshot/rail/detail resync, just the Add-server
+        # button's gating) so a scope change alone doesn't leave it stale.
+        if self._source == "server":
+            self._server_mutations_available = self._compute_server_mutations_available(service)
+            self.query_one(MCPServersMode).set_mutations_available(
+                self._server_mutations_available
+            )
 
     async def on_mcp_servers_mode_server_row_selected(
         self, event: MCPServersMode.ServerRowSelected
     ) -> None:
         event.stop()
-        self._selected_server_key = event.server_key
-        await self._sync_children()
+        await self._select_server_key(event.server_key)
 
     async def on_mcp_inspector_hub_action_requested(
         self, event: MCPInspector.HubActionRequested
@@ -719,7 +893,16 @@ class MCPWorkbench(Container):
         self, event: MCPServersMode.AddServerRequested
     ) -> None:
         event.stop()
-        await self.query_one(MCPServersMode).show_form(None)
+        canvas = self.query_one(MCPServersMode)
+        if self._source == "server":
+            # The button is disabled (see `set_mutations_available()`) when
+            # this is False -- a real Button.Pressed can't reach here then,
+            # but a defensive check costs nothing.
+            if not self._server_mutations_available:
+                return
+            await canvas.show_server_mutations(None, [])
+        else:
+            await canvas.show_form(None)
 
     async def on_mcp_servers_mode_import_servers_requested(
         self, event: MCPServersMode.ImportServersRequested
@@ -857,6 +1040,76 @@ class MCPWorkbench(Container):
             self._profile_save_in_flight = False
 
     async def on_mcp_profile_form_cancelled(self, event: MCPProfileForm.Cancelled) -> None:
+        event.stop()
+        await self.query_one(MCPServersMode).hide_form()
+
+    # -- T9: server-source external-server + credential-slot mutations --------
+
+    def _mutations_panel_or_none(self) -> MCPServerMutationsPanel | None:
+        try:
+            return self.query_one(MCPServerMutationsPanel)
+        except Exception:
+            return None
+
+    def on_mcp_server_mutations_submit_requested(
+        self, event: MCPServerMutationsPanel.SubmitRequested
+    ) -> None:
+        """Dispatch one `run_action(action, payload)` call in the background.
+
+        Synchronous (not `async def`), mirroring
+        `on_mcp_profile_form_submit_requested()`: `_server_mutation_in_flight`
+        is set here, before dispatch, so a second Save/Add-slot/Set-secret
+        press arriving in the same pump window is reliably swallowed with a
+        warning toast instead of racing the in-flight call.
+        """
+        event.stop()
+        if self._server_mutation_in_flight:
+            self.app.notify("Save already running.", severity="warning")
+            return
+        self._server_mutation_in_flight = True
+        self.run_worker(
+            self._run_server_mutation(event.action, dict(event.payload)),
+            group="mcp-server-mutation",
+            exclusive=True,
+        )
+
+    async def _run_server_mutation(self, action: str, payload: dict[str, Any]) -> None:
+        try:
+            service = self._service()
+            if service is None:
+                return
+            try:
+                await service.run_action(action, payload)
+            except Exception as exc:
+                logger.warning(f"MCP server mutation failed ({action}): {exc}")
+                panel = self._mutations_panel_or_none()
+                if panel is not None:
+                    panel.show_error(str(exc))
+                else:
+                    self.app.notify(f"{action} failed: {exc}", severity="error")
+                return
+            self.app.notify(
+                _SERVER_MUTATION_MESSAGES.get(
+                    action, f"{action.rsplit('.', 1)[-1].replace('_', ' ').title()} saved."
+                )
+            )
+            if action == "external_server.create":
+                # Drill straight into the record just created -- credential
+                # setup is the natural next step, and `_sync_children()`
+                # below will fetch its slots and show the mutation panel in
+                # edit mode (T9's `_show_selected_detail()`).
+                target_id = self._selected_target_id()
+                server_id = payload.get("server_id")
+                if target_id and server_id:
+                    self._selected_server_key = f"server:{target_id}/{server_id}"
+            self._snapshots = await self._collect_snapshots()
+            await self._sync_children()
+        finally:
+            self._server_mutation_in_flight = False
+
+    async def on_mcp_server_mutations_cancelled(
+        self, event: MCPServerMutationsPanel.Cancelled
+    ) -> None:
         event.stop()
         await self.query_one(MCPServersMode).hide_form()
 

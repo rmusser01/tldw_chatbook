@@ -113,6 +113,26 @@ async def test_workbench_mounts_rail_canvas_inspector_and_loads_local_servers():
 
 
 @pytest.mark.asyncio
+async def test_server_source_add_button_gated_when_mutations_unavailable():
+    """T9: `service.available_actions()` not offering `external_server.create`
+    (e.g. scope below team/org/system-admin) must disable the overview
+    Add-server button in server source, with an explanatory tooltip.
+    `FakeHubService.available_actions()` always returns `[]`, so switching
+    to server source alone is enough to exercise the gated-off path.
+    """
+    app = WorkbenchApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        rail = app.query_one(MCPRail)
+        rail.post_message(MCPRail.SourceChanged("server"))
+        await pilot.pause()
+        canvas = app.query_one(MCPServersMode)
+        button = canvas.query_one("#mcp-add-server", Button)
+        assert button.disabled is True
+        assert button.tooltip == "Requires team, org, or system-admin scope."
+
+
+@pytest.mark.asyncio
 async def test_mode_switch_shows_placeholder_canvases():
     app = WorkbenchApp()
     async with app.run_test() as pilot:
