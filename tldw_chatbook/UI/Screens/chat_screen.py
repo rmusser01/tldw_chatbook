@@ -2489,6 +2489,37 @@ class ChatScreen(BaseAppScreen):
             )
         return messages
 
+    def _inject_resume_agent_markers(
+        self,
+        messages: list[ConsoleChatMessage],
+        conversation_id: str,
+    ) -> list[ConsoleChatMessage]:
+        """Re-derive and interleave TOOL markers from ``AgentRunsDB`` on resume.
+
+        Plan-B final-review Medium-1: the rail already re-derives from
+        ``AgentRunsDB`` on resume (``_console_agent_section_lines`` ->
+        ``bridge.historical_snapshot``, and the ``[N Sub-Agents]`` badge);
+        the inline transcript TOOL markers did not, since
+        ``_console_messages_from_conversation_tree`` only ever reads
+        persisted ChaChaNotes rows, where markers never land
+        (``ConsoleAgentBridge._append_marker`` uses ``persist=False`` so
+        agent activity survives a restart without being written into the
+        conversation itself). See ``inject_resume_agent_markers`` for the
+        placement/idempotency contract, and ``resume_marker_messages`` for
+        how each run's marker block is derived.
+
+        Returns ``messages`` unchanged when there is no durable agent
+        bridge available (e.g. an in-memory test harness, matching
+        ``_ensure_console_agent_bridge``'s own fallback).
+        """
+        bridge = self._ensure_console_agent_bridge()
+        if bridge is None:
+            return messages
+        from tldw_chatbook.Chat.console_agent_bridge import inject_resume_agent_markers
+
+        return inject_resume_agent_markers(
+            messages, bridge.resume_marker_messages(conversation_id))
+
     def _console_session_settings_for_resume(
         self,
         conversation: Mapping[str, Any],
@@ -2587,6 +2618,7 @@ class ChatScreen(BaseAppScreen):
         if not title:
             title = "Saved conversation"
         messages = self._console_messages_from_conversation_tree(tree)
+        messages = self._inject_resume_agent_markers(messages, target)
         session = store.restore_persisted_session(
             title=title,
             workspace_id=workspace_id,

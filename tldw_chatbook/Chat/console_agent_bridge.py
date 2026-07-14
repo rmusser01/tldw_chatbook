@@ -22,7 +22,7 @@ from tldw_chatbook.Agents.agent_models import (
 from tldw_chatbook.Agents.agent_service import SUBAGENT_SYSTEM_PROMPT, AgentService
 from tldw_chatbook.Agents.agent_stream import StreamGate
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 CONSOLE_AGENT_OPERATING_PROMPT = (
@@ -41,6 +41,106 @@ def compose_agent_system_prompt(session_prompt: str) -> str:
     if not base:
         return CONSOLE_AGENT_OPERATING_PROMPT
     return f"{session_prompt}\n\n{CONSOLE_AGENT_OPERATING_PROMPT}"
+
+
+def format_agent_step_marker(
+    kind: str,
+    *,
+    tool_name: str | None = None,
+    result: Any = None,
+    summary: str | None = None,
+) -> str | None:
+    """Return the transcript TOOL marker text for one primary-agent step.
+
+    Shared by the live bridge (``ConsoleAgentBridge.run_reply``'s ``on_step``
+    hook, called per in-flight ``AgentStep``) and resume re-derivation
+    (``ConsoleAgentBridge.resume_marker_messages``, called per persisted
+    ``AgentRunsDB`` step dict), so a resumed transcript's markers render
+    byte-identical to what the live run produced (Plan-B final-review
+    Medium-1). Returns ``None`` for step kinds that never produce a
+    transcript marker: ``STEP_MODEL`` and the quiet tool-catalog steps
+    (``find_tools``/``load_tools``, see ``_QUIET_STEP_TOOLS``).
+
+    Kept raw (no escaping): both consumers render markup-off --
+    ``console_transcript.py``'s ``_message_render_text`` builds a
+    ``Content`` via ``Content.assemble`` (never markup-parsed) and
+    ``chat_screen.py``'s legacy fallback wraps the string in a bare
+    ``rich.text.Text(...)`` (also never markup-parsed). Escaping here for a
+    parser that never runs would leave literal backslashes in the rendered
+    marker (``fetch [docs]`` -> ``fetch \\[docs]``).
+    """
+    if kind == STEP_SPAWN:
+        return f"⤷ spawned sub-agent: {summary}"
+    if kind == STEP_TOOL_RESULT and tool_name not in _QUIET_STEP_TOOLS:
+        return f"⚙ {tool_name} → {result}"
+    if kind == STEP_ERROR:
+        return f"⚠ {summary}"
+    return None
+
+
+def inject_resume_agent_markers(
+    messages: list[ConsoleChatMessage],
+    marker_blocks: list[list[ConsoleChatMessage]],
+) -> list[ConsoleChatMessage]:
+    """Interleave AgentRunsDB-derived TOOL marker blocks into a resumed transcript.
+
+    Placement (Plan-B final-review Medium-1): each run's marker block is
+    matched ordinally to the Nth ASSISTANT message in ``messages`` --
+    oldest run <-> oldest assistant reply -- so in the common case (every
+    assistant reply in the conversation came from the agent path) each
+    run's markers land directly after the answer they belong to, exactly
+    mirroring where they rendered live. This is the "simplest correct"
+    placement given persisted messages carry no per-step timestamp to
+    interleave by more precisely. A run left over with no corresponding
+    assistant message -- only possible when ``agent_runtime`` was toggled
+    off mid-conversation after some replies already used the agent path --
+    has its block appended at the end of the transcript instead of being
+    silently dropped.
+
+    Idempotent: a block whose marker texts are already present as TOOL
+    messages anywhere in ``messages`` is skipped, so calling this twice (or
+    resuming into a transcript that already carries live markers) never
+    duplicates a block.
+
+    Args:
+        messages: The rebuilt transcript (ChaChaNotes-derived; never
+            contains TOOL rows on its own, since markers are appended
+            live with ``persist=False``).
+        marker_blocks: Per-run marker-message blocks, oldest run first
+            (see ``ConsoleAgentBridge.resume_marker_messages``).
+
+    Returns:
+        A new list with marker blocks interleaved; ``messages`` itself is
+        not mutated.
+    """
+    non_empty_blocks = [block for block in marker_blocks if block]
+    if not non_empty_blocks:
+        return list(messages)
+
+    existing_tool_contents = {
+        message.content for message in messages
+        if message.role is ConsoleMessageRole.TOOL
+    }
+    assistant_indexes = [
+        index for index, message in enumerate(messages)
+        if message.role is ConsoleMessageRole.ASSISTANT
+    ]
+    matched = dict(zip(assistant_indexes, non_empty_blocks))
+    leftover_blocks = non_empty_blocks[len(assistant_indexes):]
+
+    def _already_present(block: list[ConsoleChatMessage]) -> bool:
+        return all(marker.content in existing_tool_contents for marker in block)
+
+    result: list[ConsoleChatMessage] = []
+    for index, message in enumerate(messages):
+        result.append(message)
+        block = matched.get(index)
+        if block is not None and not _already_present(block):
+            result.extend(block)
+    for block in leftover_blocks:
+        if not _already_present(block):
+            result.extend(block)
+    return result
 
 
 @dataclass(frozen=True)
@@ -198,28 +298,17 @@ class ConsoleAgentBridge:
             live_steps.append(AgentLiveStep(step.kind, self._summarize(step), agent_kind))
             if agent_kind == AGENT_KIND_PRIMARY:
                 if step.kind == STEP_SPAWN:
-                    # Finding B: this text is only ever rendered into the
-                    # rail's markup=False Statics (_console_agent_section_lines
-                    # in chat_screen.py) -- never into a markup-enabled
-                    # widget -- so it must stay raw. Escaping here produced
-                    # literal backslashes once rendered (`fetch [docs]` ->
-                    # `fetch \[docs]`), since markup=False never interprets
-                    # (and so never "consumes") the escape sequence. The same
-                    # is true of the transcript TOOL marker path below
-                    # (_append_marker): both of its consumers
-                    # (console_transcript.py's Content.assemble and
-                    # chat_screen.py's Text(...)) render the text as-is
-                    # rather than parsing it as markup, so _append_marker
-                    # must stay raw too.
                     subagents.append(SubAgentSummary(step.summary or ""))
-                    self._append_marker(
-                        session_id, f"⤷ spawned sub-agent: {step.summary}")
-                elif (step.kind == STEP_TOOL_RESULT
-                      and step.tool_name not in _QUIET_STEP_TOOLS):
-                    self._append_marker(
-                        session_id, f"⚙ {step.tool_name} → {step.result}")
-                elif step.kind == STEP_ERROR:
-                    self._append_marker(session_id, f"⚠ {step.summary}")
+                # format_agent_step_marker is the single source of truth for
+                # marker text -- shared with resume_marker_messages below --
+                # so live and resume-rebuilt transcripts render identically
+                # (Plan-B final-review Medium-1). See its docstring for why
+                # the text must stay raw/unescaped.
+                marker_text = format_agent_step_marker(
+                    step.kind, tool_name=step.tool_name, result=step.result,
+                    summary=step.summary)
+                if marker_text is not None:
+                    self._append_marker(session_id, marker_text)
             self._live[conversation_id] = AgentLiveSnapshot(
                 status="running", step=len(live_steps),
                 steps=tuple(live_steps[-5:]), subagents=tuple(subagents))
@@ -297,6 +386,51 @@ class ConsoleAgentBridge:
         ``AgentRunsDB.count_subagents_by_conversation`` for the query.
         """
         return self._db.count_subagents_by_conversation(conversation_ids)
+
+    def resume_marker_messages(self, conversation_id: str) -> list[list[ConsoleChatMessage]]:
+        """Re-derive transcript TOOL marker messages from ``AgentRunsDB`` for resume.
+
+        Plan-B final-review Medium-1: the rail (``historical_snapshot``) and
+        the ``[N Sub-Agents]`` badge already re-derive from ``AgentRunsDB``
+        on resume; the inline transcript TOOL markers did not -- they are
+        only ever appended live via ``_append_marker`` with
+        ``persist=False``, so a session rebuilt fresh from ChaChaNotes never
+        sees them.
+
+        Returns one marker-message block per non-superseded PRIMARY run for
+        the conversation, oldest run first (``list_runs`` itself returns
+        newest-first, so the order is reversed here). Each block holds that
+        run's own TOOL marker messages, in the run's recorded step order,
+        built with ``format_agent_step_marker`` -- the same formatter the
+        live bridge uses -- so a resumed transcript's markers are
+        byte-identical to what the live run produced. A run with no
+        marker-worthy steps (e.g. a plain answer, no tool/spawn/error step)
+        yields an empty block; callers should skip those rather than inject
+        nothing.
+
+        Placement of the returned blocks into a transcript is the caller's
+        job -- see ``inject_resume_agent_markers``.
+        """
+        records = [
+            record for record in self._db.list_runs(conversation_id, include_superseded=False)
+            if record["agent_kind"] == AGENT_KIND_PRIMARY
+        ]
+        records.reverse()  # list_runs is newest-first; markers must read chronologically
+        blocks: list[list[ConsoleChatMessage]] = []
+        for record in records:
+            block: list[ConsoleChatMessage] = []
+            for step in record.get("steps") or []:
+                text = format_agent_step_marker(
+                    str(step.get("kind") or ""),
+                    tool_name=step.get("tool_name"),
+                    result=step.get("result"),
+                    summary=step.get("summary"),
+                )
+                if text is not None:
+                    block.append(ConsoleChatMessage(
+                        role=ConsoleMessageRole.TOOL, content=text, status="complete"))
+            blocks.append(block)
+        return blocks
 
     # -- internals ------------------------------------------------------
 

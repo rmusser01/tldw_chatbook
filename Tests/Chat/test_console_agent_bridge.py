@@ -5,11 +5,13 @@ import pytest
 
 from tldw_chatbook.Chat.console_agent_bridge import (
     CONSOLE_AGENT_OPERATING_PROMPT, ConsoleAgentBridge, compose_agent_system_prompt,
+    format_agent_step_marker, inject_resume_agent_markers,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
+from tldw_chatbook.Agents.agent_models import STEP_ERROR, STEP_MODEL, STEP_SPAWN, STEP_TOOL_RESULT
 
 
 def _fence(name, args):
@@ -293,3 +295,198 @@ def test_historical_snapshot_caches_per_conversation_not_hit_every_call(tmp_path
     # A different conversation is a separate cache entry.
     bridge.historical_snapshot("conv-2")
     assert len(calls) == 2
+
+
+# -- Plan-B final-review Medium-1: inline transcript TOOL markers re-derive
+# from AgentRunsDB on resume, the same way the rail already does. --
+
+
+def test_format_agent_step_marker_matches_each_live_marker_shape():
+    assert format_agent_step_marker(
+        STEP_SPAWN, summary="research pricing") == "⤷ spawned sub-agent: research pricing"
+    assert format_agent_step_marker(
+        STEP_TOOL_RESULT, tool_name="calculator", result="42") == "⚙ calculator → 42"
+    assert format_agent_step_marker(STEP_ERROR, summary="boom") == "⚠ boom"
+    # Quiet tool-catalog steps and plain model steps never produce a marker.
+    assert format_agent_step_marker(STEP_TOOL_RESULT, tool_name="find_tools", result="[]") is None
+    assert format_agent_step_marker(STEP_TOOL_RESULT, tool_name="load_tools", result="[]") is None
+    assert format_agent_step_marker(STEP_MODEL, summary="The answer is 42.") is None
+
+
+def test_resume_marker_messages_reproduces_live_markers_after_simulated_restart(tmp_path):
+    scripts = [
+        [_fence("calculator", {"expression": "6*7"})],   # turn 1: leading fence
+        ["It is ", "42."],                                # turn 2: final answer
+    ]
+    bridge, db, store, session, aid = _bridge(tmp_path, scripts)
+    _run(bridge, store, session, aid)
+    live_tool_contents = [
+        m.content for m in store.messages_for_session(session.id)
+        if m.role is ConsoleMessageRole.TOOL
+    ]
+    assert live_tool_contents  # sanity: the live run actually left a marker
+
+    # A fresh bridge instance -- simulates an app restart -- must re-derive
+    # byte-identical marker text purely from AgentRunsDB.
+    fresh_bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+    blocks = fresh_bridge.resume_marker_messages("conv-1")
+    resumed_tool_contents = [m.content for block in blocks for m in block]
+    assert resumed_tool_contents == live_tool_contents
+
+
+def test_resume_marker_messages_orders_blocks_chronologically_oldest_first(tmp_path):
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    first = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    db.append_steps(first, [
+        {"index": 0, "kind": STEP_TOOL_RESULT, "tool_name": "calculator",
+         "result": "4", "summary": "", "args": None, "created_at": ""},
+    ])
+    db.set_status(first, "done", result="4")
+    second = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    db.append_steps(second, [
+        {"index": 0, "kind": STEP_ERROR, "summary": "timed out",
+         "tool_name": "", "result": "", "args": None, "created_at": ""},
+    ])
+    db.set_status(second, "done", result="ok")
+
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+    blocks = bridge.resume_marker_messages("conv-1")
+    assert len(blocks) == 2
+    assert "calculator" in blocks[0][0].content
+    assert "timed out" in blocks[1][0].content
+
+
+def test_resume_marker_messages_skips_superseded_runs(tmp_path):
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    superseded = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    db.append_steps(superseded, [
+        {"index": 0, "kind": STEP_ERROR, "summary": "old attempt",
+         "tool_name": "", "result": "", "args": None, "created_at": ""},
+    ])
+    db.set_status(superseded, "superseded")
+    kept = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    db.append_steps(kept, [
+        {"index": 0, "kind": STEP_ERROR, "summary": "final attempt",
+         "tool_name": "", "result": "", "args": None, "created_at": ""},
+    ])
+    db.set_status(kept, "done", result="ok")
+
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+    blocks = bridge.resume_marker_messages("conv-1")
+    assert len(blocks) == 1
+    assert "final attempt" in blocks[0][0].content
+
+
+def _tool_marker(text: str) -> ConsoleChatMessage:
+    return ConsoleChatMessage(role=ConsoleMessageRole.TOOL, content=text, status="complete")
+
+
+def test_inject_resume_agent_markers_places_block_after_matching_assistant_message():
+    messages = [
+        ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hi"),
+        ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="42.", status="complete"),
+        ConsoleChatMessage(role=ConsoleMessageRole.USER, content="again"),
+        ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="ok.", status="complete"),
+    ]
+    blocks = [[_tool_marker("⚙ calculator → 42")], [_tool_marker("⚠ retry")]]
+
+    result = inject_resume_agent_markers(messages, blocks)
+
+    roles = [(m.role, m.content) for m in result]
+    assert roles == [
+        (ConsoleMessageRole.USER, "hi"),
+        (ConsoleMessageRole.ASSISTANT, "42."),
+        (ConsoleMessageRole.TOOL, "⚙ calculator → 42"),
+        (ConsoleMessageRole.USER, "again"),
+        (ConsoleMessageRole.ASSISTANT, "ok."),
+        (ConsoleMessageRole.TOOL, "⚠ retry"),
+    ]
+
+
+def test_inject_resume_agent_markers_appends_leftover_block_when_more_runs_than_replies():
+    messages = [
+        ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hi"),
+        ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="42.", status="complete"),
+    ]
+    blocks = [[_tool_marker("⚙ calculator → 42")], [_tool_marker("⚠ orphan run")]]
+
+    result = inject_resume_agent_markers(messages, blocks)
+
+    assert [m.content for m in result] == ["hi", "42.", "⚙ calculator → 42", "⚠ orphan run"]
+
+
+def test_inject_resume_agent_markers_skips_empty_blocks():
+    messages = [
+        ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="ok.", status="complete"),
+    ]
+    result = inject_resume_agent_markers(messages, [[], []])
+    assert [m.content for m in result] == ["ok."]
+
+
+def test_inject_resume_agent_markers_is_idempotent_no_duplicates_on_second_call():
+    messages = [
+        ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hi"),
+        ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="42.", status="complete"),
+    ]
+    blocks = [[_tool_marker("⚙ calculator → 42")]]
+
+    once = inject_resume_agent_markers(messages, blocks)
+    twice = inject_resume_agent_markers(once, blocks)
+
+    tool_rows = [m.content for m in twice if m.role is ConsoleMessageRole.TOOL]
+    assert tool_rows == ["⚙ calculator → 42"]
+    assert len(once) == len(twice)
+
+
+def test_inject_resume_agent_markers_leaves_live_session_with_markers_untouched():
+    """A session that already carries live markers (this bridge ran the
+    turn in-process rather than resuming) must be left byte-for-byte
+    unchanged if this function is (defensively) called on it again."""
+    messages = [
+        ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hi"),
+        ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="42.", status="complete"),
+        _tool_marker("⚙ calculator → 42"),
+    ]
+    blocks = [[_tool_marker("⚙ calculator → 42")]]
+
+    result = inject_resume_agent_markers(messages, blocks)
+
+    assert result == messages
+
+
+def test_resume_injects_markers_matching_live_format_end_to_end(tmp_path):
+    """Fresh store + populated AgentRunsDB -> resuming reconstructs a
+    transcript whose TOOL markers match live-format byte-for-byte, placed
+    after the answer they belong to, and a second resume onto the
+    already-injected transcript adds nothing more."""
+    scripts = [
+        [_fence("calculator", {"expression": "6*7"})],
+        ["It is ", "42."],
+    ]
+    bridge, db, store, session, aid = _bridge(tmp_path, scripts)
+    _run(bridge, store, session, aid)
+    live_messages = store.messages_for_session(session.id)
+    live_tool_contents = [
+        m.content for m in live_messages if m.role is ConsoleMessageRole.TOOL
+    ]
+
+    # Simulate resume after a restart: the "ChaChaNotes-only" transcript
+    # never carries markers (they persist=False), then inject markers
+    # derived fresh from the DB via a brand-new bridge instance.
+    chachanotes_only = [
+        ConsoleChatMessage(role=m.role, content=m.content, status="complete")
+        for m in live_messages if m.role is not ConsoleMessageRole.TOOL
+    ]
+    fresh_bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+    resumed = inject_resume_agent_markers(
+        chachanotes_only, fresh_bridge.resume_marker_messages("conv-1"))
+
+    resumed_tool_contents = [m.content for m in resumed if m.role is ConsoleMessageRole.TOOL]
+    assert resumed_tool_contents == live_tool_contents
+    assistant_index = next(
+        i for i, m in enumerate(resumed) if m.role is ConsoleMessageRole.ASSISTANT)
+    assert resumed[assistant_index + 1].role is ConsoleMessageRole.TOOL
+
+    resumed_again = inject_resume_agent_markers(
+        resumed, fresh_bridge.resume_marker_messages("conv-1"))
+    assert len(resumed_again) == len(resumed)

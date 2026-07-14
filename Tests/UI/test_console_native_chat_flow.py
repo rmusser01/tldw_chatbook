@@ -22,6 +22,7 @@ from tldw_chatbook.Chat.chat_conversation_scope_service import ChatConversationS
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
+    ConsoleChatMessage,
     ConsoleMessageRole,
     ConsoleRunStatus,
 )
@@ -6431,6 +6432,44 @@ def test_resume_hydrates_image_messages_including_image_only_rows():
     assert messages[0].image_mime_type == "image/png"
     assert messages[0].content == ""
     assert messages[1].content == "a red square"
+
+
+def test_resume_wiring_injects_agent_markers_from_agent_runs_db(tmp_path):
+    """Plan-B final-review Medium-1: the ChatScreen-level wiring
+    (`_inject_resume_agent_markers`) must re-derive TOOL markers from the
+    real sibling `AgentRunsDB` the same way `_ensure_console_agent_bridge`
+    locates it (keyed off `chachanotes_db.db_path`), not just the pure
+    helper functions in isolation."""
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    screen = ChatScreen(_build_test_app())
+    screen.app_instance.chachanotes_db = SimpleNamespace(
+        db_path=str(tmp_path / "chacha.db")
+    )
+    runs_db = AgentRunsDB(tmp_path / "agent_runs.db", client_id="t")
+    primary_id = runs_db.create_run(conversation_id="conv-x", agent_kind="primary")
+    runs_db.append_steps(primary_id, [
+        {"index": 0, "kind": "tool_result", "tool_name": "calculator",
+         "result": "42", "summary": "", "args": None, "created_at": ""},
+    ])
+    runs_db.set_status(primary_id, "done", result="It is 42.")
+
+    messages = [
+        ConsoleChatMessage(role=ConsoleMessageRole.USER, content="what is 6*7"),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT, content="It is 42.", status="complete"),
+    ]
+
+    resumed = screen._inject_resume_agent_markers(messages, "conv-x")
+
+    tool_rows = [m for m in resumed if m.role is ConsoleMessageRole.TOOL]
+    assert len(tool_rows) == 1
+    assert tool_rows[0].content == "⚙ calculator → 42"
+    assert resumed[-1] is tool_rows[0]  # placed right after the assistant answer
+
+    # Idempotent: injecting again onto the already-injected list adds nothing.
+    resumed_again = screen._inject_resume_agent_markers(resumed, "conv-x")
+    assert len(resumed_again) == len(resumed)
 
 
 def test_console_message_serialization_carries_image_metadata_not_bytes():

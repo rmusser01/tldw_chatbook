@@ -160,8 +160,38 @@ All four scenarios below were driven against the real llama.cpp server with
 ### 4. Reload / resume
 - `resume-reopened-conversation-2026-07-13.png` — opening a previously-saved
   spawn conversation in a **fresh app session** (a real process restart, not
-  just a tab switch) correctly restores the full transcript, including both
-  TOOL markers, from the store.
+  just a tab switch) showed the full transcript, including both TOOL
+  markers, at capture time.
+- **Correction (found by the Plan-B final whole-branch review, fixed in the
+  same commit as this correction)**: the claim above — that the transcript's
+  TOOL markers were restored "from the store" — was **materially false** as
+  stated. At the time of this gate, `ChatScreen._console_messages_from_
+  conversation_tree` rebuilt a resumed session's messages solely from the
+  persisted ChaChaNotes tree, where TOOL markers never land (`ConsoleAgent
+  Bridge._append_marker` uses `persist=False` by design, per the spec).
+  There was no code path anywhere that read `AgentRunsDB.steps` back into
+  transcript rows; only the rail (`historical_snapshot`) and the
+  `[N Sub-Agents]` badge re-derived from `AgentRunsDB` on resume. The
+  markers visible in the screenshot above reflect whatever this specific
+  capture happened to carry over, not a real re-derivation — a genuinely
+  fresh resume (as every unit test at the time confirmed) dropped every
+  `⚙`/`⤷`/`⚠` marker from the transcript, even though the underlying tool
+  history remained reachable via the rail's drill-in.
+  - **Fixed as of this commit**: `ConsoleAgentBridge.resume_marker_messages`
+    re-derives one marker block per non-superseded PRIMARY run from
+    `AgentRunsDB.steps`, using the same `format_agent_step_marker` formatter
+    the live bridge uses (so resumed markers render byte-identical to live
+    ones). `inject_resume_agent_markers` (pure, idempotent) places each
+    run's block ordinally after the Nth ASSISTANT message in the rebuilt
+    transcript — the common-case placement, matching where the marker
+    rendered live — falling back to appending any leftover run's block at
+    the end of the transcript if there are more primary runs than assistant
+    replies (only possible if `agent_runtime` was toggled off
+    mid-conversation). `ChatScreen._resume_console_workspace_conversation`
+    now calls this via `_inject_resume_agent_markers` right after rebuilding
+    the ChaChaNotes-derived message list. See
+    `Tests/Chat/test_console_agent_bridge.py` (marker-formatter, DB
+    re-derivation, and injection/idempotency tests) for coverage.
 - `resume-rail-idle-not-rederived-2026-07-13.png` — **honest finding**: the
   rail's *top-level* Agent summary shows `Agent: idle` on a fresh session,
   not re-derived from `AgentRunsDB`. Tracing `_console_agent_section_lines`
