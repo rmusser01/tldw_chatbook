@@ -170,7 +170,30 @@ async def test_open_skill_row_populates_editor_fields_and_save_bumps_version(tmp
 
 
 @pytest.mark.asyncio
-async def test_skill_editor_shows_shadow_warning_and_does_not_block_save(tmp_path):
+async def test_renaming_an_existing_skill_is_refused_and_never_corrupts_it(tmp_path):
+    """Fix wave for the review Critical: renaming an existing skill used to
+    silently corrupt it. ``_save_library_skill`` baked the LIVE Name-input
+    value into the frontmatter but always wrote under the ORIGINAL
+    directory name (``update_skill`` has no rename primitive), so the
+    service's own validation (``name`` must match the parent directory
+    name) marked the persisted record ``validation_status: "invalid"``
+    while the editor still reported "Saved." -- an unusable skill
+    (``skills_screen`` gates on ``validation_status == "valid"``) with no
+    visible error.
+
+    The fix makes the Name Input disabled for an existing skill (there is
+    no rename primitive to build a real rename feature on) AND, belt and
+    braces, forces the persisted frontmatter name to stay pinned to the
+    skill's own directory name no matter what the Input reports. This test
+    proves the belt half directly: ``disabled`` only blocks focus/keyboard
+    editing, not a programmatic attribute write, so setting ``.value``
+    still lets this simulate a divergent Name -- and the save must still
+    persist under the original name with a VALID record. The forced value
+    ("calculator") is also a shadowed builtin name, so this keeps the
+    shadow-warning line's coverage too (this test replaces the former
+    rename-based shadow-warning scenario, which is no longer a real user
+    flow now that renaming is refused).
+    """
     local_service, service = _real_skills_scope_service(tmp_path)
     await local_service.create_skill(
         name="draft-helper",
@@ -187,6 +210,12 @@ async def test_skill_editor_shows_shadow_warning_and_does_not_block_save(tmp_pat
         await _open_skill_editor(screen, pilot, "draft-helper")
 
         name_input = screen.query_one("#library-skill-name", Input)
+        assert name_input.disabled is True
+
+        # Force a divergent value directly -- ``disabled`` blocks
+        # keyboard/focus editing, not a programmatic attribute write, so
+        # this simulates "the Input's value somehow diverges" without
+        # relying on a real rename UI (there is none).
         name_input.value = "calculator"
         await pilot.pause()
 
@@ -205,6 +234,18 @@ async def test_skill_editor_shows_shadow_warning_and_does_not_block_save(tmp_pat
         await pilot.pause()
         status_text = await _wait_for_skill_status(screen, pilot)
         assert status_text == "Saved."
+
+        # The core corruption check: "Saved." must never be reported
+        # alongside an invalid persisted record, and the skill must still
+        # live under its ORIGINAL name -- never renamed to the diverged
+        # (disabled-input) value.
+        persisted = await local_service.get_skill("draft-helper")
+        assert persisted["name"] == "draft-helper"
+        assert persisted["validation_status"] == "valid"
+        assert screen._library_skill_editor_state.name == "draft-helper"
+
+        with pytest.raises(Exception):
+            await local_service.get_skill("calculator")
 
 
 @pytest.mark.asyncio

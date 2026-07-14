@@ -277,6 +277,37 @@ async def test_skill_editor_renders_all_field_ids_populated():
 
 
 @pytest.mark.asyncio
+async def test_skill_editor_name_input_disabled_for_existing_skill_with_rename_hint():
+    """Fix wave for the review Critical (rename corruption): an existing
+    skill has no rename primitive to build on, so its Name Input must be
+    disabled (not just visually discouraged) with a dim explanatory hint --
+    ``is_create`` defaults to ``False``, matching every editor open today
+    (there is no create entry point yet, so every open goes through a real
+    row)."""
+    state = _editor_state()
+    app = _EditorHost(mode="editor", editor_state=state)
+    async with app.run_test() as pilot:
+        name_input = pilot.app.query_one("#library-skill-name", Input)
+        assert name_input.disabled is True
+        assert name_input.value == "code-review"
+        hint = str(pilot.app.query_one("#library-skill-name-hint", Static).renderable)
+        assert hint == "Rename isn't supported — create a new skill instead."
+
+
+@pytest.mark.asyncio
+async def test_skill_editor_name_input_editable_on_create_branch():
+    """The (currently entry-point-less) create branch is the only case
+    where a Name is still being chosen -- so it must stay editable, with
+    no rename hint shown."""
+    state = _editor_state(name="")
+    app = _EditorHost(mode="editor", editor_state=state, is_create=True)
+    async with app.run_test() as pilot:
+        name_input = pilot.app.query_one("#library-skill-name", Input)
+        assert name_input.disabled is False
+        assert len(pilot.app.query("#library-skill-name-hint")) == 0
+
+
+@pytest.mark.asyncio
 async def test_skill_editor_toggle_and_context_button_labels_reflect_state():
     state = _editor_state(
         user_invocable=False, disable_model_invocation=True, context="fork",

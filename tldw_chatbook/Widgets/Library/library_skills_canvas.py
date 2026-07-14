@@ -185,6 +185,13 @@ class LibrarySkillsListCanvas(Vertical):
             has been captured for the open skill yet. Only its
             ``changed_files`` entry is rendered; presence/absence alone
             gates the Approve action.
+        is_create: Whether the open editor is creating a brand-new skill
+            (currently entry-point-less -- every editor open today goes
+            through an existing row) rather than editing one that already
+            exists on disk. The service has no rename primitive, so an
+            EXISTING skill's Name Input is disabled (with a dim hint)
+            instead of letting a user silently corrupt the skill by
+            changing it -- only the create branch renders it editable.
     """
 
     def __init__(
@@ -199,6 +206,7 @@ class LibrarySkillsListCanvas(Vertical):
         status: str = "",
         conflict: bool = False,
         active_review: Mapping[str, Any] | None = None,
+        is_create: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -211,6 +219,7 @@ class LibrarySkillsListCanvas(Vertical):
         self.status = status
         self.conflict = conflict
         self.active_review = active_review
+        self.is_create = is_create
         self.styles.width = "1fr"
         self.styles.min_width = 40
 
@@ -310,7 +319,18 @@ class LibrarySkillsListCanvas(Vertical):
             compact=True,
         )
         yield Static("Name", classes="library-prompt-field-label", markup=False)
-        yield Input(value=editor_state.name, id="library-skill-name")
+        yield Input(
+            value=editor_state.name,
+            id="library-skill-name",
+            disabled=not self.is_create,
+        )
+        if not self.is_create:
+            yield Static(
+                "Rename isn't supported — create a new skill instead.",
+                id="library-skill-name-hint",
+                classes="library-prompt-field-hint",
+                markup=False,
+            )
         yield Static("Description", classes="library-prompt-field-label", markup=False)
         yield Input(value=editor_state.description, id="library-skill-description")
         yield Static("Argument hint", classes="library-prompt-field-label", markup=False)

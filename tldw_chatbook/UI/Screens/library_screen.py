@@ -3190,6 +3190,13 @@ class LibraryScreen(BaseAppScreen):
                             status=self._library_skill_status,
                             conflict=self._library_skill_conflict,
                             active_review=self._library_skill_active_review,
+                            # Same source of truth ``_save_library_skill`` uses
+                            # for its own ``is_create`` -- an empty
+                            # ``_selected_skill_name`` means there is no
+                            # existing skill on disk to rename, so the Name
+                            # Input stays editable (currently entry-point-less:
+                            # every editor open today goes through a real row).
+                            is_create=not self._selected_skill_name,
                             id="library-skills-canvas",
                         )
                 elif shell.canvas_kind == "skills":
@@ -6655,9 +6662,24 @@ class LibraryScreen(BaseAppScreen):
         model = self._sanitize_media_field(raw_model, max_length=128)
         body = self._sanitize_note_content(raw_body, max_length=LIBRARY_SKILL_TEXT_MAX_CHARS)
 
+        if is_create:
+            editor_name = live_name or base_state.name
+        else:
+            # Renaming an existing skill isn't supported -- the service has
+            # no rename primitive, and ``update_skill`` writes under the
+            # ORIGINAL directory name regardless of what the frontmatter's
+            # ``name`` field says. The Name Input is disabled for existing
+            # skills (see ``LibrarySkillsListCanvas._compose_editor``), but
+            # this pins the persisted name defensively too: even if the
+            # live value somehow diverged, the frontmatter written to disk
+            # never does, so a save can never get marked
+            # ``validation_status: "invalid"`` (name != parent directory
+            # name) the way it silently did before this fix.
+            editor_name = base_state.name
+
         write_state = dataclasses.replace(
             base_state,
-            name=live_name or base_state.name,
+            name=editor_name,
             description=description,
             argument_hint=argument_hint or None,
             allowed_tools_csv=allowed_tools_csv,
@@ -6699,9 +6721,15 @@ class LibraryScreen(BaseAppScreen):
             except Exception as caught:
                 exc = caught
 
-        if not is_create and (
-            name != self._selected_skill_name or self._library_skills_view != "editor"
-        ):
+        # Discard out-of-order results, same stale-race guard as
+        # ``_refresh_library_skill_detail``/``_save_library_prompt``'s
+        # equivalent ``prompt_id != self._selected_prompt_id`` check --
+        # applied uniformly for creates too (``name`` was already ``""``
+        # at capture time when ``is_create``, so this still lets a
+        # still-in-flight create through as long as nothing else got
+        # selected meanwhile, but bails if a DIFFERENT skill's editor
+        # opened while this create was in flight).
+        if name != self._selected_skill_name or self._library_skills_view != "editor":
             return
 
         if exc is not None:
