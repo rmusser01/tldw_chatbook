@@ -597,8 +597,13 @@ class MCPWorkbench(Container):
         event.stop()
         worker = self._in_flight.pop(event.server_key, None)
         self._in_flight_action.pop(event.server_key, None)
-        if worker is not None:
-            worker.cancel()
+        if worker is None:
+            # Stale cancel: the operation already finished and popped itself
+            # (its own completion toast + resync have run). Toasting
+            # "Cancelled." here would falsely claim a completed operation
+            # was stopped -- silent no-op instead.
+            return
+        worker.cancel()
         self.app.notify("Cancelled.")
         self.run_worker(self._sync_children(), group="mcp-lifecycle-sync", exclusive=True)
 

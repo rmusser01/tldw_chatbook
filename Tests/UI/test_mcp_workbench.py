@@ -548,9 +548,13 @@ class LifecycleFakeHubService(FakeHubService):
 
     async def load_section(self, section=None):
         # Same shape as FakeHubService.load_section(), except the docs
-        # profile fixture is disconnected -- so it derives STALE
-        # (RUNTIME_UNAVAILABLE) rather than READY, which is what makes
-        # CONNECT a wired, enabled action to click in the first test below.
+        # profile fixture is disconnected with no discovery snapshot -- so it
+        # derives NEEDS_SETUP (DISCOVERY_NOT_RUN) rather than READY, whose
+        # action set is (CONNECT, VALIDATE, VIEW_DETAILS): both lifecycle
+        # buttons the tests below click render enabled. (STALE via
+        # RUNTIME_UNAVAILABLE would also wire CONNECT, but its action set
+        # offers no VALIDATE button at all -- see REASON_TO_ACTIONS in
+        # readiness.py.)
         effective_section = section or self.context.selected_section or "overview"
         if self.context.selected_source == "local":
             if effective_section == "external_servers":
@@ -560,7 +564,7 @@ class LifecycleFakeHubService(FakeHubService):
                         "command": "python",
                         "args": [],
                         "env_placeholders": {},
-                        "discovery_snapshot": {"tools": [{"name": "a"}], "resources": [], "prompts": []},
+                        "discovery_snapshot": None,
                         "is_connected": False,
                     }
                 ]
@@ -603,7 +607,7 @@ async def test_connect_action_runs_lifecycle_and_notifies():
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         workbench = app.query_one(MCPWorkbench)
-        # select docs (local profile, disconnected -> STALE -> CONNECT wired)
+        # select docs (local profile, never discovered -> NEEDS_SETUP -> CONNECT wired)
         await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}2")
         await pilot.pause()
         await pilot.click("#mcp-inspector-action-connect")
@@ -649,3 +653,84 @@ async def test_cancel_requested_cancels_worker():
         )
         await pilot.pause()
         assert "local:docs" not in workbench._in_flight
+
+
+def _capture_notifications(app: App) -> list[tuple[str, str]]:
+    """Shadow `app.notify` with a recorder; returns the (message, severity)
+    list it appends to. The workbench always notifies via `self.app.notify`,
+    so an instance-level shadow intercepts every toast."""
+    notifications: list[tuple[str, str]] = []
+
+    def recording_notify(message, *, title="", severity="information", **kwargs):
+        notifications.append((str(message), severity))
+
+    app.notify = recording_notify
+    return notifications
+
+
+@pytest.mark.asyncio
+async def test_validate_action_runs_test_lifecycle_and_notifies_int_tool_count():
+    """VALIDATE dispatch through the real click path, and the
+    `_lifecycle_tool_count` int-shape branch: `test_local_profile` returns
+    `"tools": 1` (a count, not a list), and the success toast must say
+    "1 tool" (singular) from that int."""
+    app = LifecycleApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        notifications = _capture_notifications(app)
+        workbench = app.query_one(MCPWorkbench)
+        # select docs (never discovered -> NEEDS_SETUP -> VALIDATE wired)
+        await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}2")
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-action-validate")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert ("test", "docs") in app.unified_mcp_service.lifecycle_calls
+        assert "local:docs" not in workbench._in_flight
+        successes = [msg for msg, severity in notifications if severity != "error"]
+        assert any("docs" in msg and "1 tool" in msg for msg in successes), (
+            f"expected an int-derived '1 tool' success toast, got: {notifications!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_refresh_lifecycle_dispatches_refresh_method():
+    """REFRESH_DISCOVERY's verb mapping ("refresh" -> refresh_local_profile)
+    through `_start_lifecycle` -- the third dispatch-table entry the other
+    lifecycle tests (all "connect"/"test") leave uncovered."""
+    app = LifecycleApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench._selected_server_key = "local:docs"
+        workbench._start_lifecycle("local:docs", "docs", "refresh")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert ("refresh", "docs") in app.unified_mcp_service.lifecycle_calls
+        assert "local:docs" not in workbench._in_flight
+
+
+@pytest.mark.asyncio
+async def test_cancel_after_natural_completion_does_not_toast_cancelled():
+    """A stale CancelRequested arriving after the operation already finished
+    (and popped itself from `_in_flight`) must be a silent no-op -- toasting
+    "Cancelled." for something that actually completed would be a lie."""
+    app = LifecycleApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench._selected_server_key = "local:docs"
+        workbench._start_lifecycle("local:docs", "docs", "connect")  # no gate -> completes
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert "local:docs" not in workbench._in_flight
+        notifications = _capture_notifications(app)
+        workbench.on_mcp_inspector_cancel_requested(
+            MCPInspector.CancelRequested("local:docs")
+        )
+        await pilot.pause()
+        assert notifications == [], (
+            f"stale cancel must not toast, got: {notifications!r}"
+        )
