@@ -89,6 +89,12 @@ class MCPServersMode(Vertical):
         height: auto;
         min-height: 0;
     }
+    #mcp-overview-summary-glyph {
+        width: 2;
+    }
+    #mcp-overview-summary {
+        width: 1fr;
+    }
     """
 
     class ServerRowSelected(Message, namespace="mcp_servers_mode"):
@@ -197,7 +203,17 @@ class MCPServersMode(Vertical):
                     compact=True,
                     tooltip=_IMPORT_LOCAL_TOOLTIP,
                 )
-            yield Static("", id="mcp-overview-summary", classes="ds-status-badge", markup=False)
+            # A5: the aggregate line is a neutral sentence with a small
+            # colored glyph in front of it, not the whole sentence taking on
+            # the worst-state color -- coloring an entire line red/orange
+            # reads as more alarming than the underlying signal warrants. The
+            # glyph Static carries the worst-state STATE_CSS_CLASSES class;
+            # the sentence Static stays plain (`ds-status-badge` only).
+            with Horizontal(id="mcp-overview-summary-row"):
+                yield Static(
+                    "", id="mcp-overview-summary-glyph", classes="ds-status-badge", markup=False,
+                )
+                yield Static("", id="mcp-overview-summary", classes="ds-status-badge", markup=False)
             table = DataTable(id="mcp-servers-table")
             table.cursor_type = "row"
             yield table
@@ -409,15 +425,19 @@ class MCPServersMode(Vertical):
         self._snapshots = list(snapshots)
         summary = self.query_one("#mcp-overview-summary", Static)
         summary.update(aggregate_summary(self._snapshots))
-        # Task 11: the aggregate badge additionally carries the CSS class
+        # A5: the sentence itself stays neutral (no status class ever added
+        # here) -- only the small glyph in front of it carries the CSS class
         # for the WORST state present (READY -- no extra class beyond the
         # base ds-status-badge look -- when every server is ready, or when
-        # there are none at all). This Static persists across calls (it is
-        # never removed/remounted), so the previous call's class must be
-        # dropped before possibly adding a different one.
+        # there are none at all). Both Statics persist across calls (neither
+        # is ever removed/remounted), so the previous call's class must be
+        # dropped from the glyph before possibly adding a different one.
+        worst = worst_state(self._snapshots)
+        glyph = self.query_one("#mcp-overview-summary-glyph", Static)
         for css_class in STATE_CSS_CLASSES.values():
-            summary.remove_class(css_class)
-        summary.add_class(STATE_CSS_CLASSES[worst_state(self._snapshots)])
+            glyph.remove_class(css_class)
+        glyph.add_class(STATE_CSS_CLASSES[worst])
+        glyph.update(STATE_GLYPHS[worst])
         table = self.query_one("#mcp-servers-table", DataTable)
         # Task 11: per-source columns -- Local (built-in + local profiles)
         # has no meaningful Scope (stdio-only / always "Personal"), so the

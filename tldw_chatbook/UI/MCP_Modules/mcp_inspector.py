@@ -145,6 +145,15 @@ class MCPInspector(Vertical):
         height: 1;
         min-height: 1;
         border: none;
+        /* A3: Button defaults BOTH text-align and content-align to center
+        (see Textual's own Button.DEFAULT_CSS -- the same lesson already
+        documented on Button.mcp-rail-row in MCPRail.DEFAULT_CSS and
+        Button.mcp-callout in _agentic_terminal.tcss) -- without this, the
+        action stack (and the lone Cancel button during an in-flight
+        lifecycle op) renders each label centered in its full-width row
+        instead of left-aligned. */
+        text-align: left;
+        content-align: left middle;
     }
     /* A2: the generic `Button:disabled` rule (_buttons.tcss) stacks 50%
     opacity on top of `$text-disabled` on a dark surface -- combined with

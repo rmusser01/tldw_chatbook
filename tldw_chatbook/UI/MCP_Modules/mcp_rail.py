@@ -38,24 +38,70 @@ _MAX_ROW_LABEL = 36
 _ALL_SERVERS_GUTTER = "  "
 
 
-def _row_label(snapshot: ReadinessSnapshot) -> str:
+def _row_prefix_and_label(snapshot: ReadinessSnapshot) -> tuple[str, str]:
+    """Truncated, UNESCAPED `(prefix, label)` for a rail row.
+
+    Shared by `_row_label()`'s final formatting and `MCPRail.compose()`'s
+    per-call adaptive pad-width measurement (A6) -- both need EXACTLY the
+    same truncation, so the logic lives in one place rather than two copies
+    that could drift. It still runs twice per row per compose() (once to
+    measure `pad_width`, once inside `_row_label()` itself) -- rail row
+    counts are small and this isn't a hot path, so that repeat call was not
+    worth the extra parameter-threading to avoid.
+
+    Deliberately returns the label BEFORE `escape_markup()` -- callers that
+    only need the rendered width (`len(prefix) + len(label)`, i.e. this
+    function's return value) must measure it here, not on the escaped
+    string `_row_label()` actually embeds. `escape_markup()` inserts one
+    backslash per markup-special character (e.g. `[` -> `\\[`), and
+    Button's own markup parsing consumes exactly that backslash again when
+    displaying the label -- so the escaped string is longer than what
+    actually renders, and padding/measuring against IT (rather than this
+    unescaped, truncated text) misaligns any row whose label contains a
+    markup-special character against its sibling rows.
+    """
     # snapshot.label is user-controlled (local profile ids, server-reported
     # names) and is rendered through Button, which parses str labels as Rich
-    # markup — escape it so a profile id like "[bold red]x" can't inject
-    # styling or break layout.
+    # markup — escape it (in `_row_label()`, at format time) so a profile id
+    # like "[bold red]x" can't inject styling or break layout.
     label = snapshot.label
     if len(label) > _MAX_ROW_LABEL:
         label = f"{label[: _MAX_ROW_LABEL - 3].rstrip()}..."
-    label = escape_markup(label)
     prefix = "⌂ " if snapshot.source == "builtin" else ""
+    return prefix, label
+
+
+def _row_label(snapshot: ReadinessSnapshot, pad_width: int = _MAX_ROW_LABEL) -> str:
+    """Format one rail row's full label, including the glyph and count.
+
+    Args:
+        snapshot: The row's readiness snapshot.
+        pad_width: A6 -- the column width to left-justify `prefix+label`'s
+            RENDERED (post-escape-round-trip) width to before the count
+            field. `MCPRail.compose()` passes the per-call adaptive width
+            (the longest current rendered label width among its rows) so a
+            short label's count isn't stranded far right of a long label's;
+            this defaults to the old fixed truncation budget for a
+            standalone/direct call (e.g. a unit test exercising truncation
+            in isolation, with no sibling rows to adapt to).
+    """
+    prefix, label = _row_prefix_and_label(snapshot)
+    # Pad using the RENDERED width (prefix + unescaped label), not the
+    # escaped string's own (longer, for any markup-special character)
+    # length -- see `_row_prefix_and_label()`'s docstring. Python's
+    # `f"{s:<{n}}"` format pads based on `len(s)`, which would be wrong
+    # here once `s` is escaped, so the padding is built manually instead.
+    visual_width = len(prefix) + len(label)
+    pad = " " * max(0, pad_width - visual_width)
+    text = f"{prefix}{escape_markup(label)}{pad}"
     # Task 11 (UX-inputs polish): the tool count sits in a fixed right-side
     # column instead of trailing the label at a variable offset -- the name
-    # is left-justified to the same truncation budget every row uses, and
-    # the count is right-aligned in a fixed 3-char field (blank, not "0",
-    # when no count has ever been discovered) so counts form one scannable
-    # column down the rail instead of drifting with label length.
+    # is left-justified to `pad_width`, and the count is right-aligned in a
+    # fixed 3-char field (blank, not "0", when no count has ever been
+    # discovered) so counts form one scannable column down the rail instead
+    # of drifting with label length.
     count = "" if snapshot.tool_count is None else str(snapshot.tool_count)
-    return f"{STATE_GLYPHS[snapshot.state]} {prefix}{label:<{_MAX_ROW_LABEL}} {count:>3}"
+    return f"{STATE_GLYPHS[snapshot.state]} {text} {count:>3}"
 
 
 class MCPRail(Vertical):
@@ -170,6 +216,22 @@ class MCPRail(Vertical):
         all_row.tooltip = "Show every server in the overview table."
         all_row.set_class(self.selected_server_key is None, "is-active")
         yield all_row
+        # A6: the count column's pad width is computed per compose() call as
+        # the longest CURRENT row's RENDERED width (post-truncate, still
+        # unescaped -- see `_row_prefix_and_label()`'s docstring for why
+        # measuring the escaped string instead would misalign any row whose
+        # label contains a markup-special character) among this rail's rows,
+        # not the fixed `_MAX_ROW_LABEL` truncation budget -- a short label
+        # (e.g. "docs") no longer strands its tool count 30+ columns right of
+        # where a long label's count lands. The truncation budget itself is
+        # unchanged; this only affects the padding applied AFTER truncation.
+        pad_width = max(
+            (
+                len(f"{prefix}{label}")
+                for prefix, label in (_row_prefix_and_label(snap) for snap in self.snapshots)
+            ),
+            default=0,
+        )
         for index, snap in enumerate(self.snapshots, start=1):
             # Task 11: each row carries its readiness state's CSS class
             # (STATE_CSS_CLASSES, Task 3) so it can be colored by status --
@@ -177,7 +239,7 @@ class MCPRail(Vertical):
             # recomposes), so there is no stale class from a prior render to
             # remove first.
             row = Button(
-                _row_label(snap),
+                _row_label(snap, pad_width),
                 id=f"{MCP_RAIL_ROW_PREFIX}{index}",
                 classes=f"mcp-rail-row console-action-subdued {STATE_CSS_CLASSES[snap.state]}",
                 compact=True,

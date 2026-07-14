@@ -213,6 +213,42 @@ async def test_disabled_action_buttons_stay_legible_with_bundled_css():
         assert connect_button.tooltip
 
 
+# -- A3: inspector action stack is left-aligned -------------------------------
+
+
+@pytest.mark.asyncio
+async def test_inspector_action_buttons_are_left_aligned_with_bundled_css():
+    """A3: Button defaults BOTH `text-align` and `content-align` to center
+    (see Textual's own Button.DEFAULT_CSS -- the same lesson already
+    documented on `Button.mcp-rail-row` in MCPRail.DEFAULT_CSS and
+    `Button.mcp-callout` in _agentic_terminal.tcss). `Button.mcp-inspector-
+    action` must override both, or the inspector's action stack (Connect/
+    Check readiness/Edit config/... and the lone Cancel button during an
+    in-flight lifecycle op) renders each label centered in its full-width
+    row instead of left-aligned like every other action list in the hub.
+    """
+    app = InspectorAppWithBundledCSS()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.update_readiness(_stale_snap())
+        await pilot.pause()
+        action_button = app.query_one("#mcp-inspector-action-view_details", Button)
+        assert action_button.styles.text_align == "left"
+        assert action_button.styles.content_align_horizontal == "left"
+
+        # The lone Cancel button shown during an in-flight (CHECKING)
+        # lifecycle op carries the same class (T5) -- must resolve the same.
+        checking_snap = ReadinessSnapshot(
+            server_key="local:docs", label="docs", source="local",
+            state=ReadinessState.CHECKING, reasons=(), message="Connecting…",
+        )
+        await inspector.update_readiness(checking_snap)
+        await pilot.pause()
+        cancel_button = app.query_one("#mcp-inspector-cancel", Button)
+        assert cancel_button.styles.text_align == "left"
+        assert cancel_button.styles.content_align_horizontal == "left"
+
+
 # -- A3/A5: humanized reason copy, no raw reason codes -----------------------
 
 

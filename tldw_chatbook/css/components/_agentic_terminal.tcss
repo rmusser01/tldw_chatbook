@@ -4057,7 +4057,13 @@ ListItem.personas-library-row.is-active.-highlight {
     min-width: 28;
 }
 
-#mcp-overview-summary,
+/* A5: the row wrapping the aggregate summary's colored glyph + neutral
+   sentence (kept in lockstep with the width rules in
+   MCPServersMode.DEFAULT_CSS, mcp_servers_mode.py -- required in EVERY
+   harness, not just the bundled one: without an explicit width split, both
+   Static children of the Horizontal default to 1fr/full-width and the
+   second one renders entirely off-screen). */
+#mcp-overview-summary-row,
 #mcp-detail-title {
     height: 1;
     min-height: 1;
@@ -4086,6 +4092,15 @@ ListItem.personas-library-row.is-active.-highlight {
     background: $ds-surface-raised;
     color: $ds-text-muted;
     text-style: none;
+}
+
+/* A3: same Button center-default lesson as Button.mcp-rail-row
+   (MCPRail.DEFAULT_CSS) and Button.mcp-callout below -- left-align the
+   inspector's action stack. Kept in lockstep with the baseline copy in
+   MCPInspector.DEFAULT_CSS (mcp_inspector.py). */
+Button.mcp-inspector-action {
+    text-align: left;
+    content-align: left middle;
 }
 
 /* --- MCP Hub Phase 2 ------------------------------------------------- */
@@ -4136,4 +4151,16 @@ Button.mcp-callout {
     height: 1;
     min-height: 1;
     border: none;
+}
+
+/* A1: kept in lockstep with the baseline copy in MCPImportPanel.DEFAULT_CSS
+   (mcp_profile_form.py) -- without an explicit height override here too,
+   Textual's Vertical default (height: 1fr) expands this container to
+   consume whatever vertical space the panel has left, stranding the
+   sibling "Import N servers"/Cancel action row far below the preview list
+   on a real terminal window (same bug class as #mcp-detail-builtin-toggles,
+   QA defect 1, mcp-hub-phase2-2026-07 round). */
+#mcp-import-list {
+    height: auto;
+    min-height: 0;
 }

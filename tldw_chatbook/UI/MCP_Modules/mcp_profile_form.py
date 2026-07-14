@@ -51,6 +51,10 @@ class MCPProfileForm(Vertical):
     def __init__(self, *, profile: dict[str, Any] | None = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._profile = dict(profile) if profile else None
+        # A4: Save is state-driven -- disabled while either required field is
+        # empty/whitespace, or while a submit this form already posted is
+        # still awaiting the host's outcome (show_error()/unmount).
+        self._submit_in_flight = False
 
     @property
     def is_edit(self) -> bool:
@@ -71,7 +75,13 @@ class MCPProfileForm(Vertical):
         yield Static("Args — one per line", classes="form-label")
         yield TextArea("\n".join(str(a) for a in profile.get("args") or []),
                        id="mcp-form-args")
-        yield Static("", id="mcp-form-args-warning", classes="ds-field-row", markup=False)
+        # A2: mcp-status-warning colors the secret-lint warning text (the
+        # color rule itself has existed since T13 -- nothing applied the
+        # class to this Static until now).
+        yield Static(
+            "", id="mcp-form-args-warning", classes="ds-field-row mcp-status-warning",
+            markup=False,
+        )
         yield Static("Env — one KEY=value per line", classes="form-label")
         yield Static(
             "Secrets are never stored — reference them as KEY=$ENV_VAR and export "
@@ -81,12 +91,70 @@ class MCPProfileForm(Vertical):
         env_lines = [f"{k}={v}" for k, v in (profile.get("env_placeholders") or {}).items()]
         env_lines += [f"{k}={v}" for k, v in (profile.get("env_literals") or {}).items()]
         yield TextArea("\n".join(env_lines), id="mcp-form-env")
-        yield Static("", id="mcp-form-error", classes="ds-field-row", markup=False)
+        # A2: mcp-status-error colors the validation/save-failure text (the
+        # color rule itself has existed since T13 -- nothing applied the
+        # class to this Static until now).
+        yield Static("", id="mcp-form-error", classes="ds-field-row mcp-status-error", markup=False)
         with Horizontal(classes="ds-toolbar"):
             yield Button("Save", id="mcp-form-save", classes="console-action-primary",
                          compact=True, tooltip="Validate and save this profile.")
             yield Button("Cancel", id="mcp-form-cancel", classes="console-action-secondary",
                          compact=True, tooltip="Discard changes.")
+
+    def on_mount(self) -> None:
+        # A4: `self.watch(...)` (not the `on_input_changed` message handler)
+        # deliberately -- Reactive watchers registered this way run
+        # SYNCHRONOUSLY inside the Input's own `value` setter (see
+        # `textual.reactive._check_watchers`/`_watch`), whereas a message
+        # handler only runs once the async message pump gets a turn (i.e.
+        # after a `pilot.pause()`). The workbench's double-submit regression
+        # test sets `#mcp-form-id`/`#mcp-form-command` `.value` directly and
+        # then calls `Button.press()` twice with NO intervening pause --
+        # `Button.press()` no-ops when `disabled` is still True at that exact
+        # call, so an async-only refresh would leave Save permanently
+        # disabled there and silently break that test. The synchronous watch
+        # guarantees Save's enabled state is already correct by the time
+        # `press()` runs, matching real typing (which always has pump turns
+        # between keystrokes and the eventual click) with no observable
+        # difference.
+        self.watch(self.query_one("#mcp-form-id", Input), "value",
+                   self._on_required_field_changed, init=False)
+        self.watch(self.query_one("#mcp-form-command", Input), "value",
+                   self._on_required_field_changed, init=False)
+        self._refresh_save_enabled()
+
+    def _on_required_field_changed(self, old_value: str, new_value: str) -> None:
+        self._refresh_save_enabled()
+
+    def _refresh_save_enabled(self) -> None:
+        """A4: Save is enabled only once both required fields are filled in
+        (edit mode's disabled-but-prefilled id Input still counts -- this
+        checks `.value`, not `.disabled`) and no submit posted by this form
+        is still awaiting the host's outcome. Called after compose (here, via
+        `on_mount`), on every required-field change, and from `show_error()`
+        so a failed save only re-arms Save when the fields are still valid.
+
+        Review fix: the two disable-reasons (missing fields vs. a submit
+        already in flight) get DISTINCT tooltips -- collapsing them into one
+        `enabled` boolean previously left the "Enter a profile id and
+        command first." tooltip showing even right after a valid submit,
+        while both fields were still filled in, which is simply false.
+        """
+        try:
+            save_button = self.query_one("#mcp-form-save", Button)
+            has_id = bool(self.query_one("#mcp-form-id", Input).value.strip())
+            has_command = bool(self.query_one("#mcp-form-command", Input).value.strip())
+        except Exception:
+            return
+        fields_valid = has_id and has_command
+        enabled = fields_valid and not self._submit_in_flight
+        save_button.disabled = not enabled
+        if enabled:
+            save_button.tooltip = "Validate and save this profile."
+        elif not fields_valid:
+            save_button.tooltip = "Enter a profile id and command first."
+        else:
+            save_button.tooltip = "Save already in progress."
 
     def build_payload(self) -> dict[str, Any]:
         """Parse the form into the store's exact save-payload keys.
@@ -123,14 +191,18 @@ class MCPProfileForm(Vertical):
         }
 
     def show_error(self, text: str) -> None:
-        """Surface an error and re-enable Save so the user can retry.
+        """Surface an error and clear the in-flight flag so Save can re-arm.
 
-        State-driven buttons: `on_button_pressed` disables Save when a valid
-        submit is posted; the host reporting failure through this method is
-        what re-arms it (success unmounts the whole form instead).
+        State-driven buttons: `on_button_pressed` marks a submit in-flight
+        when a valid submit is posted; the host reporting failure through
+        this method is what clears that (success unmounts the whole form
+        instead). Routed through `_refresh_save_enabled()` (A4) rather than
+        unconditionally re-enabling -- Save only re-arms if the required
+        fields are STILL both filled in.
         """
         self.query_one("#mcp-form-error", Static).update(text)
-        self.query_one("#mcp-form-save", Button).disabled = False
+        self._submit_in_flight = False
+        self._refresh_save_enabled()
 
     def _args_secret_warning(self) -> str:
         """Spec §7: "warn when a secret-looking value appears in args
@@ -185,8 +257,11 @@ class MCPProfileForm(Vertical):
             # gates on `disabled`, so a real second click can't even post
             # another Pressed. (A Pressed already queued before this line
             # still gets through; the workbench's in-flight guard is the
-            # authoritative dedupe for that window.)
-            event.button.disabled = True
+            # authoritative dedupe for that window.) Routed through A4's
+            # `_refresh_save_enabled()` rather than a bare `disabled = True`
+            # so the in-flight flag (not just the button) reflects reality.
+            self._submit_in_flight = True
+            self._refresh_save_enabled()
             self.post_message(self.SubmitRequested(payload, warning or None))
         elif event.button.id == "mcp-form-cancel":
             event.stop()
@@ -207,6 +282,7 @@ class MCPImportPanel(Vertical):
     DEFAULT_CSS = """
     MCPImportPanel { height: auto; min-height: 0; }
     #mcp-import-text { height: 8; min-height: 4; }
+    #mcp-import-list { height: auto; min-height: 0; }
     """
 
     class FileRequested(Message, namespace="mcp_import_panel"):
@@ -239,7 +315,12 @@ class MCPImportPanel(Vertical):
                          compact=True, tooltip="Load mcpServers JSON from a file.")
             yield Button("Preview", id="mcp-import-preview", classes="console-action-secondary",
                          compact=True, tooltip="Parse the text and preview the servers it would import.")
-        yield Static("", id="mcp-import-error", classes="ds-field-row", markup=False)
+        # A2: mcp-status-error colors the invalid-JSON preview error text
+        # (the color rule itself has existed since T13 -- nothing applied
+        # the class to this Static until now), mirroring #mcp-form-error.
+        yield Static(
+            "", id="mcp-import-error", classes="ds-field-row mcp-status-error", markup=False,
+        )
         yield Vertical(id="mcp-import-list")
         with Horizontal(classes="ds-toolbar"):
             apply_button = Button(

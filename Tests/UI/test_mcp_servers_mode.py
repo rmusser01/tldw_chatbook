@@ -10,6 +10,8 @@ from textual.widgets import Button, Checkbox, DataTable, Static
 import tldw_chatbook
 
 from tldw_chatbook.MCP.readiness import (
+    STATE_CSS_CLASSES,
+    STATE_GLYPHS,
     HubAction,
     ReadinessSnapshot,
     ReadinessState,
@@ -96,6 +98,62 @@ async def test_overview_renders_aggregate_table_and_callouts():
         assert len(callouts) == 1  # one problem row -> one callout
         assert "web" in str(callouts[0].label)
         assert "Missing environment variables" in str(callouts[0].label)
+
+
+@pytest.mark.asyncio
+async def test_overview_summary_glyph_carries_worst_state_class_sentence_stays_neutral():
+    """A5: the aggregate summary row is a neutral sentence with a small
+    colored glyph in front of it, not the whole line taking on the
+    worst-state color (coloring an entire sentence red/orange reads as more
+    alarming than the underlying signal warrants). `#mcp-overview-summary-
+    glyph` carries the worst-state STATE_CSS_CLASSES class + STATE_GLYPHS
+    text; `#mcp-overview-summary` (the sentence) stays a plain
+    `ds-status-badge` Static with no status class at all.
+    """
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.update_overview(
+            [
+                _snap("local:docs", "docs"),
+                _snap(
+                    "local:web", "web",
+                    state=ReadinessState.NEEDS_ATTENTION,
+                    reasons=(ReasonCode.AUTH_MISSING,),
+                    message="Timed out",
+                ),
+            ]
+        )
+        await pilot.pause()
+        glyph = app.query_one("#mcp-overview-summary-glyph", Static)
+        summary = app.query_one("#mcp-overview-summary", Static)
+
+        assert STATE_CSS_CLASSES[ReadinessState.NEEDS_ATTENTION] in glyph.classes
+        assert str(glyph.renderable) == STATE_GLYPHS[ReadinessState.NEEDS_ATTENTION]
+
+        for css_class in STATE_CSS_CLASSES.values():
+            assert css_class not in summary.classes
+        assert "ds-status-badge" in summary.classes
+        assert "1 of 2" in str(summary.renderable)
+
+        # A second call with a different worst state swaps the glyph's class
+        # instead of stacking a second one alongside it.
+        await canvas.update_overview(
+            [
+                _snap(
+                    "local:docs", "docs",
+                    state=ReadinessState.NEEDS_SETUP,
+                    reasons=(ReasonCode.AUTH_MISSING,),
+                    message="Missing environment variables: KEY.",
+                ),
+            ]
+        )
+        await pilot.pause()
+        assert STATE_CSS_CLASSES[ReadinessState.NEEDS_SETUP] in glyph.classes
+        assert STATE_CSS_CLASSES[ReadinessState.NEEDS_ATTENTION] not in glyph.classes
+        assert str(glyph.renderable) == STATE_GLYPHS[ReadinessState.NEEDS_SETUP]
+        for css_class in STATE_CSS_CLASSES.values():
+            assert css_class not in summary.classes
 
 
 @pytest.mark.asyncio
