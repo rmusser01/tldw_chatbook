@@ -63,10 +63,80 @@ class TokenBudgetExceededWarning(Warning):
     pass
 
 
+def _coerce_int(value: Any, default: int = 0) -> int:
+    """Best-effort int coercion for loosely-typed entry fields.
+
+    Args:
+        value: Raw value from a payload or persisted JSON.
+        default: Fallback when the value is missing or malformed.
+
+    Returns:
+        The coerced int, or ``default`` on None/non-numeric input.
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+_FALSY_STRINGS = {"false", "0", "no", "off", ""}
+_TRUTHY_STRINGS = {"true", "1", "yes", "on"}
+
+
+def _coerce_bool(value: Any, default: bool) -> bool:
+    """Best-effort bool coercion that treats quoted booleans honestly.
+
+    Args:
+        value: Raw value from a payload or persisted JSON.
+        default: Fallback for None or unrecognized strings.
+
+    Returns:
+        ``value`` itself for real bools; a case-insensitive allowlist parse
+        for strings ("false"/"0"/"no"/"off" are False); ``default`` for None
+        or unrecognized strings; ``bool(value)`` otherwise.
+    """
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in _TRUTHY_STRINGS:
+            return True
+        if lowered in _FALSY_STRINGS:
+            return False
+        return default
+    return bool(value)
+
+
 class ChatDictionary:
     def __init__(self, key: str, content: str, probability: int = 100, group: Optional[str] = None,
                  timed_effects: Optional[Dict[str, int]] = None, max_replacements: int = 1, enabled: bool = True,
                  case_sensitive: bool = False, priority: int = 0):
+        """Initialize a single chat-dictionary entry.
+
+        Args:
+            key: The raw match key. A ``/pattern/flags`` form is compiled as
+                a regex; any other string is treated as a literal match key.
+            content: The replacement text substituted in for a match.
+            probability: Percent chance (0-100) that a match actually fires.
+            group: Optional group name used for mutually-exclusive
+                group-scoring between entries.
+            timed_effects: Optional ``{"sticky": int, "cooldown": int,
+                "delay": int}`` mapping; defaults to all-zero effects.
+            max_replacements: Maximum number of replacements to apply per
+                invocation.
+            enabled: Whether the entry participates in matching. Loosely
+                typed values (e.g. ``"false"``) are coerced honestly instead
+                of via truthy-string ``bool()``.
+            case_sensitive: Whether literal-key matching is case sensitive.
+                Ignored for regex keys, whose case handling comes from the
+                pattern's own flags. Loosely typed values are coerced the
+                same way as ``enabled``.
+            priority: Tie-breaker used for group scoring, token-budget
+                survival, and application order (higher wins). Malformed
+                values fall back to ``0`` instead of raising.
+        """
         self.raw_key = key # Store the original key string
         self.content = content
         self.is_regex = False
@@ -79,9 +149,9 @@ class ChatDictionary:
         self.timed_effects = timed_effects or {"sticky": 0, "cooldown": 0, "delay": 0}
         self.last_triggered: Optional[datetime] = None
         self.max_replacements = max_replacements
-        self.enabled = bool(enabled)
-        self.case_sensitive = bool(case_sensitive)
-        self.priority = int(priority)
+        self.enabled = _coerce_bool(enabled, True)
+        self.case_sensitive = _coerce_bool(case_sensitive, False)
+        self.priority = _coerce_int(priority, 0)
 
     def _compile_key_internal(self, key_str: str) -> Union[re.Pattern, str]:
         self.is_regex = False # Reset for this compilation
@@ -136,7 +206,13 @@ class ChatDictionary:
         return False
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert ChatDictionary instance to a dictionary for database storage."""
+        """Convert ChatDictionary instance to a dictionary for database storage.
+
+        Returns:
+            A dict with keys ``key``, ``content``, ``probability``, ``group``,
+            ``timed_effects``, ``max_replacements``, ``is_regex``, ``enabled``,
+            ``case_sensitive``, and ``priority``.
+        """
         return {
             'key': self.raw_key,
             'content': self.content,
@@ -152,7 +228,17 @@ class ChatDictionary:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'ChatDictionary':
-        """Create ChatDictionary instance from dictionary data."""
+        """Create ChatDictionary instance from dictionary data.
+
+        Args:
+            data: A mapping as produced by :meth:`to_dict` (or a legacy
+                stored dict missing the newer keys). ``key`` and ``content``
+                are required; all other keys are optional and fall back to
+                the same defaults as :meth:`__init__`.
+
+        Returns:
+            A new :class:`ChatDictionary` built from ``data``.
+        """
         return cls(
             key=data['key'],
             content=data['content'],

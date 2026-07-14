@@ -135,3 +135,21 @@ class TestUnifiedOrdering:
         sample = "BP HR bp2 end"
         assert process_user_input(sample, entries) == \
             process_user_input_with_diagnostics(sample, entries)[0]
+
+
+class TestLooseTypedCoercion:
+    def test_priority_none_and_garbage_default_to_zero(self):
+        assert ChatDictionary.from_dict(
+            {"key": "BP", "content": "x", "priority": None}
+        ).priority == 0  # RED-first: TypeError pre-fix
+        assert _entry("BP", "x", priority="garbage").priority == 0
+
+    def test_string_false_is_false(self):
+        entry = _entry("BP", "x", enabled="false", case_sensitive="False")
+        assert entry.enabled is False        # RED-first: True pre-fix
+        assert entry.case_sensitive is False
+
+    def test_string_true_and_unrecognized(self):
+        assert _entry("BP", "x", enabled="yes").enabled is True
+        assert _entry("BP", "x", enabled="maybe").enabled is True   # default
+        assert _entry("BP", "x", case_sensitive="maybe").case_sensitive is False  # default

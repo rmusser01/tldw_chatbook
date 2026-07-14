@@ -40,7 +40,7 @@ def _entry_from_payload(value: Any) -> cdl.ChatDictionary:
         max_replacements=int(data.get("max_replacements", 1) or 1),
         enabled=data.get("enabled", True),
         case_sensitive=data.get("case_sensitive", False),
-        priority=int(data.get("priority", 0) or 0),
+        priority=data.get("priority", 0),
     )
 
 

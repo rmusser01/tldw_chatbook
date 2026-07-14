@@ -118,6 +118,12 @@ class PersonasDictionaryDetailWidget(Vertical):
     # ----- compose -----
 
     def compose(self) -> ComposeResult:
+        """Build the Entries and Settings tab panes.
+
+        Returns:
+            ComposeResult: The child widgets that make up this container
+            (the tabbed Entries/Settings layout plus the status line).
+        """
         with TabbedContent(id="personas-dict-tabs"):
             with TabPane("Entries", id="personas-dict-tab-entries"):
                 with VerticalScroll(id="personas-dict-entries-scroll"):
@@ -157,6 +163,11 @@ class PersonasDictionaryDetailWidget(Vertical):
         yield Static("", id="personas-dict-status", markup=False)
 
     def on_mount(self) -> None:
+        """Register the entries table's columns once the widget is mounted.
+
+        Returns:
+            None.
+        """
         table = self.query_one("#personas-dict-entries-table", DataTable)
         table.add_columns("pattern", "replacement", "type", "prob %", "group", "pri")
 
@@ -187,7 +198,12 @@ class PersonasDictionaryDetailWidget(Vertical):
         self._last_dirty_sent = False
 
     def update_entries(self, entries: list[dict]) -> None:
-        """Re-render the entries table from a fresh service response."""
+        """Re-render the entries table from a fresh service response.
+
+        Args:
+            entries: Normalized entry dicts (as returned by the dictionary
+                service) to display, in application order.
+        """
         self._entries = list(entries)
         table = self.query_one("#personas-dict-entries-table", DataTable)
         table.clear()
@@ -248,6 +264,14 @@ class PersonasDictionaryDetailWidget(Vertical):
         self._sync_dirty_state()
 
     def clear(self) -> None:
+        """Reset the widget to its unloaded state.
+
+        Clears the cached entries, the dirty-detection settings snapshot,
+        and the validation findings, and empties the entries table.
+
+        Returns:
+            None.
+        """
         self._entries = []
         self._loaded_settings = None
         self._last_dirty_sent = False
@@ -269,7 +293,18 @@ class PersonasDictionaryDetailWidget(Vertical):
         return [str(e.get("id")) for e in self._entries]
 
     def form_payload(self) -> dict | None:
-        """API-named entry payload from the form; None + inline error when invalid."""
+        """API-named entry payload from the form; None + inline error when invalid.
+
+        Validates the pattern, probability, max-replacements, and priority
+        fields, writing a human-readable message to the inline error Static
+        the first time a check fails.
+
+        Returns:
+            dict | None: The entry payload keyed by API field names
+            (``pattern``, ``replacement``, ``type``, ``probability``,
+            ``group``, ``max_replacements``, ``enabled``, ``case_sensitive``,
+            ``priority``), or ``None`` if the form contains invalid input.
+        """
         error = self.query_one("#personas-dict-entry-error", Static)
         pattern = self.query_one("#personas-dict-entry-pattern", Input).value.strip()
         if not pattern:

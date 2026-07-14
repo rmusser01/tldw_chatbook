@@ -312,3 +312,22 @@ def test_entry_new_fields_roundtrip_through_service(dictionary_db):
     # Partial update touching only the replacement preserves the three fields.
     updated = service.update_entry(entry["id"], {"replacement": "arterial pressure"})
     assert (updated["enabled"], updated["case_sensitive"], updated["priority"]) == (False, True, 9)
+
+
+def test_entry_loose_typed_priority_and_enabled_do_not_crash(dictionary_db):
+    """A malformed ``priority`` string must not crash entry creation, and a
+    quoted ``"false"`` must be honored as False rather than truthy-``bool()``."""
+    service = LocalChatDictionaryService(dictionary_db)
+    created = service.create_dictionary(
+        {
+            "name": "Loose Types",
+            "entries": [
+                {"pattern": "BP", "replacement": "blood pressure",
+                 "priority": "garbage", "enabled": "false"},
+            ],
+        }
+    )
+    record = service.get_dictionary(created["id"])
+    entry = record["entries"][0]
+    assert entry["priority"] == 0
+    assert entry["enabled"] is False
