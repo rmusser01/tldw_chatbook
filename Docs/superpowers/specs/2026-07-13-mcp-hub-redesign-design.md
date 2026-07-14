@@ -84,16 +84,16 @@ Ported from the webui (`mcpHubReadiness.ts`), used by both sources:
 
 **Overview (no server selected)**: aggregate readiness line; servers table — **Name | Transport | Status | Tools | Auth | Scope**. Status is a `ds-status-badge`; problem rows get a one-line `ds-recovery-callout` beneath the table ("web-search: Needs Auth — Open credentials"). Local servers' Auth column shows `env (2)` / `none` (no fake auth schemes). Primary action: **Add Server**.
 
-**Add-server flow** (inline canvas form): setup-type chooser, then type-specific fields:
-- **Local stdio** — name, command, args, working dir, env vars (write-only once saved).
-- **HTTP/SSE** — name, URL, headers.
+**Add-server flow** (inline canvas form): setup-type chooser, then type-specific fields. *Corrections (verified during Phase 2 planning):* the local store (`LocalExternalMCPProfile`) has no transport, URL, or working-dir fields — local profiles are **stdio-only** (id, command, args, env) — and it **rejects literal secrets by design** (`env_literals` is a safe-operational-value whitelist; secrets are representable only as `$VAR` placeholders). Therefore:
+- **Local stdio** — profile id, command, args, env placeholders (`$VAR` references) + safe operational literals (store-validated).
+- **HTTP/SSE** — Server source only (`external_server.create` with `transport` + `config.url`), scope-gated to team/org/system-admin.
 - **Import JSON** — paste *or file path* (terminal paste of large blobs is fragile); live parse preview of what will be created + validation errors before commit.
 
 Validation lint: warn when a secret-looking value appears in `args` (visible in `ps`); suggest env. Save lands the server in `discovery_not_run`; the inspector offers the one right next action ("Refresh tools").
 
 **Detail (server selected)**: config summary (transport, command/URL, env redacted), tool count, read-only **resources & prompts** listing with counts (test-read/test-get via inspector), and a **Credentials** section:
 - Server source: the slot model — define slots (name, kind, privilege class) → auth-template mappings (slot → header/env target, prefix/suffix) → write-only slot secret.
-- Local source: masked env/secret fields.
+- Local source: env placeholders (`$VAR`) + safe operational literals; the store rejects raw secrets, so the form teaches the placeholder pattern instead of offering masked secret inputs (correction, Phase 2 planning).
 - **Write-only secret pattern everywhere**: blank = keep existing, typed = replace, explicit Clear. Secrets are never read back.
 
 **Lifecycle actions** (inspector, readiness-filtered): Connect / Disconnect / Test / Refresh tools / Edit / Delete. Delete confirms and cascades cleanup of that server's tool overrides; audit history is retained. All async ops are per-server workers with explicit timeouts and a visible Cancel during `checking` (stdio connects can hang).
