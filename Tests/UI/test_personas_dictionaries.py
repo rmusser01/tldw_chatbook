@@ -39,7 +39,9 @@ def _entry_response(dictionary_id: int, index: int, entry: dict) -> dict:
         "timed_effects": entry.get("timed_effects"),
         "max_replacements": entry.get("max_replacements", 1),
         "type": entry.get("type", "literal"),
-        "enabled": True,
+        "enabled": bool(entry.get("enabled", True)),
+        "case_sensitive": bool(entry.get("case_sensitive", False)),
+        "priority": int(entry.get("priority", 0)),
         "source": "local",
     }
 
@@ -116,6 +118,9 @@ class FakeDictScopeService:
                     "timed_effects": e.get("timed_effects"),
                     "max_replacements": e.get("max_replacements", 1),
                     "type": e.get("type", "literal"),
+                    "enabled": bool(e.get("enabled", True)),
+                    "case_sensitive": bool(e.get("case_sensitive", False)),
+                    "priority": int(e.get("priority", 0)),
                 }
                 for e in payload.get("entries") or []
             ],
@@ -138,7 +143,15 @@ class FakeDictScopeService:
             if field in payload:
                 record[field] = payload[field]
         if "entries" in payload:
-            record["entries"] = [dict(e) for e in payload["entries"] or []]
+            record["entries"] = [
+                {
+                    **dict(e),
+                    "enabled": bool(e.get("enabled", True)),
+                    "case_sensitive": bool(e.get("case_sensitive", False)),
+                    "priority": int(e.get("priority", 0)),
+                }
+                for e in payload["entries"] or []
+            ]
         record["version"] += 1
         self.calls.append(("update", int(dictionary_id), payload))
         return self._summary(record)
@@ -152,10 +165,14 @@ class FakeDictScopeService:
 
     async def add_entry(self, dictionary_id: int, request_data: Any, mode: str = "local") -> dict:
         record = self.records[int(dictionary_id)]
-        record["entries"].append(dict(request_data))
+        entry = dict(request_data)
+        entry.setdefault("enabled", True)
+        entry.setdefault("case_sensitive", False)
+        entry.setdefault("priority", 0)
+        record["entries"].append(entry)
         record["version"] += 1
         self.calls.append(("add_entry", int(dictionary_id)))
-        return _entry_response(int(dictionary_id), len(record["entries"]) - 1, dict(request_data))
+        return _entry_response(int(dictionary_id), len(record["entries"]) - 1, entry)
 
     async def list_entries(self, dictionary_id: int, mode: str = "local", **kwargs: Any) -> dict:
         record = self.records[int(dictionary_id)]
@@ -177,6 +194,10 @@ class FakeDictScopeService:
         dictionary_id, index = self._parse_entry_id(entry_id)
         record = self.records[dictionary_id]
         record["entries"][index].update(dict(request_data))
+        # Ensure the three new fields have their defaults if not set
+        record["entries"][index].setdefault("enabled", True)
+        record["entries"][index].setdefault("case_sensitive", False)
+        record["entries"][index].setdefault("priority", 0)
         record["version"] += 1
         self.calls.append(("update_entry", entry_id))
         return _entry_response(dictionary_id, index, record["entries"][index])
@@ -284,9 +305,11 @@ def make_dict_record(
         if entries is not None
         else [
             {"pattern": "BP", "replacement": "blood pressure", "probability": 1.0,
-             "group": None, "timed_effects": None, "max_replacements": 1, "type": "literal"},
+             "group": None, "timed_effects": None, "max_replacements": 1, "type": "literal",
+             "enabled": True, "case_sensitive": False, "priority": 0},
             {"pattern": "HR", "replacement": "heart rate", "probability": 1.0,
-             "group": None, "timed_effects": None, "max_replacements": 1, "type": "literal"},
+             "group": None, "timed_effects": None, "max_replacements": 1, "type": "literal",
+             "enabled": True, "case_sensitive": False, "priority": 0},
         ],
     }
 
@@ -748,6 +771,37 @@ class TestDictionaryEntries:
             assert [e["pattern"] for e in fake_dict_service.records[1]["entries"]] == ["HR", "BP"]
             assert str(table.get_cell_at((0, 0))) == "HR"
 
+    async def test_form_roundtrips_new_fields(self, mock_app_instance, stub_characters, fake_dict_service):
+        from textual.widgets import Switch, TextArea
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            screen.query_one("#personas-dict-entry-pattern", Input).value = "ICU"
+            screen.query_one("#personas-dict-entry-replacement", TextArea).text = "intensive care"
+            screen.query_one("#personas-dict-entry-enabled", Switch).value = False
+            screen.query_one("#personas-dict-entry-case", Switch).value = True
+            screen.query_one("#personas-dict-entry-priority", Input).value = "5"
+            await pilot.click("#personas-dict-entry-add")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            added = fake_dict_service.records[1]["entries"][-1]
+            assert (added["enabled"], added["case_sensitive"], added["priority"]) == (False, True, 5)
+
+    async def test_priority_input_validates_integer(self, mock_app_instance, stub_characters, fake_dict_service):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            screen.query_one("#personas-dict-entry-pattern", Input).value = "X"
+            screen.query_one("#personas-dict-entry-priority", Input).value = "high"
+            detail = screen.query_one("#personas-dictionary-detail")
+            assert detail.form_payload() is None
+            error = str(screen.query_one("#personas-dict-entry-error", Static).renderable)
+            assert "whole number" in error.lower()
+
 
 class TestDictionarySettings:
     async def _select_first(self, pilot, screen):
@@ -873,6 +927,9 @@ class TestDictionaryNewDuplicate:
 
     async def test_duplicate_copies_entries_and_strategy(self, mock_app_instance, stub_characters, fake_dict_service):
         fake_dict_service.records[1]["strategy"] = "character_lore_first"
+        fake_dict_service.records[1]["entries"][0].update(
+            {"enabled": False, "case_sensitive": True, "priority": 4}
+        )
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _enter_dictionaries(pilot)
@@ -885,6 +942,12 @@ class TestDictionaryNewDuplicate:
             assert [e["pattern"] for e in copy_rec["entries"]] == ["BP", "HR"]
             # create_dictionary ignores strategy - the follow-up update must set it.
             assert copy_rec["strategy"] == "character_lore_first"
+            # Check all nine fields are carried
+            src = fake_dict_service.records[1]["entries"][0]
+            dup = copy_rec["entries"][0]
+            for field in ("pattern", "replacement", "probability", "group", "timed_effects",
+                          "max_replacements", "type", "enabled", "case_sensitive", "priority"):
+                assert dup.get(field) == src.get(field), field
 
     async def test_duplicate_button_hidden_outside_dictionaries(self, mock_app_instance, stub_characters, fake_dict_service):
         app = PersonasTestApp(mock_app_instance)

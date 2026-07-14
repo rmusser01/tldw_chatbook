@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -106,6 +107,9 @@ class PersonasDictionaryDetailWidget(Vertical):
                     yield Input(placeholder="Probability %", id="personas-dict-entry-probability", value="100")
                     yield Input(placeholder="Group", id="personas-dict-entry-group")
                     yield Input(placeholder="Max repl.", id="personas-dict-entry-max-repl", value="1")
+                    yield Switch(value=True, id="personas-dict-entry-enabled", tooltip="Entry enabled")
+                    yield Switch(value=False, id="personas-dict-entry-case", tooltip="Case-sensitive (literal keys)")
+                    yield Input(placeholder="Priority", id="personas-dict-entry-priority", value="0")
                 yield TextArea(id="personas-dict-entry-replacement")
                 with Horizontal(classes="personas-dict-form-row"):
                     yield Button("Add", id="personas-dict-entry-add", classes="console-action-secondary")
@@ -131,7 +135,7 @@ class PersonasDictionaryDetailWidget(Vertical):
 
     def on_mount(self) -> None:
         table = self.query_one("#personas-dict-entries-table", DataTable)
-        table.add_columns("pattern", "replacement", "type", "prob %", "group")
+        table.add_columns("pattern", "replacement", "type", "prob %", "group", "pri")
 
     # ----- public API -----
 
@@ -167,12 +171,18 @@ class PersonasDictionaryDetailWidget(Vertical):
         for entry in self._entries:
             probability = entry.get("probability")
             prob_pct = round(float(probability if probability is not None else 1.0) * 100)
+            enabled = bool(entry.get("enabled", True))
+            style = "dim" if not enabled else ""
+            pattern_cell = Text(str(entry.get("pattern") or ""), style=style)
+            if not enabled:
+                pattern_cell.append("  off", style="dim")
             table.add_row(
-                str(entry.get("pattern") or ""),
-                str(entry.get("replacement") or ""),
-                str(entry.get("type") or "literal"),
-                str(prob_pct),
-                str(entry.get("group") or ""),
+                pattern_cell,
+                Text(str(entry.get("replacement") or ""), style=style),
+                Text(str(entry.get("type") or "literal"), style=style),
+                Text(str(prob_pct), style=style),
+                Text(str(entry.get("group") or ""), style=style),
+                Text(str(int(entry.get("priority") or 0)), style=style),
                 key=str(entry.get("id")),
             )
         self.query_one("#personas-dict-entry-error", Static).update("")
@@ -231,6 +241,12 @@ class PersonasDictionaryDetailWidget(Vertical):
         except ValueError:
             error.update("Max replacements must be a positive whole number.")
             return None
+        raw_priority = self.query_one("#personas-dict-entry-priority", Input).value.strip() or "0"
+        try:
+            priority = int(raw_priority)
+        except ValueError:
+            error.update("Priority must be a whole number.")
+            return None
         error.update("")
         group = self.query_one("#personas-dict-entry-group", Input).value.strip()
         return {
@@ -240,6 +256,9 @@ class PersonasDictionaryDetailWidget(Vertical):
             "probability": prob_pct / 100,
             "group": group or None,
             "max_replacements": max_repl,
+            "enabled": bool(self.query_one("#personas-dict-entry-enabled", Switch).value),
+            "case_sensitive": bool(self.query_one("#personas-dict-entry-case", Switch).value),
+            "priority": priority,
         }
 
     def settings_payload(self) -> dict:
@@ -275,6 +294,9 @@ class PersonasDictionaryDetailWidget(Vertical):
         )
         self.query_one("#personas-dict-entry-group", Input).value = str(entry.get("group") or "")
         self.query_one("#personas-dict-entry-max-repl", Input).value = str(entry.get("max_replacements") or 1)
+        self.query_one("#personas-dict-entry-enabled", Switch).value = bool(entry.get("enabled", True))
+        self.query_one("#personas-dict-entry-case", Switch).value = bool(entry.get("case_sensitive", False))
+        self.query_one("#personas-dict-entry-priority", Input).value = str(int(entry.get("priority") or 0))
 
     @on(DataTable.RowSelected, "#personas-dict-entries-table")
     def _row_selected(self, event: DataTable.RowSelected) -> None:

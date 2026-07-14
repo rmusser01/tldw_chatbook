@@ -1667,6 +1667,9 @@ class PersonasScreen(BaseAppScreen):
                     "timed_effects": e.get("timed_effects"),
                     "max_replacements": e.get("max_replacements"),
                     "type": e.get("type"),
+                    "enabled": e.get("enabled", True),
+                    "case_sensitive": e.get("case_sensitive", False),
+                    "priority": e.get("priority", 0),
                 }
                 for e in source.get("entries") or []
             ],
