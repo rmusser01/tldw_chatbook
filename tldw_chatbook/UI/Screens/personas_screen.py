@@ -1268,6 +1268,7 @@ class PersonasScreen(BaseAppScreen):
             slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "dictionary"
             stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
             exports_dir = get_user_data_dir() / "exports"
+            temp = None
             try:
                 exports_dir.mkdir(parents=True, exist_ok=True)
                 target = exports_dir / f"{slug}-{stamp}.{extension}"
@@ -1276,6 +1277,8 @@ class PersonasScreen(BaseAppScreen):
                 temp.replace(target)
             except OSError as exc:
                 logger.opt(exception=True).warning("Could not write the export file.")
+                if temp is not None:
+                    temp.unlink(missing_ok=True)
                 detail.set_status(f"Export failed: {exc}")
                 return
             detail.set_status(f"Exported to {target}")
@@ -2257,7 +2260,7 @@ class PersonasScreen(BaseAppScreen):
         source = Path(path)
         try:
             text = await asyncio.to_thread(source.read_text, "utf-8")
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             logger.opt(exception=True).warning(f"Could not read import file {path}.")
             self._notify(f"Import failed: {exc}", "error")
             return
@@ -2268,7 +2271,11 @@ class PersonasScreen(BaseAppScreen):
             except json.JSONDecodeError as exc:
                 self._notify(f"Import failed: not valid JSON ({exc})", "error")
                 return
-            data = dict(parsed.get("data") if isinstance(parsed, dict) and "data" in parsed else parsed)
+            raw = parsed.get("data") if isinstance(parsed, dict) and "data" in parsed else parsed
+            if not isinstance(raw, dict):
+                self._notify("Import failed: JSON must be a dictionary object.", "error")
+                return
+            data = dict(raw)
             request = {"data": data}
             def _rename(new_name: str) -> None:
                 data["name"] = new_name          # data.name WINS - mutate it

@@ -303,10 +303,10 @@ class PersonasDictionaryDetailWidget(Vertical):
         table.clear()
         for record in summaries:
             table.add_row(
-                str(record.get("revision")),
-                str(record.get("action") or ""),
-                str(record.get("name") or ""),
-                str(record.get("created_at") or ""),
+                Text(str(record.get("revision"))),
+                Text(str(record.get("action") or "")),
+                Text(str(record.get("name") or "")),
+                Text(str(record.get("created_at") or "")),
                 key=str(record.get("revision")),
             )
         self.query_one("#personas-dict-version-snapshot", Static).update("")

@@ -1722,6 +1722,28 @@ class TestDictionaryVersionsTab:
             assert fake_dict_service.records[1]["name"] == "Medical Abbrev"  # restored
             assert screen.query_one("#personas-dict-name", Input).value == "Medical Abbrev"  # detail reloaded
 
+    async def test_versions_table_renders_bracketed_name_safely(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
+        """Bare str cells are markup-parsed by DataTable's idle render pass.
+        A dictionary name containing an unmatched closing tag (e.g. '[/]')
+        raises an uncaught rich.errors.MarkupError there - not caught by
+        anything, so it corrupts/crashes the widget on selection. Cells must
+        be pre-wrapped in Text() so they're never markup-parsed. This name
+        also carries a plain '[WIP]' prefix to confirm ordinary bracketed
+        text still renders through intact.
+        """
+        from textual.widgets import DataTable
+
+        fake_dict_service.records[1]["name"] = "[WIP] [/] Meds"
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            table = screen.query_one("#personas-dict-versions-table", DataTable)
+            cell = table.get_cell_at((0, 2))
+            assert "[WIP]" in str(cell)
+
 
 class TestDictionaryExport:
     async def _select_first(self, pilot, screen):
@@ -1797,6 +1819,15 @@ class TestDictionaryExport:
 
 
 class TestDictionaryImport:
+    @staticmethod
+    def _capture_notifications(app) -> list[tuple[str, str]]:
+        """Shadow App.notify with an instance attribute, like _notify resolves it."""
+        captured: list[tuple[str, str]] = []
+        app.notify = lambda message, severity="information", **kwargs: captured.append(
+            (str(message), severity)
+        )
+        return captured
+
     async def test_import_button_visible_in_dictionaries_mode(self, mock_app_instance, stub_characters, fake_dict_service):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
@@ -1871,3 +1902,58 @@ class TestDictionaryImport:
             await screen._import_dictionary_from_path(str(source))
             await pilot.pause()
             assert len(fake_dict_service.records) == before
+
+    async def test_import_non_utf8_file_notifies_no_crash(
+        self, mock_app_instance, stub_characters, fake_dict_service, tmp_path
+    ):
+        """UnicodeDecodeError is a ValueError, not an OSError - the read
+        try/except must catch it too or this worker-hosted coroutine
+        crashes the whole TUI (exit_on_error=True on the default worker)."""
+        source = tmp_path / "binary.json"
+        source.write_bytes(b"\xff\xfe bad")
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            before = len(fake_dict_service.records)
+            await screen._import_dictionary_from_path(str(source))
+            await pilot.pause()
+            assert len(fake_dict_service.records) == before
+            assert any(severity == "error" for _, severity in notifications)
+
+    async def test_import_json_array_notifies_no_crash(
+        self, mock_app_instance, stub_characters, fake_dict_service, tmp_path
+    ):
+        """A structurally-valid JSON array has no 'data' key, so the coercion
+        falls through to dict(parsed) - which raises on a non-dict payload
+        unless it's explicitly guarded."""
+        source = tmp_path / "array.json"
+        source.write_text("[1, 2, 3]")
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            before = len(fake_dict_service.records)
+            await screen._import_dictionary_from_path(str(source))
+            await pilot.pause()
+            assert len(fake_dict_service.records) == before
+            assert any(severity == "error" for _, severity in notifications)
+
+    async def test_import_json_null_data_notifies_no_crash(
+        self, mock_app_instance, stub_characters, fake_dict_service, tmp_path
+    ):
+        """An envelope with a non-dict 'data' field (here: null) must also be
+        guarded - dict(None) raises the same as dict(parsed) on a list."""
+        import json as jsonlib
+
+        source = tmp_path / "null-data.json"
+        source.write_text(jsonlib.dumps({"data": None}))
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            before = len(fake_dict_service.records)
+            await screen._import_dictionary_from_path(str(source))
+            await pilot.pause()
+            assert len(fake_dict_service.records) == before
+            assert any(severity == "error" for _, severity in notifications)
