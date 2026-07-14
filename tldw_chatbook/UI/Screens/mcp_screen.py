@@ -5,8 +5,10 @@ from typing import Any
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
+from textual.css.query import QueryError
 from textual.widgets import Button, Static
 
+from ...Widgets.AppFooterStatus import AppFooterStatus
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ..MCP_Modules.mcp_workbench import MCP_HUB_MODES, MCPWorkbench
 from ..Navigation.base_app_screen import BaseAppScreen
@@ -20,6 +22,20 @@ _MODE_TOOLTIPS = {
     "audit": "Audit mode: review MCP action history (arrives in a later phase).",
 }
 
+# T13: Console precedent is `CONSOLE_WORKBENCH_SHORTCUTS` (chat_screen.py) --
+# rendered through the shared `AppFooterStatus.set_workbench_shortcuts()`
+# context model, source="mcp" so it cannot clobber another screen's context
+# (`clear_shortcut_context(source=...)` is a no-op unless "mcp" still owns
+# it).
+MCP_SHORTCUTS = (("1-4", "mode"), ("a", "add server"), ("r", "refresh"))
+
+# T13: shared reload-worker identity between the runtime-backend-change path
+# (`handle_runtime_backend_changed`) and the manual `r` keybinding
+# (`action_mcp_refresh`) -- same group so `exclusive=True` also serializes a
+# manual refresh against an in-flight runtime-triggered one (and vice versa),
+# not just repeats of the same trigger.
+_RELOAD_WORKER_GROUP = "mcp-screen-runtime-refresh"
+
 
 class MCPScreen(BaseAppScreen):
     """MCP servers, tools, permissions, and audit surface."""
@@ -29,6 +45,8 @@ class MCPScreen(BaseAppScreen):
         Binding("2", "mcp_mode('tools')", "Tools", show=False),
         Binding("3", "mcp_mode('permissions')", "Permissions", show=False),
         Binding("4", "mcp_mode('audit')", "Audit", show=False),
+        Binding("a", "mcp_add_server", "Add server", show=False),
+        Binding("r", "mcp_refresh", "Refresh", show=False),
     ]
 
     DEFAULT_CSS = """
@@ -128,6 +146,76 @@ class MCPScreen(BaseAppScreen):
     def action_mcp_mode(self, mode: str) -> None:
         self._activate_mode(mode)
 
+    def action_mcp_add_server(self) -> None:
+        """`a` keybinding: switch to Servers mode and open the Add-server form.
+
+        Drives the workbench's `open_add_server_form()`, which follows the
+        same path the overview Add-server button does (including the T9
+        server-source mutation gate -- a notification with the button's own
+        tooltip copy instead of opening when gated). Dispatched via a worker
+        because opening the form is async (mounts `MCPProfileForm`/
+        `MCPServerMutationsPanel`).
+        """
+        if self.workbench is None:
+            return
+        self._activate_mode("servers")
+        self.run_worker(
+            self.workbench.open_add_server_form(),
+            name="mcp-screen-add-server",
+            group="mcp-screen-add-server",
+            exclusive=True,
+        )
+
+    def action_mcp_refresh(self) -> None:
+        """`r` keybinding: reload the workbench via the existing exclusive worker.
+
+        Shares `_RELOAD_WORKER_GROUP` with `handle_runtime_backend_changed()`
+        so a manual refresh and a runtime-triggered one cannot run
+        concurrently.
+        """
+        if self.workbench is None:
+            return
+        self.run_worker(
+            self.workbench.reload(),
+            name="mcp-screen-manual-refresh",
+            group=_RELOAD_WORKER_GROUP,
+            exclusive=True,
+        )
+
+    def _register_footer_shortcuts(self) -> None:
+        """Register MCP Hub shortcuts with the app footer if mounted."""
+        try:
+            footer = self.app.query_one(AppFooterStatus)
+        except QueryError:
+            return
+        set_shortcuts = getattr(footer, "set_workbench_shortcuts", None)
+        if callable(set_shortcuts):
+            set_shortcuts(source="mcp", shortcuts=MCP_SHORTCUTS)
+
+    def _clear_footer_shortcuts(self) -> None:
+        """Clear MCP Hub shortcuts from the app footer if mounted."""
+        try:
+            footer = self.app.query_one(AppFooterStatus)
+        except QueryError:
+            return
+        clear_shortcuts = getattr(footer, "clear_shortcut_context", None)
+        if callable(clear_shortcuts):
+            clear_shortcuts(source="mcp")
+
+    def on_mount(self) -> None:
+        super().on_mount()
+        self._register_footer_shortcuts()
+
+    def on_screen_resume(self) -> None:
+        """Called when returning to this screen (e.g. after a pushed overlay pops)."""
+        self._register_footer_shortcuts()
+        # Note: BaseAppScreen doesn't have on_screen_resume, so no super() call
+
+    def on_screen_suspend(self) -> None:
+        """Called when another screen is pushed on top of this one."""
+        self._clear_footer_shortcuts()
+        # Note: BaseAppScreen doesn't have on_screen_suspend, so no super() call
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         mode = _MODE_BY_BUTTON_ID.get(event.button.id or "")
         if mode is None:
@@ -161,6 +249,6 @@ class MCPScreen(BaseAppScreen):
             self.run_worker(
                 self.workbench.reload(),
                 name="mcp-screen-runtime-refresh",
-                group="mcp-screen-runtime-refresh",
+                group=_RELOAD_WORKER_GROUP,
                 exclusive=True,
             )

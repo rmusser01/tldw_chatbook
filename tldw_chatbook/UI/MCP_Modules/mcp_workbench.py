@@ -995,18 +995,54 @@ class MCPWorkbench(Container):
         self, event: MCPServersMode.AddServerRequested
     ) -> None:
         event.stop()
+        await self._open_add_server(notify_if_gated=False)
+
+    async def open_add_server_form(self) -> None:
+        """Open the Add-server form/panel from outside the overview button.
+
+        T13: entry point for the `a` keybinding, which -- unlike a
+        `Button.Pressed` on the overview's own (already gate-disabled)
+        Add-server button -- can fire while server-source mutations are
+        gated off. Reachable-while-gated means silently no-opping (the
+        button-press behavior) would leave the user with no explanation, so
+        this notifies with the button's own gate copy instead.
+        """
+        await self._open_add_server(notify_if_gated=True)
+
+    async def _open_add_server(self, *, notify_if_gated: bool) -> None:
         canvas = self.query_one(MCPServersMode)
         if self._source == "server":
-            # The button is disabled (see `_update_add_server_button()`)
-            # when either of these fails -- a real Button.Pressed can't
-            # reach here then, but a defensive check costs nothing.
+            # T9: mirrors `MCPServersMode._update_add_server_button()`'s gate
+            # precedence -- scope gate first, then the no-active-target gate.
+            # A real Button.Pressed can't reach here while either fails (the
+            # button is disabled), but a defensive check costs nothing.
             if not self._server_mutations_available:
+                if notify_if_gated:
+                    self._notify_add_server_gated(canvas)
                 return
             if self._active_service_target_id() is None:
+                if notify_if_gated:
+                    self._notify_add_server_gated(canvas)
                 return
             await canvas.show_server_mutations(None, [])
         else:
             await canvas.show_form(None)
+
+    def _notify_add_server_gated(self, canvas: MCPServersMode) -> None:
+        """Surface the overview Add-server button's own gate tooltip as a notification.
+
+        Reuses whatever `MCPServersMode._update_add_server_button()` already
+        computed rather than duplicating the gate copy, so the notification
+        and the button's own explanation can never drift apart.
+        """
+        try:
+            button = canvas.query_one("#mcp-add-server")
+        except Exception:
+            button = None
+        message = str(button.tooltip) if button is not None and button.tooltip else (
+            "Adding a server is unavailable right now."
+        )
+        self.app.notify(message, severity="warning")
 
     async def on_mcp_servers_mode_import_servers_requested(
         self, event: MCPServersMode.ImportServersRequested

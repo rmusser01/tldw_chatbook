@@ -147,6 +147,51 @@ async def test_server_source_add_button_gated_when_mutations_unavailable():
         assert button.tooltip == "Requires team, org, or system-admin scope."
 
 
+@pytest.mark.asyncio
+async def test_open_add_server_form_local_source_shows_profile_form():
+    """T13: `MCPWorkbench.open_add_server_form()` is the `a` keybinding's
+    entry point -- it never presses `#mcp-add-server`, so this drives the
+    local-source add-form path directly rather than via a Button.Pressed."""
+    app = WorkbenchApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        await workbench.open_add_server_form()
+        await pilot.pause()
+        canvas = app.query_one(MCPServersMode)
+        assert canvas.query_one("#mcp-servers-form").display is True
+        form = app.query_one(MCPProfileForm)
+        assert form.is_edit is False
+
+
+@pytest.mark.asyncio
+async def test_open_add_server_form_gated_notifies_with_button_tooltip_copy():
+    """T13: unlike a click on the already-disabled `#mcp-add-server` button
+    (`test_server_source_add_button_gated_when_mutations_unavailable`), the
+    `a` keybinding can reach this gate directly with no button to disable --
+    it must notify with the SAME copy the button's own tooltip carries
+    rather than silently doing nothing.
+    """
+    app = WorkbenchApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        notifications = _capture_notifications(app)
+        rail = app.query_one(MCPRail)
+        rail.post_message(MCPRail.SourceChanged("server"))
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        await workbench.open_add_server_form()
+        await pilot.pause()
+
+        canvas = app.query_one(MCPServersMode)
+        assert canvas.query_one("#mcp-servers-form").display is False
+        assert not app.query(MCPServerMutationsPanel)
+        assert notifications
+        message, severity = notifications[-1]
+        assert message == "Requires team, org, or system-admin scope."
+        assert severity == "warning"
+
+
 class MutationsAvailableTarget:
     server_id = "main"
     label = "Main Server"
@@ -604,6 +649,18 @@ async def test_workbench_panes_have_nonzero_geometry():
             assert widget.size.height > 0, f"{selector} has zero height"
         table = app.query_one("#mcp-servers-table")
         assert table.size.height > 0, "servers table clipped to zero height"
+
+        # T13: the Add-server form container (`#mcp-servers-form`, styled by
+        # the Phase 2 CSS block appended to _agentic_terminal.tcss) must also
+        # render with real geometry once shown -- not just the always-visible
+        # overview/detail panes checked above.
+        workbench = app.query_one(MCPWorkbench)
+        await workbench.open_add_server_form()
+        await pilot.pause()
+        form_container = app.query_one("#mcp-servers-form")
+        assert form_container.display is True
+        assert form_container.size.width > 0, "add-server form container has zero width"
+        assert form_container.size.height > 0, "add-server form container has zero height"
 
 
 # -- C1: scope-event storm on Server source --------------------------------
