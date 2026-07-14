@@ -77,19 +77,40 @@ class DictionarySettingsEdited(Message):
 
 
 class DictionaryVersionViewRequested(Message):
+    """Request to load and display a read-only snapshot of a prior version."""
+
     def __init__(self, revision: int) -> None:
+        """Initialize the message.
+
+        Args:
+            revision: The version number whose snapshot should be shown.
+        """
         super().__init__()
         self.revision = revision
 
 
 class DictionaryVersionRevertRequested(Message):
+    """Request to revert the dictionary's current state to a prior version."""
+
     def __init__(self, revision: int) -> None:
+        """Initialize the message.
+
+        Args:
+            revision: The version number to restore as the current version.
+        """
         super().__init__()
         self.revision = revision
 
 
 class DictionaryExportRequested(Message):
+    """Request to export the selected dictionary to a file."""
+
     def __init__(self, fmt: str) -> None:
+        """Initialize the message.
+
+        Args:
+            fmt: The export format, either ``"json"`` or ``"markdown"``.
+        """
         super().__init__()
         self.fmt = fmt
 

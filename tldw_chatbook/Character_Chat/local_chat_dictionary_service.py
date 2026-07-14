@@ -519,9 +519,22 @@ class LocalChatDictionaryService:
         return {"dictionary_id": int(dictionary_id), "name": record.get("name"), "content": content, "source": "local"}
 
     def import_json(self, request_data: Any) -> dict[str, Any]:
-        """Import dictionary from JSON; preserves strategy field for round-trip.
+        """Import a dictionary from a JSON payload, preserving the strategy field for round-trip.
 
         If strategy is not provided, defaults to 'sorted_evenly'.
+
+        Args:
+            request_data: The import payload; either a mapping/model with a
+                ``data`` key holding the dictionary fields (name,
+                description, content, entries, strategy, max_tokens,
+                enabled), or those fields directly at the top level.
+
+        Returns:
+            A dict with the newly created ``dictionary_id`` and
+            ``source: "local"``.
+
+        Raises:
+            ValueError: If the underlying save fails.
         """
         payload = _payload(request_data)
         data = dict(payload.get("data") or {})
@@ -543,9 +556,20 @@ class LocalChatDictionaryService:
         return {"dictionary_id": int(dictionary_id), "source": "local"}
 
     def export_json(self, dictionary_id: int) -> dict[str, Any]:
-        """Export dictionary to JSON; includes all fields for round-trip import.
+        """Export a dictionary to a JSON-serializable payload for round-trip import.
 
         The strategy field is included to support lossless round-trips.
+
+        Args:
+            dictionary_id: The id of the dictionary to export.
+
+        Returns:
+            A dict with ``dictionary_id``, a nested ``data`` mapping holding
+            all dictionary fields (name, description, content, entries,
+            strategy, max_tokens, enabled, version), and ``source: "local"``.
+
+        Raises:
+            ValueError: If the dictionary does not exist.
         """
         record = self._load_required_dictionary(int(dictionary_id))
         return {

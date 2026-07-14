@@ -1640,6 +1640,33 @@ class TestDictionaryStatsTab:
             assert "Priority: 0..5" in body
             assert "tokens" in body  # approximate token total line
 
+    async def test_stats_refreshed_after_settings_save(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
+        """load_statistics() runs on select and on entry mutations, but a
+        settings-only save (e.g. toggling enabled) must also re-feed the
+        Stats tab - otherwise it goes stale without requiring a reselect."""
+        from textual.widgets import TabbedContent
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            body_before = str(screen.query_one("#personas-dict-stats-body", Static).renderable)
+            assert "Dictionary enabled: yes" in body_before
+
+            screen.query_one("#personas-dict-tabs", TabbedContent).active = "personas-dict-tab-settings"
+            await pilot.pause()
+            screen.query_one("#personas-dict-enabled", Switch).value = False
+            await pilot.click("#personas-dict-settings-save")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert fake_dict_service.records[1]["enabled"] is False
+            body_after = str(screen.query_one("#personas-dict-stats-body", Static).renderable)
+            assert "Dictionary enabled: no" in body_after
+
 
 class TestDictionaryVersionsTab:
     async def _select_first(self, pilot, screen):
@@ -1721,6 +1748,53 @@ class TestDictionaryVersionsTab:
             await pilot.pause()
             assert fake_dict_service.records[1]["name"] == "Medical Abbrev"  # restored
             assert screen.query_one("#personas-dict-name", Input).value == "Medical Abbrev"  # detail reloaded
+
+    async def test_revert_refreshes_inspector_name(
+        self, mock_app_instance, stub_characters, fake_dict_service, monkeypatch
+    ):
+        """A revert restores the pre-rename name in the center detail (as
+        covered above), but the inspector's 'Selected:' line is a separate
+        widget the revert worker must also re-drive - otherwise it keeps
+        showing the renamed value even though the record itself reverted."""
+        from textual.widgets import DataTable, TabbedContent
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            # Mutate: rename via settings save to create revision 2.
+            screen.query_one("#personas-dict-tabs", TabbedContent).active = "personas-dict-tab-settings"
+            await pilot.pause()
+            screen.query_one("#personas-dict-name", Input).value = "Renamed"
+            await pilot.click("#personas-dict-settings-save")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert fake_dict_service.records[1]["name"] == "Renamed"
+            assert "Renamed" in str(
+                screen.query_one("#personas-selected-name", Static).renderable
+            )
+
+            async def _yes(name):
+                return True
+
+            monkeypatch.setattr(screen, "_confirm_dictionary_revert", _yes)
+            # See the comment in test_revert_confirms_then_restores: blur
+            # first so the tab switch below actually sticks.
+            screen.set_focus(None)
+            await pilot.pause()
+            screen.query_one("#personas-dict-tabs", TabbedContent).active = "personas-dict-tab-versions"
+            await pilot.pause()
+            table = screen.query_one("#personas-dict-versions-table", DataTable)
+            table.move_cursor(row=1)  # revision 1 (baseline, pre-rename)
+            await pilot.click("#personas-dict-version-revert")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert fake_dict_service.records[1]["name"] == "Medical Abbrev"  # restored
+            assert str(
+                screen.query_one("#personas-selected-name", Static).renderable
+            ) == "Selected: Medical Abbrev"
 
     async def test_versions_table_renders_bracketed_name_safely(
         self, mock_app_instance, stub_characters, fake_dict_service
@@ -2002,3 +2076,37 @@ class TestDictionaryImport:
             await pilot.pause()
             assert len(fake_dict_service.records) == before
             assert any(severity == "error" for _, severity in notifications)
+
+    async def test_import_completion_skipped_when_mode_changed(
+        self, mock_app_instance, stub_characters, fake_dict_service, tmp_path
+    ):
+        """The import coroutine awaits the DB call mid-flight; if the user
+        switches away from Dictionaries mode before it resumes, completion
+        must not yank them back into Dictionaries mode and select the newly
+        imported dictionary out from under them. The import itself (a DB
+        write, already committed by the time the mode is checked) must
+        still succeed."""
+        import json as jsonlib
+
+        payload = {"data": {"name": "Late Arrival", "description": "", "content": None,
+                             "entries": [], "strategy": "sorted_evenly", "max_tokens": 1000,
+                             "enabled": True, "version": 1}}
+        source = tmp_path / "late.json"
+        source.write_text(jsonlib.dumps(payload))
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_dictionaries(pilot)
+            # Simulate the user having navigated away while the import ran.
+            screen.state.active_mode = "characters"
+            await screen._import_dictionary_from_path(str(source))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            names = [r["name"] for r in fake_dict_service.records.values()]
+            assert "Late Arrival" in names  # the import itself still succeeded
+            assert screen.state.selected_entity_kind != "dictionary"  # no yank-back
+            assert any(
+                "open Dictionaries" in message and severity == "information"
+                for message, severity in notifications
+            )

@@ -1157,6 +1157,24 @@ class PersonasScreen(BaseAppScreen):
         self._update_status_row()
         await self._refresh_dictionary_versions()
 
+    async def _refresh_dictionary_statistics(self, record: dict) -> None:
+        """Re-feed the Stats tab for the given loaded record (best-effort).
+
+        Args:
+            record: The freshly loaded dictionary record (post save/revert)
+                whose entries seed the client-side stats enrichment.
+        """
+        entity_id = self.state.selected_entity_id
+        service = self._dictionary_scope_service()
+        if service is None or not entity_id:
+            return
+        stats = None
+        try:
+            stats = await service.get_statistics(int(entity_id), mode="local")
+        except Exception:
+            logger.opt(exception=True).warning("Could not refresh dictionary statistics.")
+        self.query_one(PersonasDictionaryDetailWidget).load_statistics(stats, list(record.get("entries") or []))
+
     @on(DictionarySettingsEdited)
     def _handle_dictionary_settings_edited(self, message: DictionarySettingsEdited) -> None:
         message.stop()
@@ -1204,6 +1222,7 @@ class PersonasScreen(BaseAppScreen):
             name=self.state.selected_entity_name, kind="dictionary", authority="Local"
         )
         detail.load_dictionary(record)
+        await self._refresh_dictionary_statistics(record)
         detail.set_status("Saved.")
         self._update_title()
         await self._render_dictionary_rows(query=self.state.search_query)
@@ -1409,7 +1428,11 @@ class PersonasScreen(BaseAppScreen):
             raw_version = record.get("version")
             self._selected_dictionary_version = int(raw_version) if raw_version is not None else None
             self.state.selected_entity_name = str(record.get("name") or "")
+            self.query_one(PersonasInspectorPane).show_selection(
+                name=self.state.selected_entity_name, kind="dictionary", authority="Local"
+            )
             detail.load_dictionary(record)
+            await self._refresh_dictionary_statistics(record)
             detail.set_status(f"Reverted to revision {revision}.")
             await self._render_dictionary_rows(query=self.state.search_query)
             self.query_one(PersonasLibraryPane).mark_active_row("dictionary", entity_id)
@@ -2287,7 +2310,12 @@ class PersonasScreen(BaseAppScreen):
         if service is None:
             self._notify("Dictionaries service is not configured.", "error")
             return
-        source = Path(path)
+        try:
+            source = validate_path_simple(path, require_exists=True)
+        except (ValueError, OSError) as exc:
+            logger.opt(exception=True).warning(f"Rejected dictionary import path {path}.")
+            self._notify(f"Import failed: {exc}", "error")
+            return
         try:
             if source.stat().st_size > PERSONAS_DICTIONARY_IMPORT_MAX_BYTES:
                 self._notify(
@@ -2347,14 +2375,22 @@ class PersonasScreen(BaseAppScreen):
             logger.opt(exception=True).warning(f"Dictionary import failed for {path}.")
             self._notify(f"Import failed: {exc}", "error")
             return
-        await self._render_dictionary_rows(query="")
         record = None
         try:
             record = await service.get_dictionary(int(result["dictionary_id"]), mode="local")
         except Exception:
             logger.opt(exception=True).warning("Imported dictionary could not be reloaded.")
-        if record is not None:
-            await self._select_dictionary(str(record.get("id")), str(record.get("name") or ""))
+            self._notify("Import succeeded, but the dictionary could not be reloaded.", "warning")
+            return
+        if self.state.active_mode != "dictionaries":
+            # The user navigated away while the import ran; don't yank them back.
+            self._notify(
+                f"Imported '{record.get('name') or ''}' — open Dictionaries to see it.",
+                "information",
+            )
+            return
+        await self._render_dictionary_rows(query="")
+        await self._select_dictionary(str(record.get("id")), str(record.get("name") or ""))
 
     @on(Button.Pressed, "#personas-export-json")
     async def _handle_export_json_pressed(self, event: Button.Pressed) -> None:
