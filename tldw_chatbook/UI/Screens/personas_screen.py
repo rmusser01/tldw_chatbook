@@ -1432,7 +1432,7 @@ class PersonasScreen(BaseAppScreen):
         # search_conversations_page(query, *, limit=50, offset=0, ...) always
         # returns a (rows, total, elapsed_seconds) tuple; unwrap defensively
         # in case a future/alternate DB implementation returns a bare list.
-        page = db.search_conversations_page(query="", limit=200, offset=0)
+        page = db.search_conversations_page(query="", scope_type="all", limit=200, offset=0)
         results = page[0] if isinstance(page, tuple) else page
         rows = []
         for conv in results or []:
