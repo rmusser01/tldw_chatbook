@@ -771,3 +771,52 @@ def test_library_skill_name_input_css_blocks_match_prompt_name_parity():
             text, "#library-skill-trust-state.library-skill-trust-state-blocked {"
         )
         assert "color: $ds-text-muted;" in blocked_state_block
+
+
+def test_library_skills_import_row_css_blocks_match_prompt_parity():
+    """``#library-skills-import-path`` and ``#library-skills-import-status``
+    (the inline import row in ``library_skills_canvas.py``, Task 5) must have
+    stylesheet blocks matching their ``#library-prompts-import-*`` siblings,
+    with same field look (tall-border/focus-accent Input) and muted status
+    line -- dual-pinned against both the source module AND the regenerated
+    bundle."""
+    agentic_terminal = AGENTIC_TERMINAL.read_text(encoding="utf-8")
+    bundled_stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+
+    for text in (agentic_terminal, bundled_stylesheet):
+        assert "#library-skills-import-path {" in text
+        assert "#library-skills-import-path:focus {" in text
+        assert "#library-skills-import-status {" in text
+
+        import_path_block = _css_block(text, "#library-skills-import-path {")
+        prompts_import_path_block = _css_block(text, "#library-prompts-import-path {")
+        for pinned in (
+            "width: 100%;",
+            "height: 3;",
+            "border: tall $ds-grid-line;",
+            "background: $ds-surface-raised;",
+            "color: $ds-text-primary;",
+        ):
+            assert pinned in import_path_block
+            assert pinned in prompts_import_path_block
+
+        import_path_focus_block = _css_block(text, "#library-skills-import-path:focus {")
+        prompts_import_path_focus_block = _css_block(text, "#library-prompts-import-path:focus {")
+        for pinned in (
+            "border: tall $ds-input-focus-accent;",
+            "outline: none;",
+            "background: $ds-input-focus-bg;",
+            "text-style: bold;",
+        ):
+            assert pinned in import_path_focus_block
+            assert pinned in prompts_import_path_focus_block
+
+        import_status_block = _css_block(text, "#library-skills-import-status {")
+        prompts_import_status_block = _css_block(text, "#library-prompts-import-status {")
+        for pinned in (
+            "width: 100%;",
+            "height: auto;",
+            "color: $ds-text-muted;",
+        ):
+            assert pinned in import_status_block
+            assert pinned in prompts_import_status_block
