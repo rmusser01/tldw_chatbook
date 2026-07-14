@@ -3,6 +3,15 @@
 TASK-217. Worktree `console-multi-attach-217`, HEAD **9227c3dc**
 ("feat(console): transcript chip per attachment").
 
+> **Post-fix update — 2026-07-14, HEAD `64584872`.** The P0 crash below is
+> **FIXED** and the three previously-blocked send-dependent captures are now
+> delivered (`sent-chips-per-attachment.png`, `save-all.png`,
+> `resume-multi-rehydrated.png`) as the live proof. Defect 2 is
+> **RESOLVED-AS-DOCUMENTED** (the spec was amended: `display_name` persists for
+> positions ≥ 1; position 0 keeps the mime·size resume label). See the
+> **Post-fix re-capture** section at the end for the full re-run. The original
+> pre-fix findings below are preserved verbatim for the record.
+
 Feature under test: Console messages carry up to **5** attachments — staging
 appends (picker / path-paste / Alt+V), a `📎 N files` indicator, a 5-per-message
 cap, multi-path-drop truncation, one `🖼` chip per attachment on send, Save-all,
@@ -126,18 +135,23 @@ None of these change what the Textual app sees vs. a real terminal.
   the red square inline; Assistant **`[failed]`** (the honest HTTP-500 from the
   non-vision llama.cpp). Proves the crash is **specific to >1 attachment**.
 
-### Not delivered — blocked by Defect 1
+### Delivered post-fix (were blocked by Defect 1 pre-fix)
 
 - **`sent-chips-per-attachment.png`**, **`save-all.png`**,
-  **`resume-multi-rehydrated.png`** — all three require a persisted
-  multi-attachment message. The multi-attachment send crashes before the
-  message is appended/rendered/persisted, so none can be produced against this
-  build. `<HOME>/Downloads` is empty (no Save-all reachable). These are blocked
-  by a code defect, not a rig limitation; no number of retries would succeed.
+  **`resume-multi-rehydrated.png`** — pre-fix these were blocked because the
+  multi-attachment send crashed before the message could be
+  appended/rendered/persisted (`<HOME>/Downloads` empty). **At HEAD `64584872`
+  all three are captured** — see the **Post-fix re-capture** section at the end
+  of this file for the full story and `ls` evidence.
 
 ## Defects
 
-### Defect 1 (P0, blocking) — multi-attachment send crashes the Console app
+### Defect 1 (P0, blocking) — multi-attachment send crashes the Console app — **FIXED in `64584872`**
+
+> **Status: FIXED.** At HEAD `64584872` a ≥2-attachment send persists cleanly
+> (legacy columns hold #0, `message_attachments` holds ≥1) and the app does not
+> crash — see `sent-chips-per-attachment.png` (send), `save-all.png`, and
+> `resume-multi-rehydrated.png`. Original pre-fix analysis preserved below.
 
 Sending any message with **≥2** attachments raises, in the persist worker:
 
@@ -172,7 +186,15 @@ raises the exact `TypeError`.
 Single-attachment send is safe: `len(attachments) > 1` is False →
 `attachments_payload` stays None → `else` branch sets the scalar image kwargs.
 
-### Defect 2 (functional, secondary) — position-0 attachment loses its filename on resume
+### Defect 2 (functional, secondary) — position-0 attachment loses its filename on resume — **RESOLVED-AS-DOCUMENTED in `64584872`**
+
+> **Status: RESOLVED-AS-DOCUMENTED.** This is inherent to the zero-duplication
+> schema (position 0 lives in the legacy `messages.image_data` columns, which
+> carry no filename). The design spec was amended to state the true behavior:
+> **`display_name` persists for positions ≥ 1; position 0 keeps the pre-existing
+> mime·size resume label.** Live-confirmed by `resume-multi-rehydrated.png`
+> (chip #0 = `🖼 image/png · 184 B`; chips #1/#2 = `green-square.png` /
+> `blue-square.png`). Original analysis preserved below.
 
 Position 0 is persisted only in the legacy `messages.image_data` /
 `image_mime_type` columns, which have **no filename field**;
@@ -213,5 +235,61 @@ Scripts (session scratchpad, not committed):
 `serve_multi.py` (serve launcher), `drv.py` (geometry + ws-stdin paste/altv +
 Send-click helpers), `setup_home.py` (HOME/config/stub/PNGs),
 `cap12.py`/`caps_rest.py`/`cap7.py` (captures), `repro_crash.py` (the Defect 1
-unit repro). QA HOME + `sitecustomize.py` under
+unit repro). Post-fix add-ons: `cap_send_save.py` (send + Save-all),
+`cap_resume.py` (fresh-process resume). QA HOME + `sitecustomize.py` under
 `/private/tmp/tldw-qa-multi-20260713`.
+
+---
+
+## Post-fix re-capture (2026-07-14, HEAD `64584872`)
+
+Same rig (textual-serve from the worktree, headless Playwright chromium
+2050×1240, isolated HOME `/private/tmp/tldw-qa-multi-20260713`, live llama.cpp @
+127.0.0.1:9099 with the vision override, ws-stdin bracketed-paste transport).
+The `ChaChaNotes` DB in the isolated HOME was wiped before the run so the rail
+holds exactly one real conversation (unambiguous resume). The three
+send-dependent captures that Defect 1 had blocked are now **delivered**:
+
+- **`sent-chips-per-attachment.png`** — three images (red/green/blue) staged by
+  sequential path-paste + text "Three squares", then **Send for real**. The
+  send **does not crash** (P0 proof): the user message posts with **three `🖼`
+  chips carrying the real filenames in-session** (`red-square.png`,
+  `green-square.png`, `blue-square.png`) and the first image (red) rendered
+  inline below. Assistant `[failed]` is the honest non-vision llama.cpp 500 and
+  is irrelevant to persistence. DB after send: one `Three squares` conversation;
+  legacy `messages.image_data` holds #0 (red, 184 B); `message_attachments`
+  holds position 1 = `green-square.png` and position 2 = `blue-square.png`
+  (185 B each) — exactly the fixed persistence shape.
+- **`save-all.png`** — the sent user message is selected; its action row shows
+  Copy / Edit / Save as… / 👍 👎 / **View** / **Save Image** (tooltip "Save
+  image to disk."). Clicking **Save Image** writes all three attachments and
+  toasts **`Saved 3 images to /private/tmp/tldw-qa-multi-20260713/Downloads`**.
+  `ls` evidence (3 distinct files, distinct md5s):
+
+  ```
+  184  console_image_20260714_011125.png    md5 b1174b58…  (red,   position 0)
+  185  console_image_20260714_011125_1.png  md5 1dd12f9b…  (green, position 1)
+  185  console_image_20260714_011125_2.png  md5 f23024d5…  (blue,  position 2)
+  ```
+
+- **`resume-multi-rehydrated.png`** — serve was **killed and restarted** (a
+  truly fresh app process, no in-memory leak); the `Three squares` conversation
+  is resumed from the rail. All **three chips rehydrate from the DB** and the
+  first image re-renders inline. Per the amended spec (Defect 2 resolution):
+  chip **#0 = `🖼 image/png · 184 B`** (position 0, legacy columns carry no
+  filename → mime·size label), chip **#1 = `🖼 green-square.png`** and chip
+  **#2 = `🖼 blue-square.png`** (real `display_name`s from `message_attachments`).
+
+### Post-fix observations
+
+- The `Console` left-rail "Chats" section renders several **static sample
+  entries** ("One square", extra "Three squares — saved chat" rows with no
+  timestamp) that **do not exist in the DB** (`conversations` holds one row; a
+  filesystem grep across the isolated HOME finds these strings nowhere). They
+  are pre-existing decorative rail rows, not produced by this feature and not
+  from persistence — the real conversation is the timestamped
+  "Chats — active session / saved chat — Nm" entry. Cosmetic; noted for honesty,
+  fixed nothing.
+- Send-session chips show real filenames for **all three** positions;
+  resume-session chip #0 degrades to the mime·size label — the documented
+  position-0 behavior, identical to the working single-image resume path.
