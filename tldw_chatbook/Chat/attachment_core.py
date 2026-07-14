@@ -66,6 +66,18 @@ def svg_rendering_available() -> bool:
     return ensure_svg_rendering()
 
 
+def _chat_images_setting(key: str, default):
+    """Read one [chat.images] key. get_cli_setting resolves top-level sections
+    only (flat lookup), so the nested table is fetched via ("chat", "images")
+    and the key resolved locally; a missing section or key yields the default."""
+    from tldw_chatbook.config import get_cli_setting
+
+    section = get_cli_setting("chat", "images", None)
+    if isinstance(section, dict) and key in section:
+        return section[key]
+    return default
+
+
 def supported_image_formats() -> tuple[str, ...]:
     """Effective image extension allowlist from [chat.images].supported_formats.
 
@@ -73,10 +85,8 @@ def supported_image_formats() -> tuple[str, ...]:
     dropped when cairosvg is unavailable. Invalid or empty config values fall
     back to DEFAULT_SUPPORTED_IMAGE_FORMATS.
     """
-    from tldw_chatbook.config import get_cli_setting
-
-    raw = get_cli_setting(
-        "chat.images", "supported_formats", list(DEFAULT_SUPPORTED_IMAGE_FORMATS)
+    raw = _chat_images_setting(
+        "supported_formats", list(DEFAULT_SUPPORTED_IMAGE_FORMATS)
     )
     formats: list[str] = []
     if isinstance(raw, (list, tuple)):
@@ -98,14 +108,17 @@ def supported_image_formats() -> tuple[str, ...]:
         formats = list(DEFAULT_SUPPORTED_IMAGE_FORMATS)
     if ".svg" in formats and not svg_rendering_available():
         formats.remove(".svg")
+        if not formats:
+            logger.warning(
+                "[chat.images].supported_formats contains only .svg and SVG "
+                "rendering is unavailable; all image attachments will be rejected"
+            )
     return tuple(formats)
 
 
 def max_image_bytes() -> int:
     """Image byte cap from [chat.images].max_size_mb (default 10 MB)."""
-    from tldw_chatbook.config import get_cli_setting
-
-    raw = get_cli_setting("chat.images", "max_size_mb", MAX_IMAGE_BYTES / (1024 * 1024))
+    raw = _chat_images_setting("max_size_mb", MAX_IMAGE_BYTES / (1024 * 1024))
     try:
         value = float(raw)
     except (TypeError, ValueError):
@@ -118,10 +131,8 @@ def max_image_bytes() -> int:
 
 def image_resize_max_dimension() -> int:
     """Resize bound from [chat.images].resize_max_dimension (default 2048)."""
-    from tldw_chatbook.config import get_cli_setting
-
-    raw = get_cli_setting(
-        "chat.images", "resize_max_dimension", DEFAULT_RESIZE_MAX_DIMENSION
+    raw = _chat_images_setting(
+        "resize_max_dimension", DEFAULT_RESIZE_MAX_DIMENSION
     )
     try:
         value = int(raw)

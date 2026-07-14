@@ -30,7 +30,8 @@ def test_routing_respects_config_narrowing(monkeypatch):
     monkeypatch.setattr(
         config_mod, "get_cli_setting",
         lambda section, key=None, default=None: (
-            [".png"] if key == "supported_formats" else default
+            {"supported_formats": [".png"]}
+            if (section, key) == ("chat", "images") else default
         ),
     )
     handler = ImageFileHandler()

@@ -90,7 +90,8 @@ async def test_custom_resize_dimension_honored(tmp_path, monkeypatch):
     monkeypatch.setattr(
         config_mod, "get_cli_setting",
         lambda section, key=None, default=None: (
-            512 if key == "resize_max_dimension" else default
+            {"resize_max_dimension": 512}
+            if (section, key) == ("chat", "images") else default
         ),
     )
     png = _write_image(tmp_path, "wide.png", "PNG", size=(1024, 800))
@@ -103,7 +104,8 @@ async def test_custom_size_cap_rejects_through_real_path(tmp_path, monkeypatch):
     monkeypatch.setattr(
         config_mod, "get_cli_setting",
         lambda section, key=None, default=None: (
-            0.0001 if key == "max_size_mb" else default
+            {"max_size_mb": 0.0001}
+            if (section, key) == ("chat", "images") else default
         ),
     )
     png = _write_image(tmp_path, "pic.png", "PNG")
@@ -116,7 +118,8 @@ async def test_custom_formats_reject_through_real_path(tmp_path, monkeypatch):
     monkeypatch.setattr(
         config_mod, "get_cli_setting",
         lambda section, key=None, default=None: (
-            [".png"] if key == "supported_formats" else default
+            {"supported_formats": [".png"]}
+            if (section, key) == ("chat", "images") else default
         ),
     )
     gif = _write_image(tmp_path, "anim.gif", "GIF")

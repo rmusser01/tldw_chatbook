@@ -1,5 +1,6 @@
 """Policy-function and drift-by-construction tests (TASK-222)."""
 
+import os
 import tomllib
 
 import pytest
@@ -39,7 +40,7 @@ def config_override(monkeypatch):
         monkeypatch.setattr(
             config_mod, "get_cli_setting",
             lambda section, k=None, default=None: (
-                value if section == "chat.images" and k == key else default
+                {key: value} if (section, k) == ("chat", "images") else default
             ),
         )
 
@@ -71,6 +72,31 @@ class TestSupportedImageFormats:
     def test_empty_list_falls_back_to_defaults(self, config_override, svg_on):
         config_override("supported_formats", [])
         assert supported_image_formats() == DEFAULT_SUPPORTED_IMAGE_FORMATS
+
+    def test_svg_only_config_with_no_svg_capability_warns_and_returns_empty(
+        self, config_override, monkeypatch
+    ):
+        """Degenerate state: config pins .svg only, but SVG rendering is
+        unavailable, so every image attachment would be rejected. This must
+        be diagnosable via a log warning rather than a silent empty allowlist.
+
+        caplog does not intercept loguru (this project's logger); attach a
+        temporary loguru sink instead of asserting on stdlib `logging`.
+        """
+        from loguru import logger as loguru_logger
+
+        config_override("supported_formats", [".svg"])
+        monkeypatch.setattr(attachment_core, "svg_rendering_available", lambda: False)
+
+        messages: list[str] = []
+        sink_id = loguru_logger.add(messages.append, level="WARNING", format="{message}")
+        try:
+            formats = supported_image_formats()
+        finally:
+            loguru_logger.remove(sink_id)
+
+        assert formats == ()
+        assert any("supported_formats contains only .svg" in m for m in messages)
 
 
 class TestCaps:
@@ -136,3 +162,41 @@ def test_config_template_matches_policy_default():
     assert parsed["chat"]["images"]["supported_formats"] == list(
         DEFAULT_SUPPORTED_IMAGE_FORMATS
     )
+
+
+def test_real_config_loader_applies_nested_chat_images_overrides(tmp_path, monkeypatch):
+    """Regression guard for C1: a real, unmocked [chat.images] TOML table must
+    actually reach the policy functions.
+
+    get_cli_setting() only resolves top-level sections (config.get(section));
+    it never understood dotted "chat.images" as a nested-table lookup. Every
+    prior test faked get_cli_setting directly, so this bug shipped invisibly.
+    This test writes a real config.toml, points the real loader at it via
+    TLDW_CONFIG_PATH, force-reloads, and asserts the policy functions pick up
+    the override with zero monkeypatching of get_cli_setting itself.
+    """
+    config_path = tmp_path / "scratch-chat-images-config.toml"
+    config_path.write_text(
+        "[chat.images]\n"
+        'supported_formats = [".png"]\n'
+        "max_size_mb = 2.5\n"
+        "resize_max_dimension = 512\n",
+        encoding="utf-8",
+    )
+
+    original_env = os.environ.get("TLDW_CONFIG_PATH")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    config_mod.load_cli_config_and_ensure_existence(force_reload=True)
+    try:
+        assert supported_image_formats() == (".png",)
+        assert max_image_bytes() == int(2.5 * 1024 * 1024)
+        assert image_resize_max_dimension() == 512
+    finally:
+        # Restore the env var and force-reload back to the prior (per-test
+        # isolated) config before this test's monkeypatch teardown runs, so
+        # the module-level config cache never leaks into later tests.
+        if original_env is not None:
+            monkeypatch.setenv("TLDW_CONFIG_PATH", original_env)
+        else:
+            monkeypatch.delenv("TLDW_CONFIG_PATH", raising=False)
+        config_mod.load_cli_config_and_ensure_existence(force_reload=True)
