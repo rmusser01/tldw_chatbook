@@ -49,16 +49,6 @@ _NON_IMAGE_FILTER_SPECS: tuple[tuple[str, str], ...] = (
     ("Data Files", "*.json;*.yaml;*.yml;*.csv;*.tsv"),
 )
 
-# (label, semicolon-separated glob patterns) — single source for both UIs' pickers.
-ATTACHMENT_FILTER_SPECS: tuple[tuple[str, str], ...] = (
-    ("All Supported Files", "*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp;*.tiff;*.tif;*.svg;*.txt;*.md;*.log;*.py;*.js;*.ts;*.java;*.cpp;*.c;*.h;*.cs;*.rb;*.go;*.rs;*.json;*.yaml;*.yml;*.csv;*.tsv;*.pdf;*.doc;*.docx;*.rtf;*.odt;*.epub;*.mobi;*.azw;*.azw3;*.fb2"),
-    ("Image Files", "*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp;*.tiff;*.tif;*.svg"),
-    ("Document Files", "*.pdf;*.doc;*.docx;*.rtf;*.odt"),
-    ("E-book Files", "*.epub;*.mobi;*.azw;*.azw3;*.fb2"),
-    ("Text Files", "*.txt;*.md;*.log;*.text;*.rst"),
-    ("Code Files", "*.py;*.js;*.ts;*.java;*.cpp;*.c;*.h;*.cs;*.rb;*.go;*.rs;*.swift;*.kt;*.php;*.r;*.m;*.lua;*.sh;*.bash;*.ps1;*.sql;*.html;*.css;*.xml"),
-    ("Data Files", "*.json;*.yaml;*.yml;*.csv;*.tsv"),
-)
 
 
 def _format_size(size: int) -> str:

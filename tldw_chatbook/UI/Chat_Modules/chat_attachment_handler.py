@@ -74,10 +74,10 @@ class ChatAttachmentHandler:
                 return any(fnmatch(path.name, pattern) for pattern in pattern_list)
             return filter_func
         
-        from ...Chat.attachment_core import ATTACHMENT_FILTER_SPECS
+        from ...Chat.attachment_core import attachment_filter_specs
 
         file_filters = Filters(
-            *[(label, create_filter(patterns)) for label, patterns in ATTACHMENT_FILTER_SPECS],
+            *[(label, create_filter(patterns)) for label, patterns in attachment_filter_specs()],
             ("All Files", lambda path: True),
         )
         

@@ -7962,7 +7962,7 @@ class ChatScreen(BaseAppScreen):
         event.stop()
         from fnmatch import fnmatch
 
-        from tldw_chatbook.Chat.attachment_core import ATTACHMENT_FILTER_SPECS
+        from tldw_chatbook.Chat.attachment_core import attachment_filter_specs
         from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
 
         def create_filter(patterns: str):
@@ -7974,7 +7974,7 @@ class ChatScreen(BaseAppScreen):
             return filter_func
 
         file_filters = Filters(
-            *[(label, create_filter(patterns)) for label, patterns in ATTACHMENT_FILTER_SPECS],
+            *[(label, create_filter(patterns)) for label, patterns in attachment_filter_specs()],
             ("All Files", lambda path: True),
         )
 
