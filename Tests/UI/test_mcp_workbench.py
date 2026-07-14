@@ -2971,3 +2971,39 @@ async def test_open_test_for_selected_tool_does_not_duplicate_already_open_panel
         await pilot.pause()
 
         assert len(list(app.query("#mcp-inspector-test-panel"))) == 1
+
+
+@pytest.mark.asyncio
+async def test_open_test_for_selected_tool_with_non_executable_selection_notifies_phase_note():
+    """T8 regression: `MCPInspector.open_test_panel()` used to return the
+    same `False` for BOTH "nothing selected" and "a tool IS selected but
+    isn't executable yet" (server-source, Phase 4), so
+    `open_test_for_selected_tool()` notified "Select a tool first." for
+    both -- misleading when a tool is in fact selected. With a
+    server-source tool selected (never executable -- see
+    `server_tools_from_inventory`), the `t` keybinding must notify with
+    the SAME copy the inline detail view already shows for that tool
+    (`mcp_inspector.py`'s "Testing server-source tools arrives in Phase
+    4." `Static`), not the generic no-selection message, and must not
+    mount a test panel (there is no schema-driven form to open for a
+    tool that can't be invoked).
+    """
+    app = ServerToolsApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        notifications = _capture_notifications(app)
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # server:main/docs::search
+        assert app.query_one("#mcp-inspector-tool-phase-note", Static)
+
+        await workbench.open_test_for_selected_tool()
+        await pilot.pause()
+
+        assert workbench.active_mode == "tools"
+        assert not list(app.query("#mcp-inspector-test-panel"))
+        assert notifications
+        message, severity = notifications[-1]
+        assert message == "Testing server-source tools arrives in Phase 4."
+        assert severity == "information"

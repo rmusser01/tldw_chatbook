@@ -566,29 +566,35 @@ class MCPInspector(Vertical):
         """
         return self._current_tool
 
-    async def open_test_panel(self) -> bool:
+    async def open_test_panel(self) -> str:
         """Open the Test Tool panel for the currently selected tool, via the
         SAME path the Test Tool button's own press handler uses
         (`on_button_pressed`'s `mcp-inspector-test-tool` branch: disable the
         button synchronously, then `_mount_test_tool_panel()`) -- the `t`
         keybinding's entry point never duplicates that mount logic.
 
-        Returns `False` (no-op) when nothing is selected, or the selected
-        tool isn't executable -- `show_tool()` never renders a `Test Tool`
-        button for a non-executable (server-source, Phase 4) tool, so there
-        is nothing this keybinding could open for one either. The caller
-        (`MCPWorkbench.open_test_for_selected_tool()`) notifies "Select a
-        tool first." on `False`.
+        Returns one of three statuses so the caller
+        (`MCPWorkbench.open_test_for_selected_tool()`) can tell "nothing
+        selected" apart from "a tool IS selected but isn't executable yet"
+        (server-source, Phase 4) -- `show_tool()` never renders a `Test
+        Tool` button for the latter, so there is nothing this keybinding
+        could open for one either, but the two cases warrant different
+        copy (see that caller):
+          - `"opened"`: the panel was mounted (or was already open).
+          - `"no_tool"`: nothing is selected in the inspector.
+          - `"not_executable"`: a tool is selected but can't be tested yet.
         """
         tool = self._current_tool
-        if tool is None or not tool.executable:
-            return False
+        if tool is None:
+            return "no_tool"
+        if not tool.executable:
+            return "not_executable"
         try:
             self.query_one("#mcp-inspector-test-tool", Button).disabled = True
         except NoMatches:
             pass
         await self._mount_test_tool_panel()
-        return True
+        return "opened"
 
     async def _close_test_tool_panel(self) -> None:
         try:

@@ -1219,10 +1219,16 @@ class MCPWorkbench(Container):
 
         Mirrors `open_add_server_form()`'s T13 rationale for a keybinding
         that can reach a state a disabled/absent button would otherwise
-        gate: with nothing selected (or a selected-but-non-executable,
-        Phase-4 server-source tool -- `MCPInspector.open_test_panel()`
-        treats both the same, since neither has a `Test Tool` button to
-        press), this notifies instead of silently no-opping.
+        gate: with nothing selected, or a selected-but-non-executable
+        (Phase-4, server-source) tool -- neither has a `Test Tool` button
+        to press -- this notifies instead of silently no-opping. The two
+        cases get distinct copy (`MCPInspector.open_test_panel()`'s three-
+        way status tells them apart): "Select a tool first." for no
+        selection, and the same "Testing server-source tools arrives in
+        Phase 4." copy the inline detail view already shows
+        (`mcp_inspector.py`'s `#mcp-inspector-tool-phase-note` `Static`)
+        when a tool IS selected but isn't executable yet -- "select a
+        tool" would be actively wrong there.
 
         `set_mode("tools")` is a no-op once already there (no mode change
         means `_clear_tool_view()` never fires -- see its own docstring),
@@ -1231,9 +1237,14 @@ class MCPWorkbench(Container):
         """
         self.set_mode("tools")
         inspector = self.query_one(MCPInspector)
-        opened = await inspector.open_test_panel()
-        if not opened:
+        status = await inspector.open_test_panel()
+        if status == "no_tool":
             self.app.notify("Select a tool first.", severity="warning")
+        elif status == "not_executable":
+            self.app.notify(
+                "Testing server-source tools arrives in Phase 4.",
+                severity="information",
+            )
 
     def on_mcp_inspector_tool_test_requested(
         self, event: MCPInspector.ToolTestRequested
