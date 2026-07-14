@@ -1,9 +1,11 @@
 ---
 id: TASK-228
 title: Fix Console run/sync worker-group collision silently cancelling streams
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-07-14 10:30'
+updated_date: '2026-07-14 20:11'
 labels:
   - console
   - bug
@@ -25,3 +27,9 @@ TASK-222's vision QA exposed a latent defect (probe-confirmed on Textual 8.2.7, 
 - [ ] #3 A regression test reproduces the collision (overlapping sync requests during an active fake stream cancel the run) RED against the pre-fix code and GREEN after
 - [ ] #4 A guard test (lint-style) fails if any exclusive run_worker call in chat_screen.py omits an explicit group
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Guard test (AST): ban ungrouped exclusive run_worker in chat_screen.py — RED at 14 sites\n2. Textual worker-group semantics regression test (ungrouped exclusive collide; distinct groups do not — pins the fix premise on the installed textual)\n3. Fix: group='console-sync' (9 sync kicks), group='console-run' (submit/retry/regenerate/continue), group='console-save-as' (save-as dispatch)\n4. Chat/console test sweep + legacy image gate\n5. Live QA on the TASK-222 vision rig: tiff+svg sends complete end-to-end ([streaming] clears, Stop/Send re-enable, full reply persisted — V1/V2/V3 gone)\n6. User screenshot gate, then PR to dev
+<!-- SECTION:PLAN:END -->

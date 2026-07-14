@@ -700,7 +700,7 @@ class ChatScreen(BaseAppScreen):
             # Modal results are explicit user selections; mark them so stale
             # default refresh never overrides them.
             self._replace_active_console_session_settings(replace(result, source="user"))
-            self.run_worker(self._sync_native_console_chat_ui(), exclusive=True)
+            self.run_worker(self._sync_native_console_chat_ui(), exclusive=True, group="console-sync")
 
         self.app.push_screen(modal, callback=_apply_modal_result)
 
@@ -926,7 +926,7 @@ class ChatScreen(BaseAppScreen):
             except KeyError:
                 self.app_instance.notify("Console tab is no longer available.", severity="error")
                 return
-            self.run_worker(self._sync_native_console_chat_ui(), exclusive=True)
+            self.run_worker(self._sync_native_console_chat_ui(), exclusive=True, group="console-sync")
 
         self.app.push_screen(
             ConsoleRenameSessionModal(title=session.title),
@@ -1153,7 +1153,7 @@ class ChatScreen(BaseAppScreen):
             self._sync_console_chat_core_state()
             self._activate_console_session_for_workspace(workspace_id)
             self._sync_console_workspace_context()
-            self.run_worker(self._sync_native_console_chat_ui(), exclusive=True)
+            self.run_worker(self._sync_native_console_chat_ui(), exclusive=True, group="console-sync")
 
         self.app.push_screen(
             ConsoleWorkspaceSwitcherModal(
@@ -1885,7 +1885,7 @@ class ChatScreen(BaseAppScreen):
             next_run_id = run_ids[0]
         self._console_agent_drilldown_run_id = next_run_id
         self._console_agent_drilldown_conversation_id = conversation_id
-        self.run_worker(self._sync_native_console_chat_ui(), exclusive=True)
+        self.run_worker(self._sync_native_console_chat_ui(), exclusive=True, group="console-sync")
 
     def _current_console_workspace_context(self) -> ConsoleWorkspaceContext:
         """Return explicit workspace policy context for native Console sends."""
@@ -5515,7 +5515,7 @@ class ChatScreen(BaseAppScreen):
             settings = replace(settings, base_url=None)
         self._replace_active_console_session_settings(replace(settings, source="user"))
         self._sync_console_transcript_guidance()
-        self.run_worker(self._sync_native_console_chat_ui(), exclusive=True)
+        self.run_worker(self._sync_native_console_chat_ui(), exclusive=True, group="console-sync")
 
     def _console_setup_modal_blocking(self) -> bool:
         """Return True when the first-run setup modal is covering the workbench."""
@@ -7075,7 +7075,7 @@ class ChatScreen(BaseAppScreen):
                 if not composer.draft_text().strip():
                     composer.load_draft(suggested_prompt)
 
-        self.run_worker(self._sync_native_console_chat_ui(), exclusive=True)
+        self.run_worker(self._sync_native_console_chat_ui(), exclusive=True, group="console-sync")
 
     async def _apply_handoff_to_chat_session(self, session: Any, payload: ChatHandoffPayload) -> None:
         mount_handoff_card = getattr(session, "mount_handoff_card", None)
@@ -7270,7 +7270,7 @@ class ChatScreen(BaseAppScreen):
             self._console_sync_in_progress = False
             if self._console_sync_requested:
                 self._console_sync_requested = False
-                self.run_worker(self._sync_native_console_chat_ui(), exclusive=True)
+                self.run_worker(self._sync_native_console_chat_ui(), exclusive=True, group="console-sync")
 
     async def _sync_console_native_session_tabs(self) -> None:
         """Refresh native Console session tabs from store state."""
@@ -7484,7 +7484,14 @@ class ChatScreen(BaseAppScreen):
         if not controller.run_state.is_send_allowed:
             self.app_instance.notify("A Console run is already running.", severity="warning")
             return
-        self.run_worker(self._submit_console_native_draft(draft), exclusive=True)
+        # group="console-run": a dedicated group so UI-sync kicks can never
+        # cancel an in-flight run (TASK-228 — ungrouped exclusive workers all
+        # share Textual's default group and cancel each other).
+        self.run_worker(
+            self._submit_console_native_draft(draft),
+            exclusive=True,
+            group="console-run",
+        )
 
     _CONSOLE_COMMAND_NAME_TO_HANDLER_ID = {
         PROMPT_COMMAND_NAME: PROMPT_COMMAND_HANDLER_ID,
@@ -8259,7 +8266,9 @@ class ChatScreen(BaseAppScreen):
                 }
                 saver = savers.get(destination or "")
                 if saver is not None:
-                    self.run_worker(saver(message_id), exclusive=True)
+                    self.run_worker(
+                        saver(message_id), exclusive=True, group="console-save-as"
+                    )
 
             await self.app.push_screen(
                 ConsoleSaveAsModal(
@@ -8290,11 +8299,19 @@ class ChatScreen(BaseAppScreen):
             return True
         if action_id == "retry" and result.status == "completed":
             controller = self._ensure_console_chat_controller()
-            self.run_worker(self._retry_console_message(controller, message_id), exclusive=True)
+            self.run_worker(
+                self._retry_console_message(controller, message_id),
+                exclusive=True,
+                group="console-run",
+            )
             return True
         if action_id == "regenerate" and result.status == "wip":
             controller = self._ensure_console_chat_controller()
-            self.run_worker(self._regenerate_console_message(controller, message_id), exclusive=True)
+            self.run_worker(
+                self._regenerate_console_message(controller, message_id),
+                exclusive=True,
+                group="console-run",
+            )
             return True
         if action_id in {"variant-previous", "variant-next"} and result.status == "completed":
             self._select_console_message_variant(message_id, direction=action_id)
@@ -8335,7 +8352,11 @@ class ChatScreen(BaseAppScreen):
             return True
         if action_id == "continue" and result.status == "continue_requested":
             controller = self._ensure_console_chat_controller()
-            self.run_worker(self._continue_console_message(controller, message_id), exclusive=True)
+            self.run_worker(
+                self._continue_console_message(controller, message_id),
+                exclusive=True,
+                group="console-run",
+            )
             return True
         severity = "information" if result.status in {"completed", "wip"} else "warning"
         self.app_instance.notify(result.visible_copy, severity=severity)
@@ -8814,7 +8835,7 @@ class ChatScreen(BaseAppScreen):
                 target_message_id=message_id,
                 target_content=result,
             )
-            self.run_worker(self._sync_native_console_chat_ui(), exclusive=True)
+            self.run_worker(self._sync_native_console_chat_ui(), exclusive=True, group="console-sync")
             self.app_instance.notify("Edited message.", severity="information")
 
         await self.app.push_screen(
@@ -10206,7 +10227,7 @@ class ChatScreen(BaseAppScreen):
         if button_id == "console-agent-drilldown-back":
             event.stop()
             self._console_agent_drilldown_run_id = None
-            self.run_worker(self._sync_native_console_chat_ui(), exclusive=True)
+            self.run_worker(self._sync_native_console_chat_ui(), exclusive=True, group="console-sync")
             return
         if button_id and button_id.startswith(CONSOLE_RAIL_SECTION_TOGGLE_PREFIX):
             event.stop()
