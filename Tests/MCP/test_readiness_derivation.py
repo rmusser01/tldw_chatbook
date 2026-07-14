@@ -202,3 +202,34 @@ def test_builtin_readiness():
     off = builtin_readiness(enabled=False)
     assert off.state is ReadinessState.NEEDS_SETUP
     assert off.primary_reason is ReasonCode.NOT_CONFIGURED
+
+
+def test_runtime_error_drives_needs_attention_with_stored_message():
+    record = _local_record(
+        discovery_snapshot={"tools": [{"name": "a"}], "resources": [], "prompts": []},
+        is_connected=False,
+    )
+    record["runtime_state"] = {"ok": False, "last_error": "Timed out after 45s",
+                               "last_action": "connect", "last_attempt_at": "t", "last_ok_at": None}
+    snap = local_profile_readiness(record, environ={})
+    assert snap.state is ReadinessState.NEEDS_ATTENTION
+    assert snap.primary_reason is ReasonCode.DISCOVERY_FAILED
+    assert "Timed out" in snap.message
+
+
+def test_runtime_ok_keeps_normal_derivation():
+    record = _local_record(
+        discovery_snapshot={"tools": [{"name": "a"}], "resources": [], "prompts": []},
+        is_connected=True,
+    )
+    record["runtime_state"] = {"ok": True, "last_error": None, "last_ok_at": "2026-07-14T00:00:00Z"}
+    snap = local_profile_readiness(record, environ={})
+    assert snap.state is ReadinessState.READY
+    assert snap.detail["last_ok_at"] == "2026-07-14T00:00:00Z"
+
+
+def test_auth_missing_outranks_runtime_error():
+    record = _local_record(env_placeholders={"API_KEY": "$MISSING"})
+    record["runtime_state"] = {"ok": False, "last_error": "boom"}
+    snap = local_profile_readiness(record, environ={})
+    assert snap.primary_reason is ReasonCode.AUTH_MISSING

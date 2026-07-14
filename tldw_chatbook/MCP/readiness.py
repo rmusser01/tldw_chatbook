@@ -10,6 +10,7 @@ module, Task 2).
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import re
 from collections import Counter
@@ -255,15 +256,28 @@ def local_profile_readiness(
 ) -> ReadinessSnapshot:
     """Derive readiness for one LocalMCPControlService.get_external_servers() item.
 
-    Durable signals: discovery_snapshot presence and env placeholders vs the
-    environment. Ephemeral: is_connected. needs_attention/checking/stale-by-age
-    require persisted attempt tracking that does not exist yet (Phase 2+).
+    Durable signals: discovery_snapshot presence, env placeholders vs the
+    environment, and persisted lifecycle attempt state (`record["runtime_state"]`,
+    Task 2's `LocalMCPStore` shape). Ephemeral: is_connected.
+
+    When the persisted attempt state records a failed connect/discovery
+    attempt (`runtime_state["ok"] is False`), that failure is more specific
+    than the generic "not currently connected" signal, so it takes the
+    reason slot instead of `RUNTIME_UNAVAILABLE` -- the stored `last_error`
+    becomes the display message. A successful attempt
+    (`runtime_state["ok"] is True`) doesn't change derivation but surfaces
+    `last_ok_at` in `detail` for the inspector.
     """
     env = os.environ if environ is None else environ
     profile_id = str(record.get("profile_id") or "unknown")
     placeholders = dict(record.get("env_placeholders") or {})
     snapshot = record.get("discovery_snapshot")
     is_connected = bool(record.get("is_connected"))
+
+    runtime_state = record.get("runtime_state") or {}
+    runtime_error: str | None = None
+    if isinstance(runtime_state, dict) and runtime_state.get("ok") is False:
+        runtime_error = str(runtime_state.get("last_error") or "").strip() or None
 
     reasons: list[ReasonCode] = []
     missing = [name for name in env_placeholder_names(placeholders) if name not in env]
@@ -275,13 +289,19 @@ def local_profile_readiness(
     else:
         if (tool_count or 0) == 0 and (resource_count or 0) == 0 and (prompt_count or 0) == 0:
             reasons.append(ReasonCode.NO_TOOLS_RETURNED)
-        if not is_connected:
+        # A recorded failure is strictly more informative than "not
+        # connected" -- don't add the generic reason on top of it.
+        if not is_connected and not runtime_error:
             reasons.append(ReasonCode.RUNTIME_UNAVAILABLE)
+    if runtime_error:
+        reasons.append(ReasonCode.DISCOVERY_FAILED)
 
     reason_tuple = tuple(reasons)
     state = resolve_state(reason_tuple)
     if missing:
         message = f"Missing environment variables: {', '.join(missing)}."
+    elif runtime_error:
+        message = runtime_error
     elif snapshot is None:
         message = "Not validated yet — connect or test to discover tools."
     elif not is_connected:
@@ -309,6 +329,7 @@ def local_profile_readiness(
             "env_placeholders": placeholders,
             "missing_env": missing,
             "discovery_snapshot": snapshot,
+            "last_ok_at": runtime_state.get("last_ok_at") if isinstance(runtime_state, dict) else None,
         },
     )
 
@@ -458,4 +479,37 @@ def builtin_readiness(
             "expose_prompts": expose_prompts,
             "client_snippet": BUILTIN_CLIENT_SNIPPET,
         },
+    )
+
+
+STATE_CSS_CLASSES: dict[ReadinessState, str] = {
+    ReadinessState.READY: "mcp-status-ready",
+    ReadinessState.CHECKING: "mcp-status-info",
+    ReadinessState.NEEDS_SETUP: "mcp-status-warning",
+    ReadinessState.NEEDS_ATTENTION: "mcp-status-error",
+    ReadinessState.NO_TOOLS: "mcp-status-warning",
+    ReadinessState.STALE: "mcp-status-warning",
+}
+
+
+def as_checking(snapshot: ReadinessSnapshot, action: str) -> ReadinessSnapshot:
+    """Return a copy of a snapshot marked as an in-flight lifecycle check.
+
+    Used by the Hub UI to optimistically render a "Working — <action>…"
+    state the moment a lifecycle action (connect, refresh, validate) is
+    dispatched, before the worker's result replaces it with a freshly
+    derived snapshot.
+
+    Args:
+        snapshot: The snapshot being operated on.
+        action: Human verb for the in-flight operation (e.g. "connect").
+
+    Returns:
+        A frozen copy with state=CHECKING, no reasons, and a working message.
+    """
+    return dataclasses.replace(
+        snapshot,
+        state=ReadinessState.CHECKING,
+        reasons=(),
+        message=f"Working — {action}…",
     )
