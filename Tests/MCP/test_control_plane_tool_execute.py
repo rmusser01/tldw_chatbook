@@ -167,3 +167,47 @@ async def test_hub_tool_log_write_failure_does_not_mask_result(tmp_path, monkeyp
     result = await service.test_hub_tool("local:docs", "search", {"q": "x"})
 
     assert result == client.call_tool_response
+
+
+@pytest.mark.asyncio
+async def test_hub_tool_execution_log_property_raise_does_not_mask_result(tmp_path, monkeypatch):
+    """N1: `_record_tool_execution()` used to read `self.execution_log`
+    OUTSIDE its own try/except -- if the property itself raised (e.g. a
+    `Path(store.path)` oddity), that would escape `_record_tool_execution()`
+    entirely and mask the tool result/error being propagated by
+    `test_hub_tool()`, violating the "recording is best-effort, never masks
+    the result" contract the existing append-failure test already covers."""
+
+    def _raise(self):
+        raise RuntimeError("execution_log unavailable")
+
+    monkeypatch.setattr(
+        control_plane_module.UnifiedMCPControlPlaneService,
+        "execution_log",
+        property(_raise),
+    )
+    service, fake, client, store = _service(tmp_path)
+
+    result = await service.test_hub_tool("local:docs", "search", {"q": "x"})
+
+    assert result == client.call_tool_response
+
+
+@pytest.mark.asyncio
+async def test_hub_tool_result_excerpt_is_redacted_before_disk(tmp_path):
+    """I2: `build_record()`/`MCPExecutionLog.append()` only redact
+    `arguments`, never `result_excerpt` -- a tool result that happens to
+    echo back a secret-shaped key (e.g. an API key in its response payload)
+    must never reach the JSONL execution log unredacted."""
+    service, fake, client, store = _service(tmp_path)
+    client.call_tool_response = {"api_key": "sk-secret123", "data": "ok"}
+
+    result = await service.test_hub_tool("local:docs", "search", {"q": "x"})
+
+    assert result == {"api_key": "sk-secret123", "data": "ok"}  # returned raw, unredacted
+    records = _log_records(store)
+    assert records and records[0]["ok"] is True
+    excerpt = records[0]["result_excerpt"] or ""
+    assert "sk-secret123" not in excerpt
+    assert "***" in excerpt
+    assert "ok" in excerpt  # non-secret fields still recorded

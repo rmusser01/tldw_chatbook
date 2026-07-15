@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import time
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,6 +16,7 @@ from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
 from .execution_log import MCPExecutionLog, build_record
+from .redaction import redact_mapping
 from .server_target_store import ConfiguredServerTargetStore
 from .unified_context_store import UnifiedMCPContextStore
 from .unified_control_models import ServerAccessContext, UnifiedMCPContext
@@ -1901,11 +1904,17 @@ class UnifiedMCPControlPlaneService:
         result: Any,
     ) -> None:
         # Recording is best-effort: it must never mask the tool result or
-        # the tool error being propagated (Phase 2 masking lesson).
-        log = self.execution_log
-        if log is None:
-            return
+        # the tool error being propagated (Phase 2 masking lesson). N1: the
+        # `self.execution_log` property access itself must be inside this
+        # try too -- it can raise (e.g. `Path(store.path)` oddities), and
+        # sitting outside would let that raise straight out of
+        # `_record_tool_execution()` into the caller's own try/except
+        # around test_hub_tool()'s success/failure paths, masking the tool
+        # result exactly like an append() failure would.
         try:
+            log = self.execution_log
+            if log is None:
+                return
             record = build_record(
                 server_key=server_key,
                 tool_name=tool_name,
@@ -1914,7 +1923,18 @@ class UnifiedMCPControlPlaneService:
                 duration_ms=duration_ms,
                 error=error,
                 arguments=arguments,
-                result_excerpt=str(result)[:500],
+                # I2: `build_record()`/`MCPExecutionLog.append()` only
+                # redact `arguments`, never the result -- a Mapping result
+                # (the common shape: `test_hub_tool()`'s MCP call_tool
+                # response) is redacted here first, mirroring the UI's own
+                # result-formatting path (mcp_workbench.py's
+                # `_run_tool_test()`), so a secret echoed back in a tool's
+                # result can never reach disk unredacted.
+                result_excerpt=(
+                    json.dumps(redact_mapping(result), default=str)[:500]
+                    if isinstance(result, Mapping)
+                    else str(result)[:500]
+                ),
                 capture_args=get_cli_setting("mcp", "log_tool_arguments", True),
             )
             log.append(record)
