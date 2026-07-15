@@ -151,6 +151,7 @@ from ...Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_SKILLS,
     LIBRARY_ROW_CREATE_NOTE,
     LIBRARY_ROW_CREATE_PROMPT,
+    LIBRARY_ROW_CREATE_SKILL,
     LIBRARY_ROW_INGEST_EXPORT,
     LIBRARY_ROW_INGEST_MEDIA,
     LibraryShellInput,
@@ -3204,8 +3205,11 @@ class LibraryScreen(BaseAppScreen):
                             # for its own ``is_create`` -- an empty
                             # ``_selected_skill_name`` means there is no
                             # existing skill on disk to rename, so the Name
-                            # Input stays editable (currently entry-point-less:
-                            # every editor open today goes through a real row).
+                            # Input stays editable. Reached both via a real
+                            # skill row (existing skill, name set) and via
+                            # the Create rail's "New skill" row
+                            # (``_enter_library_skill_create_editor`` leaves
+                            # ``_selected_skill_name`` empty).
                             is_create=not self._selected_skill_name,
                             id="library-skills-canvas",
                         )
@@ -5860,6 +5864,13 @@ class LibraryScreen(BaseAppScreen):
             # ordering ``apply_navigation_context``'s notes-create branch
             # already uses.
             self._enter_library_prompt_create_editor()
+        if row_id == LIBRARY_ROW_CREATE_SKILL:
+            # Skills sub-project (skills-200 spec, "Create > New skill"):
+            # same shape as the "New prompt" branch immediately above --
+            # ``_enter_library_skill_create_editor`` fully (re)sets every
+            # skill-editor field itself, so it needs no preceding
+            # ``_reset_library_skill_editor_state()`` call here.
+            self._enter_library_skill_create_editor()
         if (
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
             and not self._library_collections_loaded
@@ -5873,6 +5884,8 @@ class LibraryScreen(BaseAppScreen):
             self._start_library_export_counts_worker()
         if row_id == LIBRARY_ROW_CREATE_PROMPT and self.is_mounted:
             self.call_after_refresh(self._arm_library_prompt_editor)
+        if row_id == LIBRARY_ROW_CREATE_SKILL and self.is_mounted:
+            self.call_after_refresh(self._arm_library_skill_editor)
 
     @on(Button.Pressed, ".console-rail-section-toggle")
     def handle_library_rail_section_toggle(self, event: Button.Pressed) -> None:
@@ -6753,6 +6766,42 @@ class LibraryScreen(BaseAppScreen):
         for a real edit.
         """
         self._library_skill_editor_armed = True
+
+    def _enter_library_skill_create_editor(self) -> None:
+        """Open the in-canvas skill editor on a blank, not-yet-saved record.
+
+        Entered via the Create rail's "New skill" row
+        (``LIBRARY_ROW_CREATE_SKILL``, whose ``target_id`` is ``"skills"``
+        -- the SAME canvas kind Browse > Skills targets), mirroring
+        ``_enter_library_prompt_create_editor``'s "New prompt" row.
+
+        ``_selected_skill_name`` stays ``""``: the sentinel
+        ``_save_library_skill`` already reads (``is_create = not name``)
+        to route its scope-service ``create_skill`` call instead of
+        ``update_skill``, and the sentinel ``compose_content`` reads
+        (``is_create=not self._selected_skill_name``) to keep the Name
+        Input editable (an existing skill's Name Input is disabled --
+        there is no rename primitive).
+
+        ``_library_skill_editor_state`` is built directly from an empty
+        mapping (``build_skill_editor_state({})``) rather than left
+        ``None``: ``compose_content``'s skills-editor branch gates on
+        ``_library_skill_editor_state is None`` to show a "Loading
+        skill…" placeholder while the async detail fetch
+        (``_refresh_library_skill_detail``) is in flight -- there is no
+        fetch for a brand-new record, so leaving it ``None`` would show
+        that placeholder forever.
+        """
+        self._selected_skill_name = ""
+        self._library_skills_view = "editor"
+        self._library_skill_detail = {}
+        self._library_skill_editor_state = build_skill_editor_state({})
+        self._library_skill_original_name = ""
+        self._library_skill_dirty = False
+        self._library_skill_status = ""
+        self._library_skill_conflict = False
+        self._library_skill_active_review = None
+        self._library_skill_editor_armed = False
 
     def _reset_library_skill_editor_state(self) -> None:
         """Clear all in-canvas Library skill editor/save/trust state.

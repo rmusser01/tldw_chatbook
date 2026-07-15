@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock
 import pytest
 from textual.widgets import Button, Input, Static, TextArea
 
+from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_CREATE_SKILL
 from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
 from tldw_chatbook.Skills_Interop.skill_trust_service import SkillTrustService
 from tldw_chatbook.Skills_Interop.skill_trust_store import (
@@ -39,6 +40,7 @@ from Tests.UI.test_library_shell import (
     LibraryHarness,
     _active_library_screen,
     _wait_for_library_shell,
+    _wait_for_selector,
 )
 from Tests.UI.test_screen_navigation import _build_test_app
 
@@ -783,3 +785,179 @@ async def test_skill_editor_opens_under_real_runtime_policy_enforcer(tmp_path):
                 break
             await pilot.pause(0.02)
         assert screen._library_skills_view == "list"
+
+
+# ---------------------------------------------------------------------------
+# Create rail ("New skill") -- skills-200 spec's named-but-previously-
+# unscheduled entry point. Mirrors ``Tests/UI/test_library_prompts_canvas.py``'s
+# D1 create-row tests exactly (blank editor / save-creates / invalid-name),
+# plus a trust-specific case: a brand-new skill's ``create_skill`` call never
+# passes ``trust_approved=True``, so it must arrive needs-review.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_library_shell_create_skill_row_opens_blank_editor(tmp_path):
+    """The Create rail's "New skill" row opens the in-canvas editor on a
+    blank, not-yet-saved record -- empty fields, Name Input editable (no
+    rename hint), ``_selected_skill_name`` empty. Mirrors
+    ``test_library_shell_create_prompt_row_opens_blank_editor``."""
+    local_service, service = _real_skills_scope_service(tmp_path)
+    app = _build_test_app()
+    _wire_empty_non_skill_services(app)
+    app.skills_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one(f"#library-row-{LIBRARY_ROW_CREATE_SKILL}").press()
+        await _wait_for_selector(screen, pilot, "#library-skill-name")
+
+        assert screen._library_skills_view == "editor"
+        assert screen._selected_skill_name == ""
+        name_input = screen.query_one("#library-skill-name", Input)
+        assert name_input.value == ""
+        assert name_input.disabled is False
+        assert len(screen.query("#library-skill-name-hint")) == 0
+        assert screen.query_one("#library-skill-description", Input).value == ""
+        assert screen.query_one("#library-skill-argument-hint", Input).value == ""
+        assert screen.query_one("#library-skill-allowed-tools", Input).value == ""
+        assert screen.query_one("#library-skill-body", TextArea).text == ""
+
+
+@pytest.mark.asyncio
+async def test_library_shell_create_skill_save_creates_and_increments_count(tmp_path):
+    """Save with a fresh valid name CREATES via the scope service's create
+    path (not update) -- the Skills rail count increments, the record is
+    real (fetchable via the service), and the editor adopts the new name.
+    Mirrors ``test_library_shell_create_prompt_save_creates_and_increments_count``."""
+    local_service, service = _real_skills_scope_service(tmp_path)
+    await local_service.create_skill(
+        name="existing-one", content=_skill_content(title="Existing", description="d"),
+    )
+    app = _build_test_app()
+    _wire_empty_non_skill_services(app)
+    app.skills_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one(f"#library-row-{LIBRARY_ROW_CREATE_SKILL}").press()
+        await _wait_for_selector(screen, pilot, "#library-skill-name")
+
+        screen.query_one("#library-skill-name", Input).value = "brand-new-skill"
+        await pilot.pause()
+        screen.query_one("#library-skill-description", Input).value = "A brand new skill"
+        await pilot.pause()
+        screen.query_one("#library-skill-body", TextArea).text = "# Brand new\nDo the thing.\n"
+        await pilot.pause()
+        screen.query_one("#library-skill-save", Button).press()
+        await pilot.pause()
+
+        status_text = await _wait_for_skill_status(screen, pilot)
+        assert status_text == "Saved."
+        assert screen._selected_skill_name == "brand-new-skill"
+
+        persisted = await local_service.get_skill("brand-new-skill")
+        assert persisted["name"] == "brand-new-skill"
+        assert persisted["description"] == "A brand new skill"
+        assert "Do the thing." in persisted["content"]
+
+        rail_label = ""
+        for _ in range(150):
+            rail_label = str(screen.query_one("#library-row-browse-skills").label)
+            if "(2)" in rail_label:
+                break
+            await pilot.pause(0.02)
+        assert "(2)" in rail_label
+
+
+@pytest.mark.asyncio
+async def test_library_shell_create_skill_save_invalid_name_shows_classify_outcome(tmp_path):
+    """D1's three save outcomes apply to skills too -- an invalid-shaped
+    name shows the same ``classify_skill_save_error`` outcome the update
+    path already shows, and creates nothing."""
+    local_service, service = _real_skills_scope_service(tmp_path)
+    app = _build_test_app()
+    _wire_empty_non_skill_services(app)
+    app.skills_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one(f"#library-row-{LIBRARY_ROW_CREATE_SKILL}").press()
+        await _wait_for_selector(screen, pilot, "#library-skill-name")
+
+        screen.query_one("#library-skill-name", Input).value = "Not A Valid Name"
+        await pilot.pause()
+        screen.query_one("#library-skill-body", TextArea).text = "# Body\nHi.\n"
+        await pilot.pause()
+        screen.query_one("#library-skill-save", Button).press()
+        await pilot.pause()
+
+        status_text = await _wait_for_skill_status(screen, pilot)
+        assert status_text == "Skill name must use lowercase letters, numbers, and hyphens."
+        assert screen._selected_skill_name == ""
+
+        context = await service.get_context(mode="local")
+        assert context["available_skills"] == []
+        assert context["blocked_skills"] == []
+
+
+@pytest.mark.asyncio
+async def test_library_shell_create_skill_save_arrives_needs_review_with_panel_primed(tmp_path):
+    """A brand-new skill created via the "New skill" row arrives
+    trust-pending -- ``create_skill``'s default never passes
+    ``trust_approved=True`` -- so the trust panel must reflect that
+    immediately after Save, with no second editor open needed."""
+    trust_service = _real_trust_service(tmp_path)
+    # Bootstrap BEFORE any skill exists on disk: an empty trusted baseline,
+    # so the skill this test creates afterward is unambiguously "added
+    # since the baseline" (``quarantined_added``), not merely unreviewed.
+    trust_service.bootstrap_trust()
+    local_service = LocalSkillsService(store_dir=tmp_path, trust_service=trust_service)
+    service = SkillsScopeService(local_service=local_service, server_service=None)
+
+    app = _build_test_app()
+    _wire_empty_non_skill_services(app)
+    app.skills_scope_service = service
+    app.local_skill_trust_service = trust_service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one(f"#library-row-{LIBRARY_ROW_CREATE_SKILL}").press()
+        await _wait_for_selector(screen, pilot, "#library-skill-name")
+
+        screen.query_one("#library-skill-name", Input).value = "fresh-skill"
+        await pilot.pause()
+        screen.query_one("#library-skill-description", Input).value = "Fresh"
+        await pilot.pause()
+        screen.query_one("#library-skill-body", TextArea).text = "# Fresh\nDo it.\n"
+        await pilot.pause()
+        screen.query_one("#library-skill-save", Button).press()
+        await pilot.pause()
+
+        status_text = await _wait_for_skill_status(screen, pilot)
+        assert status_text == "Saved."
+
+        assert screen._library_skill_editor_state.trust_status == "quarantined_added"
+        assert screen._library_skill_editor_state.trust_blocked is True
+        trust_state_text = str(screen.query_one("#library-skill-trust-state", Static).renderable)
+        assert trust_state_text == "Trust: new untrusted file (SKILL.md)"
+        review_button = screen.query_one("#library-skill-trust-review", Button)
+        assert review_button.disabled is False
+
+        context = await service.get_context(mode="local")
+        blocked_names = [item["name"] for item in context["blocked_skills"]]
+        assert "fresh-skill" in blocked_names
+        available_names = [item["name"] for item in context["available_skills"]]
+        assert "fresh-skill" not in available_names

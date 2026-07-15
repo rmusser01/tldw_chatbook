@@ -32,6 +32,14 @@ LIBRARY_ROW_CREATE_NOTE = "create-note"
 # not by a separate canvas kind -- see library_screen.py's
 # `_enter_library_prompt_create_editor`.
 LIBRARY_ROW_CREATE_PROMPT = "create-prompt"
+# Skills sub-project (skills-200 spec, "Create > New skill"): same shape as
+# LIBRARY_ROW_CREATE_PROMPT above -- its target_id is "skills" itself (the
+# SAME canvas kind Browse > Skills targets), not a dedicated "skills-create"
+# canvas kind. The screen distinguishes "opened via Browse" vs "opened via
+# New skill" by ``_selected_skill_name`` being empty (the same sentinel
+# ``_save_library_skill``'s ``is_create`` already reads) -- see
+# library_screen.py's ``_enter_library_skill_create_editor``.
+LIBRARY_ROW_CREATE_SKILL = "create-skill"
 LIBRARY_ROW_INGEST_MEDIA = "ingest-import-media"
 LIBRARY_ROW_INGEST_EXPORT = "ingest-export"
 
@@ -221,6 +229,15 @@ def build_library_shell_state(
             title="New prompt",
             target_kind="canvas",
             target_id="prompts",
+            count=None,
+            count_known=True,
+        ),
+        LibraryRailRow(
+            row_id=LIBRARY_ROW_CREATE_SKILL,
+            section_id="create",
+            title="New skill",
+            target_kind="canvas",
+            target_id="skills",
             count=None,
             count_known=True,
         ),

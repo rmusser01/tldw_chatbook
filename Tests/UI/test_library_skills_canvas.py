@@ -287,9 +287,9 @@ async def test_skill_editor_name_input_disabled_for_existing_skill_with_rename_h
     """Fix wave for the review Critical (rename corruption): an existing
     skill has no rename primitive to build on, so its Name Input must be
     disabled (not just visually discouraged) with a dim explanatory hint --
-    ``is_create`` defaults to ``False``, matching every editor open today
-    (there is no create entry point yet, so every open goes through a real
-    row)."""
+    ``is_create`` defaults to ``False``, matching every editor open via a
+    real skill row (as opposed to the Create rail's "New skill" row,
+    which passes ``is_create=True`` -- see the next test)."""
     state = _editor_state()
     app = _EditorHost(mode="editor", editor_state=state)
     async with app.run_test() as pilot:
@@ -302,7 +302,7 @@ async def test_skill_editor_name_input_disabled_for_existing_skill_with_rename_h
 
 @pytest.mark.asyncio
 async def test_skill_editor_name_input_editable_on_create_branch():
-    """The (currently entry-point-less) create branch is the only case
+    """The create branch (Create rail's "New skill" row) is the only case
     where a Name is still being chosen -- so it must stay editable, with
     no rename hint shown."""
     state = _editor_state(name="")

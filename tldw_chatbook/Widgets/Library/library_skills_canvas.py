@@ -217,12 +217,12 @@ class LibrarySkillsListCanvas(VerticalScroll):
             ``changed_files`` entry is rendered; presence/absence alone
             gates the Approve action.
         is_create: Whether the open editor is creating a brand-new skill
-            (currently entry-point-less -- every editor open today goes
-            through an existing row) rather than editing one that already
-            exists on disk. The service has no rename primitive, so an
-            EXISTING skill's Name Input is disabled (with a dim hint)
-            instead of letting a user silently corrupt the skill by
-            changing it -- only the create branch renders it editable.
+            (reached via the Create rail's "New skill" row) rather than
+            editing one that already exists on disk. The service has no
+            rename primitive, so an EXISTING skill's Name Input is
+            disabled (with a dim hint) instead of letting a user silently
+            corrupt the skill by changing it -- only the create branch
+            renders it editable.
         import_open: List-view only (Task 5). When ``True``, renders the
             inline Import row (a path Input for a SKILL.md file OR a
             skill's own directory, plus Browse/Import/Cancel actions)
