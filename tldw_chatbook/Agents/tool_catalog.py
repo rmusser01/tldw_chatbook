@@ -184,19 +184,27 @@ class ToolCatalogRegistry:
 
     def __init__(self) -> None:
         self._providers: list[ToolProvider] = []
-        # tool_id -> owning provider, built lazily by _owner_and_id() and
-        # scoped PER RUN (see reset_catalog_cache()). `None` means "not
-        # built yet" and is distinct from an empty-but-built cache.
+        # tool_id -> owning provider, and name -> tool_id, both built
+        # together (lazily) by _ensure_catalog_cache() and scoped PER RUN
+        # (see reset_catalog_cache()). `None` means "not built yet" and is
+        # distinct from an empty-but-built cache. The two dicts are always
+        # populated from the SAME `list_catalog()` sweep (see
+        # _build_owner_cache()), so a name resolved from `_name_to_id_cache`
+        # is always present in `_owner_cache` too — `resolve_name()` and
+        # `_owner_and_id()` can never observe different generations of the
+        # catalog within one lookup.
         self._owner_cache: dict[str, ToolProvider] | None = None
+        self._name_to_id_cache: dict[str, str] | None = None
 
     def register_provider(self, provider: ToolProvider) -> None:
         self._providers.append(provider)
         # A newly registered provider's tools aren't reflected in any
         # cache already built — invalidate so the next lookup rebuilds it.
         self._owner_cache = None
+        self._name_to_id_cache = None
 
     def reset_catalog_cache(self) -> None:
-        """Drop the owner-map cache; call once at the start of a run.
+        """Drop the owner-map/name-map cache; call once at the start of a run.
 
         Cache scope is PER RUN: the catalog is listed fresh at run start
         (``AgentService.run_turn`` calls this before dispatching), so any
@@ -205,6 +213,7 @@ class ToolCatalogRegistry:
         single reset — see the skills spec's Catalog scale section.
         """
         self._owner_cache = None
+        self._name_to_id_cache = None
 
     def list_catalog(self) -> list[ToolCatalogEntry]:
         entries: list[ToolCatalogEntry] = []
@@ -220,20 +229,37 @@ class ToolCatalogRegistry:
                 if needle in e.name.lower()
                 or needle in e.one_line_description.lower()]
 
-    def _build_owner_cache(self) -> dict[str, ToolProvider]:
-        cache: dict[str, ToolProvider] = {}
+    def _build_owner_cache(self) -> tuple[dict[str, ToolProvider], dict[str, str]]:
+        owner: dict[str, ToolProvider] = {}
+        name_to_id: dict[str, str] = {}
         for provider in self._providers:
             for entry in provider.list_catalog():
-                cache.setdefault(entry.id, provider)
-        return cache
+                owner.setdefault(entry.id, provider)
+                # First-registrant-wins, same as the owner map above and in
+                # the SAME iteration order — preserves the existing
+                # shadowing rule (builtins registered before skills/MCP
+                # always win a name collision) without adding a second,
+                # independently-ordered pass over the providers.
+                name_to_id.setdefault(entry.name, entry.id)
+        return owner, name_to_id
+
+    def _ensure_catalog_cache(self) -> None:
+        # This is the fix MCP (task-201) also needs: a network-backed
+        # provider must not re-list_catalog() per lookup. Both the owner
+        # map (id -> provider, used by load_schema()/_owner_and_id()) and
+        # the name map (name -> id, used by resolve_name()) are built
+        # together from ONE list_catalog() sweep per provider (lazily, on
+        # first lookup) and reused for every subsequent lookup — by either
+        # map — until reset_catalog_cache() clears both. Previously only
+        # the owner map shared this cache; resolve_name() re-listed every
+        # provider on every call, so invoke_by_name() (resolve_name() then
+        # _owner_and_id()) still paid a full per-provider sweep on every
+        # invocation despite the owner-map cache existing.
+        if self._owner_cache is None:
+            self._owner_cache, self._name_to_id_cache = self._build_owner_cache()
 
     def _owner_and_id(self, tool_id: str):
-        # This is the fix MCP (task-201) also needs: a network-backed
-        # provider must not re-list_catalog() per lookup. The owner map
-        # is built once (lazily, on first lookup) and reused for every
-        # subsequent lookup until reset_catalog_cache() clears it.
-        if self._owner_cache is None:
-            self._owner_cache = self._build_owner_cache()
+        self._ensure_catalog_cache()
         return self._owner_cache.get(tool_id)
 
     def load_schema(self, tool_id: str) -> ToolSchema:
@@ -243,10 +269,8 @@ class ToolCatalogRegistry:
         return provider.load_schema(tool_id)
 
     def resolve_name(self, name: str) -> str | None:
-        for entry in self.list_catalog():
-            if entry.name == name:
-                return entry.id
-        return None
+        self._ensure_catalog_cache()
+        return self._name_to_id_cache.get(name)
 
     def invoke_by_name(self, name: str, args: dict) -> ToolResult:
         tool_id = self.resolve_name(name)
@@ -254,10 +278,13 @@ class ToolCatalogRegistry:
             return ToolResult(ok=False, error=f"Unknown tool: {name}")
         provider = self._owner_and_id(tool_id)
         if provider is None:
-            # Q8: resolve_name() and _owner_and_id() each re-list the
-            # catalog independently; a provider can plausibly have lost
-            # the entry between the two calls. Never let that surface as
-            # an AttributeError on None.
+            # Defensive only: resolve_name()/_owner_and_id() now share one
+            # cache built atomically from a single list_catalog() sweep, so
+            # a name resolved above is always present in the owner map too
+            # within the SAME cache generation — this branch is no longer
+            # reachable via a same-lookup race. It stays as insurance
+            # against a future change to the cache-building code, and never
+            # lets a `None` owner surface as an AttributeError.
             return ToolResult(
                 ok=False, error=f"Tool provider not found for: {name}")
         return provider.invoke(tool_id, args)

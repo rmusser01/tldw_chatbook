@@ -103,11 +103,18 @@ def test_initial_disclosure_respects_max_active_tools():
 class VanishingProvider:
     """Present on the first list_catalog() call, gone by the second.
 
-    Simulates a network-backed provider whose catalog changed between
-    resolve_name()'s list_catalog() call and invoke_by_name's own
-    _owner_and_id() re-listing (Q8) — the two currently list the catalog
-    independently, so a provider could plausibly have deregistered or
-    lost the entry in between.
+    Simulates a network-backed provider whose remote catalog changed
+    between two RUNS (e.g. an MCP server losing a tool). Since
+    ``resolve_name()``/``_owner_and_id()`` now share one cache built
+    atomically from a single ``list_catalog()`` sweep per provider (the
+    tool_catalog fix this test's sibling below regression-locks), the
+    "owner vanished between resolve_name() and _owner_and_id()" race this
+    test used to simulate WITHIN one lookup is now structurally
+    impossible — the two calls always read the same cache generation. The
+    only remaining seam that can surface a stale name is
+    ``reset_catalog_cache()`` (called once per run), so this now exercises
+    that instead: a name resolved in one run, then genuinely gone by the
+    next.
     """
 
     def __init__(self):
@@ -129,10 +136,14 @@ class VanishingProvider:
 
 
 def test_invoke_by_name_returns_error_result_when_owner_vanishes():
-    """Q8: a None owner from _owner_and_id must be a ToolResult error,
-    never an AttributeError from calling .invoke on None."""
+    """A name that resolved in one run but is gone the next (post-reset)
+    must surface as a graceful ToolResult error, never an AttributeError
+    or an uncaught exception from calling .invoke on a stale id."""
     reg = ToolCatalogRegistry()
     reg.register_provider(VanishingProvider())
+    assert reg.resolve_name("x") == "vanish:x"
+
+    reg.reset_catalog_cache()
     result = reg.invoke_by_name("x", {})
     assert result.ok is False
     assert "x" in result.error
