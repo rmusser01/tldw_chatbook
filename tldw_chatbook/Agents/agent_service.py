@@ -236,11 +236,29 @@ class AgentService:
             # default entirely; the default itself preserves the shipped
             # behavior (spawn_subagent's child inherits the parent's
             # allow-list minus the spawn tool itself, so a depth-1 child
-            # never re-offers spawn_subagent).
+            # never re-offers spawn_subagent) -- MINUS any skill-tool names
+            # too (pre-merge review MINOR 3). An ordinary native-spawn
+            # child can never actually run a skill (max_subagents is
+            # always clamped to 0 for every child, one-deep-only by
+            # construction), so a skill name surviving into its allow-list
+            # only meant a call to it fell through to that numeric
+            # budget-exhausted refusal below instead of the permission
+            # gate every other disallowed tool hits -- fragile (an
+            # incidental side effect of the budget clamp, not a modeled
+            # boundary) and inconsistent with the skill-driven child's own
+            # explicit builtins-only allow-list. Excluding skill names
+            # here too means a child can neither discover (find_tools/
+            # disclosure) nor invoke one; a stray direct call still gets a
+            # graceful "Tool not permitted" ToolResult from invoke_tool's
+            # skill branch, never reaching skill_runner.run.
             child_allowed_tools = (
                 allowed_tools if allowed_tools is not None
-                else tuple(n for n in config.allowed_tools
-                          if n != SPAWN_TOOL_NAME))
+                else tuple(
+                    n for n in config.allowed_tools
+                    if n != SPAWN_TOOL_NAME
+                    and not (self.skill_runner is not None
+                            and self.skill_runner.is_skill_tool(n))
+                ))
             child_config = AgentConfig(
                 model=config.model,
                 system_prompt=SUBAGENT_SYSTEM_PROMPT,

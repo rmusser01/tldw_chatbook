@@ -248,3 +248,51 @@ def test_combined_budget_skill_call_then_native_spawn(tmp_path):
     run = db.get_run(_r)
     results = [s for s in run["steps"] if s["kind"] == "tool_result"]
     assert any("sub-agent budget exhausted" in r["result"] for r in results)
+
+
+# --- Pre-merge review MINOR 3: an ordinary (native spawn_subagent, not
+# skill-driven) child's allow-list must exclude skill-tool names too, not
+# just the spawn tool itself -- mirroring the skill-driven child's own
+# explicit builtins-only allow-list (SkillRunner.run's `intersect_skill_tools`
+# call never re-admits skill names). Previously the child inherited every
+# skill name the parent had, so a child's attempt to call one only happened
+# to be refused by the incidental max_subagents=0 depth-1 clamp (a numeric
+# budget check, not a permission boundary) rather than the "Tool not
+# permitted" gate every other disallowed tool hits. ---
+
+def test_native_spawn_child_cannot_call_a_skill_tool(tmp_path):
+    """A child spawned via the native spawn_subagent tool (not a skill's
+    own spawn) must have skill names excluded from its allow-list, exactly
+    like the spawn tool name itself already was. Proves the refusal
+    happens at the permission GATE ("Tool not permitted"), never falling
+    through to the budget-exhausted branch, and that skill_runner.run is
+    never reached (the counting fake's `spawned_with` stays ``None``)."""
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    reg = _registry_with_code_review_skill()
+    script = [
+        {"choices": [{"message": {"content": _fence(
+            SPAWN_TOOL_NAME, {"task": "native task"})}}]},
+        # Inside the child: the model attempts the skill tool directly.
+        {"choices": [{"message": {"content": _fence(
+            "code-review", {"args": "the diff"})}}]},
+        {"choices": [{"message": {"content": "child gave up"}}]},
+        {"choices": [{"message": {"content": "final"}}]},
+    ]
+    runner = _FakeSkillRunner()
+    service = AgentService(db, reg, chat_call=lambda **k: script.pop(0),
+                           skill_runner=runner)
+    _r, outcome = service.run_turn(
+        conversation_id="c1", messages=[{"role": "user", "content": "go"}],
+        config=AgentConfig(model="m", system_prompt="s",
+                           allowed_tools=("calculator", "code-review", SPAWN_TOOL_NAME),
+                           budget=RunBudget()),
+        api_endpoint="llama_cpp")
+    assert outcome.status == RUN_DONE
+    assert runner.spawned_with is None    # never actually rendered/run
+
+    runs = db.list_runs("c1")
+    child_runs = [r for r in runs if r["agent_kind"] == "subagent"]
+    assert len(child_runs) == 1
+    tool_results = [s["result"] for s in child_runs[0]["steps"] if s["kind"] == "tool_result"]
+    assert any("Tool not permitted: code-review" in r for r in tool_results)
+    assert not any("sub-agent budget exhausted" in r for r in tool_results)
