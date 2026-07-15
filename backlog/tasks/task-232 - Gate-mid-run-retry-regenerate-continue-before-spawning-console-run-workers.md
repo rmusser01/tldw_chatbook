@@ -1,9 +1,11 @@
 ---
 id: TASK-232
 title: Gate mid-run retry/regenerate/continue before spawning console-run workers
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-07-14 22:05'
+updated_date: '2026-07-15 02:17'
 labels:
   - console
   - bug
@@ -25,3 +27,9 @@ Found by TASK-228's pre-merge review (Important #2, pre-existing — not a regre
 - [ ] #2 Retry/regenerate/continue still work when no run is active (regression coverage)
 - [ ] #3 A test reproduces the mid-run cancellation RED against the ungated dispatch and GREEN with the gate
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. RED test: fake in-flight run (run_state STREAMING) + retry/regenerate/continue action dispatch → assert the console-run worker is NOT spawned and the running worker is not cancelled (reproduces the cancel-before-gate)\n2. Fix: mirror the submit gate — is_send_allowed check + already-running notify before the three run_worker dispatches in handle_console_message_action\n3. Regression: actions still work when idle\n4. Sweep + guard tests\n5. Live QA on the vision rig: retry mid-stream → notify, stream finishes; PR
+<!-- SECTION:PLAN:END -->
