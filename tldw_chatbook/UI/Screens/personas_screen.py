@@ -64,6 +64,8 @@ from ...Widgets.Persona_Widgets.personas_pane_messages import (
     PreviewResetRequested,
 )
 from ...Widgets.Persona_Widgets.personas_dictionary_detail import (
+    DictionaryAttachRequested,
+    DictionaryDetachRequested,
     DictionaryEntriesReorderRequested,
     DictionaryEntryAddRequested,
     DictionaryEntryDeleteRequested,
@@ -1156,6 +1158,7 @@ class PersonasScreen(BaseAppScreen):
         self._update_title()
         self._update_status_row()
         await self._refresh_dictionary_versions()
+        await self._refresh_dictionary_attachments()
 
     async def _refresh_dictionary_statistics(self, record: dict) -> None:
         """Re-feed the Stats tab for the given loaded record (best-effort).
@@ -1361,6 +1364,98 @@ class PersonasScreen(BaseAppScreen):
             detail.load_versions([])
             return
         detail.load_versions(list(response.get("versions") or []))
+
+    async def _refresh_dictionary_attachments(self) -> None:
+        """Re-feed the Attachments tab for the selected dictionary (best-effort)."""
+        entity_id = self.state.selected_entity_id
+        service = self._dictionary_scope_service()
+        if service is None or self.state.selected_entity_kind != "dictionary" or not entity_id:
+            return
+        detail = self.query_one(PersonasDictionaryDetailWidget)
+        try:
+            response = await service.list_dictionary_conversations(int(entity_id), mode="local")
+        except Exception:
+            logger.opt(exception=True).warning(f"Could not list conversations for dictionary {entity_id}.")
+            detail.load_attachments([])
+            return
+        detail.load_attachments(list(response.get("conversations") or []))
+
+    @on(DictionaryAttachRequested)
+    async def _handle_dictionary_attach(self, message: DictionaryAttachRequested) -> None:
+        message.stop()
+        if self.state.selected_entity_kind != "dictionary" or not self.state.selected_entity_id:
+            return
+        if self._io_dialog_active:
+            return
+        self._io_dialog_active = True
+        self.run_worker(self._dictionary_attach_worker(), group="personas-io")
+
+    async def _dictionary_attach_worker(self) -> None:
+        try:
+            entity_id = self.state.selected_entity_id
+            service = self._dictionary_scope_service()
+            if service is None or not entity_id:
+                return
+            detail = self.query_one(PersonasDictionaryDetailWidget)
+            try:
+                convs = await asyncio.to_thread(self._list_attachable_conversations)
+            except Exception as exc:
+                logger.opt(exception=True).warning("Could not load conversations for the attach picker.")
+                detail.set_status(f"Attach failed: {exc}")
+                return
+            from ...Widgets.Persona_Widgets.dictionary_attach_picker import DictionaryAttachPicker
+            try:
+                picked = await self.app.push_screen_wait(DictionaryAttachPicker(convs))
+            except Exception:
+                logger.opt(exception=True).warning("Could not show the attach picker.")
+                return
+            if not picked:
+                return
+            try:
+                await service.attach_to_conversation(int(entity_id), str(picked), mode="local")
+            except ConflictError:
+                detail.set_status("Attach failed: the conversation changed since it was loaded. Try again.")
+                return
+            except Exception as exc:
+                logger.opt(exception=True).warning(f"Could not attach dictionary {entity_id}.")
+                detail.set_status(f"Attach failed: {exc}")
+                return
+            await self._refresh_dictionary_attachments()
+        finally:
+            self._io_dialog_active = False
+
+    def _list_attachable_conversations(self) -> list[dict]:
+        """Conversations offered by the attach picker (title + string id). Sync DB read."""
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None or not hasattr(db, "search_conversations_page"):
+            return []
+        # search_conversations_page(query, *, limit=50, offset=0, ...) always
+        # returns a (rows, total, elapsed_seconds) tuple; unwrap defensively
+        # in case a future/alternate DB implementation returns a bare list.
+        page = db.search_conversations_page(query="", scope_type="all", limit=200, offset=0)
+        results = page[0] if isinstance(page, tuple) else page
+        rows = []
+        for conv in results or []:
+            if conv.get("id") is None:
+                continue
+            rows.append({"conversation_id": str(conv.get("id")), "title": str(conv.get("title") or "(untitled)")})
+        return rows
+
+    @on(DictionaryDetachRequested)
+    async def _handle_dictionary_detach(self, message: DictionaryDetachRequested) -> None:
+        message.stop()
+        entity_id = self.state.selected_entity_id
+        service = self._dictionary_scope_service()
+        if service is None or not entity_id:
+            return
+        detail = self.query_one(PersonasDictionaryDetailWidget)
+        try:
+            await service.detach_from_conversation(int(entity_id), str(message.conversation_id), mode="local")
+        except Exception as exc:
+            logger.opt(exception=True).warning(f"Could not detach dictionary {entity_id}.")
+            detail.set_status(f"Detach failed: {exc}")
+            return
+        await self._refresh_dictionary_attachments()
 
     @on(DictionaryVersionViewRequested)
     async def _handle_dictionary_version_view(self, message: DictionaryVersionViewRequested) -> None:

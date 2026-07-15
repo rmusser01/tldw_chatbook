@@ -115,6 +115,22 @@ class DictionaryExportRequested(Message):
         self.fmt = fmt
 
 
+class DictionaryAttachRequested(Message):
+    """Request the attach-to-conversation picker for the current dictionary."""
+
+
+class DictionaryDetachRequested(Message):
+    """Detach the current dictionary from one conversation.
+
+    Args:
+        conversation_id: The conversation to detach from (string id).
+    """
+
+    def __init__(self, conversation_id: str) -> None:
+        super().__init__()
+        self.conversation_id = conversation_id
+
+
 class PersonasDictionaryDetailWidget(Vertical):
     """Entries + Settings tabs for one dictionary. Emits intents; owns no I/O."""
 
@@ -155,6 +171,10 @@ class PersonasDictionaryDetailWidget(Vertical):
     PersonasDictionaryDetailWidget #personas-dict-version-snapshot {
         height: auto;
     }
+    PersonasDictionaryDetailWidget #personas-dict-attachments-table {
+        height: auto;
+        max-height: 8;
+    }
     """
 
     def __init__(self, **kwargs: Any) -> None:
@@ -163,6 +183,7 @@ class PersonasDictionaryDetailWidget(Vertical):
         self._loaded_settings: dict | None = None  # last-loaded settings snapshot; dirty = value diff
         self._last_dirty_sent: bool = False  # last dirty state posted via DictionarySettingsEdited
         self._validation_findings: list = []  # index-aligned with the validation OptionList's options
+        self._attachment_rows: list[dict] = []
 
     # ----- compose -----
 
@@ -221,6 +242,12 @@ class PersonasDictionaryDetailWidget(Vertical):
                     yield Button("View", id="personas-dict-version-view", classes="console-action-secondary")
                     yield Button("Revert…", id="personas-dict-version-revert", classes="console-action-secondary")
                 yield Static("", id="personas-dict-version-snapshot", markup=False)
+            with TabPane("Attachments", id="personas-dict-tab-attachments"):
+                yield Static("Not attached to any conversation yet.", id="personas-dict-attachments-empty", markup=False)
+                yield DataTable(id="personas-dict-attachments-table", cursor_type="row")
+                with Horizontal(classes="personas-dict-form-row"):
+                    yield Button("Attach to conversation…", id="personas-dict-attach-add", classes="console-action-secondary")
+                    yield Button("Detach", id="personas-dict-attach-detach", classes="console-action-secondary")
         yield Static("", id="personas-dict-status", markup=False)
 
     def on_mount(self) -> None:
@@ -233,6 +260,7 @@ class PersonasDictionaryDetailWidget(Vertical):
         table.add_columns("pattern", "replacement", "type", "prob %", "group", "pri")
         versions_table = self.query_one("#personas-dict-versions-table", DataTable)
         versions_table.add_columns("rev", "action", "name", "created")
+        self.query_one("#personas-dict-attachments-table", DataTable).add_columns("conversation", "id")
 
     # ----- public API -----
 
@@ -360,6 +388,34 @@ class PersonasDictionaryDetailWidget(Vertical):
         except Exception:
             return None
 
+    def load_attachments(self, rows: list[dict]) -> None:
+        """Render the conversations this dictionary is attached to.
+
+        Args:
+            rows: ``{"conversation_id": str, "title": str}`` entries.
+        """
+        self._attachment_rows = list(rows)
+        table = self.query_one("#personas-dict-attachments-table", DataTable)
+        table.clear()
+        for row in self._attachment_rows:
+            table.add_row(
+                Text(str(row.get("title") or "(untitled)")),
+                Text(str(row.get("conversation_id") or "")),
+                key=str(row.get("conversation_id")),
+            )
+        empty = self.query_one("#personas-dict-attachments-empty", Static)
+        empty.display = not self._attachment_rows
+        table.display = bool(self._attachment_rows)
+
+    def _selected_attachment_id(self) -> str | None:
+        table = self.query_one("#personas-dict-attachments-table", DataTable)
+        if table.row_count == 0 or table.cursor_row is None or table.cursor_row < 0:
+            return None
+        try:
+            return str(table.coordinate_to_cell_key((table.cursor_row, 0)).row_key.value)
+        except Exception:
+            return None
+
     def _refresh_validation(self) -> None:
         """Recompute advisory findings for the current entry list.
 
@@ -410,7 +466,12 @@ class PersonasDictionaryDetailWidget(Vertical):
         self._loaded_settings = None
         self._last_dirty_sent = False
         self._validation_findings = []
+        self._attachment_rows = []
         self.query_one("#personas-dict-entries-table", DataTable).clear()
+        attachments_table = self.query_one("#personas-dict-attachments-table", DataTable)
+        attachments_table.clear()
+        attachments_table.display = False
+        self.query_one("#personas-dict-attachments-empty", Static).display = True
         try:
             panel = self.query_one("#personas-dict-validation", OptionList)
         except Exception:
@@ -629,6 +690,18 @@ class PersonasDictionaryDetailWidget(Vertical):
         if revision is not None:
             self.post_message(DictionaryVersionRevertRequested(revision))
 
+    @on(Button.Pressed, "#personas-dict-attach-add")
+    def _attach_add(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(DictionaryAttachRequested())
+
+    @on(Button.Pressed, "#personas-dict-attach-detach")
+    def _attach_detach(self, event: Button.Pressed) -> None:
+        event.stop()
+        conversation_id = self._selected_attachment_id()
+        if conversation_id is not None:
+            self.post_message(DictionaryDetachRequested(conversation_id))
+
     def _sync_dirty_state(self) -> None:
         """Recompute dirty state and post ``DictionarySettingsEdited`` on transitions.
 
@@ -654,6 +727,8 @@ class PersonasDictionaryDetailWidget(Vertical):
 
 
 __all__ = [
+    "DictionaryAttachRequested",
+    "DictionaryDetachRequested",
     "DictionaryEntriesReorderRequested",
     "DictionaryEntryAddRequested",
     "DictionaryEntryDeleteRequested",

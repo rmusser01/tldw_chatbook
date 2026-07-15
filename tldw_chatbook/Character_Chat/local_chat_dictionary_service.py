@@ -303,7 +303,8 @@ class LocalChatDictionaryService:
             if normalized is None:
                 continue
             if include_usage:
-                normalized.setdefault("usage", {"conversation_count": None})
+                conversation_count = len(self.list_dictionary_conversations(normalized["id"])["conversations"])
+                normalized.setdefault("usage", {"conversation_count": conversation_count})
             dictionaries.append(normalized)
         return {"dictionaries": dictionaries, "source": "local"}
 
@@ -660,6 +661,117 @@ class LocalChatDictionaryService:
             "enabled": bool(record.get("enabled")),
             "source": "local",
         }
+
+    def _load_conversation_or_raise(self, conversation_id: str) -> dict[str, Any]:
+        record = self._require_db().get_conversation_by_id(str(conversation_id))
+        if record is None:
+            raise ValueError(f"Conversation '{conversation_id}' was not found.")
+        return record
+
+    @staticmethod
+    def _active_dictionaries(record: Mapping[str, Any]) -> list[int]:
+        try:
+            meta = json.loads(record.get("metadata") or "{}")
+        except (TypeError, ValueError):
+            meta = {}
+        if not isinstance(meta, dict):
+            meta = {}
+        raw = meta.get("active_dictionaries") or []
+        if not isinstance(raw, list):
+            raw = []
+        result: list[int] = []
+        for value in raw:
+            try:
+                result.append(int(value))
+            except (TypeError, ValueError):
+                continue
+        return result
+
+    def _write_active_dictionaries(self, record: dict[str, Any], conversation_id: str, ids: list[int]) -> None:
+        try:
+            meta = json.loads(record.get("metadata") or "{}")
+        except (TypeError, ValueError):
+            meta = {}
+        if not isinstance(meta, dict):
+            meta = {}
+        meta["active_dictionaries"] = ids
+        self._require_db().update_conversation(
+            str(conversation_id), {"metadata": json.dumps(meta)}, expected_version=record["version"]
+        )
+
+    def attach_to_conversation(self, dictionary_id: int, conversation_id: str) -> dict[str, Any]:
+        """Attach a dictionary to a conversation's active_dictionaries (idempotent).
+
+        Args:
+            dictionary_id: The dictionary to attach.
+            conversation_id: The conversation to attach it to.
+
+        Returns:
+            ``{"dictionary_id", "conversation_id", "active_dictionaries", "source": "local"}``.
+
+        Raises:
+            ValueError: If the conversation does not exist.
+            ConflictError: If the conversation's version is stale at write time.
+        """
+        record = self._load_conversation_or_raise(conversation_id)
+        ids = self._active_dictionaries(record)
+        did = int(dictionary_id)
+        if did not in ids:
+            ids.append(did)
+            self._write_active_dictionaries(record, conversation_id, ids)
+        return {"dictionary_id": did, "conversation_id": str(conversation_id),
+                "active_dictionaries": ids, "source": "local"}
+
+    def detach_from_conversation(self, dictionary_id: int, conversation_id: str) -> dict[str, Any]:
+        """Detach a dictionary from a conversation (no-op when not attached).
+
+        Args:
+            dictionary_id: The dictionary to detach.
+            conversation_id: The conversation to detach it from.
+
+        Returns:
+            ``{"dictionary_id", "conversation_id", "active_dictionaries", "source": "local"}``.
+
+        Raises:
+            ValueError: If the conversation does not exist.
+            ConflictError: If the conversation's version is stale at write time.
+        """
+        record = self._load_conversation_or_raise(conversation_id)
+        ids = self._active_dictionaries(record)
+        did = int(dictionary_id)
+        if did in ids:
+            ids = [i for i in ids if i != did]
+            self._write_active_dictionaries(record, conversation_id, ids)
+        return {"dictionary_id": did, "conversation_id": str(conversation_id),
+                "active_dictionaries": ids, "source": "local"}
+
+    def list_dictionary_conversations(self, dictionary_id: int) -> dict[str, Any]:
+        """Reverse used-by: conversations whose active_dictionaries include this id.
+
+        Args:
+            dictionary_id: The dictionary to find attachments for.
+
+        Returns:
+            ``{"conversations": [{"conversation_id": str, "title": str}], "source": "local"}``.
+        """
+        did = int(dictionary_id)
+        conn = self._require_db().get_connection()
+        # LIKE prefilter shrinks the scan; exact int membership below avoids the
+        # id-1-matches-11 substring trap. metadata is a column on conversations.
+        rows = conn.execute(
+            "SELECT id, title, metadata FROM conversations "
+            "WHERE deleted = 0 AND metadata LIKE '%active_dictionaries%'"
+        ).fetchall()
+        conversations: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                is_member = did in self._active_dictionaries({"metadata": row["metadata"]})
+            except Exception:
+                # One pathological row's metadata must never break the whole scan.
+                continue
+            if is_member:
+                conversations.append({"conversation_id": str(row["id"]), "title": str(row["title"] or "")})
+        return {"conversations": conversations, "source": "local"}
 
 
 __all__ = ["LocalChatDictionaryService"]

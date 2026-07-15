@@ -1,3 +1,5 @@
+import json as _json
+
 import pytest
 
 from tldw_chatbook.Character_Chat.local_chat_dictionary_service import LocalChatDictionaryService
@@ -367,3 +369,135 @@ def test_json_export_import_roundtrips_every_field(dictionary_db):
     for field in ("pattern", "replacement", "probability", "group", "timed_effects",
                   "max_replacements", "type", "enabled", "case_sensitive", "priority"):
         assert dup_entry.get(field) == src_entry.get(field), field
+
+
+def _seed_conversation(db, title="Chat"):
+    return db.add_conversation({"title": title})
+
+
+def _active(db, conv_id):
+    meta = _json.loads(db.get_conversation_by_id(conv_id).get("metadata") or "{}")
+    return meta.get("active_dictionaries", [])
+
+
+def test_attach_is_idempotent_and_dedups(dictionary_db):
+    service = LocalChatDictionaryService(dictionary_db)
+    d = service.create_dictionary({"name": "Meds"})
+    conv = _seed_conversation(dictionary_db)
+
+    r1 = service.attach_to_conversation(d["id"], conv)
+    assert r1["active_dictionaries"] == [d["id"]]
+    r2 = service.attach_to_conversation(d["id"], conv)          # idempotent
+    assert r2["active_dictionaries"] == [d["id"]]               # no duplicate
+    assert _active(dictionary_db, conv) == [d["id"]]            # persisted as int
+
+
+def test_detach_removes_and_noop_when_absent(dictionary_db):
+    service = LocalChatDictionaryService(dictionary_db)
+    d = service.create_dictionary({"name": "Meds"})
+    conv = _seed_conversation(dictionary_db)
+    service.attach_to_conversation(d["id"], conv)
+    service.detach_from_conversation(d["id"], conv)
+    assert _active(dictionary_db, conv) == []
+    # not-attached -> no-op success
+    again = service.detach_from_conversation(d["id"], conv)
+    assert again["active_dictionaries"] == []
+
+
+def test_attach_missing_conversation_raises(dictionary_db):
+    service = LocalChatDictionaryService(dictionary_db)
+    d = service.create_dictionary({"name": "Meds"})
+    with pytest.raises(ValueError):
+        service.attach_to_conversation(d["id"], "does-not-exist")
+
+
+def test_used_by_exact_int_membership_not_substring(dictionary_db):
+    # THE 1-vs-11 trap: dict id 1 must NOT match a conversation holding only id 11.
+    # Ids auto-increment from 1, so create 11 dictionaries to force a real id-11
+    # (a function-scoped 2-dictionary fixture only ever yields ids 1 and 2, which
+    # can't distinguish exact-int membership from substring matching).
+    service = LocalChatDictionaryService(dictionary_db)
+    created = [service.create_dictionary({"name": f"Dict {n}"}) for n in range(1, 12)]
+    d1, d11 = created[0], created[10]
+    assert d1["id"] == 1
+    assert d11["id"] == 11
+
+    # Attach ONLY the id-11 dictionary to a conversation.
+    conv_with_11 = _seed_conversation(dictionary_db, "has 11")
+    service.attach_to_conversation(d11["id"], conv_with_11)
+
+    # Dict id 1 is not attached anywhere: a substring LIKE match ('%1%') would
+    # wrongly catch conv_with_11 (metadata contains "11", which contains "1").
+    used_by_1 = service.list_dictionary_conversations(d1["id"])
+    assert used_by_1["conversations"] == []
+
+    # Attach id 1 elsewhere and confirm its used-by returns exactly that one
+    # conversation, not the id-11 conversation.
+    conv_with_1 = _seed_conversation(dictionary_db, "has 1")
+    service.attach_to_conversation(d1["id"], conv_with_1)
+    used_by_1 = service.list_dictionary_conversations(d1["id"])
+    ids = {c["conversation_id"] for c in used_by_1["conversations"]}
+    assert ids == {conv_with_1}
+    titles = {c["title"] for c in used_by_1["conversations"]}
+    assert titles == {"has 1"}
+
+
+def test_used_by_tolerates_non_list_active_dictionaries_value(dictionary_db):
+    # Well-formed JSON, but a malformed *value* under a good key:
+    # {"active_dictionaries": 5} is valid JSON yet not iterable as a member
+    # list. list_dictionary_conversations() scans ALL matching rows, so one
+    # pathological row like this must not crash used-by for every dictionary.
+    service = LocalChatDictionaryService(dictionary_db)
+    d = service.create_dictionary({"name": "Meds"})
+    good_conv = _seed_conversation(dictionary_db, "good")
+    service.attach_to_conversation(d["id"], good_conv)
+
+    bad_conv = dictionary_db.add_conversation({"title": "bad metadata"})
+    bad_record = dictionary_db.get_conversation_by_id(bad_conv)
+    dictionary_db.update_conversation(
+        bad_conv,
+        {"metadata": _json.dumps({"active_dictionaries": 5})},
+        expected_version=bad_record["version"],
+    )
+
+    result = service.list_dictionary_conversations(d["id"])  # must not raise
+    ids = {c["conversation_id"] for c in result["conversations"]}
+    assert ids == {good_conv}
+    assert bad_conv not in ids
+
+
+def test_attach_survives_non_dict_metadata_json(dictionary_db):
+    """Regression for Roleplay P1e final-review #2.
+
+    A conversation's `metadata` can be valid JSON but not a JSON object
+    (e.g. a bare scalar like ``"5"``). `_active_dictionaries`/
+    `_write_active_dictionaries` used to call `.get()`/`__setitem__` on
+    whatever `json.loads()` returned, which raises `AttributeError` /
+    `TypeError` for a non-dict value (only `json.loads()` itself was
+    guarded, not the shape of its result). Attach must recover by treating
+    a non-dict decode result as an empty dict.
+    """
+    service = LocalChatDictionaryService(dictionary_db)
+    d = service.create_dictionary({"name": "Meds"})
+    conv = _seed_conversation(dictionary_db)
+    record = dictionary_db.get_conversation_by_id(conv)
+    dictionary_db.update_conversation(conv, {"metadata": "5"}, expected_version=record["version"])
+
+    result = service.attach_to_conversation(d["id"], conv)
+    assert result["active_dictionaries"] == [d["id"]]
+    assert _active(dictionary_db, conv) == [d["id"]]
+
+
+def test_attach_conflict_on_stale_version(dictionary_db, monkeypatch):
+    service = LocalChatDictionaryService(dictionary_db)
+    d = service.create_dictionary({"name": "Meds"})
+    conv = _seed_conversation(dictionary_db)
+    # Make update_conversation report a version mismatch.
+    real_update = dictionary_db.update_conversation
+
+    def _stale(conversation_id, update_data, expected_version):
+        raise ConflictError("version mismatch")
+
+    monkeypatch.setattr(dictionary_db, "update_conversation", _stale)
+    with pytest.raises(ConflictError):
+        service.attach_to_conversation(d["id"], conv)
