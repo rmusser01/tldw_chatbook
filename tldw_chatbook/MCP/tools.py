@@ -14,18 +14,43 @@ from loguru import logger
 
 # Import tldw_chatbook components
 from ..config import get_cli_setting, CLI_APP_CLIENT_ID
-from ..DB.ChaChaNotes_DB import ChaChaNotes_DB
+from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
-from ..Chat.Chat_Functions import save_conversation_from_messages
-from ..LLM_Calls.LLM_API_Calls import chat_with_provider
 from ..RAG_Search.simplified.search_service import SimplifiedRAGSearchService
-from ..Character_Chat.Character_Chat_Lib import get_character_by_id, list_characters
+
+# `save_conversation_from_messages` (tldw_chatbook.Chat.Chat_Functions) and
+# `chat_with_provider` (tldw_chatbook.LLM_Calls.LLM_API_Calls) were both
+# removed/renamed upstream at some point without this module being updated
+# (verified: neither name exists anywhere in the current tree, grepped
+# across tldw_chatbook/**/*.py -- LLM_API_Calls.py only exposes
+# provider-specific `chat_with_<provider>()` functions now, no unified
+# dispatcher). `chat_with_character()` below is the only caller of either
+# name; keep it failing loudly and gracefully (caught by its own
+# try/except, same "not available yet" contract as
+# `LocalMCPRuntimeDelegate._tool_chat_with_llm()` in
+# local_runtime_delegate.py) rather than leaving a dangling import that
+# breaks every OTHER tool in this module at import time too (QA round
+# mcp-hub-phase3-2026-07, Defect 2).
+
+
+def save_conversation_from_messages(*_args: Any, **_kwargs: Any) -> str:
+    raise NotImplementedError(
+        "MCP chat_with_character: no save_conversation_from_messages() persistence "
+        "helper is available in this build (dead upstream reference)."
+    )
+
+
+def chat_with_provider(*, provider: str, **_kwargs: Any) -> str:
+    raise NotImplementedError(
+        f"MCP chat_with_character: no unified chat_with_provider() dispatcher is "
+        f"available for provider={provider!r} in this build (dead upstream reference)."
+    )
 
 
 class MCPTools:
     """Container for MCP tool implementations."""
     
-    def __init__(self, chachanotes_db: ChaChaNotes_DB, media_db: MediaDatabase):
+    def __init__(self, chachanotes_db: CharactersRAGDB, media_db: MediaDatabase):
         """Initialize tools with database connections."""
         self.chachanotes_db = chachanotes_db
         self.media_db = media_db
@@ -57,7 +82,7 @@ class MCPTools:
         """
         try:
             # Get character
-            character = get_character_by_id(self.chachanotes_db, character_id)
+            character = self.chachanotes_db.get_character_card_by_id(character_id)
             if not character:
                 return {"error": f"Character {character_id} not found"}
             
@@ -232,7 +257,7 @@ class MCPTools:
             List of character profiles
         """
         try:
-            characters = list_characters(self.chachanotes_db)
+            characters = self.chachanotes_db.list_character_cards()
             return [
                 {
                     "id": char['id'],
