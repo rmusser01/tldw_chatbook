@@ -61,6 +61,32 @@ def _require_non_empty_field(value: str, field_name: str, record_type: str) -> s
     return normalized
 
 
+_PROFILE_ID_INVALID_CHARS_RE = re.compile(r"[:\s]")
+
+
+def _validate_profile_id(value: str) -> str:
+    """Validate a local MCP profile id at the single save-time choke point.
+
+    I3 (Phase 3 review, minimum scope -- the full tuple-identity refactor
+    for HubTool routing is deferred to Phase 4): `HubTool.tool_id` packs
+    `server_key` and tool name into one `"::"`-delimited string
+    (`f"local:{profile_id}::{tool_name}"`), and callers partition it back
+    apart on the first `"::"` (see `MCPWorkbench._run_tool_test()`). A
+    profile id containing its own `":"` corrupts that partition -- e.g.
+    profile_id `"a::b"` makes `tool_id` `"local:a::b::search"` split into
+    server_key `"local:a"` / tool `"b::search"` instead of the intended
+    profile `"a::b"` / tool `"search"`, silently executing against the
+    wrong server. Colons (and, for the same "no legitimate use, only
+    ambiguity" reason, embedded whitespace) have no legitimate use in a
+    profile id here, so both are rejected outright rather than merely
+    discouraged.
+    """
+    normalized = _require_non_empty_field(value, "profile_id", "Local MCP profile")
+    if _PROFILE_ID_INVALID_CHARS_RE.search(normalized):
+        raise ValueError("Local MCP profile profile_id must not contain ':' or whitespace")
+    return normalized
+
+
 def _datetime_to_iso(value: datetime | None) -> str | None:
     if value is None:
         return None
@@ -618,7 +644,7 @@ class LocalMCPStore:
         current = self.load()
         now = datetime.now(timezone.utc)
         canonical_profile = LocalExternalMCPProfile.from_input_dict(profile.to_input_dict())
-        profile_id = _require_non_empty_field(canonical_profile.profile_id, "profile_id", "Local MCP profile")
+        profile_id = _validate_profile_id(canonical_profile.profile_id)
         command = _require_non_empty_field(canonical_profile.command, "command", "Local MCP profile")
         existing_profile = next(
             (item for item in current.profiles if item.profile_id == profile_id),
