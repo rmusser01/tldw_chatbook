@@ -626,14 +626,28 @@ class MCPInspector(Vertical):
         run_button.disabled = True
         self.post_message(self.ToolTestRequested(tool.tool_id, arguments))
 
-    def show_tool_result(self, *, ok: bool, text: str, duration_ms: int) -> None:
+    def show_tool_result(self, *, tool_id: str, ok: bool, text: str, duration_ms: int) -> None:
         """Render one Test Tool run's outcome, and re-enable Run.
 
         Tolerant of the panel having been closed (or a different tool
         selected) while the run was in flight -- `MCPWorkbench` posts this
         purely as "here's what happened", with no guarantee the panel this
         result belongs to is still on screen.
+
+        I1: `tool_id` must match `self._current_tool.tool_id` -- a slow
+        tool A's result arriving after the user has already switched the
+        inspector to tool B's panel must never render under B (and must
+        never re-enable B's Run button, which has nothing to do with A's
+        completion). A mismatched result is dropped silently (debug-logged
+        only); it belongs to a panel that is no longer showing.
         """
+        current = self._current_tool
+        if current is None or current.tool_id != tool_id:
+            logger.debug(
+                f"MCPInspector: dropping stale tool result for {tool_id!r} "
+                f"(current tool is {current.tool_id if current else None!r})"
+            )
+            return
         try:
             result_widget = self.query_one("#mcp-inspector-test-result", Static)
         except NoMatches:

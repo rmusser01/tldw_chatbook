@@ -2844,6 +2844,34 @@ async def test_test_tool_run_redacts_secret_shaped_result():
 
 
 @pytest.mark.asyncio
+async def test_test_tool_run_error_with_dict_shaped_args_is_redacted():
+    """I1 (ledger #5): some errors carry a raw dict payload in `exc.args`
+    (e.g. an echoed request/arguments dict) -- `str(exc)` would otherwise
+    dump that dict's raw repr, including any secret-shaped values in it,
+    straight into the result panel."""
+    app = ToolTestApp()
+    app.unified_mcp_service.raise_error = RuntimeError(
+        {"api_key": "sk-live-secret", "detail": "bad request"}
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch (raw, default "{}")
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert "sk-live-secret" not in result
+        assert "***" in result
+        assert "bad request" in result
+
+
+@pytest.mark.asyncio
 async def test_test_tool_double_run_dispatches_exactly_one_service_call():
     """Mirrors test_double_submit_dispatches_exactly_one_save: the workbench
     in-flight guard, not just the Run button's own disabled state, is the
@@ -2870,6 +2898,56 @@ async def test_test_tool_double_run_dispatches_exactly_one_service_call():
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert len(app.unified_mcp_service.test_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_slow_tool_result_does_not_render_under_a_different_selected_tool():
+    """I1: tool A's ("docs::fetch") slow test run must not land in tool B's
+    ("notes::list_notes") panel when the user switches selection before A
+    resolves -- and must not re-enable B's Run button on A's behalf.
+    Mirrors the whole-branch review's end-to-end probe."""
+    app = ToolTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        service = app.unified_mcp_service
+        workbench.set_mode("tools")
+        await pilot.pause()
+
+        # Select docs::fetch (row 0, raw mode), open Test panel, Run (gated).
+        await _select_tools_mode_row(app, pilot, 0)
+        app.query_one("#mcp-inspector-test-tool", Button).press()
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        service.test_gate = asyncio.Event()
+        service.test_result = {"result": "FETCH-DOC-PAYLOAD"}
+        app.query_one("#mcp-inspector-test-run", Button).press()
+        await pilot.pause()
+        assert service.test_calls and service.test_calls[0][1] == "fetch"
+
+        # While fetch is in flight, select notes::list_notes and open ITS panel.
+        await _select_tools_mode_row(app, pilot, 2)
+        await pilot.pause()
+        inspector = app.query_one(MCPInspector)
+        assert inspector.current_tool.name == "list_notes"
+        app.query_one("#mcp-inspector-test-tool", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        result_widget = app.query_one("#mcp-inspector-test-result", Static)
+        run_button = app.query_one("#mcp-inspector-test-run", Button)
+        assert str(result_widget.renderable) == ""
+
+        # Release the gate: fetch's late result must be dropped, not shown
+        # under notes::list_notes, and must not touch list_notes's own Run.
+        service.test_gate.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        rendered = str(result_widget.renderable)
+        assert "FETCH-DOC-PAYLOAD" not in rendered
+        assert rendered == ""
+        assert inspector.current_tool.name == "list_notes"
+        assert run_button.disabled is False  # never pressed for list_notes
 
 
 @pytest.mark.asyncio

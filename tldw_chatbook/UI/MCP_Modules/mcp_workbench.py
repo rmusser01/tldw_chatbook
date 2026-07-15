@@ -89,6 +89,34 @@ def _toast(text: str) -> str:
     return escape_markup(text)
 
 
+def _safe_exception_text(exc: BaseException) -> str:
+    """`str(exc)`, but redacted when the exception's own args embed a dict.
+
+    I1 (ledger #5): some client/server errors carry a raw dict payload in
+    `exc.args` (e.g. an echoed request or arguments dict) -- Python's
+    default `BaseException.__str__` renders that as `str(args[0])` (single
+    arg) or `str(args)` (multiple), either way dumping the dict's raw repr,
+    key/value pairs and all. Redact any Mapping-shaped args the same way
+    every other error payload here is redacted before it reaches this
+    result panel; non-Mapping args (the overwhelming common case: a plain
+    message string) fall through to plain `str(exc)` unchanged -- this must
+    never invent a NEW leak path, only close the dict-arg one.
+    """
+    args = getattr(exc, "args", ())
+    if not any(isinstance(arg, Mapping) for arg in args):
+        return str(exc)
+    try:
+        safe_args = tuple(
+            redact_mapping(arg) if isinstance(arg, Mapping) else arg for arg in args
+        )
+        return str(safe_args[0]) if len(safe_args) == 1 else str(safe_args)
+    except Exception:
+        # Redaction itself failed on some pathological arg -- fall back to
+        # a generic marker rather than risk falling through to the raw
+        # str(exc) this whole helper exists to avoid.
+        return "<error redacted>"
+
+
 MCP_HUB_MODES: dict[str, dict[str, str]] = {
     "servers": {"label": "Servers", "button_id": "mcp-mode-servers", "placeholder": ""},
     # T5: Tools mode now hosts the real `MCPToolsMode` canvas (see compose())
@@ -1305,7 +1333,10 @@ class MCPWorkbench(Container):
                 result = await service.test_hub_tool(server_key, tool_name, arguments)
             except Exception as exc:
                 duration_ms = int((time.monotonic() - started) * 1000)
-                self._show_tool_test_result(ok=False, text=str(exc), duration_ms=duration_ms)
+                self._show_tool_test_result(
+                    tool_id=tool_id, ok=False, text=_safe_exception_text(exc),
+                    duration_ms=duration_ms,
+                )
                 return
             duration_ms = int((time.monotonic() - started) * 1000)
             try:
@@ -1314,15 +1345,24 @@ class MCPWorkbench(Container):
                 else:
                     excerpt = str(result)[:500]
             except Exception as exc:
-                self._show_tool_test_result(ok=False, text=str(exc), duration_ms=duration_ms)
+                self._show_tool_test_result(
+                    tool_id=tool_id, ok=False, text=_safe_exception_text(exc),
+                    duration_ms=duration_ms,
+                )
                 return
-            self._show_tool_test_result(ok=True, text=excerpt, duration_ms=duration_ms)
+            self._show_tool_test_result(
+                tool_id=tool_id, ok=True, text=excerpt, duration_ms=duration_ms
+            )
         finally:
             self._tool_test_in_flight.discard(tool_id)
 
-    def _show_tool_test_result(self, *, ok: bool, text: str, duration_ms: int) -> None:
+    def _show_tool_test_result(
+        self, *, tool_id: str, ok: bool, text: str, duration_ms: int
+    ) -> None:
         try:
-            self.query_one(MCPInspector).show_tool_result(ok=ok, text=text, duration_ms=duration_ms)
+            self.query_one(MCPInspector).show_tool_result(
+                tool_id=tool_id, ok=ok, text=text, duration_ms=duration_ms
+            )
         except Exception as exc:
             logger.warning(f"MCP tool test result render failed: {exc}")
 

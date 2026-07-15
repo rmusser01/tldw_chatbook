@@ -1045,14 +1045,17 @@ async def test_show_tool_result_ok_renders_status_line_and_reenables_run():
     app = InspectorApp()
     async with app.run_test(size=(100, 60)) as pilot:
         inspector = app.query_one(MCPInspector)
-        await inspector.show_tool(_tool())
+        tool = _tool()
+        await inspector.show_tool(tool)
         await pilot.pause()
         await pilot.click("#mcp-inspector-test-tool")
         await pilot.pause()
         app.query_one("#mcp-schema-field-0", Input).value = "hello"
         await pilot.click("#mcp-inspector-test-run")
         await pilot.pause()
-        inspector.show_tool_result(ok=True, text='{"ok": true}', duration_ms=123)
+        inspector.show_tool_result(
+            tool_id=tool.tool_id, ok=True, text='{"ok": true}', duration_ms=123
+        )
         await pilot.pause()
         result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
         assert result.startswith("OK · 123ms")
@@ -1065,15 +1068,46 @@ async def test_show_tool_result_failed_renders_status_line():
     app = InspectorApp()
     async with app.run_test(size=(100, 60)) as pilot:
         inspector = app.query_one(MCPInspector)
-        await inspector.show_tool(_tool())
+        tool = _tool()
+        await inspector.show_tool(tool)
         await pilot.pause()
         await pilot.click("#mcp-inspector-test-tool")
         await pilot.pause()
-        inspector.show_tool_result(ok=False, text="boom", duration_ms=45)
+        inspector.show_tool_result(tool_id=tool.tool_id, ok=False, text="boom", duration_ms=45)
         await pilot.pause()
         result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
         assert result.startswith("Failed · 45ms")
         assert "boom" in result
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_for_a_different_tool_is_dropped():
+    """I1: a result for tool A arriving after the inspector has moved on to
+    tool B must not render in B's panel, and must not re-enable B's Run
+    button on A's behalf (B's own Run press is what should control that)."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool_b = _tool(name="fetch", server_key="local:docs", input_schema=None)
+        await inspector.show_tool(tool_b)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        run_button = app.query_one("#mcp-inspector-test-run", Button)
+        await pilot.click(run_button)
+        await pilot.pause()
+        assert run_button.disabled is True
+
+        # Tool A's late result arrives under B's tool_id mismatch.
+        inspector.show_tool_result(
+            tool_id="local:docs::search", ok=True, text="A's payload", duration_ms=10
+        )
+        await pilot.pause()
+
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert "A's payload" not in result
+        assert result == ""
+        assert run_button.disabled is True
 
 
 @pytest.mark.asyncio
