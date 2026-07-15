@@ -3277,6 +3277,7 @@ UPDATE db_schema_version
         except Exception as e:
             logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V19→V20] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V19 to V20 for '{self._SCHEMA_NAME}': {e}") from e
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -3392,8 +3393,8 @@ UPDATE db_schema_version
                     15: self._migrate_from_v15_to_v16,
                     16: self._migrate_from_v16_to_v17,
                     17: self._migrate_from_v17_to_v18,
-                    19: self._migrate_from_v19_to_v20,
                     18: self._migrate_from_v18_to_v19,
+                    19: self._migrate_from_v19_to_v20,
                 }
 
                 if current_db_version == 0:
