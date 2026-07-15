@@ -774,7 +774,7 @@ Expected: ALL PASS. Then the broad regression: `$PY -m pytest Tests/UI Tests/Cha
 - **Supporting-file editing in the detail canvas** (read-only names + sizes in v1; add/remove via import).
 - **Server-side skills surfaces** beyond what `skills_scope_service` already routes (`mode="server"`).
 - **Skill marketplace / discovery.**
-- **Unified sub-agent budget** across `spawn_subagent` and skill-tool spawns (two independent `max_subagents` counters in v1; both bounded, depth-1).
+- ~~**Unified sub-agent budget** across `spawn_subagent` and skill-tool spawns (two independent `max_subagents` counters in v1; both bounded, depth-1).~~ **Stale — actually shipped.** Task 12 review Finding 2 folded this in during implementation: `agent_service.py`'s `_run_one` uses a single `sub_agent_spawns` counter shared by both the native `spawn_subagent` path and the skill-tool path (both call the same `spawn` closure), so `RunBudget.max_subagents` bounds the COMBINED count, not two independent counters. Regression-locked by `Tests/Agents/test_skill_tool_spawn.py::test_combined_budget_native_spawn_then_skill_call`/`test_combined_budget_skill_call_then_native_spawn`.
 
 ---
 
