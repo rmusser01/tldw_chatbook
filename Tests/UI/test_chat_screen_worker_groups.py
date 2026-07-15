@@ -21,36 +21,89 @@ CHAT_SCREEN_PATH = (
 )
 
 
-def _exclusive_run_worker_calls(tree: ast.AST):
-    """Yield (lineno, has_group) for every exclusive=True run_worker call."""
+def _call_name(node: ast.Call) -> str:
+    func = node.func
+    return func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+
+
+def _exclusive_worker_sites(tree: ast.AST):
+    """Yield (lineno, has_group) for every exclusive worker declaration.
+
+    Covers both spellings — ``run_worker(..., exclusive=True)`` calls and
+    ``@work(exclusive=True)`` decorators — and fails CLOSED: a non-literal
+    ``exclusive=`` value (variable, expression, positional) is treated as
+    exclusive, because a guard that skips what it can't prove is a guard
+    that certifies an invariant the file doesn't hold.
+    """
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
-        if name != "run_worker":
-            continue
-        keywords = {kw.arg: kw.value for kw in node.keywords if kw.arg}
-        exclusive = keywords.get("exclusive")
-        if not (isinstance(exclusive, ast.Constant) and exclusive.value is True):
-            continue
-        yield node.lineno, "group" in keywords
+        calls: list[ast.Call] = []
+        if isinstance(node, ast.Call) and _call_name(node) == "run_worker":
+            calls.append(node)
+        elif isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
+            calls.extend(
+                dec for dec in node.decorator_list
+                if isinstance(dec, ast.Call) and _call_name(dec) == "work"
+            )
+        for call in calls:
+            keywords = {kw.arg: kw.value for kw in call.keywords if kw.arg}
+            has_kwargs_spread = any(kw.arg is None for kw in call.keywords)
+            exclusive = keywords.get("exclusive")
+            if exclusive is None and not has_kwargs_spread:
+                continue  # exclusive defaults to False
+            if isinstance(exclusive, ast.Constant):
+                if exclusive.value is not True:
+                    continue
+            # non-Constant exclusive= or a **kwargs spread: fail closed.
+            yield call.lineno, "group" in keywords
 
 
 def test_every_exclusive_worker_on_chat_screen_names_a_group():
-    """An exclusive run_worker without group= joins the default group and
-    cancels (or is cancelled by) every other ungrouped exclusive worker on the
-    screen — including the Console send worker mid-stream. Never ship one."""
+    """An exclusive worker without group= joins the default group and cancels
+    (or is cancelled by) every other ungrouped exclusive worker on the screen
+    — including the Console send worker mid-stream. Never ship one."""
     tree = ast.parse(CHAT_SCREEN_PATH.read_text(encoding="utf-8"))
     ungrouped = [
-        lineno for lineno, has_group in _exclusive_run_worker_calls(tree)
+        lineno for lineno, has_group in _exclusive_worker_sites(tree)
         if not has_group
     ]
     assert ungrouped == [], (
-        "run_worker(exclusive=True) without an explicit group= at "
+        "exclusive worker (run_worker or @work) without an explicit group= at "
         f"chat_screen.py lines {ungrouped} — these share Textual's default "
         "worker group and silently cancel each other (see TASK-228)."
     )
+
+
+def test_console_run_and_sync_workers_use_disjoint_groups():
+    """Pin the separation this fix exists for: the sync kicks must never share
+    a group with the run workers. The names-a-group guard alone would pass if
+    someone put a sync kick into group="console-run" — and the collision this
+    branch fixed would silently return."""
+    tree = ast.parse(CHAT_SCREEN_PATH.read_text(encoding="utf-8"))
+    RUN_COROUTINES = {
+        "_submit_console_native_draft",
+        "_retry_console_message",
+        "_regenerate_console_message",
+        "_continue_console_message",
+    }
+    SYNC_COROUTINE = "_sync_native_console_chat_ui"
+    run_groups: set[str] = set()
+    sync_groups: set[str] = set()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and _call_name(node) == "run_worker"):
+            continue
+        if not node.args:
+            continue
+        first = node.args[0]
+        target = _call_name(first) if isinstance(first, ast.Call) else ""
+        keywords = {kw.arg: kw.value for kw in node.keywords if kw.arg}
+        group = keywords.get("group")
+        group_name = group.value if isinstance(group, ast.Constant) else None
+        if target in RUN_COROUTINES:
+            run_groups.add(group_name)
+        elif target == SYNC_COROUTINE:
+            sync_groups.add(group_name)
+    assert run_groups == {"console-run"}, run_groups
+    assert sync_groups == {"console-sync"}, sync_groups
 
 
 class TestTextualExclusiveGroupSemantics:

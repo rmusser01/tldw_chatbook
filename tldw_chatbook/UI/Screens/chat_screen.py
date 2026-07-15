@@ -5678,7 +5678,7 @@ class ChatScreen(BaseAppScreen):
         self._pending_console_launch_context = launch
         self.refresh(recompose=True)
 
-    @work(exclusive=True)
+    @work(exclusive=True, group="console-library-rag-search")
     async def _execute_console_library_rag_search(self, request: LibraryRagSearchRequest) -> None:
         outcome = await run_library_rag_search(self.app_instance, request)
         await self._apply_console_library_rag_search_outcome(request, outcome)
