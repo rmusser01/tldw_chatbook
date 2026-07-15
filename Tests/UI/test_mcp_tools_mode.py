@@ -396,3 +396,74 @@ def test_tools_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
         block = text[start:end]
         assert "height: auto;" in block, f"{label}'s {selector!r} block is missing 'height: auto;'"
         assert "max-height: 70%;" in block, f"{label}'s {selector!r} block is missing 'max-height: 70%;'"
+
+
+def test_filter_server_select_width_rule_pinned_in_bundle_source_and_bundle() -> None:
+    """Defect 1 (QA round mcp-hub-phase3-2026-07): `MCPToolsMode.DEFAULT_CSS`
+    gives `#mcp-tools-filter-server-slot Select` a fixed `width: 28`, but
+    Textual's cascade always treats every CSS_PATH-sourced rule (the app
+    bundle) as higher priority than any widget's own DEFAULT_CSS regardless
+    of selector specificity -- so `_conversations.tcss`'s global, unscoped
+    `Select { width: 100%; }` rule (compiled into the same bundle, intended
+    for a completely different screen's sidebar forms) silently won,
+    collapsing the filter-server Select to a 0x0 region in the real running
+    app. Fix has to live in the bundle itself, with equal-or-higher
+    specificity than that bare rule, to actually win -- mirrors
+    `test_tools_table_height_rule_pinned_in_bundle_source_and_bundle`
+    immediately above and `test_prompt_picker_css_blocks_pinned_in_source_
+    and_bundle` in test_console_prompt_picker.py."""
+    agentic_terminal = _AGENTIC_TERMINAL_TCSS.read_text(encoding="utf-8")
+    bundled_stylesheet = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+
+    for text, label in (
+        (agentic_terminal, "_agentic_terminal.tcss"),
+        (bundled_stylesheet, "tldw_cli_modular.tcss"),
+    ):
+        selector = "#mcp-tools-filter-server-slot Select {"
+        start = text.find(selector)
+        assert start != -1, f"{label} is missing {selector!r}"
+        end = text.find("}", start)
+        block = text[start:end]
+        assert "width: 28;" in block, f"{label}'s {selector!r} block is missing 'width: 28;'"
+
+
+class ToolsModeAppWithBundledCSS(App):
+    """Same harness as `ToolsModeApp` above but with the real bundled
+    stylesheet loaded, so the filter-server Select contests its actual CSS
+    priority battle against `_conversations.tcss`'s global
+    `Select { width: 100%; }` rule exactly as it does in the live app --
+    mirrors `CanvasAppWithBundledCSS` in test_mcp_servers_mode.py and
+    `RailAppWithBundledCSS` in test_mcp_rail.py. Regression coverage for
+    Defect 1 (QA round mcp-hub-phase3-2026-07): before the bundle-layer fix
+    above, this Select rendered at 0x0 under the real app stylesheet even
+    though `MCPToolsMode.DEFAULT_CSS` alone (no CSS_PATH) already asked for
+    the correct `width: 28`."""
+
+    CSS_PATH = str(_BUNDLED_STYLESHEET)
+
+    def compose(self) -> ComposeResult:
+        yield MCPToolsMode(id="mcp-mode-canvas-tools")
+
+
+@pytest.mark.asyncio
+async def test_filter_server_select_has_nonzero_geometry_with_bundled_css():
+    app = ToolsModeAppWithBundledCSS()
+    async with app.run_test(size=(120, 40)) as pilot:
+        canvas = app.query_one(MCPToolsMode)
+        await canvas.update_tools(
+            [
+                _tool(server_key="local:docs", server_label="docs-server", name="search_docs"),
+                _tool(server_key="server:weather", server_label="weather-api", name="get_forecast"),
+            ],
+            empty_diagnosis=None,
+        )
+        await pilot.pause()
+
+        select = app.query_one("#mcp-tools-filter-server", Select)
+        assert select.size.width > 0, (
+            "filter-server Select collapsed to zero width under the real "
+            "bundled stylesheet (Defect 1, QA round mcp-hub-phase3-2026-07) "
+            "-- _conversations.tcss's global `Select { width: 100%; }` rule "
+            "is clobbering MCPToolsMode's own DEFAULT_CSS override again."
+        )
+        assert select.size.height > 0, "filter-server Select collapsed to zero height"

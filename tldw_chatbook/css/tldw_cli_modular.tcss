@@ -5914,6 +5914,22 @@ Button.mcp-callout {
     max-height: 70%;
 }
 
+/* Defect 1 fix (QA round mcp-hub-phase3-2026-07): kept in lockstep with the
+   baseline copy in MCPToolsMode.DEFAULT_CSS (mcp_tools_mode.py), but here
+   it's load-bearing, not just defensive. Textual's cascade always treats
+   every CSS_PATH-sourced rule (this bundle) as higher priority than any
+   widget's own DEFAULT_CSS, regardless of selector specificity -- so
+   _conversations.tcss's global, unscoped `Select { width: 100%; }` rule
+   (intended for a completely different screen's sidebar forms) was
+   silently winning over MCPToolsMode's own, far more specific override,
+   collapsing the filter-server Select to a 0x0 region against its
+   `width: auto` slot parent (the sibling filter Input already claims the
+   full bar at `width: 1fr`). This copy must live in the bundle itself,
+   with equal-or-higher specificity than that bare rule, to actually win. */
+#mcp-tools-filter-server-slot Select {
+    width: 28;
+}
+
 /* Kept in lockstep with the baseline copy in MCPServersMode.DEFAULT_CSS
    (mcp_servers_mode.py) -- without an explicit height override here too,
    Textual's Vertical default (height: 1fr) expands this container to fill
