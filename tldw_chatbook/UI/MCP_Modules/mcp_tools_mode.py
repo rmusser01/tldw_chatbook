@@ -246,7 +246,17 @@ class MCPToolsMode(Vertical):
         ordered = sorted(filtered, key=lambda tool: (tool.server_label, tool.name))
         table = self.query_one("#mcp-tools-table", DataTable)
         table.clear()
+        seen_keys: set[str] = set()
         for tool in ordered:
+            if tool.tool_id in seen_keys:
+                # Defense in depth: hub_tool_catalog's derivation functions
+                # already dedupe by (server_key, name), but a row key
+                # collision here would raise Textual's `DuplicateKey` and
+                # crash every mount that renders this table -- skip rather
+                # than trust every current and future upstream caller to
+                # have deduped first.
+                continue
+            seen_keys.add(tool.tool_id)
             server_cell = f"{tool.server_label} (stale)" if tool.stale else tool.server_label
             tags_cell = ", ".join(tool.tags) if tool.tags else "—"
             schema_cell = "form" if parse_schema(tool.input_schema) is not None else "raw"

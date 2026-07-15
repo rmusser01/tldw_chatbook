@@ -83,12 +83,21 @@ def local_tools_from_record(record: dict) -> list[HubTool]:
     server_key = f"local:{profile_id}"
     stale = not record.get("is_connected")
     tools: list[HubTool] = []
+    seen_names: set[str] = set()
     for raw_tool in raw_tools:
         if not isinstance(raw_tool, Mapping):
             continue
         name = _text(raw_tool.get("name"))
-        if not name:
+        if not name or name in seen_names:
+            # Duplicate tool name from the same server: keep only the first
+            # occurrence. `HubTool.tool_id` is `f"{server_key}::{name}"`,
+            # which is used as a Textual DataTable row key (mcp_tools_mode.py)
+            # -- a second row with the same key raises `DuplicateKey` and
+            # crashes every mount that renders this catalog (persisted
+            # discovery snapshots make this a permanent crash-loop, not a
+            # one-off).
             continue
+        seen_names.add(name)
         tools.append(
             HubTool(
                 server_key=server_key,
@@ -120,12 +129,16 @@ def builtin_tools_from_inventory(inventory: dict) -> list[HubTool]:
     if not isinstance(raw_tools, list):
         return []
     tools: list[HubTool] = []
+    seen_names: set[str] = set()
     for raw_tool in raw_tools:
         if not isinstance(raw_tool, Mapping):
             continue
         name = _text(raw_tool.get("name"))
-        if not name:
+        if not name or name in seen_names:
+            # See local_tools_from_record()'s dedup comment -- same
+            # DuplicateKey hazard, this server's own tool_id namespace.
             continue
+        seen_names.add(name)
         tools.append(
             HubTool(
                 server_key="builtin:tldw_chatbook",
@@ -176,12 +189,16 @@ def server_tools_from_inventory(payload: dict, *, target_id: str, target_label: 
         return []
     server_key = f"server:{target_id}"
     tools: list[HubTool] = []
+    seen_names: set[str] = set()
     for raw_tool in raw_tools:
         if not isinstance(raw_tool, Mapping):
             continue
         name = _text(raw_tool.get("name"))
-        if not name:
+        if not name or name in seen_names:
+            # See local_tools_from_record()'s dedup comment -- same
+            # DuplicateKey hazard, this server's own tool_id namespace.
             continue
+        seen_names.add(name)
         tools.append(
             HubTool(
                 server_key=server_key,

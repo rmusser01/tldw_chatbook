@@ -64,3 +64,45 @@ def test_filter_by_server_and_text():
         {"tools": [{"name": "create_note", "description": "Notes."}]})
     assert [t.name for t in filter_tools(tools, server_key="builtin:tldw_chatbook")] == ["create_note"]
     assert [t.name for t in filter_tools(tools, text="SEARCH")] == ["search"]
+
+
+# -- C1: duplicate tool names within one snapshot/inventory must not yield
+# duplicate HubTool.tool_id values (Textual DataTable row keys) --------------
+
+
+def test_local_tools_dedupe_duplicate_names_keeping_first_occurrence():
+    tools = local_tools_from_record(_local_record(tools=[
+        {"name": "search", "description": "first"},
+        {"name": "search", "description": "second"},
+    ]))
+    assert [t.name for t in tools] == ["search"]
+    assert tools[0].description == "first"
+    assert [t.tool_id for t in tools] == ["local:docs::search"]
+
+
+def test_local_tools_dedupe_whitespace_variant_names():
+    tools = local_tools_from_record(_local_record(tools=[
+        {"name": "search", "description": "first"},
+        {"name": " search", "description": "second"},
+    ]))
+    assert [t.name for t in tools] == ["search"]
+    assert tools[0].description == "first"
+
+
+def test_builtin_tools_dedupe_duplicate_names():
+    tools = builtin_tools_from_inventory({"tools": [
+        {"name": "chat_with_llm", "description": "first"},
+        {"name": "chat_with_llm", "description": "second"},
+    ]})
+    assert [t.name for t in tools] == ["chat_with_llm"]
+    assert tools[0].description == "first"
+
+
+def test_server_tools_dedupe_duplicate_names():
+    payload = {"tools": [
+        {"name": "web_search", "description": "first"},
+        {"name": "web_search", "description": "second"},
+    ]}
+    tools = server_tools_from_inventory(payload, target_id="main", target_label="Main")
+    assert [t.name for t in tools] == ["web_search"]
+    assert tools[0].description == "first"

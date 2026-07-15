@@ -2548,6 +2548,60 @@ async def test_tools_mode_shows_server_source_tools_from_embedded_inventory():
         assert canvas.query_one("#mcp-tools-empty").display is False
 
 
+class DuplicateNameToolsHubService(FakeHubService):
+    """A local external profile whose discovery snapshot carries two
+    same-named tools -- C1: this used to crash every mount of the Tools mode
+    canvas (Textual `DuplicateKey` on the DataTable row key, which is
+    `HubTool.tool_id`), and since discovery snapshots persist verbatim to
+    disk, it was a permanent crash-loop, not a one-off."""
+
+    async def load_section(self, section=None):
+        effective_section = section or self.context.selected_source or "overview"
+        if self.context.selected_source == "local" and effective_section == "external_servers":
+            return [
+                {
+                    "profile_id": "docs",
+                    "command": "python",
+                    "args": [],
+                    "env_placeholders": {},
+                    "discovery_snapshot": {
+                        "tools": [
+                            {"name": "search", "description": "a"},
+                            {"name": "search", "description": "b"},
+                        ],
+                        "resources": [],
+                        "prompts": [],
+                    },
+                    "is_connected": True,
+                }
+            ]
+        return {"source": "local", "section": effective_section}
+
+    async def local_external_catalog(self):
+        return await self.load_section("external_servers")
+
+
+class DuplicateNameToolsApp(App):
+    def __init__(self) -> None:
+        super().__init__()
+        self.unified_mcp_service = DuplicateNameToolsHubService()
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+@pytest.mark.asyncio
+async def test_duplicate_tool_names_do_not_crash_workbench_mount():
+    app = DuplicateNameToolsApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        table = app.query_one("#mcp-tools-table", DataTable)
+        assert table.row_count == 1
+        row_key, _ = table.coordinate_to_cell_key((0, 0))
+        assert row_key.value == "local:docs::search"
+
+
 # -- Task 6: inspector tool detail + Test Tool runner wiring -----------------
 #
 # `ToolTestHubService` seeds two local profiles: "docs" (tools "fetch" --

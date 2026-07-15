@@ -138,6 +138,32 @@ async def test_row_keys_are_tool_id():
 
 
 @pytest.mark.asyncio
+async def test_duplicate_tool_ids_do_not_crash_update_tools():
+    """C1: a duplicate `HubTool.tool_id` (e.g. a persisted discovery snapshot
+    with two same-named tools that upstream dedup somehow missed) must not
+    raise Textual's `DuplicateKey` when rebuilding the DataTable -- only one
+    row should ever render for that key. Mirrors the whole-branch review's
+    end-to-end probe (mounting the canvas with a hand-crafted duplicate list,
+    bypassing hub_tool_catalog's own dedup so this exercises the table's own
+    defense in depth)."""
+    app = ToolsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPToolsMode)
+        await canvas.update_tools(
+            [
+                _tool(server_key="local:docs", server_label="docs", name="search"),
+                _tool(server_key="local:docs", server_label="docs", name="search"),
+            ],
+            empty_diagnosis=None,
+        )
+        await pilot.pause()
+        table = app.query_one("#mcp-tools-table", DataTable)
+        assert table.row_count == 1
+        row_key, _ = table.coordinate_to_cell_key((0, 0))
+        assert row_key.value == "local:docs::search"
+
+
+@pytest.mark.asyncio
 async def test_filter_by_text_narrows_rows_without_touching_empty_state():
     app = ToolsModeApp()
     async with app.run_test() as pilot:
