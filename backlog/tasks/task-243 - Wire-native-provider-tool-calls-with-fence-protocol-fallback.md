@@ -1,9 +1,11 @@
 ---
 id: TASK-243
 title: Wire native provider tool-calls with fence-protocol fallback
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-07-16 16:00'
+updated_date: '2026-07-16 20:16'
 labels:
   - agents
   - console
@@ -24,3 +26,9 @@ The vertical-slice design spec called for native tool-calls where the provider a
 - [ ] #3 A native multi-tool-call reply is dispatched as multiple ToolCall entries in one run_agent_loop turn without engine changes
 - [ ] #4 Existing fence-protocol tests and the Console agent-reply integration tests still pass unchanged for tool-incapable models
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Plan at Docs/superpowers/plans/2026-07-16-native-tool-calls.md — 6 tasks: (1) Agents/native_tools.py capability set + OpenAI converters + PROVIDER_PARAM_MAP groq/deepseek tools passthrough; (2) engine native history (ModelTurn.assistant_message echo + role=tool results keyed on call_id, fence path byte-identical); (3) AgentService native branch (tools=, protocol suppression, parse, AgentConfig.native_tools, spawn propagation); (4) gateway tools= passthrough + delta.tool_calls accumulation -> ProviderToolCalls sentinel (only when tools requested); (5) bridge adapter capture + execution_key-first endpoint + [console] native_tool_calls kill-switch; (6) live gate on a real cloud provider + fence regression on llama.cpp + follow-up task for Anthropic-family normalization. Executed via SDD.
+<!-- SECTION:PLAN:END -->
