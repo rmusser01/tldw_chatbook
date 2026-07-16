@@ -48,23 +48,56 @@ _STATUS_DETAIL_LABELS = {
 _MAX_CONVERSATION_ROW_TITLE = 20
 _CONVERSATION_BROWSER_HEADER_HEIGHT = 1
 _CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT = 1
+# Button height for a conversation row that carries a `[N Sub-Agents]` badge.
+# One line more than a plain two-line row (title + secondary-detail) so the
+# badge renders on its own dedicated trailing line -- see
+# `format_console_conversation_row_label` for why that decoupling matters.
+_CONVERSATION_ROW_HEIGHT = 2
+_CONVERSATION_ROW_HEIGHT_WITH_BADGE = 3
+
+
+def _conversation_row_render_height(subagent_count: int) -> int:
+    """Return the button height needed to render a conversation row.
+
+    Args:
+        subagent_count: Historical sub-agent run count for this conversation.
+
+    Returns:
+        ``_CONVERSATION_ROW_HEIGHT_WITH_BADGE`` when a badge will render,
+        otherwise the plain two-line ``_CONVERSATION_ROW_HEIGHT``.
+    """
+    if subagent_count > 0:
+        return _CONVERSATION_ROW_HEIGHT_WITH_BADGE
+    return _CONVERSATION_ROW_HEIGHT
 
 
 def format_console_conversation_row_label(title: str, *, subagent_count: int = 0) -> str:
     """Return a markup-safe conversation-row label with an optional badge.
 
+    The badge renders on its own trailing line rather than being appended to
+    whatever line ``title`` already ends on. Conversation rows already pack a
+    marker, a (possibly ellipsized) title, and a secondary detail line
+    (workspace / status / age) whose combined length is unbounded -- if the
+    badge shared that last line, a long secondary line could push the badge
+    past the rail's rendered width and clip it (observed as a bare ``[1`` in
+    the agent-runtime live gate; see task-226). Giving the badge its own
+    short, fixed-length line decouples its visibility from how long the
+    other lines happen to be.
+
     Args:
         title: Raw row label text (escaped before any markup is appended).
+            May already contain newlines (e.g. a title line plus a secondary
+            detail line); the badge is appended as one further line.
         subagent_count: Historical sub-agent run count for this conversation.
             When greater than zero, a dim ``[N Sub-Agents]`` badge is
-            appended.
+            appended on its own line.
 
     Returns:
         Rich-markup text safe to render via ``Text.from_markup``.
     """
     base = _escape_markup(str(title))
     if subagent_count > 0:
-        return f"{base}  [dim]\\[{subagent_count} Sub-Agents][/dim]"
+        return f"{base}\n[dim]\\[{subagent_count} Sub-Agents][/dim]"
     return base
 
 
@@ -392,8 +425,9 @@ class ConsoleWorkspaceContextTray(Vertical):
         button.conversation_id = conversation_id
         button.tooltip = f"Switch to {tooltip_label or text.lstrip('> ').strip()}"
         button.set_class(selected, "console-workspace-conversation-row-selected")
-        button.styles.height = 2
-        button.styles.min_height = 2
+        row_height = _conversation_row_render_height(subagent_count)
+        button.styles.height = row_height
+        button.styles.min_height = row_height
         return button
 
     @staticmethod
@@ -414,6 +448,29 @@ class ConsoleWorkspaceContextTray(Vertical):
         return max(
             _CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT,
             len(section.rows) * CONSOLE_WORKSPACE_CONVERSATION_ROW_HEIGHT,
+        )
+
+    @staticmethod
+    def _conversation_browser_rows_height(
+        rows: tuple[ConsoleConversationBrowserRow, ...],
+    ) -> int:
+        """Return the total height needed to render a sequence of rows.
+
+        Each row normally costs ``CONSOLE_WORKSPACE_CONVERSATION_ROW_HEIGHT``
+        (button height plus row margin). Rows that carry a
+        ``[N Sub-Agents]`` badge get one extra line so the badge renders on
+        its own dedicated line -- see `_conversation_row_render_height`.
+
+        Args:
+            rows: Browser rows to size.
+
+        Returns:
+            Total height needed to render every row without clipping.
+        """
+        return sum(
+            CONSOLE_WORKSPACE_CONVERSATION_ROW_HEIGHT
+            + (_conversation_row_render_height(row.subagent_count) - _CONVERSATION_ROW_HEIGHT)
+            for row in rows
         )
 
     @staticmethod
@@ -441,15 +498,18 @@ class ConsoleWorkspaceContextTray(Vertical):
                         continue
                     if group.rows:
                         height += (
-                            len(group.rows)
-                            * CONSOLE_WORKSPACE_CONVERSATION_ROW_HEIGHT
+                            ConsoleWorkspaceContextTray._conversation_browser_rows_height(
+                                group.rows
+                            )
                         )
                     elif group.empty_copy:
                         height += _CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT
                 continue
             if section.rows:
                 height += (
-                    len(section.rows) * CONSOLE_WORKSPACE_CONVERSATION_ROW_HEIGHT
+                    ConsoleWorkspaceContextTray._conversation_browser_rows_height(
+                        section.rows
+                    )
                 )
             elif section.empty_copy:
                 height += _CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT
@@ -847,6 +907,12 @@ class ConsoleWorkspaceContextTray(Vertical):
                 compact=True,
                 disabled=star_disabled,
             )
+            # Match the row button's height so the star control still spans
+            # the full row when a badge adds a third line (see
+            # `_conversation_row_render_height`).
+            star_row_height = _conversation_row_render_height(row.subagent_count)
+            star_button.styles.height = star_row_height
+            star_button.styles.min_height = star_row_height
             if not marks_available:
                 star_button.tooltip = "Local stars unavailable"
             elif not row.star_enabled:
