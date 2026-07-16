@@ -1147,7 +1147,10 @@ def collect_active_chatdict_entries(
                 metadata = {}
             if not isinstance(metadata, dict):
                 metadata = {}
-            for dict_id in metadata.get('active_dictionaries') or []:
+            active = metadata.get('active_dictionaries')
+            if not isinstance(active, list):
+                active = []
+            for dict_id in active:
                 try:
                     dict_data = load_chat_dictionary(db, dict_id)
                 except Exception:

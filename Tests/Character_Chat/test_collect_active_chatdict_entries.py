@@ -40,10 +40,7 @@ def test_additive_union_conversation_wins_on_name_collision(db):
     conv_id = db.add_conversation({"title": "chat"})
     # Conversation attaches "Shared" (live). Character embeds "Shared" (snapshot) + "Extra".
     _attach_conv_dict(db, service, conv_id, "Shared")
-    d_shared = service.create_dictionary({"name": "SharedSnap"})  # distinct source name is fine; embed under "Shared" below
     char_id = db.add_character_card({"name": "Noir"})
-    # Embed a character "Shared" (same name as the conversation dict) + "Extra".
-    extra_id = service.create_dictionary({"name": "Extra", "entries": [{"pattern": "e", "replacement": "x"}]})["id"]
     # Manually embed a same-named "Shared" snapshot to force the collision.
     rec = db.get_character_card_by_id(char_id)
     rec_ext = rec["extensions"] if isinstance(rec["extensions"], dict) else {}
@@ -91,3 +88,12 @@ def test_conversation_only_output_unchanged(db):
     entries = collect_active_chatdict_entries(db, conv_id, None)
     assert len(entries) == 1
     assert entries[0].content == "onlyconv"
+
+
+def test_non_list_active_dictionaries_never_raises(db):
+    conv_id = db.add_conversation({"title": "chat"})
+    import json as _json
+    conv = db.get_conversation_by_id(conv_id)
+    db.update_conversation(conv_id, {"metadata": _json.dumps({"active_dictionaries": 5})},
+                           expected_version=conv["version"])
+    assert collect_active_chatdict_entries(db, conv_id, None) == []
