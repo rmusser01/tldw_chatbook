@@ -447,7 +447,23 @@ class ChatbookImporter:
                 position = int(entry.get("position"))
             except (TypeError, ValueError):
                 continue
+            if position < 0:
+                status.add_warning(
+                    f"Skipped attachment with invalid position {position}: {relative}"
+                )
+                continue
             if not relative:
+                continue
+            # NOTE: path_validation.validate_path cannot bound this read — it
+            # rejects ANY resolved path containing a dot component, and the
+            # importer's own extraction root lives under ~/.local/share/….
+            # Same posture, expressed locally: no dot components within the
+            # archive-relative path (covers ../ and hidden files), plus a
+            # resolve()-based containment check as the symlink backstop.
+            if any(part.startswith(".") for part in Path(relative).parts):
+                status.add_warning(
+                    f"Skipped attachment outside chatbook archive: {relative}"
+                )
                 continue
             resolved = (extract_dir / relative).resolve()
             if root != resolved and root not in resolved.parents:
@@ -458,7 +474,13 @@ class ChatbookImporter:
             if not resolved.is_file():
                 status.add_warning(f"Attachment file missing from chatbook: {relative}")
                 continue
-            data = resolved.read_bytes()
+            try:
+                data = resolved.read_bytes()
+            except OSError as exc:
+                status.add_warning(
+                    f"Failed to read attachment file {relative}: {exc}"
+                )
+                continue
             mime_type = str(entry.get("mime_type") or "image/png")
             display_name = str(entry.get("display_name") or "")
             if position == 0:
@@ -470,6 +492,7 @@ class ChatbookImporter:
                     "mime_type": mime_type,
                     "display_name": display_name,
                 })
+        rows.sort(key=lambda row: row["position"])
         return image_kwargs, rows
 
     @staticmethod

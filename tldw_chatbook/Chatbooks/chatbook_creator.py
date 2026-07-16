@@ -412,40 +412,28 @@ class ChatbookCreator:
                 if hasattr(last_modified, 'isoformat'):
                     last_modified = last_modified.isoformat()
                     
-                # Batch-fetch positions >= 1 for every message in one query;
-                # position 0 rides in each message row's legacy image columns.
-                message_ids = [str(msg["id"]) for msg in messages if msg.get("id")]
-                extra_attachments = (
-                    db.get_attachments_for_messages(message_ids) if message_ids else {}
-                )
-
                 exported_messages = []
                 citation_messages = []
-                for msg in messages:
-                    timestamp = msg.get('timestamp') or msg.get('created_at') or datetime.now().isoformat()
-                    if hasattr(timestamp, 'isoformat'):
-                        timestamp = timestamp.isoformat()
-                    message_id = msg.get('id')
-                    message_data = {
-                        "id": message_id,
-                        "role": msg.get('role') or msg.get('sender'),
-                        "content": msg['message'] if 'message' in msg else msg.get('content', ''),
-                        "timestamp": timestamp,
-                    }
-                    attachment_entries = self._export_message_attachments(
-                        msg,
-                        extra_attachments.get(str(message_id), []),
-                        conv_dir,
-                        str(message_id),
+                # Positions >= 1 are batch-fetched per CHUNK of messages —
+                # batching keeps the query count low while bounding peak
+                # memory (the rows carry BLOBs; an attachment-heavy
+                # conversation must not materialize every image at once).
+                # Position 0 rides in each message row's legacy image columns.
+                for chunk_start in range(0, len(messages), self._ATTACHMENT_FETCH_CHUNK):
+                    chunk = messages[chunk_start:chunk_start + self._ATTACHMENT_FETCH_CHUNK]
+                    chunk_ids = [
+                        str(msg["id"]) for msg in chunk if msg.get("id") is not None
+                    ]
+                    extra_attachments = (
+                        db.get_attachments_for_messages(chunk_ids) if chunk_ids else {}
                     )
-                    if attachment_entries:
-                        message_data["attachments"] = attachment_entries
-                    citation_payload = self._message_citation_export_payload(msg)
-                    if citation_payload:
-                        message_data.update(citation_payload)
-                        citation_messages.append(message_data)
-                    exported_messages.append(message_data)
-
+                    self._export_message_chunk(
+                        chunk,
+                        extra_attachments,
+                        conv_dir,
+                        exported_messages,
+                        citation_messages,
+                    )
                 title = conv.get('title', conv.get('conversation_name', 'Untitled'))
                 citation_metadata: dict[str, Any] = {}
                 if citation_messages:
@@ -495,6 +483,53 @@ class ChatbookCreator:
                     
             except Exception as e:
                 logger.error(f"Error collecting conversation {conv_id}: {e}")
+
+    # Messages per get_attachments_for_messages call during export: batches
+    # queries while bounding how many attachment BLOBs sit in memory at once.
+    _ATTACHMENT_FETCH_CHUNK = 50
+
+    def _export_message_chunk(
+        self,
+        chunk: list[Mapping[str, Any]],
+        extra_attachments: Mapping[str, list],
+        conv_dir: Path,
+        exported_messages: list,
+        citation_messages: list,
+    ) -> None:
+        """Export one chunk of a conversation's messages.
+
+        Args:
+            chunk: Message rows for this chunk, in conversation order.
+            extra_attachments: Positions >= 1 rows keyed by message id
+                (fetched for exactly this chunk).
+            conv_dir: The chatbook work dir's conversations directory.
+            exported_messages: Accumulator for every exported message dict.
+            citation_messages: Accumulator for citation-bearing messages.
+        """
+        for msg in chunk:
+            timestamp = msg.get('timestamp') or msg.get('created_at') or datetime.now().isoformat()
+            if hasattr(timestamp, 'isoformat'):
+                timestamp = timestamp.isoformat()
+            message_id = msg.get('id')
+            message_data = {
+                "id": message_id,
+                "role": msg.get('role') or msg.get('sender'),
+                "content": msg['message'] if 'message' in msg else msg.get('content', ''),
+                "timestamp": timestamp,
+            }
+            attachment_entries = self._export_message_attachments(
+                msg,
+                extra_attachments.get(str(message_id), []),
+                conv_dir,
+                str(message_id),
+            )
+            if attachment_entries:
+                message_data["attachments"] = attachment_entries
+            citation_payload = self._message_citation_export_payload(msg)
+            if citation_payload:
+                message_data.update(citation_payload)
+                citation_messages.append(message_data)
+            exported_messages.append(message_data)
 
     _ATTACHMENT_MIME_EXTENSIONS = {
         "image/png": ".png",
@@ -549,6 +584,8 @@ class ChatbookCreator:
             Manifest entries (position, file, mime_type, display_name), or
             an empty list when the message has no attachments.
         """
+        if not message_id or message_id == "None":
+            return []  # a filename keyed on a missing id would collide/corrupt
         tiers: list[dict[str, Any]] = []
         legacy_data = msg.get("image_data")
         if legacy_data:
@@ -561,13 +598,14 @@ class ChatbookCreator:
         tiers.extend(dict(row) for row in extra_rows)
         entries: list[dict[str, Any]] = []
         attachments_dir = conv_dir / "attachments"
+        if any(row.get("data") for row in tiers):
+            attachments_dir.mkdir(parents=True, exist_ok=True)
         for row in tiers:
             data = row.get("data")
             if not data:
                 continue
             extension = self._attachment_extension(row.get("mime_type"))
             file_name = f"{message_id}-{row['position']}{extension}"
-            attachments_dir.mkdir(parents=True, exist_ok=True)
             (attachments_dir / file_name).write_bytes(data)
             entries.append({
                 "position": row["position"],
