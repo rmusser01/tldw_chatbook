@@ -117,7 +117,10 @@ class _ParkingGateway:
         # ``ConsoleAgentBridge.run_reply``), on a real worker thread from
         # ``asyncio.to_thread`` -- blocking it here does not touch the
         # test's own asyncio loop on the main thread at all.
-        self.release.wait(timeout=5)
+        # timeout is an anti-hang safety only — the test always releases
+        # explicitly; generous so CI contention can never unpark early
+        # and break the choreography (PR #644 review).
+        self.release.wait(timeout=60)
         yield "answered anyway."
 
 
@@ -151,7 +154,7 @@ async def test_stop_during_parked_bridge_thread_persists_cancelled_not_done(tmp_
 
     send_task = asyncio.ensure_future(controller.submit_draft("hello"))
 
-    for _ in range(500):
+    for _ in range(3000):  # 30s deadline — CI-contention headroom (PR #644 review)
         if gateway.started.is_set():
             break
         await asyncio.sleep(0.01)
@@ -181,7 +184,7 @@ async def test_stop_during_parked_bridge_thread_persists_cancelled_not_done(tmp_
     gateway.release.set()
 
     primary: list[dict] = []
-    for _ in range(500):
+    for _ in range(3000):  # 30s deadline — CI-contention headroom (PR #644 review)
         primary = [r for r in _all_runs(db) if r["agent_kind"] == "primary"]
         if primary and primary[0]["status"] != "running":
             break

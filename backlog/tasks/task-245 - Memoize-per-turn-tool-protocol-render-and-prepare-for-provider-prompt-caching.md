@@ -1,5 +1,5 @@
 ---
-id: TASK-235
+id: TASK-245
 title: Memoize per-turn tool-protocol render and prepare for provider prompt-caching
 status: To Do
 assignee: []

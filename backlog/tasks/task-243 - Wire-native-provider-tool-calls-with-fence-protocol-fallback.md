@@ -1,5 +1,5 @@
 ---
-id: TASK-233
+id: TASK-243
 title: Wire native provider tool-calls with fence-protocol fallback
 status: To Do
 assignee: []
