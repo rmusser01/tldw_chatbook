@@ -67,8 +67,25 @@ class PersonasCharacterDictionariesWidget(Container):
 
         Args:
             rows: ``{"name": str, "entry_count": int, "enabled": bool}`` entries.
+
+        A hostile/crafted card import can produce two embedded blocks with
+        the same name (``attach_to_character`` dedups by name so it never
+        creates this, but nothing stops a crafted ``extensions`` payload from
+        having it). ``DataTable.add_row`` keys rows by ``str(name)``, so a
+        second same-named row would raise ``DuplicateKey`` — which would
+        propagate uncaught through the import worker and exit the app. Dedup
+        by name (first occurrence wins) before touching the table so that
+        can never happen, regardless of what the screen feeds this panel.
         """
-        self._rows = list(rows)
+        deduped: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for row in rows:
+            name = str(row.get("name"))
+            if name in seen:
+                continue
+            seen.add(name)
+            deduped.append(row)
+        self._rows = deduped
         table = self.query_one("#personas-char-dicts-table", DataTable)
         table.clear()
         for row in self._rows:

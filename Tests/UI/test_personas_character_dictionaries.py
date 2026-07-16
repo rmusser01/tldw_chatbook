@@ -66,3 +66,23 @@ async def test_detach_button_posts_intent_with_name():
         await pilot.click("#personas-char-dicts-detach")
         await pilot.pause()
     assert posted == ["Slang"]
+
+
+async def test_duplicate_named_rows_do_not_crash_and_dedup_to_one_row():
+    """A hostile/crafted import can produce two same-named embedded blocks.
+
+    ``DataTable.add_row(..., key=str(name))`` would raise ``DuplicateKey`` on
+    the second row if the panel didn't dedup first — and that exception would
+    propagate uncaught through the import worker (default ``exit_on_error``)
+    and exit the whole app. The panel must dedup by name (first wins) so this
+    can never happen, regardless of what the screen feeds it.
+    """
+    async with _Host().run_test(size=(120, 40)) as pilot:
+        panel = pilot.app.query_one(PersonasCharacterDictionariesWidget)
+        panel.load_character_dictionaries([
+            {"name": "Slang", "entry_count": 1, "enabled": True},
+            {"name": "Slang", "entry_count": 2, "enabled": True},
+        ])
+        await pilot.pause()
+        table = pilot.app.query_one("#personas-char-dicts-table", DataTable)
+        assert table.row_count == 1

@@ -42,3 +42,22 @@ def test_non_list_entries_is_tolerated_without_raising():
     char = {"extensions": {"chat_dictionaries": [{"name": "Evil", "entries": 5}]}}
     blocks = load_character_dictionaries(char)
     assert blocks == [{"name": "Evil", "enabled": True, "entries": []}]
+
+
+def test_duplicate_named_blocks_dedup_to_first_occurrence():
+    """A hostile/crafted card can embed two blocks with the same name.
+
+    ``attach_to_character`` dedups by name so it can never create this, but a
+    crafted import can. Downstream (``collect_active_chatdict_entries`` and
+    the character-dictionaries panel) must never see two same-named blocks:
+    the first occurrence wins.
+    """
+    char = {"extensions": {"chat_dictionaries": [
+        {"name": "Dup", "entries": [{"key": "a", "content": "1"}]},
+        {"name": "Dup", "entries": [{"key": "b", "content": "2"}]},
+    ]}}
+    blocks = load_character_dictionaries(char)
+    assert len(blocks) == 1
+    assert blocks[0]["name"] == "Dup"
+    assert len(blocks[0]["entries"]) == 1
+    assert blocks[0]["entries"][0].key == "a"

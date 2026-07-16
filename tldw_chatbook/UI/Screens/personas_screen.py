@@ -1585,6 +1585,9 @@ class PersonasScreen(BaseAppScreen):
         char_id = int(entity_id)
         try:
             await service.detach_from_character(char_id, str(message.dictionary_name), mode="local")
+        except ConflictError:
+            self._notify("Detach failed: the character changed since it was loaded. Try again.", "warning")
+            return
         except Exception:
             logger.opt(exception=True).warning(f"Could not detach dictionary from character {char_id}.")
             return
@@ -3199,6 +3202,21 @@ class PersonasScreen(BaseAppScreen):
             # All center views are ds-native widgets without `.hidden`-class
             # styling; plain display toggling is the whole mechanism.
             widget.display = selector == visible_id
+        # The character dictionaries panel (Roleplay P1f) is chrome shown
+        # alongside the character card/editor, not one of the exclusive
+        # _CENTER_VIEW_IDS pages - it must still be hidden outside a
+        # character context so it doesn't dock space away from (or overlap)
+        # the dictionary/persona/lore views. This gate must run before the
+        # conversation-actions early-return below (and not depend on it
+        # succeeding) - otherwise a failed actions lookup would skip setting
+        # `.display` here, and the panel (which has no `display: none` of its
+        # own in DEFAULT_CSS) would default visible in every mode.
+        try:
+            dict_panel = self.query_one(PersonasCharacterDictionariesWidget)
+        except Exception:
+            dict_panel = None
+        if dict_panel is not None:
+            dict_panel.display = visible_id in ("#ccp-character-card-view", "#ccp-character-editor-view")
         # The conversation actions row is chrome shown alongside (not instead
         # of) the read-only conversation view.
         try:
@@ -3206,16 +3224,6 @@ class PersonasScreen(BaseAppScreen):
         except Exception:
             return
         actions.display = visible_id == _CONVERSATION_VIEW_ID
-        # The character dictionaries panel (Roleplay P1f) is chrome shown
-        # alongside the character card/editor, not one of the exclusive
-        # _CENTER_VIEW_IDS pages - it must still be hidden outside a
-        # character context so it doesn't dock space away from (or overlap)
-        # the dictionary/persona/lore views.
-        try:
-            dict_panel = self.query_one(PersonasCharacterDictionariesWidget)
-        except Exception:
-            return
-        dict_panel.display = visible_id in ("#ccp-character-card-view", "#ccp-character-editor-view")
 
     async def _run_guarded(self, continuation: Callable[[], Awaitable[None]]) -> None:
         """Run ``continuation``, confirming first when an edit would be discarded.

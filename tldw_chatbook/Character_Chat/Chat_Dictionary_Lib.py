@@ -1096,12 +1096,23 @@ def load_character_dictionaries(char_data: Optional[Dict[str, Any]]) -> List[Dic
     raw = ext.get('chat_dictionaries') or []
     if not isinstance(raw, list):
         return result
+    seen_names: set = set()
     for block in raw:
         if not isinstance(block, dict):
             continue
         name = block.get('name')
         if not name:
             continue
+        # A hostile/crafted card can embed two blocks with the same name
+        # (``attach_to_character`` dedups by name so it never creates this,
+        # but a crafted import can). Without this guard,
+        # ``collect_active_chatdict_entries`` would extend a dup-named
+        # block's entries twice, and callers keyed by name (e.g. the
+        # character-dictionaries panel) could crash on the duplicate. First
+        # occurrence wins.
+        if str(name) in seen_names:
+            continue
+        seen_names.add(str(name))
         entries: List[ChatDictionary] = []
         entries_raw = block.get('entries')
         if not isinstance(entries_raw, list):
