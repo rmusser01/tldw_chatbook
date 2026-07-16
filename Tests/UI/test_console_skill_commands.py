@@ -30,6 +30,7 @@ from tldw_chatbook.Chat.console_skill_resolver import (
     SKILL_UNTRUSTED_REFUSE,
     SKILLS_EMPTY_LIST_ROW,
 )
+from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 from tldw_chatbook.UI.Screens.chat_screen import (
     CONSOLE_SKILL_NEEDS_REVIEW_HINT_TEMPLATE,
     CONSOLE_SKILL_RUN_MARKER_TEMPLATE,
@@ -291,6 +292,75 @@ async def test_bare_fallback_skill_marker_lands_after_user_message_not_before():
         ]
         assert messages[0].content == "/code-review fix it"
         assert messages[1].content == marker_expected
+
+
+class _RaceConditionSkillsScopeService(FakeSkillsScopeService):
+    """Reports a skill as trusted at candidate-listing time, but refuses it
+    (``SkillTrustBlockedError``) at actual execute-time -- simulating trust
+    being revoked in the window between the composer's dispatch-time
+    resolution (``_console_command_run_skill``, which staged the "driving
+    this turn" marker) and the controller's own build-time re-verification
+    (``ConsoleChatController._apply_skill_substitution``)."""
+
+    async def execute_skill(self, name, *, mode=None, args=None):
+        self.executions.append((name, args))
+        raise SkillTrustBlockedError(
+            skill_name=name, reason_code="skill_modified",
+            trust_status="quarantined_modified",
+        )
+
+
+@pytest.mark.asyncio
+async def test_skill_trust_revoked_between_resolve_and_submit_refuses_without_marker():
+    """Qodo finding 3 (PR #636 bot review) repro: a skill resolved (and
+    staged for the "driving this turn" marker) at dispatch time can still
+    be refused by the controller's own build-time trust re-check. The
+    refusal must produce NO TOOL marker (the skill never actually ran) and
+    must not leak the staged marker name onto the next, unrelated send."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.skills_scope_service = _RaceConditionSkillsScopeService(
+        available_skills=[_skill("code-review", "Reviews a diff.")]
+    )
+    gateway = CapturingGateway(chunks=("accepted",))
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        for _ in range(40):
+            if console._console_skill_candidates:
+                break
+            await pilot.pause(0.05)
+        assert console._console_skill_candidates, "candidate snapshot never populated"
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("/code-review fix it")
+        console.query_one("#console-send-message", Button).press()
+        await _wait_for_text(console, pilot, "isn't trusted (skill_modified)")
+
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        assert session_id is not None
+        messages = store.messages_for_session(session_id)
+
+        # The raw command still persists (honest record), followed by the
+        # refuse row -- but NO TOOL marker: the skill never actually ran.
+        assert not [m for m in messages if m.role is ConsoleMessageRole.TOOL]
+        expected = SKILL_UNTRUSTED_REFUSE.format(name="code-review", reason="skill_modified")
+        assert expected in _console_message_contents(console, ConsoleMessageRole.SYSTEM)
+        assert console._console_pending_skill_marker_name is None
+
+        # The staged marker must not leak onto the NEXT, unrelated send.
+        composer.load_draft("just a normal message")
+        console.query_one("#console-send-message", Button).press()
+        await _wait_for_text(console, pilot, "accepted")
+        assert not [
+            message
+            for message in store.messages_for_session(session_id)
+            if message.role is ConsoleMessageRole.TOOL
+        ]
 
 
 class _ToggleReadinessGateway:

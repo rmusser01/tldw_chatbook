@@ -7424,11 +7424,23 @@ class ChatScreen(BaseAppScreen):
 
         Also the sole consume point for a staged resolved-skill "driving this
         turn" TOOL marker (Task 9 fix-wave): ``ConsoleChatController.
-        submit_draft`` invokes this hook synchronously right after the USER
-        message is appended and before the ASSISTANT placeholder, so
+        submit_draft`` invokes this hook synchronously after the USER
+        message is appended and after its own skill-substitution/trust
+        re-check settles, but before the ASSISTANT placeholder, so
         appending the marker here -- rather than back at the dispatch call
         site -- guarantees store order ``[USER, TOOL, ASSISTANT]`` instead of
         racing the ``run_worker``-scheduled submit.
+
+        Qodo finding 3 (PR #636 bot review): this hook must NEVER fire for a
+        submit that ``submit_draft`` ultimately blocks -- including a skill
+        substitution refusal (an edited/untrusted skill re-checked at
+        build time). ``submit_draft`` used to call this hook right after the
+        USER append, before that trust re-check ran, so a refused skill
+        submit still consumed the staged marker and appended it right before
+        the refuse row -- a marker claiming the skill drove the turn even
+        though it never ran. The controller now only calls this hook once
+        the substitution check has confirmed the turn actually proceeds, so
+        a refusal (like any other blocked submit) never reaches it.
         """
         try:
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)

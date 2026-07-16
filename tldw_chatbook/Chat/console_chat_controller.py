@@ -239,11 +239,25 @@ class ConsoleChatController:
         )
         if pendings:
             self.store.clear_pending_attachments(session.id)
-        self._notify_submission_accepted()
         provider_messages = self._provider_messages_for_session(session.id)
         provider_messages, refuse = await self._apply_skill_substitution(provider_messages)
         if refuse is not None:
             return self._block(session.id, refuse)
+        # The accepted-hook fires only once the turn is confirmed to
+        # actually proceed (Qodo finding 3, PR #636 bot review): it used to
+        # fire right after the USER row was appended, BEFORE this skill
+        # substitution/trust check ran. In the real ChatScreen, this hook
+        # is the sole consume point for a staged resolved-skill "driving
+        # this turn" TOOL marker (see `_on_console_submission_accepted`'s
+        # own docstring) -- firing it before a substitution refusal meant
+        # a refused/untrusted skill submit still consumed and appended
+        # that marker, claiming the skill drove the turn right before the
+        # refuse row that says it never ran. A substitution refusal is a
+        # `_block()` outcome exactly like any other (provider not ready,
+        # policy block, validation failure) and those already never reach
+        # this hook -- this reorder just extends that same rule to cover
+        # it too.
+        self._notify_submission_accepted()
         assistant = self.store.append_message(
             session.id,
             role=ConsoleMessageRole.ASSISTANT,

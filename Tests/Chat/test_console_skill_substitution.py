@@ -202,6 +202,60 @@ async def test_submit_refusal_appends_system_row_and_aborts_without_provider_cal
 
 
 @pytest.mark.asyncio
+async def test_submit_refusal_never_invokes_accepted_hook():
+    """Qodo finding 3 (PR #636 bot review): the accepted-hook must not fire
+    before the skill substitution/trust check settles. Previously
+    `submit_draft` called `_notify_submission_accepted()` right after the
+    USER row was appended -- BEFORE `_apply_skill_substitution` even ran --
+    so a refused/untrusted skill still fired the hook. In the real
+    ChatScreen that hook is the sole consume point for a staged
+    "driving this turn" TOOL marker, so a refused submit still appended a
+    marker claiming the skill ran, right before the refuse row."""
+    skills = _Skills(raise_trust=True)
+    store = ConsoleChatStore()
+    gateway = _RecordingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway,
+                                       provider="llama_cpp", model="m",
+                                       skills_service=skills)
+    accepted_calls = []
+    controller.on_submission_accepted = lambda: accepted_calls.append(True)
+
+    result = await controller.submit_draft("/code-review go")
+
+    assert result.accepted is False
+    assert accepted_calls == []
+
+
+@pytest.mark.asyncio
+async def test_submit_success_still_invokes_accepted_hook_before_assistant_row():
+    """The Qodo-3 reorder must not regress the successful path: the hook
+    still fires exactly once, and still fires strictly before the
+    ASSISTANT placeholder is appended (store order stays
+    [USER, ..., ASSISTANT])."""
+    skills = _Skills("inline")
+    store = ConsoleChatStore()
+    gateway = _RecordingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway,
+                                       provider="llama_cpp", model="m",
+                                       skills_service=skills)
+    assistant_rows_seen_at_hook_time = []
+
+    def _on_accepted():
+        session_id = store.active_session_id
+        messages = store.messages_for_session(session_id) if session_id else []
+        assistant_rows_seen_at_hook_time.append(
+            [m for m in messages if m.role is ConsoleMessageRole.ASSISTANT]
+        )
+
+    controller.on_submission_accepted = _on_accepted
+
+    result = await controller.submit_draft("/code-review go")
+
+    assert result.accepted is True
+    assert assistant_rows_seen_at_hook_time == [[]]
+
+
+@pytest.mark.asyncio
 async def test_regenerate_refusal_after_skill_edit_keeps_prior_answer():
     skills = _Skills("inline")
     store = ConsoleChatStore()
