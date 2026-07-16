@@ -48,12 +48,12 @@ _STATUS_DETAIL_LABELS = {
 _MAX_CONVERSATION_ROW_TITLE = 20
 _CONVERSATION_BROWSER_HEADER_HEIGHT = 1
 _CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT = 1
+_ROW_BUTTON_HEIGHT = 2
 # Button height for a conversation row that carries a `[N Sub-Agents]` badge.
 # One line more than a plain two-line row (title + secondary-detail) so the
 # badge renders on its own dedicated trailing line -- see
 # `format_console_conversation_row_label` for why that decoupling matters.
-_CONVERSATION_ROW_HEIGHT = 2
-_CONVERSATION_ROW_HEIGHT_WITH_BADGE = 3
+_ROW_BUTTON_HEIGHT_WITH_BADGE = 3
 
 
 def _conversation_row_render_height(subagent_count: int) -> int:
@@ -63,12 +63,12 @@ def _conversation_row_render_height(subagent_count: int) -> int:
         subagent_count: Historical sub-agent run count for this conversation.
 
     Returns:
-        ``_CONVERSATION_ROW_HEIGHT_WITH_BADGE`` when a badge will render,
-        otherwise the plain two-line ``_CONVERSATION_ROW_HEIGHT``.
+        ``_ROW_BUTTON_HEIGHT_WITH_BADGE`` when a badge will render,
+        otherwise the plain two-line ``_ROW_BUTTON_HEIGHT``.
     """
     if subagent_count > 0:
-        return _CONVERSATION_ROW_HEIGHT_WITH_BADGE
-    return _CONVERSATION_ROW_HEIGHT
+        return _ROW_BUTTON_HEIGHT_WITH_BADGE
+    return _ROW_BUTTON_HEIGHT
 
 
 def format_console_conversation_row_label(title: str, *, subagent_count: int = 0) -> str:
@@ -469,7 +469,7 @@ class ConsoleWorkspaceContextTray(Vertical):
         """
         return sum(
             CONSOLE_WORKSPACE_CONVERSATION_ROW_HEIGHT
-            + (_conversation_row_render_height(row.subagent_count) - _CONVERSATION_ROW_HEIGHT)
+            + (_conversation_row_render_height(row.subagent_count) - _ROW_BUTTON_HEIGHT)
             for row in rows
         )
 

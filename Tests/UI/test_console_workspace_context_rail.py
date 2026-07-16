@@ -1351,3 +1351,71 @@ def test_console_workspace_conversation_subsection_styles_are_declared() -> None
     assert "overflow-y: auto" not in list_block
     assert "scrollbar-size:" not in list_block
     assert "#console-left-rail-body:focus {" in css
+
+
+def test_console_workspace_aggregate_height_pins_badge_row_cost() -> None:
+    """Aggregate row height includes badge row up-charge.
+
+    Regression: row height calculation must sum plain (3px) and badge (4px)
+    rows correctly. Under-counting silently overlaps rows on non-scrolling
+    Vertical containers.
+    """
+    from tldw_chatbook.Widgets.Console.console_workspace_context import (
+        ConsoleWorkspaceContextTray,
+    )
+    from tldw_chatbook.Workspaces.conversation_browser_state import (
+        ConsoleConversationBrowserRow,
+    )
+
+    # Plain row (no subagent_count): costs 3px (base 3 + delta 0).
+    # Badge row (subagent_count > 0): costs 4px (base 3 + delta 1).
+    plain_rows = tuple(
+        ConsoleConversationBrowserRow(
+            row_key=f"plain-{i}",
+            conversation_id=f"conv-plain-{i}",
+            native_session_id=None,
+            title=f"Plain row {i}",
+            status="workspace-thread",
+            selected=False,
+            subagent_count=0,
+            scope_type="workspace",
+            workspace_id="ws-a",
+            workspace_label="Workspace A",
+            updated_label="1d",
+            star_enabled=True,
+            starred=False,
+        )
+        for i in range(3)
+    )
+    badge_rows = tuple(
+        ConsoleConversationBrowserRow(
+            row_key=f"badge-{i}",
+            conversation_id=f"conv-badge-{i}",
+            native_session_id=None,
+            title=f"Badge row {i}",
+            status="workspace-thread",
+            selected=False,
+            subagent_count=1,  # Has badge.
+            scope_type="workspace",
+            workspace_id="ws-a",
+            workspace_label="Workspace A",
+            updated_label="1d",
+            star_enabled=True,
+            starred=False,
+        )
+        for i in range(2)
+    )
+    mixed_rows = plain_rows + badge_rows
+
+    # Expected sum: 3 plain rows * 3px/row + 2 badge rows * 4px/row = 17px.
+    expected_height = 3 * 3 + 2 * 4
+    actual_height = ConsoleWorkspaceContextTray._conversation_browser_rows_height(
+        mixed_rows
+    )
+
+    assert actual_height == expected_height == 17
+    assert actual_height == ConsoleWorkspaceContextTray._conversation_browser_rows_height(
+        plain_rows
+    ) + ConsoleWorkspaceContextTray._conversation_browser_rows_height(
+        badge_rows
+    )
