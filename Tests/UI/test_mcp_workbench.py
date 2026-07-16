@@ -4059,6 +4059,46 @@ async def test_state_cycle_requested_with_invalid_state_is_rejected(tmp_path):
         )
 
 
+@pytest.mark.asyncio
+async def test_space_to_allow_vanished_tool_toasts_friendly_warning_not_raw_exception(tmp_path):
+    """Minor 5: cycling a tool that's dropped out of the catalog (stale
+    selection, or a resync racing a rug-pull refresh) to "allow" used to
+    let `set_tool_state(..., "allow", tool=None)` raise, and the generic
+    `except` toast the raw internal message
+    ("Permission update failed: tool is required to set state 'allow' ...")
+    verbatim. It must instead be caught before the setter and toast a
+    friendly, actionable message -- no setter call, no store mutation.
+    """
+    app = PermissionsApp(tmp_path / "mcp_permissions.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+        notifications = _capture_notifications(app)
+
+        before = app.unified_mcp_service.permission_store.load()
+        workbench.post_message(
+            MCPPermissionsMode.StateCycleRequested(
+                row_kind="tool",
+                server_key="local:docs",
+                tool_name="does-not-exist",
+                new_state="allow",
+            )
+        )
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        after = app.unified_mcp_service.permission_store.load()
+        assert after == before
+        assert notifications, "expected a toast for a vanished-tool allow cycle"
+        message, severity = notifications[-1]
+        assert severity == "warning"
+        assert message == "Tool is no longer in the catalog — refresh and try again."
+        assert "tool is required to set state" not in message
+
+
 # -- Task 7: inspector permission explanation + re-allow ---------------------
 
 
@@ -4102,6 +4142,43 @@ async def test_permissions_mode_tool_row_selection_shows_permission_block(tmp_pa
         # Routed through show_permission(), NOT show_tool() -- the full
         # tool-detail-plus-Test-Tool block is Tools mode's own surface.
         assert not list(app.query("#mcp-inspector-tool-name"))
+
+
+@pytest.mark.asyncio
+async def test_cycling_the_selected_tool_refreshes_its_open_permission_block(tmp_path):
+    """Minor 3: `on_mcp_permissions_mode_state_cycle_requested()` resyncs
+    the MATRIX's own rows, but an already-open `#mcp-inspector-permission`
+    block for that same tool is a separate render (`show_permission()`)
+    that used to keep showing the PRE-cycle rule until something else
+    re-rendered it (only the re-allow handler did). Select docs::search
+    (inherits the global default) then Space-cycle that SAME row to
+    "allow" -- the still-open inspector block must pick up the new
+    tool-override rule without a fresh selection.
+    """
+    app = PermissionsApp(tmp_path / "mcp_permissions.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=3)  # local:docs::search
+        await pilot.press("enter")
+        await pilot.pause()
+        origin = str(app.query_one("#mcp-inspector-permission-origin", Static).renderable)
+        assert origin == "Inherited from the global default."
+
+        await pilot.press("space")  # cycle_ui_state(None) == "allow"
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        state = str(app.query_one("#mcp-inspector-permission-state", Static).renderable)
+        origin = str(app.query_one("#mcp-inspector-permission-origin", Static).renderable)
+        assert state == "Permission: Allow"
+        assert origin == "From this tool's override."
 
 
 @pytest.mark.asyncio

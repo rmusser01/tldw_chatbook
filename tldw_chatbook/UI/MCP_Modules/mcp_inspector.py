@@ -796,6 +796,18 @@ class MCPInspector(Vertical):
         one-shot "Confirm run" state (see `require_confirm()`)."""
         return self._test_run_armed
 
+    @property
+    def current_permission_tool(self) -> HubTool | None:
+        """The tool `#mcp-inspector-permission` is currently explaining, or
+        `None` when nothing is shown there.
+
+        Minor 3: lets `MCPWorkbench` check, after a Space-cycle resyncs the
+        Permissions-mode matrix, whether the already-open permission block
+        belongs to the SAME tool that was just cycled -- so it can refresh
+        that block too (`_render_permission_container()` is otherwise only
+        re-entered by a fresh selection or the re-allow handler)."""
+        return self._current_permission_tool
+
     def require_confirm(self, notice: str | None) -> None:
         """Arm the Test Tool Run button into a one-shot "Confirm run" control.
 

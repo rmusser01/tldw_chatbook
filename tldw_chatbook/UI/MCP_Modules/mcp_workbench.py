@@ -1335,6 +1335,15 @@ class MCPWorkbench(Container):
         runs -- `None` is legal (Inherit, for a `"server"`/`"tool"` row
         only) but anything else that isn't `"allow"`/`"ask"`/`"deny"` is
         rejected outright, no setter call at all.
+
+        Minor 5: a `"tool"` row whose tool has dropped out of the catalog
+        (`_tool_for()` returns `None`) cycled to `"allow"` is caught HERE,
+        before the setter -- `set_tool_state(..., "allow", tool=None)`
+        raises a `ValueError` whose message is an internal implementation
+        detail ("tool is required to set state 'allow' ..."), which the
+        generic `except` below would otherwise toast verbatim. Every other
+        state (`"ask"`/`"deny"`/`None`) works fine with `tool=None` -- only
+        `"allow"` needs the live tool to fingerprint.
         """
         event.stop()
         service = self._service()
@@ -1347,6 +1356,7 @@ class MCPWorkbench(Container):
                 severity="warning",
             )
             return
+        cycled_tool: HubTool | None = None
         try:
             if event.row_kind == "global":
                 if event.new_state is not None:
@@ -1354,9 +1364,15 @@ class MCPWorkbench(Container):
             elif event.row_kind == "server":
                 service.set_server_default(event.server_key, event.new_state)
             elif event.row_kind == "tool":
-                tool = self._tool_for(event.server_key, event.tool_name or "")
+                cycled_tool = self._tool_for(event.server_key, event.tool_name or "")
+                if cycled_tool is None and event.new_state == "allow":
+                    self.app.notify(
+                        _toast("Tool is no longer in the catalog — refresh and try again."),
+                        severity="warning",
+                    )
+                    return
                 service.set_tool_state(
-                    event.server_key, event.tool_name or "", event.new_state, tool=tool
+                    event.server_key, event.tool_name or "", event.new_state, tool=cycled_tool
                 )
         except Exception as exc:
             logger.warning(f"MCP permission cycle failed: {exc}")
@@ -1364,6 +1380,25 @@ class MCPWorkbench(Container):
             return
         async with self._sync_children_lock:
             await self._sync_permissions_mode()
+
+        # Minor 3: `_sync_permissions_mode()` above rebuilds the matrix's
+        # OWN rows, but an already-open `#mcp-inspector-permission` block
+        # for this same tool is a separate render (`show_permission()`,
+        # driven by `MCPPermissionsMode.RowSelected`, not the matrix
+        # resync) that keeps showing the pre-cycle rule until something
+        # re-renders it -- today only the re-allow handler does. Refresh it
+        # here too when it's explaining the tool that was just cycled.
+        if event.row_kind == "tool" and cycled_tool is not None:
+            inspector = self.query_one(MCPInspector)
+            current_tool = inspector.current_permission_tool
+            if (
+                current_tool is not None
+                and current_tool.server_key == cycled_tool.server_key
+                and current_tool.name == cycled_tool.name
+            ):
+                await inspector.show_permission(
+                    cycled_tool, self._effective_for_display(cycled_tool)
+                )
 
     async def on_mcp_permissions_mode_kill_switch_toggled(
         self, event: MCPPermissionsMode.KillSwitchToggled
