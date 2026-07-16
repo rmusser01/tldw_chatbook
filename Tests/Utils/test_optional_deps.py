@@ -357,24 +357,30 @@ def test_mcp_deps():
 def test_initialize_dependency_checks():
     """Test that initialize_dependency_checks calls all check functions."""
     from tldw_chatbook.Utils.optional_deps import initialize_dependency_checks, DEPENDENCIES_AVAILABLE
-    
-    # Clear all dependencies first
+
+    # Clear all dependencies first — and restore afterwards: this module dict
+    # is shared process-global state, and initialize_dependency_checks() only
+    # repopulates the checked categories, not static registry keys (e.g.
+    # 'svg_rendering'), so leaving it cleared poisons later tests.
+    snapshot = dict(DEPENDENCIES_AVAILABLE)
     DEPENDENCIES_AVAILABLE.clear()
-    
-    # Initialize should populate all dependencies
-    initialize_dependency_checks()
-    
-    # Check that all major categories are present with the correct keys
-    assert 'embeddings_rag' in DEPENDENCIES_AVAILABLE
-    assert 'websearch' in DEPENDENCIES_AVAILABLE  # Changed from web_scraping
-    assert 'pdf_processing' in DEPENDENCIES_AVAILABLE
-    assert 'ebook_processing' in DEPENDENCIES_AVAILABLE
-    assert 'ocr_processing' in DEPENDENCIES_AVAILABLE  # Changed from ocr
-    assert 'local_llm' in DEPENDENCIES_AVAILABLE
-    assert 'tts_processing' in DEPENDENCIES_AVAILABLE  # Changed from tts
-    assert 'stt_processing' in DEPENDENCIES_AVAILABLE  # Changed from stt
-    assert 'image_processing' in DEPENDENCIES_AVAILABLE
-    assert 'mcp' in DEPENDENCIES_AVAILABLE
+    try:
+        # Initialize should populate all dependencies
+        initialize_dependency_checks()
+
+        # Check that all major categories are present with the correct keys
+        assert 'embeddings_rag' in DEPENDENCIES_AVAILABLE
+        assert 'websearch' in DEPENDENCIES_AVAILABLE  # Changed from web_scraping
+        assert 'pdf_processing' in DEPENDENCIES_AVAILABLE
+        assert 'ebook_processing' in DEPENDENCIES_AVAILABLE
+        assert 'ocr_processing' in DEPENDENCIES_AVAILABLE  # Changed from ocr
+        assert 'local_llm' in DEPENDENCIES_AVAILABLE
+        assert 'tts_processing' in DEPENDENCIES_AVAILABLE  # Changed from tts
+        assert 'stt_processing' in DEPENDENCIES_AVAILABLE  # Changed from stt
+        assert 'image_processing' in DEPENDENCIES_AVAILABLE
+        assert 'mcp' in DEPENDENCIES_AVAILABLE
+    finally:
+        DEPENDENCIES_AVAILABLE.update(snapshot)
 
 
 def test_pdf_processing_lib_import_handling():

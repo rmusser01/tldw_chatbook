@@ -98,6 +98,12 @@ DEPENDENCIES_AVAILABLE = {
     'tqdm': False,
 }
 
+# Pristine copy of the registry above — reset_dependency_checks() restores
+# from THIS, so new keys need only be added to the literal once. (A stale
+# duplicated literal inside reset used to silently drop newer keys, e.g.
+# 'svg_rendering'.)
+_INITIAL_DEPENDENCIES_AVAILABLE = dict(DEPENDENCIES_AVAILABLE)
+
 # Store actual modules for conditional use
 MODULES = {}
 
@@ -1017,93 +1023,17 @@ def create_unavailable_feature_handler(feature_name: str, suggestion: str = "") 
     return handler
 
 # Initialize dependency checks
-def reset_dependency_checks():
-    """Reset all dependency checks - useful for testing."""
-    global MODULES
+def reset_dependency_checks() -> None:
+    """Reset all dependency checks to their pristine unchecked state.
+
+    Restores ``DEPENDENCIES_AVAILABLE`` from the pristine copy of the module
+    literal, clears the cached SVG probe and imported-module registry.
+    Useful for testing.
+    """
+    global MODULES, _svg_rendering_available
     DEPENDENCIES_AVAILABLE.clear()
-    DEPENDENCIES_AVAILABLE.update({
-        'torch': False,
-        'transformers': False,
-        'numpy': False,
-        'chromadb': False,
-        'embeddings_rag': False,
-        'websearch': False,
-        'jieba': False,
-        'fugashi': False,
-        'flashrank': False,
-        'sentence_transformers': False,
-        'chunker': False,
-        'chinese_chunking': False,
-        'japanese_chunking': False,
-        'token_chunking': False,
-        'cohere': False,
-        # Audio/Video processing
-        'audio_processing': False,
-        'video_processing': False,
-        'faster_whisper': False,
-        'lightning_whisper_mlx': False,
-        'parakeet_mlx': False,
-        'yt_dlp': False,
-        'soundfile': False,
-        'scipy': False,
-        'qwen2audio': False,
-        # PDF processing
-        'pdf_processing': False,
-        'pymupdf': False,
-        'pymupdf4llm': False,
-        'docling': False,
-        # E-book processing
-        'ebook_processing': False,
-        'ebooklib': False,
-        'defusedxml': False,
-        'html2text': False,
-        'lxml': False,
-        'beautifulsoup4': False,
-        # Web scraping - additional
-        'pandas': False,
-        'playwright': False,
-        'trafilatura': False,
-        'aiohttp': False,
-        # Local LLM
-        'local_llm': False,
-        'mlx_lm': False,
-        'vllm': False,
-        'onnxruntime': False,
-        # MCP
-        'mcp': False,
-        # TTS
-        'tts_processing': False,
-        'kokoro_onnx': False,
-        'chatterbox': False,
-        'pydub': False,
-        'pyaudio': False,
-        'av': False,
-        # STT
-        'stt_processing': False,
-        'nemo_toolkit': False,
-        # OCR
-        'ocr_processing': False,
-        'docext': False,
-        'gradio_client': False,
-        'openai': False,
-        # Image processing
-        'image_processing': False,
-        'PIL': False,
-        'pillow': False,
-        'textual_image': False,
-        'rich_pixels': False,
-        # Mindmap
-        'mindmap': False,
-        'anytree': False,
-        # Subscriptions
-        'subscriptions': False,
-        'markdown': False,
-        'schedule': False,
-        'feedparser': False,
-        # Web server
-        'web': False,
-        'textual_serve': False,
-    })
+    DEPENDENCIES_AVAILABLE.update(_INITIAL_DEPENDENCIES_AVAILABLE)
+    _svg_rendering_available = None
     MODULES = {}
     logger.debug("Reset dependency checks")
 
