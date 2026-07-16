@@ -1246,13 +1246,9 @@ def _content_from_provider_mapping(item: Mapping[str, Any]) -> str | object:
             delta = first.get("delta")
             if isinstance(delta, Mapping) and isinstance(delta.get("content"), str):
                 return delta["content"]
-            if isinstance(delta, Mapping) and delta.get("tool_calls"):
-                return ""
             message = first.get("message")
             if isinstance(message, Mapping) and isinstance(message.get("content"), str):
                 return message["content"]
-            if isinstance(message, Mapping) and message.get("tool_calls"):
-                return ""
             text = first.get("text")
             if isinstance(text, str):
                 return text

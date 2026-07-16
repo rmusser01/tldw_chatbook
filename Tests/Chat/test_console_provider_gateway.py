@@ -1676,6 +1676,49 @@ async def test_no_tools_requested_is_byte_identical() -> None:
 
 
 @pytest.mark.asyncio
+async def test_tools_none_raw_dict_tool_call_chunk_keeps_baseline_copy() -> None:
+    """Regression (task-243 review): a raw DICT streaming chunk (not an SSE
+    string, unlike ``test_no_tools_requested_is_byte_identical`` above) that
+    carries only ``delta.tool_calls`` with no content, and with ``tools``
+    NOT passed, must stay byte-identical to the pre-native-tools baseline --
+    ``_content_from_provider_mapping`` has no tool-call awareness in that
+    codepath, so the chunk falls through to ``_UNSUPPORTED_RESPONSE`` like
+    any other unrecognized dict shape, and ``normalize_provider_response``
+    surfaces it as ``UNSUPPORTED_PROVIDER_RESPONSE_COPY`` in the stream.
+    Mapping-level ``tool_calls`` guards previously short-circuited this to a
+    silent drop instead, which changed ``tools=None`` output."""
+    def fake_chat_api_call(**_kwargs):
+        yield "hel"
+        yield {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "c1",
+                                "type": "function",
+                                "function": {"name": "calculator", "arguments": "{}"},
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+        yield {"choices": [{"delta": {"content": "lo"}}]}
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1"))
+
+    chunks = [chunk async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "hi"}])]
+
+    assert chunks == ["hel", UNSUPPORTED_PROVIDER_RESPONSE_COPY, "lo"]
+
+
+@pytest.mark.asyncio
 async def test_tool_call_only_stream_yields_no_fallback_copy() -> None:
     """A tools= run whose stream carries ONLY tool-call fragments must not
     inject NO_PROVIDER_CONTENT_COPY / UNSUPPORTED copy into the text
