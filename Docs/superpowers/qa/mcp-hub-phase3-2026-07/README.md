@@ -1,8 +1,24 @@
 # MCP Hub Phase 3 — QA evidence (2026-07-14)
 
-Branch: `claude/mcp-hub-phase3`, HEAD `808ce4d3` ("fix(mcp-hub): reject
-colon/whitespace-bearing local profile ids at save time (I3)"). Worktree:
+Branch: `claude/mcp-hub-phase3`, originally captured at HEAD `808ce4d3`
+("fix(mcp-hub): reject colon/whitespace-bearing local profile ids at save
+time (I3)"). Worktree:
 `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/mcp-hub-phase3`.
+
+**Re-capture round (2026-07-16, branch at `892bf041`):** both defects this
+round originally found were since fixed on the branch — Defect 1 by
+`d19d1adc` (bundle-layer width rule for the tools filter Select) and
+Defect 2 by `4fd1e908` + `892bf041` (built-in tool import cascade, plus a
+follow-on fix replacing a nonexistent DB method call). All nine Tools-mode
+PNGs were re-taken **in place** (same filenames) against the same two HOMEs
+with the fixed code+bundle served fresh: `tools-catalog`,
+`tools-filter-text`, `tools-filter-server`, `tools-empty-diagnostic`,
+`tool-inspector-detail`, `tool-test-form`, `tool-test-raw`, `tool-test-ok`,
+`tool-test-failed`. The two Servers-mode captures (`checking-bound`,
+`hugging-layout`) are unaffected by either fix and were left as originally
+taken. Per-capture notes below are updated where the re-capture changed
+what the PNG shows; the two defect sections at the bottom now carry
+"FIXED" verdicts with the verification evidence.
 
 Captured live from textual-serve (real app CSS, worktree code) in headless
 bundled Chromium (Playwright, CDP-attached), viewport **2050×1240**. Same
@@ -52,27 +68,40 @@ or the `2` keybinding; `MCPScreen.BINDINGS` maps `"2"` to
    `hub_tool_catalog.py:149`). `Server` column reads `docs-server (stale)`
    for all three (the profile has no active session this round). Columns:
    `Tool | Server | Tags | Schema`. Verified: DOM text search for
-   `search_docs` + `form` and `read_file` + `raw` on the same row both hit;
-   PNG 104KB.
+   `search_docs` + `form` and `read_file` + `raw` on the same row both hit.
+   **Re-taken 2026-07-16 (post-`d19d1adc`):** the server-filter Select now
+   renders visibly at the right end of the filter bar (`All servers ▼`),
+   width verified numerically — its full box-frame segment
+   (`▊  All servers          ▼  ▎`) measures **202.05px = exactly 28
+   terminal cells** (2045px canvas / 284 cols × 28), matching the intended
+   `width: 28` rule; the bundled-CSS harness pilot independently reports
+   `select.region == Region(x=255, y=0, width=28, height=3)` and
+   `styles.width == 28` (was 0×0 / `100w` pre-fix). Rail note:
+   `slow-server` shows `!` (NEEDS_ATTENTION) instead of the original
+   round's `○` — the documented persisted side effect of capture 10's
+   connect-timeout, not a regression. PNG 105KB.
 
 2. **`tools-filter-text`** — typed `search` into `#mcp-tools-filter-text`.
    Table narrows to exactly the 4 tools whose name/description contains
    "search": `search_docs` (docs-server), `search_conversations`,
    `search_notes`, `search_rag` (all tldw_chatbook). Verified via DOM row
-   count read straight from the live buffer; PNG 77KB.
+   count read straight from the live buffer. **Re-taken 2026-07-16:** same
+   4-row narrowing re-verified (column-scoped row count == 4, zero
+   non-matching rows), now with the server Select visible alongside the
+   text filter. PNG 79KB.
 
-3. **`tools-filter-server`** — **could not be captured as a working
-   filter — this PNG instead documents an app defect** (see Defect 1
-   below). The server filter `Select` (`#mcp-tools-filter-server`) is
-   rendered at zero width/height and is completely absent from the screen
-   and non-interactive; the filter Input's box border runs the full width
-   of the canvas panel with no room left for the dropdown. Verified two
-   ways: DOM text search for `All servers`/any server label anywhere in the
-   Tools-mode filter bar returns no match (only the rail's unrelated "All
-   servers" *server-list* entry, a different string), and a real mouse
-   click at the Select's computed screen position produces zero change to
-   the DOM (before/after dumps identical). PNG 104KB — captures the filter
-   bar with the Select simply missing.
+3. **`tools-filter-server`** — **re-taken 2026-07-16 as a working filter**
+   (the original 2026-07-14 capture documented Defect 1 — the Select
+   rendered at 0×0 and was unclickable; see the FIXED defect section
+   below). Post-`d19d1adc`: clicked the Select (prompt "All servers"), its
+   overlay opened listing `docs-server` / `tldw_chatbook`; clicked
+   `docs-server` via a row-scoped `Range` click inside the overlay. Result:
+   the Select displays **docs-server** as its value and the table filters
+   to **exactly the 3 docs-server rows** (`list_files`, `read_file`,
+   `search_docs`), the 10 built-in rows gone — verified by column-scoped
+   row count before capturing. Reset to "All servers" afterwards (full
+   13-row catalog re-verified) so later captures see the unfiltered
+   catalog. PNG 77KB.
 
 4. **`tools-empty-diagnostic`** — the *true* zero-tool diagnostic state:
    **"No servers configured — add one to see its tools."** with an **"Add
@@ -101,14 +130,22 @@ or the `2` keybinding; `MCPScreen.BINDINGS` maps `"2"` to
    `target_store.list_targets()` empty → `_empty_tools_diagnosis()`'s
    `if not relevant: return ("No servers configured…", "add_server")`
    branch. Verified: DOM text search for the exact message and the "Add
-   server" button both hit; PNG 69KB.
+   server" button both hit. **Re-taken 2026-07-16:** the filter bar renders
+   in the empty state too, and the Select is now visible in it (same
+   202.05px = 28-cell segment measurement as capture 1, re-measured in this
+   state at capture time); the diagnostic message, Add-server button, and
+   filter Input all re-verified via DOM text search. The blanked
+   `[tldw_api].base_url` held — no `mcp_server_targets.json` was re-seeded
+   on the fresh session. PNG 75KB.
 
 5. **`tool-inspector-detail`** — `search_docs` row selected (two clicks,
    docs-server). Inspector's tool-detail block: `search_docs —
    docs-server` name/server line, description ("Search the docs tree for
    matching content."), `Tags: —`, `Parameters: form`, "Stale — not
    currently connected." (docs-server has no active session), `Test Tool`
-   button. Verified via DOM text search for all five lines; PNG 110KB.
+   button. Verified via DOM text search for all five lines. **Re-taken
+   2026-07-16:** all five lines re-verified, now with the visible filter
+   Select above the table. PNG 110KB.
 
 6. **`tool-test-form`** — Test Tool pressed for `search_docs`. Schema-driven
    form rendered exactly per the seeded schema: `query *` label (required
@@ -121,7 +158,10 @@ or the `2` keybinding; `MCPScreen.BINDINGS` maps `"2"` to
    obscured the `query *` label in the first dump — moved the mouse to a
    neutral screen corner and re-verified the label text was present in the
    DOM before capturing. Verified: DOM text search for `query *`,
-   `max_results`, `fuzzy`, `scope` all hit; PNG 120KB.
+   `max_results`, `fuzzy`, `scope` all hit. **Re-taken 2026-07-16:** all
+   seven field/button texts (`query *`, `Search query`, `max_results`,
+   `fuzzy`, `scope`, `Run`, `Close`) re-verified via DOM text search before
+   capturing. PNG 121KB.
 
 7. **`tool-test-raw`** — `read_file` selected instead, Test Tool pressed.
    `Parameters: raw JSON` in the detail block, then the raw-fallback panel:
@@ -130,39 +170,48 @@ or the `2` keybinding; `MCPScreen.BINDINGS` maps `"2"` to
    schema being unrenderable (nested `options` object property fails
    `parse_schema()`'s "no nested object/array" rule, the whole schema falls
    back to raw per that function's documented all-or-nothing contract).
-   Verified: DOM text search for the exact fallback note; PNG 117KB.
+   Verified: DOM text search for the exact fallback note. **Re-taken
+   2026-07-16:** fallback note, `Parameters: raw JSON`, and the `{}`
+   TextArea all re-verified. PNG 117KB.
 
-8. **`tool-test-ok`** — **could not use the task brief's suggested
-   "datetime tool"** — no such tool exists in this hub's built-in registry
+8. **`tool-test-ok`** — the task brief's suggested "datetime tool" does not
+   exist in this hub's built-in registry
    (`describe_local_mcp_capabilities()`'s actual 10 tools are
    `chat_with_llm, chat_with_character, search_rag, search_conversations,
    create_note, search_notes, list_characters, get_conversation_history,
    export_conversation, ingest_media`; "DateTimeTool"/"CalculatorTool" are a
    *different* system — the agent tool-calling registry used by Chat,
    `Tools/tool_executor.py` — not exposed through the MCP hub at all).
-   Additionally, the first candidate tried (`list_characters`, the simplest
-   no-required-args built-in tool) **failed** with a real app defect (see
-   Defect 2 below) — every built-in tool that touches the ChaChaNotes DB is
-   currently broken. Used **`ingest_media`** instead (no DB access at all —
-   `_tool_ingest_media()` just validates its own arguments and returns a
-   placeholder dict), with raw JSON `{"url": "https://example.com/test"}`.
-   Result: **`OK · 3ms`** +
-   `{"source": "local", "tool_name": "ingest_media", "result": {"status":
-   "queued", "media_id": "placeholder_id", "message": "Media ingestion
-   queued"}, "governance": {...}}`. Verified: DOM text search for `OK ·
-   3ms` and `queued`; PNG 144KB. (Side effect, expected: this run persisted
-   one `runtime_activity` entry into `local_mcp_store.json` — the hub's own
-   execution-log feature, not a QA artifact to clean up.)
+   The original 2026-07-14 round additionally hit Defect 2 (see below) on
+   `list_characters` — every DB-touching built-in tool was broken — and had
+   to fall back to the DB-free `ingest_media` (`OK · 3ms`, placeholder
+   payload). **Re-taken 2026-07-16 (post-`4fd1e908`+`892bf041`) with
+   `list_characters`, exercising the real DB path end to end:** raw-JSON
+   args `{}`, Run → **`OK · 10ms`** +
+   `{"source": "local", "tool_name": "list_characters", "result": [{"id":
+   1, "name": "Default Assistant", "description": "A general-purpose
+   assistant.", "message_count": 0}], "governance": {...}}` — a real
+   character row read from the seeded ChaChaNotes DB, not a placeholder.
+   Verified: DOM text search for `OK · 10ms` and `Default Assistant`.
+   PNG 142KB. (Driver note: the first Run press this round was swallowed —
+   likely landed while the panel's own tooltip overlay still hovered the
+   button — the result Static stayed empty for >5s with no OK/Failed; a
+   second, rect-resolved Run click executed normally. Not reproducible as
+   a product defect — the same press pattern works on every other run —
+   filed as a driver flake, not an app issue. Side effect, expected: run
+   persisted to `runtime_activity` in `local_mcp_store.json`.)
 
 9. **`tool-test-failed`** — `search_docs` on docs-server, form filled
    `query = "driver test"` (defaults left for the rest), Run. docs-server's
    `command` is `npx -y @modelcontextprotocol/server-filesystem
    /Users/qa/docs`, which fails to spawn/connect in this sandbox — result:
-   **`Failed · 3357ms`** + **"Failed to connect profile: docs-server"**
-   (well under the 8s `hub_lifecycle_timeout_seconds` bound — it fails fast
-   here rather than timing out; see the `checking-bound` capture's own note
-   about this same server resolving too quickly to catch mid-flight).
-   Verified: DOM text search for the exact failure line; PNG 125KB.
+   original round **`Failed · 3357ms`**, re-capture **`Failed · 681ms`**
+   (**re-taken 2026-07-16**), both + **"Failed to connect profile:
+   docs-server"** (well under the 8s `hub_lifecycle_timeout_seconds` bound —
+   it fails fast here rather than timing out; see the `checking-bound`
+   capture's own note about this same server resolving too quickly to catch
+   mid-flight). Verified: DOM text search for the exact failure line both
+   rounds. PNG 126KB.
 
 10. **`checking-bound`** — **could not use docs-server** as the task brief
     suggested: repeated attempts (both "Refresh tools", its actual wired
@@ -205,9 +254,9 @@ or the `2` keybinding; `MCPScreen.BINDINGS` maps `"2"` to
     backend is available in this sandbox, and faking the response would
     misrepresent an unimplemented code path. Not captured.
 
-## Defects / observations found (documented at capture time; not fixed, per scope)
+## Defects / observations found (documented at capture time; both defects since FIXED on the branch — see each section's verdict)
 
-### Defect 1 (High, functional) — Tools mode server-filter Select renders at 0×0, completely invisible and unusable
+### Defect 1 (High, functional) — Tools mode server-filter Select renders at 0×0, completely invisible and unusable — FIXED (`d19d1adc`)
 
 **Reproduction:** Navigate to MCP → Tools mode with more than one server
 present in the catalog (so the filter Select would have real options). The
@@ -276,15 +325,33 @@ different project screen's own bundled rule (not a Textual default at all)
 unconditionally clobbers this screen's override because of how Textual
 weighs `DEFAULT_CSS` vs. `CSS_PATH` rules, independent of specificity.
 
-**Not fixed** (out of this QA round's scope) — flagging for a follow-up fix
-in `tldw_chatbook/UI/MCP_Modules/mcp_tools_mode.py`'s bundle-source
-counterpart (the CSS override needs to live in the *bundle* itself, e.g.
-`_agentic_terminal.tcss`, with an equal-or-higher-specificity selector than
-`_conversations.tcss`'s bare `Select` rule — mirroring how Phase 2's own
-Defect 1/2 fixes were applied to the bundle, not to `DEFAULT_CSS`, for
-exactly this reason).
+**FIXED** by commit `d19d1adc` ("fix(mcp-hub): bundle-layer rules for tools
+filter select"): a scoped copy of the `#mcp-tools-filter-server-slot Select
+{ width: 28; }` rule was added to the bundle-source component file that
+already carries the other MCP hub lockstep rules
+(`_agentic_terminal.tcss`), and the bundle regenerated — exactly the
+follow-up shape this section originally recommended. Regression coverage
+was added in `Tests/UI/test_mcp_tools_mode.py` (rule-presence assertion +
+a bundled-CSS harness asserting non-zero computed geometry, confirmed to
+reproduce the 0×0 collapse pre-fix per the commit message).
+**Re-verified at re-capture time (2026-07-16, branch `892bf041`), both
+numerically and interactively:**
+- Bundled-CSS harness pilot (same 284×73 geometry as the served terminal):
+  `select.region == Region(x=255, y=0, width=28, height=3)`,
+  `styles.width == 28` — was `Region(x=283, y=0, width=0, height=0)` /
+  `100w` pre-fix.
+- Live DOM: the Select's full on-screen box segment
+  (`▊  All servers          ▼  ▎`) measures **202.05px = exactly 28 cells**
+  (2045px / 284 cols × 28).
+- Live interaction: clicking the Select opens its overlay
+  (docs-server / tldw_chatbook options); selecting `docs-server` filters
+  the table to exactly its 3 tools and the Select displays the chosen
+  value; selecting "All servers" restores the full 13-row catalog — the
+  whole per-server filter feature now works end to end
+  (`mcp-p3-tools-filter-server-2026-07-14.png` re-taken as the working
+  filter).
 
-### Defect 2 (High, functional) — most built-in MCP tools crash with an ImportError when actually executed
+### Defect 2 (High, functional) — most built-in MCP tools crash with an ImportError when actually executed — FIXED (`4fd1e908` + `892bf041`)
 
 **Reproduction:** MCP Hub → Tools mode → select any of `chat_with_character`,
 `search_conversations`, `create_note`, `search_notes`, `list_characters`,
@@ -332,10 +399,24 @@ available through the direct local runtime delegate yet.")`, a separate,
 already-documented stub, not this bug). `search_rag` was not tested this
 round.
 
-**Not fixed** (out of this QA round's scope) — the fix is presumably either
-renaming the import to `CharactersRAGDB` at all four call sites, or adding
-a `ChaChaNotes_DB = CharactersRAGDB` alias in `DB/ChaChaNotes_DB.py` if the
-name `ChaChaNotes_DB` is intended as a stable public alias elsewhere.
+**FIXED** by commit `4fd1e908` ("fix(mcp): correct ChaChaNotes_DB imports
+in built-in MCP server modules" — the four call sites now import
+`CharactersRAGDB`, the first of the two fix shapes this section originally
+suggested), plus follow-on `892bf041` ("fix(mcp): replace nonexistent
+get_conversation_messages calls with get_messages_for_conversation" — a
+second latent nonexistent-name bug in the same modules that the ImportError
+had been masking).
+**Re-verified at re-capture time (2026-07-16, branch `892bf041`), live and
+end to end:** `list_characters` (the exact tool that reproduced the
+original failure) run through the Hub's Test Tool panel now returns
+**`OK · 10ms`** with a *real* row read from the seeded ChaChaNotes DB —
+`"result": [{"id": 1, "name": "Default Assistant", "description": "A
+general-purpose assistant.", "message_count": 0}]` — captured as the new
+`mcp-p3-tool-test-ok-2026-07-14.png` (replacing the original round's
+`ingest_media` placeholder-path workaround). Other DB-touching tools were
+not individually re-run this round; they share the identical import path,
+and `list_characters` exercises `_get_tools()` → `MCPTools` construction →
+a real DB query, the full previously-broken chain.
 
 ### Observations (not filed as defects)
 
@@ -393,11 +474,17 @@ Left on disk per instructions:
   capture, not reverted (mirrors Phase 2's own practice of leaving
   capture-induced state as the final on-disk record). One
   `runtime_activity` entry was also persisted from capture 8's `ingest_media`
-  run.
+  run. The 2026-07-16 re-capture round appended further expected
+  `runtime_activity`/`profile_runtime_state` entries (the `list_characters`
+  OK run, the re-run `search_docs` failure, and the original round's
+  DB-broken `list_characters` attempt).
 - **`/private/tmp/tldw-qa-mcp-hub-p3-empty-20260714`** — minimal HOME (port
-  9190), used only for capture 4. `[tldw_api].base_url` is blanked
-  (`""`) and `mcp_server_targets.json` deleted, by design, to keep it
-  reproducing the true zero-server-target empty state on a fresh session.
+  9190), used only for capture 4 (both rounds). `[tldw_api].base_url` is
+  blanked (`""`) and `mcp_server_targets.json` deleted, by design, to keep
+  it reproducing the true zero-server-target empty state on a fresh
+  session — re-confirmed at the 2026-07-16 re-capture: no targets file was
+  re-seeded.
 
 Both `run_web_server` processes and the driver's persistent headless
-Chromium were killed at the end of this QA round.
+Chromium were killed at the end of each QA round (original and
+re-capture).
