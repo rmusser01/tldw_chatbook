@@ -11,6 +11,7 @@ from tldw_chatbook.Chat.console_agent_bridge import (
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_provider_gateway import ProviderToolCalls
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Agents.agent_models import (
     LOAD_TOOLS_NAME, SPAWN_TOOL_NAME, STEP_ERROR, STEP_MODEL, STEP_SPAWN,
@@ -25,20 +26,42 @@ def _fence(name, args):
 
 
 class _ChunkGateway:
-    """A gateway whose stream_chat replays a script keyed by call index."""
+    """A gateway whose stream_chat replays a script keyed by call index.
+
+    Each scripted entry is a list of chunks, where a chunk is either a
+    plain ``str`` (streamed text, as before) or a ``ProviderToolCalls``
+    sentinel (native tool-calls, yielded as the final item of that turn).
+    ``tools_seen`` records the ``tools=`` kwarg passed on each call, in
+    call order, so tests can assert whether/what was forwarded.
+    """
 
     def __init__(self, scripts):
-        self._scripts = list(scripts)   # each entry: list[str] chunks for that turn
+        self._scripts = list(scripts)   # each entry: list of str and/or ProviderToolCalls
         self.calls = 0
+        self.tools_seen = []
 
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, tools=None):
+        self.tools_seen.append(tools)
         chunks = self._scripts[self.calls]
         self.calls += 1
         for chunk in chunks:
             yield chunk
 
 
-def _bridge(tmp_path, scripts):
+class _NativeResolution:
+    """A fake resolution whose execution_key resolves to a native-capable provider."""
+
+    provider = "Groq"
+    execution_key = "groq"
+
+
+def _native_calls(name, args, call_id="c1"):
+    return ProviderToolCalls(tool_calls=(
+        {"id": call_id, "type": "function",
+         "function": {"name": name, "arguments": json.dumps(args)}},))
+
+
+def _bridge(tmp_path, scripts, native_tools_enabled=None):
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
@@ -46,7 +69,8 @@ def _bridge(tmp_path, scripts):
     assistant = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content="")
     bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts))
+        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
+        native_tools_enabled=native_tools_enabled)
     return bridge, db, store, session, assistant.id
 
 
@@ -112,6 +136,50 @@ def test_leaked_prose_before_disobedient_fence_is_reset_not_garbled(tmp_path):
     assert store.get_message(aid).content == "42."
 
 
+# -- Task 5: native provider tool-calls through the streaming adapter,
+# plus the [console] native_tool_calls kill-switch. --
+
+
+def test_native_tool_call_round_trip_streams_final_answer(tmp_path):
+    bridge, db, store, session, aid = _bridge(tmp_path, [
+        [_native_calls("get_current_datetime", {})],
+        ["It is ", "now."]])
+    outcome = _run(bridge, store, session, aid, resolution=_NativeResolution())
+    assert outcome.status == "done"
+    assert store.get_message(aid).content == "It is now."
+    gateway = bridge._gateway
+    assert gateway.tools_seen[0] is not None          # tools= sent on turn 1
+    names = [t["function"]["name"] for t in gateway.tools_seen[0]]
+    assert "get_current_datetime" in names
+    kinds = [step["kind"] for step in db.list_runs("conv-1")[0]["steps"]]
+    assert "tool_call" in kinds and "tool_result" in kinds
+    tool_rows = [m for m in store.messages_for_session(session.id)
+                 if m.role is ConsoleMessageRole.TOOL]
+    assert tool_rows, "a native tool turn must drop a TOOL marker too"
+    assert "get_current_datetime" in tool_rows[0].content
+
+
+def test_native_leaked_prose_is_reset_before_final_answer(tmp_path):
+    """Prose streamed before the ProviderToolCalls arrives must not survive
+    (Finding-A parity with the fence path)."""
+    bridge, db, store, session, aid = _bridge(tmp_path, [
+        ["Let me check. ", _native_calls("get_current_datetime", {})],
+        ["Done."]])
+    outcome = _run(bridge, store, session, aid, resolution=_NativeResolution())
+    assert outcome.status == "done"
+    assert store.get_message(aid).content == "Done."
+
+
+def test_native_kill_switch_off_stays_on_fence_path(tmp_path):
+    bridge, db, store, session, aid = _bridge(
+        tmp_path,
+        [[_fence("get_current_datetime", {})], ["Done."]],
+        native_tools_enabled=lambda: False)
+    outcome = _run(bridge, store, session, aid, resolution=_NativeResolution())
+    assert outcome.status == "done"
+    assert bridge._gateway.tools_seen[0] is None       # no tools= despite groq
+
+
 def test_multi_turn_run_reuses_one_event_loop_across_chat_call_turns(tmp_path):
     """PR #629 Fix 1(c) (Gemini HIGH x2 + Qodo-8): ``_StreamingModelAdapter.
     chat_call`` used to bridge every turn via its own ``asyncio.run()`` --
@@ -127,9 +195,9 @@ def test_multi_turn_run_reuses_one_event_loop_across_chat_call_turns(tmp_path):
     seen_loops = []
 
     class _LoopSpyGateway(_ChunkGateway):
-        async def stream_chat(self, resolution, messages):
+        async def stream_chat(self, resolution, messages, tools=None):
             seen_loops.append(asyncio.get_running_loop())
-            async for chunk in super().stream_chat(resolution, messages):
+            async for chunk in super().stream_chat(resolution, messages, tools=tools):
                 yield chunk
 
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
