@@ -2747,7 +2747,7 @@ async def test_mcp_destination_registers_footer_workbench_shortcuts():
         await _wait_for_selector(screen, pilot, "#mcp-shell")
         footer = host.query_one(AppFooterStatus)
 
-        assert footer.shortcut_text == "1-4 mode | a add server | r refresh | t test tool"
+        assert footer.shortcut_text == "1-4 mode | a add server | r refresh | t test tool | space cycle permission"
 
 
 @pytest.mark.asyncio
@@ -2765,7 +2765,7 @@ async def test_mcp_destination_footer_shortcuts_clear_and_restore_across_suspend
         screen = host.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#mcp-shell")
         footer = host.query_one(AppFooterStatus)
-        assert footer.shortcut_text == "1-4 mode | a add server | r refresh | t test tool"
+        assert footer.shortcut_text == "1-4 mode | a add server | r refresh | t test tool | space cycle permission"
 
         overlay = TextualScreen()
         await host.push_screen(overlay)
@@ -2774,7 +2774,7 @@ async def test_mcp_destination_footer_shortcuts_clear_and_restore_across_suspend
 
         await host.pop_screen()
         await pilot.pause()
-        assert footer.shortcut_text == "1-4 mode | a add server | r refresh | t test tool"
+        assert footer.shortcut_text == "1-4 mode | a add server | r refresh | t test tool | space cycle permission"
 
 
 def test_skills_screen_public_initializer_is_typed():

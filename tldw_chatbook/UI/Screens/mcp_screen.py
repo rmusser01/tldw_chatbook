@@ -27,8 +27,14 @@ _MODE_TOOLTIPS = {
 # context model, source="mcp" so it cannot clobber another screen's context
 # (`clear_shortcut_context(source=...)` is a no-op unless "mcp" still owns
 # it).
+# T9 (P4): "space cycle permission" is display-only -- the actual `space`
+# binding lives on `MCPPermissionsMode` itself (its matrix `DataTable` must
+# own focus for the keypress to reach `action_cycle_state()`), not on this
+# screen, mirroring how `("1-4", "mode")` documents the mode-strip Buttons'
+# own bindings rather than a screen-level one.
 MCP_SHORTCUTS = (
     ("1-4", "mode"), ("a", "add server"), ("r", "refresh"), ("t", "test tool"),
+    ("space", "cycle permission"),
 )
 
 # T13: shared reload-worker identity between the runtime-backend-change path

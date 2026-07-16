@@ -15,6 +15,7 @@ from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
 )
 
 _CSS_ROOT = Path(tldw_chatbook.__file__).parent / "css"
+_AGENTIC_TERMINAL_TCSS = _CSS_ROOT / "components" / "_agentic_terminal.tcss"
 _BUNDLED_STYLESHEET = _CSS_ROOT / "tldw_cli_modular.tcss"
 
 
@@ -535,6 +536,93 @@ async def test_update_server_profiles_markup_safe():
         assert rows == ["[bold red]x (p1)"]
 
 
+# -- T9: bundle-parity (dual-layer CSS) -----------------------------------
+
+
+def test_perm_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
+    """`MCPPermissionsMode.DEFAULT_CSS` gives `#mcp-perm-table` the same
+    `height: auto; max-height: 70%;` discipline T7 (P3 UX batch) gave
+    `#mcp-tools-table`/`#mcp-servers-table` -- so it hugs its own row count
+    instead of ballooning to fill the canvas and stranding the
+    policy-preview strip below it. Pins the matching bundle-layer copy
+    (added in lockstep, T9) in both the bundle-source file and the
+    generated bundle (`tldw_cli_modular.tcss`) -- the latter also proves
+    `build_css.py` was re-run after the source edit, mirroring
+    `test_tools_table_height_rule_pinned_in_bundle_source_and_bundle` in
+    test_mcp_tools_mode.py and `test_servers_table_height_rule_pinned_in_
+    bundle_source_and_bundle` in test_mcp_servers_mode.py."""
+    agentic_terminal = _AGENTIC_TERMINAL_TCSS.read_text(encoding="utf-8")
+    bundled_stylesheet = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+
+    for text, label in (
+        (agentic_terminal, "_agentic_terminal.tcss"),
+        (bundled_stylesheet, "tldw_cli_modular.tcss"),
+    ):
+        selector = "#mcp-perm-table {"
+        start = text.find(selector)
+        assert start != -1, f"{label} is missing {selector!r}"
+        end = text.find("}", start)
+        block = text[start:end]
+        assert "height: auto;" in block, f"{label}'s {selector!r} block is missing 'height: auto;'"
+        assert "max-height: 70%;" in block, f"{label}'s {selector!r} block is missing 'max-height: 70%;'"
+
+
+def test_perm_preview_height_rule_pinned_in_bundle_source_and_bundle() -> None:
+    """`MCPPermissionsMode.DEFAULT_CSS` gives `#mcp-perm-preview`
+    `height: auto;` so the policy-preview Static hugs its own (one- or
+    two-sentence) content instead of competing with the matrix table above
+    for the canvas's remaining space. Pins the matching bundle-layer copy
+    (T9) in both layers -- same rationale as `test_perm_table_height_rule_
+    pinned_in_bundle_source_and_bundle` above."""
+    agentic_terminal = _AGENTIC_TERMINAL_TCSS.read_text(encoding="utf-8")
+    bundled_stylesheet = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+
+    for text, label in (
+        (agentic_terminal, "_agentic_terminal.tcss"),
+        (bundled_stylesheet, "tldw_cli_modular.tcss"),
+    ):
+        selector = "#mcp-perm-preview {"
+        start = text.find(selector)
+        assert start != -1, f"{label} is missing {selector!r}"
+        end = text.find("}", start)
+        block = text[start:end]
+        assert "height: auto;" in block, f"{label}'s {selector!r} block is missing 'height: auto;'"
+
+
+def test_kill_switch_height_rule_pinned_in_bundle_source_and_bundle() -> None:
+    """T6 flagged a pre-existing bundle defect (verified empirically, same
+    family as Phase 3's Select-collapse Defect 1, see `test_filter_server_
+    select_width_rule_pinned_in_bundle_source_and_bundle` in
+    test_mcp_tools_mode.py): `_conversations.tcss` compiles a bare,
+    unscoped `Checkbox { height: 2; }` rule into the same app bundle, which
+    -- because Textual's cascade always treats every CSS_PATH-sourced rule
+    as higher priority than any widget's own DEFAULT_CSS regardless of
+    selector specificity -- wins over `MCPPermissionsMode.DEFAULT_CSS`'s
+    own `#mcp-perm-kill-switch` override for the `height` property itself
+    (only `min-height`, a DIFFERENT property the bare rule never touches,
+    leaked through as a floor). T6 shipped with that DEFAULT_CSS-only
+    `min-height: 3` workaround; T9 adds a properly SCOPED, id-selector
+    bundle-layer copy here -- higher specificity than the bare type
+    selector, so it wins within the bundle's own layer -- so the fix no
+    longer depends on the DEFAULT_CSS-only property-level gap alone. Pins
+    the bundle-layer copy in both the bundle-source file and the generated
+    bundle, mirroring the sibling pinned tests above."""
+    agentic_terminal = _AGENTIC_TERMINAL_TCSS.read_text(encoding="utf-8")
+    bundled_stylesheet = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+
+    for text, label in (
+        (agentic_terminal, "_agentic_terminal.tcss"),
+        (bundled_stylesheet, "tldw_cli_modular.tcss"),
+    ):
+        selector = "#mcp-perm-kill-switch {"
+        start = text.find(selector)
+        assert start != -1, f"{label} is missing {selector!r}"
+        end = text.find("}", start)
+        block = text[start:end]
+        assert "height: auto;" in block, f"{label}'s {selector!r} block is missing 'height: auto;'"
+        assert "min-height: 3;" in block, f"{label}'s {selector!r} block is missing 'min-height: 3;'"
+
+
 # -- real bundled CSS (Phase 3 lesson: DEFAULT_CSS alone can still collapse
 # to 0x0 under the real app stylesheet's global widget rules) ---------------
 
@@ -570,6 +658,29 @@ async def test_matrix_and_kill_switch_have_nonzero_geometry_with_bundled_css():
 
         checkbox = app.query_one("#mcp-perm-kill-switch", Checkbox)
         assert checkbox.size.width > 0, "kill-switch row collapsed to zero width under bundled CSS"
+        # T9: `checkbox.size` (content area, post-border) alone would not
+        # have caught the pre-existing bundle defect T6 worked around --
+        # `MCPPermissionsMode` mounted alone auto-focuses this Checkbox (the
+        # only focusable widget on screen), and a focused compact
+        # ToggleButton's OWN DEFAULT_CSS deliberately re-draws a 1-row-top +
+        # 1-row-bottom focus-ring border (`&.-textual-compact:focus` in
+        # Textual's `_toggle_button.py`) -- so `checkbox.size.height` is
+        # legitimately 1 (content only) whenever this test runs, whether or
+        # not the min-height floor is honored, and `> 0`/`>= 1` can't tell
+        # those apart. Assert the OUTER box instead (`outer_size`, "the size
+        # of the widget including padding and border") against the actual
+        # `min-height: 3` floor `MCPPermissionsMode.DEFAULT_CSS` sets (now
+        # also pinned in the bundle itself, T9): with only the bare
+        # `Checkbox { height: 2; }` rule from `_conversations.tcss` and no
+        # min-height floor, that 2-row outer box minus the 2-row focus
+        # border leaves ZERO rows for content -- exactly the defect T6
+        # documented -- so a regression back to that state fails this
+        # assertion even though the content-area check would not.
+        assert checkbox.outer_size.height >= 3, (
+            "kill-switch row's outer box is shorter than its min-height: 3 floor under "
+            f"bundled CSS (got {checkbox.outer_size.height}) -- a focused compact Checkbox's "
+            "own 2-row focus border would leave zero rows for content"
+        )
 
         # T8's server-source governance listing is its own dedicated slot
         # (`#mcp-perm-server-profiles-slot`, `height: auto; min-height: 0;`)
@@ -587,4 +698,10 @@ async def test_matrix_and_kill_switch_have_nonzero_geometry_with_bundled_css():
         pointer = app.query_one("#mcp-perm-server-profiles-pointer", Static)
         assert pointer.size.width > 0, "server-profiles pointer collapsed to zero width under bundled CSS"
         assert pointer.size.height > 0, "server-profiles pointer collapsed to zero height under bundled CSS"
-        assert checkbox.size.height > 0, "kill-switch row collapsed to zero height under bundled CSS"
+        # Re-check after the server-profiles mount above (T9: same
+        # outer-box `>= 3` floor, not just `size.height > 0` -- see the
+        # first checkbox-height assertion for why `size` alone can't tell).
+        assert checkbox.outer_size.height >= 3, (
+            "kill-switch row's outer box is shorter than its min-height: 3 floor under "
+            f"bundled CSS (got {checkbox.outer_size.height})"
+        )

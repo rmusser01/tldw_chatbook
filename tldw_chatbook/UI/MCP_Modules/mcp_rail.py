@@ -199,12 +199,30 @@ class MCPRail(Vertical):
 
     def compose(self) -> ComposeResult:
         yield Static("Source", classes="destination-section mcp-rail-heading")
-        yield Select(
+        source_value = self.source if self.source in ("local", "server") else "local"
+        source_select = Select(
             [("Local", "local"), ("Server", "server")],
             id="mcp-rail-source",
             allow_blank=False,
-            value=self.source if self.source in ("local", "server") else "local",
+            value=source_value,
         )
+        # T9 (P4) mount-echo guard for the SOURCE select -- per-INSTANCE,
+        # unlike the scope selects' rail-level `_displayed_scope_value`
+        # slots below, because this select's echo can be processed AFTER a
+        # newer compose() generation has already been scheduled (verified
+        # empirically: the destination-shell restore test's saved "server"
+        # source was silently reverted to "local" by exactly this race).
+        # The old `event.value != self.source` comparison alone can't catch
+        # it: by the time the echo is processed, `self.source` has moved on
+        # (e.g. a restored view state switched it to "server"), so the
+        # stale "local" echo looks like a genuine user change. A rail-level
+        # single slot would have the same hole across generations (each
+        # compose() would reset it while an older generation's echo is
+        # still queued); pinning the constructed value on the Select
+        # instance itself makes the guard track exactly the widget whose
+        # mount posted the echo.
+        source_select._mcp_mount_echo_value = source_value
+        yield source_select
         yield Static("Servers", classes="destination-section mcp-rail-heading")
         self._row_keys = [None] + [snap.server_key for snap in self.snapshots]
         all_row = Button(
@@ -319,6 +337,17 @@ class MCPRail(Vertical):
         select_id = event.select.id or ""
         if select_id == "mcp-rail-source":
             event.stop()
+            # T9 (P4): one-shot per-instance mount-echo guard -- see the
+            # comment on `_mcp_mount_echo_value` in compose(). The first
+            # Changed a Select instance ever posts is its constructor echo
+            # (a user can't interact before mount), so consuming at most
+            # one matching event per instance drops exactly the echo while
+            # a later genuine A -> B -> A round trip still dispatches.
+            echo_value = getattr(event.select, "_mcp_mount_echo_value", _ECHO_CONSUMED)
+            if echo_value is not _ECHO_CONSUMED:
+                event.select._mcp_mount_echo_value = _ECHO_CONSUMED
+                if event.value == echo_value:
+                    return
             if event.value in ("local", "server") and event.value != self.source:
                 self.post_message(self.SourceChanged(str(event.value)))
         elif select_id == "mcp-rail-scope-select":
