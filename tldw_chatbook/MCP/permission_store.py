@@ -51,16 +51,21 @@ here should need to change to accommodate them.
 """
 from __future__ import annotations
 
+import hashlib
 import json
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
 
+from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+
 SCHEMA_VERSION = 1
 STORE_STATES: tuple[str, ...] = ("allow", "ask", "deny")
 DEFAULT_GLOBAL = "ask"
+HIGH_RISK_TAGS = frozenset({"mutates", "process"})
 
 _DEFAULT_PROFILE_ID = "default"
 
@@ -276,3 +281,139 @@ class MCPPermissionStore:
         tool_entry["config_changed"] = True
         self.save(payload)
         return not already_set
+
+
+# -- effective-state resolution (pure; no store I/O) -------------------------
+#
+# Everything below operates on a plain payload dict (the shape `load()`
+# returns) and a `HubTool`. Nothing here reads or writes disk -- callers
+# fetch the payload once (e.g. via `MCPPermissionStore.load()`) and resolve
+# as many tools against it as they like.
+
+
+def definition_hash(description: str | None, input_schema: dict | None) -> str:
+    """Fingerprint a tool's advertised shape for the rug-pull guard.
+
+    Mirrors ``LocalControlService._approval_fingerprint``'s canonicalization
+    (``local_control_service.py``): sorted-key, compact-separator JSON,
+    sha256 hex digest.
+    """
+    canonical = json.dumps(
+        {"description": description or "", "inputSchema": input_schema or {}},
+        sort_keys=True,
+        default=str,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True)
+class EffectiveToolState:
+    """The resolved allow/ask/deny verdict for one tool, plus why.
+
+    Attributes:
+        state: One of ``STORE_STATES``.
+        origin: Which precedence level produced ``state`` before any
+            downgrade -- ``tool_override``, ``server_default``, or
+            ``global_default``.
+        config_changed: True when an explicit tool-level ``allow`` was
+            downgraded to ``ask`` by the rug-pull guard (hash mismatch
+            and/or a persisted ``config_changed`` marker).
+        risk_floored: True when an *inherited* ``allow`` was downgraded to
+            ``ask`` by the high-risk floor.
+    """
+
+    state: str
+    origin: str
+    config_changed: bool = False
+    risk_floored: bool = False
+
+    @property
+    def ui_label(self) -> str:
+        return {"allow": "Allow", "ask": "Ask", "deny": "Off"}[self.state]
+
+
+def resolve_effective_state(payload: dict[str, Any], tool: HubTool) -> EffectiveToolState:
+    """Resolve ``tool``'s effective permission state from ``payload``.
+
+    Precedence: an explicit tool-level entry (``tool_override``) beats the
+    owning server's ``default`` (``server_default``), which beats the
+    profile's ``global_default`` (``global_default``); absence at each level
+    means "inherit from the next level down".
+
+    Two downgrades apply on top of precedence, in order:
+
+    1. Rug-pull guard: an explicit tool-level ``allow`` is downgraded to
+       ``ask`` (``config_changed=True``) when the live tool's current
+       ``definition_hash`` no longer matches the one stored alongside the
+       ``allow``, or when the entry carries a persisted ``config_changed``
+       marker -- regardless of whether the hash happens to match again.
+       Only a fresh ``set_tool_state`` (Task 1) clears the marker.
+    2. High-risk floor: an *inherited* ``allow`` (origin ``server_default``
+       or ``global_default``) is downgraded to ``ask``
+       (``risk_floored=True``) when the tool's tags intersect
+       ``HIGH_RISK_TAGS``. Explicit tool-level ``allow`` is never floored --
+       the operator opted in with full knowledge of the specific tool.
+    """
+    profile = payload.get("profiles", {}).get(_DEFAULT_PROFILE_ID, {})
+    servers = profile.get("servers", {})
+    server_entry = servers.get(tool.server_key) or {}
+    tools = server_entry.get("tools") or {}
+    tool_entry = tools.get(tool.name)
+
+    config_changed = False
+
+    if tool_entry is not None and tool_entry.get("state") in STORE_STATES:
+        origin = "tool_override"
+        state = tool_entry["state"]
+        if state == "allow":
+            current_hash = definition_hash(tool.description, tool.input_schema)
+            stale_hash = tool_entry.get("definition_hash") != current_hash
+            marked_changed = bool(tool_entry.get("config_changed"))
+            if stale_hash or marked_changed:
+                state = "ask"
+                config_changed = True
+    else:
+        server_default = server_entry.get("default")
+        if server_default in STORE_STATES:
+            origin = "server_default"
+            state = server_default
+        else:
+            origin = "global_default"
+            state = profile.get("global_default", DEFAULT_GLOBAL)
+
+    risk_floored = False
+    if origin != "tool_override" and state == "allow" and set(tool.tags) & HIGH_RISK_TAGS:
+        state = "ask"
+        risk_floored = True
+
+    return EffectiveToolState(
+        state=state,
+        origin=origin,
+        config_changed=config_changed,
+        risk_floored=risk_floored,
+    )
+
+
+_CYCLE_UI_STATES: dict[str | None, str | None] = {
+    None: "allow",
+    "allow": "ask",
+    "ask": "deny",
+    "deny": None,
+}
+
+_CYCLE_GLOBAL_STATES: dict[str, str] = {
+    "allow": "ask",
+    "ask": "deny",
+    "deny": "allow",
+}
+
+
+def cycle_ui_state(current: str | None) -> str | None:
+    """Advance a per-server/per-tool state one Space-press: Inherit->Allow->Ask->Off->Inherit."""
+    return _CYCLE_UI_STATES[current]
+
+
+def cycle_global(current: str) -> str:
+    """Advance the global default one Space-press: Allow->Ask->Off->Allow (no Inherit)."""
+    return _CYCLE_GLOBAL_STATES[current]
