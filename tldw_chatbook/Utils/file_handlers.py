@@ -55,11 +55,13 @@ class FileHandler(ABC):
 
 class ImageFileHandler(FileHandler):
     """Handler for image files - maintains existing functionality."""
-    
-    SUPPORTED_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tiff', '.tif', '.svg'}
-    
+
     def can_handle(self, file_path: Path) -> bool:
-        return file_path.suffix.lower() in self.SUPPORTED_EXTENSIONS
+        # Lazy import: attachment_core imports this module at module level
+        # (same cycle-avoidance as the lazy import in process() below).
+        from ..Chat.attachment_core import supported_image_formats
+
+        return file_path.suffix.lower() in supported_image_formats()
     
     async def process(self, file_path: Path) -> ProcessedFile:
         """Process image file for attachment."""

@@ -498,6 +498,7 @@ class LocalMCPStoreState:
     governance_rules: tuple[LocalGovernanceRule, ...] = ()
     approval_requests: tuple[LocalApprovalRequest, ...] = ()
     runtime_activity: tuple[LocalRuntimeActivity, ...] = ()
+    profile_runtime_state: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -509,6 +510,7 @@ class LocalMCPStoreState:
             "governance_rules": [rule.to_dict() for rule in self.governance_rules],
             "approval_requests": [request.to_dict() for request in self.approval_requests],
             "runtime_activity": [activity.to_dict() for activity in self.runtime_activity],
+            "profile_runtime_state": dict(self.profile_runtime_state),
         }
 
     @classmethod
@@ -561,12 +563,23 @@ class LocalMCPStoreState:
             if isinstance(snapshots_raw, Mapping)
             else {}
         )
+        runtime_state_raw = data.get("profile_runtime_state")
+        profile_runtime_state = (
+            {
+                str(profile_id): dict(record)
+                for profile_id, record in runtime_state_raw.items()
+                if str(profile_id).strip() and isinstance(record, Mapping)
+            }
+            if isinstance(runtime_state_raw, Mapping)
+            else {}
+        )
         return cls(
             profiles=profiles,
             discovery_snapshots=discovery_snapshots,
             governance_rules=governance_rules,
             approval_requests=approval_requests,
             runtime_activity=runtime_activity,
+            profile_runtime_state=profile_runtime_state,
         )
 
 
@@ -624,8 +637,10 @@ class LocalMCPStore:
         profiles = [item for item in current.profiles if item.profile_id != saved_profile.profile_id]
         profiles.append(saved_profile)
         discovery_snapshots = dict(current.discovery_snapshots)
+        profile_runtime_state = dict(current.profile_runtime_state)
         if existing_profile and self._launch_config_changed(existing_profile, saved_profile):
             discovery_snapshots.pop(saved_profile.profile_id, None)
+            profile_runtime_state.pop(saved_profile.profile_id, None)
         self.save(
             LocalMCPStoreState(
                 profiles=tuple(profiles),
@@ -633,6 +648,7 @@ class LocalMCPStore:
                 governance_rules=current.governance_rules,
                 approval_requests=current.approval_requests,
                 runtime_activity=current.runtime_activity,
+                profile_runtime_state=profile_runtime_state,
             )
         )
         return saved_profile
@@ -645,6 +661,8 @@ class LocalMCPStore:
             return False
         discovery_snapshots = dict(current.discovery_snapshots)
         discovery_snapshots.pop(normalized_profile_id, None)
+        profile_runtime_state = dict(current.profile_runtime_state)
+        profile_runtime_state.pop(normalized_profile_id, None)
         self.save(
             LocalMCPStoreState(
                 profiles=tuple(profiles),
@@ -652,6 +670,7 @@ class LocalMCPStore:
                 governance_rules=current.governance_rules,
                 approval_requests=current.approval_requests,
                 runtime_activity=current.runtime_activity,
+                profile_runtime_state=profile_runtime_state,
             )
         )
         return True
@@ -672,12 +691,57 @@ class LocalMCPStore:
                 governance_rules=current.governance_rules,
                 approval_requests=current.approval_requests,
                 runtime_activity=current.runtime_activity,
+                profile_runtime_state=current.profile_runtime_state,
             )
         )
         return discovery_snapshots[normalized_profile_id]
 
     def get_discovery_snapshot(self, profile_id: str) -> dict[str, Any] | None:
         return self.load().discovery_snapshots.get(_text(profile_id))
+
+    def get_profile_runtime_state(self, profile_id: str) -> dict[str, Any] | None:
+        """Return the persisted lifecycle-attempt record for a profile.
+
+        Args:
+            profile_id: Stable local profile identifier.
+
+        Returns:
+            The stored record dict, or None if no attempt has been recorded.
+        """
+        state = self.load()
+        record = state.profile_runtime_state.get(_text(profile_id))
+        return dict(record) if record is not None else None
+
+    def save_profile_runtime_state(self, profile_id: str, record: Mapping[str, Any]) -> dict[str, Any]:
+        """Persist the lifecycle-attempt record for a profile (last-write-wins).
+
+        Args:
+            profile_id: Stable local profile identifier.
+            record: Attempt record (see module convention: last_attempt_at,
+                last_action, ok, last_ok_at, last_error).
+
+        Returns:
+            The stored record dict.
+        """
+        normalized_profile_id = _require_non_empty_field(
+            profile_id,
+            "profile_id",
+            "Local MCP profile runtime state",
+        )
+        current = self.load()
+        profile_runtime_state = dict(current.profile_runtime_state)
+        profile_runtime_state[normalized_profile_id] = dict(record)
+        self.save(
+            LocalMCPStoreState(
+                profiles=current.profiles,
+                discovery_snapshots=current.discovery_snapshots,
+                governance_rules=current.governance_rules,
+                approval_requests=current.approval_requests,
+                runtime_activity=current.runtime_activity,
+                profile_runtime_state=profile_runtime_state,
+            )
+        )
+        return profile_runtime_state[normalized_profile_id]
 
     def list_governance_rules(self) -> list[LocalGovernanceRule]:
         return list(self.load().governance_rules)
@@ -708,6 +772,7 @@ class LocalMCPStore:
                 governance_rules=tuple(rules),
                 approval_requests=current.approval_requests,
                 runtime_activity=current.runtime_activity,
+                profile_runtime_state=current.profile_runtime_state,
             )
         )
         return saved_rule
@@ -727,6 +792,7 @@ class LocalMCPStore:
                 governance_rules=tuple(rules),
                 approval_requests=current.approval_requests,
                 runtime_activity=current.runtime_activity,
+                profile_runtime_state=current.profile_runtime_state,
             )
         )
         return True
@@ -777,6 +843,7 @@ class LocalMCPStore:
                 governance_rules=current.governance_rules,
                 approval_requests=tuple(approval_requests),
                 runtime_activity=current.runtime_activity,
+                profile_runtime_state=current.profile_runtime_state,
             )
         )
         return saved_request
@@ -819,6 +886,7 @@ class LocalMCPStore:
                 governance_rules=current.governance_rules,
                 approval_requests=tuple(approval_requests),
                 runtime_activity=current.runtime_activity,
+                profile_runtime_state=current.profile_runtime_state,
             )
         )
         return resolved_request
@@ -842,6 +910,7 @@ class LocalMCPStore:
                 governance_rules=current.governance_rules,
                 approval_requests=tuple(approval_requests),
                 runtime_activity=current.runtime_activity,
+                profile_runtime_state=current.profile_runtime_state,
             )
         )
         return True
@@ -891,6 +960,7 @@ class LocalMCPStore:
                 governance_rules=current.governance_rules,
                 approval_requests=current.approval_requests,
                 runtime_activity=tuple(runtime_activity),
+                profile_runtime_state=current.profile_runtime_state,
             )
         )
         return saved_entry.to_dict()

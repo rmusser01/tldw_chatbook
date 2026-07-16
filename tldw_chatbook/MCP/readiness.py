@@ -10,6 +10,7 @@ module, Task 2).
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import re
 from collections import Counter
@@ -213,6 +214,36 @@ def aggregate_summary(snapshots: list[ReadinessSnapshot]) -> str:
     return f"{ready} of {total} servers ready{suffix}."
 
 
+# Task 11: severity order for the overview's aggregate status badge --
+# most-severe-first, same style as REASON_PRIORITY above. States that share
+# a STATE_CSS_CLASSES bucket (NEEDS_SETUP/NO_TOOLS/STALE all map to
+# "mcp-status-warning") don't need a meaningful order relative to each
+# other, only relative to NEEDS_ATTENTION (error) / CHECKING (info) /
+# READY (ready).
+STATE_SEVERITY: tuple[ReadinessState, ...] = (
+    ReadinessState.NEEDS_ATTENTION,
+    ReadinessState.NEEDS_SETUP,
+    ReadinessState.NO_TOOLS,
+    ReadinessState.STALE,
+    ReadinessState.CHECKING,
+    ReadinessState.READY,
+)
+
+
+def worst_state(snapshots: list[ReadinessSnapshot]) -> ReadinessState:
+    """Return the most severe state present across `snapshots`.
+
+    Used to color the overview's aggregate summary badge. An empty list (no
+    servers configured yet) and an all-READY list both resolve to READY --
+    there is nothing to warn about in either case.
+    """
+    present = {snap.state for snap in snapshots}
+    for state in STATE_SEVERITY:
+        if state in present:
+            return state
+    return ReadinessState.READY
+
+
 BUILTIN_SERVER_KEY = "builtin:tldw_chatbook"
 BUILTIN_CLIENT_SNIPPET = (
     '{\n'
@@ -248,6 +279,19 @@ def _snapshot_counts(snapshot: Mapping[str, Any] | None) -> tuple[int | None, in
     )
 
 
+# Task 11: human-facing copy for the local-profile Auth column/detail line --
+# "env (N)" read as control-plane shorthand rather than a sentence a user
+# would say out loud; every surface (overview table, rail tooltip, detail
+# body) reads `snapshot.auth_display` so the plural form is derived once
+# here rather than re-humanized ad hoc at each call site.
+def _env_auth_display(placeholder_count: int) -> str:
+    if placeholder_count == 0:
+        return "none"
+    if placeholder_count == 1:
+        return "1 env var"
+    return f"{placeholder_count} env vars"
+
+
 def local_profile_readiness(
     record: dict[str, Any],
     *,
@@ -255,15 +299,28 @@ def local_profile_readiness(
 ) -> ReadinessSnapshot:
     """Derive readiness for one LocalMCPControlService.get_external_servers() item.
 
-    Durable signals: discovery_snapshot presence and env placeholders vs the
-    environment. Ephemeral: is_connected. needs_attention/checking/stale-by-age
-    require persisted attempt tracking that does not exist yet (Phase 2+).
+    Durable signals: discovery_snapshot presence, env placeholders vs the
+    environment, and persisted lifecycle attempt state (`record["runtime_state"]`,
+    Task 2's `LocalMCPStore` shape). Ephemeral: is_connected.
+
+    When the persisted attempt state records a failed connect/discovery
+    attempt (`runtime_state["ok"] is False`), that failure is more specific
+    than the generic "not currently connected" signal, so it takes the
+    reason slot instead of `RUNTIME_UNAVAILABLE` -- the stored `last_error`
+    becomes the display message. A successful attempt
+    (`runtime_state["ok"] is True`) doesn't change derivation but surfaces
+    `last_ok_at` in `detail` for the inspector.
     """
     env = os.environ if environ is None else environ
     profile_id = str(record.get("profile_id") or "unknown")
     placeholders = dict(record.get("env_placeholders") or {})
     snapshot = record.get("discovery_snapshot")
     is_connected = bool(record.get("is_connected"))
+
+    runtime_state = record.get("runtime_state") or {}
+    runtime_error: str | None = None
+    if isinstance(runtime_state, dict) and runtime_state.get("ok") is False:
+        runtime_error = str(runtime_state.get("last_error") or "").strip() or None
 
     reasons: list[ReasonCode] = []
     missing = [name for name in env_placeholder_names(placeholders) if name not in env]
@@ -275,13 +332,19 @@ def local_profile_readiness(
     else:
         if (tool_count or 0) == 0 and (resource_count or 0) == 0 and (prompt_count or 0) == 0:
             reasons.append(ReasonCode.NO_TOOLS_RETURNED)
-        if not is_connected:
+        # A recorded failure is strictly more informative than "not
+        # connected" -- don't add the generic reason on top of it.
+        if not is_connected and not runtime_error:
             reasons.append(ReasonCode.RUNTIME_UNAVAILABLE)
+    if runtime_error:
+        reasons.append(ReasonCode.DISCOVERY_FAILED)
 
     reason_tuple = tuple(reasons)
     state = resolve_state(reason_tuple)
     if missing:
         message = f"Missing environment variables: {', '.join(missing)}."
+    elif runtime_error:
+        message = runtime_error
     elif snapshot is None:
         message = "Not validated yet — connect or test to discover tools."
     elif not is_connected:
@@ -300,7 +363,7 @@ def local_profile_readiness(
         resource_count=resource_count,
         prompt_count=prompt_count,
         transport="stdio",
-        auth_display=f"env ({len(placeholders)})" if placeholders else "none",
+        auth_display=_env_auth_display(len(placeholders)),
         scope_display="Personal",
         is_connected=is_connected,
         detail={
@@ -309,6 +372,7 @@ def local_profile_readiness(
             "env_placeholders": placeholders,
             "missing_env": missing,
             "discovery_snapshot": snapshot,
+            "last_ok_at": runtime_state.get("last_ok_at") if isinstance(runtime_state, dict) else None,
         },
     )
 
@@ -453,9 +517,51 @@ def builtin_readiness(
         auth_display="none",
         scope_display="—",
         detail={
+            # Task 10: stored directly rather than left for callers to
+            # re-derive from `state is not NEEDS_SETUP` -- today those are
+            # equivalent (NOT_CONFIGURED is the only reason this function
+            # ever attaches), but the detail toggles UI needs the raw
+            # enabled flag decoupled from readiness-state classification so
+            # a future reason code reusing NEEDS_SETUP for the built-in
+            # server (e.g. an invalid expose combination) can't silently
+            # flip the "Enabled" checkbox's displayed value.
+            "enabled": enabled,
             "expose_tools": expose_tools,
             "expose_resources": expose_resources,
             "expose_prompts": expose_prompts,
             "client_snippet": BUILTIN_CLIENT_SNIPPET,
         },
+    )
+
+
+STATE_CSS_CLASSES: dict[ReadinessState, str] = {
+    ReadinessState.READY: "mcp-status-ready",
+    ReadinessState.CHECKING: "mcp-status-info",
+    ReadinessState.NEEDS_SETUP: "mcp-status-warning",
+    ReadinessState.NEEDS_ATTENTION: "mcp-status-error",
+    ReadinessState.NO_TOOLS: "mcp-status-warning",
+    ReadinessState.STALE: "mcp-status-warning",
+}
+
+
+def as_checking(snapshot: ReadinessSnapshot, action: str) -> ReadinessSnapshot:
+    """Return a copy of a snapshot marked as an in-flight lifecycle check.
+
+    Used by the Hub UI to optimistically render a "Working — <action>…"
+    state the moment a lifecycle action (connect, refresh, validate) is
+    dispatched, before the worker's result replaces it with a freshly
+    derived snapshot.
+
+    Args:
+        snapshot: The snapshot being operated on.
+        action: Human verb for the in-flight operation (e.g. "connect").
+
+    Returns:
+        A frozen copy with state=CHECKING, no reasons, and a working message.
+    """
+    return dataclasses.replace(
+        snapshot,
+        state=ReadinessState.CHECKING,
+        reasons=(),
+        message=f"Working — {action}…",
     )

@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from textual.app import App
+from textual.app import App, ComposeResult
 from textual.widgets import Button, Checkbox, Select, Static
 
 from Tests.UI.test_screen_navigation import _build_test_app
@@ -21,8 +21,10 @@ from tldw_chatbook.MCP.unified_control_models import ConfiguredServerTarget
 from tldw_chatbook.runtime_policy.types import PolicyDeniedError
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
 from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCPRail
+from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
 from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCPWorkbench
 from tldw_chatbook.UI.MCP_Modules.unified_mcp_panel import UnifiedMCPPanel
+from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.UI.Screens.artifacts_screen import ArtifactsScreen
 from tldw_chatbook.UI.Screens.acp_screen import ACPScreen
 from tldw_chatbook.UI.Screens.destination_recovery import DestinationRecoveryState
@@ -2529,6 +2531,170 @@ async def test_mcp_destination_runtime_refresh_uses_exclusive_worker(monkeypatch
     assert scheduled["kwargs"]["name"] == "mcp-screen-runtime-refresh"
     assert scheduled["kwargs"]["group"] == "mcp-screen-runtime-refresh"
     assert scheduled["kwargs"]["exclusive"] is True
+
+
+def test_mcp_screen_bindings_include_add_and_refresh_shortcuts():
+    """T13: `a`/`r` map to the documented actions, both hidden from the
+    Footer widget's own binding list (`show=False`) -- the Phase 2 footer
+    shortcut hint (`MCP_SHORTCUTS`) documents them instead."""
+    bindings = {b.key: b for b in MCPScreen.BINDINGS}
+    assert bindings["a"].action == "mcp_add_server"
+    assert bindings["a"].show is False
+    assert bindings["r"].action == "mcp_refresh"
+    assert bindings["r"].show is False
+
+
+def test_mcp_destination_manual_refresh_uses_exclusive_worker(monkeypatch):
+    """T13: the `r` keybinding reloads the workbench through the SAME
+    exclusive worker group `handle_runtime_backend_changed()` uses, so a
+    manual refresh and a runtime-triggered one cannot run concurrently.
+    """
+    app = _build_test_app()
+    screen = MCPScreen(app)
+    scheduled = {}
+
+    class FakeWorkbench:
+        async def reload(self) -> None:
+            return None
+
+    def capture_worker(coro, **kwargs):
+        scheduled["kwargs"] = kwargs
+        coro.close()
+
+    screen.workbench = FakeWorkbench()
+    monkeypatch.setattr(screen, "run_worker", capture_worker)
+
+    screen.action_mcp_refresh()
+
+    assert scheduled["kwargs"]["name"] == "mcp-screen-manual-refresh"
+    assert scheduled["kwargs"]["group"] == "mcp-screen-runtime-refresh"
+    assert scheduled["kwargs"]["exclusive"] is True
+
+
+def test_mcp_destination_add_server_binding_switches_mode_and_schedules_worker(monkeypatch):
+    """T13: the `a` keybinding switches to Servers mode and dispatches
+    `MCPWorkbench.open_add_server_form()` via a named, exclusive worker.
+    The form's own T9 gate/notify behavior when server-source mutations are
+    unavailable is unit-tested directly against
+    `MCPWorkbench.open_add_server_form()` in test_mcp_workbench.py.
+    """
+    app = _build_test_app()
+    screen = MCPScreen(app)
+    scheduled = {}
+
+    class FakeWorkbench:
+        def __init__(self) -> None:
+            self.active_mode = "tools"
+            self.mode_calls: list[str] = []
+
+        def set_mode(self, mode: str) -> None:
+            self.mode_calls.append(mode)
+            self.active_mode = mode
+
+        async def open_add_server_form(self) -> None:
+            return None
+
+    def capture_worker(coro, **kwargs):
+        scheduled["kwargs"] = kwargs
+        coro.close()
+
+    screen.workbench = FakeWorkbench()
+    monkeypatch.setattr(screen, "run_worker", capture_worker)
+
+    screen.action_mcp_add_server()
+
+    assert screen.workbench.mode_calls == ["servers"]
+    assert scheduled["kwargs"]["name"] == "mcp-screen-add-server"
+    assert scheduled["kwargs"]["group"] == "mcp-screen-add-server"
+    assert scheduled["kwargs"]["exclusive"] is True
+
+
+@pytest.mark.asyncio
+async def test_mcp_destination_add_server_binding_opens_real_form_end_to_end():
+    """T13: end-to-end (real `MCPScreen` + `MCPWorkbench`, no fakes) --
+    pressing the `a` keybinding's action switches to Servers mode and opens
+    the local-source Add-server form, mounting `#mcp-servers-form` visibly.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "mcp")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#mcp-hub-rail")
+        # Start on a non-servers mode so the binding's own mode switch is observable.
+        screen.action_mcp_mode("tools")
+        await pilot.pause()
+        assert screen.workbench.active_mode == "tools"
+
+        screen.action_mcp_add_server()
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert screen.workbench.active_mode == "servers"
+        canvas = screen.query_one(MCPServersMode)
+        assert canvas.query_one("#mcp-servers-form").display is True
+
+
+class MCPFooterHarness(App):
+    """Mirrors `test_console_workbench_contract.py`'s `ConsoleFooterHarness`
+    for the MCP destination: composes a real `AppFooterStatus` alongside the
+    pushed screen so `MCPScreen._register_footer_shortcuts()`'s
+    `self.app.query_one(AppFooterStatus)` resolves."""
+
+    def __init__(self, app_instance):
+        super().__init__()
+        self.app_instance = app_instance
+
+    def compose(self) -> ComposeResult:
+        yield AppFooterStatus(id="app-footer-status")
+
+    async def on_mount(self) -> None:
+        await self.push_screen(MCPScreen(self.app_instance))
+
+
+@pytest.mark.asyncio
+async def test_mcp_destination_registers_footer_workbench_shortcuts():
+    """T13: mounting the MCP destination registers its Phase 2 footer
+    shortcut hint (source="mcp") -- same contract Console established
+    (`test_console_registers_footer_workbench_shortcuts`).
+    """
+    app = _build_test_app()
+    host = MCPFooterHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        screen = host.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, "#mcp-shell")
+        footer = host.query_one(AppFooterStatus)
+
+        assert footer.shortcut_text == "1-4 mode | a add server | r refresh"
+
+
+@pytest.mark.asyncio
+async def test_mcp_destination_footer_shortcuts_clear_and_restore_across_suspend_resume():
+    """T13: shortcuts clear when another screen suspends the MCP destination
+    (e.g. the mcpServers-import file picker pushed on top) and re-register
+    once that overlay pops back to the MCP screen.
+    """
+    from textual.screen import Screen as TextualScreen
+
+    app = _build_test_app()
+    host = MCPFooterHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        screen = host.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, "#mcp-shell")
+        footer = host.query_one(AppFooterStatus)
+        assert footer.shortcut_text == "1-4 mode | a add server | r refresh"
+
+        overlay = TextualScreen()
+        await host.push_screen(overlay)
+        await pilot.pause()
+        assert footer.shortcut_text == AppFooterStatus.DEFAULT_SHORTCUT_TEXT
+
+        await host.pop_screen()
+        await pilot.pause()
+        assert footer.shortcut_text == "1-4 mode | a add server | r refresh"
 
 
 def test_skills_screen_public_initializer_is_typed():

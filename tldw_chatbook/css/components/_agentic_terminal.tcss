@@ -4314,7 +4314,13 @@ ListItem.personas-library-row.is-active.-highlight {
     min-width: 28;
 }
 
-#mcp-overview-summary,
+/* A5: the row wrapping the aggregate summary's colored glyph + neutral
+   sentence (kept in lockstep with the width rules in
+   MCPServersMode.DEFAULT_CSS, mcp_servers_mode.py -- required in EVERY
+   harness, not just the bundled one: without an explicit width split, both
+   Static children of the Horizontal default to 1fr/full-width and the
+   second one renders entirely off-screen). */
+#mcp-overview-summary-row,
 #mcp-detail-title {
     height: 1;
     min-height: 1;
@@ -4343,4 +4349,75 @@ ListItem.personas-library-row.is-active.-highlight {
     background: $ds-surface-raised;
     color: $ds-text-muted;
     text-style: none;
+}
+
+/* A3: same Button center-default lesson as Button.mcp-rail-row
+   (MCPRail.DEFAULT_CSS) and Button.mcp-callout below -- left-align the
+   inspector's action stack. Kept in lockstep with the baseline copy in
+   MCPInspector.DEFAULT_CSS (mcp_inspector.py). */
+Button.mcp-inspector-action {
+    text-align: left;
+    content-align: left middle;
+}
+
+/* --- MCP Hub Phase 2 ------------------------------------------------- */
+.mcp-status-ready { color: $ds-status-ready; }
+.mcp-status-warning { color: $ds-status-warning; }
+.mcp-status-error { color: $ds-status-error; }
+.mcp-status-info { color: $ds-status-info; }
+
+.ds-info-callout {
+    border: round $ds-status-info;
+    background: $ds-status-info 10%;
+    padding: 0 1;
+    height: auto;
+}
+
+Button.mcp-callout {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    border: none;
+    /* Button defaults BOTH text-align AND content-align to center (see
+       Textual's own Button.DEFAULT_CSS, and the same lesson documented on
+       Button.mcp-rail-row in MCPRail.DEFAULT_CSS) -- text-align alone does
+       not left-align a one-line Button label; without content-align the
+       whole callout line still rendered centered under the table. */
+    text-align: left;
+    content-align: left middle;
+}
+
+#mcp-servers-form {
+    height: auto;
+    min-height: 0;
+}
+
+/* Kept in lockstep with the baseline copy in MCPServersMode.DEFAULT_CSS
+   (mcp_servers_mode.py) -- without an explicit height override here too,
+   Textual's Vertical default (height: 1fr) expands this container to fill
+   the rest of #mcp-detail-scroll, pushing its sibling "Copy client config"
+   Button roughly 800px below the built-in enable/expose checkboxes it
+   should sit directly under. QA defect 1, mcp-hub-phase2-2026-07 round. */
+#mcp-detail-builtin-toggles {
+    height: auto;
+    min-height: 0;
+}
+
+#mcp-detail-toolbar Button {
+    height: 1;
+    min-height: 1;
+    border: none;
+}
+
+/* A1: kept in lockstep with the baseline copy in MCPImportPanel.DEFAULT_CSS
+   (mcp_profile_form.py) -- without an explicit height override here too,
+   Textual's Vertical default (height: 1fr) expands this container to
+   consume whatever vertical space the panel has left, stranding the
+   sibling "Import N servers"/Cancel action row far below the preview list
+   on a real terminal window (same bug class as #mcp-detail-builtin-toggles,
+   QA defect 1, mcp-hub-phase2-2026-07 round). */
+#mcp-import-list {
+    height: auto;
+    min-height: 0;
 }

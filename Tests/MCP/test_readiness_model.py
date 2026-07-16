@@ -6,11 +6,13 @@ from tldw_chatbook.MCP.readiness import (
     REASON_PRIORITY,
     REASON_TO_ACTIONS,
     REASON_TO_STATE,
+    STATE_CSS_CLASSES,
     HubAction,
     ReadinessSnapshot,
     ReadinessState,
     ReasonCode,
     aggregate_summary,
+    as_checking,
     resolve_state,
 )
 
@@ -92,3 +94,17 @@ def test_aggregate_summary_counts_states():
     assert "2 of 4" in summary
     assert "needs setup" in summary
     assert aggregate_summary([]) == "No MCP servers configured yet."
+
+
+def test_state_css_classes_complete():
+    assert set(STATE_CSS_CLASSES) == set(ReadinessState)
+    assert all(v.startswith("mcp-status-") for v in STATE_CSS_CLASSES.values())
+
+
+def test_as_checking_replaces_state_and_message():
+    snap = _snap(ReadinessState.READY)
+    checking = as_checking(snap, "connect")
+    assert checking.state is ReadinessState.CHECKING
+    assert checking.reasons == ()
+    assert "connect" in checking.message
+    assert checking.server_key == snap.server_key

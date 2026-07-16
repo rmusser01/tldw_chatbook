@@ -8,7 +8,9 @@ from types import SimpleNamespace
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.css.query import NoMatches
 from textual.widgets import Button
+from textual.widgets import Collapsible
 from textual.widgets import Static
 
 from Tests.UI.test_destination_shells import (
@@ -1244,7 +1246,7 @@ async def test_operational_loading_states_preserve_workbench_geometry(
         )
 
 
-def _assert_advanced_run_reachable(screen) -> None:
+async def _assert_advanced_run_reachable(screen, pilot) -> None:
     """The Advanced "Run Action" button is mounted and (when actions exist) focusable.
 
     #mcp-adv-run is the direct successor of the retired
@@ -1266,7 +1268,20 @@ def _assert_advanced_run_reachable(screen) -> None:
     regression, it is `MCPInspector._refresh_advanced_actions()` correctly
     reflecting the loaded section instead of the stale action set the mount
     happened to compute before the section finished loading.
+
+    T12: the whole Advanced block now lives inside a `Collapsible` that
+    defaults to collapsed (`display: none` on its contents), so this expands
+    it first when needed -- this check's actual subject (does the button get
+    lost to overflow/CSS once the pane IS open) is unchanged by that; it
+    would otherwise trivially fail on every run against the new default.
     """
+    try:
+        collapsible = screen.query_one("#mcp-adv-collapsible", Collapsible)
+    except NoMatches:
+        collapsible = None
+    if collapsible is not None and collapsible.collapsed:
+        collapsible.collapsed = False
+        await pilot.pause()
     adv_run = screen.query_one("#mcp-adv-run", Button)
     assert _is_effectively_displayed(adv_run), "#mcp-adv-run is not displayed"
     if not adv_run.disabled:
@@ -1299,7 +1314,7 @@ async def test_mcp_uses_visible_server_detail_readiness_layout_without_overflow(
             height=42,
             min_pane_rows=30,
         )
-        _assert_advanced_run_reachable(screen)
+        await _assert_advanced_run_reachable(screen, pilot)
 
 
 @pytest.mark.asyncio
@@ -1325,7 +1340,7 @@ async def test_mcp_unavailable_or_local_default_state_keeps_workbench_geometry()
             actions=("#mcp-rail-row-0",),
             height=42,
         )
-        _assert_advanced_run_reachable(screen)
+        await _assert_advanced_run_reachable(screen, pilot)
         _assert_marker_inside_container(
             screen,
             "#mcp-overview-summary",

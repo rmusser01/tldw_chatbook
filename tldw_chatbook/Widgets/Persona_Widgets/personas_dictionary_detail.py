@@ -76,6 +76,61 @@ class DictionarySettingsEdited(Message):
         self.is_dirty = is_dirty
 
 
+class DictionaryVersionViewRequested(Message):
+    """Request to load and display a read-only snapshot of a prior version."""
+
+    def __init__(self, revision: int) -> None:
+        """Initialize the message.
+
+        Args:
+            revision: The version number whose snapshot should be shown.
+        """
+        super().__init__()
+        self.revision = revision
+
+
+class DictionaryVersionRevertRequested(Message):
+    """Request to revert the dictionary's current state to a prior version."""
+
+    def __init__(self, revision: int) -> None:
+        """Initialize the message.
+
+        Args:
+            revision: The version number to restore as the current version.
+        """
+        super().__init__()
+        self.revision = revision
+
+
+class DictionaryExportRequested(Message):
+    """Request to export the selected dictionary to a file."""
+
+    def __init__(self, fmt: str) -> None:
+        """Initialize the message.
+
+        Args:
+            fmt: The export format, either ``"json"`` or ``"markdown"``.
+        """
+        super().__init__()
+        self.fmt = fmt
+
+
+class DictionaryAttachRequested(Message):
+    """Request the attach-to-conversation picker for the current dictionary."""
+
+
+class DictionaryDetachRequested(Message):
+    """Detach the current dictionary from one conversation.
+
+    Args:
+        conversation_id: The conversation to detach from (string id).
+    """
+
+    def __init__(self, conversation_id: str) -> None:
+        super().__init__()
+        self.conversation_id = conversation_id
+
+
 class PersonasDictionaryDetailWidget(Vertical):
     """Entries + Settings tabs for one dictionary. Emits intents; owns no I/O."""
 
@@ -106,6 +161,20 @@ class PersonasDictionaryDetailWidget(Vertical):
         height: auto;
         max-height: 5;
     }
+    PersonasDictionaryDetailWidget #personas-dict-stats-body {
+        height: auto;
+    }
+    PersonasDictionaryDetailWidget #personas-dict-versions-table {
+        height: auto;
+        max-height: 8;
+    }
+    PersonasDictionaryDetailWidget #personas-dict-version-snapshot {
+        height: auto;
+    }
+    PersonasDictionaryDetailWidget #personas-dict-attachments-table {
+        height: auto;
+        max-height: 8;
+    }
     """
 
     def __init__(self, **kwargs: Any) -> None:
@@ -114,6 +183,7 @@ class PersonasDictionaryDetailWidget(Vertical):
         self._loaded_settings: dict | None = None  # last-loaded settings snapshot; dirty = value diff
         self._last_dirty_sent: bool = False  # last dirty state posted via DictionarySettingsEdited
         self._validation_findings: list = []  # index-aligned with the validation OptionList's options
+        self._attachment_rows: list[dict] = []
 
     # ----- compose -----
 
@@ -160,6 +230,24 @@ class PersonasDictionaryDetailWidget(Vertical):
                     yield Static("Enabled", markup=False)
                     yield Switch(value=True, id="personas-dict-enabled")
                 yield Button("Save settings", id="personas-dict-settings-save", classes="console-action-secondary")
+                with Horizontal(classes="personas-dict-form-row"):
+                    yield Button("Export JSON", id="personas-dict-export-json", classes="console-action-secondary")
+                    yield Button("Export Markdown", id="personas-dict-export-md", classes="console-action-secondary")
+                yield Static("Exports read the last saved state.", id="personas-dict-export-note", markup=False, classes="destination-purpose")
+            with TabPane("Stats", id="personas-dict-tab-stats"):
+                yield Static("", id="personas-dict-stats-body", markup=False)
+            with TabPane("Versions", id="personas-dict-tab-versions"):
+                yield DataTable(id="personas-dict-versions-table", cursor_type="row")
+                with Horizontal(classes="personas-dict-form-row"):
+                    yield Button("View", id="personas-dict-version-view", classes="console-action-secondary")
+                    yield Button("Revert…", id="personas-dict-version-revert", classes="console-action-secondary")
+                yield Static("", id="personas-dict-version-snapshot", markup=False)
+            with TabPane("Attachments", id="personas-dict-tab-attachments"):
+                yield Static("Not attached to any conversation yet.", id="personas-dict-attachments-empty", markup=False)
+                yield DataTable(id="personas-dict-attachments-table", cursor_type="row")
+                with Horizontal(classes="personas-dict-form-row"):
+                    yield Button("Attach to conversation…", id="personas-dict-attach-add", classes="console-action-secondary")
+                    yield Button("Detach", id="personas-dict-attach-detach", classes="console-action-secondary")
         yield Static("", id="personas-dict-status", markup=False)
 
     def on_mount(self) -> None:
@@ -170,6 +258,9 @@ class PersonasDictionaryDetailWidget(Vertical):
         """
         table = self.query_one("#personas-dict-entries-table", DataTable)
         table.add_columns("pattern", "replacement", "type", "prob %", "group", "pri")
+        versions_table = self.query_one("#personas-dict-versions-table", DataTable)
+        versions_table.add_columns("rev", "action", "name", "created")
+        self.query_one("#personas-dict-attachments-table", DataTable).add_columns("conversation", "id")
 
     # ----- public API -----
 
@@ -226,6 +317,105 @@ class PersonasDictionaryDetailWidget(Vertical):
         self.query_one("#personas-dict-entry-error", Static).update("")
         self._refresh_validation()
 
+    def load_statistics(self, stats: dict | None, entries: list[dict]) -> None:
+        """Render the Stats tab from service stats plus client-side enrichment.
+
+        Args:
+            stats: The service's get_statistics payload, or None when the
+                fetch failed (entries-only rendering with a note).
+            entries: The currently loaded API-named entry dicts.
+        """
+        literal = sum(1 for e in entries if (e.get("type") or "literal") != "regex")
+        regex = len(entries) - literal
+        disabled = sum(1 for e in entries if not e.get("enabled", True))
+        tokens = sum(len(str(e.get("replacement") or "").split()) for e in entries)
+        priorities = [int(e.get("priority") or 0) for e in entries] or [0]
+        lines = [
+            f"Entries: {stats.get('entry_count', len(entries)) if stats else len(entries)}"
+            + ("" if stats else "  (service stats unavailable)"),
+            f"Types — literal: {literal} · regex: {regex} · disabled: {disabled}",
+            f"Approx. replacement tokens: {tokens}",
+        ]
+        if any(priorities):
+            lines.append(f"Priority: {min(priorities)}..{max(priorities)}")
+        if stats is not None:
+            lines.append(f"Dictionary enabled: {'yes' if stats.get('enabled', True) else 'no'}")
+        self.query_one("#personas-dict-stats-body", Static).update("\n".join(lines))
+
+    def load_versions(self, summaries: list[dict]) -> None:
+        """Render version summaries (newest first, as the service returns them).
+
+        Args:
+            summaries: list_versions()["versions"] records (no snapshots).
+        """
+        table = self.query_one("#personas-dict-versions-table", DataTable)
+        table.clear()
+        for record in summaries:
+            table.add_row(
+                Text(str(record.get("revision"))),
+                Text(str(record.get("action") or "")),
+                Text(str(record.get("name") or "")),
+                Text(str(record.get("created_at") or "")),
+                key=str(record.get("revision")),
+            )
+        self.query_one("#personas-dict-version-snapshot", Static).update("")
+
+    def show_version_snapshot(self, record: dict) -> None:
+        """Render a get_version() record as a summary line block.
+
+        Args:
+            record: The full version record including ``snapshot``.
+        """
+        snapshot = record.get("snapshot") or {}
+        entries = snapshot.get("entries") or []
+        lines = [
+            f"rev {record.get('revision')} · {record.get('action')} · {record.get('created_at')}",
+            f"name: {snapshot.get('name')} · entries: {len(entries)}",
+            f"strategy: {snapshot.get('strategy')} · budget: {snapshot.get('max_tokens')}"
+            f" · enabled: {'yes' if snapshot.get('enabled', True) else 'no'}",
+        ]
+        if snapshot.get("description"):
+            lines.append(f"description: {str(snapshot.get('description'))[:80]}")
+        self.query_one("#personas-dict-version-snapshot", Static).update("\n".join(lines))
+
+    def _selected_revision(self) -> int | None:
+        table = self.query_one("#personas-dict-versions-table", DataTable)
+        if table.cursor_row is None or table.cursor_row < 0 or table.row_count == 0:
+            return None
+        try:
+            key = table.coordinate_to_cell_key((table.cursor_row, 0)).row_key
+            return int(str(key.value))
+        except Exception:
+            return None
+
+    def load_attachments(self, rows: list[dict]) -> None:
+        """Render the conversations this dictionary is attached to.
+
+        Args:
+            rows: ``{"conversation_id": str, "title": str}`` entries.
+        """
+        self._attachment_rows = list(rows)
+        table = self.query_one("#personas-dict-attachments-table", DataTable)
+        table.clear()
+        for row in self._attachment_rows:
+            table.add_row(
+                Text(str(row.get("title") or "(untitled)")),
+                Text(str(row.get("conversation_id") or "")),
+                key=str(row.get("conversation_id")),
+            )
+        empty = self.query_one("#personas-dict-attachments-empty", Static)
+        empty.display = not self._attachment_rows
+        table.display = bool(self._attachment_rows)
+
+    def _selected_attachment_id(self) -> str | None:
+        table = self.query_one("#personas-dict-attachments-table", DataTable)
+        if table.row_count == 0 or table.cursor_row is None or table.cursor_row < 0:
+            return None
+        try:
+            return str(table.coordinate_to_cell_key((table.cursor_row, 0)).row_key.value)
+        except Exception:
+            return None
+
     def _refresh_validation(self) -> None:
         """Recompute advisory findings for the current entry list.
 
@@ -276,7 +466,17 @@ class PersonasDictionaryDetailWidget(Vertical):
         self._loaded_settings = None
         self._last_dirty_sent = False
         self._validation_findings = []
+        self._attachment_rows = []
         self.query_one("#personas-dict-entries-table", DataTable).clear()
+        attachments_table = self.query_one("#personas-dict-attachments-table", DataTable)
+        attachments_table.clear()
+        attachments_table.display = False
+        self.query_one("#personas-dict-attachments-empty", Static).display = True
+        try:
+            panel = self.query_one("#personas-dict-validation", OptionList)
+        except Exception:
+            return
+        panel.clear_options()
 
     @property
     def selected_entry_id(self) -> str | None:
@@ -466,6 +666,42 @@ class PersonasDictionaryDetailWidget(Vertical):
         event.stop()
         self.post_message(DictionarySettingsSaveRequested(self.settings_payload()))
 
+    @on(Button.Pressed, "#personas-dict-export-json")
+    def _export_json_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(DictionaryExportRequested("json"))
+
+    @on(Button.Pressed, "#personas-dict-export-md")
+    def _export_markdown_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(DictionaryExportRequested("markdown"))
+
+    @on(Button.Pressed, "#personas-dict-version-view")
+    def _version_view_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        revision = self._selected_revision()
+        if revision is not None:
+            self.post_message(DictionaryVersionViewRequested(revision))
+
+    @on(Button.Pressed, "#personas-dict-version-revert")
+    def _version_revert_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        revision = self._selected_revision()
+        if revision is not None:
+            self.post_message(DictionaryVersionRevertRequested(revision))
+
+    @on(Button.Pressed, "#personas-dict-attach-add")
+    def _attach_add(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(DictionaryAttachRequested())
+
+    @on(Button.Pressed, "#personas-dict-attach-detach")
+    def _attach_detach(self, event: Button.Pressed) -> None:
+        event.stop()
+        conversation_id = self._selected_attachment_id()
+        if conversation_id is not None:
+            self.post_message(DictionaryDetachRequested(conversation_id))
+
     def _sync_dirty_state(self) -> None:
         """Recompute dirty state and post ``DictionarySettingsEdited`` on transitions.
 
@@ -491,11 +727,16 @@ class PersonasDictionaryDetailWidget(Vertical):
 
 
 __all__ = [
+    "DictionaryAttachRequested",
+    "DictionaryDetachRequested",
     "DictionaryEntriesReorderRequested",
     "DictionaryEntryAddRequested",
     "DictionaryEntryDeleteRequested",
     "DictionaryEntryUpdateRequested",
+    "DictionaryExportRequested",
     "DictionarySettingsEdited",
     "DictionarySettingsSaveRequested",
+    "DictionaryVersionRevertRequested",
+    "DictionaryVersionViewRequested",
     "PersonasDictionaryDetailWidget",
 ]

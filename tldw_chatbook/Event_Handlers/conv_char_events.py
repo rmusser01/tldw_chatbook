@@ -3517,62 +3517,6 @@ async def handle_ccp_editor_dict_cancel_button_pressed(app: 'TldwCli', event: Bu
     app.notify("Edit cancelled", severity="information")
 
 
-async def handle_ccp_dict_apply_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    """Apply the current dictionary to the active conversation."""
-    logger = getattr(app, 'loguru_logger', loguru_logger)
-    logger.info("CCP Dictionary Apply button pressed.")
-    
-    if not hasattr(app, 'loaded_dictionary_id') or not app.loaded_dictionary_id:
-        app.notify("No dictionary loaded to apply.", severity="warning")
-        return
-        
-    if not app.current_ccp_conversation_id:
-        app.notify("No active conversation to apply dictionary to.", severity="warning")
-        return
-        
-    if not app.notes_service:
-        app.notify("Database service not available.", severity="error")
-        return
-        
-    try:
-        db = app.notes_service._get_db(app.notes_user_id)
-        
-        # Apply dictionary to conversation (store in conversation metadata)
-        conv_details = db.get_conversation_by_id(app.current_ccp_conversation_id)
-        if conv_details:
-            # Get current active dictionaries from metadata
-            metadata = json.loads(conv_details.get('metadata', '{}'))
-            active_dicts = metadata.get('active_dictionaries', [])
-            
-            # Add this dictionary if not already present
-            dict_id = int(app.loaded_dictionary_id)
-            if dict_id not in active_dicts:
-                active_dicts.append(dict_id)
-                metadata['active_dictionaries'] = active_dicts
-                
-                # Update conversation metadata
-                db.update_conversation(
-                    app.current_ccp_conversation_id,
-                    metadata=json.dumps(metadata)
-                )
-                
-                app.notify("Dictionary applied to conversation.", severity="information")
-                
-                # Update the active dictionaries list in right pane if visible
-                try:
-                    await populate_active_dictionaries_list(app)
-                except Exception as e:
-                    loguru_logger.warning(f"Failed to update active dictionaries list: {e}")
-            else:
-                app.notify("Dictionary is already applied to this conversation.", severity="information")
-        else:
-            app.notify("Failed to load conversation details.", severity="error")
-            
-    except Exception as e:
-        logger.opt(exception=True).error(f"Error applying dictionary: {e}")
-        app.notify("Error applying dictionary", severity="error")
-
-
 async def handle_ccp_dict_clone_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Clone the current dictionary."""
     logger = getattr(app, 'loguru_logger', loguru_logger)
@@ -3621,99 +3565,13 @@ async def handle_ccp_dict_clone_button_pressed(app: 'TldwCli', event: Button.Pre
         app.notify("Error cloning dictionary", severity="error")
 
 
-async def handle_ccp_dict_remove_from_conv_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    """Remove selected dictionary from the active conversation."""
-    logger = getattr(app, 'loguru_logger', loguru_logger)
-    logger.info("CCP Dictionary Remove from Conversation button pressed.")
-    
-    if not app.current_ccp_conversation_id:
-        app.notify("No active conversation.", severity="warning")
-        return
-        
-    if not app.notes_service:
-        app.notify("Database service not available.", severity="error")
-        return
-        
-    try:
-        # Get selected dictionary from active list
-        active_list = app.query_one("#ccp-active-dictionaries-list", ListView)
-        if active_list.index is not None:
-            selected_item = active_list.highlighted_child
-            if selected_item and hasattr(selected_item, 'dict_id'):
-                dict_id = selected_item.dict_id
-                
-                db = app.notes_service._get_db(app.notes_user_id)
-                conv_details = db.get_conversation_by_id(app.current_ccp_conversation_id)
-                
-                if conv_details:
-                    # Remove from active dictionaries
-                    metadata = json.loads(conv_details.get('metadata', '{}'))
-                    active_dicts = metadata.get('active_dictionaries', [])
-                    
-                    if dict_id in active_dicts:
-                        active_dicts.remove(dict_id)
-                        metadata['active_dictionaries'] = active_dicts
-                        
-                        # Update conversation metadata
-                        db.update_conversation(
-                            app.current_ccp_conversation_id,
-                            metadata=json.dumps(metadata)
-                        )
-                        
-                        app.notify("Dictionary removed from conversation.", severity="information")
-                        await populate_active_dictionaries_list(app)
-                    else:
-                        app.notify("Dictionary not found in conversation.", severity="warning")
-                else:
-                    app.notify("Failed to load conversation details.", severity="error")
-            else:
-                app.notify("No dictionary selected.", severity="warning")
-        else:
-            app.notify("No dictionary selected.", severity="warning")
-            
-    except Exception as e:
-        logger.opt(exception=True).error(f"Error removing dictionary from conversation: {e}")
-        app.notify("Error removing dictionary", severity="error")
-
-
 async def handle_ccp_dict_update_priority_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Update the priority of dictionaries in the conversation."""
     logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Dictionary Update Priority button pressed.")
-    
+
     # This is a placeholder for future priority ordering functionality
     app.notify("Dictionary priority ordering not yet implemented.", severity="information")
-
-
-async def populate_active_dictionaries_list(app: 'TldwCli') -> None:
-    """Populate the active dictionaries list for the current conversation."""
-    logger = getattr(app, 'loguru_logger', loguru_logger)
-    
-    if not app.current_ccp_conversation_id or not app.notes_service:
-        return
-        
-    try:
-        active_list = app.query_one("#ccp-active-dictionaries-list", ListView)
-        await active_list.clear()
-        
-        db = app.notes_service._get_db(app.notes_user_id)
-        conv_details = db.get_conversation_by_id(app.current_ccp_conversation_id)
-        
-        if conv_details:
-            metadata = json.loads(conv_details.get('metadata', '{}'))
-            active_dict_ids = metadata.get('active_dictionaries', [])
-            
-            for dict_id in active_dict_ids:
-                dict_data = cdl.load_chat_dictionary(db, dict_id)
-                if dict_data:
-                    item = ListItem(Label(dict_data['name']))
-                    item.dict_id = dict_id  # Store dict ID for removal
-                    await active_list.append(item)
-                    
-            logger.info(f"Populated active dictionaries list with {len(active_dict_ids)} items.")
-            
-    except Exception as e:
-        logger.opt(exception=True).error(f"Error populating active dictionaries: {e}")
 
 
 ########################################################################################################################
@@ -3902,14 +3760,12 @@ CCP_BUTTON_HANDLERS = {
     "ccp-refresh-worldbook-list-button": handle_ccp_refresh_worldbook_list_button_pressed,
     "ccp-dict-edit-button": handle_ccp_dict_edit_button_pressed,
     "ccp-dict-export-button": handle_ccp_dict_export_button_pressed,
-    "ccp-dict-apply-button": handle_ccp_dict_apply_button_pressed,
     "ccp-editor-dict-save-button": handle_ccp_editor_dict_save_button_pressed,
     "ccp-editor-dict-cancel-button": handle_ccp_editor_dict_cancel_button_pressed,
     "ccp-dict-add-entry-button": handle_ccp_dict_add_entry_button_pressed,
     "ccp-dict-remove-entry-button": handle_ccp_dict_remove_entry_button_pressed,
     "ccp-dict-delete-button": handle_ccp_dict_delete_button_pressed,
     "ccp-dict-clone-button": handle_ccp_dict_clone_button_pressed,
-    "ccp-dict-remove-from-conv-button": handle_ccp_dict_remove_from_conv_button_pressed,
     "ccp-dict-update-priority-button": handle_ccp_dict_update_priority_button_pressed,
 
     # Center Pane

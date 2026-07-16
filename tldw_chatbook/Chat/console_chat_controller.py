@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Protocol
 
 from tldw_chatbook.Chat.attachment_core import (
-    image_content_parts,
+    image_url_part,
     max_history_images,
     vision_block_reason,
 )
@@ -18,6 +18,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleProviderSelection,
     ConsoleRunState,
     ConsoleRunStatus,
+    MessageAttachment,
     derive_console_session_title,
     is_default_console_session_title,
 )
@@ -189,20 +190,19 @@ class ConsoleChatController:
         session = self.store.ensure_session(
             workspace_id=self.store.workspace_context.active_workspace_id,
         )
-        pending = self.store.pending_attachment(session.id)
-        pending_image = (
+        pendings = self.store.pending_attachments(session.id)
+        attachment_mode_pendings = [
             pending
-            if pending is not None
-            and pending.insert_mode == "attachment"
-            and pending.data is not None
-            else None
-        )
+            for pending in pendings
+            if pending.insert_mode == "attachment" and pending.data is not None
+        ]
+        has_pending_attachment = bool(attachment_mode_pendings)
         clean_draft, validation_error = self._validated_draft(
-            draft, allow_empty=pending_image is not None
+            draft, allow_empty=has_pending_attachment
         )
         if validation_error is not None:
             return self._block(session.id, validation_error)
-        if pending_image is not None:
+        if has_pending_attachment:
             vision_model = self.model or self.configured_model
             model_is_vision_capable = bool(vision_model) and is_vision_capable(
                 self.provider, vision_model or ""
@@ -221,17 +221,24 @@ class ConsoleChatController:
             return self._block(session.id, visible_copy)
 
         self._maybe_auto_title_session(session, clean_draft)
+        staged_attachments = tuple(
+            MessageAttachment(
+                data=pending.data,
+                mime_type=pending.mime_type or "image/png",
+                display_name=pending.display_name,
+                position=index,
+            )
+            for index, pending in enumerate(attachment_mode_pendings)
+        )
         self.store.append_message(
             session.id,
             role=ConsoleMessageRole.USER,
             content=clean_draft,
-            image_data=pending_image.data if pending_image is not None else None,
-            image_mime_type=pending_image.mime_type if pending_image is not None else None,
-            attachment_label=pending_image.label if pending_image is not None else None,
+            attachments=staged_attachments,
             persist=self.store.persistence is not None,
         )
-        if pending_image is not None:
-            self.store.clear_pending_attachment(session.id)
+        if pendings:
+            self.store.clear_pending_attachments(session.id)
         self._notify_submission_accepted()
         provider_messages = self._provider_messages_for_session(session.id)
         provider_messages, refuse = await self._apply_skill_substitution(provider_messages)
@@ -1132,13 +1139,25 @@ class ConsoleChatController:
     ) -> list[dict[str, Any]]:
         model = self.model or self.configured_model
         vision = bool(model) and is_vision_capable(self.provider, model or "")
-        image_budget = max_history_images(self.provider, model)
-        image_ids = [
-            message.id
-            for message in session_messages
-            if message.role is ConsoleMessageRole.USER and message.image_data is not None
-        ]
-        allowed_image_ids = set(image_ids[-image_budget:]) if vision else set()
+
+        # Reserve the image budget newest-message-first, counting IMAGES (not
+        # messages): a message with several attachments can consume more than
+        # one unit of budget, and the walk stops as soon as the budget is
+        # exhausted regardless of how many messages remain.
+        budget = max_history_images(self.provider, model) if vision else 0
+        allowed_counts: dict[str, int] = {}
+        for message in reversed(session_messages):
+            if budget <= 0:
+                break
+            if message.role is not ConsoleMessageRole.USER:
+                continue
+            usable = [attachment for attachment in message.attachments if attachment.data is not None]
+            if not usable:
+                continue
+            take = min(len(usable), budget)
+            allowed_counts[message.id] = take
+            budget -= take
+
         payloads: list[dict[str, Any]] = []
         for message in session_messages:
             if message.role not in {ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT}:
@@ -1150,19 +1169,32 @@ class ConsoleChatController:
                 if use_variant_content and message.variants is not None
                 else message.content
             )
-            if (
-                message.id in allowed_image_ids
-                and message.image_data is not None
-                and message.image_mime_type
-            ):
-                payloads.append(
-                    {
-                        "role": message.role.value,
-                        "content": image_content_parts(
-                            text, message.image_data, message.image_mime_type
-                        ),
-                    }
-                )
+            take = allowed_counts.get(message.id, 0)
+            if take > 0:
+                # Partially-budgeted messages emit their images in POSITION
+                # order up to the reserved count (oldest-attached first),
+                # not in reservation order.
+                usable = [
+                    attachment for attachment in message.attachments if attachment.data is not None
+                ]
+                parts: list[dict[str, Any]] = []
+                if text:
+                    parts.append({"type": "text", "text": text})
+                for attachment in usable[:take]:
+                    # An attachment can reach here with an empty mime_type
+                    # (e.g. a resumed message whose persisted
+                    # image_mime_type column was NULL --
+                    # ``_console_messages_from_conversation_tree`` falls back
+                    # to ``""`` for display purposes). Emitting a bare
+                    # ``data:;base64,...`` URL produces an invalid data URI
+                    # most providers reject outright, so fall back to the
+                    # same default mime the send-time staging path already
+                    # uses (see ``pending.mime_type or "image/png"`` above
+                    # and ``ConsoleChatStore.append_message``).
+                    parts.append(
+                        image_url_part(attachment.data, attachment.mime_type or "image/png")
+                    )
+                payloads.append({"role": message.role.value, "content": parts})
                 continue
             if not text:
                 continue

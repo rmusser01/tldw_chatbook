@@ -38,8 +38,7 @@ class EventDispatcher:
             embeddings_events, subscription_events, template_events
         )
         from tldw_chatbook.Event_Handlers.Chat_Events import (
-            chat_events_sidebar, chat_events_tabs, chat_events_worldbooks,
-            chat_events_dictionaries
+            chat_events_sidebar, chat_events_tabs, chat_events_worldbooks
         )
         from tldw_chatbook.Event_Handlers.LLM_Management_Events import (
             llm_management_events, llm_management_events_llamacpp,
@@ -69,7 +68,6 @@ class EventDispatcher:
             **chat_events_sidebar.CHAT_SIDEBAR_BUTTON_HANDLERS,
             **chat_events_tabs.CHAT_TABS_BUTTON_HANDLERS,
             **chat_events_worldbooks.CHAT_WORLDBOOKS_BUTTON_HANDLERS,
-            **chat_events_dictionaries.CHAT_DICTIONARIES_BUTTON_HANDLERS,
             
             # Conversations/Characters/Prompts
             **conv_char_events.CCP_BUTTON_HANDLERS,

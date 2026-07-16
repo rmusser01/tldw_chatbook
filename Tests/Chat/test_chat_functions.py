@@ -1377,6 +1377,30 @@ key2: |
         result = process_user_input(user_input, entries, max_tokens=3)
         assert result == "This is a this is fine test."
 
+    def test_null_metadata_active_dictionaries_read_guard_does_not_raise(self, db_instance):
+        """Regression for chat_events.py:986 (Roleplay P1e final-review #1).
+
+        The `conversations` table grew a `metadata` column for dictionary
+        attachment; `get_conversation_by_id()` does `SELECT *`, so any
+        conversation that never had a dictionary attached comes back with
+        `metadata` present in the dict but set to SQL NULL -> Python `None`.
+        `dict.get('metadata', '{}')` does NOT fall back to the default in
+        that case (the key IS present), so `json.loads(None)` used to raise
+        `TypeError` on every message send for such a conversation (silently
+        swallowed by the caller's broad `except Exception`). The fix reads
+        `conv_details.get('metadata') or '{}'` instead.
+        """
+        conv_id = db_instance.add_conversation({"title": "no dict"})
+        conv_details = db_instance.get_conversation_by_id(conv_id)
+        assert conv_details["metadata"] is None
+
+        # The fixed reader statement from chat_events.py must not raise and
+        # must yield an empty active-dictionaries list for this conversation.
+        active_dict_ids = json.loads(conv_details.get("metadata") or "{}").get(
+            "active_dictionaries", []
+        )
+        assert active_dict_ids == []
+
 #
 # End of test_chat_functions.py
 ########################################################################################################################

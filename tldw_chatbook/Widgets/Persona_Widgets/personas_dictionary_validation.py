@@ -18,7 +18,7 @@ class ValidationFinding:
 
     Args:
         code: Stable machine code (invalid_regex, duplicate_pattern,
-            probability_zero, case_flag_on_regex).
+            probability_zero, case_flag_on_regex, malformed_probability).
         field: The entry field the finding is about.
         message: Human-readable explanation.
         entry_id: The positional entry id, or None when unavailable.
@@ -72,10 +72,15 @@ def validate_entries(entries: list[dict]) -> list[ValidationFinding]:
             seen.add(key)
 
         probability = entry.get("probability")
-        try:
-            probability_value = float(probability) if probability is not None else None
-        except (TypeError, ValueError):
-            probability_value = None  # malformed: not zero, no finding; display layer falls back
+        probability_value: float | None = None
+        if probability is not None:
+            try:
+                probability_value = float(probability)
+            except (TypeError, ValueError):
+                findings.append(ValidationFinding(
+                    code="malformed_probability", field="probability", entry_id=entry_id,
+                    message="Probability is not a number; the editor will display 100% until it is fixed.",
+                ))
         if probability_value is not None and probability_value == 0.0:
             findings.append(ValidationFinding(
                 code="probability_zero", field="probability", entry_id=entry_id,

@@ -8,7 +8,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button, Select
 
 import tldw_chatbook
-from tldw_chatbook.MCP.readiness import ReadinessSnapshot, ReadinessState
+from tldw_chatbook.MCP.readiness import STATE_CSS_CLASSES, ReadinessSnapshot, ReadinessState
 from tldw_chatbook.UI.MCP_Modules.mcp_rail import (
     _MAX_ROW_LABEL,
     MCP_RAIL_ROW_PREFIX,
@@ -50,6 +50,9 @@ class RailApp(App):
         self.events.append(event)
 
     def on_mcp_rail_source_changed(self, event: MCPRail.SourceChanged) -> None:
+        self.events.append(event)
+
+    def on_mcp_rail_scope_changed(self, event: MCPRail.ScopeChanged) -> None:
         self.events.append(event)
 
 
@@ -265,3 +268,171 @@ async def test_rail_rows_are_left_aligned_with_bundled_css():
         row = app.query_one(f"#{MCP_RAIL_ROW_PREFIX}0", Button)
         assert row.styles.text_align == "left"
         assert row.styles.content_align_horizontal == "left"
+
+
+# -- Task 11: status colors + rail count alignment ---------------------------
+
+
+@pytest.mark.asyncio
+async def test_rail_row_carries_state_css_class_and_swaps_on_resync():
+    app = RailApp()
+    async with app.run_test() as pilot:
+        rail = app.query_one(MCPRail)
+        docs_row = app.query_one(f"#{MCP_RAIL_ROW_PREFIX}2", Button)  # local:docs
+        assert STATE_CSS_CLASSES[ReadinessState.NEEDS_SETUP] in docs_row.classes
+
+        rail.sync_state(
+            source="local",
+            snapshots=[
+                _snap("builtin:tldw_chatbook", "tldw_chatbook (built-in)"),
+                _snap("local:docs", "docs", ReadinessState.NEEDS_ATTENTION),
+            ],
+            selected_server_key=None,
+            scope_options=[("Personal", "personal")],
+            scope_value="personal",
+            scope_ref_options=[],
+            scope_ref_value=None,
+        )
+        await pilot.pause()
+        docs_row = app.query_one(f"#{MCP_RAIL_ROW_PREFIX}2", Button)
+        assert STATE_CSS_CLASSES[ReadinessState.NEEDS_ATTENTION] in docs_row.classes
+        assert STATE_CSS_CLASSES[ReadinessState.NEEDS_SETUP] not in docs_row.classes
+
+
+class AdaptiveCountRailApp(App):
+    """Two rows with very different label lengths -- used to prove A6's
+    per-compose() adaptive pad width, not the old fixed 36-char budget."""
+
+    def compose(self) -> ComposeResult:
+        yield MCPRail(
+            source="local",
+            snapshots=[
+                ReadinessSnapshot(
+                    server_key="local:a", label="a", source="local",
+                    state=ReadinessState.READY, reasons=(), message="", tool_count=3,
+                ),
+                ReadinessSnapshot(
+                    server_key="local:bb", label="a-longer-profile-name", source="local",
+                    state=ReadinessState.READY, reasons=(), message="", tool_count=12,
+                ),
+            ],
+            selected_server_key=None,
+            scope_options=[("Personal", "personal")],
+            scope_value="personal",
+            scope_ref_options=[],
+            scope_ref_value=None,
+            id="mcp-rail",
+        )
+
+
+@pytest.mark.asyncio
+async def test_row_label_right_aligns_tool_count_at_adaptive_column():
+    """A6: `MCPRail.compose()` now computes the count column's pad width per
+    call as the longest CURRENT (post-truncate, post-escape) label among its
+    rows -- not the fixed 36-char truncation budget -- so a short label's
+    count sits right after ITS row's own content instead of stranded far
+    right of where a long label's count lands. Driven through the real
+    MCPRail (not `_row_label()` directly): the adaptive width is a property
+    of the whole row set at a given compose(), not any single snapshot.
+    `_row_label()` still defaults its `pad_width` param to `_MAX_ROW_LABEL`
+    for a standalone call (e.g. the blank-count check below).
+    """
+    app = AdaptiveCountRailApp()
+    async with app.run_test() as pilot:
+        short_row = app.query_one(f"#{MCP_RAIL_ROW_PREFIX}1", Button)  # "a"
+        long_row = app.query_one(f"#{MCP_RAIL_ROW_PREFIX}2", Button)   # "a-longer-profile-name"
+        short_label = str(short_row.label)
+        long_label = str(long_row.label)
+        assert len(short_label) == len(long_label)
+        assert short_label[-3:] == "  3"
+        assert long_label[-3:] == " 12"
+        # Adaptive width == len("a-longer-profile-name") == 21 chars, far
+        # short of the old fixed 36-char budget -- the rendered row is
+        # correspondingly shorter than a direct `_row_label()` call at the
+        # default (fixed) pad width.
+        assert len(short_label) < len(_row_label(_snap("local:a", "a")))
+
+    # No count discovered yet -- the count field renders blank, not "0" or
+    # any other placeholder digit (unaffected by the adaptive-width change;
+    # exercised directly at the default/standalone pad width).
+    none_label = _row_label(_snap("local:c", "c", ReadinessState.READY))
+    assert none_label[-3:] == "   "
+
+
+class AdaptiveCountWithMarkupCharsRailApp(App):
+    """One row's label contains a Rich-markup-special character (`[`) --
+    `escape_markup()` lengthens it by one char (`[test-server]` -> 13 raw,
+    14 escaped). Review-fix regression guard for A6: `pad_width` must be
+    measured from the ESCAPED text (what actually renders), the same text
+    `_row_label()` pads -- if a future change measured the raw label instead,
+    the two rows' count fields would land one column apart.
+    """
+
+    def compose(self) -> ComposeResult:
+        yield MCPRail(
+            source="local",
+            snapshots=[
+                ReadinessSnapshot(
+                    server_key="local:docs", label="docs", source="local",
+                    state=ReadinessState.READY, reasons=(), message="", tool_count=3,
+                ),
+                ReadinessSnapshot(
+                    server_key="local:brk", label="[test-server]", source="local",
+                    state=ReadinessState.READY, reasons=(), message="", tool_count=12,
+                ),
+            ],
+            selected_server_key=None,
+            scope_options=[("Personal", "personal")],
+            scope_value="personal",
+            scope_ref_options=[],
+            scope_ref_value=None,
+            id="mcp-rail",
+        )
+
+
+@pytest.mark.asyncio
+async def test_adaptive_pad_width_measures_escaped_text_not_raw_label():
+    app = AdaptiveCountWithMarkupCharsRailApp()
+    async with app.run_test() as pilot:
+        docs_row = app.query_one(f"#{MCP_RAIL_ROW_PREFIX}1", Button)
+        bracket_row = app.query_one(f"#{MCP_RAIL_ROW_PREFIX}2", Button)
+        docs_label = str(docs_row.label)
+        bracket_label = str(bracket_row.label)
+        assert len(docs_label) == len(bracket_label), (
+            "pad_width must be measured from the same escaped text that gets "
+            "rendered -- a raw-length regression would misalign these two "
+            "rows' count columns"
+        )
+        assert docs_label[-3:] == "  3"
+        assert bracket_label[-3:] == " 12"
+
+
+# -- Task 4: one-shot mount-echo guard (A -> B -> A must not be swallowed) --
+
+
+@pytest.mark.asyncio
+async def test_scope_a_b_a_dispatches_three_changes_and_mount_echo_zero():
+    app = RailApp()
+    async with app.run_test() as pilot:
+        rail = app.query_one(MCPRail)
+        rail.sync_state(
+            source="server",
+            snapshots=[_snap("server:main", "Main Server")],
+            selected_server_key=None,
+            scope_options=[("Personal", "personal"), ("Team", "team")],
+            scope_value="personal",
+            scope_ref_options=[],
+            scope_ref_value=None,
+        )
+        await pilot.pause()
+        changes = [e for e in app.events if isinstance(e, MCPRail.ScopeChanged)]
+        assert changes == []  # mount echo suppressed
+        select = app.query_one("#mcp-rail-scope-select", Select)
+        select.value = "team"       # A -> B
+        await pilot.pause()
+        select.value = "personal"   # B -> A (must NOT be swallowed as echo)
+        await pilot.pause()
+        select.value = "team"       # A -> B again
+        await pilot.pause()
+        changes = [e.scope for e in app.events if isinstance(e, MCPRail.ScopeChanged)]
+        assert changes == ["team", "personal", "team"]

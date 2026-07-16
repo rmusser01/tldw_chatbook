@@ -26,10 +26,22 @@ MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024  # matches the legacy handler's 100MB c
 MAX_IMAGE_BYTES = 10 * 1024 * 1024  # matches ChatImageHandler.MAX_IMAGE_SIZE
 DEFAULT_MAX_HISTORY_IMAGES = 10  # used when model capabilities omit max_images
 
-# (label, semicolon-separated glob patterns) — single source for both UIs' pickers.
-ATTACHMENT_FILTER_SPECS: tuple[tuple[str, str], ...] = (
-    ("All Supported Files", "*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp;*.tiff;*.tif;*.svg;*.txt;*.md;*.log;*.py;*.js;*.ts;*.java;*.cpp;*.c;*.h;*.cs;*.rb;*.go;*.rs;*.json;*.yaml;*.yml;*.csv;*.tsv;*.pdf;*.doc;*.docx;*.rtf;*.odt;*.epub;*.mobi;*.azw;*.azw3;*.fb2"),
-    ("Image Files", "*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp;*.tiff;*.tif;*.svg"),
+DEFAULT_RESIZE_MAX_DIMENSION = 2048  # matches ChatImageHandler's legacy literal
+
+DEFAULT_SUPPORTED_IMAGE_FORMATS: tuple[str, ...] = (
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".tif", ".svg",
+)
+
+# Non-image picker rows; the image rows are derived at call time by
+# attachment_filter_specs(). The "All Supported Files" non-image tail is the
+# legacy literal verbatim (it was never the union of the rows below — do not
+# "fix" that here).
+_ALL_FILES_NON_IMAGE_PATTERNS = (
+    "*.txt;*.md;*.log;*.py;*.js;*.ts;*.java;*.cpp;*.c;*.h;*.cs;*.rb;*.go;*.rs;"
+    "*.json;*.yaml;*.yml;*.csv;*.tsv;*.pdf;*.doc;*.docx;*.rtf;*.odt;"
+    "*.epub;*.mobi;*.azw;*.azw3;*.fb2"
+)
+_NON_IMAGE_FILTER_SPECS: tuple[tuple[str, str], ...] = (
     ("Document Files", "*.pdf;*.doc;*.docx;*.rtf;*.odt"),
     ("E-book Files", "*.epub;*.mobi;*.azw;*.azw3;*.fb2"),
     ("Text Files", "*.txt;*.md;*.log;*.text;*.rst"),
@@ -38,12 +50,144 @@ ATTACHMENT_FILTER_SPECS: tuple[tuple[str, str], ...] = (
 )
 
 
+
 def _format_size(size: int) -> str:
     if size >= 1024 * 1024:
         return f"{size / 1024 / 1024:.1f} MB"
     if size >= 1024:
         return f"{size / 1024:.0f} KB"
     return f"{size} B"
+
+
+def svg_rendering_available() -> bool:
+    """Capability seam for the SVG gate; tests monkeypatch this name.
+
+    Returns:
+        True when cairosvg-based SVG rasterization is available, False
+        otherwise.
+    """
+    from tldw_chatbook.Utils.optional_deps import ensure_svg_rendering
+
+    return ensure_svg_rendering()
+
+
+def _chat_images_setting(key: str, default):
+    """Read one [chat.images] key. get_cli_setting resolves top-level sections
+    only (flat lookup), so the nested table is fetched via ("chat", "images")
+    and the key resolved locally; a missing section or key yields the default.
+
+    Args:
+        key: The [chat.images] key to read (e.g. "max_size_mb").
+        default: Value returned when the section or key is absent.
+
+    Returns:
+        The configured value for `key`, or `default` when the [chat.images]
+        section or the key itself is missing.
+    """
+    from tldw_chatbook.config import get_cli_setting
+
+    section = get_cli_setting("chat", "images", None)
+    if isinstance(section, dict) and key in section:
+        return section[key]
+    return default
+
+
+def supported_image_formats() -> tuple[str, ...]:
+    """Effective image extension allowlist from [chat.images].supported_formats.
+
+    Entries are normalized (lowercased, dotted, deduped in order); .svg is
+    dropped when cairosvg is unavailable. Invalid or empty config values fall
+    back to DEFAULT_SUPPORTED_IMAGE_FORMATS.
+
+    Returns:
+        Dotted, lowercased, deduplicated image extensions accepted for
+        attachment, in configured order.
+    """
+    raw = _chat_images_setting(
+        "supported_formats", list(DEFAULT_SUPPORTED_IMAGE_FORMATS)
+    )
+    formats: list[str] = []
+    if isinstance(raw, (list, tuple)):
+        for entry in raw:
+            if not isinstance(entry, str) or not entry.strip():
+                logger.warning(
+                    f"[chat.images].supported_formats: ignoring entry {entry!r}"
+                )
+                continue
+            ext = entry.strip().lower()
+            if not ext.startswith("."):
+                ext = f".{ext}"
+            if ext not in formats:
+                formats.append(ext)
+    if not formats:
+        logger.warning(
+            "[chat.images].supported_formats invalid or empty; using defaults"
+        )
+        formats = list(DEFAULT_SUPPORTED_IMAGE_FORMATS)
+    if ".svg" in formats and not svg_rendering_available():
+        formats.remove(".svg")
+        if not formats:
+            logger.warning(
+                "[chat.images].supported_formats contains only .svg and SVG "
+                "rendering is unavailable; all image attachments will be rejected"
+            )
+    return tuple(formats)
+
+
+def max_image_bytes() -> int:
+    """Image byte cap from [chat.images].max_size_mb (default 10 MB).
+
+    Returns:
+        The maximum allowed image size in bytes.
+    """
+    raw = _chat_images_setting("max_size_mb", MAX_IMAGE_BYTES / (1024 * 1024))
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = 0.0
+    if value <= 0:
+        logger.warning(f"[chat.images].max_size_mb invalid ({raw!r}); using 10.0")
+        return MAX_IMAGE_BYTES
+    return int(value * 1024 * 1024)
+
+
+def image_resize_max_dimension() -> int:
+    """Resize bound from [chat.images].resize_max_dimension (default 2048).
+
+    Returns:
+        The maximum width/height, in pixels, images are resized to.
+    """
+    raw = _chat_images_setting(
+        "resize_max_dimension", DEFAULT_RESIZE_MAX_DIMENSION
+    )
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = 0
+    if value <= 0:
+        logger.warning(
+            f"[chat.images].resize_max_dimension invalid ({raw!r}); using "
+            f"{DEFAULT_RESIZE_MAX_DIMENSION}"
+        )
+        return DEFAULT_RESIZE_MAX_DIMENSION
+    return value
+
+
+def attachment_filter_specs() -> tuple[tuple[str, str], ...]:
+    """Picker filter rows with image patterns derived from the effective formats.
+
+    Returns:
+        Ordered (label, glob_pattern) rows for the attachment file picker:
+        "All Supported Files" and "Image Files" (both built from the
+        effective image formats) followed by the fixed non-image
+        document/e-book/text/code/data rows.
+    """
+    image_patterns = ";".join(f"*{ext}" for ext in supported_image_formats())
+    return (
+        ("All Supported Files", f"{image_patterns};{_ALL_FILES_NON_IMAGE_PATTERNS}"),
+        ("Image Files", image_patterns),
+        *_NON_IMAGE_FILTER_SPECS,
+    )
 
 
 @dataclass
@@ -166,26 +310,38 @@ async def process_attachment_bytes(
     from PIL import Image as PILImage
 
     from tldw_chatbook.Event_Handlers.Chat_Events.chat_image_events import (
+        PAYLOAD_FORMAT_MIME,
         ChatImageHandler,
     )
 
-    if len(data) > MAX_IMAGE_BYTES:
+    size_cap = max_image_bytes()
+    if len(data) > size_cap:
         raise ValueError(
             f"Image too large ({len(data) / 1024 / 1024:.1f}MB). "
-            f"Maximum size: {MAX_IMAGE_BYTES / 1024 / 1024:.0f}MB"
+            f"Maximum size: {size_cap / 1024 / 1024:.0f}MB"
         )
     try:
-        PILImage.open(BytesIO(data)).verify()
+        probe = PILImage.open(BytesIO(data))
+        probe.verify()
+        probed_format = (probe.format or "").upper()
     except Exception as exc:
         raise ValueError("Clipboard data is not a valid image.") from exc
     extension = ".png" if "png" in mime_type else ".jpg"
     try:
-        processed = await ChatImageHandler._process_image_data(data, extension, mime_type)
+        processed, mime_type = await ChatImageHandler.prepare_image_payload(
+            data, extension
+        )
     except Exception:
         logger.opt(exception=True).warning(
             "Failed to process clipboard image data, using original bytes."
         )
         processed = data
+        mime_type = PAYLOAD_FORMAT_MIME.get(probed_format, mime_type)
+    if len(processed) > size_cap:
+        raise ValueError(
+            f"Processed image too large ({len(processed) / 1024 / 1024:.1f}MB). "
+            f"Maximum size: {size_cap / 1024 / 1024}MB"
+        )
     return PendingAttachment(
         file_path="",
         display_name=display_name,
@@ -241,6 +397,23 @@ def max_history_images(provider: str, model: str | None) -> int:
     return DEFAULT_MAX_HISTORY_IMAGES
 
 
+def image_url_part(image_data: bytes, mime_type: str) -> dict[str, Any]:
+    """Build one OpenAI-style image_url content part (base64 data URL).
+
+    Args:
+        image_data: Raw image bytes.
+        mime_type: MIME type for the data URL.
+
+    Returns:
+        A single ``{"type": "image_url", ...}`` content part dict.
+    """
+    encoded = base64.b64encode(image_data).decode("ascii")
+    return {
+        "type": "image_url",
+        "image_url": {"url": f"data:{mime_type};base64,{encoded}"},
+    }
+
+
 def image_content_parts(
     text: str,
     image_data: bytes,
@@ -257,11 +430,8 @@ def image_content_parts(
         Content-part dicts: an optional {"type": "text"} part followed by
         one {"type": "image_url"} part with a data URL.
     """
-    encoded = base64.b64encode(image_data).decode("ascii")
     parts: list[dict[str, Any]] = []
     if text:
         parts.append({"type": "text", "text": text})
-    parts.append(
-        {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{encoded}"}}
-    )
+    parts.append(image_url_part(image_data, mime_type))
     return parts

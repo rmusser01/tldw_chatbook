@@ -2,22 +2,53 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
 from loguru import logger
+from textual import on
 from textual.app import ComposeResult
 from textual.containers import Vertical, VerticalScroll
 from textual.message import Message
-from textual.widgets import Button, Label, Select, Static, TextArea
+from textual.widgets import Button, Collapsible, Label, Select, Static, TextArea
 
-from tldw_chatbook.MCP.readiness import REASON_LABELS, HubAction, ReadinessSnapshot
+from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
+from tldw_chatbook.MCP.readiness import (
+    REASON_LABELS,
+    STATE_CSS_CLASSES,
+    HubAction,
+    ReadinessSnapshot,
+    ReadinessState,
+)
 from tldw_chatbook.MCP.redaction import redact_mapping
 from tldw_chatbook.UI.MCP_Modules.unified_mcp_sections import render_unified_mcp_section
 
-# Actions that have first-class UI in Phase 1. Everything else renders
+# Actions that have first-class UI in every source. Everything else renders
 # disabled and points at the Advanced runner below (capability preserved).
-_WIRED_ACTIONS = {HubAction.VIEW_DETAILS, HubAction.OPEN_TOOL_CATALOG, HubAction.OPEN_AUDIT}
+_BASE_WIRED_ACTIONS = {HubAction.VIEW_DETAILS, HubAction.OPEN_TOOL_CATALOG, HubAction.OPEN_AUDIT}
+
+# Local-profile lifecycle actions (Task 5): wired only for local-source
+# snapshots, where MCPWorkbench._start_lifecycle() can actually run them
+# against the typed T2 control-plane methods. Server-source servers are
+# mutated on the server side (Advanced), not from this pane.
+_LIFECYCLE_ACTIONS = {HubAction.CONNECT, HubAction.VALIDATE, HubAction.REFRESH_DISCOVERY}
+
+# Task 6: editing a local profile's config (command/args/env) is now wired
+# for local-source snapshots -- MCPWorkbench opens the MCPProfileForm
+# pre-filled from the catalog record for that profile_id. Server-source
+# servers are still edited on the server side (Advanced), not from this pane.
+_CONFIG_ACTIONS = {HubAction.EDIT_CONFIG}
+
+
+def _wired_actions(snapshot: ReadinessSnapshot | None) -> set[HubAction]:
+    """Actions this inspector renders enabled for the given snapshot."""
+    wired = set(_BASE_WIRED_ACTIONS)
+    if snapshot is not None and snapshot.source == "local":
+        wired |= _LIFECYCLE_ACTIONS
+        wired |= _CONFIG_ACTIONS
+    return wired
+
 
 _ACTION_LABELS: dict[HubAction, str] = {
     HubAction.ADD_SERVER: "Add server",
@@ -31,14 +62,24 @@ _ACTION_LABELS: dict[HubAction, str] = {
     HubAction.OPEN_AUDIT: "Open audit",
 }
 
-# Tooltips for the actions that have first-class UI in Phase 1 (_WIRED_ACTIONS).
+# Tooltips for the actions that have first-class UI (see _wired_actions()).
 # Every rendered action button must explain its outcome -- disabled buttons get
 # a tooltip below; these cover the wired, enabled ones.
 _WIRED_ACTION_TOOLTIPS: dict[HubAction, str] = {
     HubAction.VIEW_DETAILS: "Show this server's detail view in Servers mode.",
     HubAction.OPEN_TOOL_CATALOG: "Switch to Tools mode.",
     HubAction.OPEN_AUDIT: "Switch to Audit mode.",
+    HubAction.CONNECT: "Connect to this server and discover its tools.",
+    HubAction.VALIDATE: "Test the connection without changing the cached catalog.",
+    HubAction.REFRESH_DISCOVERY: "Reconnect and refresh the tool/resource/prompt catalog.",
+    HubAction.EDIT_CONFIG: "Edit this profile's command, args, and env.",
 }
+
+# Disabled-button tooltip for a lifecycle action on a server-source snapshot
+# (managed server-side, not from this local-lifecycle pane).
+_SERVER_MANAGED_TOOLTIP = "Managed on the server — use Advanced."
+# Disabled-button tooltip for every other still-unwired action.
+_LATER_PHASE_TOOLTIP = "Available in a later phase — use Advanced below."
 
 
 def _is_blank(value: Any) -> bool:
@@ -74,6 +115,23 @@ class MCPInspector(Vertical):
         height: auto;
         min-height: 0;
     }
+    /* T12: the Advanced block moved from a direct-child VerticalScroll to a
+    Collapsible's body. Give the Collapsible itself the 1fr the scroll used
+    to claim directly (so it still fills the remaining pane height when
+    expanded) and drop back to auto when collapsed (Contents is display:
+    none then -- reserving 1fr of empty space below the title bar would
+    waste most of the pane). #mcp-adv-scroll keeps height:1fr for when it
+    IS visible; nested inside Collapsible's own auto-height Contents this
+    mostly falls back to intrinsic sizing, but VerticalScroll still scrolls
+    on overflow regardless, so nothing breaks -- exact geometry polish is
+    T13's job. */
+    #mcp-adv-collapsible {
+        height: 1fr;
+        min-height: 0;
+    }
+    #mcp-adv-collapsible.-collapsed {
+        height: auto;
+    }
     #mcp-adv-scroll {
         height: 1fr;
         min-height: 0;
@@ -87,6 +145,15 @@ class MCPInspector(Vertical):
         height: 1;
         min-height: 1;
         border: none;
+        /* A3: Button defaults BOTH text-align and content-align to center
+        (see Textual's own Button.DEFAULT_CSS -- the same lesson already
+        documented on Button.mcp-rail-row in MCPRail.DEFAULT_CSS and
+        Button.mcp-callout in _agentic_terminal.tcss) -- without this, the
+        action stack (and the lone Cancel button during an in-flight
+        lifecycle op) renders each label centered in its full-width row
+        instead of left-aligned. */
+        text-align: left;
+        content-align: left middle;
     }
     /* A2: the generic `Button:disabled` rule (_buttons.tcss) stacks 50%
     opacity on top of `$text-disabled` on a dark surface -- combined with
@@ -120,6 +187,16 @@ class MCPInspector(Vertical):
             self.action = action
             self.server_key = server_key
 
+    class CancelRequested(Message, namespace="mcp_inspector"):
+        """Posted when the user clicks Cancel on an in-flight (CHECKING)
+        lifecycle operation. `MCPWorkbench` owns the actual worker and
+        cancels it -- this pane only knows which server the button belongs
+        to."""
+
+        def __init__(self, server_key: str) -> None:
+            super().__init__()
+            self.server_key = server_key
+
     def __init__(self, **kwargs: Any) -> None:
         classes = kwargs.pop("classes", "")
         super().__init__(classes=f"ds-inspector {classes}".strip(), **kwargs)
@@ -127,6 +204,39 @@ class MCPInspector(Vertical):
         self._service: Any = None
         self._sections: list[tuple[str, str]] = [("Overview", "overview")]
         self._action_templates: dict[str, str] = {}
+        # T12: the object the Advanced pane's content currently describes --
+        # defaults match set_service_context()'s own default source="local"
+        # so the label composed here (before any set_service_context() call)
+        # agrees with what a fresh mount would show.
+        self._advanced_source: str = "local"
+        self._advanced_target_label: str | None = None
+        # T12 review fix: the collapsed state this widget last knew about --
+        # set to the constructed value in compose(), updated only by the
+        # Toggled handler. Used to drop the spurious mount-time Toggled that
+        # `Collapsible(collapsed=False)` posts (see the handler); default
+        # True matches Collapsible's own reactive default.
+        self._advanced_last_collapsed: bool = True
+        # Task 4: serializes `update_readiness()`'s remove+mount cycle. Two
+        # calls awaited concurrently (a worker-driven refresh interleaved
+        # with a pump-driven one) previously could both be mid-flight at
+        # once even though each call itself awaits remove/mount in order --
+        # this lock ensures the second call's whole body only starts once the
+        # first has fully finished, so the last writer's buttons win exactly
+        # once instead of racing into `DuplicateIds`.
+        self._refresh_lock = asyncio.Lock()
+
+    def _advanced_object_label(self) -> str:
+        """Compute the "Showing: <object>" text for `#mcp-adv-object`.
+
+        UX-inputs: label the object the Advanced content describes, so its
+        section dumps -- which can legitimately describe a different object
+        than the selected server -- never get mistaken for facts about the
+        currently-selected row.
+        """
+        if self._advanced_source == "server":
+            target = self._advanced_target_label or "(none selected)"
+            return f"Showing: server {target}"
+        return "Showing: Local control plane"
 
     def compose(self) -> ComposeResult:
         yield Static("Inspector", classes="destination-section")
@@ -134,21 +244,89 @@ class MCPInspector(Vertical):
                      classes="ds-status-badge", markup=False)
         yield Static("", id="mcp-inspector-message", classes="ds-field-row", markup=False)
         yield Vertical(id="mcp-inspector-actions")
-        yield Static("Advanced (legacy control plane)", classes="destination-section")
-        with VerticalScroll(id="mcp-adv-scroll"):
-            yield Label("Section", classes="form-label")
-            yield Select(self._sections, id="mcp-adv-section-select", allow_blank=False,
-                         value="overview")
-            yield Static("", id="mcp-adv-content", classes="ds-field-row", markup=False)
-            yield Label("Action", classes="form-label")
-            yield Select([("No actions available", Select.BLANK)], id="mcp-adv-action-select",
-                         value=Select.BLANK)
-            yield Label("Payload (JSON)", classes="form-label")
-            yield TextArea("{}", id="mcp-adv-payload")
-            yield Button("Run Action", id="mcp-adv-run", classes="console-action-primary",
-                         compact=True,
-                         tooltip="Run the selected legacy control-plane action with this JSON payload.")
-            yield Static("", id="mcp-adv-result", classes="ds-field-row", markup=False)
+        # T12: default collapsed unless the user has previously opened it --
+        # per-user GLOBAL preference (Console rail section-preference
+        # precedent), NOT per-server. `get_cli_setting` reads the real user
+        # config in a bare test App; tests monkeypatch this module's
+        # `get_cli_setting` name for determinism (see test_mcp_inspector.py).
+        persisted_open = bool(get_cli_setting("mcp.hub_state", "advanced_open", False))
+        self._advanced_last_collapsed = not persisted_open
+        with Collapsible(
+            title="Advanced (legacy control plane)",
+            collapsed=not persisted_open,
+            id="mcp-adv-collapsible",
+        ):
+            yield Static(self._advanced_object_label(), id="mcp-adv-object", markup=False)
+            with VerticalScroll(id="mcp-adv-scroll"):
+                yield Label("Section", classes="form-label")
+                yield Select(self._sections, id="mcp-adv-section-select", allow_blank=False,
+                             value="overview")
+                yield Static("", id="mcp-adv-content", classes="ds-field-row", markup=False)
+                yield Label("Action", classes="form-label")
+                yield Select([("No actions available", Select.BLANK)], id="mcp-adv-action-select",
+                             value=Select.BLANK)
+                # Task 4: guidance shown only while the section above has zero
+                # runnable action descriptors (see `_refresh_advanced_actions`),
+                # so a user landing on e.g. Overview isn't left staring at a
+                # disabled "No actions available" select with no next step.
+                yield Static("", id="mcp-adv-empty-hint", classes="ds-field-row", markup=False)
+                yield Label("Payload (JSON)", classes="form-label")
+                yield TextArea("{}", id="mcp-adv-payload")
+                yield Button("Run Action", id="mcp-adv-run", classes="console-action-primary",
+                             compact=True,
+                             tooltip="Run the selected legacy control-plane action with this JSON payload.")
+                yield Static("", id="mcp-adv-result", classes="ds-field-row", markup=False)
+
+    # -- T12: Advanced disclosure open/collapsed persistence -----------------
+
+    @on(Collapsible.Toggled, "#mcp-adv-collapsible")
+    def _on_advanced_collapsible_toggled(self, event: Collapsible.Toggled) -> None:
+        event.stop()
+        collapsed = event.collapsible.collapsed
+        # Mount-echo guard (review fix): `Collapsible.collapsed` is
+        # `reactive(True, init=False)`, so constructing the widget
+        # already-expanded (`collapsed=False` differs from the reactive's
+        # own True default) fires the watcher during construction and posts
+        # ONE Toggled with zero user interaction. The same quirk is
+        # documented at library_screen.py's
+        # `sync_library_ingest_advanced_open`, where the handler is a
+        # harmless in-memory sync -- here it would be a real disk write
+        # (TOML read-modify-write) on every mount whenever the preference
+        # is open. Drop any event that merely re-asserts the state we
+        # already track; real toggles always change it.
+        if collapsed == self._advanced_last_collapsed:
+            return
+        self._advanced_last_collapsed = collapsed
+        self.run_worker(
+            self._persist_advanced_open(not collapsed),
+            group="mcp-adv-open",
+            exclusive=True,
+        )
+
+    async def _persist_advanced_open(self, open_state: bool) -> None:
+        """Persist the Advanced disclosure's open/collapsed state.
+
+        Thread-offloaded exactly like `MCPWorkbench._save_builtin_flag()`
+        (`mcp_workbench.py`, Task 10 precedent) -- `save_setting_to_cli_config`
+        does a blocking TOML read-modify-write. Unlike that handler, this one
+        has no UI to resync afterward (the Collapsible already reflects its
+        own reactive `collapsed` state) and doesn't reach into `self.app` at
+        all: `save_setting_to_cli_config` is a free function, not something
+        that needs app-specific wiring, so there is nothing here that a bare
+        test App would be missing (contrast `_action_allowed()`'s
+        getattr-tolerant read of `self.app.require_ui_action_allowed`, which
+        DOES need that idiom because it's an app-specific seam). Failures are
+        logged and swallowed rather than surfaced via `self.app.notify()`
+        (unlike `_save_builtin_flag`): this is a low-stakes UI preference that
+        silently reverts to its default on next launch, not worth alarming
+        the user over.
+        """
+        try:
+            await asyncio.to_thread(
+                save_setting_to_cli_config, "mcp.hub_state", "advanced_open", open_state
+            )
+        except Exception as exc:
+            logger.warning(f"MCP advanced-open preference save failed: {exc}")
 
     # -- readiness block -----------------------------------------------------
 
@@ -163,52 +341,112 @@ class MCPInspector(Vertical):
         reason's action set) into `DuplicateIds`, crashing the whole app.
         Mirrors the fix in `console_session_switcher_modal.py`
         (`_refresh_results`) for the same bug class.
+
+        Task 4: the whole body additionally runs under `self._refresh_lock`
+        so two concurrently-awaited calls (e.g. a worker-driven refresh
+        racing a pump-driven one) can't interleave their remove/mount
+        cycles -- the second call's remove_children()/mount_all() only
+        begins once the first has fully completed.
         """
-        self._snapshot = snapshot
-        state = self.query_one("#mcp-inspector-state", Static)
-        message = self.query_one("#mcp-inspector-message", Static)
-        actions = self.query_one("#mcp-inspector-actions", Vertical)
-        await actions.remove_children()
-        if snapshot is None:
-            state.update("Select a server to see its readiness.")
-            message.update("")
-            return
-        state.update(f"{snapshot.badge_text()}  {snapshot.label}")
-        # A5: lead with the humanized *reason*, not a repeat of the canvas's
-        # own snapshot.message -- the inspector should add "why", which the
-        # canvas detail view doesn't say, rather than mirror what it already
-        # shows. A3a: never leak the internal ReasonCode value (e.g.
-        # "runtime_unavailable") into user-facing copy.
-        reason = snapshot.primary_reason
-        if reason is not None:
-            why_line = f"Why · {REASON_LABELS[reason]}"
-        elif snapshot.tool_count is not None:
-            why_line = f"Why · Ready — {snapshot.tool_count} tools available"
-        else:
-            why_line = "Why · Ready"
-        message.update(why_line)
-        buttons = []
-        for action in snapshot.allowed_actions:
-            button = Button(
-                _ACTION_LABELS[action],
-                id=f"mcp-inspector-action-{action.value}",
-                classes="mcp-inspector-action console-action-secondary",
-                compact=True,
-            )
-            if action not in _WIRED_ACTIONS:
-                button.disabled = True
-                button.tooltip = "Available in a later phase — use Advanced below."
+        async with self._refresh_lock:
+            self._snapshot = snapshot
+            state = self.query_one("#mcp-inspector-state", Static)
+            message = self.query_one("#mcp-inspector-message", Static)
+            actions = self.query_one("#mcp-inspector-actions", Vertical)
+            await actions.remove_children()
+            # Task 11: this Static persists across snapshots (unlike the
+            # rail's rows, which are recomposed fresh) -- drop whatever
+            # status class the previous snapshot left behind before
+            # possibly adding the new one, so two selections in a row never
+            # leave a stale color class stacked alongside the current one.
+            for css_class in STATE_CSS_CLASSES.values():
+                state.remove_class(css_class)
+            if snapshot is None:
+                state.update("Select a server to see its readiness.")
+                message.update("")
+                return
+            state.add_class(STATE_CSS_CLASSES[snapshot.state])
+            state.update(f"{snapshot.badge_text()}  {snapshot.label}")
+            # A5: lead with the humanized *reason*, not a repeat of the
+            # canvas's own snapshot.message -- the inspector should add
+            # "why", which the canvas detail view doesn't say, rather than
+            # mirror what it already shows. A3a: never leak the internal
+            # ReasonCode value (e.g. "runtime_unavailable") into user-facing
+            # copy.
+            reason = snapshot.primary_reason
+            if snapshot.state is ReadinessState.CHECKING:
+                # as_checking() clears reasons but leaves tool_count from the
+                # underlying snapshot alone -- lead with its own working
+                # message instead of falling through to a stale "Ready"/reason
+                # line that would contradict the "Checking" badge above.
+                why_line = snapshot.message
+            elif reason is not None:
+                why_line = f"Why · {REASON_LABELS[reason]}"
+            elif snapshot.tool_count is not None:
+                why_line = f"Why · Ready — {snapshot.tool_count} tools available"
             else:
-                button.tooltip = _WIRED_ACTION_TOOLTIPS.get(action, _ACTION_LABELS[action])
-            buttons.append(button)
-        if buttons:
-            await actions.mount_all(buttons)
+                why_line = "Why · Ready"
+            message.update(why_line)
+            if snapshot.state is ReadinessState.CHECKING:
+                # T5: an in-flight lifecycle action replaces the action set
+                # with a single Cancel button -- nothing else is actionable
+                # on this server until the worker finishes or is cancelled.
+                cancel_button = Button(
+                    "Cancel",
+                    id="mcp-inspector-cancel",
+                    classes="mcp-inspector-action console-action-secondary",
+                    compact=True,
+                    tooltip="Cancel the in-flight operation.",
+                )
+                await actions.mount_all([cancel_button])
+                return
+            wired = _wired_actions(snapshot)
+            buttons = []
+            for action in snapshot.allowed_actions:
+                button = Button(
+                    _ACTION_LABELS[action],
+                    id=f"mcp-inspector-action-{action.value}",
+                    classes="mcp-inspector-action console-action-secondary",
+                    compact=True,
+                )
+                if action not in wired:
+                    button.disabled = True
+                    if action in (_LIFECYCLE_ACTIONS | _CONFIG_ACTIONS) and snapshot.source != "local":
+                        button.tooltip = _SERVER_MANAGED_TOOLTIP
+                    else:
+                        button.tooltip = _LATER_PHASE_TOOLTIP
+                else:
+                    button.tooltip = _WIRED_ACTION_TOOLTIPS.get(action, _ACTION_LABELS[action])
+                buttons.append(button)
+            if buttons:
+                await actions.mount_all(buttons)
 
     # -- advanced escape hatch -----------------------------------------------
 
-    def set_service_context(self, service: Any, sections: list[tuple[str, str]]) -> None:
+    def set_service_context(
+        self,
+        service: Any,
+        sections: list[tuple[str, str]],
+        *,
+        source: str = "local",
+        target_label: str | None = None,
+    ) -> None:
+        """Bind the Advanced pane to a service context (initial mount, or a
+        rebind on a workbench source/target switch).
+
+        `source`/`target_label` drive `#mcp-adv-object`'s "Showing: ..."
+        label. The section resets to `sections[0]` and `#mcp-adv-content` is
+        blanked SYNCHRONOUSLY (not just once the reload worker below
+        resolves) so a rebind can never leave a previous object's rendered
+        dump on screen, even for one frame (UX-inputs acceptance: "reopening
+        never shows a previous object's facts").
+        """
         self._service = service
         self._sections = sections or [("Overview", "overview")]
+        self._advanced_source = source
+        self._advanced_target_label = target_label
+        self.query_one("#mcp-adv-object", Static).update(self._advanced_object_label())
+        self.query_one("#mcp-adv-content", Static).update("")
         section_select = self.query_one("#mcp-adv-section-select", Select)
         with section_select.prevent(Select.Changed):
             section_select.set_options(self._sections)
@@ -234,6 +472,7 @@ class MCPInspector(Vertical):
         self._action_templates = {
             str(d["name"]): str(d.get("payload_template") or "{}") for d in descriptors
         }
+        hint = self.query_one("#mcp-adv-empty-hint", Static)
         with action_select.prevent(Select.Changed):
             if not descriptors:
                 action_select.set_options([("No actions available", Select.BLANK)])
@@ -243,6 +482,11 @@ class MCPInspector(Vertical):
                 # Legacy behavior: a section with nothing to run resets the
                 # payload editor rather than leaving a stale template behind.
                 payload.text = "{}"
+                hint.update(
+                    "No actions for this section. Select External Servers or "
+                    "Inventory to see runnable actions."
+                )
+                hint.display = True
                 return
             options = [(str(d["label"]), str(d["name"])) for d in descriptors]
             option_values = [value for _, value in options]
@@ -252,6 +496,7 @@ class MCPInspector(Vertical):
             action_select.disabled = False
             run_button.disabled = False
             payload.text = self._action_templates.get(selected, "{}")
+            hint.display = False
 
     def _action_allowed(self, descriptor: dict[str, Any]) -> bool:
         """Mirror the legacy panel's policy gate; permissive only when seams absent.
@@ -312,6 +557,11 @@ class MCPInspector(Vertical):
         if button_id == "mcp-adv-run":
             event.stop()
             self.run_worker(self._run_advanced_action(), group="mcp-adv-run", exclusive=True)
+            return
+        if button_id == "mcp-inspector-cancel":
+            event.stop()
+            if self._snapshot is not None:
+                self.post_message(self.CancelRequested(self._snapshot.server_key))
             return
         if button_id.startswith("mcp-inspector-action-"):
             event.stop()

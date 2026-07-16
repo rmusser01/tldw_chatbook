@@ -162,8 +162,7 @@ from .Event_Handlers import (
     llm_nav_events, media_events, notes_events, app_lifecycle, tab_events,
     search_events, subscription_events,
 )
-from .Event_Handlers.Chat_Events import chat_events as chat_handlers, chat_events_sidebar, chat_events_worldbooks, \
-    chat_events_dictionaries
+from .Event_Handlers.Chat_Events import chat_events as chat_handlers, chat_events_sidebar, chat_events_worldbooks
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events
 from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
     TTSRequestEvent, TTSCompleteEvent, TTSPlaybackEvent, TTSProgressEvent, TTSEventHandler
@@ -7353,9 +7352,6 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         # --- Chat Tab World Book Search Input ---
         elif input_id == "chat-worldbook-search-input" and current_active_tab == TAB_CHAT:
             await chat_events_worldbooks.handle_worldbook_search_input(self, event.value)
-        # --- Chat Tab Dictionary Search Input ---
-        elif input_id == "chat-dictionary-search-input" and current_active_tab == TAB_CHAT:
-            await chat_events_dictionaries.handle_dictionary_search_input(self, event.value)
         # --- Chat Tab Media Search Input ---
         # elif input_id == "chat-media-search-input" and current_active_tab == TAB_CHAT:
         #     await handle_chat_media_search_input_changed(self, event.input)
@@ -7401,11 +7397,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         elif list_view_id in ["chat-worldbook-available-listview", "chat-worldbook-active-listview"] and current_active_tab == TAB_CHAT:
             self.loguru_logger.debug(f"World book selected in {list_view_id}")
             await chat_events_worldbooks.handle_worldbook_selection(self, list_view_id)
-            
-        elif list_view_id in ["chat-dictionary-available-listview", "chat-dictionary-active-listview"] and current_active_tab == TAB_CHAT:
-            self.loguru_logger.debug(f"Dictionary selected in {list_view_id}")
-            await chat_events_dictionaries.handle_dictionary_selection(self, list_view_id)
-            
+
         # Note: conv-char-search-results-list selections are handled by their respective "Load Selected" buttons.
         else:
             self.loguru_logger.warning(
@@ -7448,8 +7440,6 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 self.notify("Dictation button setting saved. Restart chat to apply changes.", timeout=3)
         elif checkbox_id == "chat-worldbook-enable-checkbox" and current_active_tab == TAB_CHAT:
             await chat_events_worldbooks.handle_worldbook_enable_checkbox(self, event.value)
-        elif checkbox_id == "chat-dictionary-enable-checkbox" and current_active_tab == TAB_CHAT:
-            await chat_events_dictionaries.handle_dictionary_enable_checkbox(self, event.value)
         elif checkbox_id == "chat-settings-mode-toggle" and current_active_tab == TAB_CHAT:
             # Handle settings mode toggle checkbox
             await self.handle_settings_mode_toggle_checkbox(event)

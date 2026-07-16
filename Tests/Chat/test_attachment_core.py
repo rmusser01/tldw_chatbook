@@ -144,11 +144,21 @@ def test_process_attachment_bytes_rejects_corrupt_and_oversized(monkeypatch):
     with _pytest.raises(ValueError, match="not a valid image"):
         asyncio.run(process_attachment_bytes(b"junk", display_name="x.png"))
 
-    monkeypatch.setattr(attachment_core, "MAX_IMAGE_BYTES", 4)
+    monkeypatch.setattr(attachment_core, "max_image_bytes", lambda: 4)
     with _pytest.raises(ValueError, match="too large"):
         asyncio.run(
             process_attachment_bytes(b"12345678", display_name="big.png")
         )
+
+
+def test_image_url_part_and_content_parts_agree():
+    from tldw_chatbook.Chat.attachment_core import image_content_parts, image_url_part
+
+    part = image_url_part(b"\x89PNG", "image/png")
+    assert part["type"] == "image_url"
+    assert part["image_url"]["url"].startswith("data:image/png;base64,")
+    combined = image_content_parts("hi", b"\x89PNG", "image/png")
+    assert combined[-1] == part
 
 
 def test_process_attachment_bytes_falls_back_to_original_on_processing_failure(monkeypatch):
