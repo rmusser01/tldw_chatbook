@@ -197,6 +197,26 @@ class MCPToolsMode(Vertical):
         await self._rebuild_server_select()
         self._apply_filter()
 
+    def update_states(self, states: dict[tuple[str, str], EffectiveToolState]) -> None:
+        """Refresh the cached State-column data in place and re-render rows,
+        without touching the cached tool list or rebuilding the server
+        filter Select.
+
+        Defect 1 fix (MCP Hub Phase 4 live QA, 2026-07-16): the three
+        standalone permission-mutation handlers in `mcp_workbench.py`
+        (Space-cycle, kill-switch toggle, Re-allow) deliberately resync
+        ONLY the Permissions matrix for latency (see
+        `MCPWorkbench._sync_permissions_mode()`'s docstring) -- but each of
+        them already resolves a fresh `EffectiveToolState` batch to do
+        that. This narrow setter lets those handlers hand that SAME dict to
+        this widget too, so its State column reflects the mutation without
+        the caller needing a second `effective_tool_states()` call, a
+        governance fetch, or a full `update_tools()` rebuild (which would
+        also remount the filter Select).
+        """
+        self._states = dict(states) if states else {}
+        self._apply_filter()
+
     def _server_options(self) -> list[tuple[str, str]]:
         """Unique `(server_label, server_key)` options, one per server
         actually present in the current (unfiltered) tool list, sorted by

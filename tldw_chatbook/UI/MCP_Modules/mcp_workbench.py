@@ -1080,6 +1080,7 @@ class MCPWorkbench(Container):
             except Exception as exc:
                 logger.warning(f"MCP kill switch read failed: {exc}")
 
+        standalone_resync = effective is None
         if effective is None:
             effective = self._resolve_effective_states(tools)
         # T7: cache this batch resolution for `_effective_for_display()` --
@@ -1087,6 +1088,18 @@ class MCPWorkbench(Container):
         # mode's own matrix-row selection reuse it instead of a second,
         # redundant per-tool resolution.
         self._last_effective_states = effective
+
+        if standalone_resync:
+            # Defect 1 fix (MCP Hub Phase 4 live QA, 2026-07-16): a
+            # STANDALONE caller (Space-cycle, kill-switch toggle, Re-allow)
+            # just resolved this batch fresh for ITS OWN matrix resync,
+            # above -- hand that same dict to `MCPToolsMode` too, so its
+            # State column reflects the mutation immediately instead of
+            # waiting for the next full `_sync_children()` pass. No extra
+            # `effective_tool_states()` call, no governance fetch, no
+            # `_sync_tools_mode()`/tool-list rebuild -- just this one
+            # widget's own narrow row re-render (`update_states()`).
+            self.query_one(MCPToolsMode).update_states(effective)
 
         payload: dict[str, Any] = {}
         store = getattr(service, "permission_store", None)

@@ -4351,6 +4351,94 @@ async def test_tools_mode_state_column_reflects_effective_tool_states(tmp_path):
         assert rows_by_tool["list_notes"] == "Ask"
 
 
+def _tools_table_state(app: App, tool_name: str) -> str:
+    table = app.query_one("#mcp-tools-table", DataTable)
+    for i in range(table.row_count):
+        row = table.get_row_at(i)
+        if row[0].plain == tool_name:
+            return row[1].plain
+    raise AssertionError(f"{tool_name!r} not found in #mcp-tools-table")
+
+
+@pytest.mark.asyncio
+async def test_space_cycle_propagates_fresh_states_to_tools_mode_without_full_resync(tmp_path):
+    """Defect 1 (MCP Hub Phase 4 live QA, 2026-07-16): the standalone
+    Space-cycle handler (`on_mcp_permissions_mode_state_cycle_requested`)
+    deliberately resyncs ONLY the Permissions matrix for latency (T8/T10) --
+    but it already resolves a fresh `EffectiveToolState` batch to do that.
+    This pins that `MCPToolsMode`'s cached State column must be refreshed
+    from that SAME batch, so switching to Tools mode right after a
+    Space-cycle -- with no manual `r` refresh and no full `_sync_children()`
+    pass -- shows the tool's NEW state, not the pre-mutation one."""
+    app = PermissionsApp(tmp_path / "mcp_permissions.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        # Tools mode starts with the pre-mutation "Ask" (plain, inherited).
+        assert _tools_table_state(app, "search") == "Ask"
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=3)  # local:docs::search
+        await pilot.press("space")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert _perm_table_texts(app, 3) == ["search", "Allow •", "—"]
+
+        # Switch to Tools mode WITHOUT a full resync (no `r` keypress, no
+        # `_sync_children()` call) -- `set_mode()` only swaps the
+        # ContentSwitcher's visible pane.
+        workbench.set_mode("tools")
+        await pilot.pause()
+
+        assert _tools_table_state(app, "search") == "Allow •"
+
+
+@pytest.mark.asyncio
+async def test_reallow_propagates_fresh_states_to_tools_mode_without_full_resync(tmp_path):
+    """Same Defect 1 coverage for the Re-allow standalone handler
+    (`on_mcp_inspector_reallow_requested`) -- a rug-pull-downgraded tool's
+    "Ask ⚠" marker must also clear in the Tools-mode State column once
+    Re-allow is pressed, without a manual refresh."""
+    store_path = tmp_path / "mcp_permissions.json"
+    MCPPermissionStore(store_path).set_tool_state(
+        "local:docs", "search", "allow", definition_hash="stale-hash-from-a-different-tool-shape"
+    )
+
+    app = PermissionsApp(store_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        assert _perm_table_texts(app, 3) == ["search", "Ask ⚠", "—"]
+        assert _tools_table_state(app, "search") == "Ask ⚠"
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=3)
+        await pilot.press("enter")
+        await pilot.pause()
+
+        await pilot.click("#mcp-inspector-reallow")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert _perm_table_texts(app, 3) == ["search", "Allow •", "—"]
+
+        workbench.set_mode("tools")
+        await pilot.pause()
+
+        assert _tools_table_state(app, "search") == "Allow •"
+
+
 class CountingEffectiveStatesHubService(PermissionsHubService):
     """T10 regression guard: counts `effective_tool_states()` invocations.
 

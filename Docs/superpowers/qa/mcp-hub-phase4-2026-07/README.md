@@ -259,7 +259,7 @@ directly). Files:
 
 ## Defects / observations found
 
-### Defect 1 (High, functional/UX) — Tools mode's cross-server catalog State column does not refresh after a Permissions-mode mutation
+### Defect 1 (High, functional/UX) — Tools mode's cross-server catalog State column does not refresh after a Permissions-mode mutation — FIXED
 
 **Reproduction:** MCP Hub → Permissions mode → Space-cycle any row (or
 toggle the kill switch, or press Re-allow) → switch to Tools mode (or it
@@ -316,8 +316,24 @@ source read of `_sync_children()`'s own docstring, which documents this
 exact trade-off by name ("The three STANDALONE callers of `_sync_
 permissions_mode()`... deliberately do NOT go through this path").
 
-Not fixed — reported per the task's own "capture, document, report; do not
-fix code" instruction.
+**Fix (2026-07-16):** `MCPWorkbench._sync_permissions_mode()` now tracks
+whether it was called standalone (`effective is None`, i.e. by one of the
+three mutation handlers above) versus as part of a full `_sync_children()`
+pass. On a standalone call, it hands the SAME freshly-resolved
+`EffectiveToolState` batch it just computed for its own matrix resync to a
+new narrow `MCPToolsMode.update_states()` setter, which refreshes the
+widget's cached `_states` and re-renders its rows (`_apply_filter()`)
+without touching the cached tool list or rebuilding the server-filter
+Select. This adds zero additional `effective_tool_states()` calls,
+governance fetches, or full `_sync_children()` passes — the T8/T10
+counting test (`test_sync_children_resolves_effective_states_exactly_once`)
+still asserts exactly one `effective_tool_states()` call per full sync.
+RED-first: `Tests/UI/test_mcp_workbench.py::
+test_space_cycle_propagates_fresh_states_to_tools_mode_without_full_resync`
+and `::test_reallow_propagates_fresh_states_to_tools_mode_without_full_resync`
+reproduced the stale-column bug pre-fix, pass post-fix. Commit:
+`412431c0` — fix(mcp-hub): propagate fresh permission states to the
+tools-mode column on standalone mutations.
 
 ### Defect 2 (Medium, UX/dead-code) — the footer shortcut-hint system (`MCP_SHORTCUTS`, `AppFooterStatus.set_workbench_shortcuts`) never renders in the running app
 
