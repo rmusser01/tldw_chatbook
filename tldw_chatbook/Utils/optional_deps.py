@@ -1023,8 +1023,13 @@ def create_unavailable_feature_handler(feature_name: str, suggestion: str = "") 
     return handler
 
 # Initialize dependency checks
-def reset_dependency_checks():
-    """Reset all dependency checks - useful for testing."""
+def reset_dependency_checks() -> None:
+    """Reset all dependency checks to their pristine unchecked state.
+
+    Restores ``DEPENDENCIES_AVAILABLE`` from the pristine copy of the module
+    literal, clears the cached SVG probe and imported-module registry.
+    Useful for testing.
+    """
     global MODULES, _svg_rendering_available
     DEPENDENCIES_AVAILABLE.clear()
     DEPENDENCIES_AVAILABLE.update(_INITIAL_DEPENDENCIES_AVAILABLE)

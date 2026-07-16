@@ -3095,10 +3095,24 @@ def save_setting_to_cli_config(section: str, key: str, value: Any) -> bool:
 # --- CLI Setting Getter ---
 def get_cli_setting(section: str, key: str = None, default: Any = None) -> Any:
     """Helper to get a specific setting from the loaded CLI configuration.
-    
+
     Can be called in two ways:
     1. get_cli_setting("section", "key", default)  # Traditional format
     2. get_cli_setting("section.key", default)     # Dotted format
+
+    Dotted sections/keys that miss the flat top-level lookup are resolved
+    against the nested TOML tree (``[chat.images]`` loads as
+    ``config["chat"]["images"]``); a flat top-level hit always wins.
+
+    Args:
+        section: Top-level section name, or a dotted path into nested tables.
+        key: Setting key within the section; in the dotted call shape this
+            positional slot may carry the default instead.
+        default: Value returned when the setting cannot be resolved.
+
+    Returns:
+        The resolved setting value, or ``default`` when the section/key does
+        not exist.
     """
     config = load_cli_config_and_ensure_existence() # Ensures config is loaded
     
@@ -3131,7 +3145,11 @@ def get_cli_setting(section: str, key: str = None, default: Any = None) -> Any:
     # Nested fallback: TOML `[chat.images]` loads as config["chat"]["images"],
     # never config["chat.images"], so dotted sections/keys that miss the flat
     # lookup are resolved by walking the real tree segment by segment.
-    if isinstance(key, str) and ("." in section or "." in key):
+    if (
+        isinstance(section, str)
+        and isinstance(key, str)
+        and ("." in section or "." in key)
+    ):
         node: Any = config
         for part in (*section.split("."), *key.split(".")):
             if not isinstance(node, dict) or part not in node:
