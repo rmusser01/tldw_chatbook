@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Protocol
@@ -180,6 +181,15 @@ class ConsoleChatController:
         self._active_assistant_message_id: str | None = None
         self._active_stream_task: asyncio.Task | None = None
         self._stop_requested = False
+        #: Per-run cancellation flag for the agent bridge's background
+        #: thread (see ``_run_agent_reply``). ``threading.Event`` rather
+        #: than a shared bool: ``asyncio.to_thread`` survives Task
+        #: cancellation (the coroutine detaches from the still-running OS
+        #: thread), so the closure handed to that thread must observe a
+        #: signal that, once set, is never reset for THIS run -- unlike
+        #: ``_stop_requested``, which the run's own ``finally`` block
+        #: resets as soon as the coroutine side is done (task-227).
+        self._active_cancel_event: threading.Event | None = None
 
     async def submit_draft(self, draft: str) -> ConsoleSubmitResult:
         """Submit a composer draft through native Console validation and provider resolution."""
@@ -394,7 +404,7 @@ class ConsoleChatController:
             The session activated after closing, or ``None`` when no sessions remain.
         """
         if self._active_stream_belongs_to_session(session_id):
-            self._stop_requested = True
+            self._signal_stop()
             if (
                 self._active_stream_task is not None
                 and self._active_stream_task is not asyncio.current_task()
@@ -404,6 +414,24 @@ class ConsoleChatController:
                 ConsoleRunState(ConsoleRunStatus.STOPPED, "Session closed.")
             )
         return self.store.close_session(session_id)
+
+    def _signal_stop(self) -> None:
+        """Set the shared UI-facing stop flag AND the active run's own
+        permanent per-run cancel signal.
+
+        ``_stop_requested`` is reset by the run's own ``finally`` block as
+        soon as the coroutine side of ``_run_agent_reply`` is done handling
+        a cancellation -- but ``asyncio.to_thread`` survives Task
+        cancellation, so the agent bridge's background OS thread can still
+        be running at that point and poll ``should_cancel()`` afterward
+        (task-227). ``_active_cancel_event``, once set here, is never reset
+        for that run, so a still-running bridge thread always observes the
+        Stop correctly regardless of what the coroutine side has already
+        reset.
+        """
+        self._stop_requested = True
+        if self._active_cancel_event is not None:
+            self._active_cancel_event.set()
 
     def stop_active_run(self) -> bool:
         """Request the active stream to stop at the next safe boundary."""
@@ -418,7 +446,7 @@ class ConsoleChatController:
             )
         if assistant_message_id is None:
             return False
-        self._stop_requested = True
+        self._signal_stop()
         self._mark_stream_stopped(
             assistant_message_id,
             visible_copy="Response stopped.",
@@ -433,7 +461,7 @@ class ConsoleChatController:
         if task is None:
             return
         if not self.stop_active_run():
-            self._stop_requested = True
+            self._signal_stop()
             if task is not asyncio.current_task():
                 task.cancel()
         if task is asyncio.current_task():
@@ -450,6 +478,7 @@ class ConsoleChatController:
                 self._active_assistant_message_id = None
                 self._active_stream_task = None
                 self._stop_requested = False
+                self._active_cancel_event = None
 
     def _active_streaming_assistant_message_id(self) -> str | None:
         """Return the visible streaming assistant message for the active session."""
@@ -940,6 +969,13 @@ class ConsoleChatController:
         self._active_assistant_message_id = assistant_message_id
         self._active_stream_task = asyncio.current_task()
         self._stop_requested = False
+        # A fresh per-run Event, captured by `should_cancel` below by
+        # closure (not read off `self` each time) -- see
+        # `_active_cancel_event`'s docstring for why this, rather than
+        # `_stop_requested` alone, is what makes a still-running bridge
+        # thread observe a Stop correctly (task-227).
+        cancel_event = threading.Event()
+        self._active_cancel_event = cancel_event
         self._set_run_state(ConsoleRunState(ConsoleRunStatus.STREAMING, "Agent running."))
         try:
             session_id = self.store.session_id_for_message(assistant_message_id)
@@ -959,7 +995,20 @@ class ConsoleChatController:
             agent_messages = agent_messages[1:]
 
         conversation_id = self._agent_conversation_id(session_id)
-        should_cancel = lambda: self._stop_requested  # noqa: E731 — tiny closure
+        # noqa: E731 — tiny closure. Reads BOTH signals: `_stop_requested`
+        # for same-tick responsiveness (and test doubles that flip it
+        # directly), and `cancel_event` -- captured by value, not via
+        # `self._active_cancel_event` -- for correctness once this run's
+        # `finally` below has already reset `_stop_requested` while the
+        # bridge's background thread is still running (task-227: an
+        # `asyncio.to_thread` call survives Task cancellation, so the
+        # coroutine can finish handling a Stop and reset its own shared
+        # bookkeeping well before the OS thread it detached from actually
+        # returns). `stop_active_run`/`close_session`/`shutdown` all set
+        # `cancel_event` via `_signal_stop()` the moment Stop is
+        # requested, and nothing ever clears it again for this run, so a
+        # late poll from the surviving thread still sees the cancellation.
+        should_cancel = lambda: self._stop_requested or cancel_event.is_set()  # noqa: E731
 
         # Swap site: the agent loop runs synchronously on a worker thread via
         # asyncio.to_thread, so Stop is cooperative-only -- `should_cancel` is
@@ -1020,6 +1069,12 @@ class ConsoleChatController:
                 self._active_assistant_message_id = None
                 self._active_stream_task = None
                 self._stop_requested = False
+                # NOT cancel_event.clear(): the closure above captured
+                # this exact Event object by value, so any still-running
+                # bridge thread keeps observing whatever it was last set
+                # to, forever, regardless of this attribute now pointing
+                # elsewhere (or nowhere) for the NEXT run (task-227).
+                self._active_cancel_event = None
 
         return self._finalize_agent_reply(
             assistant_message_id, session_id, outcome, variant_mode=variant_mode)
@@ -1036,6 +1091,26 @@ class ConsoleChatController:
         *, variant_mode: bool,
     ) -> ConsoleSubmitResult:
         from tldw_chatbook.Agents.agent_models import RUN_CANCELLED, RUN_DONE
+
+        try:
+            current = self.store.get_message(assistant_message_id)
+        except KeyError:
+            return self._session_closed_result()
+        if current.status == "stopped":
+            # task-227 LOW-2: a Stop can land in the ultra-narrow window
+            # after asyncio.to_thread returns an outcome but before this
+            # method runs -- the message is already terminal here, so
+            # every branch below would either raise via
+            # _validate_can_mark_terminal (mark_message_complete /
+            # mark_message_failed) or silently resurrect the stopped
+            # message back to "complete" (finalize_variant_stream, which
+            # has no such guard at all). Stop already won and settled
+            # both the message and run_state, so this is a benign
+            # no-op read-back, never an error.
+            self._set_run_state(
+                ConsoleRunState(ConsoleRunStatus.STOPPED, "Response stopped.")
+            )
+            return ConsoleSubmitResult(True, True, current.content)
 
         if outcome.status == RUN_CANCELLED:
             try:

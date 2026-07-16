@@ -635,19 +635,29 @@ class ConsoleChatStore:
         status (not reset to ``pending``) so the next turn's chunks continue
         to append normally via ``append_stream_chunk``.
 
+        A message already ``"stopped"`` is left untouched rather than
+        resurrected back to ``"streaming"`` -- mirrors ``append_stream_chunk``'s
+        hardening (Plan-B agent-runtime gate Finding 1 / final-review LOW-1,
+        task-227): the stop/cancel race can leave a still-running bridge
+        thread calling this after the user already stopped the message, and
+        that must be a benign no-op, not un-stop it.
+
         Args:
             message_id: Native Console message ID whose streamed content
                 (buffered chunks and materialized ``content``) should be
                 discarded.
 
         Returns:
-            A snapshot of the now-empty, still-streaming message.
+            A snapshot of the now-empty, still-streaming message -- or the
+            unmodified message, if it was already ``"stopped"``.
 
         Raises:
             KeyError: If the message is unknown.
             ValueError: If the message is not an assistant message.
         """
         message = self._message_or_raise(message_id)
+        if message.status == "stopped":
+            return self._snapshot(message)
         if message.role is not ConsoleMessageRole.ASSISTANT:
             raise ValueError("Only assistant messages can reset stream content.")
         message.content = ""
