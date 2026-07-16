@@ -1,5 +1,7 @@
 """The controller send path runs the agent loop when the bridge is wired."""
+import asyncio
 import json
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -92,6 +94,250 @@ async def test_stop_cancels_tree_and_persists_cancelled(tmp_path):
 
     primary = [r for r in _all_runs(db) if r["agent_kind"] == "primary"]
     assert primary and primary[0]["status"] == "cancelled"
+
+
+class _ParkingGateway:
+    """A ``provider_gateway`` whose ``stream_chat`` blocks the calling OS
+    thread mid-turn until released -- lets a test park the real bridge's
+    background thread (``asyncio.to_thread`` inside ``_run_agent_reply``)
+    at a well-known point and then drive a genuine cross-task
+    ``stop_active_run()`` while it is still executing."""
+
+    def __init__(self):
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    async def resolve_for_send(self, _selection):
+        return SimpleNamespace(ready=True, provider="llama_cpp", visible_copy="")
+
+    async def stream_chat(self, _resolution, _messages):
+        self.started.set()
+        # Blocking (not async) wait: this runs inside the bridge's own
+        # private per-run event loop (``run_loop.run_until_complete`` in
+        # ``ConsoleAgentBridge.run_reply``), on a real worker thread from
+        # ``asyncio.to_thread`` -- blocking it here does not touch the
+        # test's own asyncio loop on the main thread at all.
+        # timeout is an anti-hang safety only — the test always releases
+        # explicitly; generous so CI contention can never unpark early
+        # and break the choreography (PR #644 review).
+        self.release.wait(timeout=60)
+        yield "answered anyway."
+
+
+@pytest.mark.asyncio
+async def test_stop_during_parked_bridge_thread_persists_cancelled_not_done(tmp_path):
+    """task-227 AC1: stop_active_run's task-cancel must not race
+    _run_agent_reply's finally-reset of _stop_requested.
+
+    asyncio.to_thread survives Task cancellation -- cancelling the Task
+    only detaches the *coroutine* from the still-running background OS
+    thread; the thread itself keeps executing. Pre-fix, should_cancel read
+    the shared, mutable _stop_requested flag, which _run_agent_reply's
+    finally block resets to False the moment the coroutine handles the
+    CancelledError raised by stop_active_run's task.cancel() -- so if the
+    surviving thread polls should_cancel() *after* that reset (exactly
+    what happens here: the gateway is released only after awaiting the
+    coroutine's own return), it incorrectly sees "not cancelled" and
+    finishes the turn as RUN_DONE, persisting agent_runs.status == "done"
+    even though the user stopped. The fix threads a per-run
+    threading.Event through the should_cancel closure, set once by
+    stop_active_run and never reset by the finally block, so the
+    surviving thread still observes the cancellation correctly.
+    """
+    gateway = _ParkingGateway()
+    store = ConsoleChatStore()
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
+    controller = ConsoleChatController(
+        store=store, provider_gateway=gateway, provider="llama_cpp", model="test-model",
+        agent_bridge=bridge, agent_runtime_enabled=True)
+
+    send_task = asyncio.ensure_future(controller.submit_draft("hello"))
+
+    for _ in range(3000):  # 30s deadline — CI-contention headroom (PR #644 review)
+        if gateway.started.is_set():
+            break
+        await asyncio.sleep(0.01)
+    assert gateway.started.is_set(), "bridge thread never reached the parked gateway call"
+
+    # Stop while the bridge's worker thread is genuinely mid-turn -- a
+    # real cross-task cancellation, not a manually-flipped test flag.
+    assert controller.stop_active_run() is True
+    result = await send_task
+    assert result.accepted is True
+
+    session_id = store.active_session_id
+    assistant = next(
+        m for m in store.messages_for_session(session_id)
+        if m.role is ConsoleMessageRole.ASSISTANT
+    )
+    assert assistant.status == "stopped"
+    assert assistant.content == ""
+    # The controller-side bookkeeping has already been reset by
+    # _run_agent_reply's finally -- exactly the moment the pre-fix bug
+    # discarded the signal the still-running bridge thread depends on.
+    assert controller._stop_requested is False
+    assert controller._active_stream_task is None
+
+    # Release the parked thread now -- it is STILL RUNNING on its own OS
+    # thread, oblivious to the coroutine having already returned.
+    gateway.release.set()
+
+    primary: list[dict] = []
+    for _ in range(3000):  # 30s deadline — CI-contention headroom (PR #644 review)
+        primary = [r for r in _all_runs(db) if r["agent_kind"] == "primary"]
+        if primary and primary[0]["status"] != "running":
+            break
+        await asyncio.sleep(0.01)
+
+    assert primary, "primary run was never created"
+    assert primary[0]["status"] == "cancelled", (
+        "the surviving bridge thread's should_cancel() must still observe "
+        f"the Stop after the finally reset -- got {primary[0]['status']!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_finalize_after_already_stopped_is_a_benign_noop(tmp_path):
+    """task-227 AC3 (LOW-2): a Stop landing in the ultra-narrow window
+    after the bridge returns RUN_DONE but before _finalize_agent_reply
+    runs leaves the message already "stopped" by the time finalize is
+    reached. mark_message_complete (and mark_message_failed, for a
+    non-done outcome) reject an already-terminal message via
+    _validate_can_mark_terminal, and finalize_variant_stream has no such
+    guard at all -- either raises an unhandled ValueError or silently
+    resurrects the stopped message back to "complete". Finalize must
+    instead treat an already-stopped target as a benign no-op."""
+    controller, store, _db = _controller(tmp_path, [["unused"]])
+
+    def parked_run_reply(*, assistant_message_id, **_kwargs):
+        # Simulate the race directly at the store level: by the time the
+        # bridge "returns" RUN_DONE, a concurrent Stop has already
+        # finalized the message to "stopped".
+        store.mark_message_stopped(assistant_message_id)
+        return RunOutcome(status=RUN_DONE, steps=[], final_text="late done text")
+
+    controller._agent_bridge.run_reply = parked_run_reply
+    result = await controller.submit_draft("hi")
+    assert result.accepted is True
+
+    session_id = store.active_session_id
+    assistant = next(
+        m for m in store.messages_for_session(session_id)
+        if m.role is ConsoleMessageRole.ASSISTANT
+    )
+    assert assistant.status == "stopped"
+    assert assistant.content == ""
+    assert "late done text" not in assistant.content
+    assert controller.run_state.status is ConsoleRunStatus.STOPPED
+
+
+@pytest.mark.asyncio
+async def test_finalize_after_already_stopped_regenerate_no_phantom_variant(tmp_path):
+    """task-227 AC3 follow-up: the same post-outcome-window race as
+    ``test_finalize_after_already_stopped_is_a_benign_noop`` above, but
+    during a REGENERATE (``variant_mode=True``). ``mark_message_stopped``
+    (console_chat_store.py) restores a mid-regenerate message to its
+    *prior* status (e.g. "complete"), not "stopped" -- so
+    ``_finalize_agent_reply``'s original ``current.status == "stopped"``
+    guard never fires here, and RUN_DONE falls through to
+    ``finalize_variant_stream``, which has no stopped-guard of its own and
+    fabricates a phantom variant from the (already-cleared) variant base,
+    silently resurrecting the message to "complete" with a bogus variant
+    entry. The fix instead trusts the run's own per-run ``cancel_event``
+    (set by ``_signal_stop`` the instant Stop is requested, never cleared
+    for this run) as the authority on whether the run was stopped,
+    independent of what status ``mark_message_stopped`` happened to leave
+    the message at.
+    """
+    controller, store, _db = _controller(tmp_path, [["original answer."], ["unused"]])
+    first = await controller.submit_draft("hi")
+    assert first.accepted is True
+    session_id = store.active_session_id
+    assistant = next(
+        m for m in store.messages_for_session(session_id)
+        if m.role is ConsoleMessageRole.ASSISTANT
+    )
+    assert assistant.status == "complete"
+    assert assistant.content == "original answer."
+    assert assistant.variants is None
+
+    def parked_regenerate_reply(*, assistant_message_id, **_kwargs):
+        # Mirror stop_active_run's own sequence -- _signal_stop() (sets
+        # the per-run cancel_event) immediately followed by
+        # mark_message_stopped (restores the pre-regenerate base content
+        # AND status) -- simulating a real Stop landing in the window
+        # after the bridge has already produced RUN_DONE but before
+        # _finalize_agent_reply runs.
+        controller._active_cancel_event.set()
+        store.mark_message_stopped(assistant_message_id)
+        return RunOutcome(status=RUN_DONE, steps=[], final_text="late regenerate text")
+
+    controller._agent_bridge.run_reply = parked_regenerate_reply
+    regen = await controller.regenerate_message(assistant.id)
+    assert regen.accepted is True
+
+    restored = store.get_message(assistant.id)
+    assert restored.status == "complete"
+    assert restored.content == "original answer."
+    assert "late regenerate text" not in restored.content
+    # No phantom variant was fabricated from the already-popped base.
+    assert restored.variants is None
+    assert controller.run_state.status is ConsoleRunStatus.STOPPED
+
+
+@pytest.mark.asyncio
+async def test_finalize_after_already_stopped_regenerate_error_no_wedge(tmp_path):
+    """task-227 AC3 follow-up, RUN_ERROR/RUN_STUCK side: the same race as
+    the RUN_DONE test above, but the bridge reports a non-done outcome.
+    Pre-fix, ``_finalize_agent_reply`` falls through past the (never
+    firing) ``current.status == "stopped"`` guard into
+    ``mark_message_failed``, which raises ``ValueError`` via
+    ``_validate_can_mark_terminal`` because the message is already
+    "complete" (its restored prior status), not "pending"/"streaming".
+    That exception is raised *outside* ``_run_agent_reply``'s own
+    try/except (the call happens after the try/finally block returns),
+    so it propagates uncaught all the way out of ``regenerate_message``,
+    leaving ``run_state`` wedged at STREAMING forever -- every subsequent
+    send is then rejected as "a Console run is already running."
+    """
+    controller, store, _db = _controller(tmp_path, [["original answer."], ["unused"]])
+    first = await controller.submit_draft("hi")
+    assert first.accepted is True
+    session_id = store.active_session_id
+    assistant = next(
+        m for m in store.messages_for_session(session_id)
+        if m.role is ConsoleMessageRole.ASSISTANT
+    )
+    assert assistant.status == "complete"
+
+    def parked_regenerate_error_reply(*, assistant_message_id, **_kwargs):
+        controller._active_cancel_event.set()
+        store.mark_message_stopped(assistant_message_id)
+        return RunOutcome(
+            status=RUN_ERROR,
+            steps=[AgentStep(index=0, kind=STEP_ERROR, summary="late regenerate error")],
+        )
+
+    controller._agent_bridge.run_reply = parked_regenerate_error_reply
+    regen = await controller.regenerate_message(assistant.id)
+    assert regen.accepted is True
+
+    restored = store.get_message(assistant.id)
+    assert restored.status == "complete"
+    assert restored.content == "original answer."
+    assert controller.run_state.status is ConsoleRunStatus.STOPPED
+
+    # The run must not be wedged: a fresh send is accepted immediately.
+    def next_send_reply(*, assistant_message_id, **_kwargs):
+        store.append_stream_chunk(assistant_message_id, "next turn works.")
+        return RunOutcome(status=RUN_DONE, steps=[], final_text="next turn works.")
+
+    controller._agent_bridge.run_reply = next_send_reply
+    second = await controller.submit_draft("still there?")
+    assert second.accepted is True
+    second_messages = store.messages_for_session(store.active_session_id)
+    assert second_messages[-1].content == "next turn works."
 
 
 @pytest.mark.asyncio

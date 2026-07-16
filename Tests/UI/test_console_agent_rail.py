@@ -56,6 +56,87 @@ def test_no_badge_when_subagent_count_is_zero():
     assert label == "Beta"
 
 
+def test_badge_renders_on_its_own_line_regardless_of_secondary_length():
+    """Regression for task-226: the conversation-row badge used to share the
+    row's *last existing line* with the unbounded secondary-detail text
+    (workspace label - status - age). A long secondary line pushed the
+    trailing `[N Sub-Agents]` badge past the rail's rendered width, clipping
+    it to a bare `[1` (per the agent-runtime live-gate capture). The badge
+    must render on its own dedicated line so its visibility never depends on
+    how long the title or secondary line happen to be."""
+    from tldw_chatbook.Widgets.Console.console_workspace_context import (
+        format_console_conversation_row_label,
+    )
+    long_secondary = (
+        "a-really-long-workspace-label-that-keeps-going - saved chat - 3h ago"
+    )
+    composed = f"  Some Title\n  {long_secondary}"
+    label = format_console_conversation_row_label(composed, subagent_count=1)
+    lines = label.splitlines()
+    # The full badge text is present, unclipped, and is the ENTIRE final
+    # line -- not sharing that line with any of the long secondary text.
+    assert lines[-1] == "[dim]\\[1 Sub-Agents][/dim]"
+    assert long_secondary not in lines[-1]
+    assert "Sub-Agents" not in "\n".join(lines[:-1])
+
+
+def test_ellipsized_title_still_pairs_with_full_badge():
+    """Long titles keep degrading via ellipsis (existing behavior); that
+    truncation must never interact with -- or swallow -- the badge, which
+    now lives on an entirely separate line."""
+    from tldw_chatbook.Widgets.Console.console_workspace_context import (
+        ConsoleWorkspaceContextTray,
+        format_console_conversation_row_label,
+    )
+    long_title = "A" * 40
+    visible_title = ConsoleWorkspaceContextTray._conversation_visible_title(long_title)
+    assert visible_title.endswith("...")
+    assert len(visible_title) == 20
+
+    composed = f"  {visible_title}\n  saved chat - 2m"
+    label = format_console_conversation_row_label(composed, subagent_count=5)
+    lines = label.splitlines()
+    assert lines[0] == f"  {visible_title}"
+    assert lines[-1] == "[dim]\\[5 Sub-Agents][/dim]"
+
+
+def test_short_title_without_badge_is_unchanged():
+    """Badge-less rows and short titles get no extra lines or ellipsis."""
+    from tldw_chatbook.Widgets.Console.console_workspace_context import (
+        ConsoleWorkspaceContextTray,
+        format_console_conversation_row_label,
+    )
+    short_title = "Short title"
+    assert ConsoleWorkspaceContextTray._conversation_visible_title(short_title) == short_title
+
+    composed = f"  {short_title}\n  saved chat - 2m"
+    label = format_console_conversation_row_label(composed, subagent_count=0)
+    assert label == composed
+    assert label.count("\n") == 1
+
+
+def test_conversation_row_height_grows_only_when_badge_present():
+    """The row button gains a third line (for the badge) only when a badge
+    will actually render; badge-less rows keep the original two-line height."""
+    from tldw_chatbook.Widgets.Console.console_workspace_context import (
+        ConsoleWorkspaceContextTray,
+    )
+    badge_button = ConsoleWorkspaceContextTray._conversation_button(
+        "  Title\n  secondary",
+        id="row-badge",
+        conversation_id="c1",
+        subagent_count=2,
+    )
+    plain_button = ConsoleWorkspaceContextTray._conversation_button(
+        "  Title\n  secondary",
+        id="row-plain",
+        conversation_id="c2",
+        subagent_count=0,
+    )
+    assert int(badge_button.styles.height.value) == 3
+    assert int(plain_button.styles.height.value) == 2
+
+
 @pytest.mark.asyncio
 async def test_agent_rail_section_mounts():
     app = _build_test_app()

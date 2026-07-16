@@ -191,6 +191,33 @@ def test_reset_stream_content_discards_leaked_prose_but_keeps_streaming_status()
     assert materialized.content == "42."
 
 
+def test_reset_stream_content_noops_on_already_stopped_message():
+    """Plan-B final-review LOW-1 (task-227): reset_stream_content must not
+    resurrect an already-stopped message back to "streaming" -- mirrors
+    append_stream_chunk's hardening for the same stop/cancel race family
+    (Plan-B agent-runtime gate Finding 1). A disobedient model's
+    post-stop tool-call turn calls reset_stream_content once its (leaked,
+    already-dropped) turn is classified as a tool call; that must be a
+    no-op once the user has already stopped the message, not leave it
+    stuck "streaming" forever."""
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+
+    store.append_stream_chunk(message.id, "before stop")
+    stopped = store.mark_message_stopped(message.id)
+    assert stopped.status == "stopped"
+    assert stopped.content == "before stop"
+
+    result = store.reset_stream_content(message.id)
+
+    assert result.status == "stopped"
+    assert result.content == "before stop"
+    unchanged = store.get_message(message.id)
+    assert unchanged.status == "stopped"
+    assert unchanged.content == "before stop"
+
+
 def test_store_tracks_active_workspace_context():
     context = ConsoleWorkspaceContext(active_workspace_id="workspace-a")
     store = ConsoleChatStore(workspace_context=context)
