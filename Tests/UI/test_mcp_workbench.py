@@ -4146,6 +4146,59 @@ async def test_tools_mode_state_column_reflects_effective_tool_states(tmp_path):
         assert rows_by_tool["list_notes"] == "Ask"
 
 
+class CountingEffectiveStatesHubService(PermissionsHubService):
+    """T10 regression guard: counts `effective_tool_states()` invocations.
+
+    Before T10, one full `_sync_children()` pass called this TWICE for the
+    exact same `tools` list -- once from `_sync_tools_mode()` (State
+    column) and once from `_sync_permissions_mode()` (matrix rows), each a
+    full store load (plus any mark/audit side effects the real method
+    performs). This subclass just counts calls on top of
+    `PermissionsHubService`'s real store-backed implementation so a test
+    can pin the count directly rather than inferring it from rendered
+    output.
+    """
+
+    def __init__(self, store_path: Path) -> None:
+        super().__init__(store_path)
+        self.effective_tool_states_calls = 0
+
+    def effective_tool_states(self, tools):
+        self.effective_tool_states_calls += 1
+        return super().effective_tool_states(tools)
+
+
+class CountingEffectiveStatesApp(App):
+    def __init__(self, store_path: Path) -> None:
+        super().__init__()
+        self.unified_mcp_service = CountingEffectiveStatesHubService(store_path)
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+@pytest.mark.asyncio
+async def test_sync_children_resolves_effective_states_exactly_once(tmp_path):
+    """T10: one full `_sync_children()` pass must call
+    `effective_tool_states()` on the service EXACTLY ONCE. Previously
+    `_sync_tools_mode()` and `_sync_permissions_mode()` each resolved their
+    own `EffectiveToolState` batch independently -- two full resolutions
+    over the SAME tools list, back-to-back, every single resync."""
+    app = CountingEffectiveStatesApp(tmp_path / "mcp_permissions_count.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        service = app.unified_mcp_service
+        # Reset past whatever the mount-time reload() itself triggered --
+        # this test pins the count for ONE explicit full sync, not mount.
+        service.effective_tool_states_calls = 0
+
+        await workbench._sync_children()
+        await pilot.pause()
+
+        assert service.effective_tool_states_calls == 1
+
+
 class GovernanceHubService(FakeHubService):
     """Server source with one active target ("main") -- `load_section`
     returns a canned "governance" section carrying a `permission_profiles`
@@ -4247,4 +4300,220 @@ async def test_permissions_mode_governance_fetch_failure_leaves_section_absent()
         assert len(app.query("#mcp-perm-server-profiles")) == 0
         # The matrix itself must still render -- a governance-section
         # failure is isolated, not a whole-mode crash.
+        assert app.query_one("#mcp-perm-table", DataTable)
+
+
+# -- T11: server-source governance-listing fetch is cached per (source,
+# target) identity -----------------------------------------------------------
+#
+# `GovernanceCachingHubService` combines `GovernanceHubService`'s canned
+# governance section with `PermissionsHubService`'s real store-backed
+# `effective_tool_states()`/`set_tool_state()`/kill-switch plumbing (T1/T4),
+# plus one external server record embedding a tool (mirrors
+# `ServerToolsHubService`) so the permissions matrix actually has a "tool"
+# row to Space-press cycle, and a `load_section("governance")` call counter.
+
+
+class GovernanceCachingHubService(FakeHubService):
+    def __init__(self, store_path: Path) -> None:
+        super().__init__()
+        self._store = MCPPermissionStore(store_path)
+        self.context = UnifiedMCPContext(
+            selected_source="server", selected_active_server_id="main"
+        )
+        self.governance_fetch_calls = 0
+
+    @property
+    def permission_store(self) -> MCPPermissionStore:
+        return self._store
+
+    def effective_tool_states(self, tools):
+        payload = self._store.load()
+        return {(t.server_key, t.name): resolve_effective_state(payload, t) for t in tools}
+
+    def set_tool_state(self, server_key, tool_name, ui_state, *, tool=None):
+        hash_value = None
+        if ui_state == "allow":
+            if tool is None:
+                raise ValueError("tool is required to set state 'allow'")
+            hash_value = definition_hash(tool.description, tool.input_schema)
+        self._store.set_tool_state(server_key, tool_name, ui_state, definition_hash=hash_value)
+
+    def get_kill_switch(self):
+        return self._store.get_kill_switch()
+
+    def set_kill_switch(self, value):
+        self._store.set_kill_switch(value)
+
+    async def load_section(self, section=None):
+        effective_section = section or self.context.selected_section or "overview"
+        if effective_section == "governance":
+            self.governance_fetch_calls += 1
+            return {
+                "permission_profiles": [{"name": "Docs writers", "id": "prof-1"}],
+                "source": "server",
+                "section": "governance",
+            }
+        if self.context.selected_source == "server" and effective_section == "external_servers":
+            return {
+                "external_servers": [
+                    {
+                        "server_id": "docs",
+                        "name": "Docs",
+                        "tools": [{"name": "search", "description": "Search."}],
+                    }
+                ],
+                "source": "server",
+                "section": "external_servers",
+            }
+        return await super().load_section(section)
+
+
+class GovernanceCachingApp(App):
+    def __init__(self, store_path: Path) -> None:
+        super().__init__()
+        self.unified_mcp_service = GovernanceCachingHubService(store_path)
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+@pytest.mark.asyncio
+async def test_space_press_resyncs_reuse_cached_governance_profiles(tmp_path):
+    """T11 (a): the governance listing is STATIC server-side data -- two
+    consecutive Space-press permission cycles under server source (each a
+    standalone `_sync_permissions_mode()` resync) must not re-fetch it.
+    Only the mount-time full `_sync_children()` pass should ever call
+    `load_section("governance")`."""
+    app = GovernanceCachingApp(tmp_path / "mcp_governance_cache.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        service = app.unified_mcp_service
+        assert service.governance_fetch_calls == 1  # the mount-time full sync
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        assert table.row_count == 3  # global, server default, "search" tool
+        table.focus()
+
+        table.move_cursor(row=2)  # server:main/docs::search
+        await pilot.press("space")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert service.governance_fetch_calls == 1
+
+        table.move_cursor(row=2)
+        await pilot.press("space")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert service.governance_fetch_calls == 1
+
+        # The section itself still renders from the cached value -- caching
+        # the fetch must not also blank the UI.
+        section = app.query_one("#mcp-perm-server-profiles")
+        assert section.display is True
+
+
+@pytest.mark.asyncio
+async def test_source_switch_refetches_governance_profiles_once(tmp_path):
+    """T11 (b): a source switch is a full `_sync_children()` pass under a
+    `(source, target)` key the cache no longer matches for -- exactly one
+    additional `load_section("governance")` fetch per switch back into
+    server source, never a fetch per resync along the way."""
+    app = GovernanceCachingApp(tmp_path / "mcp_governance_switch.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        service = app.unified_mcp_service
+        assert service.governance_fetch_calls == 1
+
+        rail = app.query_one(MCPRail)
+        rail.post_message(MCPRail.SourceChanged("local"))
+        await pilot.pause()
+        assert service.governance_fetch_calls == 1  # local source never fetches
+
+        rail.post_message(MCPRail.SourceChanged("server"))
+        await pilot.pause()
+        assert service.governance_fetch_calls == 2
+
+
+# -- Minor 2: `_load_server_governance_profiles()` malformed-but-present
+# payloads -- both a non-Mapping payload and a `permission_profiles` key
+# that isn't a list count as a SUCCESSFUL fetch (not a failure): the section
+# still renders, with its pointer text and zero rows, same as a legitimately
+# empty profiles list. Only load_section() itself raising renders the
+# section absent (see test_permissions_mode_governance_fetch_failure_leaves_
+# section_absent above).
+
+
+class GovernanceNonMappingHubService(GovernanceHubService):
+    async def load_section(self, section=None):
+        effective_section = section or self.context.selected_section or "overview"
+        if effective_section == "governance":
+            return ["not", "a", "mapping"]
+        return await super().load_section(section)
+
+
+class GovernanceNonMappingApp(App):
+    def __init__(self) -> None:
+        super().__init__()
+        self.unified_mcp_service = GovernanceNonMappingHubService()
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+@pytest.mark.asyncio
+async def test_permissions_mode_governance_non_mapping_payload_renders_empty_section():
+    app = GovernanceNonMappingApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        section = app.query_one("#mcp-perm-server-profiles")
+        assert section.display is True
+        assert len(app.query(".mcp-perm-server-profile-row")) == 0
+        # The matrix itself must still render alongside the empty section.
+        assert app.query_one("#mcp-perm-table", DataTable)
+
+
+class GovernanceProfilesNotListHubService(GovernanceHubService):
+    async def load_section(self, section=None):
+        effective_section = section or self.context.selected_section or "overview"
+        if effective_section == "governance":
+            return {
+                "permission_profiles": "not-a-list",
+                "source": "server",
+                "section": "governance",
+            }
+        return await super().load_section(section)
+
+
+class GovernanceProfilesNotListApp(App):
+    def __init__(self) -> None:
+        super().__init__()
+        self.unified_mcp_service = GovernanceProfilesNotListHubService()
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+@pytest.mark.asyncio
+async def test_permissions_mode_governance_profiles_not_list_renders_empty_section():
+    app = GovernanceProfilesNotListApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        section = app.query_one("#mcp-perm-server-profiles")
+        assert section.display is True
+        assert len(app.query(".mcp-perm-server-profile-row")) == 0
         assert app.query_one("#mcp-perm-table", DataTable)

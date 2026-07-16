@@ -482,6 +482,19 @@ class MCPWorkbench(Container):
         # rule (Tools-mode's `show_tool(tool, effective=...)` and
         # Permissions-mode's own `show_permission()`).
         self._last_effective_states: dict[tuple[str, str], EffectiveToolState] = {}
+        # T11: this pass's server-source governance-listing fetch
+        # (`_load_server_governance_profiles()`), cached by `(source,
+        # target)` identity -- that data is STATIC server-side profile
+        # config, unaffected by anything a permission-matrix interaction
+        # (Space-press cycle, kill-switch toggle, re-allow) can do, so a
+        # standalone `_sync_permissions_mode()` resync from any of those
+        # must reuse this instead of re-awaiting `load_section
+        # ("governance")` on every keypress. `_UNSET` seeds the key so the
+        # very first fetch (whatever source/target that turns out to be)
+        # always "changes" it and fetches once; see `_server_governance_
+        # profiles()` for the full cache/refresh contract.
+        self._governance_profiles_cache: list[dict[str, Any]] | None = None
+        self._governance_profiles_cache_key: tuple[str, str | None] | Any = _UNSET
 
     @property
     def active_mode(self) -> str:
@@ -838,6 +851,20 @@ class MCPWorkbench(Container):
         serializes those too, so two overlapping calls' remove+mount cycles
         (now real suspension points, since `MCPServersMode.show_detail()`
         rebuilds the detail toolbar) can't interleave on the same widgets.
+
+        T10: `_collect_hub_tools()` and `_resolve_effective_states()` are
+        each called EXACTLY ONCE per pass, right here, and threaded into
+        both `_sync_tools_mode()` (the State column) and
+        `_sync_permissions_mode()` (the matrix rows) -- both modes render
+        the SAME tool list against the SAME effective-state resolution for
+        one pass, so there is no reason to pay for a second full store
+        load (plus any mark/audit side effects `effective_tool_states()`
+        performs) back-to-back. The three STANDALONE callers of
+        `_sync_permissions_mode()` (Space-press cycle, kill-switch toggle,
+        re-allow) deliberately do NOT go through this path -- they call it
+        with no `effective` argument, so it resolves fresh (see that
+        method's docstring for why that's correct there: each of those
+        handlers just mutated the store itself).
         """
         async with self._sync_children_lock:
             display_snapshots = [self._display_snapshot(snap) for snap in self._snapshots]
@@ -861,10 +888,15 @@ class MCPWorkbench(Container):
             selected = self._snapshot_for_display(self._selected_server_key)
             await self._show_selected_detail(canvas, selected)
             await self.query_one(MCPInspector).update_readiness(selected)
-            await self._sync_tools_mode()
-            await self._sync_permissions_mode()
+            tools = self._collect_hub_tools()
+            self._last_hub_tools = tools
+            effective = self._resolve_effective_states(tools)
+            await self._sync_tools_mode(tools, effective)
+            await self._sync_permissions_mode(effective, refresh_governance=True)
 
-    async def _sync_tools_mode(self) -> None:
+    async def _sync_tools_mode(
+        self, tools: list[HubTool], states: dict[tuple[str, str], EffectiveToolState]
+    ) -> None:
         """Push the current cross-server tool catalog into `MCPToolsMode`.
 
         T5: runs on every `_sync_children()` pass (mirrors `MCPServersMode`'s
@@ -872,23 +904,18 @@ class MCPWorkbench(Container):
         the active canvas -- the ContentSwitcher hides the inactive canvas
         via CSS but never unmounts it, so keeping its data current the whole
         time means switching TO Tools mode never shows stale rows from
-        before the last background resync. Computed entirely from
-        `self._catalog_records`/`self._snapshots` (both already loaded by
-        `_collect_snapshots()` this same pass) plus one guarded, synchronous
-        `local_service.get_inventory()` call -- no new I/O.
+        before the last background resync.
 
-        T8: also resolves this pass's `EffectiveToolState`s for the State
-        column via `_resolve_effective_states()` -- computed fresh here
-        (not read from `self._last_effective_states`) because that cache is
-        only ever current AFTER `_sync_permissions_mode()` runs, which
-        happens immediately AFTER this method in `_sync_children()`; reading
-        it here would render the State column one pass stale on the very
-        first sync (still empty) and after any tool-list change.
+        T10: `tools` (from `_collect_hub_tools()`) and `states` (from
+        `_resolve_effective_states()`) are now both resolved ONCE by the
+        caller (`_sync_children()`) and passed in, rather than this method
+        deriving them itself -- `_sync_permissions_mode()` needs the exact
+        same two values this same pass, and resolving them twice meant two
+        full store loads (plus any mark/audit side effects
+        `effective_tool_states()` performs) back-to-back for identical
+        input.
         """
-        tools = self._collect_hub_tools()
-        self._last_hub_tools = tools
         diagnosis = None if tools else self._empty_tools_diagnosis()
-        states = self._resolve_effective_states(tools)
         await self.query_one(MCPToolsMode).update_tools(
             tools, empty_diagnosis=diagnosis, states=states
         )
@@ -974,13 +1001,17 @@ class MCPWorkbench(Container):
         rather than raising.
 
         T8: shared by `_sync_tools_mode()` (State column) and
-        `_sync_permissions_mode()` (matrix rows) -- each calls this
-        itself rather than one reusing `self._last_effective_states` from
-        the other, because `_sync_permissions_mode()` also runs
-        STANDALONE (kill-switch toggle, Space-press state cycle handlers)
-        without a preceding `_sync_tools_mode()` pass in the same call,
-        and must always resolve fresh so a just-applied permission change
-        is reflected immediately rather than waiting for the next full
+        `_sync_permissions_mode()` (matrix rows).
+
+        T10: a full `_sync_children()` pass now calls this itself exactly
+        ONCE and threads the one result into both `_sync_tools_mode()` and
+        `_sync_permissions_mode()` (see `_sync_children()`'s docstring) --
+        this method itself is unchanged, and the three STANDALONE callers
+        of `_sync_permissions_mode()` (kill-switch toggle, Space-press
+        state cycle, re-allow) still call THIS directly with no
+        preceding `_sync_tools_mode()` pass in the same call, and must
+        always resolve fresh so a just-applied permission change is
+        reflected immediately rather than waiting for the next full
         `_sync_children()` pass.
         """
         service = self._service()
@@ -993,18 +1024,43 @@ class MCPWorkbench(Container):
             logger.warning(f"MCP effective tool state resolution failed: {exc}")
             return {}
 
-    async def _sync_permissions_mode(self) -> None:
+    async def _sync_permissions_mode(
+        self,
+        effective: dict[tuple[str, str], EffectiveToolState] | None = None,
+        *,
+        refresh_governance: bool = False,
+    ) -> None:
         """Push the current permission matrix into `MCPPermissionsMode`.
 
         Mirrors `_sync_tools_mode()`: runs on every `_sync_children()` pass
         (the ContentSwitcher never unmounts the inactive canvas, only hides
         it) so switching INTO Permissions mode never shows a stale matrix
         from before the last background resync. Computed from
-        `self._last_hub_tools` (already derived this same pass by the
-        immediately-preceding `_sync_tools_mode()` call) plus one
-        `effective_tool_states()` call and one `permission_store.load()`
-        read -- no extra service I/O beyond that (T8's server-source
-        governance fetch, below, is the one exception).
+        `self._last_hub_tools` (already derived this same pass by
+        `_sync_children()`, immediately before it calls this) plus one
+        `permission_store.load()` read -- no extra service I/O beyond that
+        (T8's server-source governance fetch, below, is the one exception,
+        and T11 now caches it -- see `_server_governance_profiles()`).
+
+        T10: `effective` is the SAME batch `EffectiveToolState` resolution
+        `_sync_children()` already computed once this pass (via
+        `_resolve_effective_states()`) for `_sync_tools_mode()`'s State
+        column -- passed in rather than resolved again here, so one full
+        `_sync_children()` pass no longer means two back-to-back
+        `effective_tool_states()` calls (each a full store load, plus any
+        mark/audit side effects that method performs) for identical input.
+        `None` (the default) means resolve fresh instead: every STANDALONE
+        caller (kill-switch toggle, Space-press state cycle, re-allow) just
+        mutated the permission store itself and must see that change
+        reflected immediately, not the previous pass's now-stale snapshot.
+
+        T11: `refresh_governance` gates whether `_server_governance_
+        profiles()` may actually fetch this pass -- only `_sync_children()`'s
+        own full pass sets it True; every standalone caller leaves it False
+        (the default) so a Space-press/kill-switch/re-allow resync reuses
+        whatever governance listing was last cached rather than re-awaiting
+        `load_section("governance")` for data that interaction can't have
+        changed.
 
         Every T4 seam is read via `getattr(..., None)` + `callable()` --
         the same "seams absent -> permissive/fail-soft by design" precedent
@@ -1024,7 +1080,8 @@ class MCPWorkbench(Container):
             except Exception as exc:
                 logger.warning(f"MCP kill switch read failed: {exc}")
 
-        effective = self._resolve_effective_states(tools)
+        if effective is None:
+            effective = self._resolve_effective_states(tools)
         # T7: cache this batch resolution for `_effective_for_display()` --
         # both Tools-mode's tool-detail permission block and Permissions-
         # mode's own matrix-row selection reuse it instead of a second,
@@ -1055,8 +1112,48 @@ class MCPWorkbench(Container):
             rows, kill_switch=kill_switch, preview=preview
         )
         await self.query_one(MCPPermissionsMode).update_server_profiles(
-            await self._load_server_governance_profiles(service)
+            await self._server_governance_profiles(service, refresh=refresh_governance)
         )
+
+    async def _server_governance_profiles(
+        self, service: Any, *, refresh: bool
+    ) -> list[dict[str, Any]] | None:
+        """T11: this pass's server-source governance listing, fetched at
+        most once per `(source, target)` identity.
+
+        `_load_server_governance_profiles()` reads STATIC server-side
+        profile data -- nothing a permission-matrix interaction (Space-press
+        cycle, kill-switch toggle, re-allow) can change -- so this is the
+        single point deciding whether the current pass actually needs to hit
+        `load_section("governance")` again:
+
+        - `refresh=True` (only `_sync_children()`'s own full pass): fetch
+          when `(self._source, self._active_service_target_id())` differs
+          from the key of the last fetch, or nothing has ever been fetched
+          yet (`_governance_profiles_cache_key` still the module's `_UNSET`
+          sentinel); otherwise reuse the cached value with no I/O at all.
+        - `refresh=False` (every standalone resync): NEVER fetches --
+          returns whatever is cached for the CURRENT key. A key mismatch
+          here (returns `None`, section renders absent rather than a
+          stale different identity's profiles) is defensive only: every
+          source/target switch (`_switch_source()`, `_select_server_key()`)
+          runs its own full `_sync_children()` pass -- which refreshes the
+          cache for the new key -- before any standalone resync can run
+          against it, so this branch should not normally trigger.
+
+        No separate cache-invalidation call is needed at the rail's
+        source/scope-switch handlers: the key is recomputed from live state
+        on every call, so any actual identity change is caught by the
+        comparison above rather than requiring every switch site to
+        remember to clear a cache by hand.
+        """
+        key = (self._source, self._active_service_target_id())
+        if key != self._governance_profiles_cache_key:
+            if not refresh:
+                return None
+            self._governance_profiles_cache = await self._load_server_governance_profiles(service)
+            self._governance_profiles_cache_key = key
+        return self._governance_profiles_cache
 
     async def _load_server_governance_profiles(self, service: Any) -> list[dict[str, Any]] | None:
         """T8: the server-source read-only governance listing's data.
@@ -1087,7 +1184,11 @@ class MCPWorkbench(Container):
             logger.warning(f"MCP governance section fetch failed: {exc}")
             return None
         if not isinstance(governance_payload, Mapping):
-            return None
+            # Malformed-but-present, per this method's own docstring above --
+            # the fetch itself succeeded, it just didn't hand back the shape
+            # expected. `[]` (not `None`), same as a bad `permission_profiles`
+            # value below.
+            return []
         raw_profiles = governance_payload.get("permission_profiles")
         return raw_profiles if isinstance(raw_profiles, list) else []
 

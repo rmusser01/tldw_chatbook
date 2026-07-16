@@ -570,4 +570,21 @@ async def test_matrix_and_kill_switch_have_nonzero_geometry_with_bundled_css():
 
         checkbox = app.query_one("#mcp-perm-kill-switch", Checkbox)
         assert checkbox.size.width > 0, "kill-switch row collapsed to zero width under bundled CSS"
+
+        # T8's server-source governance listing is its own dedicated slot
+        # (`#mcp-perm-server-profiles-slot`, `height: auto; min-height: 0;`)
+        # -- exercise it under the real bundle too, same rationale as the
+        # matrix table/kill-switch checks above (Phase 3 lesson: DEFAULT_CSS
+        # alone can still collapse to 0x0 once the bundle's global widget
+        # rules are also in play).
+        await canvas.update_server_profiles([{"name": "Docs writers", "id": "prof-1"}])
+        await pilot.pause()
+
+        section = app.query_one("#mcp-perm-server-profiles")
+        assert section.size.width > 0, "server-profiles section collapsed to zero width under bundled CSS"
+        assert section.size.height > 0, "server-profiles section collapsed to zero height under bundled CSS"
+
+        pointer = app.query_one("#mcp-perm-server-profiles-pointer", Static)
+        assert pointer.size.width > 0, "server-profiles pointer collapsed to zero width under bundled CSS"
+        assert pointer.size.height > 0, "server-profiles pointer collapsed to zero height under bundled CSS"
         assert checkbox.size.height > 0, "kill-switch row collapsed to zero height under bundled CSS"
