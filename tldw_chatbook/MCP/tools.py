@@ -291,11 +291,15 @@ class MCPTools:
             if not conv_details:
                 return {"error": f"Conversation {conversation_id} not found"}
             
-            # Get messages
-            messages = self.chachanotes_db.get_conversation_messages(conversation_id)
+            # Get messages. `get_conversation_messages` never existed on
+            # CharactersRAGDB; the real method is `get_messages_for_conversation`,
+            # which takes a string conversation id and already excludes
+            # soft-deleted messages/conversations (QA follow-up review of
+            # commit 4fd1e908).
+            messages = self.chachanotes_db.get_messages_for_conversation(str(conversation_id))
             if limit:
                 messages = messages[-limit:]
-            
+
             return {
                 "id": conversation_id,
                 "title": conv_details['title'],
@@ -305,7 +309,7 @@ class MCPTools:
                     {
                         "role": msg['role'],
                         "content": msg['content'],
-                        "timestamp": msg.get('created_at')
+                        "timestamp": msg.get('timestamp')
                     }
                     for msg in messages
                 ]

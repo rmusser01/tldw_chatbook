@@ -44,10 +44,13 @@ class MCPResources:
             Resource dict with content and metadata
         """
         try:
-            conv_id = int(conversation_id)
-            
-            # Get conversation details
-            conv = self.chachanotes_db.get_conversation_by_id(conv_id)
+            # `conversation_id` is a string UUID (see `get_conversation_by_id`'s
+            # docstring), not an int -- casting it broke every lookup. Likewise
+            # `get_conversation_messages` never existed on CharactersRAGDB; the
+            # real method is `get_messages_for_conversation`, which already
+            # excludes soft-deleted messages/conversations (QA follow-up review
+            # of commit 4fd1e908).
+            conv = self.chachanotes_db.get_conversation_by_id(conversation_id)
             if not conv:
                 return {
                     "uri": f"conversation://{conversation_id}",
@@ -55,9 +58,9 @@ class MCPResources:
                     "mimeType": "text/plain",
                     "content": "Conversation not found"
                 }
-            
+
             # Get messages
-            messages = self.chachanotes_db.get_conversation_messages(conv_id)
+            messages = self.chachanotes_db.get_messages_for_conversation(conversation_id)
             
             # Format as markdown
             content = f"# {conv['title']}\n\n"

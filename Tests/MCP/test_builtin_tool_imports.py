@@ -3,8 +3,11 @@
 built-in MCP tools crashed with `ImportError: cannot import name
 'ChaChaNotes_DB' from 'tldw_chatbook.DB.ChaChaNotes_DB'` the moment they were
 actually executed (Hub -> Tools mode -> Test Tool -> Run for
-`chat_with_character`, `search_conversations`, `create_note`, `search_notes`,
-`list_characters`, `get_conversation_history`, `export_conversation`).
+`chat_with_character`, `search_conversations`, `list_characters`,
+`get_conversation_history`, `export_conversation`). `create_note` and
+`search_notes` are routed by `local_runtime_delegate.py` straight to
+`CharactersRAGDB.add_note()` / `.search_notes()` and never go through this
+module at all, so they were unaffected by the ImportError.
 
 Root cause (verified by reading each site): `tldw_chatbook/MCP/tools.py`,
 `resources.py`, `prompts.py`, and `server.py` all imported a class named
@@ -110,3 +113,34 @@ async def test_local_runtime_delegate_list_characters_executes_without_importerr
 
     assert isinstance(result, list)
     assert result and all("error" not in entry for entry in result)
+
+
+def test_get_conversation_history_executes_against_real_db(tmp_path):
+    """Residual dead-call regression (QA follow-up review of commit
+    4fd1e908): `get_conversation_history` called
+    `chachanotes_db.get_conversation_messages()`, a method that never
+    existed on `CharactersRAGDB` (the real method is
+    `get_messages_for_conversation`). Seeds a real conversation + message
+    and asserts a genuine result comes back, not a tool-level `{"error":
+    ...}` naming the dead method."""
+    from tldw_chatbook.MCP.tools import MCPTools
+
+    chachanotes_db, media_db = _real_dbs(tmp_path)
+    tools = MCPTools(chachanotes_db, media_db)
+
+    conversation_id = chachanotes_db.add_conversation({"title": "Test Conversation"})
+    chachanotes_db.add_message({
+        "conversation_id": conversation_id,
+        "sender": "user",
+        "content": "Hello there",
+        "role": "user",
+    })
+
+    result = asyncio.run(tools.get_conversation_history(conversation_id))
+
+    assert "get_conversation_messages" not in str(result)
+    assert "error" not in result, f"tool-level error, not the crash under test: {result}"
+    assert result["title"] == "Test Conversation"
+    assert len(result["messages"]) == 1
+    assert result["messages"][0]["content"] == "Hello there"
+    assert result["messages"][0]["role"] == "user"
