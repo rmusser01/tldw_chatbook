@@ -161,31 +161,10 @@ def test_image_url_part_and_content_parts_agree():
     assert combined[-1] == part
 
 
-def test_process_attachment_bytes_falls_back_to_original_on_processing_failure(monkeypatch):
-    """When ChatImageHandler._process_image_data raises, keep the original
-    bytes instead of failing the attachment (mirrors process_image_file's
-    fallback at chat_image_events.py:71-80)."""
-    import asyncio
-    from io import BytesIO
-
-    from PIL import Image as PILImage
-
-    from tldw_chatbook.Chat.attachment_core import process_attachment_bytes
-    from tldw_chatbook.Event_Handlers.Chat_Events.chat_image_events import (
-        ChatImageHandler,
-    )
-
-    async def _boom(*args, **kwargs):
-        raise RuntimeError("simulated processing failure")
-
-    monkeypatch.setattr(ChatImageHandler, "_process_image_data", _boom)
-
-    buffer = BytesIO()
-    PILImage.new("RGB", (16, 16), (10, 20, 30)).save(buffer, format="PNG")
-    data = buffer.getvalue()
-
-    attachment = asyncio.run(
-        process_attachment_bytes(data, display_name="clipboard-fallback.png")
-    )
-    assert attachment.data == data
-    assert attachment.processed_size == len(data)
+# The bytes-fallback fault-injection test that lived here monkeypatched
+# ChatImageHandler._process_image_data, which process_attachment_bytes stopped
+# calling in TASK-222 — the test passed vacuously (its fixture PNG succeeds
+# through the real pipeline either way). Superseded by
+# Tests/Chat/test_image_payload.py::test_process_attachment_bytes_fallback_probes_mime,
+# which injects the failure at the seam actually called (prepare_image_payload)
+# and additionally asserts the fallback's probed mime. Removed per TASK-230.
