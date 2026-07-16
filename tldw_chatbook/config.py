@@ -3123,8 +3123,21 @@ def get_cli_setting(section: str, key: str = None, default: Any = None) -> Any:
         else:
             return default
     
-    # Use `config.get(section, {})` to safely access potentially missing sections
+    # Flat lookup first: preserves every previously-working shape bit-for-bit
+    # (a literal dotted top-level key, while impossible from TOML, wins).
     section_data = config.get(section)
+    if isinstance(section_data, dict) and isinstance(key, str) and key in section_data:
+        return section_data[key]
+    # Nested fallback: TOML `[chat.images]` loads as config["chat"]["images"],
+    # never config["chat.images"], so dotted sections/keys that miss the flat
+    # lookup are resolved by walking the real tree segment by segment.
+    if isinstance(key, str) and ("." in section or "." in key):
+        node: Any = config
+        for part in (*section.split("."), *key.split(".")):
+            if not isinstance(node, dict) or part not in node:
+                return default
+            node = node[part]
+        return node
     if isinstance(section_data, dict):
         return section_data.get(key, default)
     # If section is not a dict or not found, return default

@@ -1,9 +1,11 @@
 ---
 id: TASK-229
 title: Repair dotted-section get_cli_setting("chat.images") readers
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-07-14 10:30'
+updated_date: '2026-07-16 14:11'
 labels:
   - config
   - bug
@@ -24,3 +26,9 @@ TASK-222's final review proved that `get_cli_setting(section, key, default)` per
 - [ ] #2 No production caller passes a dotted section to a flat get_cli_setting lookup (repo-wide audit; either callers migrate or the accessor gains nested resolution with all affected callers reviewed)
 - [ ] #3 At least one unmocked integration test per repaired reader pins the real config path (scratch TOML through the real loader)
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. RED: unmocked real-loader tests (TLDW_CONFIG_PATH + force_reload, zero accessor mocks) for every broken caller tuple: (chat.images, show_attach_button/save_location), (chat.voice, show_mic_button), (mcp.hub_state, advanced_open), three-level prompts.document_generation.* dict form; + working-shape regressions (traditional, 1-arg single-dot, dotted+default) and flat-key-shadowing precedence\n2. Fix get_cli_setting: nested-path fallback after the flat lookup misses (dotted section OR dotted key navigates the real TOML tree); flat hit always wins\n3. Consumer-path test: DocumentGenerator picks up a configured [prompts.document_generation.timeline] prompt through the real loader (in-memory DB)\n4. Behavior-flip review of all repaired callers (defaults match template values → no visible change on default configs)\n5. Sweep + repo audit re-run; PR
+<!-- SECTION:PLAN:END -->
