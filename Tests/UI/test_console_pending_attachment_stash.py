@@ -133,3 +133,25 @@ async def test_stash_prunes_dead_sessions_and_empties_after_adoption():
         assert "dead-session-id" not in store._sessions
 
     assert getattr(app, "_console_pending_attachment_stash", None) == {}
+
+
+def test_adopt_resets_malformed_stash_without_crashing():
+    """A corrupted stash value must be replaced with an empty dict on the
+    first adopt attempt, releasing whatever it referenced (self-healing)."""
+    from types import SimpleNamespace as _NS
+
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    screen = ChatScreen.__new__(ChatScreen)
+    screen.app_instance = _NS(_console_pending_attachment_stash="not-a-dict")
+    store = ConsoleChatStore()
+    screen._adopt_console_pending_attachments(store)
+    assert screen.app_instance._console_pending_attachment_stash == {}
+
+    # Malformed VALUES inside a well-formed dict are skipped, dict still reset.
+    session_id = store.ensure_session().id
+    screen.app_instance._console_pending_attachment_stash = {session_id: "junk"}
+    screen._adopt_console_pending_attachments(store)
+    assert screen.app_instance._console_pending_attachment_stash == {}
+    assert store.pending_attachments(session_id) == []

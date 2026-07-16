@@ -6503,21 +6503,29 @@ class ChatScreen(BaseAppScreen):
 
     def _adopt_console_pending_attachments(self, store: ConsoleChatStore) -> None:
         """Re-stage stashed attachments into the restored store, then empty
-        the stash. Entries for sessions that no longer exist are dropped."""
+        the stash. Entries for sessions that no longer exist are dropped.
+
+        The stash attribute is reset the moment it is read — every adopt
+        attempt releases the byte references, even when the stash turned out
+        malformed or nothing could be adopted (self-healing; the bytes must
+        never outlive their one restore opportunity).
+        """
         app = getattr(self, "app_instance", None)
         if app is None:
             return
         stash = getattr(app, self._CONSOLE_PENDING_STASH_ATTR, None)
+        setattr(app, self._CONSOLE_PENDING_STASH_ATTR, {})
         if not isinstance(stash, dict) or not stash:
             return
         live_ids = {session.id for session in store.sessions()}
         for session_id, pendings in stash.items():
             if session_id not in live_ids:
                 continue
+            if not isinstance(pendings, (list, tuple)):
+                continue
             for pending in pendings:
                 if not store.add_pending_attachment(session_id, pending):
                     break  # staging cap reached — matches live staging semantics
-        setattr(app, self._CONSOLE_PENDING_STASH_ATTR, {})
 
     def _serialize_native_console_state(self) -> dict[str, Any] | None:
         """Return the native Console in-session state for screen restoration."""
