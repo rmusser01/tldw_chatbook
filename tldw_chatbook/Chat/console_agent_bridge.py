@@ -17,8 +17,8 @@ from typing import Any, Callable
 
 from tldw_chatbook.Agents.agent_models import (
     AGENT_KIND_PRIMARY, AGENT_KIND_SUBAGENT, FIND_TOOLS_NAME, LOAD_TOOLS_NAME,
-    RunBudget, SPAWN_TOOL_NAME, STEP_ERROR, STEP_SPAWN, STEP_TOOL_RESULT,
-    AgentConfig, AgentStep, RunOutcome, ToolResult,
+    RunBudget, RUNTIME_TOOL_NAMES, SPAWN_TOOL_NAME, STEP_ERROR, STEP_SPAWN,
+    STEP_TOOL_RESULT, AgentConfig, AgentStep, RunOutcome, ToolResult,
 )
 from tldw_chatbook.Agents.agent_service import SUBAGENT_SYSTEM_PROMPT, AgentService
 from tldw_chatbook.Agents.agent_stream import StreamGate
@@ -376,7 +376,8 @@ def _eligible_skill_entries(context: Mapping[str, Any]) -> list[Mapping[str, Any
 def _non_colliding_skill_entries(
     context: Mapping[str, Any], builtin_names: tuple[str, ...],
 ) -> list[Mapping[str, Any]]:
-    """Eligible skill entries, excluding any name that collides with a builtin.
+    """Eligible skill entries, excluding any name that collides with a
+    builtin OR one of the loop's own in-loop runtime tool names.
 
     Shadowing (Task 11 review note 2 + this task's own allow-list
     ordering): a builtin tool name must always win over a same-named
@@ -390,11 +391,23 @@ def _non_colliding_skill_entries(
     both paths in agreement: a skill literally named e.g. ``"calculator"``
     is simply never treated as a distinct, skill-routable tool, and the
     real builtin still works exactly as before.
+
+    Qodo finding 4 (PR #636 bot review): the same reasoning applies to
+    ``RUNTIME_TOOL_NAMES`` (``spawn_subagent``/``find_tools``/
+    ``load_tools``) -- these are dispatched by a direct name comparison
+    inside ``agent_runtime.run_agent_loop`` itself, BEFORE the loop ever
+    reaches the registry or ``skill_runner``. A skill front-matter'd with
+    one of those names would previously still be advertised in the run's
+    catalog/allow-list (a distinct, misleadingly-schema'd entry), yet could
+    never actually be invoked -- the loop's own name-based dispatch always
+    wins that comparison first. Excluding these names too means such a
+    skill is simply never registered as a catalog entry at all, matching
+    what would happen at invocation time anyway.
     """
-    builtin_name_set = set(builtin_names)
+    collision_names = set(builtin_names) | RUNTIME_TOOL_NAMES
     return [
         item for item in _eligible_skill_entries(context)
-        if str(item["name"]) not in builtin_name_set
+        if str(item["name"]) not in collision_names
     ]
 
 

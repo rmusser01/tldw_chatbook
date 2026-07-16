@@ -7,12 +7,14 @@ import pytest
 from tldw_chatbook.Chat.console_agent_bridge import (
     CONSOLE_AGENT_OPERATING_PROMPT, ConsoleAgentBridge, compose_agent_system_prompt,
     format_agent_step_marker, inject_resume_agent_markers, _compose_run_allowed_tools,
+    _compose_run_registry_and_allowed,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Agents.agent_models import (
-    SPAWN_TOOL_NAME, STEP_ERROR, STEP_MODEL, STEP_SPAWN, STEP_TOOL_RESULT,
+    LOAD_TOOLS_NAME, SPAWN_TOOL_NAME, STEP_ERROR, STEP_MODEL, STEP_SPAWN,
+    STEP_TOOL_RESULT,
 )
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
@@ -679,6 +681,72 @@ def test_compose_run_allowed_tools_builtin_shadows_same_named_skill():
     }
     allowed = _compose_run_allowed_tools(context, ("calculator", "get_current_datetime"))
     assert allowed == ("calculator", "get_current_datetime", SPAWN_TOOL_NAME)
+
+
+def test_compose_run_allowed_tools_runtime_tool_name_shadows_same_named_skill():
+    """Qodo finding 4 (PR #636 bot review): `_non_colliding_skill_entries`
+    used to filter a skill's name only against `BuiltinToolProvider` names,
+    not the loop's own in-loop runtime handler names (`find_tools`/
+    `load_tools`/`spawn_subagent` -- `agent_models.RUNTIME_TOOL_NAMES`). A
+    skill front-matter'd with one of those names would be advertised in the
+    run's catalog/allow-list, then get hijacked by the loop's own
+    name-based dispatch (`agent_runtime.run_agent_loop` checks
+    `call.name == FIND_TOOLS_NAME` etc. before any registry/skill routing),
+    making the skill permanently unreachable while still occupying a
+    catalog slot with a misleading schema. The allow-list must exclude it
+    exactly like a builtin-name collision does."""
+    context = {
+        "available_skills": [
+            {"name": "find_tools", "trust_blocked": False,
+             "disable_model_invocation": False},
+        ],
+    }
+    allowed = _compose_run_allowed_tools(context, ("calculator", "get_current_datetime"))
+    assert allowed == ("calculator", "get_current_datetime", SPAWN_TOOL_NAME)
+
+
+def test_compose_run_registry_excludes_skill_named_like_a_runtime_tool():
+    """Same collision, verified against the actual registry/allow-list this
+    run would use: the skill must not appear as a distinct catalog entry
+    (under either FIND_TOOLS_NAME or LOAD_TOOLS_NAME or SPAWN_TOOL_NAME)."""
+    context = {
+        "available_skills": [
+            {"name": LOAD_TOOLS_NAME, "description": "d", "argument_hint": "",
+             "trust_blocked": False, "disable_model_invocation": False},
+        ],
+    }
+    registry, allowed_tools, builtin_names = _compose_run_registry_and_allowed(context)
+    assert LOAD_TOOLS_NAME not in allowed_tools[len(builtin_names):]
+    catalog_entries = [(entry.name, entry.source) for entry in registry.list_catalog()]
+    assert (LOAD_TOOLS_NAME, "skill") not in catalog_entries
+
+
+def test_skill_named_like_a_runtime_tool_never_shadows_it_at_invocation(tmp_path):
+    """End-to-end: a skill front-matter'd as "find_tools" must not hijack
+    the runtime's own find_tools meta-tool -- the real runtime dispatch
+    still answers, and the skill is never invoked (it's excluded from the
+    run's catalog/allow-list entirely, so no sub-agent is ever spawned for
+    what looks like a skill call)."""
+    scripts = [
+        [_fence("find_tools", {"query": "anything"})],
+        ["done."],
+    ]
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    skills_service = _FakeSkillsService(skill_name="find_tools")
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
+        skills_service=skills_service)
+
+    outcome = _run(bridge, store, session, assistant.id, conversation_id="conv-runtime-collide")
+
+    assert outcome.status == "done"
+    assert skills_service.execute_calls == []          # the skill was never invoked
+    assert db.count_subagent_runs("conv-runtime-collide") == 0
 
 
 def test_skill_named_like_a_builtin_never_shadows_it_at_invocation(tmp_path):
