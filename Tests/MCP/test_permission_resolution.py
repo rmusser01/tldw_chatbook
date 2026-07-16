@@ -19,6 +19,7 @@ from tldw_chatbook.MCP.permission_store import (
     cycle_ui_state,
     definition_hash,
     resolve_effective_state,
+    resolve_effective_state_by_key,
 )
 
 
@@ -297,6 +298,98 @@ def test_resolve_effective_state_floor_does_not_apply_when_tags_dont_intersect()
 
     assert result.state == "allow"
     assert result.risk_floored is False
+
+
+# -- I1: resolve_effective_state_by_key (hashless, no live HubTool) -----------
+#
+# Backs `UnifiedMCPControlPlaneService.gate_tool_test_by_key()` -- the Test
+# Tool gate's fallback for when the tool has dropped out of the catalog
+# snapshot (`_tool_for()` came back empty) but the gate must still resolve
+# deny/ask/allow from the store alone, with no `HubTool` to hash-compare a
+# rug-pull guard against.
+
+
+def test_resolve_by_key_deny_tool_override_passes_through():
+    payload = _payload(servers={"local:demo": {"tools": {"search": {"state": "deny"}}}})
+
+    result = resolve_effective_state_by_key(payload, "local:demo", "search")
+
+    assert result.state == "deny"
+    assert result.origin == "tool_override"
+    assert result.config_changed is False
+
+
+def test_resolve_by_key_ask_tool_override_passes_through():
+    payload = _payload(servers={"local:demo": {"tools": {"search": {"state": "ask"}}}})
+
+    result = resolve_effective_state_by_key(payload, "local:demo", "search")
+
+    assert result.state == "ask"
+    assert result.origin == "tool_override"
+
+
+def test_resolve_by_key_explicit_allow_downgrades_to_ask_config_unknown():
+    """No live tool to hash-check against -- an explicit tool-level
+    ``allow`` can never be confirmed fresh here, so it resolves to "ask"
+    rather than silently trusting a possibly-stale allow (this is the
+    exact gap the I1 fix closes: the gate must not resolve "allow" for a
+    tool it can't verify)."""
+    payload = _payload(
+        servers={"local:demo": {"tools": {"search": {"state": "allow", "definition_hash": "whatever"}}}}
+    )
+
+    result = resolve_effective_state_by_key(payload, "local:demo", "search")
+
+    assert result.state == "ask"
+    assert result.origin == "tool_override"
+    assert result.config_changed is True
+
+
+def test_resolve_by_key_inherited_server_default_deny_passes_through():
+    payload = _payload(servers={"local:demo": {"default": "deny"}})
+
+    result = resolve_effective_state_by_key(payload, "local:demo", "search")
+
+    assert result.state == "deny"
+    assert result.origin == "server_default"
+
+
+def test_resolve_by_key_inherited_server_default_allow_downgrades_to_ask():
+    payload = _payload(servers={"local:demo": {"default": "allow"}})
+
+    result = resolve_effective_state_by_key(payload, "local:demo", "search")
+
+    assert result.state == "ask"
+    assert result.origin == "server_default"
+    assert result.config_changed is True
+
+
+def test_resolve_by_key_inherited_global_default_deny_passes_through():
+    payload = _payload(global_default="deny", servers={})
+
+    result = resolve_effective_state_by_key(payload, "local:demo", "search")
+
+    assert result.state == "deny"
+    assert result.origin == "global_default"
+
+
+def test_resolve_by_key_inherited_global_default_allow_downgrades_to_ask():
+    payload = _payload(global_default="allow", servers={})
+
+    result = resolve_effective_state_by_key(payload, "local:demo", "search")
+
+    assert result.state == "ask"
+    assert result.origin == "global_default"
+    assert result.config_changed is True
+
+
+def test_resolve_by_key_invalid_global_default_falls_back_to_ask():
+    payload = _payload(global_default="banana", servers={})
+
+    result = resolve_effective_state_by_key(payload, "local:demo", "search")
+
+    assert result.state == "ask"
+    assert result.origin == "global_default"
 
 
 # -- cycle helpers --------------------------------------------------------------

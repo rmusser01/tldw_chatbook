@@ -381,3 +381,65 @@ def test_gate_tool_test_does_not_emit_audit_record_on_fresh_mismatch(tmp_path):
     assert _permission_log_records(store) == []
     entry = service.permission_store.get_tool_entry("local:demo", "search")
     assert not entry.get("config_changed")  # gate must not persist the marker either
+
+
+# -- I1: gate_tool_test_by_key (no live HubTool) -----------------------------
+#
+# `MCPWorkbench._resolve_test_gate()`'s fallback for a tool that dropped out
+# of the catalog snapshot (`_tool_for()` returned None): no `HubTool` is
+# available to hash-compare, so this resolves deny/ask straight through and
+# downgrades any "allow" verdict to "ask" (see
+# `resolve_effective_state_by_key`'s own docstring for the full rationale).
+
+
+def test_gate_tool_test_by_key_no_store_returns_ask_global_default():
+    service = _service_without_store()
+
+    result = service.gate_tool_test_by_key("local:demo", "search")
+
+    assert result.state == "ask"
+    assert result.origin == "global_default"
+
+
+def test_gate_tool_test_by_key_deny_passes_through(tmp_path):
+    service, _store = _service(tmp_path)
+    service.permission_store.set_tool_state("local:demo", "search", "deny")
+
+    result = service.gate_tool_test_by_key("local:demo", "search")
+
+    assert result.state == "deny"
+
+
+def test_gate_tool_test_by_key_ask_passes_through(tmp_path):
+    service, _store = _service(tmp_path)
+    service.permission_store.set_tool_state("local:demo", "search", "ask")
+
+    result = service.gate_tool_test_by_key("local:demo", "search")
+
+    assert result.state == "ask"
+
+
+def test_gate_tool_test_by_key_allow_downgrades_to_ask_without_live_tool(tmp_path):
+    """The core I1 fix: an explicit "allow" resolved WITHOUT a live
+    `HubTool` to hash-check must never be trusted as-is -- this is what
+    lets the gate say "ask"/"deny" for a vanished tool instead of `None`
+    (which used to mean "run immediately, ungated")."""
+    service, _store = _service(tmp_path)
+    tool = _tool(name="search")
+    service.permission_store.set_tool_state(
+        "local:demo", "search", "allow", definition_hash=definition_hash(tool.description, tool.input_schema)
+    )
+
+    result = service.gate_tool_test_by_key("local:demo", "search")
+
+    assert result.state == "ask"
+    assert result.config_changed is True
+
+
+def test_gate_tool_test_by_key_does_not_emit_audit_record(tmp_path):
+    service, store = _service(tmp_path)
+    service.permission_store.set_tool_state("local:demo", "search", "allow", definition_hash="stale-hash")
+
+    service.gate_tool_test_by_key("local:demo", "search")
+
+    assert _permission_log_records(store) == []

@@ -395,6 +395,66 @@ def resolve_effective_state(payload: dict[str, Any], tool: HubTool) -> Effective
     )
 
 
+def resolve_effective_state_by_key(
+    payload: dict[str, Any], server_key: str, tool_name: str
+) -> EffectiveToolState:
+    """Resolve ``(server_key, tool_name)``'s effective permission state
+    from ``payload`` alone -- no live ``HubTool`` to fingerprint.
+
+    I1: the Test Tool gate (``UnifiedMCPControlPlaneService.gate_tool_test()``)
+    needs a live ``HubTool`` to hash-compare against a stored
+    ``definition_hash`` (the rug-pull guard). When a tool has dropped out
+    of the workbench's catalog snapshot since it was selected -- a stale
+    selection, or a resync racing a rug-pull refresh -- there is no
+    ``HubTool`` left to gate with, and ``test_hub_tool()``/
+    ``execute_external_tool()`` need no ``HubTool`` either (they dispatch
+    by ``server_key``/``tool_name`` alone against the live server). Falling
+    through ungated in that gap would let a DENIED tool run just because
+    it briefly vanished from the snapshot. This resolves the same
+    precedence walk as ``resolve_effective_state`` (tool override -> server
+    default -> global default, with the same global-default validation)
+    but skips the hash comparison entirely:
+
+    - ``deny``/``ask`` verdicts (explicit or inherited) are trustworthy
+      without a hash check -- there is nothing to downgrade a deny or ask
+      to that would be safer -- so they resolve at full fidelity.
+    - Any verdict that resolves to ``allow`` -- an explicit tool-level
+      override, or an inherited server/global default -- cannot be
+      confirmed fresh without the tool's current description/input_schema
+      to hash-compare, so it resolves to ``ask`` instead
+      (``config_changed=True``, reusing the rug-pull marker's "review
+      before trusting this" UI treatment): safer than silently trusting a
+      stale ``allow``.
+
+    High-risk-tag flooring is skipped too (no ``HubTool.tags`` to check);
+    that's covered by the "any allow downgrades to ask" rule above, which
+    is strictly more conservative.
+    """
+    profile = payload.get("profiles", {}).get(_DEFAULT_PROFILE_ID, {})
+    servers = profile.get("servers", {})
+    server_entry = servers.get(server_key) or {}
+    tools = server_entry.get("tools") or {}
+    tool_entry = tools.get(tool_name)
+
+    if tool_entry is not None and tool_entry.get("state") in STORE_STATES:
+        origin = "tool_override"
+        state = tool_entry["state"]
+    else:
+        server_default = server_entry.get("default")
+        if server_default in STORE_STATES:
+            origin = "server_default"
+            state = server_default
+        else:
+            origin = "global_default"
+            state = profile.get("global_default", DEFAULT_GLOBAL)
+            if state not in STORE_STATES:
+                state = DEFAULT_GLOBAL
+
+    if state == "allow":
+        return EffectiveToolState(state="ask", origin=origin, config_changed=True)
+    return EffectiveToolState(state=state, origin=origin)
+
+
 _CYCLE_UI_STATES: dict[str | None, str | None] = {
     None: "allow",
     "allow": "ask",

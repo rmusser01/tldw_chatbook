@@ -2641,9 +2641,25 @@ class ToolTestHubService(FakeHubService):
         self.gate_config_changed: bool = False
         self.gate_risk_floored: bool = False
         self.gate_calls: list[tuple[str, str]] = []
+        # I1: `gate_tool_test_by_key()` calls this fake gets when
+        # `_resolve_test_gate()` can't produce a `HubTool` (the tool
+        # vanished from `_last_hub_tools`) -- driven by the SAME
+        # `gate_state`, mirroring the real
+        # `UnifiedMCPControlPlaneService.gate_tool_test_by_key()`'s "reads
+        # the same store `gate_tool_test()` does" contract.
+        self.gate_by_key_calls: list[tuple[str, str]] = []
 
     def gate_tool_test(self, tool: Any) -> EffectiveToolState:
         self.gate_calls.append((tool.server_key, tool.name))
+        return EffectiveToolState(
+            state=self.gate_state,
+            origin="tool_override",
+            config_changed=self.gate_config_changed,
+            risk_floored=self.gate_risk_floored,
+        )
+
+    def gate_tool_test_by_key(self, server_key: str, tool_name: str) -> EffectiveToolState:
+        self.gate_by_key_calls.append((server_key, tool_name))
         return EffectiveToolState(
             state=self.gate_state,
             origin="tool_override",
@@ -3564,6 +3580,83 @@ async def test_gate_resolved_against_tool_from_tool_for_lookup():
         assert app.unified_mcp_service.gate_calls == [
             ("local:docs", "search"), ("local:docs", "search"),
         ]
+
+
+# -- I1 (final whole-branch review): Test Tool gate must not be bypassable
+# for a catalog-vanished tool -----------------------------------------------
+#
+# `_resolve_test_gate(None, ...)` used to mean "run immediately" -- but
+# `test_hub_tool()` dispatches by `server_key`/`tool_name` alone (it needs
+# no `HubTool`), so a tool that dropped out of `_last_hub_tools` between
+# opening the Test panel and pressing Run (a resync racing a rug-pull
+# refresh, or simply a stale selection) ran completely ungated. Reproduces
+# the reviewer's probe (`test_gate_bypass_probe.py`).
+
+
+@pytest.mark.asyncio
+async def test_denied_tool_vanished_from_catalog_run_is_blocked_not_executed():
+    app = ToolTestApp()
+    app.unified_mcp_service.gate_state = "deny"
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+
+        # Simulate the resync-with-vanished-tool state: the same
+        # assignment `_sync_children()` performs when `_collect_hub_tools()`
+        # comes back without this tool (e.g. a transient inventory failure
+        # racing a rug-pull refresh).
+        workbench._last_hub_tools = [
+            t for t in workbench._last_hub_tools if t.name != "fetch"
+        ]
+
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert app.unified_mcp_service.test_calls == [], (
+            "GATE BYPASSED: denied tool executed after vanishing from the "
+            f"catalog snapshot: {app.unified_mcp_service.test_calls!r}"
+        )
+        assert app.unified_mcp_service.gate_by_key_calls == [("local:docs", "fetch")]
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert mcp_workbench_module._TOOL_TEST_BLOCKED_TEXT in result
+
+
+@pytest.mark.asyncio
+async def test_service_without_gate_by_key_seam_falls_through_for_vanished_tool():
+    """Compat precedent: a service that predates `gate_tool_test_by_key()`
+    entirely (an older test double, or a not-yet-upgraded real service)
+    must keep today's Phase-3-style "run immediately" behavior for a
+    vanished tool -- `_resolve_test_gate()` only returns `None` when NO
+    gate seam at all is available, never silently starts blocking a
+    service that simply hasn't been upgraded yet.
+    """
+    app = NoGateToolTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # local:docs::a
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+
+        workbench._last_hub_tools = [
+            t for t in workbench._last_hub_tools if t.name != "a"
+        ]
+
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert app.unified_mcp_service.test_calls == [("local:docs", "a", {})]
 
 
 # -- Task 6: Permissions mode canvas (matrix, kill switch, policy preview) --

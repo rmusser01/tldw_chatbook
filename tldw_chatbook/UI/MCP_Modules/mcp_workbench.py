@@ -1860,26 +1860,48 @@ class MCPWorkbench(Container):
                 severity="information",
             )
 
-    def _resolve_test_gate(self, tool: HubTool | None) -> EffectiveToolState | None:
+    def _resolve_test_gate(
+        self, tool: HubTool | None, server_key: str, tool_name: str
+    ) -> EffectiveToolState | None:
         """Resolve one tool's Test Tool gate, or `None` when no gate applies.
 
-        `None` means "run immediately, exactly like Phase 3" -- covers both
-        a tool that couldn't be resolved (`_tool_for()` came back empty --
-        e.g. a stale selection whose tool has since dropped out of the
-        catalog) and a service with no `gate_tool_test()` at all yet
-        (getattr-tolerant, mirroring `MCPInspector._action_allowed()`'s
-        "seams absent -> permissive by design" precedent -- a service that
-        hasn't been upgraded to gate Test Tool must not silently start
-        blocking everything).
+        `None` means "run immediately, exactly like Phase 3" -- covers a
+        service with no gate seam at all yet (getattr-tolerant, mirroring
+        `MCPInspector._action_allowed()`'s "seams absent -> permissive by
+        design" precedent -- a service that hasn't been upgraded to gate
+        Test Tool must not silently start blocking everything).
 
-        A callable `gate_tool_test()` that RAISES is the other half of that
-        same precedent: fail CLOSED (a synthetic "deny"), never swallow and
+        I1: `tool is None` (`_tool_for()` came back empty -- e.g. a stale
+        selection, or a resync racing a rug-pull refresh that dropped this
+        tool from `_last_hub_tools` while the Test panel was still open)
+        used to mean the same "run immediately" -- but `test_hub_tool()`
+        doesn't need a `HubTool` to execute (`execute_external_tool()`
+        dispatches by `server_key`/`tool_name` alone), so that let a DENIED
+        tool run just because it briefly vanished from the snapshot. A
+        service with the `gate_tool_test_by_key()` seam (T4's hashless,
+        store-only resolution -- see that method's own docstring) is
+        gated through it instead; only a service that predates that seam
+        entirely (compat fakes in older tests) still falls through to
+        `None` here.
+
+        A callable gate check that RAISES is the other half of that same
+        precedent: fail CLOSED (a synthetic "deny"), never swallow and
         allow -- a runtime error here must not silently expose a tool
         permissions might forbid.
         """
-        if tool is None:
-            return None
         service = self._service()
+        if tool is None:
+            gate_by_key = getattr(service, "gate_tool_test_by_key", None)
+            if not callable(gate_by_key):
+                return None
+            try:
+                return gate_by_key(server_key, tool_name)
+            except Exception as exc:
+                logger.warning(
+                    f"MCP tool test gate-by-key check failed for {server_key}::{tool_name}; "
+                    f"failing closed: {exc}"
+                )
+                return EffectiveToolState(state="deny", origin="gate_error")
         gate_check = getattr(service, "gate_tool_test", None)
         if not callable(gate_check):
             return None
@@ -1932,7 +1954,7 @@ class MCPWorkbench(Container):
         tool_name = event.tool_name
         inspector = self.query_one(MCPInspector)
         tool = self._tool_for(server_key, tool_name)
-        gate = self._resolve_test_gate(tool)
+        gate = self._resolve_test_gate(tool, server_key, tool_name)
 
         if gate is not None and gate.state == "deny":
             inspector.disarm_test_run()

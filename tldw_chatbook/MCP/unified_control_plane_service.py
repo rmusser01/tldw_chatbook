@@ -17,7 +17,13 @@ from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
 from .execution_log import MCPExecutionLog, RESULT_EXCERPT_LIMIT, build_record
 from .hub_tool_catalog import HubTool
-from .permission_store import EffectiveToolState, MCPPermissionStore, definition_hash, resolve_effective_state
+from .permission_store import (
+    EffectiveToolState,
+    MCPPermissionStore,
+    definition_hash,
+    resolve_effective_state,
+    resolve_effective_state_by_key,
+)
 from .redaction import redact_mapping
 from .server_target_store import ConfiguredServerTargetStore
 from .unified_context_store import UnifiedMCPContextStore
@@ -2182,3 +2188,32 @@ class UnifiedMCPControlPlaneService:
             return EffectiveToolState(state="ask", origin="global_default")
         payload = store.load()
         return resolve_effective_state(payload, tool)
+
+    def gate_tool_test_by_key(self, server_key: str, tool_name: str) -> EffectiveToolState:
+        """Resolve one tool's Test Tool gate from the store alone, with no
+        live ``HubTool`` to fingerprint.
+
+        I1: the counterpart `gate_tool_test()` needs a `HubTool` to
+        hash-compare an explicit ``allow`` against its stored
+        ``definition_hash`` (the rug-pull guard) -- this is the seam for
+        when the workbench can't produce one anymore (`_tool_for()` came
+        back empty: the tool dropped out of `_last_hub_tools` since the
+        Test panel opened, e.g. a resync racing a rug-pull refresh).
+        Without this, `MCPWorkbench._resolve_test_gate()` had nothing to
+        gate a vanished-but-still-denied tool against and fell through to
+        an ungated dispatch.
+
+        Deny/ask verdicts resolve at full fidelity (no hash check is
+        needed to trust those); an "allow" verdict -- explicit or
+        inherited -- can't be trusted without the live definition, so it
+        resolves to "ask" instead (see `resolve_effective_state_by_key`).
+
+        No store configured -> `EffectiveToolState(state="ask",
+        origin="global_default")` (fail closed), matching
+        `gate_tool_test()`.
+        """
+        store = self.permission_store
+        if store is None:
+            return EffectiveToolState(state="ask", origin="global_default")
+        payload = store.load()
+        return resolve_effective_state_by_key(payload, server_key, tool_name)
