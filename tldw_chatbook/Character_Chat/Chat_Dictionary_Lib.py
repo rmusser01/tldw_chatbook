@@ -1074,6 +1074,48 @@ def load_chat_dictionary(db: CharactersRAGDB, dict_id: int) -> Optional[Dict[str
         return None
 
 
+def load_character_dictionaries(char_data: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Parse a character card's embedded chat dictionaries into runtime blocks.
+
+    Reads ``extensions['chat_dictionaries']`` (a list of ``export_json`` ``data``
+    blocks) and returns one ``{"name", "enabled", "entries": [ChatDictionary...]}``
+    per well-formed block. Malformed blocks/entries are skipped. This runs on the
+    chat send path over untrusted (imported) card content, so it MUST NOT raise.
+    """
+    result: List[Dict[str, Any]] = []
+    if not isinstance(char_data, dict):
+        return result
+    ext = char_data.get('extensions')
+    if isinstance(ext, str):
+        try:
+            ext = json.loads(ext or "{}")
+        except (TypeError, ValueError):
+            ext = {}
+    if not isinstance(ext, dict):
+        return result
+    raw = ext.get('chat_dictionaries') or []
+    if not isinstance(raw, list):
+        return result
+    for block in raw:
+        if not isinstance(block, dict):
+            continue
+        name = block.get('name')
+        if not name:
+            continue
+        entries: List[ChatDictionary] = []
+        for entry in block.get('entries') or []:
+            try:
+                entries.append(ChatDictionary.from_dict(entry))
+            except Exception:
+                continue
+        result.append({
+            "name": str(name),
+            "enabled": bool(block.get('enabled', True)),
+            "entries": entries,
+        })
+    return result
+
+
 def list_chat_dictionaries(
     db: CharactersRAGDB, 
     limit: int = 100,

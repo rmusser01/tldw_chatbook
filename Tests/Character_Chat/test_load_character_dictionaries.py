@@ -1,0 +1,38 @@
+"""P1f: defensive parse of a character card's embedded chat dictionaries."""
+
+from tldw_chatbook.Character_Chat.Chat_Dictionary_Lib import load_character_dictionaries, ChatDictionary
+
+
+def test_parses_embedded_blocks_into_chatdictionary_entries():
+    char = {"extensions": {"chat_dictionaries": [
+        {"name": "Slang", "enabled": True, "entries": [
+            {"key": "BP", "content": "blood pressure", "probability": 100},
+        ]},
+    ]}}
+    blocks = load_character_dictionaries(char)
+    assert len(blocks) == 1
+    assert blocks[0]["name"] == "Slang"
+    assert blocks[0]["enabled"] is True
+    assert len(blocks[0]["entries"]) == 1
+    assert isinstance(blocks[0]["entries"][0], ChatDictionary)
+
+
+def test_skips_malformed_blocks_and_entries_without_raising():
+    char = {"extensions": {"chat_dictionaries": [
+        "not-a-dict",
+        {"name": "", "entries": []},                 # no name → skipped
+        {"name": "Bad", "entries": [{"content": "x"}]},  # entry missing 'key' → entry skipped
+        {"name": "Good", "entries": [{"key": "k", "content": "c"}]},
+    ]}}
+    blocks = load_character_dictionaries(char)
+    names = [b["name"] for b in blocks]
+    assert names == ["Bad", "Good"]
+    assert load_character_dictionaries(char)[0]["entries"] == []  # 'Bad' dropped its bad entry
+
+
+def test_tolerates_none_and_missing_and_string_extensions():
+    assert load_character_dictionaries(None) == []
+    assert load_character_dictionaries({}) == []
+    assert load_character_dictionaries({"extensions": {}}) == []
+    assert load_character_dictionaries({"extensions": '{"chat_dictionaries": []}'}) == []
+    assert load_character_dictionaries({"extensions": "not json"}) == []
