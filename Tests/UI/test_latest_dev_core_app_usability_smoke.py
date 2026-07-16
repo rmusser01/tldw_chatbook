@@ -43,7 +43,12 @@ CORE_FIRST_USE_ROUTES = (
     (TAB_HOME, TAB_HOME, "HomeScreen", ("Home", "Set up Console model")),
     (TAB_CHAT, TAB_CHAT, "ChatScreen", ("Console", "Transcript / Event Stream")),
     (TAB_LIBRARY, TAB_LIBRARY, "LibraryScreen", ("Library", "Search / RAG")),
-    (TAB_SKILLS, TAB_SKILLS, "SkillsScreen", ("Skills", "Agent Skills")),
+    # The standalone Skills tab is retired (Skills sub-project Task 5): the
+    # legacy "skills" route now re-points into Library with the Skills rail
+    # row selected, so this smoke entry lands on LibraryScreen (canonical
+    # tab "library") and checks the skills canvas's own empty-state copy
+    # rather than the retired SkillsScreen's.
+    (TAB_SKILLS, TAB_LIBRARY, "LibraryScreen", ("No skills yet", "Library ▸ Skills")),
     (TAB_MCP, TAB_MCP, "MCPScreen", ("MCP", "Unified MCP")),
     (TAB_SETTINGS, TAB_SETTINGS, "SettingsScreen", ("Settings", "Providers & Models")),
 )

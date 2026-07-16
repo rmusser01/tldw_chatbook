@@ -43,11 +43,11 @@ async def _wait_for_picker_search(pilot) -> None:
 
 
 UNKNOWN_NOPE_HINT = (
-    "Unknown command /nope — available: /prompt, /system. "
+    "Unknown command /nope — available: /prompt, /system, /skills. "
     "Press Enter again to send as text."
 )
 UNKNOWN_NADA_HINT = (
-    "Unknown command /nada — available: /prompt, /system. "
+    "Unknown command /nada — available: /prompt, /system, /skills. "
     "Press Enter again to send as text."
 )
 

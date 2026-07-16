@@ -13,6 +13,13 @@ LIBRARY_ROW_BROWSE_NOTES = "browse-notes"
 # the row's DOM id as LIBRARY_RAIL_ROW_PREFIX ("library-row-") + row_id,
 # i.e. "#library-row-browse-prompts" -- the id the task brief names.
 LIBRARY_ROW_BROWSE_PROMPTS = "browse-prompts"
+# Skills sub-project Task 1: same "browse-*" convention, rendered right after
+# Prompts in the Browse section -- "#library-row-browse-skills". Until the
+# Skills canvas lands (Task 3), the row is inert-but-selectable: pressing it
+# just selects the row and falls through to the shell's generic empty-canvas
+# landing path (no ``elif shell.canvas_kind == "skills"`` branch exists yet
+# in library_screen.py's compose).
+LIBRARY_ROW_BROWSE_SKILLS = "browse-skills"
 LIBRARY_ROW_BROWSE_SEARCH = "browse-search"
 LIBRARY_ROW_BROWSE_COLLECTIONS = "browse-collections"
 LIBRARY_ROW_CREATE_NOTE = "create-note"
@@ -25,6 +32,14 @@ LIBRARY_ROW_CREATE_NOTE = "create-note"
 # not by a separate canvas kind -- see library_screen.py's
 # `_enter_library_prompt_create_editor`.
 LIBRARY_ROW_CREATE_PROMPT = "create-prompt"
+# Skills sub-project (skills-200 spec, "Create > New skill"): same shape as
+# LIBRARY_ROW_CREATE_PROMPT above -- its target_id is "skills" itself (the
+# SAME canvas kind Browse > Skills targets), not a dedicated "skills-create"
+# canvas kind. The screen distinguishes "opened via Browse" vs "opened via
+# New skill" by ``_selected_skill_name`` being empty (the same sentinel
+# ``_save_library_skill``'s ``is_create`` already reads) -- see
+# library_screen.py's ``_enter_library_skill_create_editor``.
+LIBRARY_ROW_CREATE_SKILL = "create-skill"
 LIBRARY_ROW_INGEST_MEDIA = "ingest-import-media"
 LIBRARY_ROW_INGEST_EXPORT = "ingest-export"
 
@@ -83,6 +98,8 @@ class LibraryShellInput:
     notes_known: bool = True
     prompts_count: int | None = None
     prompts_known: bool = True
+    skills_count: int | None = None
+    skills_known: bool = True
     collections_count: int | None = None
     collections_known: bool = True
     runtime_source: str = "local"
@@ -164,6 +181,19 @@ def build_library_shell_state(
             count_known=state.prompts_known,
         ),
         LibraryRailRow(
+            # Task 1: row exists and is selectable now; its canvas (Task 3)
+            # does not exist yet, so selecting it falls through to the
+            # shell's generic empty-canvas landing path -- see
+            # ``LIBRARY_ROW_BROWSE_SKILLS``'s comment above.
+            row_id=LIBRARY_ROW_BROWSE_SKILLS,
+            section_id="browse",
+            title="Skills",
+            target_kind="canvas",
+            target_id="skills",
+            count=state.skills_count,
+            count_known=state.skills_known,
+        ),
+        LibraryRailRow(
             row_id=LIBRARY_ROW_BROWSE_COLLECTIONS,
             section_id="browse",
             title="Collections",
@@ -199,6 +229,15 @@ def build_library_shell_state(
             title="New prompt",
             target_kind="canvas",
             target_id="prompts",
+            count=None,
+            count_known=True,
+        ),
+        LibraryRailRow(
+            row_id=LIBRARY_ROW_CREATE_SKILL,
+            section_id="create",
+            title="New skill",
+            target_kind="canvas",
+            target_id="skills",
             count=None,
             count_known=True,
         ),

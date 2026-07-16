@@ -4498,10 +4498,12 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     # explicit context supplied). Mirrors how ``open_notes_workspace`` builds
     # ``{LIBRARY_NAV_CONTEXT_MODE: "notes"}`` for the retired standalone
     # Notes tab -- except "prompts" (the retired Personas "prompts" mode
-    # chip, Task 7) has no dedicated re-entry action to carry that context,
-    # so the bare alias route itself must supply it here.
+    # chip, Task 7) and "skills" (the retired standalone Skills tab, Skills
+    # sub-project Task 5) have no dedicated re-entry action to carry that
+    # context, so the bare alias route itself must supply it here.
     _LEGACY_ROUTE_LIBRARY_NAV_CONTEXT: dict[str, dict[str, str]] = {
         "prompts": {LIBRARY_NAV_CONTEXT_MODE: "prompts"},
+        "skills": {LIBRARY_NAV_CONTEXT_MODE: "skills"},
     }
 
     def _create_navigation_screen(self, screen_name: str, screen_class: type):

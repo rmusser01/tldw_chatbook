@@ -3,7 +3,9 @@ import pytest
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP,
     LIBRARY_ROW_BROWSE_PROMPTS,
+    LIBRARY_ROW_BROWSE_SKILLS,
     LIBRARY_ROW_CREATE_PROMPT,
+    LIBRARY_ROW_CREATE_SKILL,
     LIBRARY_ROW_INGEST_EXPORT,
     LibraryShellInput,
     build_library_shell_state,
@@ -13,7 +15,7 @@ from tldw_chatbook.Library.library_shell_state import (
 def test_shell_sections_rows_and_targets_are_fixed():
     shell = build_library_shell_state(LibraryShellInput(
         media_count=17, conversations_count=128, notes_count=42, collections_count=5,
-        prompts_count=9,
+        prompts_count=9, skills_count=3,
     ))
     assert shell.header_line == "Library | Local"
     assert [s.section_id for s in shell.sections] == ["browse", "create", "ingest"]
@@ -21,14 +23,14 @@ def test_shell_sections_rows_and_targets_are_fixed():
     browse = shell.sections[0]
     assert [r.row_id for r in browse.rows] == [
         "browse-media", "browse-conversations", "browse-notes", LIBRARY_ROW_BROWSE_PROMPTS,
-        "browse-collections", "browse-search",
+        LIBRARY_ROW_BROWSE_SKILLS, "browse-collections", "browse-search",
     ]
     assert [r.title for r in browse.rows] == [
-        "Media", "Conversations", "Notes", "Prompts", "Collections", "Search / RAG"
+        "Media", "Conversations", "Notes", "Prompts", "Skills", "Collections", "Search / RAG"
     ]
-    assert browse.rows[5].target_kind == "canvas" and browse.rows[5].target_id == "search"
-    assert browse.rows[5].count is None
-    assert browse.rows[4].target_kind == "canvas" and browse.rows[4].target_id == "collections"
+    assert browse.rows[6].target_kind == "canvas" and browse.rows[6].target_id == "search"
+    assert browse.rows[6].count is None
+    assert browse.rows[5].target_kind == "canvas" and browse.rows[5].target_id == "collections"
     conv = browse.rows[1]
     assert (conv.target_kind, conv.target_id, conv.count) == ("canvas", "conversations", 128)
     media = browse.rows[0]
@@ -37,12 +39,15 @@ def test_shell_sections_rows_and_targets_are_fixed():
     assert (notes.target_kind, notes.target_id, notes.count) == ("canvas", "notes", 42)
     prompts = browse.rows[3]
     assert (prompts.target_kind, prompts.target_id, prompts.count) == ("canvas", "prompts", 9)
+    skills = browse.rows[4]
+    assert (skills.target_kind, skills.target_id, skills.count) == ("canvas", "skills", 3)
     create_ids = [r.row_id for r in shell.sections[1].rows]
     assert create_ids == [
-        "create-note", LIBRARY_ROW_CREATE_PROMPT, "create-study", "create-flashcards", "create-quizzes",
+        "create-note", LIBRARY_ROW_CREATE_PROMPT, LIBRARY_ROW_CREATE_SKILL,
+        "create-study", "create-flashcards", "create-quizzes",
     ]
     assert [r.title for r in shell.sections[1].rows] == [
-        "New note", "New prompt", "Study decks", "Flashcards", "Quizzes"
+        "New note", "New prompt", "New skill", "Study decks", "Flashcards", "Quizzes"
     ]
     assert (shell.sections[1].rows[0].target_kind, shell.sections[1].rows[0].target_id) == (
         "canvas", "notes-create",
@@ -176,6 +181,23 @@ def test_create_prompt_row_targets_prompts_canvas():
     assert row.target_id == "prompts"
     assert (shell.canvas_kind, shell.canvas_target) == ("prompts", "")
     assert shell.selected_row_id == LIBRARY_ROW_CREATE_PROMPT
+
+
+def test_create_skill_row_targets_skills_canvas():
+    # Skills sub-project (skills-200 spec, "Create > New skill"): mirrors
+    # ``test_create_prompt_row_targets_prompts_canvas`` exactly -- the row
+    # reuses the SAME canvas kind ("skills") Browse > Skills targets, the
+    # screen distinguishes the two by ``_selected_skill_name`` being empty
+    # (view state), not by a separate canvas kind.
+    shell = build_library_shell_state(LibraryShellInput(), selected_row_id=LIBRARY_ROW_CREATE_SKILL)
+    row = next(
+        r for section in shell.sections for r in section.rows if r.row_id == LIBRARY_ROW_CREATE_SKILL
+    )
+    assert row.target_kind == "canvas"
+    assert row.target_id == "skills"
+    assert row.title == "New skill"
+    assert (shell.canvas_kind, shell.canvas_target) == ("skills", "")
+    assert shell.selected_row_id == LIBRARY_ROW_CREATE_SKILL
 
 
 def test_unknown_rows_resolve_to_empty_canvas():

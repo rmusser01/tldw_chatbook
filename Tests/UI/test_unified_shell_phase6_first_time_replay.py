@@ -38,7 +38,6 @@ EXPECTED_NAV = [
     ("nav-workflows", "Workflows"),
     ("nav-mcp", "MCP"),
     ("nav-acp", "ACP"),
-    ("nav-skills", "Skills"),
     ("nav-settings", "Settings"),
 ]
 
@@ -162,12 +161,6 @@ async def test_first_time_shell_replay_exposes_home_console_and_orientation_path
                         "Characters",
                         "Lore",
                     ),
-                ),
-                (
-                    "nav-skills",
-                    "skills",
-                    "SkillsScreen",
-                    ("Skills", "Agent Skills", "SKILL.md"),
                 ),
             ):
                 app.screen.query_one(f"#{button_id}", Button).press()

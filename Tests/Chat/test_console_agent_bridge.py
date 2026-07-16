@@ -6,13 +6,18 @@ import pytest
 
 from tldw_chatbook.Chat.console_agent_bridge import (
     CONSOLE_AGENT_OPERATING_PROMPT, ConsoleAgentBridge, compose_agent_system_prompt,
-    format_agent_step_marker, inject_resume_agent_markers,
+    format_agent_step_marker, inject_resume_agent_markers, _compose_run_allowed_tools,
+    _compose_run_registry_and_allowed,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.Agents.agent_models import (
+    LOAD_TOOLS_NAME, SPAWN_TOOL_NAME, STEP_ERROR, STEP_MODEL, STEP_SPAWN,
+    STEP_TOOL_RESULT,
+)
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
-from tldw_chatbook.Agents.agent_models import STEP_ERROR, STEP_MODEL, STEP_SPAWN, STEP_TOOL_RESULT
+from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 
 
 def _fence(name, args):
@@ -533,3 +538,340 @@ def test_resume_injects_markers_matching_live_format_end_to_end(tmp_path):
     resumed_again = inject_resume_agent_markers(
         resumed, fresh_bridge.resume_marker_messages("conv-1"))
     assert len(resumed_again) == len(resumed)
+
+
+# -- Task 12: per-run spawn-wired skill executor + run allow-list composition --
+
+
+class _FakeSkillsService:
+    """Minimal async skills service: one trusted, model-invocable skill."""
+
+    def __init__(self, *, skill_name="code-review", allowed_tools=None,
+                 blocked=False):
+        self.skill_name = skill_name
+        self.allowed_tools = allowed_tools
+        self.blocked = blocked
+        self.execute_calls = []
+        self.get_context_calls = 0
+
+    async def get_context(self, *, mode="local"):
+        self.get_context_calls += 1
+        return {
+            "available_skills": [
+                {"name": self.skill_name, "description": "Review a diff",
+                 "argument_hint": "[diff]", "trust_blocked": False,
+                 "disable_model_invocation": False},
+            ],
+            "blocked_skills": [],
+        }
+
+    async def execute_skill(self, name, *, mode="local", args=None):
+        self.execute_calls.append(args)
+        if self.blocked:
+            raise SkillTrustBlockedError(
+                skill_name=name, reason_code="quarantined_modified",
+                trust_status="quarantined_modified")
+        return {
+            "skill_name": name,
+            "rendered_prompt": f"Review this: {args}",
+            "allowed_tools": self.allowed_tools,
+            "execution_mode": "inline",
+        }
+
+
+def test_skill_tool_call_routes_through_run_scoped_spawn(tmp_path):
+    """A model-invoked skill tool runs as a budget-counted sub-agent of THIS
+    run -- not SkillToolProvider.invoke (which raises by design), and not an
+    unbounded/uncancellable bespoke path. The rendered skill prompt becomes
+    the sub-agent's task, the sub-agent turn goes through the same scripted
+    gateway as any other spawned sub-agent, and a TOOL marker records the
+    call in the transcript exactly like any other tool call."""
+    scripts = [
+        [_fence("code-review", {"args": "the diff"})],  # primary calls the skill
+        ["Looks fine to me."],                            # sub-agent turn
+        ["All done."],                                    # primary final
+    ]
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    skills_service = _FakeSkillsService()
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
+        skills_service=skills_service)
+
+    outcome = _run(bridge, store, session, assistant.id, conversation_id="conv-skill")
+
+    assert outcome.status == "done"
+    assert skills_service.execute_calls == ["the diff"]
+    assert db.count_subagent_runs("conv-skill") == 1
+    tool_rows = [m for m in store.messages_for_session(session.id)
+                 if m.role is ConsoleMessageRole.TOOL]
+    assert any("code-review" in row.content for row in tool_rows)
+
+
+def test_skill_trust_blocked_refuses_without_spawning(tmp_path):
+    """A skill whose trust was revoked between catalog build and model call
+    refuses (re-verified at render time by execute_skill) -- no sub-agent is
+    ever spawned, so the run tree never grows for a blocked call."""
+    scripts = [
+        [_fence("code-review", {"args": "x"})],
+        ["I could not review that."],
+    ]
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    skills_service = _FakeSkillsService(blocked=True)
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
+        skills_service=skills_service)
+
+    outcome = _run(bridge, store, session, assistant.id, conversation_id="conv-blocked")
+
+    assert outcome.status == "done"
+    assert db.count_subagent_runs("conv-blocked") == 0
+
+
+def test_no_skills_service_leaves_shared_registry_path_untouched(tmp_path):
+    """The no-skills-service path (skills_service=None, the default) must
+    stay byte-identical to the pre-Task-12 behavior: no get_context call, no
+    skill_runner wiring, the bridge's own shared registry/allow-list used."""
+    bridge, db, store, session, aid = _bridge(tmp_path, [["Tokyo."]])
+    outcome = _run(bridge, store, session, aid)
+    assert outcome.status == "done" and outcome.final_text == "Tokyo."
+
+
+def test_compose_run_allowed_tools_includes_eligible_skill_names():
+    """Pure per-run allow-list: builtins, then eligible skill names, then
+    spawn -- a trust-blocked or model-invocation-disabled skill is excluded."""
+    context = {
+        "available_skills": [
+            {"name": "code-review", "trust_blocked": False,
+             "disable_model_invocation": False},
+            {"name": "needs-review", "trust_blocked": True,
+             "disable_model_invocation": False},
+            {"name": "user-only", "trust_blocked": False,
+             "disable_model_invocation": True},
+        ],
+    }
+    allowed = _compose_run_allowed_tools(context, ("calculator", "get_current_datetime"))
+    assert allowed == (
+        "calculator", "get_current_datetime", "code-review", SPAWN_TOOL_NAME)
+
+
+def test_compose_run_allowed_tools_empty_context_is_builtins_plus_spawn():
+    allowed = _compose_run_allowed_tools({}, ("calculator",))
+    assert allowed == ("calculator", SPAWN_TOOL_NAME)
+
+
+def test_compose_run_allowed_tools_builtin_shadows_same_named_skill():
+    """Task 11 review note 2: a skill named the same as a builtin must never
+    become a distinct, skill-routable tool -- the builtin always wins. The
+    allow-list carries the name exactly once (from builtins), never twice."""
+    context = {
+        "available_skills": [
+            {"name": "calculator", "trust_blocked": False,
+             "disable_model_invocation": False},
+        ],
+    }
+    allowed = _compose_run_allowed_tools(context, ("calculator", "get_current_datetime"))
+    assert allowed == ("calculator", "get_current_datetime", SPAWN_TOOL_NAME)
+
+
+def test_compose_run_allowed_tools_runtime_tool_name_shadows_same_named_skill():
+    """Qodo finding 4 (PR #636 bot review): `_non_colliding_skill_entries`
+    used to filter a skill's name only against `BuiltinToolProvider` names,
+    not the loop's own in-loop runtime handler names (`find_tools`/
+    `load_tools`/`spawn_subagent` -- `agent_models.RUNTIME_TOOL_NAMES`). A
+    skill front-matter'd with one of those names would be advertised in the
+    run's catalog/allow-list, then get hijacked by the loop's own
+    name-based dispatch (`agent_runtime.run_agent_loop` checks
+    `call.name == FIND_TOOLS_NAME` etc. before any registry/skill routing),
+    making the skill permanently unreachable while still occupying a
+    catalog slot with a misleading schema. The allow-list must exclude it
+    exactly like a builtin-name collision does."""
+    context = {
+        "available_skills": [
+            {"name": "find_tools", "trust_blocked": False,
+             "disable_model_invocation": False},
+        ],
+    }
+    allowed = _compose_run_allowed_tools(context, ("calculator", "get_current_datetime"))
+    assert allowed == ("calculator", "get_current_datetime", SPAWN_TOOL_NAME)
+
+
+def test_compose_run_registry_excludes_skill_named_like_a_runtime_tool():
+    """Same collision, verified against the actual registry/allow-list this
+    run would use: the skill must not appear as a distinct catalog entry
+    (under either FIND_TOOLS_NAME or LOAD_TOOLS_NAME or SPAWN_TOOL_NAME)."""
+    context = {
+        "available_skills": [
+            {"name": LOAD_TOOLS_NAME, "description": "d", "argument_hint": "",
+             "trust_blocked": False, "disable_model_invocation": False},
+        ],
+    }
+    registry, allowed_tools, builtin_names = _compose_run_registry_and_allowed(context)
+    assert LOAD_TOOLS_NAME not in allowed_tools[len(builtin_names):]
+    catalog_entries = [(entry.name, entry.source) for entry in registry.list_catalog()]
+    assert (LOAD_TOOLS_NAME, "skill") not in catalog_entries
+
+
+def test_skill_named_like_a_runtime_tool_never_shadows_it_at_invocation(tmp_path):
+    """End-to-end: a skill front-matter'd as "find_tools" must not hijack
+    the runtime's own find_tools meta-tool -- the real runtime dispatch
+    still answers, and the skill is never invoked (it's excluded from the
+    run's catalog/allow-list entirely, so no sub-agent is ever spawned for
+    what looks like a skill call)."""
+    scripts = [
+        [_fence("find_tools", {"query": "anything"})],
+        ["done."],
+    ]
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    skills_service = _FakeSkillsService(skill_name="find_tools")
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
+        skills_service=skills_service)
+
+    outcome = _run(bridge, store, session, assistant.id, conversation_id="conv-runtime-collide")
+
+    assert outcome.status == "done"
+    assert skills_service.execute_calls == []          # the skill was never invoked
+    assert db.count_subagent_runs("conv-runtime-collide") == 0
+
+
+def test_skill_named_like_a_builtin_never_shadows_it_at_invocation(tmp_path):
+    """End-to-end: a skill front-matter'd as "calculator" must not hijack
+    calculator calls -- the real builtin still answers, and no sub-agent
+    is spawned for what looks like a skill call."""
+    scripts = [
+        [_fence("calculator", {"expression": "6*7"})],
+        ["It is 42."],
+    ]
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    skills_service = _FakeSkillsService(skill_name="calculator")
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
+        skills_service=skills_service)
+
+    outcome = _run(bridge, store, session, assistant.id, conversation_id="conv-collide")
+
+    assert outcome.status == "done"
+    assert skills_service.execute_calls == []          # the skill was never invoked
+    assert db.count_subagent_runs("conv-collide") == 0  # no sub-agent spawned
+    tool_rows = [m for m in store.messages_for_session(session.id)
+                 if m.role is ConsoleMessageRole.TOOL]
+    assert any("42" in row.content for row in tool_rows)
+
+
+# -- Skills Phase-2 gate finding 1: discovery-heavy runs must not exhaust the
+# bare engine step budget right after a successful skill call, before the
+# final wrap-up reply (Task-14 gate scenario 5: "Find a skill that can
+# shout, load it, and use it on: hello"). --
+
+
+class _ManySkillsService:
+    """9 real skills (> DIRECT_DISCLOSE_THRESHOLD == 8), so the catalog
+    defers everything to find_tools/load_tools -- the exact >8-skill shape
+    that engaged progressive disclosure in the live gate capture."""
+
+    def __init__(self):
+        self.execute_calls = []
+
+    async def get_context(self, *, mode="local"):
+        names = ["shout"] + [f"filler{i}" for i in range(8)]
+        return {
+            "available_skills": [
+                {"name": n, "description": f"{n} skill", "argument_hint": "[args]",
+                 "trust_blocked": False, "disable_model_invocation": False}
+                for n in names
+            ],
+            "blocked_skills": [],
+        }
+
+    async def execute_skill(self, name, *, mode="local", args=None):
+        self.execute_calls.append((name, args))
+        return {
+            "skill_name": name,
+            "rendered_prompt": f"SHOUT[{args}]",
+            "allowed_tools": None,
+            "execution_mode": "inline",
+        }
+
+
+def _discovery_heavy_shout_scripts():
+    # Mirrors the gate's live raw step log: find_tools({"query": "shout"})
+    # -> load_tools({"ids": ["skill:shout"]}) -> shout({"args": "hello"})
+    # -> the sub-agent's own turn -> the primary's final wrap-up reply.
+    return [
+        [_fence("find_tools", {"query": "shout"})],
+        [_fence("load_tools", {"ids": ["skill:shout"]})],
+        [_fence("shout", {"args": "hello"})],
+        ["HELLO"],              # sub-agent turn (never streamed to the store)
+        ["Shouted: HELLO"],     # primary final answer
+    ]
+
+
+def test_discovery_heavy_skill_run_completes_done_not_stuck(tmp_path):
+    """Task-14 gate finding 1 repro: find_tools -> load_tools -> a skill
+    call -> final answer needs exactly 10 primary-loop steps at minimum (3
+    steps per tool round x 3 rounds, plus 1 final model turn -- see
+    agent_runtime.run_agent_loop's per-round STEP_MODEL/STEP_TOOL_CALL/
+    STEP_TOOL_RESULT accounting). The bare engine default
+    (agent_models.RunBudget.max_steps == 8, pinned by
+    test_agent_models.test_budget_defaults) is ONE ROUND short of that --
+    it exhausts right after the skill's tool_result, one step before the
+    wrap-up reply, even though every tool call already succeeded. The
+    Console bridge must give this exact shape enough headroom to actually
+    reach the final answer and persist `done`."""
+    scripts = _discovery_heavy_shout_scripts()
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    skills_service = _ManySkillsService()
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
+        skills_service=skills_service)
+
+    outcome = _run(bridge, store, session, assistant.id, conversation_id="conv-discover")
+
+    assert outcome.status == "done"
+    assert outcome.final_text == "Shouted: HELLO"
+    assert skills_service.execute_calls == [("shout", "hello")]
+    assert db.count_subagent_runs("conv-discover") == 1
+    tool_rows = [m for m in store.messages_for_session(session.id)
+                 if m.role is ConsoleMessageRole.TOOL]
+    assert any("shout" in row.content for row in tool_rows)
+
+
+def test_console_run_budget_is_raised_above_the_bare_engine_default(tmp_path):
+    """Pins the config-assembly override directly: a primary Console run's
+    PERSISTED budget must sit strictly above the engine's own pure default
+    (RunBudget().max_steps == 8 -- see test_agent_models.test_budget_defaults,
+    which stays unchanged) -- with enough headroom (>= 16, per the counted
+    10-step discovery-heavy floor above) to survive a real disclosure run,
+    and a proportionally raised wall-clock allowance for the extra turns."""
+    bridge, db, store, session, aid = _bridge(tmp_path, [["hi there"]])
+    _run(bridge, store, session, aid, conversation_id="conv-budget")
+    run = db.list_runs("conv-budget")[0]
+    assert run["agent_kind"] == "primary"
+    assert run["budget"]["max_steps"] > 8
+    assert run["budget"]["max_steps"] >= 16
+    assert run["budget"]["max_wall_seconds"] > 240.0

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import inspect
 import re
 import threading
@@ -104,6 +105,15 @@ from ...Library.library_prompts_state import (
     classify_prompt_save_error,
     prompt_editor_meta_line,
 )
+from ...Library.library_skills_state import (
+    SkillEditorState,
+    build_skill_editor_state,
+    build_skills_list_state,
+    classify_skill_save_error,
+    compose_skill_markdown,
+    save_marks_needs_review,
+    skill_name_shadows_builtin,
+)
 from ...Prompt_Management.prompt_markdown_export import render_prompt_markdown
 from ...Prompt_Management.Prompts_Interop import (
     parse_json_prompts_from_content,
@@ -138,8 +148,10 @@ from ...Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_NOTES,
     LIBRARY_ROW_BROWSE_PROMPTS,
     LIBRARY_ROW_BROWSE_SEARCH,
+    LIBRARY_ROW_BROWSE_SKILLS,
     LIBRARY_ROW_CREATE_NOTE,
     LIBRARY_ROW_CREATE_PROMPT,
+    LIBRARY_ROW_CREATE_SKILL,
     LIBRARY_ROW_INGEST_EXPORT,
     LIBRARY_ROW_INGEST_MEDIA,
     LibraryShellInput,
@@ -170,6 +182,7 @@ from ...Widgets.Library import (
     LibraryRail,
     LibrarySearchRagInspectorPanel,
     LibrarySearchRagPanel,
+    LibrarySkillsListCanvas,
     library_dim_label_text,
     library_rag_history_children,
     library_rag_query_shows_full_recovery,
@@ -177,11 +190,20 @@ from ...Widgets.Library import (
     library_rag_results_body_children,
     library_rag_scope_recovery_children,
     library_rag_scope_shows_recovery,
+    next_skill_context,
+    skill_context_toggle_label,
+    skill_disable_model_label,
+    skill_editor_warning_lines,
+    skill_trust_review_enabled,
+    skill_trust_state_line,
+    skill_trust_unlock_enabled,
+    skill_user_invocable_label,
 )
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 from ..Views.RAGSearch.search_handoff import build_library_rag_console_live_work_payload
 from .destination_recovery import DestinationRecoveryState, policy_denied_recovery_state
+from .skills_screen import SkillTrustBootstrapModal, SkillTrustPassphraseModal
 from .study_scope_models import (
     MATERIAL_SOURCE_LIBRARY,
     MATERIAL_TITLE_LIBRARY_SOURCES,
@@ -197,6 +219,16 @@ LIBRARY_SOURCE_PAGE_SIZES = {"notes": 100, "media": 50, "conversations": 50, "pr
 # library_prompts_state.py) since it's screen-toolbar-cycling concern, not
 # pure list-state-building logic.
 _LIBRARY_PROMPTS_SORT_MODES = ("newest", "name")
+# Skills sort modes (Task 3 of the Skills sub-project): "name" (pure
+# alphabetical) <-> "status" (needs-review first, then alphabetical) --
+# cycled by handle_library_skills_sort. Same "screen-toolbar-cycling
+# concern, not pure list-state-building logic" posture as the prompts modes
+# above, kept local rather than in library_skills_state.py.
+_LIBRARY_SKILLS_SORT_MODES = ("name", "status")
+# Skills toolbar Import… (Task 5): the fixed filename every real skill
+# package uses for its own content, matched case-insensitively by
+# ``LibraryScreen._find_skill_md_in_dir``. See ``_run_library_skills_import``.
+_SKILL_MD_FILENAME = "SKILL.md"
 # Toolbar Import… (Task 5): which parser handles which file extension.
 # Mirrors ``Prompts_Interop._get_file_type``'s extension map, but writes
 # through ``prompt_scope_service``/``LocalPromptService`` per-prompt
@@ -249,6 +281,21 @@ LIBRARY_PROMPT_SAVE_STATUS_COPY = {
     "name-in-use": "Name already in use — pick another or open the existing prompt.",
     "soft-deleted-name": "A deleted prompt holds this name — restore it or choose another.",
     "error": "Couldn't save this prompt. Try again.",
+}
+# Skill editor's text fields (description/allowed-tools/body) have no
+# dedicated cap of their own -- reuses the note body's generous ceiling,
+# same reasoning as ``LIBRARY_PROMPT_TEXT_MAX_CHARS`` above.
+LIBRARY_SKILL_TEXT_MAX_CHARS = LIBRARY_NOTE_CONTENT_MAX_CHARS
+# Exact outcome copy for the skill editor's #library-skill-save-status line,
+# keyed by ``classify_skill_save_error``'s return value. "version-conflict"
+# is deliberately absent -- it routes into the conflict banner instead (see
+# ``_save_library_skill``), never this status line.
+LIBRARY_SKILL_SAVE_STATUS_COPY = {
+    "ok": "Saved.",
+    "exists": "A skill with this name already exists.",
+    "invalid-name": "Skill name must use lowercase letters, numbers, and hyphens.",
+    "trust-blocked": "This skill is trust-blocked; resolve trust before saving.",
+    "error": "Couldn't save this skill. Try again.",
 }
 LIBRARY_COLLECTION_SYNC_CONFLICT_LIMIT = 200
 LIBRARY_HANDOFF_LABEL_PREFIX = "Console/RAG handoff: "
@@ -362,8 +409,11 @@ def _active_library_sync_scope(app_instance: Any) -> dict[str, str | None]:
 # tested contracts of ``apply_navigation_context``, though no live emitter
 # currently sends them), and ``prompts`` (the retired Personas "prompts" mode
 # chip's legacy route alias -- see ``screen_registry``'s ``_SCREEN_ALIASES``
-# and ``shell_destinations``, Task 7). ``notes`` is handled as its own
-# dedicated branch in ``_apply_navigation_context_state`` below
+# and ``shell_destinations``, Task 7). ``skills`` (Skills sub-project Task 1)
+# has no live emitter yet either -- same forward-compat posture as
+# ``search``/``collections`` -- added so a future Skills deep link has
+# somewhere to land without another table edit. ``notes`` is handled as its
+# own dedicated branch in ``_apply_navigation_context_state`` below
 # (``open_notes_workspace``'s route), not through this table. ``media`` has
 # no navigation-context entry point at all (the retired mode-strip machinery
 # never had a "media" mode either). Any other mode value -- including the
@@ -376,6 +426,7 @@ LIBRARY_NAV_MODE_TO_ROW_ID = {
     "collections": LIBRARY_ROW_BROWSE_COLLECTIONS,
     "search": LIBRARY_ROW_BROWSE_SEARCH,
     "prompts": LIBRARY_ROW_BROWSE_PROMPTS,
+    "skills": LIBRARY_ROW_BROWSE_SKILLS,
 }
 
 
@@ -568,6 +619,13 @@ class LibraryScreen(BaseAppScreen):
             # fetching/paging past the first page of records remains
             # future work.
             "prompts": (None, ()),
+            # Skills sub-project Task 1: also ``(count, payload)``, not a
+            # bare records tuple -- but unlike prompts' ``page_records``
+            # (a list of rows), ``payload`` here is the normalized
+            # ``get_context`` dict (``available_skills`` + ``blocked_skills``)
+            # a future Skills canvas will render directly, so there is no
+            # separate paginated fetch to add later.
+            "skills": (None, {"available_skills": [], "blocked_skills": []}),
         }
         self._local_source_counts: dict[str, int] = {
             "notes": 0,
@@ -677,6 +735,52 @@ class LibraryScreen(BaseAppScreen):
         # ``call_after_refresh`` after every prompt-editor (re)compose,
         # mirroring ``_library_note_editor_armed``.
         self._library_prompt_editor_armed: bool = False
+        # Skills list canvas (Task 3 of the Skills sub-project): sort/filter
+        # are pure in-memory operations over the already-fetched
+        # ``get_context`` snapshot payload (mirrors
+        # ``_library_prompts_sort``/``_library_prompts_filter``).
+        # ``_selected_skill_name`` is recording-only for now -- the
+        # in-canvas skill detail/trust editor lands in a later task -- same
+        # posture ``handle_library_prompt_row`` originally had before its
+        # own editor landed.
+        self._library_skills_sort: str = "name"
+        self._library_skills_filter: str = ""
+        self._selected_skill_name: str = ""
+        # Toolbar Import… state (Task 5): a path Input (a SKILL.md file OR
+        # a skill's own directory) inlined below the sort/Import… toolbar,
+        # worker-executed on Run/Enter. See ``_run_library_skills_import``.
+        self._library_skills_import_open: bool = False
+        self._library_skills_import_path: str = ""
+        self._library_skills_import_status: str = ""
+        # Skill detail/trust editor (Task 4 of the Skills sub-project).
+        # Mirrors the prompts editor's own state shape
+        # (``_library_prompts_view``/``_library_prompt_detail``/etc.) --
+        # ``_selected_skill_name`` (above, Task 3) doubles as the
+        # create-vs-update sentinel: ``""`` means "not yet created" (mirrors
+        # ``_selected_prompt_id is None``), a real name means "editing an
+        # existing skill", routed through by NAME (skills are keyed by name,
+        # not a numeric id -- unlike prompts' ``_resolve_editor_prompt_id``
+        # complication, ``detail["name"]`` is already the stable identity).
+        self._library_skills_view: str = "list"
+        self._library_skill_detail: Mapping[str, Any] | None = None
+        self._library_skill_original_name: str = ""
+        self._library_skill_editor_state: SkillEditorState | None = None
+        self._library_skill_dirty: bool = False
+        self._library_skill_status: str = ""
+        self._library_skill_conflict: bool = False
+        # Guards against the spurious ``Input.Changed``/``TextArea.Changed``
+        # Textual fires when a widget mounts with a non-empty initial value
+        # -- same rationale/re-arm timing as ``_library_prompt_editor_armed``.
+        self._library_skill_editor_armed: bool = False
+        # The trust panel's currently-captured review (from
+        # ``capture_review``'s result mapping), or ``None`` when no review
+        # is active for the open skill. Reset every time a (different)
+        # skill is opened -- unlike ``skills_screen.py``'s
+        # ``_active_trust_review`` (which persists across row selection
+        # within one long-lived screen instance and needs its own
+        # staleness reconciliation), this editor always starts a fresh
+        # session per open, so no extra staleness check is needed.
+        self._library_skill_active_review: dict[str, Any] | None = None
         self._library_note_detail: Mapping[str, Any] | None = None
         self._selected_note_id: str = ""
         self._library_note_version: int | None = None
@@ -1106,7 +1210,8 @@ class LibraryScreen(BaseAppScreen):
         """
         await self._flush_library_note_save()
         prompt_flush_allowed = await self._flush_library_prompt_save()
-        return not self._library_note_dirty and prompt_flush_allowed
+        skill_flush_allowed = await self._flush_library_skill_save()
+        return not self._library_note_dirty and prompt_flush_allowed and skill_flush_allowed
 
     def apply_navigation_context(self, context: Mapping[str, Any]) -> None:
         """Apply route context supplied by shell navigation.
@@ -1733,6 +1838,44 @@ class LibraryScreen(BaseAppScreen):
             )
         return tuple(records)
 
+    async def _skills_context_or_none(self, get_context: Any, **kwargs: Any) -> Mapping[str, Any] | None:
+        """Fetch the local skills context, degrading quietly on failure.
+
+        Runs inside the same ``asyncio.gather`` as the notes/media/
+        conversations/prompts fetch (see ``_list_local_source_snapshot``).
+        Mirrors ``_prompts_count_or_none``: the seam is optional (guarded by
+        ``callable(get_context)`` at the call site), so when it is missing
+        this method is never invoked, and when it *is* present but raises,
+        the failure is swallowed and ``None`` is returned -- the Skills
+        rail row then renders uncounted with an empty context payload
+        rather than surfacing an error or failing the whole snapshot
+        fetch.
+
+        Unlike prompts (a separate ``count_prompts`` call plus a separate
+        paginated ``list_prompts`` page fetch), a single ``get_context``
+        call here supplies both: the count is derived from its
+        ``available_skills``/``blocked_skills`` lengths by the caller, and
+        the same payload is stashed for a future Skills canvas to render.
+
+        Args:
+            get_context: The bound ``skills_scope_service.get_context``
+                callable to invoke.
+            **kwargs: Forwarded to ``get_context`` (``mode``).
+
+        Returns:
+            The normalized ``get_context`` payload (``available_skills`` +
+            ``blocked_skills``), or ``None`` if the call failed or returned
+            something other than a ``Mapping``.
+        """
+        try:
+            result = await self._run_library_service_call(get_context, isolate_in_worker=True, **kwargs)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Failed to fetch local skills context; Skills row will show no count."
+            )
+            return None
+        return result if isinstance(result, Mapping) else None
+
     async def _study_count_or_none(self, count_callable: Any, label: str, **kwargs: Any) -> int | None:
         """Fetch a decorative Create-rail count, degrading quietly on failure.
 
@@ -1790,6 +1933,7 @@ class LibraryScreen(BaseAppScreen):
         study_service = getattr(self.app_instance, "study_scope_service", None)
         quiz_service = getattr(self.app_instance, "study_quiz_scope_service", None)
         prompt_service = getattr(self.app_instance, "prompt_scope_service", None)
+        skills_service = getattr(self.app_instance, "skills_scope_service", None)
         list_notes = getattr(notes_service, "list_notes", None)
         list_media = getattr(media_service, "list_media_items", None)
         list_conversations = getattr(conversation_service, "list_conversations", None)
@@ -1802,6 +1946,8 @@ class LibraryScreen(BaseAppScreen):
         count_prompts_available = callable(count_prompts)
         list_prompts = getattr(prompt_service, "list_prompts", None)
         list_prompts_available = callable(list_prompts)
+        get_skills_context = getattr(skills_service, "get_context", None)
+        get_skills_context_available = callable(get_skills_context)
         notes_user_id = getattr(self.app_instance, "notes_user_id", None) or "default_user"
 
         empty_records: dict[str, tuple[Mapping[str, Any], ...]] = {
@@ -1811,6 +1957,9 @@ class LibraryScreen(BaseAppScreen):
             # See ``__init__``'s ``_local_source_records`` default: this key
             # carries ``(count, page_records)``, not a bare records tuple.
             "prompts": (None, ()),
+            # Likewise ``(count, context_payload)`` -- see ``__init__``'s
+            # comment on this same key.
+            "skills": (None, {"available_skills": [], "blocked_skills": []}),
         }
         empty_counts = {"notes": 0, "media": 0, "conversations": 0}
         empty_total_known = {"notes": True, "media": True, "conversations": True}
@@ -1897,6 +2046,10 @@ class LibraryScreen(BaseAppScreen):
                     ),
                 )
             )
+        if get_skills_context_available:
+            optional_calls.append(
+                ("skills_context", self._skills_context_or_none(get_skills_context, mode="local"))
+            )
         gathered_calls.extend(call for _, call in optional_calls)
 
         try:
@@ -1939,6 +2092,15 @@ class LibraryScreen(BaseAppScreen):
         notes_true_count = optional_values.get("notes_true_count")
         prompts_count = optional_values.get("prompts_count")
         prompts_page_records = optional_values.get("prompts_page") or ()
+        skills_context = optional_values.get("skills_context")
+        if isinstance(skills_context, Mapping):
+            skills_available = skills_context.get("available_skills") or []
+            skills_blocked = skills_context.get("blocked_skills") or []
+            skills_count: int | None = len(skills_available) + len(skills_blocked)
+            skills_payload: Mapping[str, Any] = skills_context
+        else:
+            skills_count = None
+            skills_payload = {"available_skills": [], "blocked_skills": []}
         study_counts: dict[str, int | None] = {
             "study_decks": optional_values.get("study_decks"),
             "flashcards_due": optional_values.get("flashcards_due"),
@@ -1966,6 +2128,14 @@ class LibraryScreen(BaseAppScreen):
                 # seam or the fetch failed (degrade-quietly contract; see
                 # ``_prompts_page_records_or_empty``).
                 "prompts": (prompts_count, prompts_page_records),
+                # (count, context_payload) -- see the ``__init__``/
+                # ``empty_records`` comments above. ``skills_count`` spans
+                # BOTH ``available_skills`` and ``blocked_skills`` (needs
+                # review) per the spec's blocked-skills visibility rule, and
+                # degrades to ``None``/empty payload whenever the local
+                # backend has no ``get_context`` seam or the fetch failed
+                # (degrade-quietly contract; see ``_skills_context_or_none``).
+                "skills": (skills_count, skills_payload),
             },
             {
                 "notes": notes_count,
@@ -3008,6 +3178,51 @@ class LibraryScreen(BaseAppScreen):
                         import_status=self._library_prompts_import_status,
                         id="library-prompts-canvas",
                     )
+                elif shell.canvas_kind == "skills" and self._library_skills_view == "editor":
+                    if self._library_skill_editor_state is None:
+                        yield Static(
+                            "Loading skill…",
+                            id="library-skill-loading",
+                            classes="destination-purpose",
+                            markup=False,
+                        )
+                    else:
+                        editor_state = self._library_skill_editor_state
+                        yield LibrarySkillsListCanvas(
+                            mode="editor",
+                            editor_state=editor_state,
+                            warnings="\n".join(
+                                skill_editor_warning_lines(
+                                    live_name=editor_state.name,
+                                    trust_status=editor_state.trust_status,
+                                    trust_blocked=editor_state.trust_blocked,
+                                )
+                            ),
+                            status=self._library_skill_status,
+                            conflict=self._library_skill_conflict,
+                            active_review=self._library_skill_active_review,
+                            # Same source of truth ``_save_library_skill`` uses
+                            # for its own ``is_create`` -- an empty
+                            # ``_selected_skill_name`` means there is no
+                            # existing skill on disk to rename, so the Name
+                            # Input stays editable. Reached both via a real
+                            # skill row (existing skill, name set) and via
+                            # the Create rail's "New skill" row
+                            # (``_enter_library_skill_create_editor`` leaves
+                            # ``_selected_skill_name`` empty).
+                            is_create=not self._selected_skill_name,
+                            id="library-skills-canvas",
+                        )
+                elif shell.canvas_kind == "skills":
+                    yield LibrarySkillsListCanvas(
+                        self._build_library_skills_state(),
+                        sort_mode=self._library_skills_sort,
+                        filter_value=self._library_skills_filter,
+                        import_open=self._library_skills_import_open,
+                        import_path=self._library_skills_import_path,
+                        import_status=self._library_skills_import_status,
+                        id="library-skills-canvas",
+                    )
                 elif shell.canvas_kind == "search":
                     yield LibrarySearchRagPanel(
                         self._library_rag_panel_state(),
@@ -3096,6 +3311,12 @@ class LibraryScreen(BaseAppScreen):
             if isinstance(prompts_entry, tuple) and len(prompts_entry) == 2
             else None
         )
+        skills_entry = self._local_source_records.get("skills")
+        skills_count = (
+            skills_entry[0]
+            if isinstance(skills_entry, tuple) and len(skills_entry) == 2
+            else None
+        )
         return LibraryShellInput(
             media_count=counts.get("media") if counts_known_yet else None,
             media_known=known.get("media", True),
@@ -3110,6 +3331,11 @@ class LibraryScreen(BaseAppScreen):
             # stays ``True``.
             prompts_count=prompts_count if counts_known_yet else None,
             prompts_known=True,
+            # Same posture as prompts: no sample-cap fallback backs this
+            # count either (a single ``get_context`` call, not a paginated
+            # fetch), so ``skills_known`` stays ``True``.
+            skills_count=skills_count if counts_known_yet else None,
+            skills_known=True,
             collections_count=collections_count,
             runtime_source=active_source,
             server_label=str(server_label) if server_label else None,
@@ -3211,6 +3437,30 @@ class LibraryScreen(BaseAppScreen):
             query=self._library_prompts_filter,
             sort=self._library_prompts_sort,
             now=datetime.now(timezone.utc),
+        )
+
+    def _build_library_skills_state(self):
+        """Build the Library skills canvas's list-view display state.
+
+        Reads the ``(count, context_payload)`` snapshot entry seeded by
+        ``_list_local_source_snapshot`` (Task 1's single ``get_context``
+        call, which supplies both the rail count AND this payload) --
+        ``context_payload`` degrades to an empty ``available_skills``/
+        ``blocked_skills`` mapping whenever the local backend has no
+        ``get_context`` seam, the fetch failed, or the snapshot simply
+        hasn't loaded yet, in which case the pure builder below renders an
+        empty list rather than raising.
+        """
+        skills_entry = self._local_source_records.get("skills")
+        context_payload = (
+            skills_entry[1]
+            if isinstance(skills_entry, tuple) and len(skills_entry) == 2
+            else None
+        )
+        return build_skills_list_state(
+            context_payload,
+            query=self._library_skills_filter,
+            sort=self._library_skills_sort,
         )
 
     async def _refresh_library_media_detail(self, media_id: str) -> None:
@@ -5614,6 +5864,13 @@ class LibraryScreen(BaseAppScreen):
             # ordering ``apply_navigation_context``'s notes-create branch
             # already uses.
             self._enter_library_prompt_create_editor()
+        if row_id == LIBRARY_ROW_CREATE_SKILL:
+            # Skills sub-project (skills-200 spec, "Create > New skill"):
+            # same shape as the "New prompt" branch immediately above --
+            # ``_enter_library_skill_create_editor`` fully (re)sets every
+            # skill-editor field itself, so it needs no preceding
+            # ``_reset_library_skill_editor_state()`` call here.
+            self._enter_library_skill_create_editor()
         if (
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
             and not self._library_collections_loaded
@@ -5627,6 +5884,8 @@ class LibraryScreen(BaseAppScreen):
             self._start_library_export_counts_worker()
         if row_id == LIBRARY_ROW_CREATE_PROMPT and self.is_mounted:
             self.call_after_refresh(self._arm_library_prompt_editor)
+        if row_id == LIBRARY_ROW_CREATE_SKILL and self.is_mounted:
+            self.call_after_refresh(self._arm_library_skill_editor)
 
     @on(Button.Pressed, ".console-rail-section-toggle")
     def handle_library_rail_section_toggle(self, event: Button.Pressed) -> None:
@@ -5964,6 +6223,1405 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         self._library_prompts_filter = self._safe_text(event.value, max_length=200).strip()
         self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-skills-sort")
+    def handle_library_skills_sort(self, event: Button.Pressed) -> None:
+        """Cycle the Library skills canvas sort mode (name/status).
+
+        Same pure in-memory posture as ``handle_library_prompts_sort``: the
+        already-fetched ``get_context`` snapshot payload is re-sorted by
+        ``_build_library_skills_state`` -> ``build_skills_list_state`` on
+        recompose, no worker needed.
+
+        Args:
+            event: Button press event emitted by the skills sort control.
+        """
+        event.stop()
+        try:
+            index = _LIBRARY_SKILLS_SORT_MODES.index(self._library_skills_sort)
+        except ValueError:
+            index = -1
+        self._library_skills_sort = _LIBRARY_SKILLS_SORT_MODES[
+            (index + 1) % len(_LIBRARY_SKILLS_SORT_MODES)
+        ]
+        self.refresh(recompose=True)
+
+    @on(Input.Submitted, "#library-skills-filter")
+    def handle_library_skills_filter(self, event: Input.Submitted) -> None:
+        """Apply the Library skills filter on Enter.
+
+        Purely in-memory (see ``handle_library_skills_sort``'s note): the
+        submitted text is stored and the canvas recomposes, re-running
+        ``build_skills_list_state`` over the already-fetched snapshot
+        payload with the new query -- no service call or worker involved.
+
+        Args:
+            event: Input submission event emitted by the skills filter box.
+        """
+        event.stop()
+        self._library_skills_filter = self._safe_text(event.value, max_length=200).strip()
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-skills-import")
+    def handle_library_skills_import(self, event: Button.Pressed) -> None:
+        """Open the inline Import row below the skills toolbar.
+
+        Idempotent while already open, mirrors
+        ``handle_library_prompts_import`` exactly: Cancel is the only way
+        to close the row once opened.
+
+        Args:
+            event: Button press event emitted by the "Import…" action.
+        """
+        event.stop()
+        if self._library_skills_import_open:
+            return
+        self._library_skills_import_open = True
+        self._library_skills_import_path = ""
+        self._library_skills_import_status = ""
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-skills-import-cancel")
+    def handle_library_skills_import_cancel(self, event: Button.Pressed) -> None:
+        """Close the inline Import row, discarding any typed path/outcome.
+
+        Args:
+            event: Button press event emitted by the Import row's
+                "Cancel" action.
+        """
+        event.stop()
+        self._library_skills_import_open = False
+        self._library_skills_import_path = ""
+        self._library_skills_import_status = ""
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-skills-import-browse")
+    def handle_library_skills_import_browse(self, event: Button.Pressed) -> None:
+        """Push a ``FileOpen`` dialog to pick a local SKILL.md file.
+
+        Mirrors ``handle_library_prompts_import_browse``'s dialog flow
+        exactly. The shared ``FileOpen`` dialog has no directory-selection
+        mode, so importing a skill BY ITS FOLDER path still requires
+        typing that path into the Import row's path ``Input`` by hand
+        (see ``_run_library_skills_import``, which accepts either shape).
+
+        Args:
+            event: Button press event emitted by the "Browse…" action.
+        """
+        event.stop()
+
+        async def browse_callback(selected_path: Path | None) -> None:
+            if selected_path is None:
+                return
+            self._library_skills_import_path = str(selected_path)
+            self.refresh(recompose=True)
+
+        self.app.push_screen(
+            FileOpen(title="Import Skill (SKILL.md)"),
+            browse_callback,
+        )
+
+    @on(Input.Changed, "#library-skills-import-path")
+    def handle_library_skills_import_path_changed(self, event: Input.Changed) -> None:
+        """Track the Import row's path text as the user types it (state only).
+
+        Args:
+            event: Input change event emitted by the Import row's path field.
+        """
+        event.stop()
+        self._library_skills_import_path = event.value
+
+    @on(Input.Submitted, "#library-skills-import-path")
+    def handle_library_skills_import_path_submitted(self, event: Input.Submitted) -> None:
+        """Run the import when Enter is pressed in the Import row's path field.
+
+        Args:
+            event: Input submission event emitted by the Import row's
+                path field.
+        """
+        event.stop()
+        self._start_library_skills_import()
+
+    @on(Button.Pressed, "#library-skills-import-run")
+    def handle_library_skills_import_run(self, event: Button.Pressed) -> None:
+        """Run the import when the Import row's "Import" action is pressed.
+
+        Args:
+            event: Button press event emitted by the Import row's
+                "Import" action.
+        """
+        event.stop()
+        self._start_library_skills_import()
+
+    def _start_library_skills_import(self) -> None:
+        """Validate the Import row has a non-blank path, then run the import worker.
+
+        Worker-executed (exclusive, its own group) since it performs file
+        IO plus a service call -- never inline on the UI thread. A blank
+        path is a quiet inline status line, matching
+        ``_start_library_prompts_import``'s equivalent gate.
+        """
+        if self._library_skills_view != "list":
+            return
+        raw_path = self._library_skills_import_path.strip()
+        if not raw_path:
+            self._apply_library_skills_import_status("Please enter a file or folder path.")
+            return
+        self.run_worker(
+            self._run_library_skills_import(raw_path),
+            exclusive=True,
+            group="library_skills_import",
+        )
+
+    def _apply_library_skills_import_status(self, text: str) -> None:
+        """Set the Import row's outcome line and recompose to show it."""
+        self._library_skills_import_status = text
+        if self.is_mounted:
+            self.refresh(recompose=True)
+
+    async def _run_library_skills_import(self, raw_path: str) -> None:
+        """Import ONE skill from a SKILL.md file path or a skill's own directory.
+
+        Unlike ``_run_library_prompts_import`` (which batch-imports every
+        supported file in a folder), a skill is conceptually ONE directory
+        containing exactly one ``SKILL.md`` -- so this always imports
+        exactly one skill per Import press, landing it TRUST-PENDING
+        (``trust_approved=False``; the review panel is primed the next
+        time this skill's row is opened, since every quarantined/
+        uninitialized trust status already gates the trust panel's
+        "Review changes" action -- see ``skill_trust_review_enabled``).
+
+        Two path shapes are accepted, both resolving to the SAME skill
+        name (the directory's own name) -- this matters because every
+        real skill package (e.g. the ``superpowers`` skillset) is a
+        directory named after the skill containing a file LITERALLY named
+        ``SKILL.md``, so deriving the name from the file's own basename
+        (``local_skills_service._derive_name_from_filename``, which is
+        what a plain ``import_skill_file(..., filename="SKILL.md")`` call
+        would do) would incorrectly produce ``"skill"`` for every import
+        regardless of the real skill's name:
+
+        - A file path whose basename is ``SKILL.md`` (case-insensitive):
+          treated as that file's PARENT directory's skill (the common
+          case for a real skillset laid out one-directory-per-skill).
+        - A directory path containing a top-level ``SKILL.md``: same
+          shape, just already pointing at the directory.
+
+        Both call ``import_skill(name=<directory name>, content=..., ...)``
+        directly (the name is already known, so no filename-derivation
+        guesswork is needed) and thread any FLAT sibling files in that
+        same directory through as ``supporting_files`` (nested
+        subdirectories -- e.g. a ``references/`` folder -- are NOT
+        recursed into: ``local_skills_service``'s own supporting-file
+        model has no nested-path support, so those would either be
+        silently dropped or rejected by the service's own filename
+        pattern; skipping them here keeps this import path's own failure
+        mode explicit rather than surprising).
+
+        Any OTHER file path (e.g. a standalone ``some-skill.md`` not named
+        ``SKILL.md``, or a ``.zip`` export) is imported via
+        ``import_skill_file`` instead, letting the service derive the
+        name from that file's own (already meaningful) basename.
+
+        A folder that does not directly contain a ``SKILL.md`` is
+        reported as an outcome (never silently imports zero skills or
+        guesses at a subdirectory to use) -- batch "import every skill
+        under this folder" is out of this task's scope.
+
+        Args:
+            raw_path: The Import row's typed path (SKILL.md file, skill
+                directory, standalone ``.md`` file, or ``.zip`` export),
+                already known non-blank by the caller.
+        """
+        try:
+            validated_path = validate_path_simple(
+                Path(raw_path).expanduser(), require_exists=True
+            )
+        except ValueError:
+            logger.opt(exception=True).warning(
+                f"Rejected Library skills import path {raw_path!r}."
+            )
+            self._apply_library_skills_import_status("Could not find that file or folder.")
+            return
+
+        service = getattr(self.app_instance, "skills_scope_service", None)
+        import_skill = getattr(service, "import_skill", None)
+        import_skill_file = getattr(service, "import_skill_file", None)
+        if not callable(import_skill) or not callable(import_skill_file):
+            self._apply_library_skills_import_status("Skill import is unavailable.")
+            return
+
+        if validated_path.is_dir():
+            skill_dir = validated_path
+            skill_md_path = self._find_skill_md_in_dir(skill_dir)
+            if skill_md_path is None:
+                self._apply_library_skills_import_status("No SKILL.md found in that folder.")
+                return
+        elif validated_path.name.lower() == _SKILL_MD_FILENAME.lower():
+            skill_dir = validated_path.parent
+            skill_md_path = validated_path
+        else:
+            await self._import_library_skill_from_loose_file(validated_path, import_skill_file)
+            return
+
+        try:
+            content = await asyncio.to_thread(
+                skill_md_path.read_text, encoding="utf-8", errors="strict"
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Could not read Library skill import file '{skill_md_path}'."
+            )
+            self._apply_library_skills_import_status("Could not read that file.")
+            return
+
+        supporting_files = self._read_library_skill_import_supporting_files(skill_dir, skill_md_path)
+        skill_name = skill_dir.name
+
+        try:
+            await self._run_library_service_call(
+                import_skill,
+                mode="local",
+                name=skill_name,
+                content=content,
+                supporting_files=supporting_files or None,
+                trust_approved=False,
+                isolate_in_worker=True,
+            )
+        except Exception as exc:
+            self._apply_library_skills_import_outcome_from_exception(skill_name, exc)
+            return
+
+        self._apply_library_skills_import_success()
+
+    async def _import_library_skill_from_loose_file(
+        self, file_path: Path, import_skill_file: Any,
+    ) -> None:
+        """Import a standalone ``.md``/``.zip`` file (not named ``SKILL.md``).
+
+        Split out of ``_run_library_skills_import`` for that method's own
+        readability -- this branch has no directory/supporting-files
+        concerns at all, unlike the SKILL.md-directory branch.
+
+        Args:
+            file_path: The standalone file to import (already known to
+                exist and NOT be named ``SKILL.md``).
+            import_skill_file: The bound ``skills_scope_service.import_skill_file``
+                callable.
+        """
+        suffix = file_path.suffix.lower()
+        if suffix == ".zip":
+            content_type = "application/zip"
+            try:
+                data = await asyncio.to_thread(file_path.read_bytes)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"Could not read Library skill import file '{file_path}'."
+                )
+                self._apply_library_skills_import_status("Could not read that file.")
+                return
+        elif suffix == ".md":
+            content_type = "text/markdown"
+            try:
+                text = await asyncio.to_thread(
+                    file_path.read_text, encoding="utf-8", errors="strict"
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"Could not read Library skill import file '{file_path}'."
+                )
+                self._apply_library_skills_import_status("Could not read that file.")
+                return
+            data = text.encode("utf-8")
+        else:
+            self._apply_library_skills_import_status("Unsupported file type.")
+            return
+
+        try:
+            await self._run_library_service_call(
+                import_skill_file,
+                data,
+                mode="local",
+                filename=file_path.name,
+                content_type=content_type,
+                trust_approved=False,
+                isolate_in_worker=True,
+            )
+        except Exception as exc:
+            self._apply_library_skills_import_outcome_from_exception(
+                self._safe_text(file_path.stem, max_length=64), exc,
+            )
+            return
+
+        self._apply_library_skills_import_success()
+
+    def _apply_library_skills_import_success(self) -> None:
+        """Report a successful single-skill import and refresh the rail/list."""
+        self._library_skills_import_path = ""
+        self._apply_library_skills_import_status(
+            "1 imported · re-review it in the trust panel"
+        )
+        self._refresh_local_source_snapshot()
+
+    def _apply_library_skills_import_outcome_from_exception(
+        self, skill_name: str, exc: Exception,
+    ) -> None:
+        """Translate a failed import call into an honest, specific outcome line.
+
+        Never silently swallowed -- ``local_skill_exists:`` (the only
+        expected "the user tried to re-import a name that's already
+        there" case) is reported as a duplicate-name skip; every OTHER
+        exception (a bad skill name, an invalid supporting-file name, an
+        oversized field, a policy denial, or a plain read/parse failure)
+        is reported as a distinct failure, always clearing the in-flight
+        path so the Import row does not look stuck (mirrors
+        ``_run_library_prompts_import``'s unconditional path-clear at the
+        end of its per-file loop).
+        """
+        logger.opt(exception=True).warning(
+            f"Library skill import failed for {skill_name!r}."
+        )
+        self._library_skills_import_path = ""
+        if "local_skill_exists:" in str(exc):
+            self._apply_library_skills_import_status(
+                f"Skipped — a skill named \"{skill_name}\" already exists."
+            )
+            return
+        self._apply_library_skills_import_status("Could not import that skill.")
+
+    @staticmethod
+    def _find_skill_md_in_dir(directory: Path) -> Path | None:
+        """Return the directory's ``SKILL.md`` file, matched case-insensitively.
+
+        Returns:
+            The matched path, or ``None`` when the directory has no
+            top-level file named ``SKILL.md`` (any case).
+        """
+        exact = directory / _SKILL_MD_FILENAME
+        if exact.is_file():
+            return exact
+        try:
+            children = list(directory.iterdir())
+        except Exception:
+            return None
+        for child in children:
+            if child.is_file() and child.name.lower() == _SKILL_MD_FILENAME.lower():
+                return child
+        return None
+
+    @staticmethod
+    def _read_library_skill_import_supporting_files(
+        skill_dir: Path, skill_md_path: Path,
+    ) -> dict[str, str]:
+        """Read the skill directory's FLAT sibling files as supporting files.
+
+        Only immediate-child FILES are read (mirrors
+        ``local_skills_service._read_supporting_files``'s own flat-only
+        model) -- nested subdirectories (e.g. a real skill's own
+        ``references/`` folder) are skipped entirely rather than
+        recursed into or flattened, since the service's supporting-file
+        name pattern has no path-separator support. A sibling that fails
+        to decode as UTF-8 text (e.g. a binary asset) is skipped
+        individually rather than failing the whole import.
+
+        Args:
+            skill_dir: The skill's own directory.
+            skill_md_path: The directory's ``SKILL.md`` file (excluded
+                from the result).
+
+        Returns:
+            A ``{filename: content}`` mapping of every readable flat
+            sibling file, excluding ``SKILL.md`` itself.
+        """
+        supporting_files: dict[str, str] = {}
+        try:
+            children = sorted(skill_dir.iterdir(), key=lambda item: item.name)
+        except Exception:
+            return supporting_files
+        for child in children:
+            if not child.is_file() or child.resolve() == skill_md_path.resolve():
+                continue
+            try:
+                supporting_files[child.name] = child.read_text(encoding="utf-8", errors="strict")
+            except Exception:
+                logger.debug(f"Skipping unreadable Library skill supporting file '{child}'.")
+                continue
+        return supporting_files
+
+    @on(Button.Pressed, ".library-skill-row")
+    async def handle_library_skill_row(self, event: Button.Pressed) -> None:
+        """Select a skill row and open the in-canvas SKILL.md editor.
+
+        Mirrors ``handle_library_prompt_row``: switches the skills canvas
+        from its list view to the editor, clears any stale detail, and
+        kicks the async detail fetch (``_refresh_library_skill_detail``);
+        ``compose_content`` renders a loading line until that worker stores
+        the fetched detail and recomposes. Works for both trusted and
+        needs-review (blocked) rows alike -- a trust-blocked skill still
+        opens, with the trust panel primed from the fetched detail's
+        ``trust_changed_files``.
+
+        Vetoed while a previously-open skill is dirty (see
+        ``_flush_library_skill_save``): the skill editor is
+        explicit-Save-only (no autosave), so switching rows while dirty
+        would otherwise silently discard the in-progress edit.
+
+        Args:
+            event: Button press event emitted by a skill row button.
+        """
+        event.stop()
+        if not await self._flush_library_skill_save():
+            return
+        skill_name = getattr(event.button, "skill_name", None)
+        self._reset_library_skill_editor_state()
+        if isinstance(skill_name, str):
+            self._selected_skill_name = skill_name
+        self._library_selected_row_id = LIBRARY_ROW_BROWSE_SKILLS
+        self._library_skills_view = "editor"
+        if isinstance(skill_name, str):
+            # Exclusive in its own group so rapidly switching rows cancels
+            # the previous in-flight detail fetch instead of letting a
+            # slower older fetch finish and overwrite the newer selection's
+            # editor.
+            self.run_worker(
+                self._refresh_library_skill_detail(skill_name),
+                exclusive=True,
+                group="library_skill_detail",
+            )
+        self.refresh(recompose=True)
+
+    async def _refresh_library_skill_detail(self, skill_name: str) -> None:
+        """Fetch and store the full detail for a selected Library skill.
+
+        Mirrors ``_refresh_library_prompt_detail``: offloads the (possibly
+        blocking) ``get_skill`` service call via ``_run_library_service_call``
+        and recomposes once the fetched detail (or a cleared state) has
+        been stored.
+
+        Args:
+            skill_name: The Library skill name to fetch full detail for.
+        """
+        service = getattr(self.app_instance, "skills_scope_service", None)
+        get_skill = getattr(service, "get_skill", None)
+        if not callable(get_skill):
+            self._library_skill_detail = None
+            if self.is_mounted:
+                self.refresh(recompose=True)
+            return
+        try:
+            detail = await self._run_library_service_call(
+                get_skill,
+                skill_name,
+                mode="local",
+                isolate_in_worker=True,
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Failed to load Library skill detail for {skill_name!r}."
+            )
+            detail = None
+        # Discard out-of-order results: the same stale-race guard as
+        # ``_refresh_library_prompt_detail``.
+        if skill_name != self._selected_skill_name or self._library_skills_view != "editor":
+            return
+        if not isinstance(detail, Mapping):
+            logger.info(
+                f"Library skill {skill_name!r} is no longer available; returning to list."
+            )
+            self._reset_library_skill_editor_state()
+            self._refresh_local_source_snapshot()
+            if self.is_mounted:
+                self.refresh(recompose=True)
+            return
+        self._apply_library_skill_detail(detail)
+
+    def _apply_library_skill_detail(self, detail: Mapping[str, Any]) -> None:
+        """Store a freshly-fetched skill detail and (re)render the editor.
+
+        Shared by the initial open (``_refresh_library_skill_detail``) and
+        a successful Save (whose response mapping is already a full detail
+        -- see ``_save_library_skill``'s docstring for why no separate
+        "refresh snapshot" fetch is needed there).
+
+        Args:
+            detail: A skill detail mapping shaped like ``get_skill``'s (or
+                a save call's) response.
+        """
+        self._library_skill_detail = dict(detail)
+        self._library_skill_editor_state = build_skill_editor_state(self._library_skill_detail)
+        self._library_skill_original_name = self._library_skill_editor_state.name
+        self._library_skill_dirty = False
+        self._library_skill_status = ""
+        self._library_skill_conflict = False
+        self._library_skill_active_review = None
+        self._library_skill_editor_armed = False
+        if self.is_mounted:
+            self.refresh(recompose=True)
+            self.call_after_refresh(self._arm_library_skill_editor)
+
+    def _arm_library_skill_editor(self) -> None:
+        """Enable dirty-tracking once the skill editor's mount-time
+        ``Input.Changed``/``TextArea.Changed`` (fired for the non-empty
+        initial values) has already been delivered, so it is never mistaken
+        for a real edit.
+        """
+        self._library_skill_editor_armed = True
+
+    def _enter_library_skill_create_editor(self) -> None:
+        """Open the in-canvas skill editor on a blank, not-yet-saved record.
+
+        Entered via the Create rail's "New skill" row
+        (``LIBRARY_ROW_CREATE_SKILL``, whose ``target_id`` is ``"skills"``
+        -- the SAME canvas kind Browse > Skills targets), mirroring
+        ``_enter_library_prompt_create_editor``'s "New prompt" row.
+
+        ``_selected_skill_name`` stays ``""``: the sentinel
+        ``_save_library_skill`` already reads (``is_create = not name``)
+        to route its scope-service ``create_skill`` call instead of
+        ``update_skill``, and the sentinel ``compose_content`` reads
+        (``is_create=not self._selected_skill_name``) to keep the Name
+        Input editable (an existing skill's Name Input is disabled --
+        there is no rename primitive).
+
+        ``_library_skill_editor_state`` is built directly from an empty
+        mapping (``build_skill_editor_state({})``) rather than left
+        ``None``: ``compose_content``'s skills-editor branch gates on
+        ``_library_skill_editor_state is None`` to show a "Loading
+        skill…" placeholder while the async detail fetch
+        (``_refresh_library_skill_detail``) is in flight -- there is no
+        fetch for a brand-new record, so leaving it ``None`` would show
+        that placeholder forever.
+        """
+        self._selected_skill_name = ""
+        self._library_skills_view = "editor"
+        self._library_skill_detail = {}
+        self._library_skill_editor_state = build_skill_editor_state({})
+        self._library_skill_original_name = ""
+        self._library_skill_dirty = False
+        self._library_skill_status = ""
+        self._library_skill_conflict = False
+        self._library_skill_active_review = None
+        self._library_skill_editor_armed = False
+
+    def _reset_library_skill_editor_state(self) -> None:
+        """Clear all in-canvas Library skill editor/save/trust state.
+
+        Shared by skill-row selection, Back, delete, and rail-row selection
+        so every exit from the editor leaves save/conflict/trust-review
+        tracking clean for the next skill.
+        """
+        self._library_skills_view = "list"
+        self._library_skill_detail = None
+        self._library_skill_original_name = ""
+        self._library_skill_editor_state = None
+        self._library_skill_dirty = False
+        self._library_skill_status = ""
+        self._library_skill_conflict = False
+        self._library_skill_active_review = None
+        self._library_skill_editor_armed = False
+
+    def _mark_library_skill_dirty(self) -> None:
+        """Record an in-progress skill edit.
+
+        Ignored until ``_library_skill_editor_armed`` is set (see that
+        flag's docstring). Unlike the notes editor, this never arms an
+        autosave timer -- the skill editor is explicit-Save-only.
+        """
+        if not self._library_skill_editor_armed:
+            return
+        self._library_skill_dirty = True
+
+    def _read_library_skill_live_name(self) -> str:
+        """Read the Name Input's current (possibly unsaved) value.
+
+        Falls back to the editor state's own name when the Input isn't
+        mounted (e.g. the conflict banner, which doesn't render the field
+        Inputs).
+        """
+        try:
+            return self.query_one("#library-skill-name", Input).value
+        except (NoMatches, QueryError):
+            state = self._library_skill_editor_state
+            return state.name if state is not None else ""
+
+    def _update_library_skill_warnings_static(self, *, name: str | None = None) -> None:
+        """Targeted update of ``#library-skill-warnings``, no recompose.
+
+        Args:
+            name: The live Name field value to compute the shadow warning
+                against. Defaults to the current editor state's name (used
+                right after a trust action, where the Name field itself
+                hasn't changed).
+        """
+        state = self._library_skill_editor_state
+        if state is None:
+            return
+        if name is None:
+            name = state.name
+        try:
+            warnings_static = self.query_one("#library-skill-warnings", Static)
+        except (NoMatches, QueryError):
+            return
+        lines = skill_editor_warning_lines(
+            live_name=name,
+            trust_status=state.trust_status,
+            trust_blocked=state.trust_blocked,
+        )
+        warnings_static.update("\n".join(lines))
+
+    def _update_library_skill_status_static(self, text: str) -> None:
+        """Targeted update of ``#library-skill-save-status``, no recompose.
+
+        Args:
+            text: The status copy to show (``""`` clears it).
+        """
+        self._library_skill_status = text
+        try:
+            status_static = self.query_one("#library-skill-save-status", Static)
+        except (NoMatches, QueryError):
+            return
+        status_static.update(text)
+
+    def _render_library_skill_trust_panel(self) -> None:
+        """Targeted update of the trust panel's state/changed-files/buttons,
+        no recompose -- called after every trust action and after a
+        successful Save, so an in-progress (unsaved) edit elsewhere in the
+        editor is never discarded by a full rebuild.
+        """
+        state = self._library_skill_editor_state
+        if state is None:
+            return
+        try:
+            self.query_one("#library-skill-trust-state", Static).update(
+                skill_trust_state_line(state.trust_status, state.trust_changed_files)
+            )
+        except (NoMatches, QueryError):
+            pass
+        try:
+            self.query_one("#library-skill-trust-review-files", Static).update(
+                ", ".join(
+                    str(item)
+                    for item in ((self._library_skill_active_review or {}).get("changed_files") or [])
+                )
+            )
+        except (NoMatches, QueryError):
+            pass
+        try:
+            self.query_one("#library-skill-trust-unlock", Button).disabled = (
+                not skill_trust_unlock_enabled(state.trust_status)
+            )
+        except (NoMatches, QueryError):
+            pass
+        try:
+            self.query_one("#library-skill-trust-review", Button).disabled = (
+                not skill_trust_review_enabled(state.trust_status, state.trust_blocked)
+            )
+        except (NoMatches, QueryError):
+            pass
+        try:
+            self.query_one("#library-skill-trust-approve", Button).disabled = (
+                self._library_skill_active_review is None
+            )
+        except (NoMatches, QueryError):
+            pass
+
+    @on(Input.Changed, "#library-skill-name")
+    def handle_library_skill_name_changed(self, event: Input.Changed) -> None:
+        """Mark the open skill dirty on a Name edit, and live-refresh the
+        shadow-name warning (unconditionally, not gated by "armed" -- the
+        warning is a plain live read, not a dirty-tracking concern).
+
+        Args:
+            event: Input change event emitted by the editor's Name field.
+        """
+        self._mark_library_skill_dirty()
+        self._update_library_skill_warnings_static(name=event.value)
+
+    @on(Input.Changed, "#library-skill-description")
+    @on(Input.Changed, "#library-skill-argument-hint")
+    @on(Input.Changed, "#library-skill-allowed-tools")
+    @on(Input.Changed, "#library-skill-model")
+    def handle_library_skill_input_changed(self, event: Input.Changed) -> None:
+        """Mark the open skill dirty on a field edit.
+
+        Args:
+            event: Input change event emitted by one of the editor's
+                single-line fields.
+        """
+        self._mark_library_skill_dirty()
+
+    @on(TextArea.Changed, "#library-skill-body")
+    def handle_library_skill_body_changed(self, event: TextArea.Changed) -> None:
+        """Mark the open skill dirty on a Body edit.
+
+        Args:
+            event: Text change event emitted by the editor's Body TextArea.
+        """
+        self._mark_library_skill_dirty()
+
+    def _update_library_skill_toggle_buttons(self) -> None:
+        """Targeted label update for the user-invocable/disable-model/context
+        toggle Buttons, no recompose."""
+        state = self._library_skill_editor_state
+        if state is None:
+            return
+        try:
+            self.query_one("#library-skill-user-invocable", Button).label = (
+                skill_user_invocable_label(state.user_invocable)
+            )
+        except (NoMatches, QueryError):
+            pass
+        try:
+            self.query_one("#library-skill-disable-model", Button).label = (
+                skill_disable_model_label(state.disable_model_invocation)
+            )
+        except (NoMatches, QueryError):
+            pass
+        try:
+            self.query_one("#library-skill-context", Button).label = (
+                skill_context_toggle_label(state.context)
+            )
+        except (NoMatches, QueryError):
+            pass
+
+    @on(Button.Pressed, "#library-skill-user-invocable")
+    def handle_library_skill_user_invocable_toggle(self, event: Button.Pressed) -> None:
+        """Toggle the open skill's ``user_invocable`` flag.
+
+        Args:
+            event: Button press event emitted by the user-invocable toggle.
+        """
+        event.stop()
+        state = self._library_skill_editor_state
+        if state is None:
+            return
+        self._library_skill_editor_state = dataclasses.replace(
+            state, user_invocable=not state.user_invocable
+        )
+        self._mark_library_skill_dirty()
+        self._update_library_skill_toggle_buttons()
+
+    @on(Button.Pressed, "#library-skill-disable-model")
+    def handle_library_skill_disable_model_toggle(self, event: Button.Pressed) -> None:
+        """Toggle the open skill's ``disable_model_invocation`` flag.
+
+        Args:
+            event: Button press event emitted by the disable-model toggle.
+        """
+        event.stop()
+        state = self._library_skill_editor_state
+        if state is None:
+            return
+        self._library_skill_editor_state = dataclasses.replace(
+            state, disable_model_invocation=not state.disable_model_invocation
+        )
+        self._mark_library_skill_dirty()
+        self._update_library_skill_toggle_buttons()
+
+    @on(Button.Pressed, "#library-skill-context")
+    def handle_library_skill_context_toggle(self, event: Button.Pressed) -> None:
+        """Cycle the open skill's ``context`` field between ``inline``/``fork``.
+
+        Args:
+            event: Button press event emitted by the context cycler.
+        """
+        event.stop()
+        state = self._library_skill_editor_state
+        if state is None:
+            return
+        self._library_skill_editor_state = dataclasses.replace(
+            state, context=next_skill_context(state.context)
+        )
+        self._mark_library_skill_dirty()
+        self._update_library_skill_toggle_buttons()
+
+    def _read_library_skill_editor_fields(
+        self,
+    ) -> tuple[str, str, str, str, str, str] | None:
+        """Read the skill editor's current (possibly unsaved) field values.
+
+        Returns:
+            ``(name, description, argument_hint, allowed_tools_csv, model,
+            body)`` read from the live widgets, or ``None`` if the editor
+            isn't mounted.
+        """
+        try:
+            name = self.query_one("#library-skill-name", Input).value
+            description = self.query_one("#library-skill-description", Input).value
+            argument_hint = self.query_one("#library-skill-argument-hint", Input).value
+            allowed_tools_csv = self.query_one("#library-skill-allowed-tools", Input).value
+            model = self.query_one("#library-skill-model", Input).value
+            body = self.query_one("#library-skill-body", TextArea).text
+        except (NoMatches, QueryError):
+            return None
+        return name, description, argument_hint, allowed_tools_csv, model, body
+
+    @on(Button.Pressed, "#library-skill-save")
+    def handle_library_skill_save(self, event: Button.Pressed) -> None:
+        """Explicitly save the open skill (there is no autosave).
+
+        Args:
+            event: Button press event emitted by the editor's "Save" action.
+        """
+        event.stop()
+        self.run_worker(
+            self._save_library_skill(),
+            exclusive=True,
+            group="library_skill_save",
+        )
+
+    async def _save_library_skill(self) -> None:
+        """Save the open Library skill's current editor text.
+
+        Unlike the prompts editor (whose ``update_prompt_by_id`` has no
+        caller-supplied expected-version parameter, forcing a manual
+        pre-read staleness check), ``LocalSkillsService.update_skill``
+        accepts ``expected_version`` directly and raises
+        ``local_skill_version_conflict:...`` itself on a real mismatch --
+        so this never needs its own pre-read; ``classify_skill_save_error``
+        classifies whatever the real write call raises/returns.
+
+        The create/update response mapping is already a full skill detail
+        (``LocalSkillsService._response_for_record``'s shape, same as
+        ``get_skill``'s), so a successful save's "refresh snapshot" is just
+        rebuilding the editor state from THIS call's own result -- no
+        second service round-trip needed. This is also how the
+        save-marks-needs-review re-quarantine becomes visible without any
+        special-casing: the write never passes ``trust_approved=True``, so
+        a currently-trusted skill's post-save ``trust_status`` in the
+        response is already ``quarantined_modified``.
+        """
+        if self._library_skills_view != "editor":
+            return
+        name = self._selected_skill_name
+        is_create = not name
+        base_state = self._library_skill_editor_state
+        if base_state is None:
+            return
+        fields = self._read_library_skill_editor_fields()
+        if fields is None:
+            return
+        raw_name, raw_description, raw_argument_hint, raw_allowed_tools_csv, raw_model, raw_body = fields
+
+        live_name = self._sanitize_media_field(raw_name, max_length=64)
+        description = self._sanitize_note_content(raw_description, max_length=LIBRARY_SKILL_TEXT_MAX_CHARS)
+        argument_hint = self._sanitize_media_field(raw_argument_hint, max_length=500)
+        allowed_tools_csv = self._sanitize_note_content(raw_allowed_tools_csv, max_length=LIBRARY_SKILL_TEXT_MAX_CHARS)
+        model = self._sanitize_media_field(raw_model, max_length=128)
+        body = self._sanitize_note_content(raw_body, max_length=LIBRARY_SKILL_TEXT_MAX_CHARS)
+
+        if is_create:
+            editor_name = live_name or base_state.name
+        else:
+            # Renaming an existing skill isn't supported -- the service has
+            # no rename primitive, and ``update_skill`` writes under the
+            # ORIGINAL directory name regardless of what the frontmatter's
+            # ``name`` field says. The Name Input is disabled for existing
+            # skills (see ``LibrarySkillsListCanvas._compose_editor``), but
+            # this pins the persisted name defensively too: even if the
+            # live value somehow diverged, the frontmatter written to disk
+            # never does, so a save can never get marked
+            # ``validation_status: "invalid"`` (name != parent directory
+            # name) the way it silently did before this fix.
+            editor_name = base_state.name
+
+        write_state = dataclasses.replace(
+            base_state,
+            name=editor_name,
+            description=description,
+            argument_hint=argument_hint or None,
+            allowed_tools_csv=allowed_tools_csv,
+            model=model or None,
+        )
+        content = compose_skill_markdown(write_state, body=body)
+
+        service = getattr(self.app_instance, "skills_scope_service", None)
+        create_skill = getattr(service, "create_skill", None)
+        update_skill = getattr(service, "update_skill", None)
+
+        result: Any = None
+        exc: Exception | None = None
+        if is_create:
+            if not callable(create_skill):
+                return
+            try:
+                result = await self._run_library_service_call(
+                    create_skill,
+                    mode="local",
+                    name=write_state.name,
+                    content=content,
+                    isolate_in_worker=True,
+                )
+            except Exception as caught:
+                exc = caught
+        else:
+            if not callable(update_skill):
+                return
+            try:
+                result = await self._run_library_service_call(
+                    update_skill,
+                    name,
+                    mode="local",
+                    content=content,
+                    expected_version=base_state.version,
+                    isolate_in_worker=True,
+                )
+            except Exception as caught:
+                exc = caught
+
+        # Discard out-of-order results, same stale-race guard as
+        # ``_refresh_library_skill_detail``/``_save_library_prompt``'s
+        # equivalent ``prompt_id != self._selected_prompt_id`` check --
+        # applied uniformly for creates too (``name`` was already ``""``
+        # at capture time when ``is_create``, so this still lets a
+        # still-in-flight create through as long as nothing else got
+        # selected meanwhile, but bails if a DIFFERENT skill's editor
+        # opened while this create was in flight).
+        if name != self._selected_skill_name or self._library_skills_view != "editor":
+            return
+
+        if exc is not None:
+            logger.opt(exception=True).warning(f"Library skill save failed for {name!r}.")
+            outcome = classify_skill_save_error(None, str(exc), exc)
+        else:
+            outcome = classify_skill_save_error(result, "", None)
+
+        if outcome == "version-conflict":
+            self._enter_library_skill_conflict()
+            return
+        if outcome != "ok":
+            self._update_library_skill_status_static(
+                LIBRARY_SKILL_SAVE_STATUS_COPY.get(outcome, LIBRARY_SKILL_SAVE_STATUS_COPY["error"])
+            )
+            return
+
+        self._apply_library_skill_save_success(result, is_create=is_create)
+
+    def _apply_library_skill_save_success(self, result: Any, *, is_create: bool) -> None:
+        """Apply a successful save's response: rebuild state, clear dirty,
+        show "Saved.", and refresh the trust panel + warnings in place.
+
+        Args:
+            result: The create/update call's response mapping (a full
+                skill detail).
+            is_create: Whether this save created a brand-new skill (adopts
+                the new name as ``_selected_skill_name`` and kicks a
+                snapshot refresh so the rail badge/list pick up the new
+                row).
+        """
+        if not isinstance(result, Mapping):
+            self._update_library_skill_status_static(LIBRARY_SKILL_SAVE_STATUS_COPY["error"])
+            return
+        # Deliberately NOT ``_apply_library_skill_detail`` (which recomposes
+        # + re-arms): recomposing here would remount fresh Input/TextArea
+        # widgets while the editor is still armed, and Textual's spurious
+        # mount-time ``Changed`` event for a non-empty initial value would
+        # immediately re-mark the just-saved skill dirty -- same discipline
+        # ``_save_library_prompt``'s success tail documents.
+        self._library_skill_detail = dict(result)
+        self._library_skill_editor_state = build_skill_editor_state(self._library_skill_detail)
+        self._library_skill_original_name = self._library_skill_editor_state.name
+        self._library_skill_dirty = False
+        if is_create:
+            self._selected_skill_name = self._library_skill_editor_state.name
+            # A brand-new skill changes the list's membership/count, so the
+            # Skills rail badge and list must pick up the new row now --
+            # fire-and-forget, mirrors ``_save_library_prompt``'s equivalent
+            # post-create refresh.
+            self._refresh_local_source_snapshot()
+        self._update_library_skill_status_static(LIBRARY_SKILL_SAVE_STATUS_COPY["ok"])
+        self._update_library_skill_warnings_static(name=self._read_library_skill_live_name())
+        self._render_library_skill_trust_panel()
+
+    def _enter_library_skill_conflict(self) -> None:
+        """Recompose into the save-conflict banner (Reload only -- see the
+        brief's narrower scope vs. the prompts editor's Overwrite+Reload;
+        ``update_skill``'s own ``expected_version`` guard is what raised
+        this, so nothing here needs to preserve/replay the user's kept
+        text the way the prompts conflict path does).
+        """
+        self._library_skill_conflict = True
+        self._library_skill_status = ""
+        self._library_skill_editor_armed = False
+        if self.is_mounted:
+            self.refresh(recompose=True)
+            self.call_after_refresh(self._arm_library_skill_editor)
+
+    @on(Button.Pressed, "#library-skill-conflict-reload")
+    def handle_library_skill_conflict_reload(self, event: Button.Pressed) -> None:
+        """Discard the conflicting edit and refetch the skill's fresh detail.
+
+        Args:
+            event: Button press event emitted by the conflict banner's
+                "Reload" action.
+        """
+        event.stop()
+        name = self._selected_skill_name
+        if not name:
+            return
+        self._library_skill_conflict = False
+        self.run_worker(
+            self._refresh_library_skill_detail(name),
+            exclusive=True,
+            group="library_skill_detail",
+        )
+
+    async def _flush_library_skill_save(self) -> bool:
+        """Veto leaving the skill editor while an edit is unsaved.
+
+        Mirrors ``_flush_library_prompt_save`` exactly: the skill editor is
+        explicit-Save-only, so this simply reports whether it is safe to
+        proceed -- ``False`` whenever ``_library_skill_dirty`` is set.
+
+        Returns:
+            ``True`` when there is nothing unsaved (safe to proceed);
+            ``False`` when a dirty edit must be resolved first.
+        """
+        return not self._library_skill_dirty
+
+    @on(Button.Pressed, "#library-skill-back")
+    async def handle_library_skill_back(self, event: Button.Pressed) -> None:
+        """Return the Library skills canvas from the editor to its list view.
+
+        Vetoed while dirty (see ``_flush_library_skill_save``) so Back
+        never silently discards an unsaved edit.
+
+        Args:
+            event: Button press event emitted by the "‹ Back to list" action.
+        """
+        event.stop()
+        if not await self._flush_library_skill_save():
+            return
+        self._reset_library_skill_editor_state()
+        self._refresh_local_source_snapshot()
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-skill-delete")
+    def handle_library_skill_delete(self, event: Button.Pressed) -> None:
+        """Delete the open skill and return to the list view.
+
+        Confirm-free by design (a single press deletes) -- matches the
+        notes/prompts delete affordance's "dim button, single press
+        acceptable" posture.
+
+        Args:
+            event: Button press event emitted by the editor's "Delete" action.
+        """
+        event.stop()
+        if self._library_skills_view != "editor" or not self._selected_skill_name:
+            return
+        self.run_worker(
+            self._delete_library_skill(self._selected_skill_name),
+            exclusive=True,
+            group="library_skill_delete",
+        )
+
+    async def _delete_library_skill(self, skill_name: str) -> None:
+        """Delete the selected Library skill, then return to the list view.
+
+        Args:
+            skill_name: The Library skill name to delete.
+        """
+        service = getattr(self.app_instance, "skills_scope_service", None)
+        delete_skill = getattr(service, "delete_skill", None)
+        if not callable(delete_skill):
+            self._update_library_skill_status_static("Skill deletion is unavailable.")
+            return
+        state = self._library_skill_editor_state
+        version = state.version if state is not None else None
+        try:
+            result = await self._run_library_service_call(
+                delete_skill,
+                skill_name,
+                mode="local",
+                expected_version=version,
+                isolate_in_worker=True,
+            )
+        except Exception:
+            logger.opt(exception=True).warning(f"Failed to delete Library skill {skill_name!r}.")
+            if skill_name != self._selected_skill_name or self._library_skills_view != "editor":
+                return
+            self._update_library_skill_status_static("Could not delete this skill.")
+            return
+
+        if skill_name != self._selected_skill_name or self._library_skills_view != "editor":
+            return
+
+        deleted = bool(result.get("deleted", True)) if isinstance(result, Mapping) else bool(result)
+        if not deleted:
+            self._update_library_skill_status_static(
+                "This skill changed elsewhere — refresh and try again."
+            )
+            return
+
+        self._reset_library_skill_editor_state()
+        self._library_skills_filter = ""
+        self._refresh_local_source_snapshot()
+        if self.is_mounted:
+            self.refresh(recompose=True)
+
+    async def _request_library_skill_trust_passphrase(self) -> str | None:
+        """Push the shared ``SkillTrustPassphraseModal`` and await a passphrase.
+
+        Mirrors ``skills_screen.SkillsScreen._request_skill_trust_passphrase``
+        (reused, not forked): never bootstraps from this editor, so
+        ``confirm_bootstrap`` is always ``False``.
+        """
+        push_screen_wait = getattr(self.app, "push_screen_wait", None)
+        if not callable(push_screen_wait):
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Local skill trust passphrase prompt is unavailable.", severity="warning")
+            return None
+        result = await push_screen_wait(SkillTrustPassphraseModal(confirm_bootstrap=False))
+        if isinstance(result, str) and result:
+            return result
+        return None
+
+    async def _call_library_skill_trust_service(
+        self,
+        method_name: str,
+        *args: Any,
+    ) -> tuple[Any, bool]:
+        """Call a ``local_skill_trust_service`` method off the UI loop.
+
+        Mirrors ``skills_screen.SkillsScreen._call_skill_trust_service``
+        (reused pattern, not forked): every ``SkillTrustService`` method
+        this editor calls is a plain sync method, offloaded via
+        ``asyncio.to_thread``.
+
+        Returns:
+            ``(result, True)`` on success, or ``(None, False)`` on any
+            failure (service unavailable or the call raised).
+        """
+        trust_service = getattr(self.app_instance, "local_skill_trust_service", None)
+        method = getattr(trust_service, method_name, None)
+        if not callable(method):
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Local skill trust service is unavailable.", severity="warning")
+            return None, False
+        try:
+            if inspect.iscoroutinefunction(method):
+                result = await method(*args)
+            else:
+                result = await asyncio.to_thread(method, *args)
+                if inspect.isawaitable(result):
+                    result = await result
+        except Exception as exc:
+            logger.warning(
+                "Local skill trust action failed.",
+                action=method_name,
+                error_type=type(exc).__name__,
+            )
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Local skill trust action could not be completed.", severity="warning")
+            return None, False
+        return result, True
+
+    async def _refresh_library_skill_trust_status(self) -> None:
+        """Re-fetch the open skill's trust status and patch the trust panel
+        in place (no recompose -- see ``_render_library_skill_trust_panel``).
+        """
+        name = self._selected_skill_name
+        state = self._library_skill_editor_state
+        if not name or state is None:
+            return
+        result, ok = await self._call_library_skill_trust_service("status_for_skill", name)
+        if not ok or result is None:
+            return
+        if name != self._selected_skill_name or self._library_skills_view != "editor":
+            return
+        self._library_skill_editor_state = dataclasses.replace(
+            self._library_skill_editor_state,
+            trust_status=result.trust_status,
+            trust_blocked=result.trust_blocked,
+            trust_changed_files=tuple(result.changed_files),
+        )
+        self._render_library_skill_trust_panel()
+        self._update_library_skill_warnings_static(name=self._read_library_skill_live_name())
+
+    async def _request_library_skill_trust_bootstrap_passphrase(self) -> str | None:
+        """Push the confirm-passphrase bootstrap modal and await a passphrase.
+
+        Structural twin of ``_request_library_skill_trust_passphrase``: the
+        only difference is which modal it drives -- this one CREATES a
+        brand-new passphrase (twice-entry confirmed by
+        ``SkillTrustBootstrapModal`` itself), the other unlocks an existing
+        one.
+        """
+        push_screen_wait = getattr(self.app, "push_screen_wait", None)
+        if not callable(push_screen_wait):
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Local skill trust passphrase prompt is unavailable.", severity="warning")
+            return None
+        result = await push_screen_wait(SkillTrustBootstrapModal())
+        if isinstance(result, str) and result:
+            return result
+        return None
+
+    @on(Button.Pressed, "#library-skill-trust-setup")
+    def handle_library_skill_trust_setup(self, event: Button.Pressed) -> None:
+        """Bootstrap local skill trust from the editor's first-run setup state.
+
+        Only rendered while ``trust_status == "trust_uninitialized"`` (a
+        brand-new, never-bootstrapped trust store) -- the Phase-1 gate fix
+        for the finding that a fresh install had no live-UI path to create
+        the trust passphrase at all.
+
+        Args:
+            event: Button press event emitted by the trust panel's "Set up
+                skill trust" action.
+        """
+        event.stop()
+        self.run_worker(
+            self._bootstrap_library_skill_trust(),
+            exclusive=True,
+            group="library_skill_trust",
+        )
+
+    async def _bootstrap_library_skill_trust(self) -> None:
+        """Create the initial trust baseline via a confirm-passphrase modal.
+
+        Unlike every other trust action here, ``bootstrap_trust`` is called
+        directly (never preceded by ``unlock_with_passphrase`` -- it takes
+        the new passphrase itself and derives+stores fresh keys). A full
+        recompose follows a successful bootstrap, not the usual targeted
+        ``_render_library_skill_trust_panel`` patch: the panel's layout
+        itself changes shape here, from the first-run setup state to the
+        normal Unlock/Review/Approve row, which a no-recompose patch can't
+        produce since those buttons don't exist in the DOM yet.
+        """
+        if self._library_skills_view != "editor" or self._library_skill_editor_state is None:
+            return
+        passphrase = await self._request_library_skill_trust_bootstrap_passphrase()
+        if passphrase is None:
+            return
+        _, ok = await self._call_library_skill_trust_service("bootstrap_trust", passphrase)
+        if not ok:
+            return
+        name = self._selected_skill_name
+        if name and self._library_skills_view == "editor" and self._library_skill_editor_state is not None:
+            result, status_ok = await self._call_library_skill_trust_service("status_for_skill", name)
+            if (
+                status_ok
+                and result is not None
+                and name == self._selected_skill_name
+                and self._library_skills_view == "editor"
+            ):
+                self._library_skill_editor_state = dataclasses.replace(
+                    self._library_skill_editor_state,
+                    trust_status=result.trust_status,
+                    trust_blocked=result.trust_blocked,
+                    trust_changed_files=tuple(result.changed_files),
+                )
+        self._library_skill_active_review = None
+        self._refresh_local_source_snapshot()
+        if self.is_mounted:
+            # Disarm dirty-tracking before the recompose (mirrors
+            # ``_apply_library_skill_detail``): remounting the Inputs with
+            # their existing values still fires their initial
+            # ``Input.Changed`` -- without this, still-armed dirty-tracking
+            # would misread that as a real edit and wrongly mark the editor
+            # dirty (vetoing the next Back/row-switch for no reason).
+            self._library_skill_dirty = False
+            self._library_skill_editor_armed = False
+            self.refresh(recompose=True)
+            self.call_after_refresh(self._arm_library_skill_editor)
+
+    @on(Button.Pressed, "#library-skill-trust-unlock")
+    def handle_library_skill_trust_unlock(self, event: Button.Pressed) -> None:
+        """Unlock local skill trust for this session via the passphrase modal.
+
+        Args:
+            event: Button press event emitted by the trust panel's "Unlock"
+                action.
+        """
+        event.stop()
+        self.run_worker(
+            self._unlock_library_skill_trust(),
+            exclusive=True,
+            group="library_skill_trust",
+        )
+
+    async def _unlock_library_skill_trust(self) -> None:
+        if self._library_skills_view != "editor":
+            return
+        passphrase = await self._request_library_skill_trust_passphrase()
+        if passphrase is None:
+            return
+        _, ok = await self._call_library_skill_trust_service("unlock_with_passphrase", passphrase)
+        if ok:
+            await self._refresh_library_skill_trust_status()
+
+    @on(Button.Pressed, "#library-skill-trust-review")
+    def handle_library_skill_trust_review(self, event: Button.Pressed) -> None:
+        """Capture a trust review snapshot for the open (blocked) skill.
+
+        Args:
+            event: Button press event emitted by the trust panel's "Review
+                changes" action.
+        """
+        event.stop()
+        self.run_worker(
+            self._review_library_skill_trust(),
+            exclusive=True,
+            group="library_skill_trust",
+        )
+
+    async def _review_library_skill_trust(self) -> None:
+        if self._library_skills_view != "editor" or not self._selected_skill_name:
+            return
+        name = self._selected_skill_name
+        result, ok = await self._call_library_skill_trust_service("capture_review", name)
+        if not ok or not isinstance(result, Mapping) or not result.get("review_id"):
+            return
+        if name != self._selected_skill_name or self._library_skills_view != "editor":
+            return
+        self._library_skill_active_review = dict(result)
+        self._render_library_skill_trust_panel()
+
+    @on(Button.Pressed, "#library-skill-trust-approve")
+    def handle_library_skill_trust_approve(self, event: Button.Pressed) -> None:
+        """Approve the captured trust review via the passphrase modal.
+
+        Args:
+            event: Button press event emitted by the trust panel's
+                "Approve" action.
+        """
+        event.stop()
+        self.run_worker(
+            self._approve_library_skill_trust(),
+            exclusive=True,
+            group="library_skill_trust",
+        )
+
+    async def _approve_library_skill_trust(self) -> None:
+        if self._library_skills_view != "editor" or self._library_skill_active_review is None:
+            return
+        name = self._selected_skill_name
+        review_id = self._library_skill_active_review.get("review_id")
+        if not review_id:
+            return
+        passphrase = await self._request_library_skill_trust_passphrase()
+        if passphrase is None:
+            return
+        _, unlock_ok = await self._call_library_skill_trust_service(
+            "unlock_with_passphrase", passphrase
+        )
+        if not unlock_ok:
+            return
+        _, ok = await self._call_library_skill_trust_service(
+            "trust_reviewed_snapshot", review_id
+        )
+        if not ok:
+            return
+        if name != self._selected_skill_name or self._library_skills_view != "editor":
+            return
+        self._library_skill_active_review = None
+        await self._refresh_library_skill_trust_status()
 
     @on(Button.Pressed, "#library-prompts-import")
     def handle_library_prompts_import(self, event: Button.Pressed) -> None:

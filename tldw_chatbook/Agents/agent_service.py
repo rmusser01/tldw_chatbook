@@ -10,7 +10,7 @@ from __future__ import annotations
 import dataclasses
 import time
 from datetime import datetime, timezone
-from typing import Callable
+from typing import Callable, Protocol
 
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
@@ -30,6 +30,44 @@ SUBAGENT_SYSTEM_PROMPT = (
     "reply with a concise result. You cannot ask the user questions.")
 
 TRUNCATION_NOTICE = "\n[truncated]"
+
+
+class SkillRunner(Protocol):
+    """Executes a skill-tool call as a budget-counted, spawn-wired sub-agent.
+
+    Implemented by ``console_agent_bridge._BridgeSkillRunner``; a plain fake
+    in tests. ``run`` is handed THIS run's own ``spawn`` closure so a skill's
+    rendered prompt executes exactly like any other sub-agent -- cancellable
+    via ``should_cancel``, DB-lineage-tracked via ``parent_run_id``, and
+    result-capped -- never a bespoke, unbounded execution path. This is the
+    replacement for the pre-wiring path traced in Task 11, where a skill
+    tool routed to ``SkillToolProvider.invoke`` (which raises by design and
+    aborted the whole run).
+    """
+
+    def is_skill_tool(self, name: str) -> bool:
+        """Return whether ``name`` is a skill tool this runner handles."""
+        ...
+
+    def run(self, name: str, args: str,
+            spawn: Callable[..., "ToolResult"]) -> "ToolResult":
+        """Render skill ``name`` with ``args`` and run it via ``spawn``.
+
+        Args:
+            name: The skill's tool name (as it appears in
+                ``config.allowed_tools``).
+            args: The raw ``args`` string the model passed (the tool
+                schema's single ``args`` property -- see
+                ``SkillToolProvider.load_schema``).
+            spawn: This run's own spawn closure -- ``spawn(task, *,
+                allowed_tools=None)`` -- so the rendered skill prompt runs
+                as a normal budget-counted sub-agent of THIS run.
+
+        Returns:
+            The sub-agent's result, wrapped as a ``ToolResult`` exactly the
+            way ``spawn`` itself returns one.
+        """
+        ...
 
 
 def _now_iso() -> str:
@@ -54,13 +92,15 @@ class AgentService:
     def __init__(self, db: AgentRunsDB, registry: ToolCatalogRegistry,
                  chat_call: Callable | None = None,
                  clock: Callable[[], float] = time.monotonic,
-                 on_step: Callable[[AgentStep, str], None] | None = None
+                 on_step: Callable[[AgentStep, str], None] | None = None,
+                 skill_runner: SkillRunner | None = None,
                  ) -> None:
         self.db = db
         self.registry = registry
         self.chat_call = chat_call or _default_chat_call()
         self.clock = clock
         self._on_step = on_step
+        self.skill_runner = skill_runner
 
     # -- internals -------------------------------------------------------
 
@@ -168,15 +208,61 @@ class AgentService:
                 disclosed_names.add(schema.name)
             return accepted
 
-        def spawn(spawn_task: str) -> ToolResult:
+        sub_agent_spawns = 0
+
+        def spawn(spawn_task: str, *,
+                  allowed_tools: tuple[str, ...] | None = None) -> ToolResult:
+            nonlocal sub_agent_spawns
+            # Task-12 review Finding 2: this closure is THE single spawn
+            # path -- the loop calls it directly for the native
+            # spawn_subagent tool (agent_runtime.py), and invoke_tool's
+            # skill branch below calls it via skill_runner.run. Gating and
+            # incrementing the shared counter HERE, before any child run is
+            # created, enforces one combined sub-agent ceiling across both
+            # paths regardless of call order. (Previously each path checked
+            # its own independent counter -- the loop's own `spawned` and
+            # this service's now-removed `skill_spawns` -- so an operator
+            # ceiling of 1 could permit 2 sub-agent runs.) The loop's own
+            # counter stays untouched as a redundant secondary bound that
+            # is never reached first.
+            if sub_agent_spawns >= config.budget.max_subagents:
+                return ToolResult(
+                    ok=False, error="sub-agent budget exhausted")
+            sub_agent_spawns += 1
             remaining = config.budget.max_wall_seconds - (
                 self.clock() - started)
+            # Q6/Task-12: an explicit override (a skill's own narrowed,
+            # builtins-only allow-list -- see SkillRunner.run) replaces the
+            # default entirely; the default itself preserves the shipped
+            # behavior (spawn_subagent's child inherits the parent's
+            # allow-list minus the spawn tool itself, so a depth-1 child
+            # never re-offers spawn_subagent) -- MINUS any skill-tool names
+            # too (pre-merge review MINOR 3). An ordinary native-spawn
+            # child can never actually run a skill (max_subagents is
+            # always clamped to 0 for every child, one-deep-only by
+            # construction), so a skill name surviving into its allow-list
+            # only meant a call to it fell through to that numeric
+            # budget-exhausted refusal below instead of the permission
+            # gate every other disallowed tool hits -- fragile (an
+            # incidental side effect of the budget clamp, not a modeled
+            # boundary) and inconsistent with the skill-driven child's own
+            # explicit builtins-only allow-list. Excluding skill names
+            # here too means a child can neither discover (find_tools/
+            # disclosure) nor invoke one; a stray direct call still gets a
+            # graceful "Tool not permitted" ToolResult from invoke_tool's
+            # skill branch, never reaching skill_runner.run.
+            child_allowed_tools = (
+                allowed_tools if allowed_tools is not None
+                else tuple(
+                    n for n in config.allowed_tools
+                    if n != SPAWN_TOOL_NAME
+                    and not (self.skill_runner is not None
+                            and self.skill_runner.is_skill_tool(n))
+                ))
             child_config = AgentConfig(
                 model=config.model,
                 system_prompt=SUBAGENT_SYSTEM_PROMPT,
-                allowed_tools=tuple(
-                    n for n in config.allowed_tools
-                    if n != SPAWN_TOOL_NAME),
+                allowed_tools=child_allowed_tools,
                 budget=clamp_child_budget(config.budget, remaining))
             _child_id, child_outcome = self._run_one(
                 conversation_id=conversation_id,
@@ -195,10 +281,49 @@ class AgentService:
                     error=f"sub-agent {child_outcome.status}: {text}")
             return ToolResult(ok=True, content=text)
 
+        # Skill-aware invoke_tool, built AFTER spawn (it closes over it): a
+        # skill-tool call never reaches the registry/ToolProvider.invoke
+        # path (SkillToolProvider.invoke raises by design -- Task 11 traced
+        # that pre-wiring path as a loud full-run abort). Instead it routes
+        # through skill_runner.run, which renders the skill and calls THIS
+        # run's spawn -- so it is budget-counted (via spawn's own shared
+        # sub_agent_spawns counter -- see Finding 2 above), cancellable, and
+        # DB-lineage-tracked exactly like a spawn_subagent call.
+        builtin_invoke_tool = self._make_invoke_tool(config, disclosed_names)
+
+        def invoke_tool(call: ToolCall) -> ToolResult:
+            if (self.skill_runner is not None
+                    and self.skill_runner.is_skill_tool(call.name)):
+                # Task-12 review Finding 1: a skill tool must pass the SAME
+                # two-part gate as an ordinary catalog tool (mirrors
+                # _make_invoke_tool above) -- allowed_tools is the
+                # permission boundary, but disclosed_names (seeded by
+                # initial disclosure and grown only via load_tools, exactly
+                # like a builtin) is the other half. Checking allowed_tools
+                # alone let an undisclosed skill name execute the instant
+                # the model guessed it, even behind a >8-tool catalog where
+                # progressive disclosure is supposed to gate exactly this.
+                if (call.name not in config.allowed_tools
+                        or call.name not in disclosed_names):
+                    return ToolResult(
+                        ok=False, error=f"Tool not permitted: {call.name}")
+                # Cheap early exit before rendering the skill: the
+                # authoritative check-and-increment lives in `spawn` itself
+                # (shared with the native spawn_subagent path), so the
+                # combined ceiling holds regardless of call order even
+                # without this line -- it only saves an unnecessary
+                # render/trust round-trip once the shared budget is spent.
+                if sub_agent_spawns >= config.budget.max_subagents:
+                    return ToolResult(
+                        ok=False, error="sub-agent budget exhausted")
+                return self.skill_runner.run(
+                    call.name, str(call.args.get("args", "")), spawn)
+            return builtin_invoke_tool(call)
+
         deps = LoopDeps(
             call_model=self._make_call_model(
                 config, api_endpoint, runtime_schemas),
-            invoke_tool=self._make_invoke_tool(config, disclosed_names),
+            invoke_tool=invoke_tool,
             spawn=spawn,
             find_tools=find_tools,
             load_schemas=load_schemas,
@@ -254,6 +379,13 @@ class AgentService:
         """
         if supersede_run_id:
             self.db.supersede_run_tree(supersede_run_id)
+        # Per-run scope for the registry's owner-map cache (tool_catalog's
+        # _owner_and_id): reset here, once, at the top of the run tree —
+        # covers the primary turn AND any sub-agents it spawns via
+        # _run_one, since they never call run_turn themselves. The catalog
+        # is listed fresh at this point, so skill CRUD since the last run
+        # is always picked up with no separate invalidation signal needed.
+        self.registry.reset_catalog_cache()
         return self._run_one(
             conversation_id=conversation_id, messages=messages,
             config=config, api_endpoint=api_endpoint,

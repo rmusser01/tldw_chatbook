@@ -174,7 +174,13 @@ class LoopDeps:
 
     call_model: Callable[[list, tuple], ModelTurn]
     invoke_tool: Callable[..., ToolResult]
-    spawn: Callable[[str], ToolResult]
+    # Callable[..., ...] (not Callable[[str], ...]): the loop itself only
+    # ever calls spawn(task) positionally, but the real implementation
+    # (agent_service._run_one's spawn closure) also accepts a keyword-only
+    # `allowed_tools` override, used by the skill-tool dispatch path
+    # (SkillRunner.run) to narrow a spawned child's allow-list. The loop
+    # never passes it and never needs to.
+    spawn: Callable[..., ToolResult]
     find_tools: Callable[[str], list]
     load_schemas: Callable[[list], list]
     should_cancel: Callable[[], bool]
@@ -329,16 +335,42 @@ def run_agent_loop(config: AgentConfig, initial_messages: list[dict],
                     result = ToolResult(
                         ok=False, error="No valid tools found to load")
                 else:
-                    room = budget.max_active_tools - len(active)
-                    accepted = loaded[:max(room, 0)]
-                    active.extend(accepted)
-                    if accepted:
+                    # F1-b (plan-a-final-review addendum): a provider may
+                    # legitimately hand back a schema whose name is
+                    # already in `active` (a re-load of an already-active
+                    # tool). Drop those here, BEFORE the room slice below,
+                    # so `active` can never gain a duplicate name even if
+                    # a caller-side gate (e.g. agent_service's
+                    # disclosed_names filtering) is bypassed or desyncs —
+                    # this is the loop's own last line of defense for its
+                    # list-vs-set cap-boundary integrity.
+                    active_names = {a.name for a in active}
+                    already_active = [s.name for s in loaded if s.name in active_names]
+                    new_loaded = [s for s in loaded if s.name not in active_names]
+                    if not new_loaded:
+                        # Every requested id was already active — a no-op,
+                        # not the "no valid ids at all" error case above,
+                        # and (Gemini M, PR #636 bot review) not the same
+                        # "no room" message a genuinely budget-exhausted
+                        # request gets below: those two reasons a load
+                        # accepts nothing are different for the model to
+                        # act on (proceed to just call the tool it already
+                        # has vs. it must free room first), so they must
+                        # not read identically.
                         result = ToolResult(
                             ok=True,
-                            content="loaded: " + ", ".join(
-                                s.name for s in accepted))
+                            content="already loaded: " + ", ".join(already_active))
                     else:
-                        result = ToolResult(ok=True, content="no room")
+                        room = budget.max_active_tools - len(active)
+                        accepted = new_loaded[:max(room, 0)]
+                        active.extend(accepted)
+                        if accepted:
+                            result = ToolResult(
+                                ok=True,
+                                content="loaded: " + ", ".join(
+                                    s.name for s in accepted))
+                        else:
+                            result = ToolResult(ok=True, content="no room")
             else:
                 add(STEP_TOOL_CALL, tool_name=call.name,
                     args=dict(call.args))

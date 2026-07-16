@@ -11,19 +11,25 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Callable
 
 from tldw_chatbook.Agents.agent_models import (
     AGENT_KIND_PRIMARY, AGENT_KIND_SUBAGENT, FIND_TOOLS_NAME, LOAD_TOOLS_NAME,
-    RunBudget, SPAWN_TOOL_NAME, STEP_ERROR, STEP_SPAWN, STEP_TOOL_RESULT,
-    AgentConfig, AgentStep, RunOutcome,
+    RunBudget, RUNTIME_TOOL_NAMES, SPAWN_TOOL_NAME, STEP_ERROR, STEP_SPAWN,
+    STEP_TOOL_RESULT, AgentConfig, AgentStep, RunOutcome, ToolResult,
 )
 from tldw_chatbook.Agents.agent_service import SUBAGENT_SYSTEM_PROMPT, AgentService
 from tldw_chatbook.Agents.agent_stream import StreamGate
-from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
+from tldw_chatbook.Agents.tool_catalog import (
+    BuiltinToolProvider, SkillToolProvider, ToolCatalogRegistry,
+    intersect_skill_tools,
+)
 from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
+from tldw_chatbook.Chat.console_skill_resolver import SKILL_UNTRUSTED_REFUSE
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 
 CONSOLE_AGENT_OPERATING_PROMPT = (
     "You are a capable assistant with optional tools. Answer directly when no "
@@ -31,6 +37,28 @@ CONSOLE_AGENT_OPERATING_PROMPT = (
     "using the fenced protocol described below, then continue once you have the "
     "result. Use spawn_subagent to delegate a self-contained sub-task to an "
     "isolated helper. Keep replies concise.")
+
+# Skills Phase-2 gate finding 1 (Task-14 report, scenario 5: "Find a skill
+# that can shout, load it, and use it on: hello"): a discovery-heavy run --
+# find_tools -> load_tools -> a tool/skill call -> the final wrap-up reply --
+# needs exactly 10 primary-loop steps at the floor (3 steps per tool round:
+# STEP_MODEL + STEP_TOOL_CALL + STEP_TOOL_RESULT, times 3 rounds, plus 1
+# final STEP_MODEL with no tool call -- see agent_runtime.run_agent_loop).
+# That floor already sits ABOVE the engine's own pure default
+# (agent_models.RunBudget.max_steps == 8), so any >DIRECT_DISCLOSE_THRESHOLD
+# skill catalog -- which forces the find/load path -- exhausts the bare
+# default right after the skill's successful tool_result, one step short of
+# the wrap-up reply: the run persists `stuck` even though every tool call
+# already succeeded (live-gate confirmed). max_steps=16 gives ~60% headroom
+# above the 10-step floor (room for ~2 more tool rounds for a model that
+# retries or double-checks); max_wall_seconds is raised by the same 16/8=2x
+# factor (240s -> 480s) so a run that actually uses that headroom still has
+# time for it at the slow local-model pace this gate exercises
+# (25-50s/turn x up to ~6 model turns). The engine's own RunBudget defaults
+# (agent_models.RunBudget) are left UNCHANGED -- this override applies only
+# at the Console bridge's own config-assembly site (run_reply below); other
+# callers of RunBudget()/AgentConfig keep the bare engine default.
+CONSOLE_RUN_BUDGET = RunBudget(max_steps=16, max_wall_seconds=480.0)
 
 _QUIET_STEP_TOOLS = {FIND_TOOLS_NAME, LOAD_TOOLS_NAME}
 
@@ -314,16 +342,184 @@ class _StreamingModelAdapter:
                 and str(first.get("content", "")).startswith(SUBAGENT_SYSTEM_PROMPT))
 
 
+def _eligible_skill_entries(context: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """Trusted, model-invocable skill summaries from a ``get_context`` snapshot.
+
+    Mirrors ``ChatScreen._console_skill_trusted_candidates_from_context``'s
+    defensive filter shape, but scoped to model-invocation eligibility
+    rather than user (``/skill-name``) invocation: a skill is eligible here
+    when it is not ``trust_blocked`` (the local-skill-trust-integrity gate)
+    and does not opt out of model calls via ``disable_model_invocation``
+    (the skill author's own front-matter flag). Both fields default to
+    "eligible" when absent so a caller-supplied fake ``get_context`` (as in
+    tests) does not need to set every field.
+
+    Args:
+        context: A ``get_context(mode="local")`` payload (or a plain dict
+            shaped like one); anything else yields no entries.
+
+    Returns:
+        The raw ``available_skills`` entries (plain mappings, unmodified)
+        that pass the eligibility filter, in the order ``get_context``
+        returned them.
+    """
+    available = context.get("available_skills") if isinstance(context, Mapping) else None
+    return [
+        item for item in (available or [])
+        if isinstance(item, Mapping)
+        and item.get("name")
+        and not item.get("trust_blocked", False)
+        and not item.get("disable_model_invocation", False)
+    ]
+
+
+def _non_colliding_skill_entries(
+    context: Mapping[str, Any], builtin_names: tuple[str, ...],
+) -> list[Mapping[str, Any]]:
+    """Eligible skill entries, excluding any name that collides with a
+    builtin OR one of the loop's own in-loop runtime tool names.
+
+    Shadowing (Task 11 review note 2 + this task's own allow-list
+    ordering): a builtin tool name must always win over a same-named
+    skill -- for BOTH the registry's own first-match resolution (builtins
+    registered before skills, so ``resolve_name``/``_owner_and_id`` find
+    the builtin first) AND the actual invocation dispatch in
+    ``AgentService.invoke_tool`` (which checks
+    ``skill_runner.is_skill_tool(name)`` BEFORE falling back to the
+    registry -- a check the registry's own registration order can't
+    influence). Excluding the collision here, at composition time, keeps
+    both paths in agreement: a skill literally named e.g. ``"calculator"``
+    is simply never treated as a distinct, skill-routable tool, and the
+    real builtin still works exactly as before.
+
+    Qodo finding 4 (PR #636 bot review): the same reasoning applies to
+    ``RUNTIME_TOOL_NAMES`` (``spawn_subagent``/``find_tools``/
+    ``load_tools``) -- these are dispatched by a direct name comparison
+    inside ``agent_runtime.run_agent_loop`` itself, BEFORE the loop ever
+    reaches the registry or ``skill_runner``. A skill front-matter'd with
+    one of those names would previously still be advertised in the run's
+    catalog/allow-list (a distinct, misleadingly-schema'd entry), yet could
+    never actually be invoked -- the loop's own name-based dispatch always
+    wins that comparison first. Excluding these names too means such a
+    skill is simply never registered as a catalog entry at all, matching
+    what would happen at invocation time anyway.
+    """
+    collision_names = set(builtin_names) | RUNTIME_TOOL_NAMES
+    return [
+        item for item in _eligible_skill_entries(context)
+        if str(item["name"]) not in collision_names
+    ]
+
+
+def _compose_run_allowed_tools(
+    context: Mapping[str, Any], builtin_names: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Pure per-run allow-list: builtins, then eligible skill names, then spawn.
+
+    Kept as its own tiny pure helper (no registry construction) so the
+    allow-list composition itself -- the part that actually gates what a
+    run may call -- is directly unit-testable without also standing up a
+    ``ToolCatalogRegistry``/``SkillToolProvider``.
+
+    Args:
+        context: A ``get_context(mode="local")`` payload.
+        builtin_names: The run's builtin tool names, in registry order.
+
+    Returns:
+        ``builtin_names + eligible non-colliding skill names +
+        (SPAWN_TOOL_NAME,)``.
+    """
+    skill_names = tuple(
+        str(item["name"])
+        for item in _non_colliding_skill_entries(context, builtin_names))
+    return tuple(builtin_names) + skill_names + (SPAWN_TOOL_NAME,)
+
+
+def _compose_run_registry_and_allowed(
+    context: Mapping[str, Any],
+) -> tuple[ToolCatalogRegistry, tuple[str, ...], tuple[str, ...]]:
+    """Build a fresh per-run tool registry + allow-list from a skills snapshot.
+
+    Called once per ``run_reply`` invocation (never cached across runs --
+    the per-run freshness doctrine: a skill approved/edited/revoked since
+    the last run must take effect on the very next one). Registers
+    ``BuiltinToolProvider`` first, then (only when there is at least one
+    non-colliding eligible entry) a ``SkillToolProvider`` snapshot --
+    shadowing order: builtins are registered before skills, matching the
+    allow-list's own ``builtins ∪ skills`` ordering.
+
+    Args:
+        context: A fresh ``get_context(mode="local")`` payload.
+
+    Returns:
+        ``(registry, allowed_tools, builtin_names)`` -- the per-run
+        registry, its full allow-list (builtins + eligible skills +
+        spawn), and just the builtin names (needed separately by
+        ``_BridgeSkillRunner`` to intersect a skill's own declared
+        ``allowed_tools`` against -- never against skill names, so a
+        skill's sub-agent can never call another skill).
+    """
+    registry = ToolCatalogRegistry()
+    builtin_provider = BuiltinToolProvider()
+    registry.register_provider(builtin_provider)
+    builtin_names = tuple(entry.name for entry in builtin_provider.list_catalog())
+    eligible = _non_colliding_skill_entries(context, builtin_names)
+    if eligible:
+        registry.register_provider(SkillToolProvider(eligible))
+    allowed_tools = tuple(builtin_names) + tuple(
+        str(item["name"]) for item in eligible) + (SPAWN_TOOL_NAME,)
+    return registry, allowed_tools, builtin_names
+
+
+class _BridgeSkillRunner:
+    """``SkillRunner``: renders a skill, then routes it through THIS run's spawn.
+
+    Built fresh per ``run_reply`` invocation from that run's own eligible
+    skill-name set and builtin names (see ``_compose_run_registry_and_allowed``).
+    ``run`` re-verifies trust at render time via ``execute_skill`` -- never
+    a cached snapshot -- so a skill approved when the catalog was built but
+    revoked before the model actually calls it still refuses (mirrors
+    ``ConsoleChatController._apply_skill_substitution``'s own re-verification
+    discipline for the ``/skill-name`` user-invocation path).
+    """
+
+    def __init__(self, *, skills_service: Any, skill_names: frozenset[str],
+                 builtin_names: tuple[str, ...]) -> None:
+        self._skills_service = skills_service
+        self._skill_names = skill_names
+        self._builtin_names = builtin_names
+
+    def is_skill_tool(self, name: str) -> bool:
+        return name in self._skill_names
+
+    def run(self, name: str, args: str,
+            spawn: Callable[..., ToolResult]) -> ToolResult:
+        try:
+            result = asyncio.run(
+                self._skills_service.execute_skill(name, mode="local", args=args))
+        except SkillTrustBlockedError as exc:
+            return ToolResult(
+                ok=False,
+                error=SKILL_UNTRUSTED_REFUSE.format(name=name, reason=exc.reason_code))
+        rendered = result.get("rendered_prompt", "") if isinstance(result, Mapping) else ""
+        declared_allowed_tools = (
+            result.get("allowed_tools") if isinstance(result, Mapping) else None)
+        allowed_tools = intersect_skill_tools(declared_allowed_tools, self._builtin_names)
+        return spawn(rendered, allowed_tools=allowed_tools)
+
+
 class ConsoleAgentBridge:
     """Owns the tool registry + run store and runs one primary agent reply."""
 
     def __init__(self, *, agent_runs_db: AgentRunsDB, store,
                  provider_gateway, registry: ToolCatalogRegistry | None = None,
-                 clock: Callable[[], float] = time.monotonic) -> None:
+                 clock: Callable[[], float] = time.monotonic,
+                 skills_service: Any | None = None) -> None:
         self._db = agent_runs_db
         self._store = store
         self._gateway = provider_gateway
         self._clock = clock
+        self._skills_service = skills_service
         if registry is None:
             registry = ToolCatalogRegistry()
             registry.register_provider(BuiltinToolProvider())
@@ -339,11 +535,33 @@ class ConsoleAgentBridge:
                   assistant_message_id: str, model: str, session_system_prompt: str,
                   agent_messages: list[dict], should_cancel: Callable[[], bool],
                   supersede_previous: bool = False) -> RunOutcome:
+        # Per-run tool registry + allow-list (Task 12): when a skills
+        # service is wired, both are rebuilt FRESH for this run (never
+        # cached across runs, and never the shared self._registry/
+        # self._allowed_tools built at construction) from a get_context
+        # snapshot filtered to trusted + model-invocable skills -- so a
+        # skill approved/edited/revoked since the last run always takes
+        # effect on the very next one. Without a skills service, the
+        # shipped shared registry/allow-list is used unchanged -- the
+        # no-skills path stays byte-identical to before this task.
+        registry = self._registry
+        allowed_tools = self._allowed_tools
+        skill_runner = None
+        if self._skills_service is not None:
+            context = asyncio.run(self._skills_service.get_context(mode="local"))
+            registry, allowed_tools, builtin_names = (
+                _compose_run_registry_and_allowed(context))
+            skill_names = frozenset(
+                str(item["name"])
+                for item in _non_colliding_skill_entries(context, builtin_names))
+            skill_runner = _BridgeSkillRunner(
+                skills_service=self._skills_service, skill_names=skill_names,
+                builtin_names=builtin_names)
         config = AgentConfig(
             model=model,
             system_prompt=compose_agent_system_prompt(session_system_prompt),
-            allowed_tools=self._allowed_tools,
-            budget=RunBudget())
+            allowed_tools=allowed_tools,
+            budget=CONSOLE_RUN_BUDGET)
         # One event loop for the whole run (PR #629 Fix 1(c)): every turn
         # this run makes -- primary tool-call turns, any sub-agent turns,
         # and the final-answer turn -- bridges through this same loop via
@@ -387,8 +605,8 @@ class ConsoleAgentBridge:
                 steps=tuple(live_steps[-5:]), subagents=tuple(subagents))
 
         service = AgentService(
-            self._db, self._registry, chat_call=adapter.chat_call,
-            clock=self._clock, on_step=on_step)
+            self._db, registry, chat_call=adapter.chat_call,
+            clock=self._clock, on_step=on_step, skill_runner=skill_runner)
 
         supersede_run_id = (
             self._previous_primary_run_id(conversation_id) if supersede_previous else None)

@@ -2,6 +2,7 @@ from tldw_chatbook.Chat.console_command_grammar import (
     CommandParse,
     ConsoleCommand,
     ConsoleCommandRegistry,
+    SKILLS_COMMAND_NAME,
     default_console_registry,
 )
 
@@ -85,12 +86,38 @@ def test_second_fallback_resolver_is_consulted_after_first_declines():
     assert registry.parse("/found here") == CommandParse("fallback", "found", "here")
 
 
-def test_default_console_registry_registers_prompt_and_system_with_stable_ids():
+def test_default_console_registry_registers_prompt_system_and_skills_with_stable_ids():
     registry = default_console_registry()
 
-    assert registry.available_names() == ("prompt", "system")
+    assert registry.available_names() == ("prompt", "system", "skills")
     assert registry.parse("/prompt") == CommandParse("command", "prompt", "")
     assert registry.parse("/system") == CommandParse("command", "system", "")
+    assert registry.parse("/skills") == CommandParse("command", "skills", "")
+
+
+def test_available_names_includes_skills():
+    assert SKILLS_COMMAND_NAME in default_console_registry().available_names()
+
+
+def test_skills_command_parses_name_and_args():
+    registry = default_console_registry()
+
+    assert registry.parse("/skills code-review go") == CommandParse(
+        "command", "skills", "code-review go"
+    )
+
+
+def test_fallback_resolver_can_claim_a_skill_word():
+    registry = default_console_registry()
+
+    def resolver(word: str, rest: str):
+        if word == "summ":
+            return CommandParse("fallback", word, rest)
+        return None
+
+    registry.register_fallback_resolver(resolver)
+
+    assert registry.parse("/summ the doc") == CommandParse("fallback", "summ", "the doc")
 
 
 def test_register_adds_a_new_command_available_by_name():

@@ -38,6 +38,10 @@ SYSTEM_COMMAND_NAME = "system"
 SYSTEM_COMMAND_ARGUMENT_HINT = "[name]"
 SYSTEM_COMMAND_HANDLER_ID = "apply-system"
 
+SKILLS_COMMAND_NAME = "skills"
+SKILLS_COMMAND_ARGUMENT_HINT = "[name] [args]"
+SKILLS_COMMAND_HANDLER_ID = "skills"
+
 
 @dataclass(frozen=True)
 class ConsoleCommand:
@@ -175,6 +179,13 @@ def default_console_registry() -> ConsoleCommandRegistry:
             name=SYSTEM_COMMAND_NAME,
             argument_hint=SYSTEM_COMMAND_ARGUMENT_HINT,
             handler_id=SYSTEM_COMMAND_HANDLER_ID,
+        )
+    )
+    registry.register(
+        ConsoleCommand(
+            name=SKILLS_COMMAND_NAME,
+            argument_hint=SKILLS_COMMAND_ARGUMENT_HINT,
+            handler_id=SKILLS_COMMAND_HANDLER_ID,
         )
     )
     return registry

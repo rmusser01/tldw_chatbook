@@ -151,6 +151,128 @@ class SkillTrustPassphraseModal(ModalScreen[str | None]):
         self.dismiss(passphrase)
 
 
+class SkillTrustBootstrapModal(ModalScreen[str | None]):
+    """Prompt for a brand-new local skill trust passphrase, twice, before bootstrap.
+
+    Structural twin of ``SkillTrustPassphraseModal`` above (same CSS id/
+    layout shape, same Cancel/Submit actions and ``escape`` binding) --
+    this is the ONLY trust modal that creates a passphrase rather than
+    unlocking an existing one, so it asks for it twice and refuses to
+    dismiss on a mismatch instead of silently proceeding with a possibly-
+    mistyped passphrase nobody could recover afterward. Used by the Library
+    Skills editor's first-run "Set up skill trust" state (the Phase-1 gate
+    fix: a brand-new install previously had no live-UI path to bootstrap
+    trust at all).
+    """
+
+    DEFAULT_CSS = """
+    SkillTrustBootstrapModal {
+        align: center middle;
+    }
+
+    #skill-trust-bootstrap-modal {
+        width: 64;
+        height: auto;
+        border: tall gray;
+        background: black;
+        padding: 1 2;
+    }
+
+    #skill-trust-bootstrap-message {
+        margin: 1 0;
+    }
+
+    #skill-trust-bootstrap-input {
+        width: 100%;
+        margin: 0 0 1 0;
+    }
+
+    #skill-trust-bootstrap-confirm-input {
+        width: 100%;
+    }
+
+    #skill-trust-bootstrap-error {
+        height: auto;
+        min-height: 1;
+        color: red;
+    }
+
+    #skill-trust-bootstrap-actions {
+        height: 3;
+        min-height: 3;
+        margin: 1 0 0 0;
+        align-horizontal: right;
+    }
+
+    #skill-trust-bootstrap-cancel,
+    #skill-trust-bootstrap-submit {
+        width: 10;
+        min-width: 10;
+        height: 3;
+        min-height: 3;
+    }
+    """
+
+    BINDINGS = [("escape", "dismiss", "Cancel")]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="skill-trust-bootstrap-modal"):
+            yield Static("Set Up Local Skill Trust", classes="destination-section")
+            yield Static(
+                "Choose a passphrase to protect local skill trust. Current local "
+                "skill files become the trusted baseline. Enter it twice to confirm.",
+                id="skill-trust-bootstrap-message",
+            )
+            yield Input(
+                password=True,
+                id="skill-trust-bootstrap-input",
+                placeholder="New trust passphrase",
+            )
+            yield Input(
+                password=True,
+                id="skill-trust-bootstrap-confirm-input",
+                placeholder="Confirm trust passphrase",
+            )
+            yield Static("", id="skill-trust-bootstrap-error", markup=False)
+            with Horizontal(id="skill-trust-bootstrap-actions"):
+                yield Button("Cancel", id="skill-trust-bootstrap-cancel")
+                yield Button("Submit", id="skill-trust-bootstrap-submit", variant="primary")
+
+    def on_mount(self) -> None:
+        self.query_one("#skill-trust-bootstrap-input", Input).focus()
+
+    def action_dismiss(self) -> None:
+        self.dismiss(None)
+
+    @on(Button.Pressed, "#skill-trust-bootstrap-cancel")
+    def _cancel(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss(None)
+
+    @on(Button.Pressed, "#skill-trust-bootstrap-submit")
+    def _submit_button(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._submit()
+
+    @on(Input.Submitted, "#skill-trust-bootstrap-input")
+    @on(Input.Submitted, "#skill-trust-bootstrap-confirm-input")
+    def _submit_input(self, event: Input.Submitted) -> None:
+        event.stop()
+        self._submit()
+
+    def _submit(self) -> None:
+        passphrase = self.query_one("#skill-trust-bootstrap-input", Input).value
+        confirm = self.query_one("#skill-trust-bootstrap-confirm-input", Input).value
+        error = self.query_one("#skill-trust-bootstrap-error", Static)
+        if not passphrase:
+            error.update("Passphrase cannot be blank.")
+            return
+        if passphrase != confirm:
+            error.update("Passphrases do not match.")
+            return
+        self.dismiss(passphrase)
+
+
 class SkillsScreen(BaseAppScreen):
     """Agent Skills packs, discovery, validation, and attachments."""
 

@@ -65,7 +65,6 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
     "workflows": ScreenRoute("workflows", "workflows", "tldw_chatbook.UI.Screens.workflows_screen", "WorkflowsScreen"),
     "mcp": ScreenRoute("mcp", TAB_MCP, "tldw_chatbook.UI.Screens.mcp_screen", "MCPScreen"),
     "acp": ScreenRoute("acp", "acp", "tldw_chatbook.UI.Screens.acp_screen", "ACPScreen"),
-    "skills": ScreenRoute("skills", "skills", "tldw_chatbook.UI.Screens.skills_screen", "SkillsScreen"),
     "settings": ScreenRoute("settings", "settings", "tldw_chatbook.UI.Screens.settings_screen", "SettingsScreen"),
     "ingest": ScreenRoute("ingest", "ingest", "tldw_chatbook.UI.Screens.media_ingest_screen", "MediaIngestScreen"),
     "coding": ScreenRoute("coding", "coding", "tldw_chatbook.UI.Screens.coding_screen", "CodingScreen"),
@@ -112,6 +111,16 @@ _SCREEN_ALIASES = {
     # configs / callers using the legacy "prompts" route id resolve to
     # Library instead of Personas.
     "prompts": "library",
+    # The standalone Skills tab is retired (Skills sub-project Task 5):
+    # skill management now lives entirely inside Library (its own Skills
+    # rail row, built in Tasks 1-4). Existing startup configs / callers
+    # using the legacy "skills" route id resolve to Library instead of the
+    # standalone SkillsScreen -- mirrors the "notes"/"prompts" aliases
+    # above exactly. ``skills_screen.py``/``SkillsScreen`` are NOT deleted:
+    # the class is still directly exercised by its own destination-shell
+    # test suite, and its trust passphrase modal is reused by the Library
+    # skill editor's trust panel (Task 4).
+    "skills": "library",
 }
 
 

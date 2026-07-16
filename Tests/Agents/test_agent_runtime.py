@@ -231,7 +231,36 @@ def test_load_tools_all_invalid_ids_reports_no_valid_tools_not_no_room():
     assert result_steps[0].result == "ERROR: No valid tools found to load"
 
 
+NEW_TOOL = ToolSchema(id="builtin:new_tool", name="new_tool",
+                      description="new", parameters={"type": "object"})
+
+
 def test_load_tools_out_of_room_still_says_no_room():
+    """A genuinely NEW tool (not already active) requested while the active
+    cap is already full is refused as "no room" -- distinct from
+    re-requesting an already-active tool, which reports "already loaded"
+    instead (see test_load_tools_already_active_reports_already_loaded_not_no_room,
+    Gemini M finding, PR #636 bot review)."""
+    turns = [ModelTurn(text=fence("load_tools",
+                                  {"ids": ["builtin:new_tool"]})),
+             ModelTurn(text="done")]
+    deps = make_deps(turns)
+    deps.load_schemas = lambda ids: [NEW_TOOL]
+    out = run_agent_loop(
+        AgentConfig(model="m", system_prompt="s",
+                   allowed_tools=("calculator", "new_tool"),
+                   budget=RunBudget(max_active_tools=1)),
+        [{"role": "user", "content": "hi"}], [CALC], deps)
+    result_steps = [s for s in out.steps if s.kind == STEP_TOOL_RESULT]
+    assert result_steps[0].result == "no room"
+
+
+def test_load_tools_already_active_reports_already_loaded_not_no_room():
+    """Gemini M finding (PR #636 bot review): re-requesting a tool that's
+    already active must not report the same "no room" message as
+    genuinely running out of budget -- the model would otherwise think it
+    needs to free space when it can simply proceed to call the tool it
+    already has."""
     turns = [ModelTurn(text=fence("load_tools",
                                   {"ids": ["builtin:calculator"]})),
              ModelTurn(text="done")]
@@ -240,7 +269,7 @@ def test_load_tools_out_of_room_still_says_no_room():
                                  allowed_tools=("calculator",),
                                  budget=RunBudget(max_active_tools=1)))
     result_steps = [s for s in out.steps if s.kind == STEP_TOOL_RESULT]
-    assert result_steps[0].result == "no room"
+    assert result_steps[0].result == "already loaded: calculator"
 
 
 # --- G4: an empty spawn task must be refused with no budget consumption
