@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-07-16 16:00'
-updated_date: '2026-07-16 20:16'
+updated_date: '2026-07-16 21:57'
 labels:
   - agents
   - console
@@ -21,10 +21,10 @@ The vertical-slice design spec called for native tool-calls where the provider a
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A per-model/provider capability check selects native tool-calls when supported and falls back to the fence protocol otherwise (llama_cpp and other local backends without tools= support in PROVIDER_PARAM_MAP keep working via fallback)
+- [x] #1 A per-model/provider capability check selects native tool-calls when supported and falls back to the fence protocol otherwise (llama_cpp and other local backends without tools= support in PROVIDER_PARAM_MAP keep working via fallback)
 - [ ] #2 ModelTurn.tool_calls is populated from a real native tool-call response for at least one cloud provider end-to-end
-- [ ] #3 A native multi-tool-call reply is dispatched as multiple ToolCall entries in one run_agent_loop turn without engine changes
-- [ ] #4 Existing fence-protocol tests and the Console agent-reply integration tests still pass unchanged for tool-incapable models
+- [x] #3 A native multi-tool-call reply is dispatched as multiple ToolCall entries in one run_agent_loop turn without engine changes
+- [x] #4 Existing fence-protocol tests and the Console agent-reply integration tests still pass unchanged for tool-incapable models
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -32,3 +32,9 @@ The vertical-slice design spec called for native tool-calls where the provider a
 <!-- SECTION:PLAN:BEGIN -->
 Plan at Docs/superpowers/plans/2026-07-16-native-tool-calls.md — 6 tasks: (1) Agents/native_tools.py capability set + OpenAI converters + PROVIDER_PARAM_MAP groq/deepseek tools passthrough; (2) engine native history (ModelTurn.assistant_message echo + role=tool results keyed on call_id, fence path byte-identical); (3) AgentService native branch (tools=, protocol suppression, parse, AgentConfig.native_tools, spawn propagation); (4) gateway tools= passthrough + delta.tool_calls accumulation -> ProviderToolCalls sentinel (only when tools requested); (5) bridge adapter capture + execution_key-first endpoint + [console] native_tool_calls kill-switch; (6) live gate on a real cloud provider + fence regression on llama.cpp + follow-up task for Anthropic-family normalization. Executed via SDD.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented via SDD (5 tasks + coordinator-run live gate), plan at Docs/superpowers/plans/2026-07-16-native-tool-calls.md, final whole-branch review APPROVE. Native mode: NATIVE_TOOLS_PROVIDERS (handler-verified raw-OpenAI-dict providers: openai/groq/openrouter/mistral/deepseek/moonshot/custom-openai x2) selects tools= + fence-protocol suppression in AgentService._make_call_model; ModelTurn.assistant_message echoed verbatim + role=tool results keyed on call_id (fence path byte-identical, key-set pinned); gateway accumulates delta.tool_calls fragments into a ProviderToolCalls sentinel (only when tools= requested — plain sends byte-identical, regression-pinned); bridge adapter captures the sentinel (never hits transcript) with Finding-A leaked-prose reset parity; [console] native_tool_calls kill-switch default ON; groq/deepseek PROVIDER_PARAM_MAP gaps fixed; PRE-EXISTING crasher fixed (custom-openai-api + local-llm died on every call: provider_name=dict.capitalize()). AC#2: real native round-trip PASSED end-to-end through the Console reply engine against real llama.cpp via custom-openai-api (Docs/superpowers/qa/native-tool-calls-2026-07/) — literal 'cloud provider' wording awaiting user decision (no cloud credential available in environment). Follow-up task-246 filed (Anthropic/Google/Cohere normalizers drop tool_use). Deferred minors recorded in .superpowers/sdd/progress.md (m1-m6, all triaged defer by final review).
+<!-- SECTION:NOTES:END -->
