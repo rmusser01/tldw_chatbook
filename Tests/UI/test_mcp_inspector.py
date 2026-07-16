@@ -7,10 +7,11 @@ from typing import Any
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Collapsible, Select, Static, TextArea
+from textual.widgets import Button, Collapsible, Input, Select, Static, TextArea
 
 import tldw_chatbook
 import tldw_chatbook.UI.MCP_Modules.mcp_inspector as mcp_inspector_module
+from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.readiness import (
     REASON_LABELS,
     STATE_CSS_CLASSES,
@@ -80,6 +81,9 @@ class InspectorApp(App):
         inspector.set_service_context(self.service, [("Overview", "overview"), ("Inventory", "inventory")])
 
     def on_mcp_inspector_hub_action_requested(self, event) -> None:
+        self.events.append(event)
+
+    def on_mcp_inspector_tool_test_requested(self, event) -> None:
         self.events.append(event)
 
 
@@ -848,3 +852,275 @@ async def test_advanced_content_cleared_synchronously_on_rebind():
         # No pilot.pause() here: the clear must be visible before the
         # reload worker this call schedules has had any chance to run.
         assert str(content.renderable) == ""
+
+
+# -- Task 6: tool detail view + Test Tool runner -----------------------------
+
+
+def _tool(**overrides: Any) -> HubTool:
+    base: dict[str, Any] = dict(
+        server_key="local:docs",
+        server_label="docs",
+        source="local",
+        name="search",
+        description="Search the docs.",
+        input_schema={
+            "type": "object",
+            "properties": {"query": {"type": "string", "description": "Search text"}},
+            "required": ["query"],
+        },
+        tags=(),
+        stale=False,
+        executable=True,
+    )
+    base.update(overrides)
+    return HubTool(**base)
+
+
+@pytest.mark.asyncio
+async def test_show_tool_renders_executable_tool_with_test_button():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())
+        await pilot.pause()
+        container = app.query_one("#mcp-inspector-tool")
+        assert container.display is True
+        name_text = str(app.query_one("#mcp-inspector-tool-name", Static).renderable)
+        assert "search" in name_text
+        assert "docs" in name_text
+        description = str(app.query_one("#mcp-inspector-tool-description", Static).renderable)
+        assert description == "Search the docs."
+        schema_line = str(app.query_one("#mcp-inspector-tool-schema", Static).renderable)
+        assert schema_line == "Parameters: form"
+        test_button = app.query_one("#mcp-inspector-test-tool", Button)
+        assert test_button.tooltip == "Run this tool with test arguments."
+        assert not list(app.query("#mcp-inspector-tool-phase-note"))
+        assert not list(app.query("#mcp-inspector-tool-stale"))
+
+
+@pytest.mark.asyncio
+async def test_show_tool_raw_schema_reports_raw_json_availability():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool(name="fetch", input_schema=None))
+        await pilot.pause()
+        schema_line = str(app.query_one("#mcp-inspector-tool-schema", Static).renderable)
+        assert schema_line == "Parameters: raw JSON"
+
+
+@pytest.mark.asyncio
+async def test_show_tool_stale_shows_stale_note():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool(stale=True))
+        await pilot.pause()
+        stale = app.query_one("#mcp-inspector-tool-stale", Static)
+        assert str(stale.renderable)
+
+
+@pytest.mark.asyncio
+async def test_show_tool_non_executable_shows_phase4_note_not_test_button():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(
+            _tool(source="server", server_key="server:main/docs", executable=False)
+        )
+        await pilot.pause()
+        note = app.query_one("#mcp-inspector-tool-phase-note", Static)
+        assert str(note.renderable) == "Testing server-source tools arrives in Phase 4."
+        assert not list(app.query("#mcp-inspector-test-tool"))
+
+
+@pytest.mark.asyncio
+async def test_show_tool_none_hides_and_clears_container():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())
+        await pilot.pause()
+        await inspector.show_tool(None)
+        await pilot.pause()
+        container = app.query_one("#mcp-inspector-tool")
+        assert container.display is False
+        assert not list(app.query("#mcp-inspector-tool-name"))
+
+
+@pytest.mark.asyncio
+async def test_second_show_tool_back_to_back_does_not_duplicate_ids():
+    """Mandatory regression: selecting two tools in a row must not raise
+    DuplicateIds -- mirrors update_readiness's own back-to-back precedent
+    (test_second_update_readiness_does_not_duplicate_action_ids)."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool(name="search"))
+        # No pilot.pause() here on purpose.
+        await inspector.show_tool(_tool(name="fetch"))
+        await pilot.pause()
+        names = list(app.query("#mcp-inspector-tool-name"))
+        assert len(names) == 1
+        assert "fetch" in str(names[0].renderable)
+
+
+@pytest.mark.asyncio
+async def test_test_tool_button_mounts_form_run_close_and_result():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        assert app.query_one("#mcp-inspector-test-form")
+        assert app.query_one("#mcp-inspector-test-run", Button)
+        assert app.query_one("#mcp-inspector-test-close", Button)
+        result = app.query_one("#mcp-inspector-test-result", Static)
+        assert str(result.renderable) == ""
+        assert app.query_one("#mcp-inspector-test-tool", Button).disabled is True
+
+
+@pytest.mark.asyncio
+async def test_test_run_posts_tool_test_requested_with_collected_arguments():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        app.query_one("#mcp-schema-field-0", Input).value = "hello"
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+        events = [e for e in app.events if isinstance(e, MCPInspector.ToolTestRequested)]
+        assert len(events) == 1
+        assert events[0].tool_id == tool.tool_id
+        assert events[0].arguments == {"query": "hello"}
+        assert app.query_one("#mcp-inspector-test-run", Button).disabled is True
+
+
+@pytest.mark.asyncio
+async def test_test_run_value_error_shows_message_and_does_not_post():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        # required "query" field left empty
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+        events = [e for e in app.events if isinstance(e, MCPInspector.ToolTestRequested)]
+        assert events == []
+        result = app.query_one("#mcp-inspector-test-result", Static)
+        assert "required" in str(result.renderable)
+
+
+@pytest.mark.asyncio
+async def test_raw_mode_tool_test_panel_shows_raw_textarea():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool(name="fetch", input_schema=None)
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        raw_area = app.query_one("#mcp-schema-raw", TextArea)
+        raw_area.text = '{"url": "https://example.test"}'
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+        events = [e for e in app.events if isinstance(e, MCPInspector.ToolTestRequested)]
+        assert len(events) == 1
+        assert events[0].arguments == {"url": "https://example.test"}
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_ok_renders_status_line_and_reenables_run():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        app.query_one("#mcp-schema-field-0", Input).value = "hello"
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+        inspector.show_tool_result(
+            tool_id=tool.tool_id, ok=True, text='{"ok": true}', duration_ms=123
+        )
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert result.startswith("OK · 123ms")
+        assert '{"ok": true}' in result
+        assert app.query_one("#mcp-inspector-test-run", Button).disabled is False
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_failed_renders_status_line():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.show_tool_result(tool_id=tool.tool_id, ok=False, text="boom", duration_ms=45)
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert result.startswith("Failed · 45ms")
+        assert "boom" in result
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_for_a_different_tool_is_dropped():
+    """I1: a result for tool A arriving after the inspector has moved on to
+    tool B must not render in B's panel, and must not re-enable B's Run
+    button on A's behalf (B's own Run press is what should control that)."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool_b = _tool(name="fetch", server_key="local:docs", input_schema=None)
+        await inspector.show_tool(tool_b)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        run_button = app.query_one("#mcp-inspector-test-run", Button)
+        await pilot.click(run_button)
+        await pilot.pause()
+        assert run_button.disabled is True
+
+        # Tool A's late result arrives under B's tool_id mismatch.
+        inspector.show_tool_result(
+            tool_id="local:docs::search", ok=True, text="A's payload", duration_ms=10
+        )
+        await pilot.pause()
+
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert "A's payload" not in result
+        assert result == ""
+        assert run_button.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_close_button_removes_test_panel_and_reenables_test_tool_button():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-close")
+        await pilot.pause()
+        assert not list(app.query("#mcp-inspector-test-run"))
+        assert not list(app.query("#mcp-inspector-test-result"))
+        assert app.query_one("#mcp-inspector-test-tool", Button).disabled is False

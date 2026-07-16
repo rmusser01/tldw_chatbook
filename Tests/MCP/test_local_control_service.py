@@ -694,6 +694,27 @@ def test_local_control_service_rejects_invalid_profile_writes(tmp_path):
     assert store.get_profile("profile-b") is None
 
 
+def test_local_control_service_rejects_colon_bearing_profile_id(tmp_path):
+    """I3: `save_external_profile()` is the single entry point both the
+    profile-save form and the mcpServers import batch route through
+    (`UnifiedMCPControlPlaneService.save_local_profile()`) -- a colon in
+    profile_id would corrupt `HubTool.tool_id` routing
+    (`"local:a::b::search"` partitions ambiguously), so both `"a::b"` and
+    `"a:b"` must be rejected here, at the real choke point, not just at
+    `LocalMCPStore.save_profile()` in isolation."""
+    store = LocalMCPStore(tmp_path / "local_mcp_store.json")
+    service = LocalMCPControlService(store=store, client=FakeMCPClient(), manifest_provider=lambda: {})
+
+    with pytest.raises(ValueError, match="profile_id"):
+        service.save_external_profile({"profile_id": "a::b", "command": "python"})
+
+    with pytest.raises(ValueError, match="profile_id"):
+        service.save_external_profile({"profile_id": "a:b", "command": "python"})
+
+    assert store.get_profile("a::b") is None
+    assert store.get_profile("a:b") is None
+
+
 def test_local_control_service_rejects_invalid_governance_rule_writes(tmp_path):
     store = LocalMCPStore(tmp_path / "local_mcp_store.json")
     service = LocalMCPControlService(store=store, client=FakeMCPClient(), manifest_provider=lambda: {})

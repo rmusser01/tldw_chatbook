@@ -126,15 +126,15 @@ class TldwMCPServer:
     def _init_databases(self):
         """Initialize database connections."""
         try:
-            from ..config import get_cli_setting, CLI_APP_CLIENT_ID
-            from ..DB.ChaChaNotes_DB import ChaChaNotes_DB
+            from ..config import get_cli_setting, get_chachanotes_db_path, CLI_APP_CLIENT_ID
+            from ..DB.ChaChaNotes_DB import CharactersRAGDB
             from ..DB.Client_Media_DB_v2 import MediaDatabase
             from ..Notes.Notes_Library import NotesInteropService
             from ..Character_Chat.Character_Chat_Lib import CharacterInteropService
 
             # Initialize character/chat/notes database
-            self.chachanotes_db = ChaChaNotes_DB(
-                db_name="chachanotes_db.sqlite",
+            self.chachanotes_db = CharactersRAGDB(
+                db_path=get_chachanotes_db_path(),
                 client_id=CLI_APP_CLIENT_ID
             )
             

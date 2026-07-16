@@ -66,8 +66,17 @@ class MCPServersMode(Vertical):
         height: 100%;
         min-height: 0;
     }
+    /* T7 (P3 UX batch): height: auto + max-height: 70% instead of height:
+    1fr -- a 1fr table balloons to fill the entire overview pane no matter
+    how few servers are configured, stranding #mcp-overview-callouts dozens
+    of rows below the table it explains on a tall canvas. Auto-sizing lets
+    the table hug its own row count so the callouts render directly under
+    its last row; max-height still caps it so a large server list leaves
+    room for the callouts/summary above the fold instead of pushing them
+    off-screen. */
     #mcp-servers-table {
-        height: 1fr;
+        height: auto;
+        max-height: 70%;
         min-height: 4;
     }
     #mcp-detail-scroll {

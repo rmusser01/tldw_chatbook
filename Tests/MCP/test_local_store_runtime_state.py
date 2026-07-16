@@ -49,3 +49,13 @@ def test_other_mutations_do_not_reset_runtime_state(store):
     # a snapshot save is one of the other LocalMCPStoreState(...) reconstruction sites
     store.save_discovery_snapshot("docs", {"tools": [{"name": "a"}], "resources": [], "prompts": []})
     assert store.get_profile_runtime_state("docs") == {"ok": True}
+
+
+def test_get_catalog_bundle_single_shape(store):
+    _save_profile(store)
+    store.save_discovery_snapshot("docs", {"tools": [{"name": "a"}], "resources": [], "prompts": []})
+    store.save_profile_runtime_state("docs", {"ok": True})
+    bundle = store.get_catalog_bundle()
+    assert [p["profile_id"] for p in bundle["profiles"]] == ["docs"]
+    assert bundle["discovery_snapshots"]["docs"]["tools"][0]["name"] == "a"
+    assert bundle["profile_runtime_state"]["docs"]["ok"] is True

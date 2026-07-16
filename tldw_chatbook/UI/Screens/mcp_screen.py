@@ -27,7 +27,9 @@ _MODE_TOOLTIPS = {
 # context model, source="mcp" so it cannot clobber another screen's context
 # (`clear_shortcut_context(source=...)` is a no-op unless "mcp" still owns
 # it).
-MCP_SHORTCUTS = (("1-4", "mode"), ("a", "add server"), ("r", "refresh"))
+MCP_SHORTCUTS = (
+    ("1-4", "mode"), ("a", "add server"), ("r", "refresh"), ("t", "test tool"),
+)
 
 # T13: shared reload-worker identity between the runtime-backend-change path
 # (`handle_runtime_backend_changed`) and the manual `r` keybinding
@@ -47,6 +49,7 @@ class MCPScreen(BaseAppScreen):
         Binding("4", "mcp_mode('audit')", "Audit", show=False),
         Binding("a", "mcp_add_server", "Add server", show=False),
         Binding("r", "mcp_refresh", "Refresh", show=False),
+        Binding("t", "mcp_test_tool", "Test tool", show=False),
     ]
 
     DEFAULT_CSS = """
@@ -179,6 +182,27 @@ class MCPScreen(BaseAppScreen):
             self.workbench.reload(),
             name="mcp-screen-manual-refresh",
             group=_RELOAD_WORKER_GROUP,
+            exclusive=True,
+        )
+
+    def action_mcp_test_tool(self) -> None:
+        """`t` keybinding: switch to Tools mode and open the Test Tool panel
+        for whatever tool the inspector currently has selected.
+
+        Drives the workbench's `open_test_for_selected_tool()`, which both
+        performs the mode switch and notifies "Select a tool first." when
+        nothing is selected -- unlike `action_mcp_add_server`, there is no
+        separate screen-level mode switch here because the mode switch
+        happens inside that one method (see its own docstring). Dispatched
+        via a worker because opening the panel is async (mounts
+        `MCPSchemaForm` + Run/Close/result, mirrors `action_mcp_add_server`).
+        """
+        if self.workbench is None:
+            return
+        self.run_worker(
+            self.workbench.open_test_for_selected_tool(),
+            name="mcp-screen-test-tool",
+            group="mcp-screen-test-tool",
             exclusive=True,
         )
 

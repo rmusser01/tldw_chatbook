@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -18,10 +20,17 @@ from textual.widgets import ContentSwitcher, Static
 from textual.worker import Worker
 
 from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
+from tldw_chatbook.MCP.hub_tool_catalog import (
+    HubTool,
+    builtin_tools_from_inventory,
+    local_tools_from_record,
+    server_tools_from_inventory,
+)
 from tldw_chatbook.MCP.mcp_import import ImportCandidate
 from tldw_chatbook.MCP.readiness import (
     HubAction,
     ReadinessSnapshot,
+    ReadinessState,
     as_checking,
     builtin_readiness,
     local_profile_readiness,
@@ -34,6 +43,7 @@ from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel, MCPPro
 from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCPRail
 from tldw_chatbook.UI.MCP_Modules.mcp_server_mutations import MCPServerMutationsPanel
 from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
+from tldw_chatbook.UI.MCP_Modules.mcp_tools_mode import MCPToolsMode
 from tldw_chatbook.Utils.path_validation import is_safe_path
 
 # Sentinel distinguishing "key absent from a restore blob" from "key present
@@ -46,6 +56,23 @@ _UNSET: Any = object()
 # cap, not a config knob, since this is a hard sanity limit not a user
 # preference).
 MAX_MCP_IMPORT_FILE_BYTES = 1024 * 1024  # 1MB cap for an imported config JSON
+
+
+def _hub_lifecycle_timeout_seconds() -> float:
+    """Read `[mcp] hub_lifecycle_timeout_seconds`, falling back to 45s.
+
+    Mirrors `UnifiedMCPControlPlaneService._lifecycle_timeout()`
+    (unified_control_plane_service.py) so the CHECKING-state time bound
+    shown here can never drift from the value that service actually
+    enforces the timeout with -- including the malformed-config fallback:
+    a non-numeric value (e.g. a user typo like "soon" in config.toml) must
+    not raise out of the render path, it should just fall back to 45s same
+    as the enforcement side does.
+    """
+    try:
+        return float(get_cli_setting("mcp", "hub_lifecycle_timeout_seconds", 45))
+    except (TypeError, ValueError):
+        return 45.0
 
 
 def _toast(text: str) -> str:
@@ -62,16 +89,40 @@ def _toast(text: str) -> str:
     return escape_markup(text)
 
 
+def _safe_exception_text(exc: BaseException) -> str:
+    """`str(exc)`, but redacted when the exception's own args embed a dict.
+
+    I1 (ledger #5): some client/server errors carry a raw dict payload in
+    `exc.args` (e.g. an echoed request or arguments dict) -- Python's
+    default `BaseException.__str__` renders that as `str(args[0])` (single
+    arg) or `str(args)` (multiple), either way dumping the dict's raw repr,
+    key/value pairs and all. Redact any Mapping-shaped args the same way
+    every other error payload here is redacted before it reaches this
+    result panel; non-Mapping args (the overwhelming common case: a plain
+    message string) fall through to plain `str(exc)` unchanged -- this must
+    never invent a NEW leak path, only close the dict-arg one.
+    """
+    args = getattr(exc, "args", ())
+    if not any(isinstance(arg, Mapping) for arg in args):
+        return str(exc)
+    try:
+        safe_args = tuple(
+            redact_mapping(arg) if isinstance(arg, Mapping) else arg for arg in args
+        )
+        return str(safe_args[0]) if len(safe_args) == 1 else str(safe_args)
+    except Exception:
+        # Redaction itself failed on some pathological arg -- fall back to
+        # a generic marker rather than risk falling through to the raw
+        # str(exc) this whole helper exists to avoid.
+        return "<error redacted>"
+
+
 MCP_HUB_MODES: dict[str, dict[str, str]] = {
     "servers": {"label": "Servers", "button_id": "mcp-mode-servers", "placeholder": ""},
-    "tools": {
-        "label": "Tools",
-        "button_id": "mcp-mode-tools",
-        "placeholder": (
-            "Tools mode arrives in a later phase. Until then, a server's tools are "
-            "listed in its Server detail, and tool actions run via Advanced in the inspector."
-        ),
-    },
+    # T5: Tools mode now hosts the real `MCPToolsMode` canvas (see compose())
+    # -- "placeholder" is unused for it, same as "servers" above, kept "" for
+    # shape parity with the other MCP_HUB_MODES entries.
+    "tools": {"label": "Tools", "button_id": "mcp-mode-tools", "placeholder": ""},
     "permissions": {
         "label": "Permissions",
         "button_id": "mcp-mode-permissions",
@@ -395,6 +446,18 @@ class MCPWorkbench(Container):
         # concurrently scheduled restore worker can race to write
         # `_source`/`_selected_server_key`/`_scope`/`_scope_ref` last.
         self._reloading: bool = False
+        # T6: the cross-server `HubTool` catalog `_sync_tools_mode()` most
+        # recently derived (via `_collect_hub_tools()`) -- `HubTool.tool_id`
+        # (the Tools-mode DataTable's row key) is looked up against this
+        # cache when `MCPToolsMode.ToolSelected` arrives, rather than
+        # re-deriving the whole catalog on every selection.
+        self._last_hub_tools: list[HubTool] = []
+        # T6: in-flight Test Tool runs, keyed by `HubTool.tool_id`. Mirrors
+        # `_profile_save_in_flight`/`_server_mutation_in_flight`: a second
+        # ToolTestRequested for the SAME tool arriving before the first
+        # `test_hub_tool()` call resolves is swallowed with a warning toast
+        # instead of dispatching a second overlapping call.
+        self._tool_test_in_flight: set[str] = set()
 
     @property
     def active_mode(self) -> str:
@@ -431,8 +494,9 @@ class MCPWorkbench(Container):
                 classes="destination-workbench-pane",
             ):
                 yield MCPServersMode(id="mcp-mode-canvas-servers")
+                yield MCPToolsMode(id="mcp-mode-canvas-tools")
                 for mode, spec in MCP_HUB_MODES.items():
-                    if mode == "servers":
+                    if mode in ("servers", "tools"):
                         continue
                     with Vertical(id=f"mcp-mode-canvas-{mode}"):
                         yield Static(
@@ -710,10 +774,21 @@ class MCPWorkbench(Container):
         action has something correct to fall back to -- this wraps it with
         `as_checking()` only for display, purely based on whether the key is
         currently in `self._in_flight`.
+
+        T7 (P3 UX batch): the CHECKING message ("Working — <action>…") had
+        no indication of how long a stuck lifecycle op might sit there --
+        this appends a time bound, e.g. "connect (up to 45s)", read straight
+        from the same `[mcp] hub_lifecycle_timeout_seconds` setting
+        `UnifiedMCPControlPlaneService._lifecycle_timeout()` already uses to
+        actually enforce the timeout (unified_control_plane_service.py), so
+        the copy can never drift from the real bound without touching
+        readiness.py's `as_checking()` itself.
         """
         if snapshot.server_key in self._in_flight:
             action = self._in_flight_action.get(snapshot.server_key, "update")
-            return as_checking(snapshot, action)
+            timeout_seconds = _hub_lifecycle_timeout_seconds()
+            bounded_action = f"{action} (up to {int(round(timeout_seconds))}s)"
+            return as_checking(snapshot, bounded_action)
         return snapshot
 
     def _snapshot_for_display(self, server_key: str | None) -> ReadinessSnapshot | None:
@@ -761,6 +836,91 @@ class MCPWorkbench(Container):
             selected = self._snapshot_for_display(self._selected_server_key)
             await self._show_selected_detail(canvas, selected)
             await self.query_one(MCPInspector).update_readiness(selected)
+            await self._sync_tools_mode()
+
+    async def _sync_tools_mode(self) -> None:
+        """Push the current cross-server tool catalog into `MCPToolsMode`.
+
+        T5: runs on every `_sync_children()` pass (mirrors `MCPServersMode`'s
+        own unconditional resync above) rather than only while Tools mode is
+        the active canvas -- the ContentSwitcher hides the inactive canvas
+        via CSS but never unmounts it, so keeping its data current the whole
+        time means switching TO Tools mode never shows stale rows from
+        before the last background resync. Computed entirely from
+        `self._catalog_records`/`self._snapshots` (both already loaded by
+        `_collect_snapshots()` this same pass) plus one guarded, synchronous
+        `local_service.get_inventory()` call -- no new I/O.
+        """
+        tools = self._collect_hub_tools()
+        self._last_hub_tools = tools
+        diagnosis = None if tools else self._empty_tools_diagnosis()
+        await self.query_one(MCPToolsMode).update_tools(tools, empty_diagnosis=diagnosis)
+
+    def _collect_hub_tools(self) -> list[HubTool]:
+        """Derive the current source's cross-server `HubTool` catalog.
+
+        Local source: every local profile's discovered tools
+        (`self._catalog_records`, populated by `_collect_snapshots()` --
+        reused here, not re-fetched) plus the built-in server's inventory
+        (`service.local_service.get_inventory()`, guarded by getattr since
+        test fakes and a still-initializing service may not expose it).
+
+        Server source: each external-server record's own embedded `tools`
+        list (when the backend includes one -- `ReadinessSnapshot.detail
+        ["raw"]`, already loaded by `_collect_snapshots()`'s external-
+        servers-section read for the active target; see
+        `server_external_record_readiness()`), keyed by that record's own
+        composite id so its tools group under the SAME server_key
+        (`"server:<target>/<record>"`) the Servers-mode rail/table already
+        use for it. Bare server TARGETS (the tldw_server connection itself)
+        carry no tools of their own -- only the external records beneath
+        them do, mirroring how a local profile (not the built-in server) is
+        the tool-bearing entity on the local side.
+        """
+        tools: list[HubTool] = []
+        if self._source == "local":
+            for record in self._catalog_records.values():
+                tools.extend(local_tools_from_record(record))
+            service = self._service()
+            local_service = getattr(service, "local_service", None) if service is not None else None
+            get_inventory = getattr(local_service, "get_inventory", None)
+            if callable(get_inventory):
+                try:
+                    inventory = get_inventory()
+                except Exception as exc:
+                    logger.warning(f"MCP built-in inventory read failed: {exc}")
+                    inventory = None
+                if isinstance(inventory, Mapping):
+                    tools.extend(builtin_tools_from_inventory(inventory))
+        else:
+            for snap in self._snapshots:
+                if snap.source != "server" or not self._is_external_record_key(snap.server_key):
+                    continue
+                raw = (snap.detail or {}).get("raw")
+                if isinstance(raw, Mapping):
+                    remainder = snap.server_key.split(":", 1)[1]
+                    tools.extend(
+                        server_tools_from_inventory(raw, target_id=remainder, target_label=snap.label)
+                    )
+        return tools
+
+    def _empty_tools_diagnosis(self) -> tuple[str, str]:
+        """Diagnose why the Tools mode catalog is currently empty.
+
+        Mirrors the design spec's three-bucket empty-state model: no
+        servers at all -> add one; servers exist but none have ever
+        connected/discovered (every relevant snapshot is still
+        `NEEDS_SETUP`) -> connect or refresh; otherwise (servers have
+        connected/discovered but genuinely returned zero tools) -> refresh
+        again. "Relevant" excludes the built-in server under local source
+        (it's always present and isn't something the user "configured").
+        """
+        relevant = [snap for snap in self._snapshots if snap.source == self._source]
+        if not relevant:
+            return ("No servers configured — add one to see its tools.", "add_server")
+        if all(snap.state is ReadinessState.NEEDS_SETUP for snap in relevant):
+            return ("No tools discovered yet — connect or refresh a server.", "connect")
+        return ("No tools found — try refreshing a server's discovery.", "refresh")
 
     async def _show_selected_detail(
         self, canvas: MCPServersMode, selected: ReadinessSnapshot | None
@@ -823,6 +983,18 @@ class MCPWorkbench(Container):
                 group="mcp-detail-disarm",
                 exclusive=True,
             )
+            # T6: a mode change also invalidates whatever tool the inspector
+            # was showing -- switching AWAY from Tools mode leaves a stale
+            # Test Tool panel behind otherwise; switching INTO it starts
+            # with nothing selected anyway, so this is a no-op there.
+            self.run_worker(
+                self._clear_tool_view(),
+                group="mcp-tool-clear",
+                exclusive=True,
+            )
+
+    async def _clear_tool_view(self) -> None:
+        await self.query_one(MCPInspector).show_tool(None)
 
     async def _disarm_canvas_delete(self) -> None:
         # Under `_sync_children_lock`: `disarm_delete()` rebuilds the detail
@@ -906,6 +1078,10 @@ class MCPWorkbench(Container):
                 logger.warning(f"MCP source switch failed: {exc}")
         self._source = source
         self._selected_server_key = None
+        # T6: switching source invalidates any Tools-mode selection the
+        # inspector was showing (the tool belonged to the OTHER source's
+        # catalog).
+        await self.query_one(MCPInspector).show_tool(None)
         self._snapshots = await self._collect_snapshots()
         await self._sync_children()
         self._rebind_inspector_advanced_context(service)
@@ -927,6 +1103,10 @@ class MCPWorkbench(Container):
         both entry points now share this one path.
         """
         self._selected_server_key = server_key
+        # T6: selecting a different server invalidates any Tools-mode
+        # selection the inspector was showing -- "switching modes or
+        # servers clears the tool view".
+        await self.query_one(MCPInspector).show_tool(None)
         service = self._service()
         if (
             service is not None
@@ -1021,6 +1201,170 @@ class MCPWorkbench(Container):
     ) -> None:
         event.stop()
         await self._open_add_server(notify_if_gated=False)
+
+    async def on_mcp_tools_mode_empty_action_requested(
+        self, event: MCPToolsMode.EmptyActionRequested
+    ) -> None:
+        """Route the Tools mode diagnostic empty state's primary Button.
+
+        `"add_server"` reuses the existing add-form path (same as the
+        overview's own Add-server button, notifying if gated -- reachable
+        here with no disabled-button affordance to lean on, same rationale
+        as `open_add_server_form()`'s `a`-keybinding entry point). `"connect"`
+        and `"refresh"` both just point the user at Servers mode, where the
+        actual per-server lifecycle actions live (Task 5 scope; Tools mode
+        itself gains no lifecycle buttons).
+        """
+        event.stop()
+        if event.action_key == "add_server":
+            await self._open_add_server(notify_if_gated=True)
+        elif event.action_key in ("connect", "refresh"):
+            self.set_mode("servers")
+            self.app.notify("Select a server below to connect or refresh its tools.")
+
+    def _tool_for(self, tool_id: str) -> HubTool | None:
+        for tool in self._last_hub_tools:
+            if tool.tool_id == tool_id:
+                return tool
+        return None
+
+    async def on_mcp_tools_mode_tool_selected(self, event: MCPToolsMode.ToolSelected) -> None:
+        """T6: route a Tools-mode row selection to the inspector's tool
+        detail view. `_tool_for()` resolves the row's `tool_id` against
+        `_last_hub_tools` (populated by the same `_sync_tools_mode()` pass
+        that fed the DataTable this selection came from) -- a stale
+        selection whose tool has since dropped out of the catalog
+        (disconnect, refresh) resolves to `None`, which `show_tool()`
+        renders as "nothing selected" rather than crashing.
+        """
+        event.stop()
+        await self.query_one(MCPInspector).show_tool(self._tool_for(event.tool_id))
+
+    async def open_test_for_selected_tool(self) -> None:
+        """T8: entry point for the `t` keybinding (mcp_screen.py's
+        `action_mcp_test_tool`) -- switch to Tools mode and open the Test
+        Tool panel for whatever tool the inspector currently has selected.
+
+        Mirrors `open_add_server_form()`'s T13 rationale for a keybinding
+        that can reach a state a disabled/absent button would otherwise
+        gate: with nothing selected, or a selected-but-non-executable
+        (Phase-4, server-source) tool -- neither has a `Test Tool` button
+        to press -- this notifies instead of silently no-opping. The two
+        cases get distinct copy (`MCPInspector.open_test_panel()`'s three-
+        way status tells them apart): "Select a tool first." for no
+        selection, and the same "Testing server-source tools arrives in
+        Phase 4." copy the inline detail view already shows
+        (`mcp_inspector.py`'s `#mcp-inspector-tool-phase-note` `Static`)
+        when a tool IS selected but isn't executable yet -- "select a
+        tool" would be actively wrong there.
+
+        `set_mode("tools")` is a no-op once already there (no mode change
+        means `_clear_tool_view()` never fires -- see its own docstring),
+        so pressing `t` again on an already-selected tool re-opens/no-ops
+        cleanly rather than clearing the very selection it's about to test.
+        """
+        self.set_mode("tools")
+        inspector = self.query_one(MCPInspector)
+        status = await inspector.open_test_panel()
+        if status == "no_tool":
+            self.app.notify("Select a tool first.", severity="warning")
+        elif status == "not_executable":
+            self.app.notify(
+                "Testing server-source tools arrives in Phase 4.",
+                severity="information",
+            )
+
+    def on_mcp_inspector_tool_test_requested(
+        self, event: MCPInspector.ToolTestRequested
+    ) -> None:
+        """Dispatch one `test_hub_tool()` call in the background.
+
+        Synchronous (not `async def`), mirroring
+        `on_mcp_profile_form_submit_requested()`: `_tool_test_in_flight` is
+        checked and updated here, before dispatch, so a second
+        ToolTestRequested for the SAME tool arriving in the same pump
+        window (two Run presses queued before the first handler could
+        disable the button) is reliably swallowed with a warning toast
+        instead of racing a second `test_hub_tool()` call.
+        """
+        event.stop()
+        tool_id = event.tool_id
+        if tool_id in self._tool_test_in_flight:
+            self.app.notify(_toast(f"{tool_id}: test already running."), severity="warning")
+            return
+        self._tool_test_in_flight.add(tool_id)
+        self.run_worker(
+            self._run_tool_test(tool_id, dict(event.arguments)),
+            group="mcp-tool-test",
+            exclusive=False,
+        )
+
+    async def _run_tool_test(self, tool_id: str, arguments: dict[str, Any]) -> None:
+        """Run one `test_hub_tool()` call and report the outcome.
+
+        The WHOLE body is wrapped in `try/except Exception` (not just the
+        service call) -- Textual 8.2.7's `run_worker()` defaults to
+        `exit_on_error=True`, so ANY uncaught exception here (a malformed
+        `tool_id`, a missing service, a `json.dumps` surprise) would panic
+        the whole app rather than just failing this one tool test. T3's
+        `test_hub_tool()` itself already records the attempt to the
+        execution log -- nothing here duplicates that, this only renders
+        the outcome and measures wall-clock duration for display.
+
+        The success-path result-formatting step (`redact_mapping()` then
+        `json.dumps(..., default=str)` or `str(result)`) gets its own
+        try/except too: `default=str` only rescues non-serializable VALUES,
+        not dict KEYS (a tuple key raises `TypeError`), and `redact_mapping`
+        can raise on pathological input too (e.g. `RecursionError` on a
+        self-referential dict). The `builtin:` path runs arbitrary in-process
+        tool code, so a malformed result is reachable, not just theoretical
+        -- treat a formatting failure the same as a service-call failure
+        rather than letting it escape uncaught.
+        """
+        started = time.monotonic()
+        try:
+            try:
+                service = self._service()
+                if service is None:
+                    raise RuntimeError("MCP control-plane service is unavailable.")
+                server_key, _, tool_name = tool_id.partition("::")
+                if not server_key or not tool_name:
+                    raise RuntimeError(f"Malformed tool id: {tool_id!r}")
+                result = await service.test_hub_tool(server_key, tool_name, arguments)
+            except Exception as exc:
+                duration_ms = int((time.monotonic() - started) * 1000)
+                self._show_tool_test_result(
+                    tool_id=tool_id, ok=False, text=_safe_exception_text(exc),
+                    duration_ms=duration_ms,
+                )
+                return
+            duration_ms = int((time.monotonic() - started) * 1000)
+            try:
+                if isinstance(result, Mapping):
+                    excerpt = json.dumps(redact_mapping(result), default=str)[:500]
+                else:
+                    excerpt = str(result)[:500]
+            except Exception as exc:
+                self._show_tool_test_result(
+                    tool_id=tool_id, ok=False, text=_safe_exception_text(exc),
+                    duration_ms=duration_ms,
+                )
+                return
+            self._show_tool_test_result(
+                tool_id=tool_id, ok=True, text=excerpt, duration_ms=duration_ms
+            )
+        finally:
+            self._tool_test_in_flight.discard(tool_id)
+
+    def _show_tool_test_result(
+        self, *, tool_id: str, ok: bool, text: str, duration_ms: int
+    ) -> None:
+        try:
+            self.query_one(MCPInspector).show_tool_result(
+                tool_id=tool_id, ok=ok, text=text, duration_ms=duration_ms
+            )
+        except Exception as exc:
+            logger.warning(f"MCP tool test result render failed: {exc}")
 
     async def open_add_server_form(self) -> None:
         """Open the Add-server form/panel from outside the overview button.

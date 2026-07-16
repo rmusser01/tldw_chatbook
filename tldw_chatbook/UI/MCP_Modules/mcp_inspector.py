@@ -10,10 +10,12 @@ from loguru import logger
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widgets import Button, Collapsible, Label, Select, Static, TextArea
 
 from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
+from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.readiness import (
     REASON_LABELS,
     STATE_CSS_CLASSES,
@@ -22,6 +24,7 @@ from tldw_chatbook.MCP.readiness import (
     ReadinessState,
 )
 from tldw_chatbook.MCP.redaction import redact_mapping
+from tldw_chatbook.UI.MCP_Modules.mcp_schema_form import MCPSchemaForm, parse_schema
 from tldw_chatbook.UI.MCP_Modules.unified_mcp_sections import render_unified_mcp_section
 
 # Actions that have first-class UI in every source. Everything else renders
@@ -115,6 +118,15 @@ class MCPInspector(Vertical):
         height: auto;
         min-height: 0;
     }
+    /* T6: the tool-detail container, shown above the Advanced collapsible
+    when a Tools-mode row is selected. Hidden by default (display: none) --
+    show_tool()'s own display toggle is what reveals it, so a fresh mount
+    (or a selection cleared back to None) never shows an empty box. */
+    #mcp-inspector-tool {
+        height: auto;
+        min-height: 0;
+        display: none;
+    }
     /* T12: the Advanced block moved from a direct-child VerticalScroll to a
     Collapsible's body. Give the Collapsible itself the 1fr the scroll used
     to claim directly (so it still fills the remaining pane height when
@@ -197,6 +209,17 @@ class MCPInspector(Vertical):
             super().__init__()
             self.server_key = server_key
 
+    class ToolTestRequested(Message, namespace="mcp_inspector"):
+        """Posted when the user presses Run in the Test Tool panel with a
+        validly-collected argument dict (`MCPSchemaForm.collect_arguments()`
+        raised nothing). `MCPWorkbench` owns the actual `test_hub_tool()`
+        call and reports the outcome back via `show_tool_result()`."""
+
+        def __init__(self, tool_id: str, arguments: dict[str, Any]) -> None:
+            super().__init__()
+            self.tool_id = tool_id
+            self.arguments = arguments
+
     def __init__(self, **kwargs: Any) -> None:
         classes = kwargs.pop("classes", "")
         super().__init__(classes=f"ds-inspector {classes}".strip(), **kwargs)
@@ -224,6 +247,11 @@ class MCPInspector(Vertical):
         # first has fully finished, so the last writer's buttons win exactly
         # once instead of racing into `DuplicateIds`.
         self._refresh_lock = asyncio.Lock()
+        # T6: the `HubTool` `#mcp-inspector-tool` currently describes, or
+        # `None` when hidden. Used by the Test Tool panel handlers below to
+        # know which tool a Run press is testing without re-querying the
+        # workbench.
+        self._current_tool: HubTool | None = None
 
     def _advanced_object_label(self) -> str:
         """Compute the "Showing: <object>" text for `#mcp-adv-object`.
@@ -244,6 +272,10 @@ class MCPInspector(Vertical):
                      classes="ds-status-badge", markup=False)
         yield Static("", id="mcp-inspector-message", classes="ds-field-row", markup=False)
         yield Vertical(id="mcp-inspector-actions")
+        # T6: tool-detail container, populated by show_tool() -- hidden
+        # (display: none, see DEFAULT_CSS) until a Tools-mode row is
+        # selected.
+        yield Vertical(id="mcp-inspector-tool")
         # T12: default collapsed unless the user has previously opened it --
         # per-user GLOBAL preference (Console rail section-preference
         # precedent), NOT per-server. `get_cli_setting` reads the real user
@@ -421,6 +453,212 @@ class MCPInspector(Vertical):
             if buttons:
                 await actions.mount_all(buttons)
 
+    # -- T6: tool detail view + Test Tool runner ------------------------------
+
+    async def show_tool(self, tool: HubTool | None) -> None:
+        """Rebuild `#mcp-inspector-tool` for the given tool, or hide it.
+
+        Awaited end to end (remove, then mount) within a single call, under
+        the SAME `_refresh_lock` `update_readiness()` uses -- two selections
+        in a row (a Tools-mode row click arriving while the previous
+        selection's tool-detail refresh is still settling) must never
+        interleave their remove/mount cycles into `DuplicateIds`, exactly
+        the P0 class `update_readiness()` was already hardened against (see
+        its own docstring). Any previously-open Test Tool panel is
+        implicitly discarded by `remove_children()` below -- selecting a
+        different tool (or clearing the selection) always starts fresh.
+        """
+        async with self._refresh_lock:
+            self._current_tool = tool
+            container = self.query_one("#mcp-inspector-tool", Vertical)
+            await container.remove_children()
+            if tool is None:
+                container.display = False
+                return
+            container.display = True
+            widgets: list[Any] = [
+                Static(
+                    f"{tool.name} — {tool.server_label}",
+                    id="mcp-inspector-tool-name", classes="ds-field-row", markup=False,
+                ),
+                Static(
+                    tool.description, id="mcp-inspector-tool-description",
+                    classes="ds-field-row", markup=False,
+                ),
+                Static(
+                    f"Tags: {', '.join(tool.tags) if tool.tags else '—'}",
+                    id="mcp-inspector-tool-tags", classes="ds-field-row", markup=False,
+                ),
+                Static(
+                    "Parameters: form" if parse_schema(tool.input_schema) is not None
+                    else "Parameters: raw JSON",
+                    id="mcp-inspector-tool-schema", classes="ds-field-row", markup=False,
+                ),
+            ]
+            if tool.stale:
+                widgets.append(
+                    Static(
+                        "Stale — not currently connected.",
+                        id="mcp-inspector-tool-stale", classes="ds-field-row", markup=False,
+                    )
+                )
+            if tool.executable:
+                widgets.append(
+                    Button(
+                        "Test Tool", id="mcp-inspector-test-tool",
+                        classes="console-action-primary", compact=True,
+                        tooltip="Run this tool with test arguments.",
+                    )
+                )
+            else:
+                widgets.append(
+                    Static(
+                        "Testing server-source tools arrives in Phase 4.",
+                        id="mcp-inspector-tool-phase-note",
+                        classes="ds-field-row", markup=False,
+                    )
+                )
+            await container.mount_all(widgets)
+
+    async def _mount_test_tool_panel(self) -> None:
+        """Mount the schema-driven form + Run/Close/result panel, once.
+
+        Guarded against a double mount (two `Test Tool` presses queued
+        before the first handler's `disabled = True` takes effect -- the
+        same message-pump race the profile-save-form double-submit fix
+        documents in mcp_workbench.py) by checking for the panel first.
+        """
+        tool = self._current_tool
+        if tool is None:
+            return
+        container = self.query_one("#mcp-inspector-tool", Vertical)
+        try:
+            container.query_one("#mcp-inspector-test-panel")
+            return  # already open
+        except NoMatches:
+            pass
+        panel = Vertical(
+            MCPSchemaForm(schema=tool.input_schema, id="mcp-inspector-test-form"),
+            Button(
+                "Run", id="mcp-inspector-test-run",
+                classes="console-action-primary", compact=True,
+                tooltip="Send these arguments to the tool and show the result.",
+            ),
+            Button(
+                "Close", id="mcp-inspector-test-close",
+                classes="console-action-secondary", compact=True,
+                tooltip="Close this test form without running the tool.",
+            ),
+            Static("", id="mcp-inspector-test-result", classes="ds-field-row", markup=False),
+            id="mcp-inspector-test-panel",
+        )
+        await container.mount(panel)
+
+    @property
+    def current_tool(self) -> HubTool | None:
+        """The `HubTool` `#mcp-inspector-tool` currently describes, or `None`.
+
+        Read-only accessor for `MCPWorkbench.open_test_for_selected_tool()`
+        (the `t` keybinding's entry point, mcp_screen.py) to check whether
+        there's anything to test before dispatching -- mirrors how every
+        other cross-widget read here goes through a public method rather
+        than reaching into `_current_tool` directly.
+        """
+        return self._current_tool
+
+    async def open_test_panel(self) -> str:
+        """Open the Test Tool panel for the currently selected tool, via the
+        SAME path the Test Tool button's own press handler uses
+        (`on_button_pressed`'s `mcp-inspector-test-tool` branch: disable the
+        button synchronously, then `_mount_test_tool_panel()`) -- the `t`
+        keybinding's entry point never duplicates that mount logic.
+
+        Returns one of three statuses so the caller
+        (`MCPWorkbench.open_test_for_selected_tool()`) can tell "nothing
+        selected" apart from "a tool IS selected but isn't executable yet"
+        (server-source, Phase 4) -- `show_tool()` never renders a `Test
+        Tool` button for the latter, so there is nothing this keybinding
+        could open for one either, but the two cases warrant different
+        copy (see that caller):
+          - `"opened"`: the panel was mounted (or was already open).
+          - `"no_tool"`: nothing is selected in the inspector.
+          - `"not_executable"`: a tool is selected but can't be tested yet.
+        """
+        tool = self._current_tool
+        if tool is None:
+            return "no_tool"
+        if not tool.executable:
+            return "not_executable"
+        try:
+            self.query_one("#mcp-inspector-test-tool", Button).disabled = True
+        except NoMatches:
+            pass
+        await self._mount_test_tool_panel()
+        return "opened"
+
+    async def _close_test_tool_panel(self) -> None:
+        try:
+            panel = self.query_one("#mcp-inspector-test-panel", Vertical)
+        except NoMatches:
+            pass
+        else:
+            await panel.remove()
+        try:
+            self.query_one("#mcp-inspector-test-tool", Button).disabled = False
+        except NoMatches:
+            pass
+
+    def _handle_test_run(self) -> None:
+        tool = self._current_tool
+        if tool is None:
+            return
+        try:
+            form = self.query_one("#mcp-inspector-test-form", MCPSchemaForm)
+            result_widget = self.query_one("#mcp-inspector-test-result", Static)
+            run_button = self.query_one("#mcp-inspector-test-run", Button)
+        except NoMatches:
+            return
+        try:
+            arguments = form.collect_arguments()
+        except ValueError as exc:
+            result_widget.update(str(exc))
+            return
+        run_button.disabled = True
+        self.post_message(self.ToolTestRequested(tool.tool_id, arguments))
+
+    def show_tool_result(self, *, tool_id: str, ok: bool, text: str, duration_ms: int) -> None:
+        """Render one Test Tool run's outcome, and re-enable Run.
+
+        Tolerant of the panel having been closed (or a different tool
+        selected) while the run was in flight -- `MCPWorkbench` posts this
+        purely as "here's what happened", with no guarantee the panel this
+        result belongs to is still on screen.
+
+        I1: `tool_id` must match `self._current_tool.tool_id` -- a slow
+        tool A's result arriving after the user has already switched the
+        inspector to tool B's panel must never render under B (and must
+        never re-enable B's Run button, which has nothing to do with A's
+        completion). A mismatched result is dropped silently (debug-logged
+        only); it belongs to a panel that is no longer showing.
+        """
+        current = self._current_tool
+        if current is None or current.tool_id != tool_id:
+            logger.debug(
+                f"MCPInspector: dropping stale tool result for {tool_id!r} "
+                f"(current tool is {current.tool_id if current else None!r})"
+            )
+            return
+        try:
+            result_widget = self.query_one("#mcp-inspector-test-result", Static)
+        except NoMatches:
+            return
+        status = "OK" if ok else "Failed"
+        result_widget.update(f"{status} · {duration_ms}ms\n{text}")
+        try:
+            self.query_one("#mcp-inspector-test-run", Button).disabled = False
+        except NoMatches:
+            pass
+
     # -- advanced escape hatch -----------------------------------------------
 
     def set_service_context(
@@ -568,6 +806,30 @@ class MCPInspector(Vertical):
             action = HubAction(button_id.removeprefix("mcp-inspector-action-"))
             server_key = self._snapshot.server_key if self._snapshot else None
             self.post_message(self.HubActionRequested(action, server_key))
+            return
+        if button_id == "mcp-inspector-test-tool":
+            event.stop()
+            # Disable synchronously (before dispatching the mount worker) so
+            # a second Pressed already queued for this same button (the
+            # message-pump race documented on mcp_workbench.py's
+            # profile-save Save button) sees it disabled -- the panel's own
+            # existence check in `_mount_test_tool_panel()` is the second
+            # line of defense for the window before this takes effect.
+            event.button.disabled = True
+            self.run_worker(
+                self._mount_test_tool_panel(), group="mcp-inspector-test-panel", exclusive=True
+            )
+            return
+        if button_id == "mcp-inspector-test-run":
+            event.stop()
+            self._handle_test_run()
+            return
+        if button_id == "mcp-inspector-test-close":
+            event.stop()
+            self.run_worker(
+                self._close_test_tool_panel(), group="mcp-inspector-test-panel", exclusive=True
+            )
+            return
 
     async def _run_advanced_action(self) -> None:
         result_widget = self.query_one("#mcp-adv-result", Static)
