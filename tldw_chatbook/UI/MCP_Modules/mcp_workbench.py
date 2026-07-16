@@ -27,6 +27,7 @@ from tldw_chatbook.MCP.hub_tool_catalog import (
     server_tools_from_inventory,
 )
 from tldw_chatbook.MCP.mcp_import import ImportCandidate
+from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.MCP.readiness import (
     HubAction,
     ReadinessSnapshot,
@@ -190,6 +191,18 @@ _SERVER_MUTATION_MESSAGES: dict[str, str] = {
     "external_server.slot.secret.clear": "Secret cleared.",
     "external_server.slot.delete": "Credential slot deleted.",
 }
+
+# Task 5: Test Tool result copy for a tool the permissions gate resolved to
+# "deny" -- shown via `MCPInspector.show_tool_result()` exactly like any
+# other failed run, but with no service call ever made.
+_TOOL_TEST_BLOCKED_TEXT = "Blocked — this tool is set to Off in Permissions."
+# Arm notice shown under the Run button (Task 5) when an "ask" resolution
+# carries `config_changed` -- an explicit tool-level allow that the rug-pull
+# guard downgraded because the tool's live definition no longer matches what
+# was allowed.
+_TOOL_TEST_CONFIG_CHANGED_NOTICE = (
+    "Definition changed since you allowed it — review in Permissions."
+)
 
 
 def _import_summary(succeeded: list[str], failed: list[tuple[str, str]]) -> str:
@@ -1297,10 +1310,42 @@ class MCPWorkbench(Container):
                 severity="information",
             )
 
+    def _resolve_test_gate(self, tool: HubTool | None) -> EffectiveToolState | None:
+        """Resolve one tool's Test Tool gate, or `None` when no gate applies.
+
+        `None` means "run immediately, exactly like Phase 3" -- covers both
+        a tool that couldn't be resolved (`_tool_for()` came back empty --
+        e.g. a stale selection whose tool has since dropped out of the
+        catalog) and a service with no `gate_tool_test()` at all yet
+        (getattr-tolerant, mirroring `MCPInspector._action_allowed()`'s
+        "seams absent -> permissive by design" precedent -- a service that
+        hasn't been upgraded to gate Test Tool must not silently start
+        blocking everything).
+
+        A callable `gate_tool_test()` that RAISES is the other half of that
+        same precedent: fail CLOSED (a synthetic "deny"), never swallow and
+        allow -- a runtime error here must not silently expose a tool
+        permissions might forbid.
+        """
+        if tool is None:
+            return None
+        service = self._service()
+        gate_check = getattr(service, "gate_tool_test", None)
+        if not callable(gate_check):
+            return None
+        try:
+            return gate_check(tool)
+        except Exception as exc:
+            logger.warning(
+                f"MCP tool test gate check failed for {tool.server_key}::{tool.name}; "
+                f"failing closed: {exc}"
+            )
+            return EffectiveToolState(state="deny", origin="gate_error")
+
     def on_mcp_inspector_tool_test_requested(
         self, event: MCPInspector.ToolTestRequested
     ) -> None:
-        """Dispatch one `test_hub_tool()` call in the background.
+        """Gate, then dispatch one `test_hub_tool()` call in the background.
 
         Synchronous (not `async def`), mirroring
         `on_mcp_profile_form_submit_requested()`: `_tool_test_in_flight` is
@@ -1310,12 +1355,48 @@ class MCPWorkbench(Container):
         disable the button) is reliably swallowed with a warning toast
         instead of racing a second `test_hub_tool()` call.
 
+        Task 5: BEFORE that in-flight check, this now resolves the tool's
+        permissions gate (`_resolve_test_gate()`, T4's `gate_tool_test()`)
+        and routes on it -- re-resolved on EVERY press (never cached from an
+        earlier arm), so a permission revoked to "deny" while a confirm is
+        pending still blocks on the confirming press:
+          - "deny": no worker, no in-flight bookkeeping -- straight to a
+            blocked `show_tool_result()`.
+          - "ask": the inspector's Run button arms into a one-shot "Confirm
+            run" control (`MCPInspector.require_confirm()`) instead of
+            running, UNLESS the inspector is already armed (this press IS
+            the confirm -- `MCPInspector.test_run_armed`), in which case it
+            consumes the arm (`disarm_test_run()`) and falls through to run.
+          - "allow" (or no gate applies -- `_resolve_test_gate()` returned
+            `None`): falls through to the existing dispatch, unchanged from
+            Phase 3. `disarm_test_run()` here is a no-op unless the
+            inspector happened to still be armed from an earlier "ask" that
+            has since resolved to "allow" (e.g. permission granted while the
+            panel was open) -- clears that stale arm on its way through.
+
         task-233: keyed by the `(server_key, tool_name)` tuple `event`
         carries directly -- no packed id to parse or reconstruct.
         """
         event.stop()
         server_key = event.server_key
         tool_name = event.tool_name
+        inspector = self.query_one(MCPInspector)
+        tool = self._tool_for(server_key, tool_name)
+        gate = self._resolve_test_gate(tool)
+
+        if gate is not None and gate.state == "deny":
+            inspector.disarm_test_run()
+            inspector.show_tool_result(
+                server_key=server_key, tool_name=tool_name,
+                ok=False, text=_TOOL_TEST_BLOCKED_TEXT, duration_ms=0,
+            )
+            return
+        if gate is not None and gate.state == "ask" and not inspector.test_run_armed:
+            notice = _TOOL_TEST_CONFIG_CHANGED_NOTICE if gate.config_changed else None
+            inspector.require_confirm(notice)
+            return
+        inspector.disarm_test_run()
+
         key = (server_key, tool_name)
         if key in self._tool_test_in_flight:
             self.app.notify(

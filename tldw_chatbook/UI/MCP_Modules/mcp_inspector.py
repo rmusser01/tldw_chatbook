@@ -84,6 +84,13 @@ _SERVER_MANAGED_TOOLTIP = "Managed on the server — use Advanced."
 # Disabled-button tooltip for every other still-unwired action.
 _LATER_PHASE_TOOLTIP = "Available in a later phase — use Advanced below."
 
+# Task 5: the Test Tool Run button's tooltip in its normal (unarmed) state,
+# and once `require_confirm()` has armed it into a one-shot "Confirm run"
+# control -- `MCPWorkbench` resolves deny/ask/allow via `gate_tool_test()`
+# and arms this pane for "ask", but the button copy/mechanics live here.
+_TEST_RUN_TOOLTIP = "Send these arguments to the tool and show the result."
+_TEST_RUN_CONFIRM_TOOLTIP = "Ask is set for this tool — press again to run once."
+
 
 def _is_blank(value: Any) -> bool:
     """Whether a Select value means "nothing selected".
@@ -257,6 +264,14 @@ class MCPInspector(Vertical):
         # know which tool a Run press is testing without re-querying the
         # workbench.
         self._current_tool: HubTool | None = None
+        # Task 5: True once `require_confirm()` has armed the Test Tool Run
+        # button into a one-shot "Confirm run" control (the tool's gate
+        # resolved to "ask" -- `MCPWorkbench` decides that, this pane only
+        # renders it). Mirrors `MCPServersMode._delete_armed`: reset to
+        # False by every "other interaction" per the arm-then-confirm
+        # contract -- a new/cleared tool selection (`show_tool()`) and the
+        # test panel's own Close button (`_close_test_tool_panel()`).
+        self._test_run_armed: bool = False
 
     def _advanced_object_label(self) -> str:
         """Compute the "Showing: <object>" text for `#mcp-adv-object`.
@@ -475,6 +490,14 @@ class MCPInspector(Vertical):
         """
         async with self._refresh_lock:
             self._current_tool = tool
+            # Task 5: a tool-selection change (a different tool, or clearing
+            # the selection entirely -- e.g. a mode switch, see
+            # MCPWorkbench._clear_tool_view()) is an "other interaction" per
+            # the arm-then-confirm contract, so it disarms a pending Test
+            # Tool confirm. The panel `remove_children()` below discards the
+            # armed Run button regardless; this just keeps the flag from
+            # lying about a button that no longer exists.
+            self._test_run_armed = False
             container = self.query_one("#mcp-inspector-tool", Vertical)
             await container.remove_children()
             if tool is None:
@@ -547,13 +570,16 @@ class MCPInspector(Vertical):
             Button(
                 "Run", id="mcp-inspector-test-run",
                 classes="console-action-primary", compact=True,
-                tooltip="Send these arguments to the tool and show the result.",
+                tooltip=_TEST_RUN_TOOLTIP,
             ),
             Button(
                 "Close", id="mcp-inspector-test-close",
                 classes="console-action-secondary", compact=True,
                 tooltip="Close this test form without running the tool.",
             ),
+            # Task 5: blank until `require_confirm()` fills it in for a
+            # config_changed downgrade -- see that method's docstring.
+            Static("", id="mcp-inspector-test-arm-notice", classes="ds-field-row", markup=False),
             Static("", id="mcp-inspector-test-result", classes="ds-field-row", markup=False),
             id="mcp-inspector-test-panel",
         )
@@ -602,6 +628,11 @@ class MCPInspector(Vertical):
         return "opened"
 
     async def _close_test_tool_panel(self) -> None:
+        # Task 5: Close is an "other interaction" per the arm-then-confirm
+        # contract -- disarm before tearing the panel down (the panel itself
+        # discards the armed Run button regardless, this just keeps the
+        # flag from lying about a button that's about to be gone).
+        self._test_run_armed = False
         try:
             panel = self.query_one("#mcp-inspector-test-panel", Vertical)
         except NoMatches:
@@ -612,6 +643,72 @@ class MCPInspector(Vertical):
             self.query_one("#mcp-inspector-test-tool", Button).disabled = False
         except NoMatches:
             pass
+
+    @property
+    def test_run_armed(self) -> bool:
+        """Whether the Test Tool Run button is currently armed into its
+        one-shot "Confirm run" state (see `require_confirm()`)."""
+        return self._test_run_armed
+
+    def require_confirm(self, notice: str | None) -> None:
+        """Arm the Test Tool Run button into a one-shot "Confirm run" control.
+
+        Called by `MCPWorkbench` when `gate_tool_test()` resolves a tool to
+        "ask": the press that triggered this did NOT run the tool -- the
+        SAME Run button (relabeled/re-tooltipped in place, not replaced)
+        becomes the confirm control instead. `notice`, when given (Task 5:
+        only for a `config_changed` downgrade), is rendered as an extra line
+        explaining why a confirm is required this time; `None` clears it.
+
+        No-op (beyond the label/variant/tooltip writes) if the panel isn't
+        actually mounted -- tolerant of a race where the panel closed
+        between the Run press and this call.
+        """
+        self._test_run_armed = True
+        try:
+            run_button = self.query_one("#mcp-inspector-test-run", Button)
+        except NoMatches:
+            pass
+        else:
+            run_button.label = "Confirm run"
+            run_button.variant = "primary"
+            run_button.tooltip = _TEST_RUN_CONFIRM_TOOLTIP
+            run_button.disabled = False
+        try:
+            notice_widget = self.query_one("#mcp-inspector-test-arm-notice", Static)
+        except NoMatches:
+            pass
+        else:
+            notice_widget.update(notice or "")
+
+    def disarm_test_run(self) -> None:
+        """Revert the Run button to its normal, unarmed state (no-op if
+        already unarmed).
+
+        The arm-then-confirm contract is "any other interaction disarms" --
+        `show_tool()` and `_close_test_tool_panel()` cover tool switch/mode
+        switch/Close (mirrors `MCPServersMode.disarm_delete()`); `MCPWorkbench`
+        also calls this directly when it consumes a confirming press (the
+        run is about to dispatch, so the button should read "Run" again by
+        the time it re-enables).
+        """
+        if not self._test_run_armed:
+            return
+        self._test_run_armed = False
+        try:
+            run_button = self.query_one("#mcp-inspector-test-run", Button)
+        except NoMatches:
+            pass
+        else:
+            run_button.label = "Run"
+            run_button.variant = "default"
+            run_button.tooltip = _TEST_RUN_TOOLTIP
+        try:
+            notice_widget = self.query_one("#mcp-inspector-test-arm-notice", Static)
+        except NoMatches:
+            pass
+        else:
+            notice_widget.update("")
 
     def _handle_test_run(self) -> None:
         tool = self._current_tool

@@ -1181,3 +1181,208 @@ async def test_close_button_removes_test_panel_and_reenables_test_tool_button():
         assert not list(app.query("#mcp-inspector-test-run"))
         assert not list(app.query("#mcp-inspector-test-result"))
         assert app.query_one("#mcp-inspector-test-tool", Button).disabled is False
+
+
+# -- Task 5: gate-aware Test Tool -- arm-then-confirm mechanics --------------
+#
+# `require_confirm()`/`disarm_test_run()`/`test_run_armed` are the inspector-
+# owned half of the arm-then-confirm contract (mirrors mcp_servers_mode.py's
+# `_delete_armed`/`disarm_delete()`) -- the WORKBENCH decides deny/ask/allow
+# via `gate_tool_test()` (Tests/UI/test_mcp_workbench.py covers that
+# end-to-end), but the button relabel/tooltip/notice mechanics and every
+# disarm trigger belong to the inspector alone and are unit-tested directly
+# here, with no service/workbench involved.
+
+
+@pytest.mark.asyncio
+async def test_require_confirm_arms_button_with_confirm_label_and_tooltip():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+
+        inspector.require_confirm(None)
+        await pilot.pause()
+
+        run_button = app.query_one("#mcp-inspector-test-run", Button)
+        assert str(run_button.label) == "Confirm run"
+        assert run_button.variant == "primary"
+        assert run_button.tooltip == "Ask is set for this tool — press again to run once."
+        assert run_button.disabled is False
+        assert inspector.test_run_armed is True
+
+
+@pytest.mark.asyncio
+async def test_require_confirm_with_notice_shows_arm_notice_text():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+
+        inspector.require_confirm(
+            "Definition changed since you allowed it — review in Permissions."
+        )
+        await pilot.pause()
+
+        notice = app.query_one("#mcp-inspector-test-arm-notice", Static)
+        assert (
+            str(notice.renderable)
+            == "Definition changed since you allowed it — review in Permissions."
+        )
+
+
+@pytest.mark.asyncio
+async def test_require_confirm_without_notice_leaves_arm_notice_blank():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+
+        inspector.require_confirm(None)
+        await pilot.pause()
+
+        notice = app.query_one("#mcp-inspector-test-arm-notice", Static)
+        assert str(notice.renderable) == ""
+
+
+@pytest.mark.asyncio
+async def test_disarm_test_run_reverts_button_and_clears_notice():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.require_confirm("Definition changed since you allowed it — review in Permissions.")
+        await pilot.pause()
+
+        inspector.disarm_test_run()
+        await pilot.pause()
+
+        run_button = app.query_one("#mcp-inspector-test-run", Button)
+        assert str(run_button.label) == "Run"
+        assert run_button.variant == "default"
+        assert run_button.tooltip == "Send these arguments to the tool and show the result."
+        assert inspector.test_run_armed is False
+        notice = app.query_one("#mcp-inspector-test-arm-notice", Static)
+        assert str(notice.renderable) == ""
+
+
+@pytest.mark.asyncio
+async def test_disarm_test_run_is_a_no_op_when_unarmed():
+    """A stray disarm call (e.g. the workbench's allow-branch fallthrough)
+    must not raise or otherwise disturb an already-unarmed panel."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+
+        inspector.disarm_test_run()  # never armed
+        await pilot.pause()
+
+        run_button = app.query_one("#mcp-inspector-test-run", Button)
+        assert str(run_button.label) == "Run"
+        assert inspector.test_run_armed is False
+
+
+@pytest.mark.asyncio
+async def test_switching_tool_disarms_pending_confirm():
+    """Tool switch is an "other interaction" per the arm-then-confirm
+    contract -- mirrors `_delete_armed`'s reset in `show_detail()`."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool(name="search"))
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.require_confirm(None)
+        await pilot.pause()
+        assert inspector.test_run_armed is True
+
+        await inspector.show_tool(_tool(name="fetch", input_schema=None))
+        await pilot.pause()
+
+        assert inspector.test_run_armed is False
+
+
+@pytest.mark.asyncio
+async def test_clearing_tool_selection_disarms_pending_confirm():
+    """Mode switch routes through `show_tool(None)` (see
+    `MCPWorkbench._clear_tool_view()`) -- covered here at the inspector
+    level without needing the workbench."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.require_confirm(None)
+        await pilot.pause()
+        assert inspector.test_run_armed is True
+
+        await inspector.show_tool(None)
+        await pilot.pause()
+
+        assert inspector.test_run_armed is False
+
+
+@pytest.mark.asyncio
+async def test_close_button_disarms_pending_confirm():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.require_confirm(None)
+        await pilot.pause()
+        assert inspector.test_run_armed is True
+
+        await pilot.click("#mcp-inspector-test-close")
+        await pilot.pause()
+
+        assert inspector.test_run_armed is False
+
+
+@pytest.mark.asyncio
+async def test_confirming_press_reposts_tool_test_requested():
+    """The confirming press is a plain second Run/Confirm-run click -- the
+    inspector doesn't special-case posting based on armed state, it always
+    re-collects arguments and posts `ToolTestRequested` (the workbench is
+    what decides whether a given press is the confirm)."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        app.query_one("#mcp-schema-field-0", Input).value = "hello"
+        inspector.require_confirm(None)
+        await pilot.pause()
+
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+
+        events = [e for e in app.events if isinstance(e, MCPInspector.ToolTestRequested)]
+        assert len(events) == 1
+        assert events[0].server_key == tool.server_key
+        assert events[0].tool_name == tool.name
+        assert events[0].arguments == {"query": "hello"}
