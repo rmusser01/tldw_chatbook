@@ -332,7 +332,7 @@ RED-first: `Tests/UI/test_mcp_workbench.py::
 test_space_cycle_propagates_fresh_states_to_tools_mode_without_full_resync`
 and `::test_reallow_propagates_fresh_states_to_tools_mode_without_full_resync`
 reproduced the stale-column bug pre-fix, pass post-fix. Commit:
-`412431c0` — fix(mcp-hub): propagate fresh permission states to the
+`05eb0b2c` — fix(mcp-hub): propagate fresh permission states to the
 tools-mode column on standalone mutations.
 
 ### Defect 2 (Medium, UX/dead-code) — the footer shortcut-hint system (`MCP_SHORTCUTS`, `AppFooterStatus.set_workbench_shortcuts`) never renders in the running app
