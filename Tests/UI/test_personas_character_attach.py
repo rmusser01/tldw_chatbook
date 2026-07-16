@@ -189,3 +189,109 @@ class TestCharacterDictionaryAttach:
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             assert fake_dict_service.characters[1]["extensions"]["chat_dictionaries"] == []
+
+    async def test_attach_and_unrelated_editor_edit_both_survive(
+        self, mock_app_instance, stub_characters, fake_dict_service, monkeypatch
+    ):
+        """Task 9 editor-coherence guard (LOAD-BEARING).
+
+        Drives the same picker-attach flow as
+        ``test_character_attach_via_picker_then_detach`` above, but with the
+        character editor open and an unrelated field (personality) already
+        being edited. ``_character_dictionary_attach_worker`` ends by calling
+        the screen's ``_sync_character_editor_dictionaries``, which patches
+        the editor's base copy (``PersonasCharacterEditorWidget.
+        sync_attached_dictionaries``, Task 7) straight from
+        ``chachanotes_db.get_character_card_by_id`` - independent of the fake
+        dictionary-scope service driving the attach call itself. Feed that
+        DB lookup a record whose embedded ``chat_dictionaries`` mirror what
+        the fake service just recorded, so the sync has something real to
+        patch in.
+
+        If Task 7's sync were never wired into the attach worker, the
+        attached dictionary would never reach ``get_character_data()`` and
+        this test would fail on the ``chat_dictionaries`` assertion. If
+        ``sync_attached_dictionaries`` clobbered the base copy instead of
+        patching only ``extensions``/``version``, the personality edit made
+        before the attach (still live in the TextArea) would still read back
+        fine (form values aren't touched), but a follow-up edit made *after*
+        the attach could break if the base copy no longer round-trips
+        through ``get_character_data`` - both directions are asserted below.
+        """
+        from textual.widgets import DataTable, Input, TextArea
+        from tldw_chatbook.Widgets.Persona_Widgets.dictionary_picker import DictionaryPicker
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_character_editor_widget import (
+            PersonasCharacterEditorWidget,
+        )
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            EditCharacterRequested,
+        )
+
+        fake_dict_service._names = {1: "Slang"}
+        # `_sync_character_editor_dictionaries` reads the character straight
+        # from chachanotes_db (not the fake dictionary-scope service), so
+        # point it at a record whose embedded block mirrors what the fake
+        # service will have recorded once the attach lands.
+        mock_app_instance.chachanotes_db.get_character_card_by_id = lambda character_id: {
+            "extensions": {
+                "chat_dictionaries": [{"name": "Slang", "enabled": True, "entries": []}]
+            },
+            "version": 2,
+        }
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_characters(pilot)
+
+            screen.post_message(EditCharacterRequested("1"))
+            await pilot.pause()
+            editor = screen.query_one(PersonasCharacterEditorWidget)
+            assert editor.display is True
+
+            # An UNRELATED in-progress form edit, made BEFORE the attach lands.
+            screen.query_one("#personas-char-editor-personality", TextArea).text = (
+                "Gruff but fair"
+            )
+            await pilot.pause()
+
+            async def _fake_push(screen_obj):
+                return 1 if isinstance(screen_obj, DictionaryPicker) else None
+
+            monkeypatch.setattr(screen.app, "push_screen_wait", _fake_push, raising=False)
+            monkeypatch.setattr(
+                screen,
+                "_list_attachable_dictionaries",
+                lambda cid: [{"dictionary_id": 1, "name": "Slang"}],
+            )
+            await pilot.click("#personas-char-dicts-add")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            # The attach landed in the (fake) dictionary-scope service...
+            assert any(
+                b["name"] == "Slang"
+                for b in fake_dict_service.characters[1]["extensions"]["chat_dictionaries"]
+            )
+
+            # ...and the out-of-band sync patched the editor's base copy with
+            # it, WITHOUT dropping the personality edit made before the attach.
+            data = editor.get_character_data()
+            assert any(
+                block.get("name") == "Slang"
+                for block in data["extensions"]["chat_dictionaries"]
+            ), "attached dictionary must reach the editor's base copy"
+            assert data["personality"] == "Gruff but fair", (
+                "a pre-attach form edit must not be clobbered by the attach sync"
+            )
+
+            # Edit a DIFFERENT field after the attach landed, proving the
+            # attachment is not dropped by a later form edit either.
+            screen.query_one("#personas-char-editor-name", Input).value = "Renamed Noir"
+            await pilot.pause()
+            data_after = editor.get_character_data()
+            assert data_after["name"] == "Renamed Noir"
+            assert any(
+                block.get("name") == "Slang"
+                for block in data_after["extensions"]["chat_dictionaries"]
+            ), "a post-attach form edit must not drop the attached dictionary"
