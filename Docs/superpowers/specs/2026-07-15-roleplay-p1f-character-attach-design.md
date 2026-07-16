@@ -1,6 +1,6 @@
 # Roleplay P1f — character-level dictionary attachment (design)
 
-**Status:** Design approved (brainstorm), pending spec review.
+**Status:** Implemented (P1f).
 **Program:** Personas→Roleplay redesign. P0 #619, P1a #622, P1b #625, P1c #627, P1d #630, P1e #633 MERGED (Dictionaries mode + conversation-attach complete; dev at schema **v20**). This slice = **character-level dictionary attachment (core)**; the cross-mode "What's in play" summary is decomposed to **P1g** (a read-only view spanning conversation + character attachments — its own cycle).
 **Worktree/branch:** `.claude/worktrees/personas-redesign`, `claude/roleplay-p1f-character-attach` off dev `2e696aff`.
 
