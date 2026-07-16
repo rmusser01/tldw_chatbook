@@ -1,9 +1,11 @@
 ---
 id: TASK-230
 title: Attachment pipeline housekeeping — vacuous test and excluded-format routing UX
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-07-14 10:30'
+updated_date: '2026-07-16 14:35'
 labels:
   - chat
   - tests
@@ -23,3 +25,9 @@ Two small riders from TASK-222's reviews, deferred because existing tests were r
 - [ ] #1 The bytes-fallback test exercises the real fault-injection seam (prepare_image_payload) or is removed in favor of the superseding test
 - [ ] #2 The excluded-image-extension pick behavior is an explicit, tested decision (rejection copy or documented generic-file fallthrough), not an accident of registry ordering
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Delete the vacuous bytes-fallback test (superseded by test_process_attachment_bytes_fallback_probes_mime — reviewer-endorsed removal)\n2. Registry-level rejection: file_handler_registry.process_file raises the unsupported-format ValueError (naming the effective list + [chat.images].supported_formats) when a file would fall to DefaultFileHandler but its extension is a known image format excluded by config — restores the legacy error toast instead of a silent [File: …] placeholder; can_handle semantics (routing == effective formats) untouched\n3. RED tests: excluded-known-image ext → ValueError; unknown ext (.xyz) → still DefaultFileHandler placeholder; effective ext → ImageFileHandler (regression)\n4. Sweep; PR
+<!-- SECTION:PLAN:END -->
