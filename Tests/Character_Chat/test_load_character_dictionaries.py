@@ -44,6 +44,17 @@ def test_non_list_entries_is_tolerated_without_raising():
     assert blocks == [{"name": "Evil", "enabled": True, "entries": []}]
 
 
+def test_enabled_false_string_is_coerced_honestly():
+    """A malformed imported snapshot can carry enabled as the string "false".
+    bool("false") is True (truthy-string bug), so it must be honestly parsed
+    (via _coerce_bool) instead of applied as enabled."""
+    char = {"extensions": {"chat_dictionaries": [
+        {"name": "Off", "enabled": "false", "entries": [{"key": "k", "content": "c"}]},
+    ]}}
+    blocks = load_character_dictionaries(char)
+    assert blocks[0]["enabled"] is False
+
+
 def test_duplicate_named_blocks_dedup_to_first_occurrence():
     """A hostile/crafted card can embed two blocks with the same name.
 

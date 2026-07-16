@@ -1081,6 +1081,19 @@ def load_character_dictionaries(char_data: Optional[Dict[str, Any]]) -> List[Dic
     blocks) and returns one ``{"name", "enabled", "entries": [ChatDictionary...]}``
     per well-formed block. Malformed blocks/entries are skipped. This runs on the
     chat send path over untrusted (imported) card content, so it MUST NOT raise.
+
+    Args:
+        char_data: The character record dict (as returned by the DB), whose
+            ``extensions`` field may hold a JSON string or dict with a
+            ``chat_dictionaries`` list of embedded dictionary snapshots.
+
+    Returns:
+        A list of ``{"name": str, "enabled": bool, "entries": [ChatDictionary]}``
+        blocks, one per well-formed, uniquely-named embedded dictionary.
+        Blocks with a missing/empty name, or malformed (non-dict/non-list)
+        shapes, are skipped; duplicate names keep the first occurrence.
+        ``enabled`` is honestly coerced (a quoted ``"false"`` is False, not
+        Python's truthy-string ``bool()``).
     """
     result: List[Dict[str, Any]] = []
     if not isinstance(char_data, dict):
@@ -1124,7 +1137,7 @@ def load_character_dictionaries(char_data: Optional[Dict[str, Any]]) -> List[Dic
                 continue
         result.append({
             "name": str(name),
-            "enabled": bool(block.get('enabled', True)),
+            "enabled": _coerce_bool(block.get('enabled'), True),
             "entries": entries,
         })
     return result
@@ -1143,6 +1156,20 @@ def collect_active_chatdict_entries(
     dictionary level by name — the conversation's dictionary WINS a name
     collision. Only enabled dictionaries contribute. Never raises: any bad row is
     skipped so a chat send is never broken by dictionary loading.
+
+    Args:
+        db: Database handle used to resolve the conversation's attached
+            dictionary ids. May be ``None`` (conversation dictionaries are
+            skipped in that case).
+        conversation_id: The active conversation's id, or ``None`` if there
+            is no conversation context (conversation dictionaries are
+            skipped).
+        char_data: The active character record dict, whose embedded
+            dictionaries are parsed via :func:`load_character_dictionaries`.
+
+    Returns:
+        A flat list of ``ChatDictionary`` entries from all enabled,
+        non-name-colliding sources, in conversation-then-character order.
     """
     entries: List[ChatDictionary] = []
     conversation_dict_names: set = set()

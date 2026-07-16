@@ -585,3 +585,40 @@ def test_attach_to_character_raises_conflict_on_stale_version(dictionary_db):
     service._load_character_or_raise = lambda cid: stale  # type: ignore[assignment]
     with pytest.raises(ConflictError):
         service.attach_to_character(dict_id, char_id)
+
+
+def test_detach_and_list_normalize_non_str_embedded_names(dictionary_db):
+    """A hostile/imported card can have extensions.chat_dictionaries[].name as
+    a non-str (e.g. int 123). detach-by-name (UI passes a str) and the list
+    summary must still match/return it as a str -- consistent with the
+    runtime parser (Chat_Dictionary_Lib.load_character_dictionaries, which
+    already does str(name))."""
+    service = LocalChatDictionaryService(dictionary_db)
+    char_id = dictionary_db.add_character_card({"name": "Noir"})
+    record = dictionary_db.get_character_card_by_id(char_id)
+    ext = record["extensions"] if isinstance(record["extensions"], dict) else {}
+    ext["chat_dictionaries"] = [{"name": 123, "entries": []}]
+    dictionary_db.update_character_card(char_id, {"extensions": ext}, expected_version=record["version"])
+
+    listing = service.list_character_dictionaries(char_id)
+    assert listing["dictionaries"][0]["name"] == "123"
+    assert isinstance(listing["dictionaries"][0]["name"], str)
+
+    result = service.detach_from_character(char_id, "123")
+    assert result["character_dictionaries"] == []
+    record = dictionary_db.get_character_card_by_id(char_id)
+    assert record["extensions"].get("chat_dictionaries") == []
+
+
+def test_list_character_dictionaries_entry_count_tolerates_non_list_entries(dictionary_db):
+    """entries can be a malformed non-list (e.g. int) in an imported block;
+    entry_count must degrade to 0 instead of raising TypeError."""
+    service = LocalChatDictionaryService(dictionary_db)
+    char_id = dictionary_db.add_character_card({"name": "Noir"})
+    record = dictionary_db.get_character_card_by_id(char_id)
+    ext = record["extensions"] if isinstance(record["extensions"], dict) else {}
+    ext["chat_dictionaries"] = [{"name": "X", "entries": 5}]
+    dictionary_db.update_character_card(char_id, {"extensions": ext}, expected_version=record["version"])
+
+    listing = service.list_character_dictionaries(char_id)
+    assert listing["dictionaries"] == [{"name": "X", "entry_count": 0, "enabled": True}]

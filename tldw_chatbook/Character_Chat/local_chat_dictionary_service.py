@@ -11,6 +11,7 @@ from typing import Any, Mapping
 from loguru import logger
 
 from . import Chat_Dictionary_Lib as cdl
+from .Chat_Dictionary_Lib import _coerce_bool
 
 
 _ENTRY_ID_RE = re.compile(r"^local:chat_dictionary_entry:(?P<dictionary_id>\d+):(?P<index>\d+)$")
@@ -812,6 +813,18 @@ class LocalChatDictionaryService:
     def attach_to_character(self, dictionary_id: int, character_id: int) -> dict[str, Any]:
         """Embed a dictionary's content snapshot into a character (idempotent by name).
 
+        Embedded block names are compared as strings so a hostile/imported
+        card whose ``name`` is a non-str (e.g. an int) still dedups correctly
+        against the freshly exported dictionary's (always-str) name.
+
+        Args:
+            dictionary_id: The local dictionary to export and embed.
+            character_id: The character to embed it into.
+
+        Returns:
+            ``{"dictionary_id", "character_id", "dictionary_name",
+            "character_dictionaries": [str, ...], "source": "local"}``.
+
         Raises:
             ValueError: If the dictionary or the character does not exist.
             ConflictError: If the character's version is stale at write time.
@@ -820,19 +833,32 @@ class LocalChatDictionaryService:
         name = block.get("name")
         record = self._load_character_or_raise(character_id)
         blocks = self._embedded_dictionaries(record)
-        if not any(b.get("name") == name for b in blocks):
+        if not any(str(b.get("name")) == str(name) for b in blocks):
             blocks = blocks + [block]
             self._write_embedded_dictionaries(record, character_id, blocks)
         return {
             "dictionary_id": int(dictionary_id),
             "character_id": int(character_id),
             "dictionary_name": name,
-            "character_dictionaries": [b.get("name") for b in blocks],
+            "character_dictionaries": [str(b.get("name")) for b in blocks],
             "source": "local",
         }
 
     def detach_from_character(self, character_id: int, dictionary_name: str) -> dict[str, Any]:
         """Remove an embedded dictionary from a character by name (no-op when absent).
+
+        Embedded block names are compared as strings so a hostile/imported
+        card whose ``name`` is a non-str (e.g. an int) still matches the
+        (always-str) ``dictionary_name`` passed by the UI.
+
+        Args:
+            character_id: The character to detach the dictionary from.
+            dictionary_name: The embedded block's ``name`` to remove (matched
+                as a string).
+
+        Returns:
+            ``{"character_id", "dictionary_name", "character_dictionaries":
+            [str, ...], "source": "local"}``.
 
         Raises:
             ValueError: If the character does not exist.
@@ -840,27 +866,45 @@ class LocalChatDictionaryService:
         """
         record = self._load_character_or_raise(character_id)
         blocks = self._embedded_dictionaries(record)
-        if any(b.get("name") == dictionary_name for b in blocks):
-            blocks = [b for b in blocks if b.get("name") != dictionary_name]
+        if any(str(b.get("name")) == str(dictionary_name) for b in blocks):
+            blocks = [b for b in blocks if str(b.get("name")) != str(dictionary_name)]
             self._write_embedded_dictionaries(record, character_id, blocks)
         return {
             "character_id": int(character_id),
             "dictionary_name": str(dictionary_name),
-            "character_dictionaries": [b.get("name") for b in blocks],
+            "character_dictionaries": [str(b.get("name")) for b in blocks],
             "source": "local",
         }
 
     def list_character_dictionaries(self, character_id: int) -> dict[str, Any]:
-        """Summarize a character's embedded dictionaries (from the snapshots only)."""
+        """Summarize a character's embedded dictionaries (from the snapshots only).
+
+        Names are normalized to str and entry counts degrade to 0 (instead of
+        raising) for a malformed imported block whose ``entries`` is a
+        truthy non-list -- this reads untrusted, imported card content.
+
+        Args:
+            character_id: The character whose embedded dictionaries to list.
+
+        Returns:
+            ``{"dictionaries": [{"name": str, "entry_count": int, "enabled":
+            bool}, ...], "source": "local"}``.
+
+        Raises:
+            ValueError: If the character does not exist.
+        """
         record = self._load_character_or_raise(character_id)
-        dictionaries = [
-            {
-                "name": b.get("name"),
-                "entry_count": len(b.get("entries") or []),
-                "enabled": bool(b.get("enabled", True)),
-            }
-            for b in self._embedded_dictionaries(record)
-        ]
+        dictionaries = []
+        for b in self._embedded_dictionaries(record):
+            raw_entries = b.get("entries")
+            entry_count = len(raw_entries) if isinstance(raw_entries, list) else 0
+            dictionaries.append(
+                {
+                    "name": str(b.get("name")),
+                    "entry_count": entry_count,
+                    "enabled": _coerce_bool(b.get("enabled"), True),
+                }
+            )
         return {"dictionaries": dictionaries, "source": "local"}
 
 

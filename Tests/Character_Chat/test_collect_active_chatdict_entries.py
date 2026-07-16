@@ -70,6 +70,19 @@ def test_disabled_embedded_dictionary_is_skipped(db):
     assert collect_active_chatdict_entries(db, None, char_data) == []
 
 
+def test_enabled_false_string_embedded_dictionary_is_skipped(db):
+    """A malformed embedded block with enabled: "false" (string) must be
+    skipped on the send path -- bool("false") is True and would wrongly
+    apply it, violating "only enabled dicts contribute"."""
+    char_id = db.add_character_card({"name": "Noir"})
+    rec = db.get_character_card_by_id(char_id)
+    rec_ext = rec["extensions"] if isinstance(rec["extensions"], dict) else {}
+    rec_ext["chat_dictionaries"] = [{"name": "Off", "enabled": "false", "entries": [{"key": "k", "content": "c"}]}]
+    db.update_character_card(char_id, {"extensions": rec_ext}, expected_version=rec["version"])
+    char_data = db.get_character_card_by_id(char_id)
+    assert collect_active_chatdict_entries(db, None, char_data) == []
+
+
 def test_malformed_embedded_content_never_raises(db):
     char_id = db.add_character_card({"name": "Noir"})
     rec = db.get_character_card_by_id(char_id)
