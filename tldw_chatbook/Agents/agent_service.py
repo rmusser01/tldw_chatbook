@@ -20,6 +20,10 @@ from .agent_models import (
     RunOutcome, ToolCall, ToolResult, clamp_child_budget,
 )
 from .agent_runtime import LoopDeps, render_tool_protocol, run_agent_loop
+from .native_tools import (
+    parse_native_tool_calls, provider_supports_native_tools,
+    schemas_to_openai_tools,
+)
 from .tool_catalog import (
     FIND_TOOLS_SCHEMA, LOAD_TOOLS_SCHEMA, SPAWN_TOOL_SCHEMA,
     ToolCatalogRegistry, initial_disclosure,
@@ -86,6 +90,14 @@ def _response_text(resp) -> str:
         return ""
 
 
+def _response_message(resp) -> dict:
+    try:
+        message = resp["choices"][0]["message"]
+    except (KeyError, IndexError, TypeError):
+        return {}
+    return message if isinstance(message, dict) else {}
+
+
 class AgentService:
     """Run one agent turn (primary + any sub-agents) and persist it."""
 
@@ -106,18 +118,40 @@ class AgentService:
 
     def _make_call_model(self, config: AgentConfig, api_endpoint: str,
                          runtime_schemas: list):
+        native = (config.native_tools
+                  and provider_supports_native_tools(api_endpoint))
+
         def call_model(messages: list[dict], active_schemas: tuple) -> ModelTurn:
-            protocol = render_tool_protocol(
-                runtime_schemas + list(active_schemas))
+            schemas = runtime_schemas + list(active_schemas)
             system_content = config.system_prompt
-            if protocol:
-                system_content = f"{config.system_prompt}\n\n{protocol}"
+            call_kwargs: dict = {}
+            if native:
+                # Native mode: the provider carries the tool catalog in
+                # tools= — no fence-protocol section in the system prompt.
+                tools = schemas_to_openai_tools(schemas)
+                if tools:
+                    call_kwargs["tools"] = tools
+            else:
+                protocol = render_tool_protocol(schemas)
+                if protocol:
+                    system_content = f"{config.system_prompt}\n\n{protocol}"
             payload = [{"role": "system", "content": system_content}]
             payload.extend(messages)
             resp = self.chat_call(
                 api_endpoint=api_endpoint, messages_payload=payload,
-                streaming=False, model=config.model)
-            return ModelTurn(text=_response_text(resp))
+                streaming=False, model=config.model, **call_kwargs)
+            text = _response_text(resp)
+            if not native:
+                return ModelTurn(text=text)
+            message = _response_message(resp)
+            tool_calls = parse_native_tool_calls(message)
+            assistant_message = None
+            if tool_calls:
+                assistant_message = {
+                    "role": "assistant", "content": text,
+                    "tool_calls": message.get("tool_calls")}
+            return ModelTurn(text=text, tool_calls=tool_calls,
+                             assistant_message=assistant_message)
         return call_model
 
     def _make_invoke_tool(self, config: AgentConfig,
@@ -263,7 +297,8 @@ class AgentService:
                 model=config.model,
                 system_prompt=SUBAGENT_SYSTEM_PROMPT,
                 allowed_tools=child_allowed_tools,
-                budget=clamp_child_budget(config.budget, remaining))
+                budget=clamp_child_budget(config.budget, remaining),
+                native_tools=config.native_tools)
             _child_id, child_outcome = self._run_one(
                 conversation_id=conversation_id,
                 messages=[{"role": "user", "content": spawn_task}],

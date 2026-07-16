@@ -111,6 +111,7 @@ class AgentConfig:
     system_prompt: str
     allowed_tools: tuple[str, ...] = ()
     budget: RunBudget = field(default_factory=RunBudget)
+    native_tools: bool = True
 
 
 @dataclass

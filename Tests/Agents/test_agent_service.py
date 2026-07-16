@@ -1,5 +1,6 @@
 # Tests/Agents/test_agent_service.py
 """Service tests: scripted chat_call (no network) + real AgentRunsDB."""
+import dataclasses
 import json
 
 import pytest
@@ -22,8 +23,16 @@ def fence(name, args):
     return f'```tool_call\n{json.dumps({"name": name, "arguments": args})}\n```'
 
 
-def provider_reply(text):
-    return {"choices": [{"message": {"content": text}}]}
+def provider_reply(item):
+    """str -> plain content reply; dict -> used as the full message."""
+    if isinstance(item, dict):
+        return {"choices": [{"message": item}]}
+    return {"choices": [{"message": {"content": item}}]}
+
+
+def native_call(name, args, call_id="c1"):
+    return {"id": call_id, "type": "function",
+            "function": {"name": name, "arguments": json.dumps(args)}}
 
 
 class ScriptedChat:
@@ -53,6 +62,102 @@ def make_service(db, replies):
 CFG = AgentConfig(model="test-model", system_prompt="You are helpful.",
                   allowed_tools=("calculator", "get_current_datetime",
                                  SPAWN_TOOL_NAME))
+
+NATIVE_CFG = dataclasses.replace(CFG)  # native_tools defaults True
+
+
+def test_native_endpoint_sends_tools_and_suppresses_fence_protocol(db):
+    service, chat = make_service(db, [
+        {"content": None,
+         "tool_calls": [native_call("calculator", {"expression": "2+2"})]},
+        "4."])
+    run_id, outcome = service.run_turn(
+        conversation_id="c", messages=[{"role": "user", "content": "2+2?"}],
+        config=CFG, api_endpoint="groq", should_cancel=lambda: False)
+    assert outcome.status == RUN_DONE and outcome.final_text == "4."
+    first = chat.calls[0]
+    names = [t["function"]["name"] for t in first["tools"]]
+    assert "calculator" in names and "spawn_subagent" in names
+    assert "tool_call" not in first["messages_payload"][0]["content"]  # no fence protocol
+    # Second call's history carries the native pairing:
+    second_payload = chat.calls[1]["messages_payload"]
+    assistant = [m for m in second_payload if m["role"] == "assistant"][0]
+    assert assistant["tool_calls"][0]["function"]["name"] == "calculator"
+    tool_msg = [m for m in second_payload if m.get("role") == "tool"][0]
+    assert tool_msg["tool_call_id"] == "c1" and "4" in tool_msg["content"]
+
+
+def test_native_multi_call_reply_dispatches_both_tools_in_one_turn(db):
+    service, chat = make_service(db, [
+        {"content": None, "tool_calls": [
+            native_call("calculator", {"expression": "2+2"}, "a"),
+            native_call("get_current_datetime", {}, "b")]},
+        "done"])
+    _run_id, outcome = service.run_turn(
+        conversation_id="c", messages=[{"role": "user", "content": "go"}],
+        config=CFG, api_endpoint="openai", should_cancel=lambda: False)
+    assert outcome.status == RUN_DONE
+    tool_results = [s for s in outcome.steps if s.kind == "tool_result"]
+    assert [s.tool_name for s in tool_results] == [
+        "calculator", "get_current_datetime"]
+    assert len(chat.calls) == 2  # one batch turn + one final turn
+
+
+def test_fence_fallback_unchanged_for_llama_cpp(db):
+    service, chat = make_service(db, [fence("calculator",
+                                            {"expression": "2+2"}), "4."])
+    _run_id, outcome = service.run_turn(
+        conversation_id="c", messages=[{"role": "user", "content": "2+2?"}],
+        config=CFG, api_endpoint="llama_cpp", should_cancel=lambda: False)
+    assert outcome.status == RUN_DONE
+    assert "tools" not in chat.calls[0]                     # no tools= kwarg at all
+    assert "tool_call" in chat.calls[0]["messages_payload"][0]["content"]
+
+
+def test_native_kill_switch_forces_fence(db):
+    cfg = dataclasses.replace(CFG, native_tools=False)
+    service, chat = make_service(db, [fence("calculator",
+                                            {"expression": "2+2"}), "4."])
+    _run_id, outcome = service.run_turn(
+        conversation_id="c", messages=[{"role": "user", "content": "2+2?"}],
+        config=cfg, api_endpoint="groq", should_cancel=lambda: False)
+    assert outcome.status == RUN_DONE and "tools" not in chat.calls[0]
+
+
+def test_native_subagent_turns_also_carry_tools(db):
+    service, chat = make_service(db, [
+        {"content": None,
+         "tool_calls": [native_call("spawn_subagent",
+                                    {"task": "say hi"}, "s1")]},
+        "hi from child",   # child's (native-mode) only turn
+        "done"])
+    _run_id, outcome = service.run_turn(
+        conversation_id="c", messages=[{"role": "user", "content": "go"}],
+        config=CFG, api_endpoint="groq", should_cancel=lambda: False)
+    assert outcome.status == RUN_DONE
+    child_call = chat.calls[1]
+    assert child_call["messages_payload"][0]["content"].startswith(
+        SUBAGENT_SYSTEM_PROMPT)
+    assert "tools" in child_call         # native_tools propagated to the child
+
+
+def test_malformed_native_arguments_error_is_echoed_and_recoverable(db):
+    bad = {"id": "m1", "type": "function",
+           "function": {"name": "calculator", "arguments": "{broken"}}
+    service, chat = make_service(db, [
+        {"content": None, "tool_calls": [bad]},
+        {"content": None,
+         "tool_calls": [native_call("calculator", {"expression": "2+2"},
+                                    "m2")]},
+        "4."])
+    _run_id, outcome = service.run_turn(
+        conversation_id="c", messages=[{"role": "user", "content": "2+2?"}],
+        config=CFG, api_endpoint="groq", should_cancel=lambda: False)
+    assert outcome.status == RUN_DONE and outcome.final_text == "4."
+    retry_payload = chat.calls[1]["messages_payload"]
+    tool_msgs = [m for m in retry_payload if m.get("role") == "tool"]
+    assert tool_msgs and tool_msgs[0]["tool_call_id"] == "m1"
+    assert "ERROR" in tool_msgs[0]["content"]  # empty-args invoke fails, echoed
 
 
 def test_plain_answer_persists_done_run(db):
