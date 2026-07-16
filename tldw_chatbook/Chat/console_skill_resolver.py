@@ -91,7 +91,14 @@ def resolve_skill_command(
             scoped by the caller (e.g. user-invocable + trusted only).
 
     Returns:
-        `SkillResolution` with ``kind`` set as follows: an exact case-
+        `SkillResolution` with ``kind`` set as follows: an empty or
+        whitespace-only ``word`` (e.g. a bare ``/`` or ``/ `` draft, which
+        `console_command_grammar` splits into an empty command word) never
+        matches anything and is always `"none"` -- without this guard every
+        candidate name trivially ``.startswith("")``, so an empty word
+        would otherwise "match" every candidate (resolving to a lone
+        candidate, or reporting `"ambiguous"` for two or more) even though
+        no skill name was actually typed. Otherwise an exact case-
         insensitive name match always wins first (`"resolved"`); otherwise a
         *unique* case-insensitive name-prefix match resolves to that
         candidate's canonical name (`"resolved"`); two or more prefix
@@ -99,6 +106,8 @@ def resolve_skill_command(
         candidate order); no match at all is `"none"`.
     """
     del args  # Not used by the resolution rules; kept for interface parity.
+    if not word.strip():
+        return SkillResolution(kind="none")
     word_lower = word.lower()
 
     for candidate in candidates:
