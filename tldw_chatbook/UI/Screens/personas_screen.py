@@ -39,6 +39,12 @@ from ...Widgets.Persona_Widgets.personas_character_card_widget import (
 from ...Widgets.Persona_Widgets.personas_character_editor_widget import (
     PersonasCharacterEditorWidget,
 )
+from ...Widgets.Persona_Widgets.personas_character_dictionaries import (
+    PersonasCharacterDictionariesWidget,
+    CharacterDictionaryAttachRequested,
+    CharacterDictionaryDetachRequested,
+)
+from ...Widgets.Persona_Widgets.dictionary_picker import DictionaryPicker
 from ...Widgets.Persona_Widgets.personas_conversation_transcript_widget import (
     PersonasConversationTranscriptWidget,
 )
@@ -349,6 +355,19 @@ class PersonasScreen(BaseAppScreen):
         height: 3;
         margin-right: 1;
     }
+
+    /* The character dictionaries panel sits alongside the character card
+       view (both visible when a character is selected), not swapped by
+       _show_center like the other detail-stack children. Dock it to the
+       bottom so PersonasCharacterCardWidget's `height: 100%` resolves
+       against the remaining space instead of the panel being squeezed to
+       nothing / clipped by the stack's hidden overflow. */
+    #personas-detail-stack PersonasCharacterDictionariesWidget {
+        dock: bottom;
+        height: auto;
+        max-height: 12;
+        width: 100%;
+    }
     """
 
     def __init__(self, app_instance: Any, **kwargs: Any) -> None:
@@ -450,6 +469,7 @@ class PersonasScreen(BaseAppScreen):
                     with Container(id="personas-detail-stack"):
                         yield PersonasCharacterCardWidget()
                         yield PersonasCharacterEditorWidget()
+                        yield PersonasCharacterDictionariesWidget()
                         yield PersonaProfileCardWidget()
                         yield PersonaProfileEditorWidget()
                         with Horizontal(id="personas-conversation-actions"):
@@ -1096,6 +1116,7 @@ class PersonasScreen(BaseAppScreen):
             character_name=entity_name,
             record=record,
         )
+        await self._refresh_character_dictionaries()
 
     async def _select_profile(self, entity_id: str, entity_name: str) -> None:
         self.state.select_entity(
@@ -1456,6 +1477,119 @@ class PersonasScreen(BaseAppScreen):
             detail.set_status(f"Detach failed: {exc}")
             return
         await self._refresh_dictionary_attachments()
+
+    # ===== Character dictionary attach/detach (Roleplay P1f) =====
+
+    async def _refresh_character_dictionaries(self) -> None:
+        """Re-feed the character dictionaries panel (best-effort)."""
+        entity_id = self.state.selected_entity_id
+        service = self._dictionary_scope_service()
+        if service is None or self.state.selected_entity_kind != "character" or not entity_id:
+            return
+        panel = self.query_one(PersonasCharacterDictionariesWidget)
+        try:
+            response = await service.list_character_dictionaries(int(entity_id), mode="local")
+        except Exception:
+            logger.opt(exception=True).warning(f"Could not list dictionaries for character {entity_id}.")
+            panel.load_character_dictionaries([])
+            return
+        panel.load_character_dictionaries(list(response.get("dictionaries") or []))
+
+    @on(CharacterDictionaryAttachRequested)
+    async def _handle_character_dictionary_attach(self, message: CharacterDictionaryAttachRequested) -> None:
+        message.stop()
+        if self.state.selected_entity_kind != "character" or not self.state.selected_entity_id:
+            return
+        if self._io_dialog_active:
+            return
+        self._io_dialog_active = True
+        self.run_worker(self._character_dictionary_attach_worker(), group="personas-io")
+
+    async def _character_dictionary_attach_worker(self) -> None:
+        try:
+            entity_id = self.state.selected_entity_id
+            service = self._dictionary_scope_service()
+            if service is None or not entity_id:
+                return
+            char_id = int(entity_id)
+            try:
+                dicts = await asyncio.to_thread(self._list_attachable_dictionaries, char_id)
+            except Exception:
+                logger.opt(exception=True).warning("Could not load dictionaries for the attach picker.")
+                return
+            try:
+                picked = await self.app.push_screen_wait(DictionaryPicker(dicts))
+            except Exception:
+                logger.opt(exception=True).warning("Could not show the dictionary picker.")
+                return
+            if not picked:
+                return
+            try:
+                await service.attach_to_character(int(picked), char_id, mode="local")
+            except ConflictError:
+                self._notify("Attach failed: the character changed since it was loaded. Try again.", "warning")
+                return
+            except Exception:
+                logger.opt(exception=True).warning(f"Could not attach dictionary to character {char_id}.")
+                return
+            await self._refresh_character_dictionaries()
+            await self._sync_character_editor_dictionaries(char_id)
+        finally:
+            self._io_dialog_active = False
+
+    def _list_attachable_dictionaries(self, character_id: int) -> list[dict]:
+        """Local dictionaries NOT already attached to this character (sync DB read)."""
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            return []
+        from ...Character_Chat import Chat_Dictionary_Lib as cdl
+        attached = set()
+        record = db.get_character_card_by_id(int(character_id))
+        for block in cdl.load_character_dictionaries(record):
+            attached.add(block.get("name"))
+        rows = []
+        for d in cdl.list_chat_dictionaries(db, limit=1000, include_disabled=True) or []:
+            name = d.get("name")
+            did = d.get("id")
+            if name in attached:
+                continue
+            rows.append({"dictionary_id": int(did), "name": str(name)})
+        return rows
+
+    async def _sync_character_editor_dictionaries(self, character_id: int) -> None:
+        """Keep the editor's base coherent after an out-of-band attach/detach."""
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            return
+        try:
+            record = await asyncio.to_thread(db.get_character_card_by_id, int(character_id))
+        except Exception:
+            return
+        if not record:
+            return
+        ext = record.get("extensions") if isinstance(record.get("extensions"), dict) else {}
+        try:
+            editor = self.query_one(PersonasCharacterEditorWidget)
+        except Exception:
+            return
+        if int(editor._character_data.get("id") or 0) == int(character_id):
+            editor.sync_attached_dictionaries(ext.get("chat_dictionaries") or [], record.get("version"))
+
+    @on(CharacterDictionaryDetachRequested)
+    async def _handle_character_dictionary_detach(self, message: CharacterDictionaryDetachRequested) -> None:
+        message.stop()
+        entity_id = self.state.selected_entity_id
+        service = self._dictionary_scope_service()
+        if service is None or self.state.selected_entity_kind != "character" or not entity_id:
+            return
+        char_id = int(entity_id)
+        try:
+            await service.detach_from_character(char_id, str(message.dictionary_name), mode="local")
+        except Exception:
+            logger.opt(exception=True).warning(f"Could not detach dictionary from character {char_id}.")
+            return
+        await self._refresh_character_dictionaries()
+        await self._sync_character_editor_dictionaries(char_id)
 
     @on(DictionaryVersionViewRequested)
     async def _handle_dictionary_version_view(self, message: DictionaryVersionViewRequested) -> None:
@@ -3072,6 +3206,16 @@ class PersonasScreen(BaseAppScreen):
         except Exception:
             return
         actions.display = visible_id == _CONVERSATION_VIEW_ID
+        # The character dictionaries panel (Roleplay P1f) is chrome shown
+        # alongside the character card/editor, not one of the exclusive
+        # _CENTER_VIEW_IDS pages - it must still be hidden outside a
+        # character context so it doesn't dock space away from (or overlap)
+        # the dictionary/persona/lore views.
+        try:
+            dict_panel = self.query_one(PersonasCharacterDictionariesWidget)
+        except Exception:
+            return
+        dict_panel.display = visible_id in ("#ccp-character-card-view", "#ccp-character-editor-view")
 
     async def _run_guarded(self, continuation: Callable[[], Awaitable[None]]) -> None:
         """Run ``continuation``, confirming first when an edit would be discarded.
