@@ -345,14 +345,24 @@ def run_agent_loop(config: AgentConfig, initial_messages: list[dict],
                     # this is the loop's own last line of defense for its
                     # list-vs-set cap-boundary integrity.
                     active_names = {a.name for a in active}
-                    loaded = [s for s in loaded if s.name not in active_names]
-                    if not loaded:
+                    already_active = [s.name for s in loaded if s.name in active_names]
+                    new_loaded = [s for s in loaded if s.name not in active_names]
+                    if not new_loaded:
                         # Every requested id was already active — a no-op,
-                        # not the "no valid ids at all" error case above.
-                        result = ToolResult(ok=True, content="no room")
+                        # not the "no valid ids at all" error case above,
+                        # and (Gemini M, PR #636 bot review) not the same
+                        # "no room" message a genuinely budget-exhausted
+                        # request gets below: those two reasons a load
+                        # accepts nothing are different for the model to
+                        # act on (proceed to just call the tool it already
+                        # has vs. it must free room first), so they must
+                        # not read identically.
+                        result = ToolResult(
+                            ok=True,
+                            content="already loaded: " + ", ".join(already_active))
                     else:
                         room = budget.max_active_tools - len(active)
-                        accepted = loaded[:max(room, 0)]
+                        accepted = new_loaded[:max(room, 0)]
                         active.extend(accepted)
                         if accepted:
                             result = ToolResult(

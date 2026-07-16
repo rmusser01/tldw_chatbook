@@ -9,7 +9,9 @@ against the room budget.
 """
 import json
 
-from tldw_chatbook.Agents.agent_models import AgentConfig, RunBudget, ToolSchema
+from tldw_chatbook.Agents.agent_models import (
+    STEP_TOOL_RESULT, AgentConfig, RunBudget, ToolSchema,
+)
 from tldw_chatbook.Agents.agent_runtime import LoopDeps, run_agent_loop, FENCE_OPEN
 
 
@@ -81,4 +83,67 @@ def test_load_dedupe_at_cap_boundary_still_admits_a_new_tool():
     # redundant t0 re-load (no-op, no room consumed), then 2 once t1 is
     # admitted.
     assert seen_active_sizes == [0, 1, 1, 2]
+    assert outcome.status == "done"
+
+
+def test_load_tools_all_requested_already_active_reports_already_loaded_not_no_room():
+    """Gemini M finding (PR #636 bot review): after the Task-13 dedupe
+    above, re-loading a tool that's already active filters `loaded` down
+    to empty, and the branch used to report the SAME "no room" message as
+    genuinely running out of budget. That's misleading -- the model would
+    reasonably conclude it needs to free space, when it can simply proceed
+    to call the tool it already has. Requesting only already-active tools
+    must be distinguishable: "already loaded: <names>"."""
+    active = [ToolSchema(id="p:foo", name="foo", description="d", parameters={})]
+    turns = iter([
+        type("M", (), {"text": _fence("load_tools", {"ids": ["p:foo"]}), "tool_calls": ()})(),
+        type("M", (), {"text": "done", "tool_calls": ()})(),
+    ])
+    steps: list = []
+    deps = LoopDeps(
+        call_model=lambda messages, active_schemas: next(turns),
+        invoke_tool=lambda call: None,
+        spawn=lambda task, **k: None,
+        find_tools=lambda q: [],
+        load_schemas=lambda ids: [ToolSchema(id="p:foo", name="foo", description="d", parameters={})],
+        should_cancel=lambda: False,
+        clock=lambda: 0.0,
+        on_step=steps.append)
+    outcome = run_agent_loop(
+        AgentConfig(model="m", system_prompt="s", allowed_tools=("foo", "load_tools"),
+                    budget=RunBudget(max_active_tools=8)),
+        [{"role": "user", "content": "hi"}], active, deps)
+    load_result = next(s for s in steps if s.kind == STEP_TOOL_RESULT)
+    assert load_result.result == "already loaded: foo"
+    assert outcome.status == "done"
+
+
+def test_load_tools_genuinely_out_of_room_is_still_distinct_from_already_loaded():
+    """The flip side of the finding above: a genuinely NEW tool (never
+    active) requested while the active cap is already full must still be
+    refused as plain "no room" -- not conflated with the "already loaded"
+    no-op case."""
+    occupying = ToolSchema(id="p:occ", name="occ", description="d", parameters={})
+    new_tool = ToolSchema(id="p:new", name="new", description="d", parameters={})
+    active = [occupying]
+    turns = iter([
+        type("M", (), {"text": _fence("load_tools", {"ids": ["p:new"]}), "tool_calls": ()})(),
+        type("M", (), {"text": "done", "tool_calls": ()})(),
+    ])
+    steps: list = []
+    deps = LoopDeps(
+        call_model=lambda messages, active_schemas: next(turns),
+        invoke_tool=lambda call: None,
+        spawn=lambda task, **k: None,
+        find_tools=lambda q: [],
+        load_schemas=lambda ids: [new_tool],
+        should_cancel=lambda: False,
+        clock=lambda: 0.0,
+        on_step=steps.append)
+    outcome = run_agent_loop(
+        AgentConfig(model="m", system_prompt="s", allowed_tools=("occ", "new", "load_tools"),
+                    budget=RunBudget(max_active_tools=1)),
+        [{"role": "user", "content": "hi"}], active, deps)
+    load_result = next(s for s in steps if s.kind == STEP_TOOL_RESULT)
+    assert load_result.result == "no room"
     assert outcome.status == "done"
