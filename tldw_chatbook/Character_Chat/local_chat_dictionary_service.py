@@ -780,7 +780,8 @@ class LocalChatDictionaryService:
         return record
 
     @staticmethod
-    def _embedded_dictionaries(record: Mapping[str, Any]) -> list[dict[str, Any]]:
+    def _normalize_extensions(record: Mapping[str, Any]) -> dict[str, Any]:
+        """Return a character record's ``extensions`` as a dict (defensive)."""
         ext = record.get("extensions")
         if isinstance(ext, str):
             try:
@@ -789,6 +790,11 @@ class LocalChatDictionaryService:
                 ext = {}
         if not isinstance(ext, dict):
             ext = {}
+        return ext
+
+    @staticmethod
+    def _embedded_dictionaries(record: Mapping[str, Any]) -> list[dict[str, Any]]:
+        ext = LocalChatDictionaryService._normalize_extensions(record)
         raw = ext.get("chat_dictionaries") or []
         if not isinstance(raw, list):
             raw = []
@@ -797,14 +803,7 @@ class LocalChatDictionaryService:
     def _write_embedded_dictionaries(
         self, record: dict[str, Any], character_id: int, blocks: list[dict[str, Any]]
     ) -> None:
-        ext = record.get("extensions")
-        if isinstance(ext, str):
-            try:
-                ext = json.loads(ext or "{}")
-            except (TypeError, ValueError):
-                ext = {}
-        if not isinstance(ext, dict):
-            ext = {}
+        ext = self._normalize_extensions(record)
         ext["chat_dictionaries"] = blocks
         self._require_db().update_character_card(
             int(character_id), {"extensions": ext}, expected_version=record["version"]
