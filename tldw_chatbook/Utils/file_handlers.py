@@ -422,6 +422,7 @@ class DefaultFileHandler(FileHandler):
     
     async def process(self, file_path: Path) -> ProcessedFile:
         """Just reference the file by name and path."""
+        self._reject_config_excluded_image(file_path)
         file_size = file_path.stat().st_size
         size_str = self._format_size(file_size)
         
@@ -441,6 +442,37 @@ class DefaultFileHandler(FileHandler):
                 return f"{size:.1f}{unit}"
             size /= 1024.0
         return f"{size:.1f}TB"
+
+    @staticmethod
+    def _reject_config_excluded_image(file_path: Path) -> None:
+        """Reject known-image files that config excluded, instead of inlining
+        a ``[File: …]`` placeholder that reads as success while sending
+        useless text (legacy behavior was an explicit error).
+
+        Reaching this fallback with a known image suffix already implies the
+        effective ``[chat.images].supported_formats`` list excluded it —
+        ImageFileHandler (first in the registry chain) claims every effective
+        format.
+
+        Raises:
+            ValueError: When the extension is a known image format excluded
+                by the current configuration.
+        """
+        # Lazy import: attachment_core imports this module at module level.
+        from ..Chat.attachment_core import (
+            DEFAULT_SUPPORTED_IMAGE_FORMATS,
+            supported_image_formats,
+        )
+
+        suffix = file_path.suffix.lower()
+        if suffix not in DEFAULT_SUPPORTED_IMAGE_FORMATS:
+            return
+        effective = supported_image_formats()
+        raise ValueError(
+            f"Unsupported image format: {suffix}. "
+            f"Supported formats: {', '.join(effective)} "
+            "([chat.images].supported_formats controls this list)"
+        )
 
 
 class FileHandlerRegistry:
@@ -476,8 +508,6 @@ class FileHandlerRegistry:
         # Find the first handler that can process this file
         for handler in self.handlers:
             if handler.can_handle(file_path):
-                if isinstance(handler, DefaultFileHandler):
-                    self._reject_config_excluded_image(file_path)
                 logger.debug(f"Using {handler.__class__.__name__} for {file_path.name}")
                 return await handler.process(file_path)
         
@@ -488,36 +518,6 @@ class FileHandlerRegistry:
             display_name=file_path.name,
             insert_mode="inline",
             file_type="error"
-        )
-
-    @staticmethod
-    def _reject_config_excluded_image(file_path: Path) -> None:
-        """Reject known-image files that config excluded, before the generic
-        fallback inlines a ``[File: …]`` placeholder that reads as success
-        while sending useless text (legacy behavior was an explicit error).
-
-        Reaching the fallback with a known image suffix already implies the
-        effective ``[chat.images].supported_formats`` list excluded it —
-        ImageFileHandler (first in the chain) claims every effective format.
-
-        Raises:
-            ValueError: When the extension is a known image format excluded
-                by the current configuration.
-        """
-        # Lazy import: attachment_core imports this module at module level.
-        from ..Chat.attachment_core import (
-            DEFAULT_SUPPORTED_IMAGE_FORMATS,
-            supported_image_formats,
-        )
-
-        suffix = file_path.suffix.lower()
-        if suffix not in DEFAULT_SUPPORTED_IMAGE_FORMATS:
-            return
-        effective = supported_image_formats()
-        raise ValueError(
-            f"Unsupported image format: {suffix}. "
-            f"Supported formats: {', '.join(effective)} "
-            "([chat.images].supported_formats controls this list)"
         )
 
 
