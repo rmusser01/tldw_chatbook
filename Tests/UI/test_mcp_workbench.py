@@ -14,9 +14,15 @@ from textual.widgets import Button, Checkbox, ContentSwitcher, DataTable, Input,
 
 import tldw_chatbook.UI.MCP_Modules.mcp_inspector as mcp_inspector_module
 import tldw_chatbook.UI.MCP_Modules.mcp_workbench as mcp_workbench_module
-from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.MCP.permission_store import (
+    EffectiveToolState,
+    MCPPermissionStore,
+    definition_hash,
+    resolve_effective_state,
+)
 from tldw_chatbook.MCP.unified_control_models import UnifiedMCPContext
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
+from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import MCPPermissionsMode
 from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel, MCPProfileForm
 from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCP_RAIL_ROW_PREFIX, MCPRail
 from tldw_chatbook.UI.MCP_Modules.mcp_server_mutations import MCPServerMutationsPanel
@@ -441,17 +447,19 @@ async def test_mutations_panel_cancel_clears_selection_and_does_not_reopen_on_re
 
 @pytest.mark.asyncio
 async def test_mode_switch_shows_placeholder_canvases():
+    """T6: "permissions" no longer shows a phase placeholder -- it now hosts
+    the real `MCPPermissionsMode` canvas (see the Task 6 section below for
+    its own coverage). "audit" is the only mode still on the generic
+    placeholder path this test guards."""
     app = WorkbenchApp()
     async with app.run_test() as pilot:
         await pilot.pause()
         workbench = app.query_one(MCPWorkbench)
-        workbench.set_mode("permissions")
+        workbench.set_mode("audit")
         await pilot.pause()
         switcher = app.query_one(ContentSwitcher)
-        assert switcher.current == "mcp-mode-canvas-permissions"
-        placeholder = str(
-            app.query_one("#mcp-mode-canvas-permissions Static", Static).renderable
-        )
+        assert switcher.current == "mcp-mode-canvas-audit"
+        placeholder = str(app.query_one("#mcp-mode-canvas-audit Static", Static).renderable)
         assert "later phase" in placeholder.lower()
 
 
@@ -2384,9 +2392,12 @@ async def test_mode_placeholder_canvases_use_info_callout_not_recovery_callout()
         for mode, spec in MCP_HUB_MODES.items():
             # T5: "tools" now hosts the real `MCPToolsMode` canvas (see
             # test_mcp_tools_mode.py for its own empty-state coverage), not
-            # a generic phase placeholder -- only "servers" and "tools" are
-            # real canvases at this point.
-            if mode in ("servers", "tools"):
+            # a generic phase placeholder. T6: "permissions" now likewise
+            # hosts the real `MCPPermissionsMode` canvas (see
+            # test_mcp_permissions_mode.py and the Task 6 section below) --
+            # only "servers"/"tools"/"permissions" are real canvases at this
+            # point; "audit" remains the last phase placeholder.
+            if mode in ("servers", "tools", "permissions"):
                 continue
             static = app.query_one(f"#mcp-mode-canvas-{mode} Static", Static)
             assert "ds-info-callout" in static.classes, mode
@@ -3543,3 +3554,326 @@ async def test_gate_resolved_against_tool_from_tool_for_lookup():
         await pilot.pause()
 
         assert app.unified_mcp_service.gate_calls == [("local:docs", "search")]
+
+
+# -- Task 6: Permissions mode canvas (matrix, kill switch, policy preview) --
+#
+# `PermissionsHubService` is wired against a REAL `MCPPermissionStore` (T1)
+# and the REAL `resolve_effective_state()` (T2) rather than a hand-rolled
+# mock -- an accessor mock here would hide exactly the kind of drift a
+# reviewer can't easily catch (see the "unmocked-integration-test" lesson
+# from task-222/223: mocked config surfaces have shipped inert before).
+# Seeds two local profiles -- "docs" (tools "search"/"fetch") and "notes"
+# (tool "list_notes") -- so grouping/sorting is actually exercised: server
+# labels "docs" < "notes"; within "docs", tools "fetch" < "search".
+
+
+class PermissionsHubService(FakeHubService):
+    def __init__(self, store_path: Path) -> None:
+        super().__init__()
+        self._store = MCPPermissionStore(store_path)
+
+    @property
+    def permission_store(self) -> MCPPermissionStore:
+        return self._store
+
+    def effective_tool_states(self, tools):
+        payload = self._store.load()
+        return {(t.server_key, t.name): resolve_effective_state(payload, t) for t in tools}
+
+    def set_tool_state(self, server_key, tool_name, ui_state, *, tool=None):
+        hash_value = None
+        if ui_state == "allow":
+            if tool is None:
+                raise ValueError("tool is required to set state 'allow'")
+            hash_value = definition_hash(tool.description, tool.input_schema)
+        self._store.set_tool_state(server_key, tool_name, ui_state, definition_hash=hash_value)
+
+    def set_server_default(self, server_key, state):
+        self._store.set_server_default(server_key, state)
+
+    def set_global_default(self, state):
+        self._store.set_global_default(state)
+
+    def get_kill_switch(self):
+        return self._store.get_kill_switch()
+
+    def set_kill_switch(self, value):
+        self._store.set_kill_switch(value)
+
+    async def load_section(self, section=None):
+        effective_section = section or self.context.selected_section or "overview"
+        if self.context.selected_source == "local":
+            if effective_section == "external_servers":
+                return [
+                    {
+                        "profile_id": "docs",
+                        "command": "python",
+                        "args": [],
+                        "env_placeholders": {},
+                        "discovery_snapshot": {
+                            "tools": [
+                                {"name": "search", "description": "Search docs."},
+                                {"name": "fetch", "description": "Fetch a doc."},
+                            ],
+                            "resources": [],
+                            "prompts": [],
+                        },
+                        "is_connected": True,
+                    },
+                    {
+                        "profile_id": "notes",
+                        "command": "python",
+                        "args": [],
+                        "env_placeholders": {},
+                        "discovery_snapshot": {
+                            "tools": [{"name": "list_notes", "description": "List notes."}],
+                            "resources": [],
+                            "prompts": [],
+                        },
+                        "is_connected": True,
+                    },
+                ]
+            return {"source": "local", "section": effective_section}
+        return {"external_servers": [], "source": "server", "section": "external_servers"}
+
+
+class PermissionsApp(App):
+    def __init__(self, store_path: Path) -> None:
+        super().__init__()
+        self.unified_mcp_service = PermissionsHubService(store_path)
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+def _perm_table_texts(app: App, row_index: int) -> list[str]:
+    table = app.query_one("#mcp-perm-table", DataTable)
+    row = table.get_row_at(row_index)
+    return [cell.plain if hasattr(cell, "plain") else str(cell) for cell in row]
+
+
+def test_tool_state_label_marker_precedence():
+    """`MCPWorkbench._tool_state_label()`'s marker selection, pinned
+    directly: config_changed -> "⚠", risk_floored -> "⚑", a plain
+    tool_override -> "•", any other origin (inherited, undowngraded) ->
+    no marker at all. Local-source `HubTool`s never carry tags (see
+    `hub_tool_catalog.local_tools_from_record()`), so a risk-floored
+    scenario can't be reached end-to-end through `PermissionsHubService`
+    above -- this pins the marker logic itself, independent of how a
+    real `EffectiveToolState` gets constructed."""
+    label = MCPWorkbench._tool_state_label
+    assert label(EffectiveToolState(state="allow", origin="tool_override")) == "Allow •"
+    assert (
+        label(EffectiveToolState(state="ask", origin="server_default")) == "Ask"
+    )
+    assert (
+        label(EffectiveToolState(state="ask", origin="global_default")) == "Ask"
+    )
+    assert (
+        label(EffectiveToolState(state="ask", origin="tool_override", config_changed=True))
+        == "Ask ⚠"
+    )
+    assert (
+        label(EffectiveToolState(state="ask", origin="server_default", risk_floored=True))
+        == "Ask ⚑"
+    )
+
+
+@pytest.mark.asyncio
+async def test_permissions_mode_renders_pinned_grouped_sorted_matrix(tmp_path):
+    app = PermissionsApp(tmp_path / "mcp_permissions.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        switcher = app.query_one(ContentSwitcher)
+        assert switcher.current == "mcp-mode-canvas-permissions"
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        assert table.row_count == 6
+        assert _perm_table_texts(app, 0) == ["Global default", "Ask", "—"]
+        assert _perm_table_texts(app, 1) == ["Server default — docs", "Ask", "—"]
+        assert _perm_table_texts(app, 2) == ["fetch", "Ask", "—"]
+        assert _perm_table_texts(app, 3) == ["search", "Ask", "—"]
+        assert _perm_table_texts(app, 4) == ["Server default — notes", "Ask", "—"]
+        assert _perm_table_texts(app, 5) == ["list_notes", "Ask", "—"]
+
+        expected_keys = [
+            "__global__",
+            "__server__::local:docs",
+            "local:docs::fetch",
+            "local:docs::search",
+            "__server__::local:notes",
+            "local:notes::list_notes",
+        ]
+        for index, expected_key in enumerate(expected_keys):
+            row_key, _ = table.coordinate_to_cell_key((index, 0))
+            assert row_key.value == expected_key
+
+        preview = app.query_one("#mcp-perm-preview", Static)
+        assert str(preview.renderable) == "Global default: Ask."
+
+
+@pytest.mark.asyncio
+async def test_space_cycle_round_trip_mutates_store_and_rerenders_override_marker(tmp_path):
+    """`StateCycleRequested` -> the workbench mutates the REAL store via
+    T4's typed methods -> the matrix re-renders with the override bullet.
+    This is the Task 6 brief's headline round-trip requirement."""
+    app = PermissionsApp(tmp_path / "mcp_permissions.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=3)  # local:docs::search
+        await pilot.press("space")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        payload = app.unified_mcp_service.permission_store.load()
+        tool_entry = payload["profiles"]["default"]["servers"]["local:docs"]["tools"]["search"]
+        assert tool_entry["state"] == "allow"
+
+        assert _perm_table_texts(app, 3) == ["search", "Allow •", "—"]
+        # Sibling rows are untouched by the single-row mutation.
+        assert _perm_table_texts(app, 2) == ["fetch", "Ask", "—"]
+        assert _perm_table_texts(app, 0) == ["Global default", "Ask", "—"]
+
+
+@pytest.mark.asyncio
+async def test_space_on_server_default_row_round_trips_through_store(tmp_path):
+    app = PermissionsApp(tmp_path / "mcp_permissions.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=1)  # __server__::local:docs
+        await pilot.press("space")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        payload = app.unified_mcp_service.permission_store.load()
+        assert payload["profiles"]["default"]["servers"]["local:docs"]["default"] == "allow"
+        assert _perm_table_texts(app, 1) == ["Server default — docs", "Allow •", "—"]
+
+
+@pytest.mark.asyncio
+async def test_space_on_global_row_round_trips_through_store(tmp_path):
+    app = PermissionsApp(tmp_path / "mcp_permissions.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=0)  # __global__
+        await pilot.press("space")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        payload = app.unified_mcp_service.permission_store.load()
+        # cycle_global("ask") == "deny"
+        assert payload["profiles"]["default"]["global_default"] == "deny"
+        assert _perm_table_texts(app, 0) == ["Global default", "Off", "—"]
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_toggle_round_trip_persists_and_resyncs(tmp_path):
+    app = PermissionsApp(tmp_path / "mcp_permissions.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        checkbox = app.query_one("#mcp-perm-kill-switch", Checkbox)
+        assert checkbox.value is False
+        await pilot.click("#mcp-perm-kill-switch")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert app.unified_mcp_service.get_kill_switch() is True
+        assert checkbox.value is True
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_starting_true_renders_without_extra_toggle(tmp_path):
+    """A resync that pushes a kill_switch value DIFFERENT from the
+    checkbox's constructor default (False) must not itself post a second
+    `KillSwitchToggled` -- `MCPPermissionsMode.update_matrix()`'s
+    `checkbox.prevent(Checkbox.Changed)` guard covers exactly this. Proven
+    here by asserting the store still reads back exactly the seeded value
+    after the mount-time resync -- a phantom echo would have round-tripped
+    through `set_kill_switch()` too (harmlessly idempotent in THIS case,
+    but the widget-level test suite pins the zero-events contract directly)."""
+    store_path = tmp_path / "mcp_permissions.json"
+    MCPPermissionStore(store_path).set_kill_switch(True)
+    app = PermissionsApp(store_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+        checkbox = app.query_one("#mcp-perm-kill-switch", Checkbox)
+        assert checkbox.value is True
+        assert app.unified_mcp_service.get_kill_switch() is True
+
+
+@pytest.mark.asyncio
+async def test_preview_scoped_to_rail_selection(tmp_path):
+    app = PermissionsApp(tmp_path / "mcp_permissions.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        preview = app.query_one("#mcp-perm-preview", Static)
+        assert str(preview.renderable) == "Global default: Ask."
+
+        rail = app.query_one(MCPRail)
+        rail.post_message(MCPRail.ServerSelected("local:docs"))
+        await pilot.pause()
+
+        assert str(preview.renderable) == (
+            "docs: 0 allowed, 2 asks, 0 off. Global default: Ask."
+        )
+
+
+@pytest.mark.asyncio
+async def test_permissions_mode_renders_fail_soft_without_t4_seams():
+    """A service that hasn't been upgraded with the T4 permission methods
+    (the base `FakeHubService` -- no `effective_tool_states`/
+    `permission_store`/`get_kill_switch` at all) must not crash
+    `_sync_permissions_mode()`: it renders a global-only-effectively "Ask"
+    matrix with the kill switch off, same "seams absent -> fail-soft"
+    precedent as `_resolve_test_gate()`.
+    """
+    app = WorkbenchApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        assert table.row_count >= 1
+        assert _perm_table_texts(app, 0) == ["Global default", "Ask", "—"]
+        checkbox = app.query_one("#mcp-perm-kill-switch", Checkbox)
+        assert checkbox.value is False

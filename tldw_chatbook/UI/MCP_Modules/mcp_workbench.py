@@ -27,7 +27,7 @@ from tldw_chatbook.MCP.hub_tool_catalog import (
     server_tools_from_inventory,
 )
 from tldw_chatbook.MCP.mcp_import import ImportCandidate
-from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.MCP.permission_store import DEFAULT_GLOBAL, STORE_STATES, EffectiveToolState
 from tldw_chatbook.MCP.readiness import (
     HubAction,
     ReadinessSnapshot,
@@ -40,6 +40,7 @@ from tldw_chatbook.MCP.readiness import (
 )
 from tldw_chatbook.MCP.redaction import redact_args, redact_mapping
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
+from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import MCPPermissionsMode, PermRow
 from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel, MCPProfileForm
 from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCPRail
 from tldw_chatbook.UI.MCP_Modules.mcp_server_mutations import MCPServerMutationsPanel
@@ -124,14 +125,11 @@ MCP_HUB_MODES: dict[str, dict[str, str]] = {
     # -- "placeholder" is unused for it, same as "servers" above, kept "" for
     # shape parity with the other MCP_HUB_MODES entries.
     "tools": {"label": "Tools", "button_id": "mcp-mode-tools", "placeholder": ""},
-    "permissions": {
-        "label": "Permissions",
-        "button_id": "mcp-mode-permissions",
-        "placeholder": (
-            "Permissions mode arrives in a later phase. MCP tools are not yet callable "
-            "from chat, so there is nothing to permit yet."
-        ),
-    },
+    # T6: Permissions mode now hosts the real `MCPPermissionsMode` canvas
+    # (see compose()) -- "placeholder" is unused for it, same as
+    # "servers"/"tools" above, kept "" for shape parity with the remaining
+    # MCP_HUB_MODES entries.
+    "permissions": {"label": "Permissions", "button_id": "mcp-mode-permissions", "placeholder": ""},
     "audit": {
         "label": "Audit",
         "button_id": "mcp-mode-audit",
@@ -509,8 +507,9 @@ class MCPWorkbench(Container):
             ):
                 yield MCPServersMode(id="mcp-mode-canvas-servers")
                 yield MCPToolsMode(id="mcp-mode-canvas-tools")
+                yield MCPPermissionsMode(id="mcp-mode-canvas-permissions")
                 for mode, spec in MCP_HUB_MODES.items():
-                    if mode in ("servers", "tools"):
+                    if mode in ("servers", "tools", "permissions"):
                         continue
                     with Vertical(id=f"mcp-mode-canvas-{mode}"):
                         yield Static(
@@ -851,6 +850,7 @@ class MCPWorkbench(Container):
             await self._show_selected_detail(canvas, selected)
             await self.query_one(MCPInspector).update_readiness(selected)
             await self._sync_tools_mode()
+            await self._sync_permissions_mode()
 
     async def _sync_tools_mode(self) -> None:
         """Push the current cross-server tool catalog into `MCPToolsMode`.
@@ -935,6 +935,255 @@ class MCPWorkbench(Container):
         if all(snap.state is ReadinessState.NEEDS_SETUP for snap in relevant):
             return ("No tools discovered yet — connect or refresh a server.", "connect")
         return ("No tools found — try refreshing a server's discovery.", "refresh")
+
+    # -- T6: Permissions mode (matrix, kill switch, policy preview) -----------
+
+    async def _sync_permissions_mode(self) -> None:
+        """Push the current permission matrix into `MCPPermissionsMode`.
+
+        Mirrors `_sync_tools_mode()`: runs on every `_sync_children()` pass
+        (the ContentSwitcher never unmounts the inactive canvas, only hides
+        it) so switching INTO Permissions mode never shows a stale matrix
+        from before the last background resync. Computed from
+        `self._last_hub_tools` (already derived this same pass by the
+        immediately-preceding `_sync_tools_mode()` call) plus one
+        `effective_tool_states()` call and one `permission_store.load()`
+        read -- no extra service I/O beyond that.
+
+        Every T4 seam is read via `getattr(..., None)` + `callable()` --
+        the same "seams absent -> permissive/fail-soft by design" precedent
+        as `_resolve_test_gate()` -- so a service that hasn't been upgraded
+        with the Phase 4 permission methods (older fakes, a
+        still-initializing service) renders an all-"Ask", switch-off matrix
+        instead of raising out of every `_sync_children()` call.
+        """
+        service = self._service()
+        tools = self._last_hub_tools
+
+        kill_switch = False
+        get_kill_switch = getattr(service, "get_kill_switch", None)
+        if callable(get_kill_switch):
+            try:
+                kill_switch = bool(get_kill_switch())
+            except Exception as exc:
+                logger.warning(f"MCP kill switch read failed: {exc}")
+
+        effective: dict[tuple[str, str], EffectiveToolState] = {}
+        effective_loader = getattr(service, "effective_tool_states", None)
+        if callable(effective_loader):
+            try:
+                effective = effective_loader(tools)
+            except Exception as exc:
+                logger.warning(f"MCP effective tool state resolution failed: {exc}")
+                effective = {}
+
+        payload: dict[str, Any] = {}
+        store = getattr(service, "permission_store", None)
+        if store is not None:
+            try:
+                payload = store.load()
+            except Exception as exc:
+                logger.warning(f"MCP permission store read failed: {exc}")
+                payload = {}
+
+        profile = (payload.get("profiles") or {}).get("default") or {}
+        global_state = profile.get("global_default")
+        if global_state not in STORE_STATES:
+            global_state = DEFAULT_GLOBAL
+        servers_payload = profile.get("servers") or {}
+        if not isinstance(servers_payload, Mapping):
+            servers_payload = {}
+
+        rows, preview = self._build_permission_rows(
+            tools, effective=effective, servers_payload=servers_payload, global_state=global_state,
+        )
+        await self.query_one(MCPPermissionsMode).update_matrix(
+            rows, kill_switch=kill_switch, preview=preview
+        )
+
+    @staticmethod
+    def _tool_state_label(effective: EffectiveToolState) -> str:
+        """Format a tool row's State cell: the UI label plus its origin
+        marker. Precedence mirrors `resolve_effective_state()`'s own
+        downgrade order (T2) -- `config_changed` and `risk_floored` are
+        mutually exclusive (the former only ever fires for an explicit
+        `tool_override`, the latter only for an *inherited* origin), so
+        checking both ahead of the plain override bullet is unambiguous:
+        "Ask ⚠" (rug-pull downgrade), "Ask ⚑" (high-risk floor), "Allow •"
+        (a plain, undowngraded explicit override), or a bare label (plain
+        inherited value, no marker at all).
+        """
+        if effective.config_changed:
+            return f"{effective.ui_label} ⚠"
+        if effective.risk_floored:
+            return f"{effective.ui_label} ⚑"
+        if effective.origin == "tool_override":
+            return f"{effective.ui_label} •"
+        return effective.ui_label
+
+    @staticmethod
+    def _raw_tool_state(
+        servers_payload: Mapping[str, Any], server_key: str, tool_name: str
+    ) -> str | None:
+        """The raw STORE value for one tool entry (`cycle_ui_state()`'s
+        input), or `None` when nothing is set at the tool level -- distinct
+        from the tool's *resolved* effective state, which may inherit from
+        the server or global default."""
+        server_entry = servers_payload.get(server_key)
+        if not isinstance(server_entry, Mapping):
+            return None
+        tools_entry = server_entry.get("tools")
+        if not isinstance(tools_entry, Mapping):
+            return None
+        tool_entry = tools_entry.get(tool_name)
+        if not isinstance(tool_entry, Mapping):
+            return None
+        state = tool_entry.get("state")
+        return state if state in STORE_STATES else None
+
+    def _build_permission_rows(
+        self,
+        tools: list[HubTool],
+        *,
+        effective: dict[tuple[str, str], EffectiveToolState],
+        servers_payload: Mapping[str, Any],
+        global_state: str,
+    ) -> tuple[list[PermRow], str]:
+        """Derive the pinned global -> server-default -> tool `PermRow`
+        list (grouped by server, both servers and their tools sorted by
+        label/name) plus the rail-scoped policy preview sentence.
+        """
+        global_label = EffectiveToolState(state=global_state, origin="global_default").ui_label
+        rows: list[PermRow] = [
+            PermRow(
+                kind="global", server_key="", server_label="", tool_name=None,
+                state_label=global_label, tags_label="—", cycle_current=global_state,
+            )
+        ]
+
+        tools_by_server: dict[str, list[HubTool]] = {}
+        labels_by_key: dict[str, str] = {}
+        for tool in tools:
+            tools_by_server.setdefault(tool.server_key, []).append(tool)
+            labels_by_key.setdefault(tool.server_key, tool.server_label)
+
+        for server_key in sorted(tools_by_server, key=lambda key: (labels_by_key[key], key)):
+            server_label = labels_by_key[server_key]
+            server_entry = servers_payload.get(server_key)
+            raw_default = (
+                server_entry.get("default")
+                if isinstance(server_entry, Mapping)
+                else None
+            )
+            if raw_default in STORE_STATES:
+                server_state_label = (
+                    f"{EffectiveToolState(state=raw_default, origin='server_default').ui_label} •"
+                )
+                server_cycle_current: str | None = raw_default
+            else:
+                # Inherit: nothing explicit at the server level -- shown as
+                # the resolved (global) value, plain (no override marker).
+                server_state_label = global_label
+                server_cycle_current = None
+            rows.append(
+                PermRow(
+                    kind="server", server_key=server_key, server_label=server_label,
+                    tool_name=None, state_label=server_state_label, tags_label="—",
+                    cycle_current=server_cycle_current,
+                )
+            )
+            for tool in sorted(tools_by_server[server_key], key=lambda t: t.name):
+                tool_effective = effective.get((tool.server_key, tool.name)) or EffectiveToolState(
+                    state="ask", origin="global_default"
+                )
+                rows.append(
+                    PermRow(
+                        kind="tool", server_key=tool.server_key, server_label=server_label,
+                        tool_name=tool.name,
+                        state_label=self._tool_state_label(tool_effective),
+                        tags_label=", ".join(tool.tags) if tool.tags else "—",
+                        cycle_current=self._raw_tool_state(
+                            servers_payload, tool.server_key, tool.name
+                        ),
+                    )
+                )
+
+        preview = self._build_permission_preview(tools_by_server, labels_by_key, effective, global_label)
+        return rows, preview
+
+    def _build_permission_preview(
+        self,
+        tools_by_server: dict[str, list[HubTool]],
+        labels_by_key: dict[str, str],
+        effective: dict[tuple[str, str], EffectiveToolState],
+        global_label: str,
+    ) -> str:
+        """One plain-language sentence, scoped to the rail's currently
+        selected server when that server has any discovered tools --
+        `"<label>: N allowed, M asks, K off. Global default: <Global>."`
+        -- else just the global default alone.
+        """
+        server_key = self._selected_server_key
+        tools = tools_by_server.get(server_key) if server_key else None
+        if tools:
+            counts = {"allow": 0, "ask": 0, "deny": 0}
+            for tool in tools:
+                tool_effective = effective.get((tool.server_key, tool.name))
+                state = tool_effective.state if tool_effective is not None else "ask"
+                counts[state] = counts.get(state, 0) + 1
+            label = labels_by_key.get(server_key, server_key)
+            return (
+                f"{label}: {counts['allow']} allowed, {counts['ask']} asks, "
+                f"{counts['deny']} off. Global default: {global_label}."
+            )
+        return f"Global default: {global_label}."
+
+    async def on_mcp_permissions_mode_state_cycle_requested(
+        self, event: MCPPermissionsMode.StateCycleRequested
+    ) -> None:
+        """Apply one Space-cycled permission change (T6) via the T4 typed
+        methods, then resync the matrix -- the single-writer contract:
+        `MCPPermissionsMode` never touches the store itself, only posts
+        the row it means and the state T2's cycle helpers already resolved.
+        """
+        event.stop()
+        service = self._service()
+        if service is None:
+            return
+        try:
+            if event.row_kind == "global":
+                if event.new_state is not None:
+                    service.set_global_default(event.new_state)
+            elif event.row_kind == "server":
+                service.set_server_default(event.server_key, event.new_state)
+            elif event.row_kind == "tool":
+                tool = self._tool_for(event.server_key, event.tool_name or "")
+                service.set_tool_state(
+                    event.server_key, event.tool_name or "", event.new_state, tool=tool
+                )
+        except Exception as exc:
+            logger.warning(f"MCP permission cycle failed: {exc}")
+            self.app.notify(_toast(f"Permission update failed: {exc}"), severity="error")
+            return
+        async with self._sync_children_lock:
+            await self._sync_permissions_mode()
+
+    async def on_mcp_permissions_mode_kill_switch_toggled(
+        self, event: MCPPermissionsMode.KillSwitchToggled
+    ) -> None:
+        event.stop()
+        service = self._service()
+        set_kill_switch = getattr(service, "set_kill_switch", None)
+        if not callable(set_kill_switch):
+            return
+        try:
+            set_kill_switch(event.value)
+        except Exception as exc:
+            logger.warning(f"MCP kill switch save failed: {exc}")
+            self.app.notify(_toast(f"Failed to save MCP tools in chat: {exc}"), severity="error")
+            return
+        async with self._sync_children_lock:
+            await self._sync_permissions_mode()
 
     async def _show_selected_detail(
         self, canvas: MCPServersMode, selected: ReadinessSnapshot | None
