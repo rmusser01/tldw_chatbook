@@ -213,11 +213,16 @@ class MCPInspector(Vertical):
         """Posted when the user presses Run in the Test Tool panel with a
         validly-collected argument dict (`MCPSchemaForm.collect_arguments()`
         raised nothing). `MCPWorkbench` owns the actual `test_hub_tool()`
-        call and reports the outcome back via `show_tool_result()`."""
+        call and reports the outcome back via `show_tool_result()`.
 
-        def __init__(self, tool_id: str, arguments: dict[str, Any]) -> None:
+        Carries `server_key`/`tool_name` as separate fields (not a packed
+        `"server_key::tool_name"` id) -- task-233: nothing downstream of
+        this message parses a `"::"`-joined string anymore."""
+
+        def __init__(self, server_key: str, tool_name: str, arguments: dict[str, Any]) -> None:
             super().__init__()
-            self.tool_id = tool_id
+            self.server_key = server_key
+            self.tool_name = tool_name
             self.arguments = arguments
 
     def __init__(self, **kwargs: Any) -> None:
@@ -624,9 +629,11 @@ class MCPInspector(Vertical):
             result_widget.update(str(exc))
             return
         run_button.disabled = True
-        self.post_message(self.ToolTestRequested(tool.tool_id, arguments))
+        self.post_message(self.ToolTestRequested(tool.server_key, tool.name, arguments))
 
-    def show_tool_result(self, *, tool_id: str, ok: bool, text: str, duration_ms: int) -> None:
+    def show_tool_result(
+        self, *, server_key: str, tool_name: str, ok: bool, text: str, duration_ms: int
+    ) -> None:
         """Render one Test Tool run's outcome, and re-enable Run.
 
         Tolerant of the panel having been closed (or a different tool
@@ -634,18 +641,21 @@ class MCPInspector(Vertical):
         purely as "here's what happened", with no guarantee the panel this
         result belongs to is still on screen.
 
-        I1: `tool_id` must match `self._current_tool.tool_id` -- a slow
-        tool A's result arriving after the user has already switched the
-        inspector to tool B's panel must never render under B (and must
-        never re-enable B's Run button, which has nothing to do with A's
-        completion). A mismatched result is dropped silently (debug-logged
-        only); it belongs to a panel that is no longer showing.
+        I1: `(server_key, tool_name)` must match `self._current_tool`'s own
+        fields -- a slow tool A's result arriving after the user has already
+        switched the inspector to tool B's panel must never render under B
+        (and must never re-enable B's Run button, which has nothing to do
+        with A's completion). A mismatched result is dropped silently
+        (debug-logged only); it belongs to a panel that is no longer
+        showing.
         """
         current = self._current_tool
-        if current is None or current.tool_id != tool_id:
+        if current is None or current.server_key != server_key or current.name != tool_name:
             logger.debug(
-                f"MCPInspector: dropping stale tool result for {tool_id!r} "
-                f"(current tool is {current.tool_id if current else None!r})"
+                f"MCPInspector: dropping stale tool result for "
+                f"server_key={server_key!r} tool_name={tool_name!r} "
+                f"(current tool is "
+                f"{(current.server_key, current.name) if current else None!r})"
             )
             return
         try:

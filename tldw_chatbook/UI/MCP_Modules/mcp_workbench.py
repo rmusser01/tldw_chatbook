@@ -452,12 +452,13 @@ class MCPWorkbench(Container):
         # cache when `MCPToolsMode.ToolSelected` arrives, rather than
         # re-deriving the whole catalog on every selection.
         self._last_hub_tools: list[HubTool] = []
-        # T6: in-flight Test Tool runs, keyed by `HubTool.tool_id`. Mirrors
+        # T6: in-flight Test Tool runs, keyed by `(server_key, tool_name)`
+        # (task-233: a tuple, not a packed `HubTool.tool_id` string). Mirrors
         # `_profile_save_in_flight`/`_server_mutation_in_flight`: a second
         # ToolTestRequested for the SAME tool arriving before the first
         # `test_hub_tool()` call resolves is swallowed with a warning toast
         # instead of dispatching a second overlapping call.
-        self._tool_test_in_flight: set[str] = set()
+        self._tool_test_in_flight: set[tuple[str, str]] = set()
 
     @property
     def active_mode(self) -> str:
@@ -1222,23 +1223,45 @@ class MCPWorkbench(Container):
             self.set_mode("servers")
             self.app.notify("Select a server below to connect or refresh its tools.")
 
-    def _tool_for(self, tool_id: str) -> HubTool | None:
+    def _tool_for_row_key(self, tool_id: str) -> HubTool | None:
+        """Resolve a Tools-mode DataTable row key (`HubTool.tool_id`, a
+        packed `"server_key::name"` display/dedup string -- see
+        `mcp_tools_mode.py`) against `_last_hub_tools`.
+
+        task-233: packed ids remain legal AS ROW KEYS (mcp_tools_mode.py is
+        unchanged), but this is the only place in this module that still
+        compares against one -- everything downstream of a selection (Test
+        Tool execution) carries `(server_key, tool_name)` as separate
+        fields instead. See `_tool_for()` for that field-based lookup.
+        """
         for tool in self._last_hub_tools:
             if tool.tool_id == tool_id:
                 return tool
         return None
 
+    def _tool_for(self, server_key: str, tool_name: str) -> HubTool | None:
+        """Resolve a `(server_key, tool_name)` pair against `_last_hub_tools`.
+
+        task-233: the field-based counterpart to `_tool_for_row_key()` --
+        compares `HubTool.server_key`/`HubTool.name` directly rather than
+        parsing (or matching) a packed id string.
+        """
+        for tool in self._last_hub_tools:
+            if tool.server_key == server_key and tool.name == tool_name:
+                return tool
+        return None
+
     async def on_mcp_tools_mode_tool_selected(self, event: MCPToolsMode.ToolSelected) -> None:
         """T6: route a Tools-mode row selection to the inspector's tool
-        detail view. `_tool_for()` resolves the row's `tool_id` against
-        `_last_hub_tools` (populated by the same `_sync_tools_mode()` pass
-        that fed the DataTable this selection came from) -- a stale
-        selection whose tool has since dropped out of the catalog
-        (disconnect, refresh) resolves to `None`, which `show_tool()`
-        renders as "nothing selected" rather than crashing.
+        detail view. `_tool_for_row_key()` resolves the row's packed
+        `tool_id` against `_last_hub_tools` (populated by the same
+        `_sync_tools_mode()` pass that fed the DataTable this selection came
+        from) -- a stale selection whose tool has since dropped out of the
+        catalog (disconnect, refresh) resolves to `None`, which
+        `show_tool()` renders as "nothing selected" rather than crashing.
         """
         event.stop()
-        await self.query_one(MCPInspector).show_tool(self._tool_for(event.tool_id))
+        await self.query_one(MCPInspector).show_tool(self._tool_for_row_key(event.tool_id))
 
     async def open_test_for_selected_tool(self) -> None:
         """T8: entry point for the `t` keybinding (mcp_screen.py's
@@ -1286,30 +1309,39 @@ class MCPWorkbench(Container):
         window (two Run presses queued before the first handler could
         disable the button) is reliably swallowed with a warning toast
         instead of racing a second `test_hub_tool()` call.
+
+        task-233: keyed by the `(server_key, tool_name)` tuple `event`
+        carries directly -- no packed id to parse or reconstruct.
         """
         event.stop()
-        tool_id = event.tool_id
-        if tool_id in self._tool_test_in_flight:
-            self.app.notify(_toast(f"{tool_id}: test already running."), severity="warning")
+        server_key = event.server_key
+        tool_name = event.tool_name
+        key = (server_key, tool_name)
+        if key in self._tool_test_in_flight:
+            self.app.notify(
+                _toast(f"{server_key}::{tool_name}: test already running."), severity="warning"
+            )
             return
-        self._tool_test_in_flight.add(tool_id)
+        self._tool_test_in_flight.add(key)
         self.run_worker(
-            self._run_tool_test(tool_id, dict(event.arguments)),
+            self._run_tool_test(server_key, tool_name, dict(event.arguments)),
             group="mcp-tool-test",
             exclusive=False,
         )
 
-    async def _run_tool_test(self, tool_id: str, arguments: dict[str, Any]) -> None:
+    async def _run_tool_test(
+        self, server_key: str, tool_name: str, arguments: dict[str, Any]
+    ) -> None:
         """Run one `test_hub_tool()` call and report the outcome.
 
         The WHOLE body is wrapped in `try/except Exception` (not just the
         service call) -- Textual 8.2.7's `run_worker()` defaults to
-        `exit_on_error=True`, so ANY uncaught exception here (a malformed
-        `tool_id`, a missing service, a `json.dumps` surprise) would panic
-        the whole app rather than just failing this one tool test. T3's
-        `test_hub_tool()` itself already records the attempt to the
-        execution log -- nothing here duplicates that, this only renders
-        the outcome and measures wall-clock duration for display.
+        `exit_on_error=True`, so ANY uncaught exception here (a missing
+        service, a `json.dumps` surprise) would panic the whole app rather
+        than just failing this one tool test. T3's `test_hub_tool()` itself
+        already records the attempt to the execution log -- nothing here
+        duplicates that, this only renders the outcome and measures
+        wall-clock duration for display.
 
         The success-path result-formatting step (`redact_mapping()` then
         `json.dumps(..., default=str)` or `str(result)`) gets its own
@@ -1327,15 +1359,12 @@ class MCPWorkbench(Container):
                 service = self._service()
                 if service is None:
                     raise RuntimeError("MCP control-plane service is unavailable.")
-                server_key, _, tool_name = tool_id.partition("::")
-                if not server_key or not tool_name:
-                    raise RuntimeError(f"Malformed tool id: {tool_id!r}")
                 result = await service.test_hub_tool(server_key, tool_name, arguments)
             except Exception as exc:
                 duration_ms = int((time.monotonic() - started) * 1000)
                 self._show_tool_test_result(
-                    tool_id=tool_id, ok=False, text=_safe_exception_text(exc),
-                    duration_ms=duration_ms,
+                    server_key=server_key, tool_name=tool_name, ok=False,
+                    text=_safe_exception_text(exc), duration_ms=duration_ms,
                 )
                 return
             duration_ms = int((time.monotonic() - started) * 1000)
@@ -1346,22 +1375,24 @@ class MCPWorkbench(Container):
                     excerpt = str(result)[:500]
             except Exception as exc:
                 self._show_tool_test_result(
-                    tool_id=tool_id, ok=False, text=_safe_exception_text(exc),
-                    duration_ms=duration_ms,
+                    server_key=server_key, tool_name=tool_name, ok=False,
+                    text=_safe_exception_text(exc), duration_ms=duration_ms,
                 )
                 return
             self._show_tool_test_result(
-                tool_id=tool_id, ok=True, text=excerpt, duration_ms=duration_ms
+                server_key=server_key, tool_name=tool_name, ok=True,
+                text=excerpt, duration_ms=duration_ms,
             )
         finally:
-            self._tool_test_in_flight.discard(tool_id)
+            self._tool_test_in_flight.discard((server_key, tool_name))
 
     def _show_tool_test_result(
-        self, *, tool_id: str, ok: bool, text: str, duration_ms: int
+        self, *, server_key: str, tool_name: str, ok: bool, text: str, duration_ms: int
     ) -> None:
         try:
             self.query_one(MCPInspector).show_tool_result(
-                tool_id=tool_id, ok=ok, text=text, duration_ms=duration_ms
+                server_key=server_key, tool_name=tool_name, ok=ok, text=text,
+                duration_ms=duration_ms,
             )
         except Exception as exc:
             logger.warning(f"MCP tool test result render failed: {exc}")

@@ -2772,6 +2772,40 @@ async def test_second_tool_selection_back_to_back_does_not_duplicate_ids():
         assert "search" in str(names[0].renderable)
 
 
+def test_mcp_workbench_source_never_parses_packed_tool_id():
+    """task-233 grep-gate: the execute path now carries (server_key,
+    tool_name) as separate fields end to end -- nothing in mcp_workbench.py
+    may reconstruct them by parsing a packed "server_key::tool_name" string
+    anymore. Row keys elsewhere (mcp_tools_mode.py) are unaffected -- this
+    only asserts mcp_workbench.py's own source never parses one."""
+    source = Path(mcp_workbench_module.__file__).read_text()
+    assert 'partition("::")' not in source
+    assert "partition('::')" not in source
+    assert 'split("::")' not in source
+    assert "split('::')" not in source
+
+
+@pytest.mark.asyncio
+async def test_tool_for_resolves_by_server_key_and_tool_name():
+    """`_tool_for(server_key, tool_name)` compares fields, not a packed
+    string -- distinct from `_tool_for_row_key()`, which still resolves the
+    Tools-mode DataTable's packed row key."""
+    app = ToolTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        tools = workbench._last_hub_tools
+        fetch_tool = next(t for t in tools if t.name == "fetch")
+
+        resolved = workbench._tool_for(fetch_tool.server_key, fetch_tool.name)
+        assert resolved is fetch_tool
+
+        # Same tool_name, different server -- must not match.
+        assert workbench._tool_for("local:notes", "fetch") is None
+        # Same server, unknown tool_name -- must not match.
+        assert workbench._tool_for(fetch_tool.server_key, "does-not-exist") is None
+
+
 @pytest.mark.asyncio
 async def test_test_tool_run_success_calls_service_and_renders_ok():
     app = ToolTestApp()
@@ -2886,7 +2920,7 @@ async def test_test_tool_double_run_dispatches_exactly_one_service_call():
         workbench = app.query_one(MCPWorkbench)
         tools = workbench._last_hub_tools
         tool = next(t for t in tools if t.name == "search")
-        event = MCPInspector.ToolTestRequested(tool.tool_id, {"query": "hello"})
+        event = MCPInspector.ToolTestRequested(tool.server_key, tool.name, {"query": "hello"})
         workbench.on_mcp_inspector_tool_test_requested(event)
         workbench.on_mcp_inspector_tool_test_requested(event)
         await pilot.pause()

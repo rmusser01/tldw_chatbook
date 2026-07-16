@@ -998,7 +998,8 @@ async def test_test_run_posts_tool_test_requested_with_collected_arguments():
         await pilot.pause()
         events = [e for e in app.events if isinstance(e, MCPInspector.ToolTestRequested)]
         assert len(events) == 1
-        assert events[0].tool_id == tool.tool_id
+        assert events[0].server_key == tool.server_key
+        assert events[0].tool_name == tool.name
         assert events[0].arguments == {"query": "hello"}
         assert app.query_one("#mcp-inspector-test-run", Button).disabled is True
 
@@ -1054,7 +1055,8 @@ async def test_show_tool_result_ok_renders_status_line_and_reenables_run():
         await pilot.click("#mcp-inspector-test-run")
         await pilot.pause()
         inspector.show_tool_result(
-            tool_id=tool.tool_id, ok=True, text='{"ok": true}', duration_ms=123
+            server_key=tool.server_key, tool_name=tool.name, ok=True,
+            text='{"ok": true}', duration_ms=123,
         )
         await pilot.pause()
         result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
@@ -1073,7 +1075,10 @@ async def test_show_tool_result_failed_renders_status_line():
         await pilot.pause()
         await pilot.click("#mcp-inspector-test-tool")
         await pilot.pause()
-        inspector.show_tool_result(tool_id=tool.tool_id, ok=False, text="boom", duration_ms=45)
+        inspector.show_tool_result(
+            server_key=tool.server_key, tool_name=tool.name, ok=False,
+            text="boom", duration_ms=45,
+        )
         await pilot.pause()
         result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
         assert result.startswith("Failed · 45ms")
@@ -1098,9 +1103,10 @@ async def test_show_tool_result_for_a_different_tool_is_dropped():
         await pilot.pause()
         assert run_button.disabled is True
 
-        # Tool A's late result arrives under B's tool_id mismatch.
+        # Tool A's late result arrives under B's server_key/tool_name mismatch.
         inspector.show_tool_result(
-            tool_id="local:docs::search", ok=True, text="A's payload", duration_ms=10
+            server_key="local:docs", tool_name="search", ok=True,
+            text="A's payload", duration_ms=10,
         )
         await pilot.pause()
 
@@ -1108,6 +1114,57 @@ async def test_show_tool_result_for_a_different_tool_is_dropped():
         assert "A's payload" not in result
         assert result == ""
         assert run_button.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_same_name_different_server_is_dropped():
+    """I1 (both fields): a result whose `tool_name` matches the currently
+    selected tool but whose `server_key` does NOT must still be dropped --
+    the stale-drop compare is a (server_key, tool_name) pair, not just the
+    name."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool(name="search", server_key="local:docs")
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+
+        inspector.show_tool_result(
+            server_key="local:notes", tool_name="search", ok=True,
+            text="wrong server's payload", duration_ms=5,
+        )
+        await pilot.pause()
+
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert "wrong server's payload" not in result
+        assert result == ""
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_same_tool_is_not_dropped():
+    """A result that matches BOTH the current tool's server_key and
+    tool_name (e.g. a same-tool re-run) must still render -- the stale-drop
+    guard must not become a false-positive drop for the tool it's actually
+    for."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool(name="search", server_key="local:docs")
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+
+        inspector.show_tool_result(
+            server_key="local:docs", tool_name="search", ok=True,
+            text="matching payload", duration_ms=7,
+        )
+        await pilot.pause()
+
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert "matching payload" in result
 
 
 @pytest.mark.asyncio
