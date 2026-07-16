@@ -17,10 +17,13 @@ from tldw_chatbook.Chat.Chat_Deps import (
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_provider_gateway import (
     GENERATION_READ_TIMEOUT_SECONDS,
+    NO_PROVIDER_CONTENT_COPY,
     PROBE_TIMEOUT_SECONDS,
+    UNSUPPORTED_PROVIDER_RESPONSE_COPY,
     ConsoleProviderGateway,
     ConsoleProviderResolution,
     LlamaCppProviderConfig,
+    ProviderToolCalls,
     build_llamacpp_chat_payload,
     safe_provider_error_copy,
 )
@@ -1533,3 +1536,172 @@ def test_active_http_client_concurrent_swap_never_leaves_client_bound_to_wrong_l
         thread.join(timeout=2)
 
     assert errors == []
+
+
+def _sse(payload):
+    return "data: " + json.dumps(payload)
+
+
+def _delta_fragment(index, call_id=None, name=None, arguments=None):
+    frag = {"index": index, "function": {}}
+    if call_id is not None:
+        frag["id"] = call_id
+        frag["type"] = "function"
+    if name is not None:
+        frag["function"]["name"] = name
+    if arguments is not None:
+        frag["function"]["arguments"] = arguments
+    return {"choices": [{"delta": {"tool_calls": [frag]}}]}
+
+
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "calculator",
+            "description": "d",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
+]
+
+
+async def _collect(gateway, resolution, tools=None):
+    items = []
+    async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "q"}], tools=tools):
+        items.append(chunk)
+    return items
+
+
+@pytest.mark.asyncio
+async def test_stream_accumulates_sse_tool_call_fragments() -> None:
+    """OpenAI streaming: id/name on the first fragment, arguments split
+    across fragments -> ONE merged ProviderToolCalls yielded last."""
+    script = iter(
+        [
+            _sse(_delta_fragment(0, call_id="c9", name="calculator")),
+            _sse(_delta_fragment(0, arguments='{"expres')),
+            _sse(_delta_fragment(0, arguments='sion": "2+2"}')),
+            "data: [DONE]",
+        ]
+    )
+
+    def fake_chat_api_call(**_kwargs):
+        return script
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"groq": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="groq", explicit_model="llama3-groq", streaming=True)
+    )
+
+    items = await _collect(gateway, resolution, tools=TOOLS)
+
+    calls = [i for i in items if isinstance(i, ProviderToolCalls)]
+    assert len(calls) == 1 and items[-1] is calls[0]
+    (call,) = calls[0].tool_calls
+    assert call == {
+        "id": "c9",
+        "type": "function",
+        "function": {"name": "calculator", "arguments": '{"expression": "2+2"}'},
+    }
+    assert not any(isinstance(i, str) and i.strip() for i in items[:-1])  # no copy leaked
+
+
+@pytest.mark.asyncio
+async def test_non_streaming_message_tool_calls_surface() -> None:
+    """resolution.streaming False: chat_api_call returns the full dict;
+    message.tool_calls surfaces as ProviderToolCalls, content as text."""
+    response = {
+        "choices": [
+            {
+                "message": {
+                    "content": "Checking.",
+                    "tool_calls": [
+                        {"id": "n1", "type": "function", "function": {"name": "calculator", "arguments": "{}"}}
+                    ],
+                }
+            }
+        ]
+    }
+
+    def fake_chat_api_call(**_kwargs):
+        return response
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"groq": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="groq", explicit_model="llama3-groq", streaming=False)
+    )
+
+    items = await _collect(gateway, resolution, tools=TOOLS)
+
+    assert "Checking." in [i for i in items if isinstance(i, str)]
+    (ptc,) = [i for i in items if isinstance(i, ProviderToolCalls)]
+    assert ptc.tool_calls[0]["id"] == "n1"
+
+
+@pytest.mark.asyncio
+async def test_no_tools_requested_is_byte_identical() -> None:
+    """Same fragment script WITHOUT tools=: no ProviderToolCalls, no new
+    strings -- the delta-only chunks stay silently dropped as today."""
+    script = iter(
+        [
+            _sse(_delta_fragment(0, call_id="c9", name="calculator")),
+            _sse(_delta_fragment(0, arguments='{"expres')),
+            _sse(_delta_fragment(0, arguments='sion": "2+2"}')),
+            "data: [DONE]",
+        ]
+    )
+
+    def fake_chat_api_call(**_kwargs):
+        return script
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"groq": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="groq", explicit_model="llama3-groq", streaming=True)
+    )
+
+    items = await _collect(gateway, resolution, tools=None)
+
+    assert all(isinstance(i, str) for i in items)
+    assert UNSUPPORTED_PROVIDER_RESPONSE_COPY not in items
+
+
+@pytest.mark.asyncio
+async def test_tool_call_only_stream_yields_no_fallback_copy() -> None:
+    """A tools= run whose stream carries ONLY tool-call fragments must not
+    inject NO_PROVIDER_CONTENT_COPY / UNSUPPORTED copy into the text
+    stream (that copy would be echoed into agent history)."""
+    script = iter(
+        [
+            _sse(_delta_fragment(0, call_id="c9", name="calculator")),
+            _sse(_delta_fragment(0, arguments='{"expres')),
+            _sse(_delta_fragment(0, arguments='sion": "2+2"}')),
+            "data: [DONE]",
+        ]
+    )
+
+    def fake_chat_api_call(**_kwargs):
+        return script
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"groq": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="groq", explicit_model="llama3-groq", streaming=True)
+    )
+
+    items = await _collect(gateway, resolution, tools=TOOLS)
+
+    texts = [i for i in items if isinstance(i, str)]
+    assert NO_PROVIDER_CONTENT_COPY not in texts
+    assert UNSUPPORTED_PROVIDER_RESPONSE_COPY not in texts
