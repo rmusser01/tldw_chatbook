@@ -180,6 +180,36 @@ class LocalMCPControlService:
             "prompts": len(snapshot.get("prompts", [])),
         }
 
+    async def execute_external_tool(
+        self,
+        profile_id: str,
+        tool_name: str,
+        arguments: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Execute a tool on an external stdio profile, connecting if needed.
+
+        Args:
+            profile_id: Id of the stored external profile.
+            tool_name: Name of the tool to call on that server.
+            arguments: Tool arguments; defaults to an empty dict.
+
+        Returns:
+            The raw result payload from ``MCPClient.call_tool``.
+
+        Raises:
+            PermissionError: If governance denies the trigger action.
+            RuntimeError: If the client reports an error payload.
+        """
+        self._require_allowed("mcp.external_profiles.trigger.local")
+        client = self._get_client()
+        sessions = getattr(client, "sessions", {})
+        if profile_id not in sessions:
+            await self.connect_profile(profile_id)
+        payload = await client.call_tool(profile_id, tool_name, arguments or {})
+        if isinstance(payload, dict) and "error" in payload:
+            raise RuntimeError(payload["error"])
+        return payload
+
     async def refresh_external_profile(self, profile_id: str) -> dict[str, Any]:
         self._require_allowed("mcp.external_profiles.observe.local")
         return await self._describe_profile(profile_id, keep_connected=True)

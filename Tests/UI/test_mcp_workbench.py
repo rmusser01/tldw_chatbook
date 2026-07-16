@@ -9,7 +9,8 @@ from typing import Any
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Checkbox, ContentSwitcher, Input, Select, Static, TextArea
+from textual.containers import Vertical
+from textual.widgets import Button, Checkbox, ContentSwitcher, DataTable, Input, Select, Static, TextArea
 
 import tldw_chatbook.UI.MCP_Modules.mcp_inspector as mcp_inspector_module
 import tldw_chatbook.UI.MCP_Modules.mcp_workbench as mcp_workbench_module
@@ -19,6 +20,7 @@ from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel, MCPPro
 from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCP_RAIL_ROW_PREFIX, MCPRail
 from tldw_chatbook.UI.MCP_Modules.mcp_server_mutations import MCPServerMutationsPanel
 from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
+from tldw_chatbook.UI.MCP_Modules.mcp_tools_mode import MCPToolsMode
 from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCP_HUB_MODES, MCPWorkbench
 
 
@@ -1106,6 +1108,102 @@ async def test_in_flight_shows_checking_and_cancel_then_completes():
         await pilot.pause()
         assert ("connect", "docs") in app.unified_mcp_service.lifecycle_calls
         assert "local:docs" not in workbench._in_flight
+
+
+@pytest.mark.asyncio
+async def test_in_flight_checking_message_includes_time_bound(monkeypatch):
+    """T7 (P3 UX batch): the CHECKING message ("Working — <action>…") gave
+    no indication of how long an in-flight lifecycle op might sit there
+    before a user gave up on it. `_display_snapshot()` now appends a time
+    bound read from `[mcp] hub_lifecycle_timeout_seconds` (the same setting
+    `UnifiedMCPControlPlaneService._lifecycle_timeout()` uses to actually
+    enforce the timeout) -- default 45s, formatted as an int.
+
+    Monkeypatches `get_cli_setting` to return each call's own default
+    (i.e. "nothing configured") so this assertion can't accidentally pass
+    or fail depending on a developer's real `~/.config/tldw_cli/config.toml`.
+    """
+    monkeypatch.setattr(
+        mcp_workbench_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: default,
+    )
+
+    app = LifecycleApp()
+    app.unified_mcp_service.connect_gate = asyncio.Event()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench._selected_server_key = "local:docs"
+        workbench._start_lifecycle("local:docs", "docs", "connect")
+        await pilot.pause()
+        selected = workbench._snapshot_for_display("local:docs")
+        assert selected.state.value == "checking"
+        assert "(up to" in selected.message
+        assert "(up to 45s)" in selected.message
+        app.unified_mcp_service.connect_gate.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_in_flight_checking_message_time_bound_honors_config_override(monkeypatch):
+    """The time bound is read live from config, not hardcoded -- a
+    non-default `hub_lifecycle_timeout_seconds` must show up in the CHECKING
+    copy verbatim."""
+
+    def fake_get_cli_setting(section, key=None, default=None):
+        if (section, key) == ("mcp", "hub_lifecycle_timeout_seconds"):
+            return 12
+        return default
+
+    monkeypatch.setattr(mcp_workbench_module, "get_cli_setting", fake_get_cli_setting)
+
+    app = LifecycleApp()
+    app.unified_mcp_service.connect_gate = asyncio.Event()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench._selected_server_key = "local:docs"
+        workbench._start_lifecycle("local:docs", "docs", "connect")
+        await pilot.pause()
+        selected = workbench._snapshot_for_display("local:docs")
+        assert "(up to 12s)" in selected.message
+        app.unified_mcp_service.connect_gate.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_in_flight_checking_message_time_bound_survives_malformed_config(monkeypatch):
+    """A non-numeric `hub_lifecycle_timeout_seconds` (e.g. a user fat-fingering
+    "soon" into config.toml) must not crash the CHECKING render path --
+    `_display_snapshot()` should fall back to the same 45s default that
+    `UnifiedMCPControlPlaneService._lifecycle_timeout()` falls back to on the
+    same malformed input, rather than letting `float()` raise ValueError
+    straight out of a render call."""
+
+    def fake_get_cli_setting(section, key=None, default=None):
+        if (section, key) == ("mcp", "hub_lifecycle_timeout_seconds"):
+            return "soon"
+        return default
+
+    monkeypatch.setattr(mcp_workbench_module, "get_cli_setting", fake_get_cli_setting)
+
+    app = LifecycleApp()
+    app.unified_mcp_service.connect_gate = asyncio.Event()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench._selected_server_key = "local:docs"
+        workbench._start_lifecycle("local:docs", "docs", "connect")
+        await pilot.pause()
+        selected = workbench._snapshot_for_display("local:docs")
+        assert selected.state.value == "checking"
+        assert "(up to 45s)" in selected.message
+        app.unified_mcp_service.connect_gate.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
 
 
 @pytest.mark.asyncio
@@ -2283,9 +2381,761 @@ async def test_mode_placeholder_canvases_use_info_callout_not_recovery_callout()
     async with app.run_test() as pilot:
         await pilot.pause()
         for mode, spec in MCP_HUB_MODES.items():
-            if mode == "servers":
+            # T5: "tools" now hosts the real `MCPToolsMode` canvas (see
+            # test_mcp_tools_mode.py for its own empty-state coverage), not
+            # a generic phase placeholder -- only "servers" and "tools" are
+            # real canvases at this point.
+            if mode in ("servers", "tools"):
                 continue
             static = app.query_one(f"#mcp-mode-canvas-{mode} Static", Static)
             assert "ds-info-callout" in static.classes, mode
             assert "ds-recovery-callout" not in static.classes, mode
             assert str(static.renderable) == spec["placeholder"]
+
+
+# -- T5: Tools mode canvas registration + workbench-fed catalog -------------
+
+
+@pytest.mark.asyncio
+async def test_tools_mode_canvas_replaces_placeholder():
+    """`#mcp-mode-canvas-tools` must host the real `MCPToolsMode` widget --
+    not the generic placeholder Vertical/Static every other not-yet-built
+    mode still renders."""
+    app = WorkbenchApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert isinstance(app.query_one("#mcp-mode-canvas-tools"), MCPToolsMode)
+        assert not list(app.query("#mcp-mode-canvas-tools > Static"))
+
+
+@pytest.mark.asyncio
+async def test_tools_mode_shows_tools_from_local_catalog_snapshots():
+    """T5: `_collect_hub_tools()` derives Tools mode's catalog from the SAME
+    local-profile records `_collect_snapshots()` already loaded for the rail/
+    overview (`FakeHubService`'s seeded "docs" profile, discovery_snapshot
+    tools=[{"name": "a"}]) -- no separate fetch.
+    """
+    app = WorkbenchApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one(MCPToolsMode)
+        table = canvas.query_one("#mcp-tools-table", DataTable)
+        assert table.row_count == 1
+        row_key, _ = table.coordinate_to_cell_key((0, 0))
+        assert row_key.value == "local:docs::a"
+        assert canvas.query_one("#mcp-tools-empty").display is False
+
+
+class NoServersHubService(FakeHubService):
+    """Local source with zero local profiles configured (and no builtin
+    inventory, since this fake never sets `local_service`) -- the "no
+    servers configured" empty-diagnosis bucket."""
+
+    async def load_section(self, section=None):
+        effective_section = section or self.context.selected_section or "overview"
+        if self.context.selected_source == "local":
+            if effective_section == "external_servers":
+                return []
+            return {"source": "local", "section": effective_section}
+        return {"external_servers": [], "source": "server", "section": "external_servers"}
+
+
+class NoServersApp(App):
+    def __init__(self) -> None:
+        super().__init__()
+        self.unified_mcp_service = NoServersHubService()
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+@pytest.mark.asyncio
+async def test_empty_diagnosis_no_servers_shows_add_server_and_button_opens_form():
+    app = NoServersApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")  # the button must be on-screen for pilot.click()
+        await pilot.pause()
+        canvas = app.query_one(MCPToolsMode)
+        empty = canvas.query_one("#mcp-tools-empty")
+        assert empty.display is True
+        message = str(canvas.query_one("#mcp-tools-empty-message", Static).renderable)
+        assert message == "No servers configured — add one to see its tools."
+
+        await pilot.click("#mcp-tools-empty-action")
+        await pilot.pause()
+        form = app.query_one(MCPProfileForm)
+        assert not form.is_edit
+
+
+@pytest.mark.asyncio
+async def test_empty_diagnosis_connect_routes_to_servers_mode_with_notify():
+    """LifecycleFakeHubService's seeded "docs" profile is disconnected with
+    no discovery snapshot -> NEEDS_SETUP -- the "servers exist but none
+    connected/discovered" empty-diagnosis bucket. The empty state's button
+    must switch to Servers mode (where the real connect/refresh actions
+    live) and notify, not attempt any lifecycle action itself.
+    """
+    app = LifecycleApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        canvas = app.query_one(MCPToolsMode)
+        message = str(canvas.query_one("#mcp-tools-empty-message", Static).renderable)
+        assert message == "No tools discovered yet — connect or refresh a server."
+
+        notifications = _capture_notifications(app)
+        await pilot.click("#mcp-tools-empty-action")
+        await pilot.pause()
+        assert workbench.active_mode == "servers"
+        assert notifications and notifications[-1] == (
+            "Select a server below to connect or refresh its tools.",
+            "information",
+        )
+
+
+class ServerToolsHubService(FakeHubService):
+    """Server source with one active target ("main") whose sole external
+    record embeds its own `tools` list -- mirrors a backend that returns
+    per-record tool inventories inline (see `readiness.py`'s own
+    `record.get("tools")` tool_count fallback, the same embedded shape)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.context = UnifiedMCPContext(
+            selected_source="server", selected_active_server_id="main"
+        )
+
+    async def load_section(self, section=None):
+        effective_section = section or self.context.selected_section or "overview"
+        if effective_section == "external_servers":
+            return {
+                "external_servers": [
+                    {
+                        "server_id": "docs",
+                        "name": "Docs",
+                        "tools": [{"name": "search", "description": "Search."}],
+                    }
+                ],
+                "source": "server",
+                "section": "external_servers",
+            }
+        return {"external_servers": [], "source": "server", "section": effective_section}
+
+
+class ServerToolsApp(App):
+    def __init__(self) -> None:
+        super().__init__()
+        self.unified_mcp_service = ServerToolsHubService()
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+@pytest.mark.asyncio
+async def test_tools_mode_shows_server_source_tools_from_embedded_inventory():
+    app = ServerToolsApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one(MCPToolsMode)
+        table = canvas.query_one("#mcp-tools-table", DataTable)
+        assert table.row_count == 1
+        row_key, _ = table.coordinate_to_cell_key((0, 0))
+        assert row_key.value == "server:main/docs::search"
+        assert canvas.query_one("#mcp-tools-empty").display is False
+
+
+class DuplicateNameToolsHubService(FakeHubService):
+    """A local external profile whose discovery snapshot carries two
+    same-named tools -- C1: this used to crash every mount of the Tools mode
+    canvas (Textual `DuplicateKey` on the DataTable row key, which is
+    `HubTool.tool_id`), and since discovery snapshots persist verbatim to
+    disk, it was a permanent crash-loop, not a one-off."""
+
+    async def load_section(self, section=None):
+        effective_section = section or self.context.selected_source or "overview"
+        if self.context.selected_source == "local" and effective_section == "external_servers":
+            return [
+                {
+                    "profile_id": "docs",
+                    "command": "python",
+                    "args": [],
+                    "env_placeholders": {},
+                    "discovery_snapshot": {
+                        "tools": [
+                            {"name": "search", "description": "a"},
+                            {"name": "search", "description": "b"},
+                        ],
+                        "resources": [],
+                        "prompts": [],
+                    },
+                    "is_connected": True,
+                }
+            ]
+        return {"source": "local", "section": effective_section}
+
+    async def local_external_catalog(self):
+        return await self.load_section("external_servers")
+
+
+class DuplicateNameToolsApp(App):
+    def __init__(self) -> None:
+        super().__init__()
+        self.unified_mcp_service = DuplicateNameToolsHubService()
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+@pytest.mark.asyncio
+async def test_duplicate_tool_names_do_not_crash_workbench_mount():
+    app = DuplicateNameToolsApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        table = app.query_one("#mcp-tools-table", DataTable)
+        assert table.row_count == 1
+        row_key, _ = table.coordinate_to_cell_key((0, 0))
+        assert row_key.value == "local:docs::search"
+
+
+# -- Task 6: inspector tool detail + Test Tool runner wiring -----------------
+#
+# `ToolTestHubService` seeds two local profiles: "docs" (tools "fetch" --
+# no inputSchema, raw-mode -- and "search" -- a schema with a required
+# "query" string, form-mode) and "notes" (tool "list_notes"). Sorted by
+# (server_label, name) per MCPToolsMode._apply_filter(), the table rows are:
+# 0=docs::fetch, 1=docs::search, 2=notes::list_notes.
+
+
+class ToolTestHubService(FakeHubService):
+    def __init__(self) -> None:
+        super().__init__()
+        self.test_calls: list[tuple[str, str, dict]] = []
+        self.test_result: Any = {"ok": True}
+        self.raise_error: Exception | None = None
+        # When set, test_hub_tool() records its call then blocks on this
+        # gate -- mirrors LifecycleFakeHubService.connect_gate, for the
+        # double-run test.
+        self.test_gate: asyncio.Event | None = None
+
+    async def load_section(self, section=None):
+        effective_section = section or self.context.selected_section or "overview"
+        if self.context.selected_source == "local":
+            if effective_section == "external_servers":
+                return [
+                    {
+                        "profile_id": "docs",
+                        "command": "python",
+                        "args": [],
+                        "env_placeholders": {},
+                        "discovery_snapshot": {
+                            "tools": [
+                                {"name": "fetch", "description": "Fetch a doc."},
+                                {
+                                    "name": "search",
+                                    "description": "Search the docs.",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "query": {
+                                                "type": "string",
+                                                "description": "Search text",
+                                            }
+                                        },
+                                        "required": ["query"],
+                                    },
+                                },
+                            ],
+                            "resources": [],
+                            "prompts": [],
+                        },
+                        "is_connected": True,
+                    },
+                    {
+                        "profile_id": "notes",
+                        "command": "python",
+                        "args": [],
+                        "env_placeholders": {},
+                        "discovery_snapshot": {
+                            "tools": [{"name": "list_notes", "description": "List notes."}],
+                            "resources": [],
+                            "prompts": [],
+                        },
+                        "is_connected": True,
+                    },
+                ]
+            return {"source": "local", "section": effective_section}
+        return {"external_servers": [], "source": "server", "section": "external_servers"}
+
+    async def local_external_catalog(self):
+        return await self.load_section("external_servers")
+
+    async def test_hub_tool(self, server_key, tool_name, arguments=None):
+        self.test_calls.append((server_key, tool_name, dict(arguments or {})))
+        if self.test_gate is not None:
+            await self.test_gate.wait()
+        if self.raise_error is not None:
+            raise self.raise_error
+        return self.test_result
+
+
+class ToolTestApp(App):
+    def __init__(self) -> None:
+        super().__init__()
+        self.unified_mcp_service = ToolTestHubService()
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+async def _select_tools_mode_row(app: App, pilot, row: int) -> None:
+    table = app.query_one("#mcp-tools-table", DataTable)
+    table.focus()
+    table.move_cursor(row=row)
+    await pilot.pause()
+    await pilot.press("enter")
+    await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_tool_row_selection_shows_tool_detail_with_test_button():
+    app = ToolTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
+        name_text = str(app.query_one("#mcp-inspector-tool-name", Static).renderable)
+        assert "docs" in name_text
+        test_button = app.query_one("#mcp-inspector-test-tool", Button)
+        assert test_button.tooltip == "Run this tool with test arguments."
+
+
+@pytest.mark.asyncio
+async def test_switching_mode_clears_tool_detail():
+    app = ToolTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)
+        assert list(app.query("#mcp-inspector-tool-name"))
+
+        workbench.set_mode("servers")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert not list(app.query("#mcp-inspector-tool-name"))
+
+
+@pytest.mark.asyncio
+async def test_switching_selected_server_clears_tool_detail():
+    app = ToolTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)
+        assert list(app.query("#mcp-inspector-tool-name"))
+
+        await workbench._select_server_key("local:notes")
+        await pilot.pause()
+        assert not list(app.query("#mcp-inspector-tool-name"))
+
+
+@pytest.mark.asyncio
+async def test_second_tool_selection_back_to_back_does_not_duplicate_ids():
+    """Mandatory regression (mirrors test_mcp_inspector.py's
+    test_second_show_tool_back_to_back_does_not_duplicate_ids): selecting a
+    second tool before the first selection's inspector refresh has settled
+    must not raise DuplicateIds."""
+    app = ToolTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        tools = workbench._last_hub_tools
+        tool_a = next(t for t in tools if t.name == "fetch")
+        tool_b = next(t for t in tools if t.name == "search")
+        await workbench.on_mcp_tools_mode_tool_selected(MCPToolsMode.ToolSelected(tool_a.tool_id))
+        # No pause here on purpose.
+        await workbench.on_mcp_tools_mode_tool_selected(MCPToolsMode.ToolSelected(tool_b.tool_id))
+        await pilot.pause()
+        names = list(app.query("#mcp-inspector-tool-name"))
+        assert len(names) == 1
+        assert "search" in str(names[0].renderable)
+
+
+@pytest.mark.asyncio
+async def test_test_tool_run_success_calls_service_and_renders_ok():
+    app = ToolTestApp()
+    app.unified_mcp_service.test_result = {"ok": True}
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 1)  # docs::search (form schema)
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        app.query_one("#mcp-schema-field-0", Input).value = "hello"
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert app.unified_mcp_service.test_calls == [
+            ("local:docs", "search", {"query": "hello"})
+        ]
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        first_line = result.split("\n", 1)[0]
+        assert first_line.startswith("OK · ")
+        assert first_line.endswith("ms")
+        assert app.query_one("#mcp-inspector-test-run", Button).disabled is False
+
+
+@pytest.mark.asyncio
+async def test_test_tool_run_error_renders_failed_with_message():
+    app = ToolTestApp()
+    app.unified_mcp_service.raise_error = RuntimeError("boom")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch (raw, default "{}")
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        first_line = result.split("\n", 1)[0]
+        assert first_line.startswith("Failed · ")
+        assert first_line.endswith("ms")
+        assert "boom" in result
+
+
+@pytest.mark.asyncio
+async def test_test_tool_run_redacts_secret_shaped_result():
+    app = ToolTestApp()
+    app.unified_mcp_service.test_result = {"ok": True, "api_key": "sk-live-secret"}
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch (raw, default "{}")
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert "sk-live-secret" not in result
+        assert "***" in result
+
+
+@pytest.mark.asyncio
+async def test_test_tool_run_error_with_dict_shaped_args_is_redacted():
+    """I1 (ledger #5): some errors carry a raw dict payload in `exc.args`
+    (e.g. an echoed request/arguments dict) -- `str(exc)` would otherwise
+    dump that dict's raw repr, including any secret-shaped values in it,
+    straight into the result panel."""
+    app = ToolTestApp()
+    app.unified_mcp_service.raise_error = RuntimeError(
+        {"api_key": "sk-live-secret", "detail": "bad request"}
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch (raw, default "{}")
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert "sk-live-secret" not in result
+        assert "***" in result
+        assert "bad request" in result
+
+
+@pytest.mark.asyncio
+async def test_test_tool_double_run_dispatches_exactly_one_service_call():
+    """Mirrors test_double_submit_dispatches_exactly_one_save: the workbench
+    in-flight guard, not just the Run button's own disabled state, is the
+    authoritative dedupe for a second ToolTestRequested reaching the
+    workbench before the first has completed (two Pressed messages queued
+    before the first handler can disable anything)."""
+    app = ToolTestApp()
+    app.unified_mcp_service.test_gate = asyncio.Event()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        notifications = _capture_notifications(app)
+        workbench = app.query_one(MCPWorkbench)
+        tools = workbench._last_hub_tools
+        tool = next(t for t in tools if t.name == "search")
+        event = MCPInspector.ToolTestRequested(tool.tool_id, {"query": "hello"})
+        workbench.on_mcp_inspector_tool_test_requested(event)
+        workbench.on_mcp_inspector_tool_test_requested(event)
+        await pilot.pause()
+        assert any(
+            "already running" in msg.lower() and severity == "warning"
+            for msg, severity in notifications
+        ), f"expected a warning toast, got: {notifications!r}"
+        app.unified_mcp_service.test_gate.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert len(app.unified_mcp_service.test_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_slow_tool_result_does_not_render_under_a_different_selected_tool():
+    """I1: tool A's ("docs::fetch") slow test run must not land in tool B's
+    ("notes::list_notes") panel when the user switches selection before A
+    resolves -- and must not re-enable B's Run button on A's behalf.
+    Mirrors the whole-branch review's end-to-end probe."""
+    app = ToolTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        service = app.unified_mcp_service
+        workbench.set_mode("tools")
+        await pilot.pause()
+
+        # Select docs::fetch (row 0, raw mode), open Test panel, Run (gated).
+        await _select_tools_mode_row(app, pilot, 0)
+        app.query_one("#mcp-inspector-test-tool", Button).press()
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        service.test_gate = asyncio.Event()
+        service.test_result = {"result": "FETCH-DOC-PAYLOAD"}
+        app.query_one("#mcp-inspector-test-run", Button).press()
+        await pilot.pause()
+        assert service.test_calls and service.test_calls[0][1] == "fetch"
+
+        # While fetch is in flight, select notes::list_notes and open ITS panel.
+        await _select_tools_mode_row(app, pilot, 2)
+        await pilot.pause()
+        inspector = app.query_one(MCPInspector)
+        assert inspector.current_tool.name == "list_notes"
+        app.query_one("#mcp-inspector-test-tool", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        result_widget = app.query_one("#mcp-inspector-test-result", Static)
+        run_button = app.query_one("#mcp-inspector-test-run", Button)
+        assert str(result_widget.renderable) == ""
+
+        # Release the gate: fetch's late result must be dropped, not shown
+        # under notes::list_notes, and must not touch list_notes's own Run.
+        service.test_gate.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        rendered = str(result_widget.renderable)
+        assert "FETCH-DOC-PAYLOAD" not in rendered
+        assert rendered == ""
+        assert inspector.current_tool.name == "list_notes"
+        assert run_button.disabled is False  # never pressed for list_notes
+
+
+@pytest.mark.asyncio
+async def test_test_tool_run_non_str_dict_key_result_does_not_crash():
+    """Critical regression: `_run_tool_test()`'s success-path result
+    formatting (`json.dumps(redact_mapping(result), default=str)`) used to
+    sit OUTSIDE the inner try/except. A result dict with a non-str key (a
+    tuple, here) makes `json.dumps` raise `TypeError` -- `default=str` only
+    covers values, not keys -- and that exception used to escape the worker
+    body entirely. Textual's `run_worker()` defaults to `exit_on_error=True`,
+    so an uncaught exception there panics the whole app rather than just
+    failing this one tool test. After the fix, formatting errors must be
+    caught and rendered as a failed result like any other test failure."""
+    app = ToolTestApp()
+    app.unified_mcp_service.test_result = {("tuple", "key"): 1}
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch (raw, default "{}")
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        first_line = result.split("\n", 1)[0]
+        assert first_line.startswith("Failed · ")
+        assert app.query_one("#mcp-inspector-test-run", Button).disabled is False
+        assert workbench._tool_test_in_flight == set()
+
+
+@pytest.mark.asyncio
+async def test_collect_arguments_value_error_does_not_call_service():
+    app = ToolTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 1)  # docs::search (required "query")
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        # required "query" field left empty
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+        assert app.unified_mcp_service.test_calls == []
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert "required" in result
+
+
+@pytest.mark.asyncio
+async def test_raw_mode_tool_run_posts_parsed_json_to_service():
+    app = ToolTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        table = app.query_one("#mcp-tools-table", DataTable)
+        assert table.row_count == 3
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch (raw mode)
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        raw_area = app.query_one("#mcp-schema-raw", TextArea)
+        raw_area.text = '{"id": 42}'
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert ("local:docs", "fetch", {"id": 42}) in app.unified_mcp_service.test_calls
+
+
+# -- Task 8: `t` keybinding entry point (open_test_for_selected_tool) --------
+
+
+@pytest.mark.asyncio
+async def test_open_test_for_selected_tool_with_no_selection_notifies():
+    """T8: the `t` keybinding's workbench entry point -- with nothing
+    selected in the inspector's tool-detail view, notifies instead of
+    silently no-opping, mirroring `open_add_server_form()`'s T13 rationale
+    for a keybinding that can reach a state no disabled button gates. Also
+    switches to Tools mode even though nothing is selected there yet --
+    same "the keybinding always lands you in the right mode" contract as
+    `action_mcp_add_server`.
+    """
+    app = ToolTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        notifications = _capture_notifications(app)
+        workbench = app.query_one(MCPWorkbench)
+        assert workbench.active_mode == "servers"
+
+        await workbench.open_test_for_selected_tool()
+        await pilot.pause()
+
+        assert workbench.active_mode == "tools"
+        assert not list(app.query("#mcp-inspector-test-panel"))
+        assert notifications
+        message, severity = notifications[-1]
+        assert message == "Select a tool first."
+        assert severity == "warning"
+
+
+@pytest.mark.asyncio
+async def test_open_test_for_selected_tool_with_selection_opens_panel():
+    """T8: with a tool already selected in the inspector (Tools mode,
+    row already clicked), `open_test_for_selected_tool()` opens the SAME
+    Test Tool panel the button's own press handler mounts
+    (`MCPInspector._mount_test_tool_panel()`, reused via
+    `MCPInspector.open_test_panel()`) -- not a second, duplicate mount path.
+    """
+    app = ToolTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 1)  # docs::search (form schema)
+
+        await workbench.open_test_for_selected_tool()
+        await pilot.pause()
+
+        assert workbench.active_mode == "tools"
+        panel = app.query_one("#mcp-inspector-test-panel", Vertical)
+        assert panel.display is not False
+        assert app.query_one("#mcp-inspector-test-tool", Button).disabled is True
+        # The mounted panel carries the selected tool's schema-driven form,
+        # not a blank/duplicate one.
+        assert app.query_one("#mcp-inspector-test-form")
+
+
+@pytest.mark.asyncio
+async def test_open_test_for_selected_tool_does_not_duplicate_already_open_panel():
+    """T8: pressing `t` a second time while the panel is already open (same
+    tool still selected) must not raise `DuplicateIds` -- relies on
+    `_mount_test_tool_panel()`'s own existence-check guard, exercised here
+    through the keybinding's entry point rather than the button.
+    """
+    app = ToolTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
+
+        await workbench.open_test_for_selected_tool()
+        await pilot.pause()
+        await workbench.open_test_for_selected_tool()
+        await pilot.pause()
+
+        assert len(list(app.query("#mcp-inspector-test-panel"))) == 1
+
+
+@pytest.mark.asyncio
+async def test_open_test_for_selected_tool_with_non_executable_selection_notifies_phase_note():
+    """T8 regression: `MCPInspector.open_test_panel()` used to return the
+    same `False` for BOTH "nothing selected" and "a tool IS selected but
+    isn't executable yet" (server-source, Phase 4), so
+    `open_test_for_selected_tool()` notified "Select a tool first." for
+    both -- misleading when a tool is in fact selected. With a
+    server-source tool selected (never executable -- see
+    `server_tools_from_inventory`), the `t` keybinding must notify with
+    the SAME copy the inline detail view already shows for that tool
+    (`mcp_inspector.py`'s "Testing server-source tools arrives in Phase
+    4." `Static`), not the generic no-selection message, and must not
+    mount a test panel (there is no schema-driven form to open for a
+    tool that can't be invoked).
+    """
+    app = ServerToolsApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        notifications = _capture_notifications(app)
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # server:main/docs::search
+        assert app.query_one("#mcp-inspector-tool-phase-note", Static)
+
+        await workbench.open_test_for_selected_tool()
+        await pilot.pause()
+
+        assert workbench.active_mode == "tools"
+        assert not list(app.query("#mcp-inspector-test-panel"))
+        assert notifications
+        message, severity = notifications[-1]
+        assert message == "Testing server-source tools arrives in Phase 4."
+        assert severity == "information"

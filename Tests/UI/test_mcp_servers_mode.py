@@ -23,6 +23,7 @@ from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel
 from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
 
 _BUNDLED_CSS_PATH = str(Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss")
+_AGENTIC_TERMINAL_TCSS = Path(tldw_chatbook.__file__).parent / "css" / "components" / "_agentic_terminal.tcss"
 
 
 def _snap(key: str, label: str, state=ReadinessState.READY, reasons=(), message="", **kw):
@@ -938,3 +939,152 @@ async def test_switching_source_between_calls_rebuilds_columns():
         await canvas.update_overview([_snap("local:docs", "docs")], source="local")
         await pilot.pause()
         assert len(table.ordered_columns) == 5
+
+
+# -- T7 (P3 UX batch): canvas hugging layout + quiet pane focus --------------
+
+
+@pytest.mark.asyncio
+async def test_overview_table_hugs_content_so_callouts_sit_close_below():
+    """`#mcp-servers-table` used to be `height: 1fr`, ballooning to fill the
+    whole overview pane no matter how few servers were configured -- on a
+    120x40 canvas a 4-row table left `#mcp-overview-callouts` stranded near
+    the bottom of the pane, dozens of rows below the table row it explains.
+    `height: auto; max-height: 70%;` (MCPServersMode.DEFAULT_CSS) makes the
+    table hug its own row count instead, so the callouts container renders
+    directly under the table's last row.
+    """
+    app = CanvasApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.update_overview(
+            [
+                _snap("local:a", "a"),
+                _snap("local:b", "b"),
+                _snap(
+                    "local:c", "c",
+                    state=ReadinessState.NEEDS_SETUP,
+                    reasons=(ReasonCode.AUTH_MISSING,),
+                    message="Missing environment variables: KEY.",
+                ),
+                _snap("local:d", "d"),
+            ]
+        )
+        await pilot.pause()
+        table = app.query_one("#mcp-servers-table", DataTable)
+        callouts = app.query_one("#mcp-overview-callouts")
+        assert table.row_count == 4
+        # Sanity: there is actually something to hug toward, not an
+        # incidentally-empty callouts container.
+        assert list(app.query(".mcp-callout"))
+
+        # `#mcp-overview-callouts` is table's direct next sibling in a
+        # Vertical layout, so its y-origin sits exactly at
+        # `table.region.y + table.region.height` regardless of how that
+        # height was computed -- a ballooned `height: 1fr` table and a
+        # tightly hugged one both leave "zero gap" by that measure alone.
+        # The actual regression is in the table's OWN size: a 1fr table
+        # (competing for remaining space with the equally-1fr-by-default
+        # callouts container beneath it) renders far taller than its 4 rows
+        # + header need, which is what pushes the callouts container's
+        # absolute y-origin dozens of rows below the last data row it
+        # explains. Assert the bounded intrinsic height directly (header +
+        # 4 rows, generous slack) -- this is what `height: auto; max-height:
+        # 70%;` fixes -- then confirm the callouts container is still
+        # exactly adjacent (the sibling-stacking invariant above).
+        assert table.size.height <= 6
+        gap = callouts.region.y - (table.region.y + table.region.height)
+        assert 0 <= gap <= 3
+
+
+def test_servers_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
+    """T7 (P3 UX batch) gave `#mcp-servers-table` `height: auto; max-height:
+    70%;` in `MCPServersMode.DEFAULT_CSS` alone -- no matching rule was ever
+    added to the bundle-source component file (`_agentic_terminal.tcss`),
+    unlike the established `#mcp-detail-builtin-toggles` / `#mcp-servers-
+    form` / `#mcp-import-list` lockstep pairs there. Without a bundle-layer
+    copy, app-loaded CSS (which cascades ON TOP of DEFAULT_CSS) could
+    silently reintroduce the `height: 1fr` ballooning regression T7 fixed
+    (see `test_overview_table_hugs_content_so_callouts_sit_close_below`
+    above), with nothing here to catch it. Pins the rule in both the
+    bundle-source file and the generated bundle (`tldw_cli_modular.tcss`)
+    -- the latter also proves `build_css.py` was re-run after the source
+    edit, mirroring `test_prompt_picker_css_blocks_pinned_in_source_and_
+    bundle` in test_console_prompt_picker.py."""
+    agentic_terminal = _AGENTIC_TERMINAL_TCSS.read_text(encoding="utf-8")
+    bundled_stylesheet = Path(_BUNDLED_CSS_PATH).read_text(encoding="utf-8")
+
+    for text, label in (
+        (agentic_terminal, "_agentic_terminal.tcss"),
+        (bundled_stylesheet, "tldw_cli_modular.tcss"),
+    ):
+        selector = "#mcp-servers-table {"
+        start = text.find(selector)
+        assert start != -1, f"{label} is missing {selector!r}"
+        end = text.find("}", start)
+        block = text[start:end]
+        assert "height: auto;" in block, f"{label}'s {selector!r} block is missing 'height: auto;'"
+        assert "max-height: 70%;" in block, f"{label}'s {selector!r} block is missing 'max-height: 70%;'"
+
+
+class InspectorAppWithBundledCSS(App):
+    """Mounts `MCPInspector` alone with the real bundled stylesheet, so
+    `#mcp-adv-scroll:focus` resolves exactly as it does in the live
+    workbench. Mirrors `CanvasAppWithBundledCSS` above and
+    `InspectorAppWithBundledCSS` in test_mcp_inspector.py (a distinct class
+    of the same name, scoped to this module)."""
+
+    CSS_PATH = _BUNDLED_CSS_PATH
+
+    def compose(self) -> ComposeResult:
+        yield MCPInspector(id="mcp-hub-inspector")
+
+
+@pytest.mark.asyncio
+async def test_detail_scroll_focus_is_quiet_not_the_generic_outline_with_bundled_css():
+    """`#mcp-detail-scroll` (VerticalScroll, focusable by default via
+    ScrollableContainer) used to fall back to the generic `*:focus {
+    outline: solid $ds-focus-accent; }` rule (core/_reset.tcss) -- a heavy
+    boxed cue for a pane that just scrolls read-only server detail text.
+    The new `#mcp-detail-scroll:focus` rule in _agentic_terminal.tcss
+    mirrors the quiet-focus idiom already used for Console content panes
+    elsewhere in that file (#console-left-rail-body:focus,
+    #console-workspace-context:focus): outline/border go away, the
+    background shifts instead.
+    """
+    app = CanvasAppWithBundledCSS()
+    async with app.run_test(size=(120, 40)) as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.show_detail(_snap("local:docs", "docs"))
+        await pilot.pause()
+        scroll = app.query_one("#mcp-detail-scroll")
+        scroll.focus()
+        await pilot.pause()
+        assert scroll.has_focus
+        assert scroll.styles.outline.top[0] in {"", "none"}
+        assert scroll.styles.border.top[0] in {"", "none"}
+        assert scroll.styles.border.top[0] != "dashed"
+        # A real (non-transparent) quiet fill replaces the outline as the
+        # focus cue.
+        assert scroll.styles.background.a > 0
+
+
+@pytest.mark.asyncio
+async def test_adv_scroll_focus_is_quiet_not_the_generic_outline_with_bundled_css():
+    """Same contract as the detail-scroll test above, for the Advanced
+    collapsible's `#mcp-adv-scroll` in mcp_inspector.py."""
+    from textual.widgets import Collapsible
+
+    app = InspectorAppWithBundledCSS()
+    async with app.run_test(size=(120, 40)) as pilot:
+        collapsible = app.query_one("#mcp-adv-collapsible", Collapsible)
+        collapsible.collapsed = False
+        await pilot.pause()
+        scroll = app.query_one("#mcp-adv-scroll")
+        scroll.focus()
+        await pilot.pause()
+        assert scroll.has_focus
+        assert scroll.styles.outline.top[0] in {"", "none"}
+        assert scroll.styles.border.top[0] in {"", "none"}
+        assert scroll.styles.border.top[0] != "dashed"
+        assert scroll.styles.background.a > 0

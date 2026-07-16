@@ -13,16 +13,23 @@ from pathlib import Path
 from loguru import logger
 
 # Import tldw_chatbook components
-from ..DB.ChaChaNotes_DB import ChaChaNotes_DB
+from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
-from ..Notes.Notes_Library import get_note_by_id
-from ..Character_Chat.Character_Chat_Lib import get_character_by_id
+
+# `get_note_by_id` (tldw_chatbook.Notes.Notes_Library) and
+# `get_character_by_id` (tldw_chatbook.Character_Chat.Character_Chat_Lib)
+# were never standalone functions in those modules -- `get_note_by_id` is
+# an instance method of `NotesInteropService`, and no free-function
+# `get_character_by_id` exists at all. `CharactersRAGDB` itself already
+# exposes the equivalent lookups directly (`get_note_by_id()`,
+# `get_character_card_by_id()`), used below instead of these broken
+# imports (QA round mcp-hub-phase3-2026-07, Defect 2).
 
 
 class MCPResources:
     """Container for MCP resource implementations."""
     
-    def __init__(self, chachanotes_db: ChaChaNotes_DB, media_db: MediaDatabase):
+    def __init__(self, chachanotes_db: CharactersRAGDB, media_db: MediaDatabase):
         """Initialize resources with database connections."""
         self.chachanotes_db = chachanotes_db
         self.media_db = media_db
@@ -37,10 +44,13 @@ class MCPResources:
             Resource dict with content and metadata
         """
         try:
-            conv_id = int(conversation_id)
-            
-            # Get conversation details
-            conv = self.chachanotes_db.get_conversation_by_id(conv_id)
+            # `conversation_id` is a string UUID (see `get_conversation_by_id`'s
+            # docstring), not an int -- casting it broke every lookup. Likewise
+            # `get_conversation_messages` never existed on CharactersRAGDB; the
+            # real method is `get_messages_for_conversation`, which already
+            # excludes soft-deleted messages/conversations (QA follow-up review
+            # of commit 4fd1e908).
+            conv = self.chachanotes_db.get_conversation_by_id(conversation_id)
             if not conv:
                 return {
                     "uri": f"conversation://{conversation_id}",
@@ -48,16 +58,16 @@ class MCPResources:
                     "mimeType": "text/plain",
                     "content": "Conversation not found"
                 }
-            
+
             # Get messages
-            messages = self.chachanotes_db.get_conversation_messages(conv_id)
+            messages = self.chachanotes_db.get_messages_for_conversation(conversation_id)
             
             # Format as markdown
             content = f"# {conv['title']}\n\n"
             content += f"*Created: {conv['created_at']}*\n\n"
             
             if conv.get('character_id'):
-                char = get_character_by_id(self.chachanotes_db, conv['character_id'])
+                char = self.chachanotes_db.get_character_card_by_id(conv['character_id'])
                 if char:
                     content += f"**Character**: {char['name']}\n\n"
             
@@ -99,7 +109,7 @@ class MCPResources:
             Resource dict with content and metadata
         """
         try:
-            note = get_note_by_id(self.chachanotes_db, int(note_id))
+            note = self.chachanotes_db.get_note_by_id(str(note_id))
             if not note:
                 return {
                     "uri": f"note://{note_id}",
@@ -154,7 +164,7 @@ class MCPResources:
             Resource dict with content and metadata
         """
         try:
-            char = get_character_by_id(self.chachanotes_db, int(character_id))
+            char = self.chachanotes_db.get_character_card_by_id(int(character_id))
             if not char:
                 return {
                     "uri": f"character://{character_id}",

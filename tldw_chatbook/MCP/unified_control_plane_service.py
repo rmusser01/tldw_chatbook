@@ -2,15 +2,21 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
+import time
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from loguru import logger
 
-from tldw_chatbook.config import get_cli_setting
+from tldw_chatbook.config import coerce_bool_setting, get_cli_setting
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
+from .execution_log import MCPExecutionLog, RESULT_EXCERPT_LIMIT, build_record
+from .redaction import redact_mapping
 from .server_target_store import ConfiguredServerTargetStore
 from .unified_context_store import UnifiedMCPContextStore
 from .unified_control_models import ServerAccessContext, UnifiedMCPContext
@@ -32,6 +38,7 @@ class UnifiedMCPControlPlaneService:
         self.local_service = local_service
         self.server_service = server_service
         self.context = self.context_store.load() if self.context_store is not None else UnifiedMCPContext()
+        self._execution_log: MCPExecutionLog | None = None
 
     @property
     def selected_source(self) -> str:
@@ -1855,11 +1862,153 @@ class UnifiedMCPControlPlaneService:
         return bool(self.local_service.delete_external_profile(profile_id))
 
     async def local_external_catalog(self) -> list[dict]:
+        # Records (profile fields + discovery_snapshot + is_connected) still
+        # come from the local service so governance enforcement and
+        # is_connected (read from the live client sessions) are unchanged.
+        # `runtime_state` is merged in from a single store bundle load
+        # rather than one `get_profile_runtime_state()` load per record.
         records = list(self.local_service.get_external_servers() or [])
         store = getattr(self.local_service, "store", None)
+        runtime_state_by_profile: dict[str, Any] = (
+            store.get_catalog_bundle()["profile_runtime_state"] if store else {}
+        )
         for record in records:
             profile_id = str(record.get("profile_id") or "")
-            record["runtime_state"] = (
-                store.get_profile_runtime_state(profile_id) if store else None
-            )
+            record["runtime_state"] = runtime_state_by_profile.get(profile_id)
         return records
+
+    # ---- Typed tool-execution seam (Phase 3) ---------------------------
+    # Shared by the Hub Tools mode now and by the Phase 5 chat bridge /
+    # agent-runtime MCPToolProvider (task-201) later. Keep this UI-free.
+
+    @property
+    def execution_log(self) -> MCPExecutionLog | None:
+        if self._execution_log is not None:
+            return self._execution_log
+        store = getattr(self.local_service, "store", None)
+        if store is None:
+            return None
+        log_path = Path(store.path).with_name("mcp_execution_log.jsonl")
+        self._execution_log = MCPExecutionLog(log_path)
+        return self._execution_log
+
+    def _record_tool_execution(
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        ok: bool,
+        duration_ms: int,
+        error: str | None,
+        arguments: dict[str, Any],
+        result: Any,
+    ) -> None:
+        # Recording is best-effort: it must never mask the tool result or
+        # the tool error being propagated (Phase 2 masking lesson). N1: the
+        # `self.execution_log` property access itself must be inside this
+        # try too -- it can raise (e.g. `Path(store.path)` oddities), and
+        # sitting outside would let that raise straight out of
+        # `_record_tool_execution()` into the caller's own try/except
+        # around test_hub_tool()'s success/failure paths, masking the tool
+        # result exactly like an append() failure would.
+        try:
+            log = self.execution_log
+            if log is None:
+                return
+            record = build_record(
+                server_key=server_key,
+                tool_name=tool_name,
+                initiator="test",
+                ok=ok,
+                duration_ms=duration_ms,
+                error=error,
+                arguments=arguments,
+                # I2: `build_record()`/`MCPExecutionLog.append()` only
+                # redact `arguments`, never the result -- a Mapping result
+                # (the common shape: `test_hub_tool()`'s MCP call_tool
+                # response) is redacted here first, mirroring the UI's own
+                # result-formatting path (mcp_workbench.py's
+                # `_run_tool_test()`), so a secret echoed back in a tool's
+                # result can never reach disk unredacted.
+                result_excerpt=(
+                    json.dumps(redact_mapping(result), default=str)[:RESULT_EXCERPT_LIMIT]
+                    if isinstance(result, Mapping)
+                    else str(result)[:RESULT_EXCERPT_LIMIT]
+                ),
+                # Coerce: a mis-typed config string like "false" is truthy,
+                # which would silently keep argument capture ON against the
+                # user's stated intent (Qodo #639 finding).
+                capture_args=coerce_bool_setting(
+                    get_cli_setting("mcp", "log_tool_arguments", True), True
+                ),
+            )
+            log.append(record)
+        except Exception as exc:
+            logger.warning(f"MCP execution log record failed for {server_key}/{tool_name}: {exc}")
+
+    async def test_hub_tool(
+        self,
+        server_key: str,
+        tool_name: str,
+        arguments: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Execute one tool test against a local or built-in server.
+
+        The shared execute seam for the Hub's Test Tool runner (and,
+        later, the Phase 5 chat bridge / agent MCPToolProvider). Every
+        attempt — success, failure, or timeout — is recorded to the
+        execution log best-effort before the result or error propagates.
+
+        Args:
+            server_key: Prefixed server key (``local:<profile_id>`` or
+                ``builtin:<id>``). Server-source keys are rejected until
+                Phase 4.
+            tool_name: Name of the tool to execute.
+            arguments: Tool arguments; defaults to an empty dict.
+
+        Returns:
+            The raw result payload from the underlying service call.
+
+        Raises:
+            ValueError: If ``server_key`` is not a local/builtin key.
+            RuntimeError: If the tool call fails or exceeds the
+                configured lifecycle timeout.
+        """
+        normalized_key = str(server_key or "").strip()
+        normalized_tool_name = str(tool_name or "").strip()
+        normalized_arguments = dict(arguments or {})
+
+        if normalized_key.startswith("local:"):
+            profile_id = normalized_key.split(":", 1)[1]
+            coro = self.local_service.execute_external_tool(profile_id, normalized_tool_name, normalized_arguments)
+        elif normalized_key.startswith("builtin:"):
+            coro = self.local_service.execute_tool(normalized_tool_name, normalized_arguments)
+        else:
+            raise ValueError("Tool testing for server-source tools arrives in Phase 4.")
+
+        timeout = self._lifecycle_timeout()
+        started = time.monotonic()
+        try:
+            result = await asyncio.wait_for(coro, timeout=timeout)
+        except asyncio.TimeoutError:
+            duration_ms = int((time.monotonic() - started) * 1000)
+            message = f"Timed out after {timeout:.0f}s"
+            self._record_tool_execution(
+                normalized_key, normalized_tool_name, ok=False, duration_ms=duration_ms,
+                error=message, arguments=normalized_arguments, result=None,
+            )
+            raise RuntimeError(message) from None
+        except Exception as exc:
+            duration_ms = int((time.monotonic() - started) * 1000)
+            self._record_tool_execution(
+                normalized_key, normalized_tool_name, ok=False, duration_ms=duration_ms,
+                error=str(exc), arguments=normalized_arguments, result=None,
+            )
+            raise
+
+        duration_ms = int((time.monotonic() - started) * 1000)
+        self._record_tool_execution(
+            normalized_key, normalized_tool_name, ok=True, duration_ms=duration_ms,
+            error=None, arguments=normalized_arguments, result=result,
+        )
+        return result
