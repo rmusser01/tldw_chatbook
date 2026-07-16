@@ -254,6 +254,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
 
 logger = logger.bind(module="ChatScreen")
+CONSOLE_RUN_ALREADY_RUNNING_COPY = "A Console run is already running."
 CONSOLE_LIBRARY_RAG_SOURCE_SCOPE = ("notes", "media", "conversations")
 CONSOLE_LIBRARY_RAG_RECOVERY_COPY = "Review citations before sending."
 CONSOLE_LIBRARY_RAG_QUERY_MAX_LENGTH = 2_000
@@ -7482,7 +7483,7 @@ class ChatScreen(BaseAppScreen):
             return
         controller = self._ensure_console_chat_controller()
         if not controller.run_state.is_send_allowed:
-            self.app_instance.notify("A Console run is already running.", severity="warning")
+            self.app_instance.notify(CONSOLE_RUN_ALREADY_RUNNING_COPY, severity="warning")
             return
         # group="console-run": a dedicated group so UI-sync kicks can never
         # cancel an in-flight run (TASK-228 — ungrouped exclusive workers all
@@ -8303,7 +8304,7 @@ class ChatScreen(BaseAppScreen):
             # in-flight run at creation time, before the controller's own
             # rejection can run — the screen must refuse, like the submit path.
             if not controller.run_state.is_send_allowed:
-                self.app_instance.notify("A Console run is already running.", severity="warning")
+                self.app_instance.notify(CONSOLE_RUN_ALREADY_RUNNING_COPY, severity="warning")
                 return True
             self.run_worker(
                 self._retry_console_message(controller, message_id),
@@ -8314,7 +8315,7 @@ class ChatScreen(BaseAppScreen):
         if action_id == "regenerate" and result.status == "wip":
             controller = self._ensure_console_chat_controller()
             if not controller.run_state.is_send_allowed:
-                self.app_instance.notify("A Console run is already running.", severity="warning")
+                self.app_instance.notify(CONSOLE_RUN_ALREADY_RUNNING_COPY, severity="warning")
                 return True
             self.run_worker(
                 self._regenerate_console_message(controller, message_id),
@@ -8362,7 +8363,7 @@ class ChatScreen(BaseAppScreen):
         if action_id == "continue" and result.status == "continue_requested":
             controller = self._ensure_console_chat_controller()
             if not controller.run_state.is_send_allowed:
-                self.app_instance.notify("A Console run is already running.", severity="warning")
+                self.app_instance.notify(CONSOLE_RUN_ALREADY_RUNNING_COPY, severity="warning")
                 return True
             self.run_worker(
                 self._continue_console_message(controller, message_id),
