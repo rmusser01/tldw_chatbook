@@ -36,3 +36,9 @@ def test_tolerates_none_and_missing_and_string_extensions():
     assert load_character_dictionaries({"extensions": {}}) == []
     assert load_character_dictionaries({"extensions": '{"chat_dictionaries": []}'}) == []
     assert load_character_dictionaries({"extensions": "not json"}) == []
+
+
+def test_non_list_entries_is_tolerated_without_raising():
+    char = {"extensions": {"chat_dictionaries": [{"name": "Evil", "entries": 5}]}}
+    blocks = load_character_dictionaries(char)
+    assert blocks == [{"name": "Evil", "enabled": True, "entries": []}]

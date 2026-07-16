@@ -1103,7 +1103,10 @@ def load_character_dictionaries(char_data: Optional[Dict[str, Any]]) -> List[Dic
         if not name:
             continue
         entries: List[ChatDictionary] = []
-        for entry in block.get('entries') or []:
+        entries_raw = block.get('entries')
+        if not isinstance(entries_raw, list):
+            entries_raw = []
+        for entry in entries_raw:
             try:
                 entries.append(ChatDictionary.from_dict(entry))
             except Exception:
