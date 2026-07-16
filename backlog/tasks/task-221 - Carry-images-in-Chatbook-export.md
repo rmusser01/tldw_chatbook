@@ -1,9 +1,11 @@
 ---
 id: TASK-221
 title: Carry images in Chatbook export
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-07-13 09:30'
+updated_date: '2026-07-16 15:35'
 labels:
   - chatbooks
 dependencies: []

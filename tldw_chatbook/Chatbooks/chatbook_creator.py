@@ -412,6 +412,13 @@ class ChatbookCreator:
                 if hasattr(last_modified, 'isoformat'):
                     last_modified = last_modified.isoformat()
                     
+                # Batch-fetch positions >= 1 for every message in one query;
+                # position 0 rides in each message row's legacy image columns.
+                message_ids = [str(msg["id"]) for msg in messages if msg.get("id")]
+                extra_attachments = (
+                    db.get_attachments_for_messages(message_ids) if message_ids else {}
+                )
+
                 exported_messages = []
                 citation_messages = []
                 for msg in messages:
@@ -425,6 +432,14 @@ class ChatbookCreator:
                         "content": msg['message'] if 'message' in msg else msg.get('content', ''),
                         "timestamp": timestamp,
                     }
+                    attachment_entries = self._export_message_attachments(
+                        msg,
+                        extra_attachments.get(str(message_id), []),
+                        conv_dir,
+                        str(message_id),
+                    )
+                    if attachment_entries:
+                        message_data["attachments"] = attachment_entries
                     citation_payload = self._message_citation_export_payload(msg)
                     if citation_payload:
                         message_data.update(citation_payload)
@@ -480,6 +495,87 @@ class ChatbookCreator:
                     
             except Exception as e:
                 logger.error(f"Error collecting conversation {conv_id}: {e}")
+
+    _ATTACHMENT_MIME_EXTENSIONS = {
+        "image/png": ".png",
+        "image/jpeg": ".jpg",
+        "image/webp": ".webp",
+        "image/gif": ".gif",
+        "image/bmp": ".bmp",
+        "image/tiff": ".tiff",
+        "image/svg+xml": ".svg",
+    }
+
+    @classmethod
+    def _attachment_extension(cls, mime_type: Optional[str]) -> str:
+        """Return a file extension for an attachment mime type.
+
+        Args:
+            mime_type: The attachment's mime type, possibly None/unknown.
+
+        Returns:
+            A dotted extension; ``.bin`` when the mime type is unknown.
+        """
+        if not mime_type:
+            return ".bin"
+        known = cls._ATTACHMENT_MIME_EXTENSIONS.get(mime_type.lower())
+        if known:
+            return known
+        import mimetypes
+
+        return mimetypes.guess_extension(mime_type) or ".bin"
+
+    def _export_message_attachments(
+        self,
+        msg: Mapping[str, Any],
+        extra_rows: list[Mapping[str, Any]],
+        conv_dir: Path,
+        message_id: str,
+    ) -> list[dict[str, Any]]:
+        """Write a message's image attachments into the chatbook work dir.
+
+        Position 0 comes from the legacy ``image_data``/``image_mime_type``
+        message columns; positions >= 1 from the ``message_attachments``
+        table rows. Files land under ``content/conversations/attachments/``
+        and the returned entries reference them by chatbook-relative path.
+
+        Args:
+            msg: The DB message row (may carry legacy image columns).
+            extra_rows: Position-ordered attachment rows (positions >= 1).
+            conv_dir: The chatbook work dir's conversations directory.
+            message_id: The exported message's id (used in filenames).
+
+        Returns:
+            Manifest entries (position, file, mime_type, display_name), or
+            an empty list when the message has no attachments.
+        """
+        tiers: list[dict[str, Any]] = []
+        legacy_data = msg.get("image_data")
+        if legacy_data:
+            tiers.append({
+                "position": 0,
+                "data": legacy_data,
+                "mime_type": msg.get("image_mime_type") or "image/png",
+                "display_name": "",
+            })
+        tiers.extend(dict(row) for row in extra_rows)
+        entries: list[dict[str, Any]] = []
+        attachments_dir = conv_dir / "attachments"
+        for row in tiers:
+            data = row.get("data")
+            if not data:
+                continue
+            extension = self._attachment_extension(row.get("mime_type"))
+            file_name = f"{message_id}-{row['position']}{extension}"
+            attachments_dir.mkdir(parents=True, exist_ok=True)
+            (attachments_dir / file_name).write_bytes(data)
+            entries.append({
+                "position": row["position"],
+                "file": f"content/conversations/attachments/{file_name}",
+                "mime_type": row.get("mime_type") or "",
+                "display_name": row.get("display_name") or "",
+            })
+        return entries
 
     @staticmethod
     def _merge_message_context(

@@ -366,19 +366,27 @@ class ChatbookImporter:
                 }
                 new_conv_id = db.add_conversation(conv_dict)
                 logger.info(f"ChatbookImporter._import_conversations: Created conversation with ID {new_conv_id}")
-                
+
                 if new_conv_id:
                     # Import messages
                     logger.info(f"ChatbookImporter._import_conversations: Importing {len(conv_data.get('messages', []))} messages")
                     for msg in conv_data.get('messages', []):
+                        image_kwargs, attachment_rows = self._load_message_attachments(
+                            extract_dir, msg, status
+                        )
                         msg_dict = {
                             'conversation_id': new_conv_id,
                             'sender': msg['role'],
                             'content': msg['content'],
                             'timestamp': msg.get('timestamp', datetime.now().isoformat())
                         }
+                        msg_dict.update(image_kwargs)
                         new_message_id = db.add_message(msg_dict)
                         if new_message_id:
+                            if attachment_rows:
+                                db.set_message_attachments(
+                                    str(new_message_id), attachment_rows
+                                )
                             self._persist_imported_message_citation_context(
                                 conversation_service,
                                 str(new_conv_id),
@@ -400,6 +408,69 @@ class ChatbookImporter:
                     "ChatbookImporter._import_conversations: Error importing conversation {}",
                     conv_id,
                 )
+
+    @staticmethod
+    def _load_message_attachments(
+        extract_dir: Path,
+        msg: Dict[str, Any],
+        status: ImportStatus,
+    ) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+        """Load a message's image attachments from the extracted chatbook.
+
+        Position 0 restores through the legacy ``image_data``/
+        ``image_mime_type`` message columns; positions >= 1 become
+        ``message_attachments`` rows — matching the app's live read contract.
+        Entries whose resolved path escapes the extraction root (a hostile
+        chatbook) or whose file is missing are skipped with a warning; the
+        message itself still imports.
+
+        Args:
+            extract_dir: Root the chatbook archive was extracted into.
+            msg: The message payload from the conversation JSON.
+            status: Import status collector for warnings.
+
+        Returns:
+            Tuple of (legacy image kwargs for ``add_message``,
+            attachment rows for ``set_message_attachments``).
+        """
+        image_kwargs: Dict[str, Any] = {}
+        rows: List[Dict[str, Any]] = []
+        raw_entries = msg.get("attachments")
+        if not isinstance(raw_entries, list):
+            return image_kwargs, rows
+        root = extract_dir.resolve()
+        for entry in raw_entries:
+            if not isinstance(entry, dict):
+                continue
+            relative = str(entry.get("file") or "")
+            try:
+                position = int(entry.get("position"))
+            except (TypeError, ValueError):
+                continue
+            if not relative:
+                continue
+            resolved = (extract_dir / relative).resolve()
+            if root != resolved and root not in resolved.parents:
+                status.add_warning(
+                    f"Skipped attachment outside chatbook archive: {relative}"
+                )
+                continue
+            if not resolved.is_file():
+                status.add_warning(f"Attachment file missing from chatbook: {relative}")
+                continue
+            data = resolved.read_bytes()
+            mime_type = str(entry.get("mime_type") or "image/png")
+            display_name = str(entry.get("display_name") or "")
+            if position == 0:
+                image_kwargs = {"image_data": data, "image_mime_type": mime_type}
+            else:
+                rows.append({
+                    "position": position,
+                    "data": data,
+                    "mime_type": mime_type,
+                    "display_name": display_name,
+                })
+        return image_kwargs, rows
 
     @staticmethod
     def _conversation_file_path(
