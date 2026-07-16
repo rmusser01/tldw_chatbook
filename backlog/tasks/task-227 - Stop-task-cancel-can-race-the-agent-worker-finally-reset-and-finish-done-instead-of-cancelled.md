@@ -55,4 +55,47 @@ AC3 (LOW-2): ConsoleChatController._finalize_agent_reply now reads the message b
 Files: tldw_chatbook/Chat/console_chat_controller.py, tldw_chatbook/Chat/console_chat_store.py, Tests/Chat/test_console_agent_swap.py, Tests/Chat/test_console_chat_store.py.
 
 Verification: Tests/Chat/test_console_chat_controller.py, test_console_chat_store.py, test_console_agent_bridge.py, test_console_agent_swap.py, Tests/Agents -- 281 passed, 0 failed.
+
+### Follow-up: AC3 regenerate window (post-review)
+
+**Honesty note**: the AC3 fix as originally shipped above only covered a
+Stop landing in the post-outcome window for a *plain send/retry*. A
+follow-up review found it did not actually cover a stopped **regenerate**
+in that same window, because `mark_message_stopped`
+(console_chat_store.py:678) RESTORES a mid-regenerate message to its
+*prior* status (e.g. "complete"), not "stopped" -- so
+`_finalize_agent_reply`'s `current.status == "stopped"` guard never fired
+for that case, and the two failure modes the guard was meant to prevent
+were both still reachable via regenerate:
+- RUN_DONE fell through to `finalize_variant_stream`, which has no
+  stopped-guard of its own and fabricated a phantom variant from the
+  already-popped variant base, silently resurrecting the message to
+  "complete" with a bogus extra variant entry.
+- RUN_ERROR/RUN_STUCK fell through to `mark_message_failed`, which raised
+  an uncaught `ValueError` via `_validate_can_mark_terminal` (status
+  "complete" is not "pending"/"streaming") -- uncaught because the call
+  happens in `_run_agent_reply` *after* its own try/except/finally block
+  returns -- wedging `run_state` at STREAMING forever (every subsequent
+  send rejected as "a Console run is already running").
+
+**Fix** (this follow-up commit): `_finalize_agent_reply` now also accepts
+the run's own per-run `cancel_event` (the same `threading.Event`
+introduced for AC1, captured by value in `_run_agent_reply` and passed
+through at the call site) and treats the run as stopped when
+`cancel_event.is_set()` is true, independent of what status
+`mark_message_stopped` left the message at. The original
+`current.status == "stopped"` check is kept as a belt for any caller that
+reaches this method without a `cancel_event` in scope. A genuinely
+invalid finalize on a NON-stopped run still raises (unchanged).
+
+**Tests** (RED-confirmed against the pre-follow-up code, then GREEN):
+`Tests/Chat/test_console_agent_swap.py::test_finalize_after_already_stopped_regenerate_no_phantom_variant`
+(RUN_DONE: no phantom variant, run_state STOPPED, content unchanged) and
+`::test_finalize_after_already_stopped_regenerate_error_no_wedge`
+(RUN_ERROR: no exception, run_state STOPPED not stuck STREAMING, next
+send accepted). Full suite re-run:
+`test_console_chat_controller.py` + `test_console_chat_store.py` +
+`test_console_agent_swap.py` + `test_console_variant_stream.py` +
+`Tests/Agents` -- 251 passed, 0 failed (plus
+`test_console_agent_bridge.py` separately -- 37 passed).
 <!-- SECTION:NOTES:END -->

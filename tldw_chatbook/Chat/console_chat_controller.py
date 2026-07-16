@@ -1076,8 +1076,13 @@ class ConsoleChatController:
                 # elsewhere (or nowhere) for the NEXT run (task-227).
                 self._active_cancel_event = None
 
+        # Captured here, before `_finalize_agent_reply` runs: this run's own
+        # cancel_event is the authority on whether IT was stopped,
+        # independent of what status `mark_message_stopped` may have left
+        # the message at (task-227 AC3 follow-up -- see the guard below).
         return self._finalize_agent_reply(
-            assistant_message_id, session_id, outcome, variant_mode=variant_mode)
+            assistant_message_id, session_id, outcome, variant_mode=variant_mode,
+            cancel_event=cancel_event)
 
     def _agent_conversation_id(self, session_id: str) -> str:
         """Return the durable id the run store is keyed by (persisted id when set)."""
@@ -1088,7 +1093,7 @@ class ConsoleChatController:
 
     def _finalize_agent_reply(
         self, assistant_message_id: str, session_id: str, outcome: Any,
-        *, variant_mode: bool,
+        *, variant_mode: bool, cancel_event: threading.Event | None = None,
     ) -> ConsoleSubmitResult:
         from tldw_chatbook.Agents.agent_models import RUN_CANCELLED, RUN_DONE
 
@@ -1096,17 +1101,29 @@ class ConsoleChatController:
             current = self.store.get_message(assistant_message_id)
         except KeyError:
             return self._session_closed_result()
-        if current.status == "stopped":
-            # task-227 LOW-2: a Stop can land in the ultra-narrow window
-            # after asyncio.to_thread returns an outcome but before this
-            # method runs -- the message is already terminal here, so
-            # every branch below would either raise via
-            # _validate_can_mark_terminal (mark_message_complete /
-            # mark_message_failed) or silently resurrect the stopped
-            # message back to "complete" (finalize_variant_stream, which
-            # has no such guard at all). Stop already won and settled
-            # both the message and run_state, so this is a benign
-            # no-op read-back, never an error.
+        # task-227 LOW-2 (+ AC3 follow-up): a Stop can land in the
+        # ultra-narrow window after asyncio.to_thread returns an outcome
+        # but before this method runs. `current.status == "stopped"` alone
+        # only catches a plain send/retry -- `mark_message_stopped`
+        # (console_chat_store.py) RESTORES a mid-regenerate message to its
+        # *prior* status (e.g. "complete"), not "stopped", so that check
+        # never fires for a stopped regenerate. Trust the run's own
+        # per-run `cancel_event` instead: it is set by `_signal_stop` the
+        # instant Stop is requested and never cleared for this run, so
+        # `.is_set()` is true here if and only if THIS run was stopped --
+        # regardless of which status `mark_message_stopped` left the
+        # message at. Every branch below would otherwise either raise via
+        # _validate_can_mark_terminal (mark_message_complete /
+        # mark_message_failed) or silently resurrect the message back to
+        # "complete" with a phantom variant (finalize_variant_stream,
+        # which has no such guard at all). The `current.status`
+        # comparison stays as a belt for any future caller that reaches
+        # this method without a `cancel_event` in scope. Stop already won
+        # and settled the message (mark_message_stopped's own restore --
+        # prior status for a regenerate, "stopped" for a plain send) and
+        # the variant base (already popped), so this is a benign no-op
+        # read-back, never an error, in either case.
+        if current.status == "stopped" or (cancel_event is not None and cancel_event.is_set()):
             self._set_run_state(
                 ConsoleRunState(ConsoleRunStatus.STOPPED, "Response stopped.")
             )
