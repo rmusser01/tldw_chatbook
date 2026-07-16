@@ -773,5 +773,96 @@ class LocalChatDictionaryService:
                 conversations.append({"conversation_id": str(row["id"]), "title": str(row["title"] or "")})
         return {"conversations": conversations, "source": "local"}
 
+    def _load_character_or_raise(self, character_id: int) -> dict[str, Any]:
+        record = self._require_db().get_character_card_by_id(int(character_id))
+        if record is None:
+            raise ValueError(f"Character '{character_id}' was not found.")
+        return record
+
+    @staticmethod
+    def _embedded_dictionaries(record: Mapping[str, Any]) -> list[dict[str, Any]]:
+        ext = record.get("extensions")
+        if isinstance(ext, str):
+            try:
+                ext = json.loads(ext or "{}")
+            except (TypeError, ValueError):
+                ext = {}
+        if not isinstance(ext, dict):
+            ext = {}
+        raw = ext.get("chat_dictionaries") or []
+        if not isinstance(raw, list):
+            raw = []
+        return [b for b in raw if isinstance(b, dict) and b.get("name")]
+
+    def _write_embedded_dictionaries(
+        self, record: dict[str, Any], character_id: int, blocks: list[dict[str, Any]]
+    ) -> None:
+        ext = record.get("extensions")
+        if isinstance(ext, str):
+            try:
+                ext = json.loads(ext or "{}")
+            except (TypeError, ValueError):
+                ext = {}
+        if not isinstance(ext, dict):
+            ext = {}
+        ext["chat_dictionaries"] = blocks
+        self._require_db().update_character_card(
+            int(character_id), {"extensions": ext}, expected_version=record["version"]
+        )
+
+    def attach_to_character(self, dictionary_id: int, character_id: int) -> dict[str, Any]:
+        """Embed a dictionary's content snapshot into a character (idempotent by name).
+
+        Raises:
+            ValueError: If the dictionary or the character does not exist.
+            ConflictError: If the character's version is stale at write time.
+        """
+        block = self.export_json(int(dictionary_id))["data"]
+        name = block.get("name")
+        record = self._load_character_or_raise(character_id)
+        blocks = self._embedded_dictionaries(record)
+        if not any(b.get("name") == name for b in blocks):
+            blocks = blocks + [block]
+            self._write_embedded_dictionaries(record, character_id, blocks)
+        return {
+            "dictionary_id": int(dictionary_id),
+            "character_id": int(character_id),
+            "dictionary_name": name,
+            "character_dictionaries": [b.get("name") for b in blocks],
+            "source": "local",
+        }
+
+    def detach_from_character(self, character_id: int, dictionary_name: str) -> dict[str, Any]:
+        """Remove an embedded dictionary from a character by name (no-op when absent).
+
+        Raises:
+            ValueError: If the character does not exist.
+            ConflictError: If the character's version is stale at write time.
+        """
+        record = self._load_character_or_raise(character_id)
+        blocks = self._embedded_dictionaries(record)
+        if any(b.get("name") == dictionary_name for b in blocks):
+            blocks = [b for b in blocks if b.get("name") != dictionary_name]
+            self._write_embedded_dictionaries(record, character_id, blocks)
+        return {
+            "character_id": int(character_id),
+            "dictionary_name": str(dictionary_name),
+            "character_dictionaries": [b.get("name") for b in blocks],
+            "source": "local",
+        }
+
+    def list_character_dictionaries(self, character_id: int) -> dict[str, Any]:
+        """Summarize a character's embedded dictionaries (from the snapshots only)."""
+        record = self._load_character_or_raise(character_id)
+        dictionaries = [
+            {
+                "name": b.get("name"),
+                "entry_count": len(b.get("entries") or []),
+                "enabled": bool(b.get("enabled", True)),
+            }
+            for b in self._embedded_dictionaries(record)
+        ]
+        return {"dictionaries": dictionaries, "source": "local"}
+
 
 __all__ = ["LocalChatDictionaryService"]
