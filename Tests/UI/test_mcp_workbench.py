@@ -4200,6 +4200,41 @@ async def test_reallow_guard_tool_not_found_notifies_without_store_call(tmp_path
         )
 
 
+@pytest.mark.asyncio
+async def test_invalid_global_default_renders_ask_instead_of_panicking(tmp_path):
+    """I2: a hand-edited `mcp_permissions.json` with an invalid
+    `global_default` (e.g. "banana" -- a valid `schema_version`, so
+    `load()`'s corruption check does NOT back it up/reset it) must not
+    reach `format_tool_state_label()`/`EffectiveToolState.ui_label` as an
+    unrecognized state -- that used to `KeyError` out of `_sync_children`
+    and panic the whole app on the very first Permissions-mode render.
+    docs::fetch has no tool- or server-level override, so it inherits
+    straight from the (corrupt) global default -- exactly the path
+    `_sync_permissions_mode()`'s OWN "Global default" row already guarded
+    but `effective_tool_states()` (feeding every TOOL row) did not.
+    """
+    store_path = tmp_path / "mcp_permissions.json"
+    store_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "kill_switch": False,
+                "profiles": {"default": {"global_default": "banana", "servers": {}}},
+            }
+        )
+    )
+    app = PermissionsApp(store_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        assert _perm_table_texts(app, 0) == ["Global default", "Ask", "—"]
+        # row 2: docs::fetch -- inherits the (invalid) global default.
+        assert _perm_table_texts(app, 2) == ["fetch", "Ask", "—"]
+
+
 # -- T8: Tools-mode State column + server-source governance listing ---------
 #
 # Reuses `PermissionsHubService` (real store, real `resolve_effective_state`)

@@ -330,7 +330,20 @@ class EffectiveToolState:
 
     @property
     def ui_label(self) -> str:
-        return {"allow": "Allow", "ask": "Ask", "deny": "Off"}[self.state]
+        # I2: second layer of defense against a hand-edited/corrupted
+        # `mcp_permissions.json` whose `global_default` is some non-store
+        # value (e.g. "banana") -- `resolve_effective_state()` itself now
+        # falls back to `DEFAULT_GLOBAL` for that case, but this property
+        # must never `KeyError` on an unrecognized `state` regardless of
+        # how it got here (a future caller constructing `EffectiveToolState`
+        # directly, a store format this code hasn't seen yet, ...): render
+        # the raw state capitalized, or "Ask" for a falsy/empty one, rather
+        # than raising and panicking whatever worker/render pass called
+        # this (mcp_workbench.py's `_sync_children`, in particular).
+        known = {"allow": "Allow", "ask": "Ask", "deny": "Off"}
+        if self.state in known:
+            return known[self.state]
+        return self.state.capitalize() if self.state else "Ask"
 
 
 def resolve_effective_state(payload: dict[str, Any], tool: HubTool) -> EffectiveToolState:
@@ -381,6 +394,18 @@ def resolve_effective_state(payload: dict[str, Any], tool: HubTool) -> Effective
         else:
             origin = "global_default"
             state = profile.get("global_default", DEFAULT_GLOBAL)
+            if state not in STORE_STATES:
+                # I2: a hand-edited `mcp_permissions.json` can carry a
+                # `schema_version` that still passes `load()`'s corruption
+                # check (so the file is never backed up/reset) yet an
+                # invalid `global_default` value (e.g. "banana"). Passing
+                # that straight through used to reach `ui_label`/
+                # `format_tool_state_label` as an unrecognized dict key,
+                # `KeyError`-ing out of `_sync_children` and panicking the
+                # app. Fail safe to the same default a missing key already
+                # gets, exactly like the server-level `server_default in
+                # STORE_STATES` check just above.
+                state = DEFAULT_GLOBAL
 
     risk_floored = False
     if origin != "tool_override" and state == "allow" and set(tool.tags) & HIGH_RISK_TAGS:

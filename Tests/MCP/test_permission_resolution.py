@@ -96,6 +96,16 @@ def test_ui_label_maps_states_to_display_text():
     assert EffectiveToolState(state="deny", origin="server_default").ui_label == "Off"
 
 
+def test_ui_label_is_defensive_against_unknown_state():
+    """I2's second layer of defense: `resolve_effective_state()` itself now
+    never produces an out-of-`STORE_STATES` `state`, but `ui_label` must
+    not `KeyError` regardless -- a future direct `EffectiveToolState(...)`
+    construction, or a store shape this module hasn't seen yet, must
+    render SOMETHING rather than panic whatever render pass called it."""
+    assert EffectiveToolState(state="banana", origin="global_default").ui_label == "Banana"
+    assert EffectiveToolState(state="", origin="global_default").ui_label == "Ask"
+
+
 # -- HIGH_RISK_TAGS ------------------------------------------------------------
 
 
@@ -145,6 +155,23 @@ def test_resolve_effective_state_falls_back_to_global_default_when_no_server_or_
 
     assert result.state == "deny"
     assert result.origin == "global_default"
+
+
+def test_resolve_effective_state_invalid_global_default_falls_back_to_ask():
+    """I2: a hand-edited `mcp_permissions.json` with an invalid
+    `global_default` (e.g. "banana" -- a valid `schema_version`, so
+    `load()`'s own corruption check never backs it up/resets it) must
+    resolve to "ask", not the raw invalid string -- passing that through
+    used to `KeyError` out of `ui_label`/`format_tool_state_label` inside
+    `_sync_children`, panicking the app on the very next matrix render."""
+    tool = _tool()
+    payload = _payload(global_default="banana", servers={})
+
+    result = resolve_effective_state(payload, tool)
+
+    assert result.state == "ask"
+    assert result.origin == "global_default"
+    assert result.ui_label == "Ask"
 
 
 def test_resolve_effective_state_falls_back_to_global_default_when_server_entry_has_no_default():
