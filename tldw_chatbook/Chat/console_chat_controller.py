@@ -214,13 +214,15 @@ class ConsoleChatController:
             return self._block(session.id, validation_error)
         if has_pending_attachment:
             vision_model = self.model or self.configured_model
-            model_is_vision_capable = bool(vision_model) and is_vision_capable(
-                self.provider, vision_model or ""
+            # ONE capability check decides the gate AND the copy: this
+            # module's is_vision_capable (the documented monkeypatch seam) is
+            # injected into vision_block_reason instead of being re-checked
+            # around it — the two seams could otherwise disagree under test.
+            block_reason = vision_block_reason(
+                self.provider, vision_model, is_capable=is_vision_capable
             )
-            if not model_is_vision_capable:
-                block_reason = vision_block_reason(self.provider, vision_model)
-                if block_reason is not None:
-                    return self._block(session.id, block_reason)
+            if block_reason is not None:
+                return self._block(session.id, block_reason)
         if self.store.workspace_context.has_policy_blocks:
             return self._block(session.id, self.store.workspace_context.recovery_copy)
 
@@ -1303,6 +1305,24 @@ class ConsoleChatController:
                 payloads.append({"role": message.role.value, "content": parts})
                 continue
             if not text:
+                # An image-only user turn whose images all fell outside the
+                # budget (over-cap, or a non-vision model) must not vanish —
+                # a silently dropped turn distorts the conversation shape the
+                # model sees. Emit a text placeholder instead.
+                omitted = [
+                    attachment
+                    for attachment in message.attachments
+                    if attachment.data is not None
+                ]
+                if message.role is ConsoleMessageRole.USER and omitted:
+                    placeholder = (
+                        "[image omitted]"
+                        if len(omitted) == 1
+                        else f"[{len(omitted)} images omitted]"
+                    )
+                    payloads.append(
+                        {"role": message.role.value, "content": placeholder}
+                    )
                 continue
             payloads.append({"role": message.role.value, "content": text})
         return payloads

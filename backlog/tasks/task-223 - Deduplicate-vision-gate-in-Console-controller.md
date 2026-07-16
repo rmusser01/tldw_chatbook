@@ -1,9 +1,11 @@
 ---
 id: TASK-223
 title: Deduplicate vision gate in Console controller
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-07-13 11:15'
+updated_date: '2026-07-16 20:18'
 labels:
   - console
   - tech-debt

@@ -1,9 +1,11 @@
 ---
 id: TASK-224
 title: Placeholder for images omitted from provider history
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-07-13 11:15'
+updated_date: '2026-07-16 20:18'
 labels:
   - console
 dependencies: []

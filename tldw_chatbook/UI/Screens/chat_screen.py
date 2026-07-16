@@ -9056,9 +9056,11 @@ class ChatScreen(BaseAppScreen):
             )
             return
         if len(written) == 1:
-            self.app_instance.notify(f"Image saved to {written[0]}")
+            self.app_instance.notify(f"Image saved to {escape_markup(str(written[0]))}")
         else:
-            self.app_instance.notify(f"Saved {len(written)} images to {save_location}")
+            self.app_instance.notify(
+                f"Saved {len(written)} images to {escape_markup(str(save_location))}"
+            )
 
     async def _save_console_message_as_note(self, message_id: str) -> None:
         """Persist one selected Console message as a local Note."""
