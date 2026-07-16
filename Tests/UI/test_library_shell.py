@@ -933,14 +933,14 @@ async def test_library_shell_search_history_row_reruns_query():
         await _wait_for_library_rag_query_ready(screen, pilot, "beta")
         screen.query_one("#library-rag-run-query", Button).press()
 
-        for _ in range(150):
-            rows = list(screen.query(".library-rag-history-row"))
-            labels = [str(row.label) for row in rows]
-            if labels == ["beta", "alpha"]:
-                break
-            await pilot.pause(0.02)
-        else:
-            raise AssertionError(f"History rows never became [beta, alpha]: {labels}")
+        def _history_labels() -> list[str]:
+            return [str(row.label) for row in screen.query(".library-rag-history-row")]
+
+        await _wait_for_condition(
+            pilot,
+            lambda: _history_labels() == ["beta", "alpha"],
+            message=lambda: f"History rows never became [beta, alpha]: {_history_labels()}",
+        )
 
         # (C5a) History recording happens synchronously the instant Run is
         # pressed, but the search-service call itself is dispatched to an
@@ -950,22 +950,46 @@ async def test_library_shell_search_history_row_reruns_query():
         # late-landing "beta" call can itself satisfy the "count
         # increased" check below and leave `service.calls[-1]` reading
         # "beta" instead of the history row's "alpha" rerun.
-        for _ in range(150):
-            if service.calls and service.calls[-1]["query"] == "beta":
-                break
-            await pilot.pause(0.02)
-        else:
-            raise AssertionError("The 'beta' search never reached the search service.")
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(service.calls) and service.calls[-1]["query"] == "beta",
+            message="The 'beta' search never reached the search service.",
+        )
+
+        # (Flake investigation: intermittent `NoMatches: #library-rag-history-1`
+        # under heavy cross-file test runs -- same CPU-contention family as
+        # task-192's note-conflict de-flake, hence the same
+        # `_wait_for_condition` wall-clock-deadline treatment here.) The
+        # "beta" reached the service check above only proves
+        # `_apply_library_rag_search_outcome` has started -- it does NOT
+        # prove that call's own history-widget refresh has *finished*.
+        # `_refresh_library_rag_history_widget` is a second, independent
+        # tear-down/rebuild of the SAME two rows (remove every child, then
+        # re-mount them one at a time, each behind an `await`), serialized
+        # behind its own lock. Under light load this always settles within
+        # one `pilot.pause` tick, well before this point; under the heavier
+        # scheduling pressure of a large combined suite, this coroutine's
+        # several `await` points can still be unwinding when the wait above
+        # returns -- pressing "#library-rag-history-1" at that exact instant
+        # (rows torn down, not yet remounted) raises `NoMatches`. Re-confirm
+        # the rows have actually settled back to their final shape first.
+        await _wait_for_condition(
+            pilot,
+            lambda: _history_labels() == ["beta", "alpha"],
+            message=lambda: (
+                "History rows never re-settled to [beta, alpha] after the "
+                f"'beta' search landed: {_history_labels()}"
+            ),
+        )
 
         calls_before = len(service.calls)
         screen.query_one("#library-rag-history-1", Button).press()
 
-        for _ in range(150):
-            if len(service.calls) > calls_before:
-                break
-            await pilot.pause(0.02)
-        else:
-            raise AssertionError("History row press never re-ran the search service.")
+        await _wait_for_condition(
+            pilot,
+            lambda: len(service.calls) > calls_before,
+            message="History row press never re-ran the search service.",
+        )
 
         assert service.calls[-1]["query"] == "alpha"
         # Minor #5: the visible query input must show the re-run entry too,
@@ -974,15 +998,14 @@ async def test_library_shell_search_history_row_reruns_query():
         # same recompose/refresh path as the service call above, but
         # isn't guaranteed to have settled by the instant the service call
         # is observed -- bounded-poll instead of a single immediate assert.
-        for _ in range(150):
-            if screen.query_one("#library-rag-query-input", Input).value == "alpha":
-                break
-            await pilot.pause(0.02)
-        else:
-            raise AssertionError(
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.query_one("#library-rag-query-input", Input).value == "alpha",
+            message=lambda: (
                 "Query input never showed the re-run entry's text (still "
                 f"{screen.query_one('#library-rag-query-input', Input).value!r})."
-            )
+            ),
+        )
 
 
 @pytest.mark.asyncio
@@ -10911,12 +10934,11 @@ async def test_library_shell_export_registry_failure_warns_it_wont_appear_in_art
 
         screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}").press()
         await _wait_for_selector(screen, pilot, "#library-export-destination")
-        for _ in range(150):
-            if screen._library_export_counts is not None:
-                break
-            await pilot.pause(0.02)
-        else:
-            raise AssertionError("Export counts never landed.")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_export_counts is not None,
+            message="Export counts never landed.",
+        )
         screen.refresh(recompose=True)
         await pilot.pause()
 
@@ -10927,12 +10949,17 @@ async def test_library_shell_export_registry_failure_warns_it_wont_appear_in_art
         await pilot.pause()
         await pilot.pause()
 
-        for _ in range(150):
-            if screen._library_export_running is False and len(notified) == 2:
-                break
-            await pilot.pause(0.02)
-        else:
-            raise AssertionError("Export run never completed.")
+        # (Flake investigation: documented as an order/global-state-dependent
+        # flake in the Task-6 gate README, alongside task-192's own
+        # note-conflict flake -- same CPU-contention family, same
+        # `_wait_for_condition` wall-clock-deadline treatment (a fixed
+        # 150-iteration/0.02s budget is not a reliable proxy for "this
+        # settled" once a large combined suite is contending for CPU).
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_export_running is False and len(notified) == 2,
+            message="Export run never completed.",
+        )
         await pilot.pause()
 
         # The registry step was genuinely attempted (zip-first ordering)...
@@ -10949,4 +10976,24 @@ async def test_library_shell_export_registry_failure_warns_it_wont_appear_in_art
         # Still an overall success: no error line, form back to clean state.
         assert screen._library_export_error == ""
         assert screen.query_one("#library-export-error-line", Static).display is False
-        assert screen.query_one("#library-export-submit", Button).disabled is False
+        # (Flake investigation, confirmed via direct reproduction under a
+        # heavy cross-file sweep: `AssertionError: assert True is False` on
+        # this exact button's `disabled` attribute, with every assertion
+        # above it already green.) `_library_export_running`/`notified`
+        # landing is necessarily the FIRST thing `_apply_library_export_success`
+        # does -- the button's own `disabled` flag is only synced afterwards,
+        # inside `_update_library_export_canvas_after_run`'s targeted DOM
+        # update, which races the submit-press's OWN "entering running"
+        # `refresh(recompose=True)` for the same widget. Under light load the
+        # completion signal and the DOM write land together; under heavy
+        # contention they can observably separate. Bounded-wait the button's
+        # OWN attribute directly rather than trusting the state-flag wait
+        # above as a proxy for it.
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.query_one("#library-export-submit", Button).disabled is False,
+            message=lambda: (
+                "Export submit button never re-enabled after the run completed "
+                f"(still disabled={screen.query_one('#library-export-submit', Button).disabled})."
+            ),
+        )
