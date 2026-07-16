@@ -3877,3 +3877,80 @@ async def test_permissions_mode_renders_fail_soft_without_t4_seams():
         assert _perm_table_texts(app, 0) == ["Global default", "Ask", "—"]
         checkbox = app.query_one("#mcp-perm-kill-switch", Checkbox)
         assert checkbox.value is False
+
+
+@pytest.mark.asyncio
+async def test_double_space_cycle_on_tool_row_stays_on_that_row(tmp_path):
+    """Critical regression: `update_matrix()` rebuilds the DataTable with
+    `table.clear()` on EVERY resync, and Textual resets `cursor_coordinate`
+    to (0, 0) on `clear()`. The workbench resyncs after every Space press,
+    so a SECOND press used to land on row 0 (Global default) instead of the
+    tool row the user was still looking at -- silently cycling the global
+    default instead of the tool. Two Space presses on the tool row must
+    advance the TOOL two cycle steps (Inherit -> Allow -> Ask) and must
+    leave the global default untouched.
+    """
+    app = PermissionsApp(tmp_path / "mcp_permissions.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=3)  # local:docs::search
+        await pilot.press("space")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause(0.3)
+
+        await pilot.press("space")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause(0.3)
+
+        payload = app.unified_mcp_service.permission_store.load()
+        tool_entry = payload["profiles"]["default"]["servers"]["local:docs"]["tools"]["search"]
+        # cycle_ui_state(None) == "allow", cycle_ui_state("allow") == "ask"
+        assert tool_entry["state"] == "ask"
+        assert payload["profiles"]["default"]["global_default"] == "ask"
+        assert _perm_table_texts(app, 3) == ["search", "Ask •", "—"]
+        assert _perm_table_texts(app, 0) == ["Global default", "Ask", "—"]
+
+
+@pytest.mark.asyncio
+async def test_state_cycle_requested_with_invalid_state_is_rejected(tmp_path):
+    """Trust-boundary validation: `event.new_state` must be one of
+    `STORE_STATES` (or `None` for Inherit) before the workbench calls any
+    setter. A forged/corrupted `StateCycleRequested` carrying an invalid
+    state must be a no-op against the store, with a warning toast, not a
+    setter call or an unhandled exception.
+    """
+    app = PermissionsApp(tmp_path / "mcp_permissions.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+        notifications = _capture_notifications(app)
+
+        before = app.unified_mcp_service.permission_store.load()
+
+        workbench.post_message(
+            MCPPermissionsMode.StateCycleRequested(
+                row_kind="tool",
+                server_key="local:docs",
+                tool_name="search",
+                new_state="bogus",
+            )
+        )
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        after = app.unified_mcp_service.permission_store.load()
+        assert after == before
+        assert any(severity == "warning" for _, severity in notifications), (
+            f"expected a warning toast for an invalid cycle state, got: {notifications!r}"
+        )

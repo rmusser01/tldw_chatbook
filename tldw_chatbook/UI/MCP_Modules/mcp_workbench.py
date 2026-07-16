@@ -1145,10 +1145,25 @@ class MCPWorkbench(Container):
         methods, then resync the matrix -- the single-writer contract:
         `MCPPermissionsMode` never touches the store itself, only posts
         the row it means and the state T2's cycle helpers already resolved.
+
+        `event.new_state` is validated against `STORE_STATES` (trust
+        boundary: this event crosses from the render-only child widget,
+        and `MCPPermissionStore.set_*` would otherwise raise on a bad
+        value AFTER partially reasoning about the write) before any setter
+        runs -- `None` is legal (Inherit, for a `"server"`/`"tool"` row
+        only) but anything else that isn't `"allow"`/`"ask"`/`"deny"` is
+        rejected outright, no setter call at all.
         """
         event.stop()
         service = self._service()
         if service is None:
+            return
+        if event.new_state is not None and event.new_state not in STORE_STATES:
+            logger.warning(f"MCP permission cycle rejected invalid state: {event.new_state!r}")
+            self.app.notify(
+                _toast(f"Ignored invalid permission state {event.new_state!r}."),
+                severity="warning",
+            )
             return
         try:
             if event.row_kind == "global":

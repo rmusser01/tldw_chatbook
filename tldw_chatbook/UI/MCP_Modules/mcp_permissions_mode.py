@@ -224,6 +224,29 @@ class MCPPermissionsMode(Vertical):
             checkbox.value = kill_switch
 
         table = self.query_one("#mcp-perm-table", DataTable)
+
+        # Preserve the cursor's ROW KEY (not its numeric position) across
+        # the rebuild below -- `DataTable.clear()` unconditionally resets
+        # `cursor_coordinate` to (0, 0), and this canvas resyncs after
+        # EVERY Space press (`mcp_workbench.py`'s
+        # `on_mcp_permissions_mode_state_cycle_requested`), so an unguarded
+        # rebuild would silently redirect a SECOND press onto row 0 (Global
+        # default) even though the user is still looking at their tool
+        # row. Mirrors `mcp_servers_mode.py`'s `_restore_overview_cursor()`
+        # -- same bug class, same fix shape: a key lookup survives a row
+        # reorder/insertion/removal; a bare saved index would not.
+        cursor_key: str | None = None
+        if table.row_count > 0 and table.cursor_row >= 0:
+            try:
+                row_key, _ = table.coordinate_to_cell_key((table.cursor_row, 0))
+            except Exception:
+                # Defensive, same rationale as `action_cycle_state()`: a
+                # cursor position that doesn't resolve to a live cell is
+                # simply not restored, not a crash.
+                row_key = None
+            if row_key is not None and row_key.value is not None:
+                cursor_key = str(row_key.value)
+
         table.clear()
         for row in rows:
             table.add_row(
@@ -232,6 +255,16 @@ class MCPPermissionsMode(Vertical):
                 Text(row.tags_label),
                 key=_row_key(row),
             )
+
+        if cursor_key is not None:
+            for index, row in enumerate(rows):
+                if _row_key(row) == cursor_key:
+                    table.move_cursor(row=index)
+                    break
+            # A key that no longer has a row (e.g. its tool/server vanished
+            # from this resync) leaves the cursor at `clear()`'s own
+            # default -- row 0 -- the same graceful fallback
+            # `_restore_overview_cursor()` uses.
 
         self.query_one("#mcp-perm-preview", Static).update(preview)
 
