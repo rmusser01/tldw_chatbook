@@ -1,11 +1,11 @@
 ---
 id: TASK-223
 title: Deduplicate vision gate in Console controller
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-13 11:15'
-updated_date: '2026-07-16 20:18'
+updated_date: '2026-07-16 20:31'
 labels:
   - console
   - tech-debt
@@ -21,6 +21,12 @@ ConsoleChatController.submit_draft re-implements the vision-capability check via
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Single capability check in submit_draft; blocked copy still comes from vision_block_reason
-- [ ] #2 Existing controller vision tests pass against one documented patch seam
+- [x] #1 Single capability check in submit_draft; blocked copy still comes from vision_block_reason
+- [x] #2 Existing controller vision tests pass against one documented patch seam
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+vision_block_reason gains optional is_capable predicate (additive kwarg, attachment_core internal seam remains the default for the screen-side caller); submit_draft injects controller_module.is_vision_capable — one check, one documented seam, blocked copy unchanged. Divergence tests pin both directions (controller-says-no blocks even when attachment_core-says-yes, and vice versa sends). Existing controller vision tests pass unedited.
+<!-- SECTION:NOTES:END -->

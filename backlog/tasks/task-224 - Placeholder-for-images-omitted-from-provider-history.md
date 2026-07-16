@@ -1,11 +1,11 @@
 ---
 id: TASK-224
 title: Placeholder for images omitted from provider history
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-13 11:15'
-updated_date: '2026-07-16 20:18'
+updated_date: '2026-07-16 20:31'
 labels:
   - console
 dependencies: []
@@ -20,7 +20,13 @@ In the Console provider payload builder (PR #621), an image-only user message th
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Over-cap and non-vision image-only turns appear in provider payloads as a text placeholder instead of vanishing
-- [ ] #2 Captioned image messages keep their existing text-fallback behavior
-- [ ] #3 Controller payload tests cover both placeholder paths
+- [x] #1 Over-cap and non-vision image-only turns appear in provider payloads as a text placeholder instead of vanishing
+- [x] #2 Captioned image messages keep their existing text-fallback behavior
+- [x] #3 Controller payload tests cover both placeholder paths
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+In _provider_message_payloads' no-text branch: USER messages with usable-but-unbudgeted attachments emit '[image omitted]' (or '[N images omitted]') instead of being skipped. Covers both paths: non-vision model (budget 0) and over-cap (older turn loses the newest-first reservation). Captioned messages keep the existing text fallback; assistant messages unchanged. Tests drive the real submit path via RecordingStreamingGateway.
+<!-- SECTION:NOTES:END -->
