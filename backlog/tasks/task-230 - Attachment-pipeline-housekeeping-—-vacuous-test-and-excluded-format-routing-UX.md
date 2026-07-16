@@ -22,8 +22,8 @@ Two small riders from TASK-222's reviews, deferred because existing tests were r
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The bytes-fallback test exercises the real fault-injection seam (prepare_image_payload) or is removed in favor of the superseding test
-- [ ] #2 The excluded-image-extension pick behavior is an explicit, tested decision (rejection copy or documented generic-file fallthrough), not an accident of registry ordering
+- [x] #1 The bytes-fallback test exercises the real fault-injection seam (prepare_image_payload) or is removed in favor of the superseding test
+- [x] #2 The excluded-image-extension pick behavior is an explicit, tested decision (rejection copy or documented generic-file fallthrough), not an accident of registry ordering
 <!-- AC:END -->
 
 ## Implementation Plan
