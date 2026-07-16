@@ -3194,8 +3194,8 @@ async def test_open_test_for_selected_tool_with_non_executable_selection_notifie
     server-source tool selected (never executable -- see
     `server_tools_from_inventory`), the `t` keybinding must notify with
     the SAME copy the inline detail view already shows for that tool
-    (`mcp_inspector.py`'s "Testing server-source tools arrives in Phase
-    4." `Static`), not the generic no-selection message, and must not
+    (`mcp_inspector.py`'s "Testing server-source tools isn't available
+    yet." `Static`), not the generic no-selection message, and must not
     mount a test panel (there is no schema-driven form to open for a
     tool that can't be invoked).
     """
@@ -3216,7 +3216,7 @@ async def test_open_test_for_selected_tool_with_non_executable_selection_notifie
         assert not list(app.query("#mcp-inspector-test-panel"))
         assert notifications
         message, severity = notifications[-1]
-        assert message == "Testing server-source tools arrives in Phase 4."
+        assert message == "Testing server-source tools isn't available yet."
         assert severity == "information"
 
 

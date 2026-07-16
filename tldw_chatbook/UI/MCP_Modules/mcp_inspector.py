@@ -102,6 +102,12 @@ _ORIGIN_SENTENCES: dict[str, str] = {
     "server_default": "Inherited from the server default.",
     "global_default": "Inherited from the global default.",
 }
+# Minor 6: fallback for an origin this dict doesn't recognize (e.g.
+# "gate_error", `_resolve_test_gate()`'s synthetic fail-closed origin) --
+# `.get(effective.origin, "")` used to render a blank line here instead of
+# ANY explanation, which reads as a broken UI rather than "we don't know
+# why, but don't trust it".
+_UNKNOWN_ORIGIN_SENTENCE = "Permission state could not be resolved."
 _CONFIG_CHANGED_NOTICE = "Definition changed since you allowed it."
 _RISK_FLOORED_NOTICE = "High-risk tool — asks even though the inherited default is Allow."
 _REALLOW_TOOLTIP = "Store the new definition hash and allow again."
@@ -606,7 +612,7 @@ class MCPInspector(Vertical):
             else:
                 widgets.append(
                     Static(
-                        "Testing server-source tools arrives in Phase 4.",
+                        "Testing server-source tools isn't available yet.",
                         id="mcp-inspector-tool-phase-note",
                         classes="ds-field-row", markup=False,
                     )
@@ -644,7 +650,7 @@ class MCPInspector(Vertical):
                 id="mcp-inspector-permission-state", classes="ds-field-row", markup=False,
             ),
             Static(
-                _ORIGIN_SENTENCES.get(effective.origin, ""),
+                _ORIGIN_SENTENCES.get(effective.origin, _UNKNOWN_ORIGIN_SENTENCE),
                 id="mcp-inspector-permission-origin", classes="ds-field-row", markup=False,
             ),
         ]

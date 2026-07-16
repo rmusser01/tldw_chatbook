@@ -935,7 +935,7 @@ async def test_show_tool_non_executable_shows_phase4_note_not_test_button():
         )
         await pilot.pause()
         note = app.query_one("#mcp-inspector-tool-phase-note", Static)
-        assert str(note.renderable) == "Testing server-source tools arrives in Phase 4."
+        assert str(note.renderable) == "Testing server-source tools isn't available yet."
         assert not list(app.query("#mcp-inspector-test-tool"))
 
 
@@ -1483,6 +1483,24 @@ async def test_show_permission_origin_sentence_global_default():
         await pilot.pause()
         origin = str(app.query_one("#mcp-inspector-permission-origin", Static).renderable)
         assert origin == "Inherited from the global default."
+
+
+@pytest.mark.asyncio
+async def test_show_permission_origin_sentence_falls_back_for_unrecognized_origin():
+    """Minor 6: an origin `_ORIGIN_SENTENCES` doesn't recognize (e.g.
+    "gate_error" -- `_resolve_test_gate()`'s synthetic fail-closed origin
+    when a gate check raises) used to render a blank line via
+    `.get(effective.origin, "")` -- a broken-looking UI, not an honest
+    "we don't know why" -- instead of a real fallback sentence."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_permission(
+            _tool(), EffectiveToolState(state="deny", origin="gate_error")
+        )
+        await pilot.pause()
+        origin = str(app.query_one("#mcp-inspector-permission-origin", Static).renderable)
+        assert origin == "Permission state could not be resolved."
 
 
 @pytest.mark.asyncio

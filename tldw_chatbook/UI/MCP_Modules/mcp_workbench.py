@@ -1838,8 +1838,8 @@ class MCPWorkbench(Container):
         to press -- this notifies instead of silently no-opping. The two
         cases get distinct copy (`MCPInspector.open_test_panel()`'s three-
         way status tells them apart): "Select a tool first." for no
-        selection, and the same "Testing server-source tools arrives in
-        Phase 4." copy the inline detail view already shows
+        selection, and the same "Testing server-source tools isn't
+        available yet." copy the inline detail view already shows
         (`mcp_inspector.py`'s `#mcp-inspector-tool-phase-note` `Static`)
         when a tool IS selected but isn't executable yet -- "select a
         tool" would be actively wrong there.
@@ -1856,7 +1856,7 @@ class MCPWorkbench(Container):
             self.app.notify("Select a tool first.", severity="warning")
         elif status == "not_executable":
             self.app.notify(
-                "Testing server-source tools arrives in Phase 4.",
+                "Testing server-source tools isn't available yet.",
                 severity="information",
             )
 
