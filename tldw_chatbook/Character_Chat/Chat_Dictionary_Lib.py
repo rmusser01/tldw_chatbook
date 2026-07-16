@@ -1119,6 +1119,51 @@ def load_character_dictionaries(char_data: Optional[Dict[str, Any]]) -> List[Dic
     return result
 
 
+def collect_active_chatdict_entries(
+    db: "CharactersRAGDB",
+    conversation_id: Optional[str],
+    char_data: Optional[Dict[str, Any]],
+) -> List[ChatDictionary]:
+    """Collect the ChatDictionary entries that apply to the current send.
+
+    Additive union of the conversation's attached dictionaries (by id, from
+    ``metadata.active_dictionaries``) and the active character's embedded
+    dictionaries (snapshots in ``extensions.chat_dictionaries``), deduped at the
+    dictionary level by name — the conversation's dictionary WINS a name
+    collision. Only enabled dictionaries contribute. Never raises: any bad row is
+    skipped so a chat send is never broken by dictionary loading.
+    """
+    entries: List[ChatDictionary] = []
+    conversation_dict_names: set = set()
+    if conversation_id and db is not None:
+        try:
+            conv_details = db.get_conversation_by_id(conversation_id)
+        except Exception:
+            conv_details = None
+        if conv_details:
+            try:
+                metadata = json.loads(conv_details.get('metadata') or '{}')
+            except (TypeError, ValueError):
+                metadata = {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            for dict_id in metadata.get('active_dictionaries') or []:
+                try:
+                    dict_data = load_chat_dictionary(db, dict_id)
+                except Exception:
+                    continue
+                if dict_data and dict_data.get('enabled', True):
+                    conversation_dict_names.add(dict_data.get('name'))
+                    entries.extend(dict_data.get('entries') or [])
+    for block in load_character_dictionaries(char_data):
+        if not block.get('enabled', True):
+            continue
+        if block.get('name') in conversation_dict_names:
+            continue
+        entries.extend(block.get('entries') or [])
+    return entries
+
+
 def list_chat_dictionaries(
     db: CharactersRAGDB, 
     limit: int = 100,

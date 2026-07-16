@@ -973,30 +973,18 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
     except Exception as e:
         loguru_logger.opt(exception=True).error(f"Error getting RAG context: {e}")
     
-    # --- 10.6. Apply Chat Dictionaries if enabled ---
-    # Get active dictionaries for the current conversation
+    # --- 10.6. Apply Chat Dictionaries (conversation + active character) ---
     chatdict_entries = []
-    if app.current_chat_conversation_id and db:
+    if (app.current_chat_conversation_id or app.current_chat_active_character_data) and db:
         try:
             from ...Character_Chat import Chat_Dictionary_Lib as cdl
-            
-            # Get conversation metadata to find active dictionaries
-            conv_details = db.get_conversation_by_id(app.current_chat_conversation_id)
-            if conv_details:
-                metadata = json.loads(conv_details.get('metadata') or '{}')
-                active_dict_ids = metadata.get('active_dictionaries', [])
-                
-                # Load each active dictionary
-                for dict_id in active_dict_ids:
-                    dict_data = cdl.load_chat_dictionary(db, dict_id)
-                    if dict_data and dict_data.get('enabled', True):
-                        # Convert entries to expected format
-                        chatdict_entries.extend(dict_data.get('entries', []))
-                        loguru_logger.info(f"Loaded dictionary '{dict_data['name']}' with {len(dict_data.get('entries', []))} entries")
-                
-                if chatdict_entries:
-                    loguru_logger.info(f"Total chat dictionary entries loaded: {len(chatdict_entries)}")
-            
+            chatdict_entries = cdl.collect_active_chatdict_entries(
+                db,
+                app.current_chat_conversation_id,
+                app.current_chat_active_character_data,
+            )
+            if chatdict_entries:
+                loguru_logger.info(f"Total chat dictionary entries loaded: {len(chatdict_entries)}")
         except Exception as e:
             loguru_logger.opt(exception=True).error(f"Error loading chat dictionaries: {e}")
             # Continue without dictionaries on error
