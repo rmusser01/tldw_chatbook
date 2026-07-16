@@ -312,8 +312,27 @@ class MCPPermissionsMode(Vertical):
         `_last_hub_tools` + `effective_tool_states()`); this widget is
         render-only, same division of labor as `MCPToolsMode.update_tools()`
         versus `filter_tools()`.
+
+        Minor 7 (DuplicateKey guard parity): two `PermRow`s sharing the
+        same `_row_key()` identity would raise Textual's `DuplicateKey`
+        out of `table.add_row()` below and crash every future resync of
+        this canvas -- the same persistent-crash-loop class
+        `MCPToolsMode._apply_filter()`'s own `seen_keys` guard exists for.
+        Deduped ONCE, first occurrence wins, before anything (`self._rows`,
+        `self._rows_by_key`, the table itself) is built from it, so all
+        three stay consistent with each other.
         """
-        self._rows = list(rows)
+        deduped: list[PermRow] = []
+        seen_keys: set[str] = set()
+        for row in rows:
+            key = _row_key(row)
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            deduped.append(row)
+        rows = deduped
+
+        self._rows = rows
         self._rows_by_key = {_row_key(row): row for row in rows}
 
         checkbox = self.query_one("#mcp-perm-kill-switch", Checkbox)

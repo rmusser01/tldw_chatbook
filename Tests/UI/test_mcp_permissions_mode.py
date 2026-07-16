@@ -163,6 +163,38 @@ async def test_rows_render_in_given_order_with_pinned_row_keys():
 
 
 @pytest.mark.asyncio
+async def test_update_matrix_skips_duplicate_row_keys_instead_of_crashing():
+    """Minor 7 (DuplicateKey guard parity): two `PermRow`s sharing the same
+    identity (same `_row_key()` -- here, two `tool` rows for the same
+    `(server_key, tool_name)`) would raise Textual's `DuplicateKey` out of
+    `table.add_row()` and crash every future resync of this canvas --
+    `MCPToolsMode._apply_filter()` already guards the same crash-loop class
+    with its own `seen_keys` skip. `update_matrix()` must render the FIRST
+    occurrence and silently skip the rest, not raise.
+    """
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        rows = [
+            _global_row(),
+            _tool_row(
+                server_key="local:docs", server_label="docs", tool_name="search",
+                state_label="Ask",
+            ),
+            _tool_row(
+                server_key="local:docs", server_label="docs", tool_name="search",
+                state_label="Allow •",
+            ),
+        ]
+        await canvas.update_matrix(rows, kill_switch=False, preview="")
+        await pilot.pause()
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        assert table.row_count == 2
+        assert _row_texts(table, 1) == ["search", "Ask", "—"]
+
+
+@pytest.mark.asyncio
 async def test_state_label_renders_verbatim_and_markup_safe():
     """`state_label` may embed a bullet/warning/flag marker already baked in
     by the workbench -- the widget must render it literally as plain `Text`,
