@@ -120,6 +120,20 @@ def intersect_skill_tools(
     Otherwise only names present in both survive, ordered by
     ``builtin_names`` (not the skill's own order) so callers get a stable,
     registry-consistent ordering regardless of how the skill listed them.
+
+    Args:
+        skill_allowed_tools: The skill's own declared ``allowed_tools``
+            list (front-matter), or ``None`` when the skill did not narrow
+            its child's tool set at all.
+        builtin_names: The run's builtin tool names, in registry order —
+            the widest set a narrowed list can ever be intersected down
+            to; a name absent here can never be granted regardless of what
+            the skill declares.
+
+    Returns:
+        ``tuple(builtin_names)`` unchanged when ``skill_allowed_tools`` is
+        ``None``; otherwise the subset of ``builtin_names`` also present in
+        ``skill_allowed_tools``, preserving ``builtin_names``' order.
     """
     if skill_allowed_tools is None:
         return tuple(builtin_names)
@@ -153,6 +167,14 @@ class SkillToolProvider:
         return f"{self.SOURCE}:{name}"
 
     def list_catalog(self) -> list[ToolCatalogEntry]:
+        """Return one cheap-to-list catalog row per skill entry.
+
+        Returns:
+            A `ToolCatalogEntry` for each skill this provider was built
+            with, in the order the entries were passed to `__init__`; each
+            entry's `id` is `"skill:<name>"` and its `source` is
+            `SOURCE` (`"skill"`).
+        """
         return [
             ToolCatalogEntry(id=self._tool_id(e["name"]), name=e["name"],
                              one_line_description=e["description"],
@@ -161,6 +183,25 @@ class SkillToolProvider:
         ]
 
     def load_schema(self, tool_id: str) -> ToolSchema:
+        """Return the full tool schema for one previously-listed skill entry.
+
+        Args:
+            tool_id: A catalog id previously returned by `list_catalog`
+                (``"skill:<name>"``).
+
+        Returns:
+            A `ToolSchema` whose single parameter is a free-form ``args``
+            string (described by the skill's own ``argument_hint``, or its
+            ``description`` when no hint was given) — skills never expose a
+            structured parameter schema the way builtin tools do.
+
+        Raises:
+            StopIteration: ``tool_id``'s name does not match any entry this
+                provider was built with (mirrors `next()`'s own behavior
+                with no default; never expected in practice since
+                `tool_id` always comes from this provider's own
+                `list_catalog`).
+        """
         name = tool_id.split(":", 1)[1]
         entry = next(e for e in self._entries if e["name"] == name)
         hint = entry.get("argument_hint") or entry["description"]
@@ -174,6 +215,19 @@ class SkillToolProvider:
         )
 
     def invoke(self, tool_id: str, args: dict) -> ToolResult:
+        """Never called: satisfies the `ToolProvider` protocol only.
+
+        Args:
+            tool_id: Unused — present only to match the protocol shape.
+            args: Unused — present only to match the protocol shape.
+
+        Raises:
+            RuntimeError: Always. A skill-tool call must route through the
+                run-scoped spawn executor (see this class's own docstring
+                and `console_agent_bridge._BridgeSkillRunner`), never
+                through a plain `ToolProvider.invoke`. Reaching this method
+                at all is a caller bug.
+        """
         raise RuntimeError(
             "SkillToolProvider.invoke must not be called; skills route "
             "through the run-scoped spawn executor")

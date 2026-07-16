@@ -101,7 +101,8 @@ def test_classify_outcomes():
 
 def test_pure_module_has_no_forbidden_imports():
     import tldw_chatbook.Library.library_skills_state as mod
-    src = open(mod.__file__, encoding="utf-8").read()
+    with open(mod.__file__, encoding="utf-8") as handle:
+        src = handle.read()
     for forbidden in ("textual", "sqlite3", "tldw_chatbook.DB",
                       "tldw_chatbook.app", "httpx", "requests"):
         assert forbidden not in src
