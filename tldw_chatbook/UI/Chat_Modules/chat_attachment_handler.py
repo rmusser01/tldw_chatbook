@@ -57,7 +57,7 @@ class ChatAttachmentHandler:
             return
         
         from fnmatch import fnmatch
-        from ...Widgets.enhanced_file_picker import FileOpen, Filters
+        from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
         
         def on_file_selected(file_path: Optional[Path]):
             if file_path:
@@ -81,13 +81,17 @@ class ChatAttachmentHandler:
             ("All Files", lambda path: True),
         )
         
-        # Push the FileOpen dialog directly
+        # Push the picker directly — EnhancedFileOpen like every other picker
+        # surface: the plain FileOpen re-export accepts no `context` kwarg and
+        # raised TypeError the moment this branch was exercised (TASK-219).
         self.app_instance.push_screen(
-            FileOpen(location=".",
+            EnhancedFileOpen(
+                location=".",
                 title="Select File to Attach",
                 filters=file_filters,
-                context="chat_images"),
-            callback=on_file_selected
+                context="chat_images",
+            ),
+            callback=on_file_selected,
         )
     
     async def handle_clear_image_button(self, event):
