@@ -8,7 +8,11 @@ from textual.app import App, ComposeResult
 from textual.widgets import Checkbox, DataTable, Static
 
 import tldw_chatbook
-from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import MCPPermissionsMode, PermRow
+from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
+    MCPPermissionsMode,
+    PermRow,
+    format_tool_state_label,
+)
 
 _CSS_ROOT = Path(tldw_chatbook.__file__).parent / "css"
 _BUNDLED_STYLESHEET = _CSS_ROOT / "tldw_cli_modular.tcss"
@@ -392,6 +396,143 @@ async def test_preview_text_renders_verbatim():
         await canvas.update_matrix([_global_row()], kill_switch=False, preview=preview)
         await pilot.pause()
         assert str(app.query_one("#mcp-perm-preview", Static).renderable) == preview
+
+
+# -- T8: shared state-label rendering helper -----------------------------
+
+
+def test_format_tool_state_label_marker_precedence():
+    """Module-level helper (imported by `MCPWorkbench._tool_state_label` in
+    mcp_workbench.py and by `MCPToolsMode`'s own State column) -- pinned
+    directly here, independent of how a real `EffectiveToolState` gets
+    constructed. Mirrors `test_tool_state_label_marker_precedence` in
+    test_mcp_workbench.py, which pins the same behavior through the
+    workbench's delegating staticmethod."""
+    from tldw_chatbook.MCP.permission_store import EffectiveToolState
+
+    assert format_tool_state_label(EffectiveToolState(state="allow", origin="tool_override")) == "Allow •"
+    assert format_tool_state_label(EffectiveToolState(state="ask", origin="server_default")) == "Ask"
+    assert format_tool_state_label(EffectiveToolState(state="ask", origin="global_default")) == "Ask"
+    assert (
+        format_tool_state_label(
+            EffectiveToolState(state="ask", origin="tool_override", config_changed=True)
+        )
+        == "Ask ⚠"
+    )
+    assert (
+        format_tool_state_label(
+            EffectiveToolState(state="ask", origin="server_default", risk_floored=True)
+        )
+        == "Ask ⚑"
+    )
+
+
+# -- T8: server-source governance listing (read-only) ---------------------
+
+
+@pytest.mark.asyncio
+async def test_update_server_profiles_renders_pointer_and_profile_names():
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        await canvas.update_server_profiles(
+            [
+                {"name": "Docs writers", "id": "prof-1"},
+                {"label": "Analysts", "profile_id": "prof-2"},
+            ]
+        )
+        await pilot.pause()
+
+        section = app.query_one("#mcp-perm-server-profiles")
+        assert section.display is True
+
+        pointer = str(app.query_one("#mcp-perm-server-profiles-pointer", Static).renderable)
+        assert pointer == (
+            "Server-side profiles are managed in the tldw_server webui. The "
+            "matrix above is chatbook's client-side gate and still applies."
+        )
+
+        rows = [str(s.renderable) for s in app.query(".mcp-perm-server-profile-row")]
+        assert rows == ["Docs writers (prof-1)", "Analysts (prof-2)"]
+
+
+@pytest.mark.asyncio
+async def test_update_server_profiles_none_leaves_section_absent():
+    """Local/builtin sources (or a guarded fetch failure) pass `None` --
+    the section is entirely absent, not merely hidden."""
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        await canvas.update_server_profiles(None)
+        await pilot.pause()
+        assert len(app.query("#mcp-perm-server-profiles")) == 0
+
+
+@pytest.mark.asyncio
+async def test_update_server_profiles_empty_list_still_shows_pointer_with_no_rows():
+    """Server source, fetch succeeded, zero profiles configured -- a
+    distinct case from `None`: the section (and its pointer text) still
+    renders, just with no profile rows."""
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        await canvas.update_server_profiles([])
+        await pilot.pause()
+        assert len(app.query("#mcp-perm-server-profiles")) == 1
+        assert len(app.query(".mcp-perm-server-profile-row")) == 0
+
+
+@pytest.mark.asyncio
+async def test_update_server_profiles_defensive_reads_handle_missing_and_malformed_entries():
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        await canvas.update_server_profiles(
+            [
+                {"name": "Only a name"},
+                {"id": "prof-only-id"},
+                {},
+                "not-a-dict",
+                42,
+            ]
+        )
+        await pilot.pause()
+        rows = [str(s.renderable) for s in app.query(".mcp-perm-server-profile-row")]
+        # Non-dict entries are skipped entirely, mirroring
+        # `server_tools_from_inventory()`'s own defensive style.
+        assert rows == ["Only a name", "prof-only-id", "Unnamed profile"]
+
+
+@pytest.mark.asyncio
+async def test_update_server_profiles_transitions_from_present_to_absent():
+    """A source switch (server -> local) must tear the whole section back
+    down, not just clear its rows -- `update_server_profiles(None)` after a
+    populated call removes the section entirely."""
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        await canvas.update_server_profiles([{"name": "Docs writers", "id": "prof-1"}])
+        await pilot.pause()
+        assert len(app.query("#mcp-perm-server-profiles")) == 1
+
+        await canvas.update_server_profiles(None)
+        await pilot.pause()
+        assert len(app.query("#mcp-perm-server-profiles")) == 0
+
+
+@pytest.mark.asyncio
+async def test_update_server_profiles_markup_safe():
+    """Raw profile name/id text must render literally, not parsed as Rich
+    markup -- same rationale as `test_state_label_renders_verbatim_and_
+    markup_safe` above (a server-supplied name could otherwise inject
+    styling)."""
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        await canvas.update_server_profiles([{"name": "[bold red]x", "id": "p1"}])
+        await pilot.pause()
+        rows = [str(s.renderable) for s in app.query(".mcp-perm-server-profile-row")]
+        assert rows == ["[bold red]x (p1)"]
 
 
 # -- real bundled CSS (Phase 3 lesson: DEFAULT_CSS alone can still collapse

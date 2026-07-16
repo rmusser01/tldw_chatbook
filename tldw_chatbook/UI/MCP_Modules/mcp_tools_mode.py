@@ -21,9 +21,11 @@ from textual.message import Message
 from textual.widgets import Button, DataTable, Input, Select, Static
 
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool, filter_tools
+from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import format_tool_state_label
 from tldw_chatbook.UI.MCP_Modules.mcp_schema_form import parse_schema
 
-_TABLE_COLUMNS = ("Tool", "Server", "Tags", "Schema")
+_TABLE_COLUMNS = ("Tool", "State", "Server", "Tags", "Schema")
 
 # Button copy for the diagnostic empty state, keyed by the workbench's
 # `empty_diagnosis` action_key. Falls back to a title-cased version of the
@@ -120,6 +122,12 @@ class MCPToolsMode(Vertical):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._tools: list[HubTool] = []
+        # T8: the last `states` dict `update_tools()` was given, cached
+        # alongside `self._tools` -- `_apply_filter()` re-renders client-
+        # side on every filter Input/Select change without another
+        # `update_tools()` call, so the State column has to survive that
+        # same re-render loop rather than being consumed once.
+        self._states: dict[tuple[str, str], EffectiveToolState] = {}
         self._filter_text: str = ""
         self._filter_server_key: str | None = None
         self._empty_diagnosis: tuple[str, str] | None = None
@@ -160,6 +168,7 @@ class MCPToolsMode(Vertical):
         tools: list[HubTool],
         *,
         empty_diagnosis: tuple[str, str] | None = None,
+        states: dict[tuple[str, str], EffectiveToolState] | None = None,
     ) -> None:
         """Rebuild the catalog from a fresh `HubTool` list.
 
@@ -171,8 +180,19 @@ class MCPToolsMode(Vertical):
                 diagnostic empty state when `tools` is empty. `action_key` is
                 one of `"add_server"|"connect"|"refresh"`. `None` renders a
                 generic fallback message with no action button.
+            states: T8 -- keyed `(server_key, name)` (same key shape as
+                `UnifiedMCPControlPlaneService.effective_tool_states()`),
+                one `EffectiveToolState` per tool the workbench was able to
+                resolve a permission verdict for. Rendered in the State
+                column with the SAME label+marker formatting as the
+                Permissions-mode matrix
+                (`mcp_permissions_mode.format_tool_state_label()`) -- a
+                tool absent from this dict (or `states=None` entirely, e.g.
+                a service without the Phase 4 permission seams yet) renders
+                "—" rather than guessing a default.
         """
         self._tools = list(tools)
+        self._states = dict(states) if states else {}
         self._empty_diagnosis = empty_diagnosis
         await self._rebuild_server_select()
         self._apply_filter()
@@ -257,11 +277,14 @@ class MCPToolsMode(Vertical):
                 # have deduped first.
                 continue
             seen_keys.add(tool.tool_id)
+            tool_state = self._states.get((tool.server_key, tool.name))
+            state_cell = format_tool_state_label(tool_state) if tool_state is not None else "—"
             server_cell = f"{tool.server_label} (stale)" if tool.stale else tool.server_label
             tags_cell = ", ".join(tool.tags) if tool.tags else "—"
             schema_cell = "form" if parse_schema(tool.input_schema) is not None else "raw"
             table.add_row(
                 Text(tool.name),
+                Text(state_cell),
                 Text(server_cell),
                 Text(tags_cell),
                 Text(schema_cell),

@@ -9,6 +9,7 @@ from textual.widgets import Button, DataTable, Input, Select, Static
 
 import tldw_chatbook
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.UI.MCP_Modules.mcp_tools_mode import MCPToolsMode
 
 _CSS_ROOT = Path(tldw_chatbook.__file__).parent / "css"
@@ -89,23 +90,90 @@ async def test_rows_render_grouped_sorted_with_tags_and_schema_columns():
         assert table.row_count == 3
         # Grouped/sorted by (server_label, name): "Main" < "docs" (ASCII
         # uppercase sorts before lowercase), then within "docs": bare < search.
-        assert _row_texts(table, 0)[:2] == ["web_search", "Main"]
-        assert _row_texts(table, 1)[:2] == ["bare", "docs"]
-        assert _row_texts(table, 2)[:2] == ["search", "docs"]
+        # Columns are Tool | State | Server | Tags | Schema -- no `states`
+        # was passed, so every State cell is the "—" absent default.
+        assert _row_texts(table, 0)[:3] == ["web_search", "—", "Main"]
+        assert _row_texts(table, 1)[:3] == ["bare", "—", "docs"]
+        assert _row_texts(table, 2)[:3] == ["search", "—", "docs"]
 
         # Tags cell.
         main_row = _row_texts(table, 0)
-        assert main_row[2] == "high, network"
+        assert main_row[3] == "high, network"
         bare_row = _row_texts(table, 1)
-        assert bare_row[2] == "—"
+        assert bare_row[3] == "—"
 
         # Schema cell: a renderable object schema -> "form"; None/unrenderable -> "raw".
-        assert main_row[3] == "form"
-        assert bare_row[3] == "raw"
+        assert main_row[4] == "form"
+        assert bare_row[4] == "raw"
         search_row = _row_texts(table, 2)
-        assert search_row[3] == "form"
+        assert search_row[4] == "form"
 
         assert app.query_one("#mcp-tools-empty").display is False
+
+
+@pytest.mark.asyncio
+async def test_state_column_renders_marker_labels_from_states_dict():
+    """T8: the State column reuses the exact same label+marker rendering as
+    the Permissions-mode matrix (`format_tool_state_label()`) -- pinned here
+    against every marker variant, keyed `(server_key, name)` same as
+    `effective_tool_states()`."""
+    app = ToolsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPToolsMode)
+        tools = [
+            _tool(server_key="local:docs", server_label="docs", name="allowed"),
+            _tool(server_key="local:docs", server_label="docs", name="asked"),
+            _tool(server_key="local:docs", server_label="docs", name="rug_pulled"),
+            _tool(server_key="local:docs", server_label="docs", name="risk_floored"),
+        ]
+        states = {
+            ("local:docs", "allowed"): EffectiveToolState(state="allow", origin="tool_override"),
+            ("local:docs", "asked"): EffectiveToolState(state="ask", origin="global_default"),
+            ("local:docs", "rug_pulled"): EffectiveToolState(
+                state="ask", origin="tool_override", config_changed=True
+            ),
+            ("local:docs", "risk_floored"): EffectiveToolState(
+                state="ask", origin="server_default", risk_floored=True
+            ),
+        }
+        await canvas.update_tools(tools, empty_diagnosis=None, states=states)
+        await pilot.pause()
+
+        table = app.query_one("#mcp-tools-table", DataTable)
+        rows_by_tool = {_row_texts(table, i)[0]: _row_texts(table, i)[1] for i in range(table.row_count)}
+        assert rows_by_tool["allowed"] == "Allow •"
+        assert rows_by_tool["asked"] == "Ask"
+        assert rows_by_tool["rug_pulled"] == "Ask ⚠"
+        assert rows_by_tool["risk_floored"] == "Ask ⚑"
+
+
+@pytest.mark.asyncio
+async def test_state_column_renders_em_dash_when_states_none_or_missing():
+    """`states=None` (default) and a tool absent from a non-empty `states`
+    dict must both fall back to the "—" absent marker -- never guess a
+    default verdict for a tool the workbench couldn't resolve one for."""
+    app = ToolsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPToolsMode)
+        tools = [
+            _tool(server_key="local:docs", server_label="docs", name="known"),
+            _tool(server_key="local:docs", server_label="docs", name="unknown"),
+        ]
+
+        # states omitted entirely.
+        await canvas.update_tools(tools, empty_diagnosis=None)
+        await pilot.pause()
+        table = app.query_one("#mcp-tools-table", DataTable)
+        assert _row_texts(table, 0)[1] == "—"
+        assert _row_texts(table, 1)[1] == "—"
+
+        # states present but missing an entry for "unknown".
+        states = {("local:docs", "known"): EffectiveToolState(state="allow", origin="tool_override")}
+        await canvas.update_tools(tools, empty_diagnosis=None, states=states)
+        await pilot.pause()
+        rows_by_tool = {_row_texts(table, i)[0]: _row_texts(table, i)[1] for i in range(table.row_count)}
+        assert rows_by_tool["known"] == "Allow •"
+        assert rows_by_tool["unknown"] == "—"
 
 
 @pytest.mark.asyncio
@@ -119,7 +187,7 @@ async def test_stale_tool_gets_stale_suffix_on_server_cell():
         )
         await pilot.pause()
         table = app.query_one("#mcp-tools-table", DataTable)
-        assert _row_texts(table, 0)[1] == "docs (stale)"
+        assert _row_texts(table, 0)[2] == "docs (stale)"
 
 
 @pytest.mark.asyncio
@@ -211,7 +279,8 @@ async def test_filter_by_server_select_narrows_rows():
 
         table = app.query_one("#mcp-tools-table", DataTable)
         assert table.row_count == 1
-        assert _row_texts(table, 0)[:2] == ["search", "docs"]
+        assert _row_texts(table, 0)[0] == "search"
+        assert _row_texts(table, 0)[2] == "docs"
 
         # Selecting back to "All servers" (Select.NULL) restores every row.
         select.value = Select.NULL

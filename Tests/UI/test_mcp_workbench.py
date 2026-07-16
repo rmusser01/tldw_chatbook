@@ -4105,3 +4105,146 @@ async def test_reallow_guard_tool_not_found_notifies_without_store_call(tmp_path
         assert any(severity == "warning" for _, severity in notifications), (
             f"expected a warning toast for an unresolvable re-allow target, got: {notifications!r}"
         )
+
+
+# -- T8: Tools-mode State column + server-source governance listing ---------
+#
+# Reuses `PermissionsHubService` (real store, real `resolve_effective_state`)
+# for the State-column wiring, and a new server-source fake for the
+# governance listing -- `PermissionsHubService`'s existing local source
+# already proves the section stays absent there.
+
+
+@pytest.mark.asyncio
+async def test_tools_mode_state_column_reflects_effective_tool_states(tmp_path):
+    """The Tools-mode catalog's State column is populated end-to-end from
+    the SAME `effective_tool_states()` resolution the Permissions matrix
+    uses: set an explicit override on one tool via the real store, resync,
+    and confirm the catalog's State cell reflects it (Textual never
+    unmounts the inactive Tools canvas, so this doesn't need
+    `set_mode('tools')` first -- mirrors `_sync_tools_mode()`'s own
+    "always current" docstring)."""
+    app = PermissionsApp(tmp_path / "mcp_permissions_tools.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        search_tool = next(t for t in workbench._last_hub_tools if t.name == "search")
+
+        app.unified_mcp_service.set_tool_state(
+            "local:docs", "search", "allow", tool=search_tool
+        )
+        await workbench._sync_children()
+        await pilot.pause()
+
+        table = app.query_one("#mcp-tools-table", DataTable)
+        rows_by_tool = {
+            table.get_row_at(i)[0].plain: table.get_row_at(i)[1].plain
+            for i in range(table.row_count)
+        }
+        assert rows_by_tool["search"] == "Allow •"
+        assert rows_by_tool["fetch"] == "Ask"
+        assert rows_by_tool["list_notes"] == "Ask"
+
+
+class GovernanceHubService(FakeHubService):
+    """Server source with one active target ("main") -- `load_section`
+    returns a canned "governance" section carrying a `permission_profiles`
+    list (T8's read-only listing source), and an empty external-servers
+    section for everything else `_collect_snapshots()`/`_sync_tools_mode()`
+    ask for."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.context = UnifiedMCPContext(
+            selected_source="server", selected_active_server_id="main"
+        )
+
+    async def load_section(self, section=None):
+        effective_section = section or self.context.selected_section or "overview"
+        if effective_section == "governance":
+            return {
+                "permission_profiles": [
+                    {"name": "Docs writers", "id": "prof-1"},
+                    {"label": "Analysts", "profile_id": "prof-2"},
+                ],
+                "source": "server",
+                "section": "governance",
+            }
+        return {"external_servers": [], "source": "server", "section": effective_section}
+
+
+class GovernanceApp(App):
+    def __init__(self) -> None:
+        super().__init__()
+        self.unified_mcp_service = GovernanceHubService()
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+@pytest.mark.asyncio
+async def test_permissions_mode_server_source_shows_governance_profiles_readonly_listing():
+    app = GovernanceApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        section = app.query_one("#mcp-perm-server-profiles")
+        assert section.display is True
+        pointer = str(app.query_one("#mcp-perm-server-profiles-pointer", Static).renderable)
+        assert pointer == (
+            "Server-side profiles are managed in the tldw_server webui. The "
+            "matrix above is chatbook's client-side gate and still applies."
+        )
+        rows = [str(s.renderable) for s in app.query(".mcp-perm-server-profile-row")]
+        assert rows == ["Docs writers (prof-1)", "Analysts (prof-2)"]
+
+
+@pytest.mark.asyncio
+async def test_permissions_mode_local_source_has_no_governance_section(tmp_path):
+    """Local source never calls `load_section("governance")` at all -- the
+    section is absent, not merely empty."""
+    app = PermissionsApp(tmp_path / "mcp_permissions_local_governance.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+        assert len(app.query("#mcp-perm-server-profiles")) == 0
+
+
+class GovernanceFetchFailsHubService(GovernanceHubService):
+    """Server source whose `load_section("governance")` raises -- the guard
+    in `_load_server_governance_profiles()` must swallow it and leave the
+    section absent rather than crashing every `_sync_children()` pass."""
+
+    async def load_section(self, section=None):
+        effective_section = section or self.context.selected_section or "overview"
+        if effective_section == "governance":
+            raise RuntimeError("governance backend unavailable")
+        return await super().load_section(section)
+
+
+class GovernanceFetchFailsApp(App):
+    def __init__(self) -> None:
+        super().__init__()
+        self.unified_mcp_service = GovernanceFetchFailsHubService()
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+@pytest.mark.asyncio
+async def test_permissions_mode_governance_fetch_failure_leaves_section_absent():
+    app = GovernanceFetchFailsApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+        assert len(app.query("#mcp-perm-server-profiles")) == 0
+        # The matrix itself must still render -- a governance-section
+        # failure is isolated, not a whole-mode crash.
+        assert app.query_one("#mcp-perm-table", DataTable)

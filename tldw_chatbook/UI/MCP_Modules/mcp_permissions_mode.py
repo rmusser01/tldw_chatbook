@@ -15,6 +15,7 @@ whatever the workbench hands you" contract.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -25,9 +26,77 @@ from textual.containers import Vertical
 from textual.message import Message
 from textual.widgets import Checkbox, DataTable, Static
 
-from tldw_chatbook.MCP.permission_store import DEFAULT_GLOBAL, cycle_global, cycle_ui_state
+from tldw_chatbook.MCP.permission_store import (
+    DEFAULT_GLOBAL,
+    EffectiveToolState,
+    cycle_global,
+    cycle_ui_state,
+)
 
 _TABLE_COLUMNS = ("Tool", "State", "Tags")
+
+# T8: exact copy pinned by the server-source governance section below --
+# tests assert this verbatim, so any copy change must happen here (single
+# source of truth), not by editing a literal string at each call site.
+_SERVER_PROFILES_POINTER = (
+    "Server-side profiles are managed in the tldw_server webui. The matrix "
+    "above is chatbook's client-side gate and still applies."
+)
+
+
+def format_tool_state_label(effective: EffectiveToolState) -> str:
+    """Format a tool row's State cell: the UI label plus its origin marker.
+
+    T8: module-level (was `MCPWorkbench._tool_state_label`, a staticmethod
+    in mcp_workbench.py) so both `MCPToolsMode` (the cross-server catalog's
+    own State column) and `MCPWorkbench` (this canvas's own matrix rows,
+    `PermRow.state_label`) render an `EffectiveToolState` identically
+    without either duplicating the marker-precedence logic or importing
+    from the other (mcp_workbench.py composes both mode canvases, so a
+    mode canvas importing back from it would be circular) -- this widget
+    module has no dependents of its own, so it's the natural shared home.
+
+    Precedence mirrors `resolve_effective_state()`'s own downgrade order
+    (T2) -- `config_changed` and `risk_floored` are mutually exclusive (the
+    former only ever fires for an explicit `tool_override`, the latter only
+    for an *inherited* origin), so checking both ahead of the plain
+    override bullet is unambiguous: "Ask ⚠" (rug-pull downgrade), "Ask ⚑"
+    (high-risk floor), "Allow •" (a plain, undowngraded explicit override),
+    or a bare label (plain inherited value, no marker at all).
+    """
+    if effective.config_changed:
+        return f"{effective.ui_label} ⚠"
+    if effective.risk_floored:
+        return f"{effective.ui_label} ⚑"
+    if effective.origin == "tool_override":
+        return f"{effective.ui_label} •"
+    return effective.ui_label
+
+
+def _profile_text(value: Any) -> str:
+    """Defensive string coercion for one raw governance-profile field --
+    mirrors `hub_tool_catalog.py`'s own `_text()` helper (not imported
+    directly: that module is tool-catalog-specific and this is a
+    permissions-only concern)."""
+    return str(value).strip() if value is not None else ""
+
+
+def _profile_display_text(profile: Mapping[str, Any]) -> str:
+    """Render one raw `permission_profiles` entry's name/id defensively --
+    the wire shape isn't pinned down (server-side product, versioned
+    independently), so every key is optional, mirroring
+    `hub_tool_catalog.server_tools_from_inventory()`'s own tolerant-of-
+    missing-keys reads."""
+    name = _profile_text(profile.get("name")) or _profile_text(profile.get("label"))
+    profile_id = _profile_text(profile.get("id")) or _profile_text(profile.get("profile_id"))
+    if name and profile_id:
+        return f"{name} ({profile_id})"
+    if name:
+        return name
+    if profile_id:
+        return profile_id
+    return "Unnamed profile"
+
 
 # Row-key formats (spec-verbatim, see task-6-brief.md): the pinned global
 # row is a fixed literal key; a pinned server-default row is
@@ -132,6 +201,13 @@ class MCPPermissionsMode(Vertical):
         height: auto;
         min-height: 0;
     }
+    /* T8: the server-source governance section is a plain read-only
+    listing (a handful of Static rows at most) -- hugs its own content,
+    same rationale as #mcp-perm-preview immediately above. */
+    #mcp-perm-server-profiles-slot {
+        height: auto;
+        min-height: 0;
+    }
     """
 
     BINDINGS = [
@@ -211,6 +287,14 @@ class MCPPermissionsMode(Vertical):
         table.cursor_type = "row"
         yield table
         yield Static("", id="mcp-perm-preview", markup=False)
+        # T8: dedicated slot container for the server-source governance
+        # listing -- mirrors `MCPToolsMode`'s own
+        # `#mcp-tools-filter-server-slot` pattern (a persistent empty
+        # container that `update_server_profiles()` remove+remounts into),
+        # so the section can be entirely ABSENT (not merely hidden) for
+        # local/builtin sources without `compose()` itself needing to know
+        # the source.
+        yield Vertical(id="mcp-perm-server-profiles-slot")
 
     async def on_mount(self) -> None:
         table = self.query_one("#mcp-perm-table", DataTable)
@@ -286,6 +370,51 @@ class MCPPermissionsMode(Vertical):
             # `_restore_overview_cursor()` uses.
 
         self.query_one("#mcp-perm-preview", Static).update(preview)
+
+    async def update_server_profiles(self, profiles: list[Mapping[str, Any]] | None) -> None:
+        """Rebuild the read-only server-source governance listing.
+
+        `profiles` is the raw `permission_profiles` list from the
+        workbench's `get_governance()` fetch (T8) when the active source is
+        a tldw_server target AND that fetch succeeded -- `None` means
+        either a local/builtin source or a failed/guarded fetch, and the
+        whole section (not just its rows) is absent. An empty list is a
+        distinct, legitimate case (server source, fetch succeeded, zero
+        profiles configured) -- still renders the section with its pointer
+        text and no profile rows.
+
+        Removes and remounts the section every call -- same discipline as
+        `MCPToolsMode._rebuild_server_select()` (a dedicated slot container,
+        awaited remove_children before remount) -- simpler to reason about
+        than incrementally diffing a rarely-changing read-only list.
+        """
+        slot = self.query_one("#mcp-perm-server-profiles-slot", Vertical)
+        await slot.remove_children()
+        if profiles is None:
+            return
+        section = Vertical(id="mcp-perm-server-profiles")
+        await slot.mount(section)
+        await section.mount(
+            Static(
+                _SERVER_PROFILES_POINTER,
+                id="mcp-perm-server-profiles-pointer",
+                classes="ds-info-callout",
+                markup=False,
+            )
+        )
+        for profile in profiles:
+            if not isinstance(profile, Mapping):
+                # Defensive, mirrors `server_tools_from_inventory()`'s own
+                # "skip non-dict entries entirely" style for a raw,
+                # wire-derived list.
+                continue
+            await section.mount(
+                Static(
+                    _profile_display_text(profile),
+                    classes="mcp-perm-server-profile-row",
+                    markup=False,
+                )
+            )
 
     # -- events -----------------------------------------------------------
 

@@ -40,7 +40,11 @@ from tldw_chatbook.MCP.readiness import (
 )
 from tldw_chatbook.MCP.redaction import redact_args, redact_mapping
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
-from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import MCPPermissionsMode, PermRow
+from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
+    MCPPermissionsMode,
+    PermRow,
+    format_tool_state_label,
+)
 from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel, MCPProfileForm
 from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCPRail
 from tldw_chatbook.UI.MCP_Modules.mcp_server_mutations import MCPServerMutationsPanel
@@ -872,11 +876,22 @@ class MCPWorkbench(Container):
         `self._catalog_records`/`self._snapshots` (both already loaded by
         `_collect_snapshots()` this same pass) plus one guarded, synchronous
         `local_service.get_inventory()` call -- no new I/O.
+
+        T8: also resolves this pass's `EffectiveToolState`s for the State
+        column via `_resolve_effective_states()` -- computed fresh here
+        (not read from `self._last_effective_states`) because that cache is
+        only ever current AFTER `_sync_permissions_mode()` runs, which
+        happens immediately AFTER this method in `_sync_children()`; reading
+        it here would render the State column one pass stale on the very
+        first sync (still empty) and after any tool-list change.
         """
         tools = self._collect_hub_tools()
         self._last_hub_tools = tools
         diagnosis = None if tools else self._empty_tools_diagnosis()
-        await self.query_one(MCPToolsMode).update_tools(tools, empty_diagnosis=diagnosis)
+        states = self._resolve_effective_states(tools)
+        await self.query_one(MCPToolsMode).update_tools(
+            tools, empty_diagnosis=diagnosis, states=states
+        )
 
     def _collect_hub_tools(self) -> list[HubTool]:
         """Derive the current source's cross-server `HubTool` catalog.
@@ -946,6 +961,38 @@ class MCPWorkbench(Container):
 
     # -- T6: Permissions mode (matrix, kill switch, policy preview) -----------
 
+    def _resolve_effective_states(
+        self, tools: list[HubTool]
+    ) -> dict[tuple[str, str], EffectiveToolState]:
+        """One batched `effective_tool_states()` call for `tools`.
+
+        Read via the same `getattr(..., None)` + `callable()` +
+        try/except fail-soft pattern as every other T4 seam here
+        (`_resolve_test_gate()`, this method's own former inline body) --
+        a service without the Phase 4 permission methods yet (older
+        fakes, a still-initializing service) resolves to an empty dict
+        rather than raising.
+
+        T8: shared by `_sync_tools_mode()` (State column) and
+        `_sync_permissions_mode()` (matrix rows) -- each calls this
+        itself rather than one reusing `self._last_effective_states` from
+        the other, because `_sync_permissions_mode()` also runs
+        STANDALONE (kill-switch toggle, Space-press state cycle handlers)
+        without a preceding `_sync_tools_mode()` pass in the same call,
+        and must always resolve fresh so a just-applied permission change
+        is reflected immediately rather than waiting for the next full
+        `_sync_children()` pass.
+        """
+        service = self._service()
+        loader = getattr(service, "effective_tool_states", None)
+        if not callable(loader):
+            return {}
+        try:
+            return loader(tools)
+        except Exception as exc:
+            logger.warning(f"MCP effective tool state resolution failed: {exc}")
+            return {}
+
     async def _sync_permissions_mode(self) -> None:
         """Push the current permission matrix into `MCPPermissionsMode`.
 
@@ -956,7 +1003,8 @@ class MCPWorkbench(Container):
         `self._last_hub_tools` (already derived this same pass by the
         immediately-preceding `_sync_tools_mode()` call) plus one
         `effective_tool_states()` call and one `permission_store.load()`
-        read -- no extra service I/O beyond that.
+        read -- no extra service I/O beyond that (T8's server-source
+        governance fetch, below, is the one exception).
 
         Every T4 seam is read via `getattr(..., None)` + `callable()` --
         the same "seams absent -> permissive/fail-soft by design" precedent
@@ -976,14 +1024,7 @@ class MCPWorkbench(Container):
             except Exception as exc:
                 logger.warning(f"MCP kill switch read failed: {exc}")
 
-        effective: dict[tuple[str, str], EffectiveToolState] = {}
-        effective_loader = getattr(service, "effective_tool_states", None)
-        if callable(effective_loader):
-            try:
-                effective = effective_loader(tools)
-            except Exception as exc:
-                logger.warning(f"MCP effective tool state resolution failed: {exc}")
-                effective = {}
+        effective = self._resolve_effective_states(tools)
         # T7: cache this batch resolution for `_effective_for_display()` --
         # both Tools-mode's tool-detail permission block and Permissions-
         # mode's own matrix-row selection reuse it instead of a second,
@@ -1013,26 +1054,53 @@ class MCPWorkbench(Container):
         await self.query_one(MCPPermissionsMode).update_matrix(
             rows, kill_switch=kill_switch, preview=preview
         )
+        await self.query_one(MCPPermissionsMode).update_server_profiles(
+            await self._load_server_governance_profiles(service)
+        )
+
+    async def _load_server_governance_profiles(self, service: Any) -> list[dict[str, Any]] | None:
+        """T8: the server-source read-only governance listing's data.
+
+        Only ever fetched under the server source -- local/builtin never
+        call `load_section("governance")` at all, so the section stays
+        entirely absent there (not merely empty) without needing its own
+        source check downstream. Guarded the same fail-soft way as every
+        other seam in `_sync_permissions_mode()`: any exception (no active
+        target, a backend error, a service too old to expose the section)
+        -> `None` -> `MCPPermissionsMode.update_server_profiles()` renders
+        no section at all, same as local/builtin.
+
+        A malformed-but-present response (not a Mapping, or a
+        `permission_profiles` key that isn't a list) still counts as a
+        successful fetch -- returns `[]` so the section renders with its
+        pointer text and zero rows, rather than disappearing outright the
+        way an actual fetch failure does.
+        """
+        if self._source != "server" or service is None:
+            return None
+        loader = getattr(service, "load_section", None)
+        if not callable(loader):
+            return None
+        try:
+            governance_payload = await loader("governance")
+        except Exception as exc:
+            logger.warning(f"MCP governance section fetch failed: {exc}")
+            return None
+        if not isinstance(governance_payload, Mapping):
+            return None
+        raw_profiles = governance_payload.get("permission_profiles")
+        return raw_profiles if isinstance(raw_profiles, list) else []
 
     @staticmethod
     def _tool_state_label(effective: EffectiveToolState) -> str:
-        """Format a tool row's State cell: the UI label plus its origin
-        marker. Precedence mirrors `resolve_effective_state()`'s own
-        downgrade order (T2) -- `config_changed` and `risk_floored` are
-        mutually exclusive (the former only ever fires for an explicit
-        `tool_override`, the latter only for an *inherited* origin), so
-        checking both ahead of the plain override bullet is unambiguous:
-        "Ask ⚠" (rug-pull downgrade), "Ask ⚑" (high-risk floor), "Allow •"
-        (a plain, undowngraded explicit override), or a bare label (plain
-        inherited value, no marker at all).
+        """T8: thin delegation to the shared, module-level rendering
+        helper (`mcp_permissions_mode.format_tool_state_label()`) -- kept
+        as a staticmethod here too since `_build_permission_rows()` below
+        already calls `self._tool_state_label(...)`, and
+        `test_tool_state_label_marker_precedence` pins this exact call
+        shape (`MCPWorkbench._tool_state_label`).
         """
-        if effective.config_changed:
-            return f"{effective.ui_label} ⚠"
-        if effective.risk_floored:
-            return f"{effective.ui_label} ⚑"
-        if effective.origin == "tool_override":
-            return f"{effective.ui_label} •"
-        return effective.ui_label
+        return format_tool_state_label(effective)
 
     @staticmethod
     def _raw_tool_state(
