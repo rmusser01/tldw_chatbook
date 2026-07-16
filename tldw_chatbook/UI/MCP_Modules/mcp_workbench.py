@@ -470,6 +470,14 @@ class MCPWorkbench(Container):
         # `test_hub_tool()` call resolves is swallowed with a warning toast
         # instead of dispatching a second overlapping call.
         self._tool_test_in_flight: set[tuple[str, str]] = set()
+        # T7: the batch `EffectiveToolState` resolution `_sync_permissions_
+        # mode()` most recently computed (via `service.effective_tool_
+        # states()`), keyed the same as that method's own return value --
+        # `_effective_for_display()` prefers this cache over a second,
+        # redundant per-tool resolution when explaining a tool's permission
+        # rule (Tools-mode's `show_tool(tool, effective=...)` and
+        # Permissions-mode's own `show_permission()`).
+        self._last_effective_states: dict[tuple[str, str], EffectiveToolState] = {}
 
     @property
     def active_mode(self) -> str:
@@ -976,6 +984,11 @@ class MCPWorkbench(Container):
             except Exception as exc:
                 logger.warning(f"MCP effective tool state resolution failed: {exc}")
                 effective = {}
+        # T7: cache this batch resolution for `_effective_for_display()` --
+        # both Tools-mode's tool-detail permission block and Permissions-
+        # mode's own matrix-row selection reuse it instead of a second,
+        # redundant per-tool resolution.
+        self._last_effective_states = effective
 
         payload: dict[str, Any] = {}
         store = getattr(service, "permission_store", None)
@@ -1536,9 +1549,113 @@ class MCPWorkbench(Container):
         from) -- a stale selection whose tool has since dropped out of the
         catalog (disconnect, refresh) resolves to `None`, which
         `show_tool()` renders as "nothing selected" rather than crashing.
+
+        T7: a resolved tool also gets its permission rule explained --
+        `_effective_for_display()` appends the block below the tool detail
+        via `show_tool()`'s `effective` keyword.
         """
         event.stop()
-        await self.query_one(MCPInspector).show_tool(self._tool_for_row_key(event.tool_id))
+        tool = self._tool_for_row_key(event.tool_id)
+        effective = self._effective_for_display(tool) if tool is not None else None
+        await self.query_one(MCPInspector).show_tool(tool, effective=effective)
+
+    def _effective_for_display(self, tool: HubTool) -> EffectiveToolState:
+        """Resolve one tool's `EffectiveToolState` for the inspector's
+        permission explanation -- Tools-mode's tool-detail-plus-permission
+        block (`show_tool(tool, effective=...)`) and Permissions-mode's own
+        matrix-row selection (`show_permission()`) both go through here.
+
+        Prefers `self._last_effective_states` -- the batch resolution
+        `_sync_permissions_mode()` already computed this same
+        `_sync_children()` pass via `effective_tool_states()` -- over a
+        second, redundant lookup. Falls back to one fresh single-tool
+        `service.gate_tool_test()` call (T4) when the tool isn't in that
+        cache (e.g. a service that exposes `gate_tool_test()` but not the
+        batch `effective_tool_states()`); a raising gate fails CLOSED
+        (deny), mirroring `_resolve_test_gate()`. No seam at all -> the
+        same `EffectiveToolState(state="ask", origin="global_default")`
+        fallback `_build_permission_rows()` already uses for a tool missing
+        from the batch dict.
+        """
+        cached = self._last_effective_states.get((tool.server_key, tool.name))
+        if cached is not None:
+            return cached
+        service = self._service()
+        gate_check = getattr(service, "gate_tool_test", None)
+        if callable(gate_check):
+            try:
+                return gate_check(tool)
+            except Exception as exc:
+                logger.warning(
+                    f"MCP permission resolution failed for {tool.server_key}::{tool.name}; "
+                    f"failing closed: {exc}"
+                )
+                return EffectiveToolState(state="deny", origin="gate_error")
+        return EffectiveToolState(state="ask", origin="global_default")
+
+    async def on_mcp_permissions_mode_row_selected(
+        self, event: MCPPermissionsMode.RowSelected
+    ) -> None:
+        """T7: route a Permissions-mode matrix row selection to the
+        inspector. A `"tool"` row resolves its `HubTool` (`_tool_for()`)
+        and shows the permission explanation standalone
+        (`MCPInspector.show_permission()`) -- NOT the full tool-detail
+        block (`#mcp-inspector-tool`, Test Tool button and all), which is
+        Tools-mode's own selection surface. A pinned `"global"`/`"server"`
+        row -- or a `"tool"` row whose tool has since dropped out of the
+        catalog -- just clears whatever tool/permission view the inspector
+        was last showing (`show_tool(None)`, which also hides
+        `#mcp-inspector-permission`; see that method).
+        """
+        event.stop()
+        inspector = self.query_one(MCPInspector)
+        tool = (
+            self._tool_for(event.server_key, event.tool_name or "")
+            if event.row_kind == "tool"
+            else None
+        )
+        if tool is None:
+            await inspector.show_tool(None)
+            return
+        await inspector.show_permission(tool, self._effective_for_display(tool))
+
+    async def on_mcp_inspector_reallow_requested(
+        self, event: MCPInspector.ReallowRequested
+    ) -> None:
+        """T7: re-allow a rug-pull-downgraded tool override -- store the
+        tool's CURRENT definition hash and set its state back to "allow"
+        via T4's `set_tool_state()`, then resync the matrix so its ⚠
+        marker clears. Also refreshes the inspector's own (already-open)
+        permission block, since the matrix resync above doesn't touch it.
+
+        Guard: an unresolvable tool (dropped out of the catalog since the
+        permission block was rendered) is a warning toast, never a store
+        call -- `set_tool_state(..., "allow", ...)` requires a live
+        `HubTool` to fingerprint (see that method's own `tool` docstring).
+        """
+        event.stop()
+        tool = self._tool_for(event.server_key, event.tool_name)
+        if tool is None:
+            self.app.notify(
+                _toast(f"{event.server_key}::{event.tool_name}: tool no longer available."),
+                severity="warning",
+            )
+            return
+        service = self._service()
+        set_tool_state = getattr(service, "set_tool_state", None)
+        if not callable(set_tool_state):
+            return
+        try:
+            set_tool_state(event.server_key, event.tool_name, "allow", tool=tool)
+        except Exception as exc:
+            logger.warning(
+                f"MCP re-allow failed for {event.server_key}::{event.tool_name}: {exc}"
+            )
+            self.app.notify(_toast(f"Re-allow failed: {exc}"), severity="error")
+            return
+        async with self._sync_children_lock:
+            await self._sync_permissions_mode()
+        await self.query_one(MCPInspector).show_permission(tool, self._effective_for_display(tool))
 
     async def open_test_for_selected_tool(self) -> None:
         """T8: entry point for the `t` keybinding (mcp_screen.py's

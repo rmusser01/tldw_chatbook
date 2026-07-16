@@ -172,6 +172,25 @@ class MCPPermissionsMode(Vertical):
             super().__init__()
             self.value = value
 
+    class RowSelected(Message, namespace="mcp_permissions_mode"):
+        """Posted when the user selects a matrix row (Enter/click on the
+        DataTable's cursor row) -- mirrors `MCPToolsMode.on_data_table_row_
+        selected()`'s own Enter/click precedent (not every cursor move, see
+        `action_cycle_state()`'s Space-only bare-cursor-move handling
+        above). Carries the resolved `PermRow`'s identity so `MCPWorkbench`
+        can route it without re-parsing the row key: `row_kind` is
+        `"global"|"server"|"tool"`; `server_key`/`tool_name` are `""`/`None`
+        for the pinned global row, the owning server key (`tool_name=None`)
+        for a pinned server-default row, and the tool's own fields for a
+        `"tool"` row.
+        """
+
+        def __init__(self, row_kind: str, server_key: str, tool_name: str | None) -> None:
+            super().__init__()
+            self.row_kind = row_kind
+            self.server_key = server_key
+            self.tool_name = tool_name
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._rows: list[PermRow] = []
@@ -275,6 +294,20 @@ class MCPPermissionsMode(Vertical):
             return
         event.stop()
         self.post_message(self.KillSwitchToggled(event.value))
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        """T7: resolve the selected row back to the `PermRow` it renders
+        (via the row-key map `update_matrix()` last built) and post
+        `RowSelected` with its identity -- mirrors
+        `MCPToolsMode.on_data_table_row_selected()`'s own bare-forward
+        shape."""
+        event.stop()
+        if event.row_key is None or event.row_key.value is None:
+            return
+        row = self._rows_by_key.get(str(event.row_key.value))
+        if row is None:
+            return
+        self.post_message(self.RowSelected(row.kind, row.server_key, row.tool_name))
 
     def action_cycle_state(self) -> None:
         """Cycle the matrix's CURSOR row one Space-press (T2's cycle rules).

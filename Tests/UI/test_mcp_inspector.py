@@ -12,6 +12,7 @@ from textual.widgets import Button, Collapsible, Input, Select, Static, TextArea
 import tldw_chatbook
 import tldw_chatbook.UI.MCP_Modules.mcp_inspector as mcp_inspector_module
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.MCP.readiness import (
     REASON_LABELS,
     STATE_CSS_CLASSES,
@@ -84,6 +85,9 @@ class InspectorApp(App):
         self.events.append(event)
 
     def on_mcp_inspector_tool_test_requested(self, event) -> None:
+        self.events.append(event)
+
+    def on_mcp_inspector_reallow_requested(self, event) -> None:
         self.events.append(event)
 
 
@@ -1386,3 +1390,186 @@ async def test_confirming_press_reposts_tool_test_requested():
         assert events[0].server_key == tool.server_key
         assert events[0].tool_name == tool.name
         assert events[0].arguments == {"query": "hello"}
+
+
+# -- Task 7: permission explanation + re-allow -------------------------------
+
+
+@pytest.mark.asyncio
+async def test_show_tool_with_effective_appends_permission_block():
+    """`show_tool(tool, effective=...)` (Tools-mode's own call site) appends
+    the permission explanation below the existing tool detail -- exact-copy
+    origin sentence for a plain server-default inheritance, no notice, no
+    Re-allow button."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(
+            _tool(), effective=EffectiveToolState(state="ask", origin="server_default")
+        )
+        await pilot.pause()
+        container = app.query_one("#mcp-inspector-permission")
+        assert container.display is True
+        origin = str(app.query_one("#mcp-inspector-permission-origin", Static).renderable)
+        assert origin == "Inherited from the server default."
+        assert not list(app.query("#mcp-inspector-reallow"))
+        assert not list(app.query("#mcp-inspector-permission-notice"))
+
+
+@pytest.mark.asyncio
+async def test_show_tool_without_effective_hides_permission_block():
+    """The plain T6 call shape (no `effective` keyword) must not show a
+    stale/empty permission block -- backward compatible with every
+    pre-Task-7 `show_tool()` call site."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())
+        await pilot.pause()
+        container = app.query_one("#mcp-inspector-permission")
+        assert container.display is False
+
+
+@pytest.mark.asyncio
+async def test_show_tool_none_hides_permission_block_too():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(
+            _tool(), effective=EffectiveToolState(state="allow", origin="tool_override")
+        )
+        await pilot.pause()
+        await inspector.show_tool(None)
+        await pilot.pause()
+        container = app.query_one("#mcp-inspector-permission")
+        assert container.display is False
+        assert not list(app.query("#mcp-inspector-permission-origin"))
+
+
+@pytest.mark.asyncio
+async def test_show_permission_origin_sentence_tool_override():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_permission(
+            _tool(), EffectiveToolState(state="allow", origin="tool_override")
+        )
+        await pilot.pause()
+        origin = str(app.query_one("#mcp-inspector-permission-origin", Static).renderable)
+        assert origin == "From this tool's override."
+
+
+@pytest.mark.asyncio
+async def test_show_permission_origin_sentence_server_default():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_permission(
+            _tool(), EffectiveToolState(state="ask", origin="server_default")
+        )
+        await pilot.pause()
+        origin = str(app.query_one("#mcp-inspector-permission-origin", Static).renderable)
+        assert origin == "Inherited from the server default."
+
+
+@pytest.mark.asyncio
+async def test_show_permission_origin_sentence_global_default():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_permission(
+            _tool(), EffectiveToolState(state="ask", origin="global_default")
+        )
+        await pilot.pause()
+        origin = str(app.query_one("#mcp-inspector-permission-origin", Static).renderable)
+        assert origin == "Inherited from the global default."
+
+
+@pytest.mark.asyncio
+async def test_show_permission_config_changed_shows_notice_and_reallow_button():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_permission(
+            _tool(),
+            EffectiveToolState(
+                state="ask", origin="tool_override", config_changed=True
+            ),
+        )
+        await pilot.pause()
+        notice = str(app.query_one("#mcp-inspector-permission-notice", Static).renderable)
+        assert notice == "Definition changed since you allowed it."
+        reallow = app.query_one("#mcp-inspector-reallow", Button)
+        assert reallow.tooltip == "Store the new definition hash and allow again."
+
+
+@pytest.mark.asyncio
+async def test_show_permission_risk_floored_shows_notice_without_reallow_button():
+    """Re-allow only ever appears for a `config_changed` downgrade -- a
+    risk-floored inherited "allow" has nothing to re-allow (there's no
+    tool-level override to refresh the hash on)."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_permission(
+            _tool(),
+            EffectiveToolState(
+                state="ask", origin="server_default", risk_floored=True
+            ),
+        )
+        await pilot.pause()
+        notice = str(app.query_one("#mcp-inspector-permission-notice", Static).renderable)
+        assert notice == "High-risk tool — asks even though the inherited default is Allow."
+        assert not list(app.query("#mcp-inspector-reallow"))
+
+
+@pytest.mark.asyncio
+async def test_show_permission_plain_state_shows_neither_notice_nor_button():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_permission(
+            _tool(), EffectiveToolState(state="allow", origin="tool_override")
+        )
+        await pilot.pause()
+        assert not list(app.query("#mcp-inspector-permission-notice"))
+        assert not list(app.query("#mcp-inspector-reallow"))
+
+
+@pytest.mark.asyncio
+async def test_reallow_button_press_posts_reallow_requested_with_server_key_and_tool_name():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool(server_key="local:docs", name="search")
+        await inspector.show_permission(
+            tool, EffectiveToolState(state="ask", origin="tool_override", config_changed=True)
+        )
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-reallow")
+        await pilot.pause()
+        events = [e for e in app.events if isinstance(e, MCPInspector.ReallowRequested)]
+        assert len(events) == 1
+        assert events[0].server_key == "local:docs"
+        assert events[0].tool_name == "search"
+
+
+@pytest.mark.asyncio
+async def test_second_show_permission_back_to_back_does_not_duplicate_ids():
+    """Mandatory regression: selecting two matrix tool rows in a row must
+    not raise DuplicateIds -- mirrors
+    `test_second_show_tool_back_to_back_does_not_duplicate_ids`."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_permission(
+            _tool(name="search"), EffectiveToolState(state="allow", origin="tool_override")
+        )
+        # No pilot.pause() here on purpose.
+        await inspector.show_permission(
+            _tool(name="fetch"), EffectiveToolState(state="ask", origin="global_default")
+        )
+        await pilot.pause()
+        origins = list(app.query("#mcp-inspector-permission-origin"))
+        assert len(origins) == 1
+        assert str(origins[0].renderable) == "Inherited from the global default."

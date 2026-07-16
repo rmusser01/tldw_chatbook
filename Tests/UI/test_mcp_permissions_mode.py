@@ -89,6 +89,9 @@ class PermissionsModeApp(App):
     def on_mcp_permissions_mode_kill_switch_toggled(self, event) -> None:
         self.events.append(event)
 
+    def on_mcp_permissions_mode_row_selected(self, event) -> None:
+        self.events.append(event)
+
 
 def _row_texts(table: DataTable, row_index: int) -> list[str]:
     row = table.get_row_at(row_index)
@@ -307,6 +310,74 @@ async def test_space_with_no_rows_is_a_noop():
         await pilot.press("space")
         await pilot.pause()
         assert app.events == []
+
+
+# -- Task 7: row selection ----------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_enter_on_tool_row_posts_row_selected_with_tool_fields():
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        rows = [
+            _global_row(),
+            _server_row(server_key="local:docs", server_label="docs"),
+            _tool_row(server_key="local:docs", server_label="docs", tool_name="search"),
+        ]
+        await canvas.update_matrix(rows, kill_switch=False, preview="")
+        await pilot.pause()
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=2)
+        await pilot.press("enter")
+        await pilot.pause()
+
+        events = [e for e in app.events if isinstance(e, MCPPermissionsMode.RowSelected)]
+        assert len(events) == 1
+        assert events[0].row_kind == "tool"
+        assert events[0].server_key == "local:docs"
+        assert events[0].tool_name == "search"
+
+
+@pytest.mark.asyncio
+async def test_enter_on_global_row_posts_row_selected_with_no_tool_name():
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        await canvas.update_matrix([_global_row()], kill_switch=False, preview="")
+        await pilot.pause()
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=0)
+        await pilot.press("enter")
+        await pilot.pause()
+
+        events = [e for e in app.events if isinstance(e, MCPPermissionsMode.RowSelected)]
+        assert len(events) == 1
+        assert events[0].row_kind == "global"
+        assert events[0].tool_name is None
+
+
+@pytest.mark.asyncio
+async def test_enter_on_server_row_posts_row_selected_with_no_tool_name():
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        rows = [_global_row(), _server_row(server_key="local:docs", server_label="docs")]
+        await canvas.update_matrix(rows, kill_switch=False, preview="")
+        await pilot.pause()
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=1)
+        await pilot.press("enter")
+        await pilot.pause()
+
+        events = [e for e in app.events if isinstance(e, MCPPermissionsMode.RowSelected)]
+        assert len(events) == 1
+        assert events[0].row_kind == "server"
+        assert events[0].server_key == "local:docs"
+        assert events[0].tool_name is None
 
 
 # -- preview ----------------------------------------------------------
