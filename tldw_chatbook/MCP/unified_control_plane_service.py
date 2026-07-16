@@ -12,10 +12,10 @@ from typing import Any
 
 from loguru import logger
 
-from tldw_chatbook.config import get_cli_setting
+from tldw_chatbook.config import coerce_bool_setting, get_cli_setting
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
-from .execution_log import MCPExecutionLog, build_record
+from .execution_log import MCPExecutionLog, RESULT_EXCERPT_LIMIT, build_record
 from .redaction import redact_mapping
 from .server_target_store import ConfiguredServerTargetStore
 from .unified_context_store import UnifiedMCPContextStore
@@ -1931,11 +1931,16 @@ class UnifiedMCPControlPlaneService:
                 # `_run_tool_test()`), so a secret echoed back in a tool's
                 # result can never reach disk unredacted.
                 result_excerpt=(
-                    json.dumps(redact_mapping(result), default=str)[:500]
+                    json.dumps(redact_mapping(result), default=str)[:RESULT_EXCERPT_LIMIT]
                     if isinstance(result, Mapping)
-                    else str(result)[:500]
+                    else str(result)[:RESULT_EXCERPT_LIMIT]
                 ),
-                capture_args=get_cli_setting("mcp", "log_tool_arguments", True),
+                # Coerce: a mis-typed config string like "false" is truthy,
+                # which would silently keep argument capture ON against the
+                # user's stated intent (Qodo #639 finding).
+                capture_args=coerce_bool_setting(
+                    get_cli_setting("mcp", "log_tool_arguments", True), True
+                ),
             )
             log.append(record)
         except Exception as exc:
@@ -1947,6 +1952,28 @@ class UnifiedMCPControlPlaneService:
         tool_name: str,
         arguments: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        """Execute one tool test against a local or built-in server.
+
+        The shared execute seam for the Hub's Test Tool runner (and,
+        later, the Phase 5 chat bridge / agent MCPToolProvider). Every
+        attempt — success, failure, or timeout — is recorded to the
+        execution log best-effort before the result or error propagates.
+
+        Args:
+            server_key: Prefixed server key (``local:<profile_id>`` or
+                ``builtin:<id>``). Server-source keys are rejected until
+                Phase 4.
+            tool_name: Name of the tool to execute.
+            arguments: Tool arguments; defaults to an empty dict.
+
+        Returns:
+            The raw result payload from the underlying service call.
+
+        Raises:
+            ValueError: If ``server_key`` is not a local/builtin key.
+            RuntimeError: If the tool call fails or exceeds the
+                configured lifecycle timeout.
+        """
         normalized_key = str(server_key or "").strip()
         normalized_tool_name = str(tool_name or "").strip()
         normalized_arguments = dict(arguments or {})

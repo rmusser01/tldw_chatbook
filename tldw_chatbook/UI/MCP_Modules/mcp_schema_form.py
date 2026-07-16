@@ -205,7 +205,7 @@ class MCPSchemaForm(Vertical):
                 continue
             if schema_field.kind == "enum":
                 value = self.query_one(widget_id, Select).value
-                if value is Select.NULL or value is Select.BLANK:
+                if value is Select.NULL:
                     if schema_field.required:
                         raise ValueError(f"{schema_field.name}: required.")
                     continue

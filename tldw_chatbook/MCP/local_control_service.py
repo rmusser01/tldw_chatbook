@@ -186,6 +186,20 @@ class LocalMCPControlService:
         tool_name: str,
         arguments: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        """Execute a tool on an external stdio profile, connecting if needed.
+
+        Args:
+            profile_id: Id of the stored external profile.
+            tool_name: Name of the tool to call on that server.
+            arguments: Tool arguments; defaults to an empty dict.
+
+        Returns:
+            The raw result payload from ``MCPClient.call_tool``.
+
+        Raises:
+            PermissionError: If governance denies the trigger action.
+            RuntimeError: If the client reports an error payload.
+        """
         self._require_allowed("mcp.external_profiles.trigger.local")
         client = self._get_client()
         sessions = getattr(client, "sessions", {})

@@ -211,3 +211,28 @@ async def test_hub_tool_result_excerpt_is_redacted_before_disk(tmp_path):
     assert "sk-secret123" not in excerpt
     assert "***" in excerpt
     assert "ok" in excerpt  # non-secret fields still recorded
+
+
+@pytest.mark.asyncio
+async def test_hub_tool_string_false_setting_disables_argument_capture(tmp_path, monkeypatch):
+    """A mis-typed `log_tool_arguments = "false"` config string is truthy;
+    without bool coercion at the call site it would silently keep argument
+    capture ON against the user's stated intent (Qodo PR #639 finding)."""
+    real_get_cli_setting = None
+    import tldw_chatbook.MCP.unified_control_plane_service as ucps
+
+    real_get_cli_setting = ucps.get_cli_setting
+
+    def fake_get_cli_setting(section, key, default=None):
+        if section == "mcp" and key == "log_tool_arguments":
+            return "false"
+        return real_get_cli_setting(section, key, default)
+
+    monkeypatch.setattr(ucps, "get_cli_setting", fake_get_cli_setting)
+    service, fake, client, store = _service(tmp_path)
+
+    await service.test_hub_tool("local:docs", "search", {"q": "sensitive input"})
+
+    records = _log_records(store)
+    assert records and records[0]["ok"] is True
+    assert records[0]["arguments"] is None  # capture disabled despite truthy string

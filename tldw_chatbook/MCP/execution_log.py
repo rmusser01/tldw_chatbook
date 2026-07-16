@@ -14,7 +14,7 @@ from typing import Any
 
 from tldw_chatbook.MCP.redaction import redact_mapping
 
-_RESULT_EXCERPT_LIMIT = 500
+RESULT_EXCERPT_LIMIT = 500
 
 
 @dataclass(frozen=True)
@@ -60,7 +60,7 @@ def build_record(*, server_key: str, tool_name: str, initiator: str, ok: bool,
         kept_arguments = redact_mapping(arguments)
     excerpt = None
     if result_excerpt is not None:
-        excerpt = str(result_excerpt)[:_RESULT_EXCERPT_LIMIT]
+        excerpt = str(result_excerpt)[:RESULT_EXCERPT_LIMIT]
     return ExecutionRecord(
         ts=datetime.now(timezone.utc).isoformat(),
         server_key=server_key, tool_name=tool_name, initiator=initiator,
@@ -78,7 +78,17 @@ class MCPExecutionLog:
         self.max_records_per_file = max_records_per_file
 
     def append(self, record: ExecutionRecord) -> None:
-        """Append one record, rotating generations at the size cap."""
+        """Append one record, rotating generations at the size cap.
+
+        Args:
+            record: The execution record to persist. Dict-shaped
+                ``arguments`` are defensively re-redacted before the
+                record reaches disk.
+
+        Raises:
+            OSError: If the log file or its parent directory cannot be
+                written (callers treat recording as best-effort).
+        """
         self.path.parent.mkdir(parents=True, exist_ok=True)
         if self._count_lines(self.path) >= self.max_records_per_file:
             rotated = self.path.with_name(self.path.name + ".1")
@@ -90,7 +100,15 @@ class MCPExecutionLog:
             handle.write(json.dumps(payload, default=str) + "\n")
 
     def read_recent(self, limit: int = 200) -> list[dict[str, Any]]:
-        """Return up to `limit` records, newest first, across generations."""
+        """Return recent records, newest first, across both generations.
+
+        Args:
+            limit: Maximum number of records to return.
+
+        Returns:
+            Up to ``limit`` record dicts, newest first. Torn or corrupt
+            JSONL lines are skipped rather than raising.
+        """
         rows: list[dict[str, Any]] = []
         rotated = self.path.with_name(self.path.name + ".1")
         for source in (rotated, self.path):  # oldest generation first

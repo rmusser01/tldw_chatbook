@@ -1340,7 +1340,7 @@ class MCPWorkbench(Container):
                 return
             duration_ms = int((time.monotonic() - started) * 1000)
             try:
-                if isinstance(result, dict):
+                if isinstance(result, Mapping):
                     excerpt = json.dumps(redact_mapping(result), default=str)[:500]
                 else:
                     excerpt = str(result)[:500]
