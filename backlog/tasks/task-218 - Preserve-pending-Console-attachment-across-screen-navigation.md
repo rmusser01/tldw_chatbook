@@ -1,9 +1,11 @@
 ---
 id: TASK-218
 title: Preserve pending Console attachment across screen navigation
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-07-13 09:30'
+updated_date: '2026-07-16 15:14'
 labels:
   - console
   - ux
