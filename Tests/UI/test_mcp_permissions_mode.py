@@ -658,24 +658,21 @@ async def test_matrix_and_kill_switch_have_nonzero_geometry_with_bundled_css():
 
         checkbox = app.query_one("#mcp-perm-kill-switch", Checkbox)
         assert checkbox.size.width > 0, "kill-switch row collapsed to zero width under bundled CSS"
-        # T9: `checkbox.size` (content area, post-border) alone would not
-        # have caught the pre-existing bundle defect T6 worked around --
-        # `MCPPermissionsMode` mounted alone auto-focuses this Checkbox (the
-        # only focusable widget on screen), and a focused compact
-        # ToggleButton's OWN DEFAULT_CSS deliberately re-draws a 1-row-top +
-        # 1-row-bottom focus-ring border (`&.-textual-compact:focus` in
-        # Textual's `_toggle_button.py`) -- so `checkbox.size.height` is
-        # legitimately 1 (content only) whenever this test runs, whether or
-        # not the min-height floor is honored, and `> 0`/`>= 1` can't tell
-        # those apart. Assert the OUTER box instead (`outer_size`, "the size
-        # of the widget including padding and border") against the actual
-        # `min-height: 3` floor `MCPPermissionsMode.DEFAULT_CSS` sets (now
-        # also pinned in the bundle itself, T9): with only the bare
-        # `Checkbox { height: 2; }` rule from `_conversations.tcss` and no
-        # min-height floor, that 2-row outer box minus the 2-row focus
-        # border leaves ZERO rows for content -- exactly the defect T6
-        # documented -- so a regression back to that state fails this
-        # assertion even though the content-area check would not.
+        # T9: Assert the OUTER box (`outer_size`, "the size of the widget
+        # including padding and border") against the actual `min-height: 3`
+        # floor `MCPPermissionsMode.DEFAULT_CSS` sets (now also pinned in the
+        # bundle itself, T9). The content-area `size.height` check would also
+        # catch a collapse (when it equals 0), but `outer_size.height >= 3`
+        # is more precise: it pins the floor more exactly. Reason: `MCPPermissionsMode`
+        # mounted alone auto-focuses this Checkbox (the only focusable widget
+        # on screen), and a focused compact ToggleButton's OWN DEFAULT_CSS
+        # deliberately re-draws a 1-row-top + 1-row-bottom focus-ring border
+        # (`&.-textual-compact:focus` in Textual's `_toggle_button.py`) -- so
+        # `checkbox.size.height` is legitimately 1 (content only) whenever this
+        # test runs, making `> 0`/`>= 1` ambiguous. The `outer_size >= 3` floor
+        # is unambiguous: with only the bare `Checkbox { height: 2; }` rule and
+        # no min-height floor, the 2-row outer box minus the 2-row focus border
+        # leaves ZERO rows for content -- exactly the defect T6 documented.
         assert checkbox.outer_size.height >= 3, (
             "kill-switch row's outer box is shorter than its min-height: 3 floor under "
             f"bundled CSS (got {checkbox.outer_size.height}) -- a focused compact Checkbox's "

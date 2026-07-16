@@ -22,6 +22,9 @@ from tldw_chatbook.MCP.readiness import STATE_CSS_CLASSES, STATE_GLYPHS, Readine
 # once a guard actually consumes an echo it overwrites the sentinel with this
 # unique object instead of leaving the matched value in place -- no real
 # Select value can ever equal it, so every subsequent change dispatches.
+# Newer per-instance tagging pattern (source-select, line ~340-350) stores
+# echo detection per Select instance via `_mcp_mount_echo_value` attribute,
+# allowing finer control over which echoes are consumed and when.
 _ECHO_CONSUMED = object()
 
 MCP_RAIL_ROW_PREFIX = "mcp-rail-row-"
