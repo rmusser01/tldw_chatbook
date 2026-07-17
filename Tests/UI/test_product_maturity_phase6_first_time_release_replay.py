@@ -156,7 +156,10 @@ async def test_release_first_time_replay_exposes_home_console_library_and_setup(
                     "nav-library",
                     "library",
                     "LibraryScreen",
-                    ("Library", "Import/Export Sources", "Search/RAG"),
+                    # The shell rail carries the orientation cues now: the
+                    # "Import / Export" section and the "Search / RAG" row
+                    # (spaced slash form per the library shell design copy).
+                    ("Library", "Import / Export", "Search / RAG"),
                 ),
                 (
                     "nav-settings",

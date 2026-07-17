@@ -4,16 +4,6 @@
  * Miscellaneous reusable widgets
  * ======================================== */
 
-#app-titlebar {
-    dock: top;
-    height: 1;                 /* single line */
-    background: $panel;        /* Use panel background color */
-    color: $text;
-    text-align: center;
-    text-style: bold;
-    padding: 0 1;
-}
-
 /* Collapsible widget styling with enhanced UX */
 Collapsible {
     height: auto;

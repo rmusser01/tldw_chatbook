@@ -1888,21 +1888,12 @@ ConsoleSystemPromptModal {
 }
 
 #console-workbench-header {
-    display: none;
-    height: 0;
-    min-height: 0;
-    max-height: 0;
-    padding: 0;
+    /* The destination identity header is the visible Console header (ADR-015);
+       layout comes from .workbench-header in _workbench.tcss. */
+    height: auto;
+    min-height: 2;
+    padding: 0 1;
     margin: 0;
-    border: none;
-}
-
-#console-workbench-header #workbench-header-subtitle,
-#console-workbench-header #workbench-header-status {
-    display: none;
-    height: 0;
-    min-height: 0;
-    max-height: 0;
 }
 
 #console-workbench-mode-strip,
@@ -2499,35 +2490,6 @@ ConsoleSystemPromptModal {
     background: $ds-surface-panel;
 }
 
-.console-start-here,
-.console-action-hints {
-    height: auto;
-    min-height: 1;
-    padding: 0 1;
-}
-
-.console-start-here {
-    margin: 0;
-    border: none;
-    background: $ds-surface-panel;
-    color: $ds-text-primary;
-}
-
-#console-start-here,
-#console-action-hints {
-    display: none;
-    height: 0;
-    min-height: 0;
-    max-height: 0;
-    padding: 0;
-    margin: 0;
-}
-
-.console-action-hints {
-    margin: 0 0 1 0;
-    color: $ds-text-muted;
-}
-
 #console-native-composer {
     height: auto;
     min-height: $ds-console-composer-height;
@@ -2714,6 +2676,13 @@ ConsoleSystemPromptModal {
     margin: 0;
     margin-bottom: 1;
     background: $ds-surface-panel;
+}
+
+/* Scrollable tab strip: overflow scrolls horizontally (wheel, keyboard, or
+   scroll-to-active) instead of silently clipping tabs. The scrollbar itself
+   is hidden because the strip is a single row tall. */
+#console-native-tab-strip {
+    scrollbar-size-horizontal: 0;
 }
 
 .console-session-tab,
@@ -3106,7 +3075,11 @@ ConsoleSystemPromptModal {
 #skills-workbench,
 #settings-workbench {
     height: 1fr;
-    min-height: 20;
+    /* Must stay below the worst-case available height at small terminal
+       sizes, otherwise content overflows and the footer status bar
+       intercepts clicks on the covered rows. Pane content scrolls
+       internally. */
+    min-height: 10;
     padding: 1;
     margin: 0;
     overflow: hidden;

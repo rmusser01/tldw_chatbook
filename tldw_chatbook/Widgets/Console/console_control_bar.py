@@ -159,9 +159,13 @@ class ConsoleControlBar(Vertical):
         }
         for selector, label in label_values.items():
             try:
-                self.query_one(selector, Static).update(label)
+                widget = self.query_one(selector, Static)
             except NoMatches:
                 continue
+            widget.update(label)
+            if selector.endswith("-chip"):
+                # Chips ellipsize at 22 cells; keep the full label on hover.
+                widget.tooltip = label
         chip_emphasis = {
             "#console-sources-chip": state.sources_active,
             "#console-tools-chip": state.tools_active,
@@ -182,7 +186,11 @@ class ConsoleControlBar(Vertical):
             classes += " console-chip-dim"
         elif emphasis is True:
             classes += " console-chip-alert"
-        return Static(label, id=id, classes=classes)
+        chip = Static(label, id=id, classes=classes)
+        # Chips ellipsize at 22 cells; the tooltip carries the full label so
+        # two models sharing a prefix stay distinguishable.
+        chip.tooltip = label
+        return chip
 
     @staticmethod
     def _action_widget_id(action: WorkbenchAction) -> str:

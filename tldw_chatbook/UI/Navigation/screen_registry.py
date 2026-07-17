@@ -67,7 +67,6 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
     "acp": ScreenRoute("acp", "acp", "tldw_chatbook.UI.Screens.acp_screen", "ACPScreen"),
     "settings": ScreenRoute("settings", "settings", "tldw_chatbook.UI.Screens.settings_screen", "SettingsScreen"),
     "ingest": ScreenRoute("ingest", "ingest", "tldw_chatbook.UI.Screens.media_ingest_screen", "MediaIngestScreen"),
-    "coding": ScreenRoute("coding", "coding", "tldw_chatbook.UI.Screens.coding_screen", "CodingScreen"),
     "conversation": ScreenRoute(
         "conversation",
         "conversation",
@@ -130,6 +129,10 @@ _SCREEN_ALIASES = {
     # ``Research_Modules/`` are intentionally NOT deleted here; that is a
     # separate, larger decision.
     "research": "library",
+    # The standalone Coding screen is retired (merged into Console). Legacy
+    # "coding" route ids still resolve to a real screen (Console) instead of
+    # erroring; the shell destination model owns the same fold.
+    "coding": "chat",
 }
 
 

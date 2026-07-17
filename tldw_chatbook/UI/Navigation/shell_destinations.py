@@ -44,7 +44,8 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
         "chat",
         "Live agent conversations, approvals, tools, RAG, and runs.",
         "Open the live agent Console.",
-        ("chat",),
+        # "coding" is retired as a standalone screen; old links land on Console.
+        ("chat", "coding"),
         navigation_priority=20,
     ),
     ShellDestination(
@@ -53,7 +54,7 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
         "library",
         "Workspaces, source material, imports, notes, media, conversations, Study, flashcards, quizzes, and Search/RAG.",
         "Browse Workspaces, imports, notes, media, Study, flashcards, quizzes, search, and source material.",
-        ("notes", "media", "ingest", "search", "conversation", "study", "prompts", "skills"),
+        ("notes", "media", "ingest", "search", "conversation", "study", "prompts", "skills", "writing", "research"),
         navigation_priority=30,
     ),
     ShellDestination(
@@ -112,12 +113,21 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
         "Manage ACP agents and sessions.",
     ),
     ShellDestination(
+        "lab",
+        "Lab",
+        "llm",
+        "Models, speech, and evaluation runs.",
+        "Manage models, speech, and evaluation runs.",
+        ("llm_management", "stts", "evals"),
+        navigation_priority=45,
+    ),
+    ShellDestination(
         "settings",
         "Settings",
         "settings",
         "Global app preferences, appearance, accounts, and storage.",
         "Configure application preferences.",
-        ("customize",),
+        ("customize", "logs", "stats"),
     ),
 )
 
@@ -133,9 +143,15 @@ _ROUTABLE_LEGACY_ROUTES = {
     "search",
     "conversation",
     "study",
+    "writing",
+    "research",
     "chatbooks",
     "subscriptions",
     "tools_settings",
+    "stts",
+    "evals",
+    "logs",
+    "stats",
     "customize",
     # Personas "prompts" mode chip retirement (Task 7): keep the legacy
     # route id as its own canonical route under Library, mirroring "notes".
@@ -148,6 +164,7 @@ _ROUTABLE_LEGACY_ROUTES = {
 
 _CANONICAL_ROUTE_OVERRIDES = {
     "subscription": "subscriptions",
+    "llm_management": "llm",
 }
 
 _ROUTE_MAP: dict[str, ResolvedShellRoute] = {}

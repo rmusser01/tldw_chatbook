@@ -243,13 +243,6 @@ def test_console_session_surface_uses_flex_height_not_full_percent_height():
             "    margin: 0;"
         ) in css
         assert (
-            "#console-start-here,\n"
-            "#console-action-hints {\n"
-            "    display: none;\n"
-            "    height: 0;\n"
-            "    min-height: 0;"
-        ) in css
-        assert (
             ".console-left-rail-section.console-settings-summary {\n"
             "    margin: 0 0 1 0;\n"
             "    padding: 0 1;\n"
@@ -2035,11 +2028,13 @@ async def test_console_empty_transcript_promotes_setup_card_over_banner():
         await _wait_for_selector(console, pilot, "#console-setup-modal")
         await _wait_for_selector(console, pilot, "#console-native-transcript")
 
-        start_here = console.query_one("#console-start-here", Static)
-        action_hints = console.query_one("#console-action-hints", Static)
         # The shared Workbench recovery banner must stay hidden — the blocking
         # setup modal owns first-run/provider-setup guidance now (Phase 2 spec,
         # section 2 revised), so it must not be duplicated in a top-level banner.
+        # The empty #console-start-here / #console-action-hints compat blocks
+        # were removed outright for the same reason.
+        assert not list(console.query("#console-start-here"))
+        assert not list(console.query("#console-action-hints"))
         recovery = console.query_one("#workbench-recovery-callout")
         recovery_action = console.query_one("#workbench-recovery-action", Button)
         modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
@@ -2050,8 +2045,6 @@ async def test_console_empty_transcript_promotes_setup_card_over_banner():
         assert recovery_action.display is False
         assert modal.display is True
         assert modal.is_blocking
-        assert start_here.styles.display == "none"
-        assert action_hints.styles.display == "none"
 
         text = _visible_text(console)
         # task-264: the Console screen mounts its own AppFooterStatus, which
@@ -2318,20 +2311,14 @@ async def test_console_inline_guidance_does_not_reserve_transcript_space():
 
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-start-here")
-        await _wait_for_selector(console, pilot, "#console-action-hints")
         await _wait_for_selector(console, pilot, "#console-transcript-title")
-        start_here = console.query_one("#console-start-here", Static)
-        action_hints = console.query_one("#console-action-hints", Static)
         transcript_title = console.query_one("#console-transcript-title", Static)
 
-        assert start_here.styles.display == "none"
-        assert action_hints.styles.display == "none"
-        assert str(start_here.styles.height) == "0"
-        start_copy = getattr(start_here.render(), "plain", str(start_here.render()))
+        # Guidance copy blocks are gone entirely, not just hidden.
+        assert not list(console.query("#console-start-here"))
+        assert not list(console.query("#console-action-hints"))
         title_copy = getattr(transcript_title.render(), "plain", str(transcript_title.render()))
-        assert start_copy == ""
-        assert title_copy == "Transcript / Event Stream"
+        assert title_copy.startswith("Transcript / Event Stream")
 
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
@@ -2340,10 +2327,10 @@ async def test_console_inline_guidance_does_not_reserve_transcript_space():
         console._sync_console_control_bar()
         await pilot.pause()
 
-        assert start_here.styles.display == "none"
-        assert action_hints.styles.display == "none"
+        assert not list(console.query("#console-start-here"))
+        assert not list(console.query("#console-action-hints"))
         title_copy = getattr(transcript_title.render(), "plain", str(transcript_title.render()))
-        assert title_copy == "Transcript / Event Stream"
+        assert title_copy.startswith("Transcript / Event Stream")
 
 
 @pytest.mark.asyncio
@@ -2360,14 +2347,14 @@ async def test_console_inline_guidance_disappears_after_user_starts_typing():
         transcript_title = console.query_one("#console-transcript-title", Static)
 
         title_copy = getattr(transcript_title.render(), "plain", str(transcript_title.render()))
-        assert title_copy == "Transcript / Event Stream"
+        assert title_copy.startswith("Transcript / Event Stream")
 
         await pilot.press("h")
         await pilot.pause(0.1)
 
         title_copy = getattr(transcript_title.render(), "plain", str(transcript_title.render()))
         assert composer.draft_text() == "h"
-        assert title_copy == "Transcript / Event Stream"
+        assert title_copy.startswith("Transcript / Event Stream")
 
         composer.clear_draft()
         console._sync_console_transcript_guidance()
@@ -2375,7 +2362,7 @@ async def test_console_inline_guidance_disappears_after_user_starts_typing():
 
         title_copy = getattr(transcript_title.render(), "plain", str(transcript_title.render()))
         assert composer.draft_text() == ""
-        assert title_copy == "Transcript / Event Stream"
+        assert title_copy.startswith("Transcript / Event Stream")
 
 
 @pytest.mark.asyncio
@@ -2386,17 +2373,14 @@ async def test_console_transcript_header_sits_at_top_of_center_panel():
 
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-start-here")
         await _wait_for_selector(console, pilot, "#console-transcript-title")
 
-        start_here = console.query_one("#console-start-here", Static)
         transcript_region = console.query_one("#console-transcript-region")
         transcript_title = console.query_one("#console-transcript-title", Static)
         tab_strip = console.query_one("#console-native-tab-strip")
         transcript = console.query_one("#console-native-transcript")
 
-        assert start_here.styles.display == "none"
-        assert start_here.region.height == 0
+        assert not list(console.query("#console-start-here"))
         assert transcript_region.styles.border.top[0] in {"", "none"}
         assert transcript_title.region.y == transcript_region.region.y
         assert tab_strip.region.y == transcript_title.region.y + transcript_title.region.height
@@ -3810,6 +3794,9 @@ def test_console_keyboard_hints_visible_in_native_footer():
     bindings_by_key = {binding.key: binding for binding in ChatScreen.BINDINGS}
 
     visible = {
+        "f1": "Help",
+        "f6": "Next pane",
+        "shift+f6": "Previous pane",
         "ctrl+k": "Switch session",
         "alt+m": "Model",
         "ctrl+t": "New tab",

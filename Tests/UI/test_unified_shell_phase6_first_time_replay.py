@@ -38,6 +38,7 @@ EXPECTED_NAV = [
     ("nav-workflows", "Workflows"),
     ("nav-mcp", "MCP"),
     ("nav-acp", "ACP"),
+    ("nav-lab", "Lab"),
     ("nav-settings", "Settings"),
 ]
 
@@ -149,7 +150,7 @@ async def test_first_time_shell_replay_exposes_home_console_and_orientation_path
                     "nav-library",
                     "library",
                     "LibraryScreen",
-                    ("Library", "Import/Export Sources", "Search/RAG"),
+                    ("Library", "Import / Export", "Search / RAG"),
                 ),
                 (
                     "nav-personas",

@@ -60,9 +60,16 @@ class _ToolsSettingsHostApp(App):
 
 @asynccontextmanager
 async def mount_settings_window(config_dict: dict, temp_config_path: Path, monkeypatch):
-    """Write config_dict to temp_config_path, patch DEFAULT_CONFIG_PATH, and yield a live-mounted ToolsSettingsWindow driven by a real pilot."""
+    """Write config_dict to temp_config_path, point the effective config path at it, and yield a live-mounted ToolsSettingsWindow driven by a real pilot."""
     create_dummy_config(temp_config_path, config_dict)
     monkeypatch.setattr(tldw_chatbook.config, "DEFAULT_CONFIG_PATH", temp_config_path)
+    # load/save resolve via _get_effective_config_path(), which prefers the
+    # TLDW_CONFIG_PATH env override (also set by Tests/UI/conftest.py) over
+    # DEFAULT_CONFIG_PATH, so the env var is the knob that actually takes effect.
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(temp_config_path))
+    # Drop any cached config loaded from this path before the test rewrote it.
+    monkeypatch.setattr(tldw_chatbook.config, "_CONFIG_CACHE", None)
+    monkeypatch.setattr(tldw_chatbook.config, "_CONFIG_CACHE_SOURCE", None)
 
     app = _ToolsSettingsHostApp()
     async with app.run_test() as pilot:
@@ -79,12 +86,17 @@ def temp_config_path(tmp_path: Path) -> Path:
 
 @pytest.fixture(autouse=True)
 def mock_config_path(monkeypatch, temp_config_path: Path):
-    """Monkeypatches DEFAULT_CONFIG_PATH and related functions to use a temporary path."""
+    """Monkeypatches the effective config path to use a temporary path."""
     # Ensure a default config exists at the temp path before tests run
     default_initial_content = {"initial_setting": "default_value"}
     create_dummy_config(temp_config_path, default_initial_content)
 
     monkeypatch.setattr(tldw_chatbook.config, 'DEFAULT_CONFIG_PATH', temp_config_path)
+    # config.py resolves loads/saves through _get_effective_config_path(), which
+    # honors the TLDW_CONFIG_PATH env override (also exported by conftest
+    # isolation fixtures) ahead of DEFAULT_CONFIG_PATH. Point it at the temp file
+    # so the content written here is what the window actually loads.
+    monkeypatch.setenv('TLDW_CONFIG_PATH', str(temp_config_path))
 
     # If load_cli_config_and_ensure_existence has its own reference to the original path (e.g. via default arg)
     # it might need to be mocked or reloaded. However, direct setattr should be effective for module-level constants.

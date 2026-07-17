@@ -8,6 +8,8 @@ from textual.widgets import Input, Select, TabbedContent
 
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..SearchRAGWindow import SearchRAGWindow
+from ..Workbench.workbench_state import WorkbenchHeaderState
+from ..Workbench.workbench_widgets import DestinationHeader
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -36,10 +38,20 @@ class SearchScreen(BaseAppScreen):
         self._pending_search_restore: Optional[Dict[str, Any]] = None
 
     def compose_content(self) -> ComposeResult:
-        """Compose the search window content."""
+        """Compose the search window content with its destination header."""
+        yield DestinationHeader(
+            WorkbenchHeaderState(
+                title="Search",
+                subtitle="Search and RAG over your library.",
+                status="ready",
+            ),
+            id="search-destination-header",
+        )
         self.search_window = SearchRAGWindow(self.app_instance)
         # Add the window class after creation
         self.search_window.add_class("window")
+        # Leave room for the destination header above the window.
+        self.search_window.styles.height = "1fr"
         # Yield the window widget directly
         yield self.search_window
 

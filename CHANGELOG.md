@@ -9,6 +9,69 @@ and this project adheres to Some kind of Versioning
 
 ### Added
 - Initial features pending documentation
+- Lab destination in the shell nav (ADR-015): Models (`llm`), Speech (`stts`), and Evals
+  now have a home in the 12-destination rail between ACP and Settings. (Rebase note:
+  upstream's retirement of the Skills destination into Library is adopted.)
+- Destination identity headers (`DestinationHeader`: title, plain-language subtitle,
+  text-labeled status badge) on the Console (now visible), Search, Media, Study, Writing,
+  Research, Models, Speech, Logs, Stats, Evals, and Personas screens. Stats also gained the
+  standard nav/footer/status chrome and a live Loading/Error/Ready/Empty header badge.
+
+### Removed
+- Legacy navigation chrome retired (ADR-014, as amended on rebase): the permanently
+  occluded `TitleBar` and the `TabBar`/`TabLinks`/`TabDropdown` legacy nav widgets are
+  deleted, along with the dead `general.use_dropdown_navigation` /
+  `general.use_link_navigation` config switches. Users who set those options lose nothing
+  visible — they only selected which of three invisible nav widgets was mounted.
+  (`AppFooterStatus` is NOT deleted: upstream's per-screen mounting in task-264 fixes the
+  same occlusion, so the widget stays and the earlier `AppStatusLine` replacement was
+  dropped in its favor.)
+- Standalone Coding screen retired and merged into Console (ADR-015): the `coding` route,
+  `CodingScreen`, and `Coding_Window.py` are gone; legacy `coding` links land on Console.
+  `CodeRepoCopyPasteWindow` is unaffected.
+
+### Changed
+- Command palette dedupe (ADR-015): one navigation command per destination; legacy route
+  names (media, search, study, writing, research, logs, stats, llm, stts, evals, coding,
+  ccp, tools_settings, ingest, notes, chatbooks, subscriptions, customize, ...) are
+  searchable aliases that land on the owning destination instead of separate labeled
+  commands. This removes the duplicated "Personas" and "MCP" palette entries.
+- Route folds (ADR-015): Writing and Research now resolve under Library, Logs and Stats
+  under Settings, and Models/Speech/Evals under Lab, so the nav boxes the right destination
+  on every screen.
+- Evals dead-end removed: the destination no longer pushes a separate hub screen on mount
+  and no longer shows a permanent "Loading Evaluation Lab..." placeholder. The evaluation
+  workbench renders inline under the shell chrome, its cards navigate again, and Escape
+  walks the workbench back stack instead of dead-ending. The hub's redundant emoji
+  marketing header was dropped in favor of the destination identity header.
+- Small-terminal workbench fix: workbench minimum heights no longer exceed the available
+  space at ~24-row terminal sizes, so list rows no longer render underneath the status
+  line where clicks were intercepted.
+- Console top area: control-bar chips carry full-label tooltips so two models sharing a
+  name prefix stay distinguishable when ellipsized. (Rebase note: the rail Model readouts
+  and transcript copy blocks stay — upstream expanded the Console internals that this
+  branch's dedup experiment had pruned, and upstream's version wins.)
+- Console session tab strip now scales: the strip scrolls horizontally instead of
+  silently clipping past a handful of tabs, the active tab is scrolled into view on
+  switch, tabs show a run-in-progress glyph for the session that owns the active
+  stream, and middle-click on a tab closes it (the ✕ button stays as the visible,
+  keyboard-reachable close path).
+- Product naming aligned: the terminal title and first-run welcome now say
+  "tldw chatbook" instead of the legacy "tldw CLI" identifier. The Console transcript
+  header uses the shell's " | " separator instead of an em dash, and the nav overflow
+  hint gained breathing room after the last destination button.
+
+### Fixed
+- Search/RAG no longer crashes with NoMatches when the screen is closed while its
+  collections loader thread is in flight; the DOM update is now guarded during teardown.
+- Study screen no longer races dashboard mounting when applying a pending initial
+  section; the sync now retries after refresh instead of raising NoMatches in a worker.
+- Seventeen pre-existing test failures repaired: stale config-path monkeypatching in the
+  tools/settings API-key tests, outdated Library copy and nav expectations in the shell
+  contract tests (including the new Lab destination), a retired notes-mode-chip CSS
+  contract, a stale packaging entry-point expectation, a glyph-marker assertion, and a
+  ChatScreen test-double missing a new dispatch stub. The phase-5 worker contract now
+  detects asyncio.run call sites via AST instead of substring matching.
 
 
 ## [0.1.8.0] - 2026-07-08

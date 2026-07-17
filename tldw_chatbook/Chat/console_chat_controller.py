@@ -1948,6 +1948,15 @@ class ConsoleChatController:
         except KeyError:
             return False
 
+    def streaming_session_id(self) -> str | None:
+        """Return the session with an in-flight stream, for tab status glyphs."""
+        if self._active_assistant_message_id is None:
+            return None
+        try:
+            return self.store.session_id_for_message(self._active_assistant_message_id)
+        except KeyError:
+            return None
+
     def _session_closed_result(self) -> ConsoleSubmitResult:
         visible_copy = "Session closed."
         self._set_run_state(ConsoleRunState(ConsoleRunStatus.STOPPED, visible_copy))

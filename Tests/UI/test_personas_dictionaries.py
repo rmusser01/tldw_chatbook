@@ -990,7 +990,11 @@ class TestDictionarySettings:
         from tldw_chatbook.Widgets.Persona_Widgets.personas_inspector_pane import PersonasInspectorPane
 
         app = StyledPersonasTestApp(mock_app_instance)
-        async with app.run_test(size=(160, 48)) as pilot:
+        # The DestinationHeader consumes 5 rows, so at (160, 48) the Save
+        # button's center lands under the Try-it pane and pilot.click would
+        # miss it; (200, 60) keeps it clickable (same convention as the
+        # entries-tab tests above).
+        async with app.run_test(size=(200, 60)) as pilot:
             screen = await _enter_dictionaries(pilot)
             await self._select_first(pilot, screen)
             tabs = screen.query_one("#personas-dict-tabs", TabbedContent)
@@ -1025,7 +1029,8 @@ class TestDictionarySettings:
             screen.query_one("#personas-dict-name", Input).value = "Half-renamed"
             await pilot.pause()
             assert screen.state.has_unsaved_changes is True
-            assert "- unsaved" in str(screen.query_one("#personas-title", Static).renderable)
+            subtitle = screen.query_one("#personas-header #workbench-header-subtitle", Static)
+            assert "- unsaved" in str(subtitle.renderable)
 
     async def test_reverting_edit_clears_dirty_flag(self, mock_app_instance, stub_characters, fake_dict_service):
         """Transition-based dirty signaling: editing back to the loaded value
@@ -1044,17 +1049,21 @@ class TestDictionarySettings:
             name_input.value = "Half-renamed"
             await pilot.pause()
             assert screen.state.has_unsaved_changes is True
-            assert "- unsaved" in str(screen.query_one("#personas-title", Static).renderable)
+            subtitle = screen.query_one("#personas-header #workbench-header-subtitle", Static)
+            assert "- unsaved" in str(subtitle.renderable)
             name_input.value = original
             await pilot.pause()
             assert screen.state.has_unsaved_changes is False
-            assert "- unsaved" not in str(screen.query_one("#personas-title", Static).renderable)
+            subtitle = screen.query_one("#personas-header #workbench-header-subtitle", Static)
+            assert "- unsaved" not in str(subtitle.renderable)
 
     async def test_conflict_surfaces_status_not_crash(self, mock_app_instance, stub_characters, fake_dict_service):
         from textual.widgets import TabbedContent
 
         app = StyledPersonasTestApp(mock_app_instance)
-        async with app.run_test(size=(160, 48)) as pilot:
+        # Same geometry constraint as test_save_persists_and_refreshes_row:
+        # (200, 60) keeps the Save button clear of the Try-it pane.
+        async with app.run_test(size=(200, 60)) as pilot:
             screen = await _enter_dictionaries(pilot)
             await self._select_first(pilot, screen)
             tabs = screen.query_one("#personas-dict-tabs", TabbedContent)

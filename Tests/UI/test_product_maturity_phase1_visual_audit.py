@@ -40,8 +40,9 @@ DESTINATION_BODY_SELECTORS: dict[str, tuple[str, ...]] = {
     "watchlists_collections": ("#watchlists-collections-shell",),
     "schedules": ("#schedules-shell",),
     "workflows": ("#workflows-shell",),
-    "mcp": ("#mcp-shell", "#unified-mcp-panel"),
+    "mcp": ("#mcp-shell", "#mcp-hub-workbench"),
     "acp": ("#acp-shell",),
+    "lab": ("#llm-destination-header", "#llm-main-content"),
     "settings": ("#settings-shell",),
 }
 TERMINAL_SIZE_MATRIX = (

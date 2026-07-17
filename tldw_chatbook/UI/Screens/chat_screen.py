@@ -547,13 +547,13 @@ class ChatScreen(BaseAppScreen):
         ),
         Binding("tab", "focus_next", "Focus Next", show=False),
         Binding("shift+tab", "focus_previous", "Focus Previous", show=False),
-        Binding("f1", "show_workbench_help", "Help", show=False),
-        Binding("f6", "focus_next_workbench_pane", "Next pane", show=False, priority=True),
+        Binding("f1", "show_workbench_help", "Help", show=True),
+        Binding("f6", "focus_next_workbench_pane", "Next pane", show=True, priority=True),
         Binding(
             "shift+f6",
             "focus_previous_workbench_pane",
             "Previous pane",
-            show=False,
+            show=True,
             priority=True,
         ),
         Binding("ctrl+k", "open_console_session_switcher", "Switch session", show=True),
@@ -5920,16 +5920,6 @@ class ChatScreen(BaseAppScreen):
             guidance_dismissed=self._console_guidance_dismissed,
         )
 
-    def _console_guidance_visible(self, blocker_copy: str | None = None) -> bool:
-        """Return whether first-run Console guidance should still be visible."""
-        if self._console_guidance_dismissed:
-            return False
-        if self._console_transcript_has_messages():
-            return False
-        if blocker_copy is None:
-            blocker_copy = self._console_provider_blocker_copy()
-        return not bool(blocker_copy)
-
     def _dismiss_console_guidance(self) -> None:
         """Hide first-run Console guidance after the user starts composing."""
         if self._console_guidance_dismissed:
@@ -5983,26 +5973,12 @@ class ChatScreen(BaseAppScreen):
     def _sync_console_transcript_guidance(self) -> None:
         """Refresh Console onboarding and provider recovery copy in place."""
         blocker_copy = self._console_provider_blocker_copy()
-        guidance_visible = self._console_guidance_visible(blocker_copy)
         action_label, _action_target, action_tooltip = self._console_provider_recovery_action()
         empty_action_label, empty_action_tooltip = self._console_empty_recovery_action_copy(
             blocker_copy,
             provider_action_label=action_label if blocker_copy else "",
             provider_action_tooltip=action_tooltip if blocker_copy else "",
         )
-        for selector, copy in (
-            ("#console-start-here", CONSOLE_START_HERE_COPY),
-            ("#console-action-hints", CONSOLE_ACTION_HINTS_COPY),
-        ):
-            try:
-                widget = self.query_one(selector, Static)
-            except QueryError:
-                continue
-            self._configure_console_copy_block(
-                widget,
-                copy,
-                visible=guidance_visible,
-            )
 
         card_state = self._build_console_setup_card_state()
         try:
@@ -6508,12 +6484,14 @@ class ChatScreen(BaseAppScreen):
             f"density-{workbench_state.density}"
         )
         with Vertical(id="console-shell", classes=shell_classes):
-            yield self._hidden_console_workbench_widget(
-                DestinationHeader(
-                    workbench_state.header,
-                    id="console-workbench-header",
-                    classes="workbench-header",
-                )
+            # The destination identity header is the visible Console header;
+            # it stays live via _sync_console_workbench_state. The legacy
+            # #console-title/#console-purpose/#console-status-row compat
+            # statics below remain mounted but hidden for contract tests.
+            yield DestinationHeader(
+                workbench_state.header,
+                id="console-workbench-header",
+                classes="workbench-header",
             )
             yield self._hidden_console_workbench_widget(
                 ModeStrip(
@@ -6698,7 +6676,8 @@ class ChatScreen(BaseAppScreen):
                                 ),
                             )
 
-                        # Section 3: Model (compact settings summary).
+                        # Section 3: Model (provider/model readout lines plus a
+                        # Configure shortcut into the Console session settings).
                         yield ConsoleRailSectionHeader(
                             "Model",
                             section_id="model",
@@ -6833,30 +6812,6 @@ class ChatScreen(BaseAppScreen):
                         top=False,
                     )
                     with transcript_region:
-                        provider_blocker_copy = self._console_provider_blocker_copy()
-                        guidance_visible = self._console_guidance_visible(provider_blocker_copy)
-                        start_here = Static(
-                            CONSOLE_START_HERE_COPY,
-                            id="console-start-here",
-                            classes="console-start-here",
-                        )
-                        self._configure_console_copy_block(
-                            start_here,
-                            CONSOLE_START_HERE_COPY,
-                            visible=guidance_visible,
-                        )
-                        yield start_here
-                        action_hints = Static(
-                            CONSOLE_ACTION_HINTS_COPY,
-                            id="console-action-hints",
-                            classes="console-action-hints",
-                        )
-                        self._configure_console_copy_block(
-                            action_hints,
-                            CONSOLE_ACTION_HINTS_COPY,
-                            visible=guidance_visible,
-                        )
-                        yield action_hints
                         yield self._ensure_console_session_surface()
 
                 right_rail = Vertical(
@@ -6973,8 +6928,7 @@ class ChatScreen(BaseAppScreen):
         """Run diagnostics when first mounted (only once)."""
         # Call parent's on_mount
         super().on_mount()
-        self._register_console_footer_shortcuts()
-        
+
         if not self._diagnostics_run and self.chat_window:
             self._diagnostics_run = True
             # Run diagnostic in the background for the legacy direct widget only.
@@ -6999,7 +6953,6 @@ class ChatScreen(BaseAppScreen):
 
     async def on_unmount(self) -> None:
         """Release Console-native resources owned by this screen."""
-        self._clear_console_footer_shortcuts()
         self._stop_console_transcript_sync_timer()
         controller = self._console_chat_controller
         if controller is not None:
@@ -8122,9 +8075,14 @@ class ChatScreen(BaseAppScreen):
             settings=self._default_console_session_settings(),
         )
         self._ensure_active_console_session_settings()
+        controller = getattr(self, "_console_chat_controller", None)
+        streaming_session_id = (
+            controller.streaming_session_id() if controller is not None else None
+        )
         await surface.sync_sessions(
             sessions=store.sessions(),
             active_session_id=store.active_session_id,
+            streaming_session_id=streaming_session_id,
         )
 
     async def _append_native_console_system_message(self, message: str) -> None:

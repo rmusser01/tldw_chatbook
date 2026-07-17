@@ -293,7 +293,6 @@ def test_generated_console_stylesheet_includes_rail_section_rules():
         ".console-rail-section-title",
         ".console-rail-section-toggle",
         ".console-rail-section-body",
-        ".console-model-section-line",
     ):
         assert selector in component_css, selector
         assert selector in generated_css, selector
@@ -1150,8 +1149,10 @@ async def test_console_left_rail_renders_four_sections_with_details_collapsed():
         _assert_selector_hidden_or_absent(console, "#console-workspace-context-title")
         # Details content exists but is hidden.
         assert list(console.query("#console-workspace-details"))
-        # Model section content.
+        # Model section content: provider/model readout lines alongside the
+        # Configure shortcut.
         assert _is_displayed(console.query_one("#console-model-section-line1"))
+        assert _is_displayed(console.query_one("#console-model-section-line2"))
         assert _is_displayed(console.query_one("#console-model-section-configure"))
 
 

@@ -413,6 +413,7 @@ def test_lazy_screen_registry_resolves_visible_shell_destinations():
         "workflows": "WorkflowsScreen",
         "mcp": "MCPScreen",
         "acp": "ACPScreen",
+        "llm": "LLMScreen",
         "settings": "SettingsScreen",
     }
 
@@ -987,9 +988,9 @@ def test_media_screen_uses_shared_runtime_state():
 
     widgets = list(screen.compose_content())
 
-    assert len(widgets) == 1
+    assert len(widgets) == 2  # destination header + media window
     assert screen.media_runtime_state is app.media_runtime_state
-    assert screen.media_window is widgets[0]
+    assert screen.media_window is widgets[1]
     assert screen.media_window.runtime_state is app.media_runtime_state
 
 
@@ -1003,38 +1004,6 @@ def test_media_ingest_screen_uses_shared_runtime_state():
     assert screen.media_runtime_state is app.media_runtime_state
     assert screen.media_ingest_window is widgets[0]
     assert screen.media_ingest_window.runtime_state is app.media_runtime_state
-
-
-@pytest.mark.asyncio
-async def test_tab_links_emit_navigation_messages():
-    from tldw_chatbook.UI.Tab_Links import TabLinks
-
-    messages_received = []
-
-    class TestApp(App):
-        def compose(self):
-            yield TabLinks(tab_ids=ALL_TABS, initial_active_tab="chat")
-
-        @on(NavigateToScreen)
-        def capture_navigation(self, message: NavigateToScreen) -> None:
-            messages_received.append(message)
-
-    app = TestApp()
-
-    async with app.run_test() as pilot:
-        tab_links = pilot.app.query_one(TabLinks)
-        media_link = tab_links.query_one("#tab-link-media")
-
-        original_get_widget_at = tab_links.app.get_widget_at
-        tab_links.app.get_widget_at = lambda _x, _y: (media_link, None)
-        try:
-            await tab_links.on_click(SimpleNamespace(screen_x=0, screen_y=0))
-            await pilot.pause(0.05)
-        finally:
-            tab_links.app.get_widget_at = original_get_widget_at
-
-    assert len(messages_received) == 1
-    assert messages_received[0].screen_name == "media"
 
 
 @pytest.mark.asyncio
@@ -1098,6 +1067,7 @@ async def test_main_navigation_copy_and_order():
         ("nav-workflows", "Workflows"),
         ("nav-mcp", "MCP"),
         ("nav-acp", "ACP"),
+        ("nav-lab", "Lab"),
         ("nav-settings", "Settings"),
     ]
 
