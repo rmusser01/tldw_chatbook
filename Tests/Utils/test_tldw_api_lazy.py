@@ -111,6 +111,37 @@ def test_all_dunder_all_names_resolve_without_error():
     assert not failed, f"{len(failed)} of {len(tldw_api.__all__)} names in __all__ failed to resolve: {failed[:20]}"
 
 
+def test_app_import_does_not_load_tldw_api_client():
+    """Regression net for the eager-import chain that used to defeat the lazy
+    package layer: runtime_policy/bootstrap.py (reached via
+    Chat/server_chat_conversation_service.py early in app.py's import chain)
+    did a module-scope `from tldw_chatbook.tldw_api import TLDWAPIClient`,
+    which pulled in tldw_api/client.py -- a 15k-line module that re-imports
+    virtually the entire schema surface. After task-285's TYPE_CHECKING
+    conversion of every on-app-path importer, a bare `import
+    tldw_chatbook.app` must NOT load tldw_api.client; it loads on demand the
+    first time a server client is actually constructed
+    (runtime_policy/bootstrap.py::build_runtime_api_client)."""
+    code = (
+        "import tldw_chatbook.app\n"
+        "import sys\n"
+        "assert 'tldw_chatbook.tldw_api.client' not in sys.modules, "
+        "'tldw_api.client was eagerly loaded by app import'\n"
+        "print('APP_LAZY_OK')\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, (
+        f"subprocess failed (rc={result.returncode})\n"
+        f"stdout={result.stdout}\nstderr={result.stderr[-3000:]}"
+    )
+    assert "APP_LAZY_OK" in result.stdout
+
+
 def test_full_submodule_mapping_resolves_without_error():
     """Even broader net than __all__: `_SUBMODULE_BY_NAME` is a superset of
     __all__ (some names were importable via `from tldw_chatbook.tldw_api
