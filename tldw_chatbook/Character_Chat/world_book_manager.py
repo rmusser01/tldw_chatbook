@@ -360,7 +360,7 @@ class WorldBookManager:
                 json.dumps(clean_secondary) if clean_secondary else None,
                 case_sensitive,
                 json.dumps(extensions) if extensions else None,
-                int(priority)
+                int(priority or 0)
             ))
             entry_id = cursor.lastrowid
             logger.info(f"Created world book entry {entry_id} for book {world_book_id}")
@@ -437,7 +437,7 @@ class WorldBookManager:
                 if field in ['keys', 'secondary_keys', 'extensions']:
                     value = json.dumps(value) if value else None
                 elif field == 'priority':
-                    value = int(value)
+                    value = int(value or 0)
                 updates.append(f"{field} = ?")
                 params.append(value)
         

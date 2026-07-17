@@ -512,3 +512,10 @@ def test_export_import_preserves_priority(wb_manager):
     assert data["entries"][0]["priority"] == 90
     new_id = wb_manager.import_world_book(data, name_override="B copy")
     assert wb_manager.get_world_book_entries(new_id)[0]["priority"] == 90
+
+def test_create_entry_null_priority_defaults_zero(wb_manager):
+    """A null priority (e.g. from a hand-edited import file) must not crash —
+    int(None or 0) == 0 (P2c whole-branch-review Minor)."""
+    book_id = wb_manager.create_world_book("B")
+    wb_manager.create_world_book_entry(book_id, ["k"], "c", priority=None)
+    assert wb_manager.get_world_book_entries(book_id)[0]["priority"] == 0

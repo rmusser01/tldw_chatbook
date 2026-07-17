@@ -274,7 +274,8 @@ class PersonasLoreDetailWidget(Vertical):
         Returns:
             dict | None: The entry payload keyed by API field names
             (``keys``, ``content``, ``position``, ``enabled``,
-            ``insertion_order``), or ``None`` if keys or content are empty.
+            ``insertion_order``, ``priority``), or ``None`` if keys or content
+            are empty.
         """
         raw_keys = self.query_one("#personas-lore-entry-keys", Input).value
         keys = [k.strip() for k in raw_keys.split(",") if k.strip()]
