@@ -5115,6 +5115,23 @@ class ChatScreen(BaseAppScreen):
     def _console_tool_count(self) -> int:
         return coerce_non_negative_int(getattr(self.app_instance, "console_tool_count", 0))
 
+    def _console_mcp_tool_count(self) -> Optional[int]:
+        """MCP catalog size for the run inspector's "MCP" row (P5-T6).
+
+        ``None`` (the default -- no seam wired) means "nothing to report":
+        no ``unified_mcp_service``, the kill switch is on, or this app
+        instance has not populated the hook yet -- ``ConsoleInspectorState.
+        from_values`` omits the "MCP" row entirely in that case, mirroring
+        ``_console_tool_count``'s own getattr-hook pattern above.
+        """
+        value = getattr(self.app_instance, "console_mcp_tool_count", None)
+        return None if value is None else coerce_non_negative_int(value)
+
+    def _console_mcp_not_connected_count(self) -> int:
+        return coerce_non_negative_int(
+            getattr(self.app_instance, "console_mcp_not_connected_count", 0)
+        )
+
     def _console_rag_source_status(
         self,
         pending_launch: Optional[ConsoleLiveWorkLaunch],
@@ -5209,6 +5226,8 @@ class ChatScreen(BaseAppScreen):
             ),
             tool_count=self._console_tool_count(),
             approval_count=self._console_pending_approval_count(),
+            mcp_tool_count=self._console_mcp_tool_count(),
+            mcp_not_connected_count=self._console_mcp_not_connected_count(),
             can_save_chatbook=can_save_chatbook,
         )
         setup_blocker_copy = self._console_provider_blocker_copy()

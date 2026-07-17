@@ -6169,6 +6169,21 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         if callable(close_cached_client):
             await close_cached_client()
 
+    async def _disconnect_local_mcp_client(self) -> None:
+        """Best-effort teardown of local MCP client sessions (P5-T6).
+
+        ``local_mcp_control_service.client`` (``LocalMCPControlService.
+        client``) stays ``None`` until a local external MCP profile is
+        actually connected during this process's lifetime (see
+        ``LocalMCPControlService._get_client``'s lazy-init) -- a session-
+        free app quit is a no-op here, matching the sibling teardown
+        blocks' own guarded style.
+        """
+        local_mcp_control_service = getattr(self, "local_mcp_control_service", None)
+        client = getattr(local_mcp_control_service, "client", None)
+        if client is not None and getattr(client, "sessions", None):
+            await client.disconnect_all()
+
     async def on_unmount(self) -> None:
         """Clean up logging resources on application exit."""
         import asyncio
@@ -6290,7 +6305,15 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                     self.loguru_logger.info("Auto-sync manager stopped")
                 except Exception as e:
                     self.loguru_logger.error(f"Error stopping auto-sync manager: {e}")
-            
+
+            # Disconnect local MCP client sessions (P5-T6), if any were ever
+            # established this run.
+            try:
+                await self._disconnect_local_mcp_client()
+                self.loguru_logger.info("Local MCP client sessions disconnected")
+            except Exception as e:
+                self.loguru_logger.error(f"Error disconnecting local MCP client sessions: {e}")
+
             # Cancel any pending workers
             for worker in self.workers:
                 if not worker.is_finished:

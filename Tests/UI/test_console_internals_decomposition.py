@@ -3337,6 +3337,59 @@ async def test_console_run_inspector_exposes_pending_approval_and_chatbook_artif
 
 
 @pytest.mark.asyncio
+async def test_console_run_inspector_shows_mcp_tools_ready_row():
+    app = _build_test_app()
+    app.console_mcp_tool_count = 5
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _open_console_inspector(console, pilot)
+        await _wait_for_selector(console, pilot, "#console-inspector-mcp")
+
+        assert "MCP: 5 tools ready" in str(
+            console.query_one("#console-inspector-mcp", Static).renderable
+        )
+        assert (
+            console.query_one("#console-inspector-tools-heading").region.y
+            < console.query_one("#console-inspector-tools").region.y
+            < console.query_one("#console-inspector-mcp").region.y
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_run_inspector_shows_mcp_not_connected_row():
+    app = _build_test_app()
+    app.console_mcp_tool_count = 0
+    app.console_mcp_not_connected_count = 2
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _open_console_inspector(console, pilot)
+        await _wait_for_selector(console, pilot, "#console-inspector-mcp")
+
+        assert "MCP: 2 servers enabled, not connected" in str(
+            console.query_one("#console-inspector-mcp", Static).renderable
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_run_inspector_omits_mcp_row_by_default():
+    """No `console_mcp_tool_count` seam wired -- e.g. no `unified_mcp_service`
+    on the app, or the kill switch is on -- must not render an "MCP" row."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _open_console_inspector(console, pilot)
+        await _wait_for_selector(console, pilot, "#console-inspector-tools")
+
+        assert not list(console.query("#console-inspector-mcp"))
+
+
+@pytest.mark.asyncio
 async def test_console_rag_action_requests_library_retrieval_and_stages_result():
     app = _build_test_app()
     service = StaticConsoleLibraryRagSearchService(

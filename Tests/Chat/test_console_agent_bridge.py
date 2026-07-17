@@ -7,7 +7,7 @@ import pytest
 from tldw_chatbook.Chat.console_agent_bridge import (
     CONSOLE_AGENT_OPERATING_PROMPT, ConsoleAgentBridge, compose_agent_system_prompt,
     format_agent_step_marker, inject_resume_agent_markers, _compose_run_allowed_tools,
-    _compose_run_registry_and_allowed,
+    _compose_run_registry_and_allowed, _non_colliding_mcp_names,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
@@ -15,10 +15,36 @@ from tldw_chatbook.Chat.console_provider_gateway import ProviderToolCalls
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Agents.agent_models import (
     LOAD_TOOLS_NAME, SPAWN_TOOL_NAME, STEP_ERROR, STEP_MODEL, STEP_SPAWN,
-    STEP_TOOL_RESULT,
+    STEP_TOOL_RESULT, ToolCatalogEntry, ToolResult, ToolSchema,
 )
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
+
+
+class _FakeMCPProvider:
+    """Minimal ``ToolProvider`` double standing in for a composed
+    ``MCPToolProvider`` (T3) -- these bridge-level tests only need the
+    catalog/invoke seam, not the real service/approval plumbing."""
+
+    def __init__(self, entries):
+        # entries: iterable of (name, description) pairs
+        self._entries = list(entries)
+        self.invoke_calls: list[tuple[str, dict]] = []
+
+    def list_catalog(self):
+        return [
+            ToolCatalogEntry(id=name, name=name, one_line_description=desc, source="mcp")
+            for name, desc in self._entries
+        ]
+
+    def load_schema(self, tool_id):
+        return ToolSchema(
+            id=tool_id, name=tool_id, description="",
+            parameters={"type": "object", "properties": {}})
+
+    def invoke(self, tool_id, args):
+        self.invoke_calls.append((tool_id, dict(args or {})))
+        return ToolResult(ok=True, content=f"mcp-result:{tool_id}")
 
 
 def _fence(name, args):
@@ -787,6 +813,138 @@ def test_compose_run_registry_excludes_skill_named_like_a_runtime_tool():
     assert LOAD_TOOLS_NAME not in allowed_tools[len(builtin_names):]
     catalog_entries = [(entry.name, entry.source) for entry in registry.list_catalog()]
     assert (LOAD_TOOLS_NAME, "skill") not in catalog_entries
+
+
+# -- P5-T6: MCPToolProvider registration + collision precedence --
+
+
+def test_compose_run_registry_and_allowed_includes_mcp_entries_when_eligible():
+    mcp_provider = _FakeMCPProvider([("mcp__srv_a__search", "Search the web")])
+    registry, allowed_tools, _builtin_names = _compose_run_registry_and_allowed(
+        {}, mcp_provider=mcp_provider)
+    assert "mcp__srv_a__search" in allowed_tools
+    catalog_entries = [(e.name, e.source) for e in registry.list_catalog()]
+    assert ("mcp__srv_a__search", "mcp") in catalog_entries
+    result = registry.invoke_by_name("mcp__srv_a__search", {"query": "weather"})
+    assert result.ok is True
+    assert mcp_provider.invoke_calls == [("mcp__srv_a__search", {"query": "weather"})]
+
+
+def test_compose_run_registry_and_allowed_absent_mcp_provider_is_unchanged():
+    """`mcp_provider=None` (the default) must not add anything -- the
+    pre-P5-T6 no-MCP behavior stays byte-identical."""
+    registry, allowed_tools, _builtin_names = _compose_run_registry_and_allowed({})
+    assert allowed_tools == ("calculator", "get_current_datetime", SPAWN_TOOL_NAME)
+    assert len(registry.list_catalog()) == 2
+
+
+def test_compose_run_registry_and_allowed_excludes_mcp_name_colliding_with_builtin():
+    """Task 11 review note 2's shadowing precedent, extended to MCP: a
+    builtin always wins a same-named MCP tool -- the name is carried
+    exactly once (from the builtin), and invoking it never reaches the
+    MCP fake."""
+    mcp_provider = _FakeMCPProvider(
+        [("calculator", "shadowing MCP tool"), ("mcp__srv_a__search", "Search")])
+    registry, allowed_tools, _builtin_names = _compose_run_registry_and_allowed(
+        {}, mcp_provider=mcp_provider)
+    assert allowed_tools.count("calculator") == 1
+    assert "mcp__srv_a__search" in allowed_tools
+    result = registry.invoke_by_name("calculator", {"expression": "1+1"})
+    assert result.ok is True
+    assert mcp_provider.invoke_calls == []  # the builtin handled it, not the MCP fake
+
+
+def test_compose_run_registry_and_allowed_excludes_mcp_name_colliding_with_runtime_tool():
+    """Qodo finding 4 (PR #636)'s shadowing precedent, extended to MCP: a
+    tool named like one of the loop's own in-loop runtime handlers must
+    never become a distinct, MCP-routable catalog entry."""
+    mcp_provider = _FakeMCPProvider([(LOAD_TOOLS_NAME, "shadowing MCP tool")])
+    registry, allowed_tools, builtin_names = _compose_run_registry_and_allowed(
+        {}, mcp_provider=mcp_provider)
+    assert LOAD_TOOLS_NAME not in allowed_tools[len(builtin_names):]
+    catalog_entries = [(e.name, e.source) for e in registry.list_catalog()]
+    assert (LOAD_TOOLS_NAME, "mcp") not in catalog_entries
+
+
+def test_compose_run_registry_and_allowed_excludes_mcp_name_colliding_with_skill():
+    """A skill (registered before MCP) also wins a same-named MCP tool."""
+    context = {
+        "available_skills": [
+            {"name": "code-review", "description": "Review a diff",
+             "argument_hint": "", "trust_blocked": False,
+             "disable_model_invocation": False},
+        ],
+    }
+    mcp_provider = _FakeMCPProvider(
+        [("code-review", "shadowing MCP tool"), ("mcp__srv_a__search", "Search")])
+    registry, allowed_tools, _builtin_names = _compose_run_registry_and_allowed(
+        context, mcp_provider=mcp_provider)
+    assert allowed_tools.count("code-review") == 1
+    catalog_entries = [(e.name, e.source) for e in registry.list_catalog()]
+    assert ("code-review", "skill") in catalog_entries
+    assert ("code-review", "mcp") not in catalog_entries
+    assert "mcp__srv_a__search" in allowed_tools
+
+
+def test_compose_run_registry_and_allowed_all_mcp_names_colliding_skips_registration():
+    """When every MCP entry collides, the provider is not registered at
+    all -- no dangling catalog entries the model could never reach."""
+    mcp_provider = _FakeMCPProvider([("calculator", "shadowing MCP tool")])
+    registry, allowed_tools, _builtin_names = _compose_run_registry_and_allowed(
+        {}, mcp_provider=mcp_provider)
+    assert allowed_tools == ("calculator", "get_current_datetime", SPAWN_TOOL_NAME)
+    catalog_entries = [(e.name, e.source) for e in registry.list_catalog()]
+    assert ("calculator", "mcp") not in catalog_entries
+
+
+def test_non_colliding_mcp_names_pure_helper():
+    mcp_provider = _FakeMCPProvider([("calculator", "x"), ("mcp__srv__y", "y")])
+    assert _non_colliding_mcp_names(mcp_provider, {"calculator"}) == ("mcp__srv__y",)
+
+
+def test_run_reply_routes_fence_call_to_mcp_provider(tmp_path):
+    """End-to-end: a run with no skills service still registers an eligible
+    MCP provider fresh (not the shared, construction-time registry) and
+    dispatches a matching fence call to it."""
+    scripts = [
+        [_fence("mcp__srv_a__search", {"query": "weather"})],
+        ["The weather is nice."],
+    ]
+    bridge, _db, store, session, aid = _bridge(tmp_path, scripts)
+    mcp_provider = _FakeMCPProvider([("mcp__srv_a__search", "Search the web")])
+
+    outcome = _run(bridge, store, session, aid, mcp_provider=mcp_provider)
+
+    assert outcome.status == "done"
+    assert outcome.final_text == "The weather is nice."
+    assert mcp_provider.invoke_calls == [("mcp__srv_a__search", {"query": "weather"})]
+    tool_rows = [m for m in store.messages_for_session(session.id)
+                 if m.role is ConsoleMessageRole.TOOL]
+    assert any("mcp__srv_a__search" in row.content for row in tool_rows)
+
+
+def test_run_reply_forwards_review_tool_calls_hook_to_agent_service(tmp_path):
+    """`review_tool_calls=` must reach AgentService/the loop -- a batch
+    verdict other than "proceed" skips dispatch and becomes the tool
+    result, exactly like the T4 hook contract documents."""
+    scripts = [
+        [_fence("calculator", {"expression": "6*7"})],
+        ["done."],
+    ]
+    bridge, _db, store, session, aid = _bridge(tmp_path, scripts)
+    captured_batches = []
+
+    def hook(calls):
+        captured_batches.append(list(calls))
+        return {"calculator": "blocked by test hook"}
+
+    outcome = _run(bridge, store, session, aid, review_tool_calls=hook)
+
+    assert outcome.status == "done"
+    assert captured_batches and captured_batches[0][0].name == "calculator"
+    tool_rows = [m for m in store.messages_for_session(session.id)
+                 if m.role is ConsoleMessageRole.TOOL]
+    assert any("blocked by test hook" in row.content for row in tool_rows)
 
 
 def test_skill_named_like_a_runtime_tool_never_shadows_it_at_invocation(tmp_path):

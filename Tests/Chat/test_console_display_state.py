@@ -100,6 +100,36 @@ def test_console_inspector_state_combines_readiness_artifact_and_recovery_rows()
     assert rows_by_label["Approvals"].status == "ready"
 
 
+def test_console_inspector_state_omits_mcp_row_by_default():
+    """`mcp_tool_count=None` (the default) means "no MCP service / kill
+    switch on" -- the inspector must not show an "MCP" row at all."""
+    state = ConsoleInspectorState.from_values()
+    assert "MCP" not in {row.label for row in state.rows}
+
+
+def test_console_inspector_state_shows_mcp_tools_ready_row():
+    state = ConsoleInspectorState.from_values(mcp_tool_count=3)
+    rows_by_label = {row.label: row for row in state.rows}
+    assert rows_by_label["MCP"].value == "3 tools ready"
+    assert rows_by_label["MCP"].status == "ready"
+
+
+def test_console_inspector_state_shows_mcp_not_connected_row_when_no_tools():
+    state = ConsoleInspectorState.from_values(
+        mcp_tool_count=0, mcp_not_connected_count=2,
+    )
+    rows_by_label = {row.label: row for row in state.rows}
+    assert rows_by_label["MCP"].value == "2 servers enabled, not connected"
+    assert rows_by_label["MCP"].status == "blocked"
+
+
+def test_console_inspector_state_omits_mcp_row_when_zero_tools_and_zero_not_connected():
+    state = ConsoleInspectorState.from_values(
+        mcp_tool_count=0, mcp_not_connected_count=0,
+    )
+    assert "MCP" not in {row.label for row in state.rows}
+
+
 def test_console_inspector_state_uses_explicit_chatbook_save_capability():
     state = ConsoleInspectorState.from_values(
         artifact_status="Chatbook save available",

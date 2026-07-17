@@ -35,12 +35,14 @@ from tldw_chatbook.Chat.console_skill_resolver import (
 )
 from loguru import logger
 
+from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
 from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 from tldw_chatbook.model_capabilities import is_vision_capable
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Agents.agent_models import ToolCall
     from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 
@@ -59,6 +61,73 @@ _MCP_APPROVAL_POLL_SECONDS = 1.0
 
 MAX_CONSOLE_DRAFT_LENGTH = 100_000
 CONSOLE_CONTINUE_INSTRUCTION = "Continue and extend the selected message."
+
+
+def build_mcp_review_hook(
+    provider: MCPToolProvider,
+    request_mcp_approvals: Callable[[list["MCPPendingCall"]], dict[str, str]],
+) -> Callable[[list["ToolCall"]], dict[str, str]]:
+    """Build this run's T4 `review_tool_calls` hook for one composed MCP provider.
+
+    Handed to `ConsoleAgentBridge.run_reply` (P5-T6), which forwards it
+    straight through to `AgentService`/`LoopDeps.review_tool_calls` (T4):
+    called ONCE per turn with the full batch of tool calls about to be
+    dispatched, before any of them is invoked.
+
+    For every call in the batch, `provider.pending_gate_for(name, args)`
+    resolves whether it needs human gating (`None` for both "not an MCP
+    call this provider owns" and "an MCP call whose current state doesn't
+    need asking" -- `invoke()` re-resolves either case for itself, so
+    this hook does not need to distinguish them). When at least one call
+    needs asking, this makes exactly ONE `request_mcp_approvals` round
+    trip for the whole batch (never one per call) and hands the resulting
+    decisions to `provider.apply_batch_decisions` -- a per-turn stamp
+    `invoke()` consumes on its very next call for that name.
+
+    Design choice (binding, per the Phase-5 plan): this hook never
+    returns a refusal string itself. Every MCP call it stamped is left to
+    resolve through `invoke()`'s own gate on dispatch -- `invoke()`
+    already handles every decision string uniformly (`approve_once`/
+    `approve_session`/`always_allow` execute; `deny`/`timeout` refuse with
+    the exact model-facing copy AND record the audit decision), so
+    routing every decision through that ONE place keeps the refusal copy
+    and the audit trail single-sourced instead of duplicating that logic
+    here. The verdict map this hook returns therefore only ever contains
+    `"proceed"` entries (for calls it gated this turn) -- purely
+    documentary, since `run_agent_loop` already treats any name this hook
+    doesn't mention as `"proceed"` by default; returning `{}` when nothing
+    needed gating is exactly as correct as omitting entries would be.
+    Non-MCP calls are untouched either way: `pending_gate_for` returns
+    `None` for any name the provider doesn't own, so they never enter
+    `pending` and are never mentioned in the returned map.
+
+    Args:
+        provider: This run's already-composed `MCPToolProvider` (P5-T6:
+            built and `compose_catalog()`-ed by the caller on the main
+            loop before the run's worker thread starts).
+        request_mcp_approvals: The bound `ConsoleChatController.
+            request_mcp_approvals` method for THIS run -- runs on the
+            agent bridge's worker thread and blocks until the batch is
+            decided, cancelled, or times out (T5).
+
+    Returns:
+        A `review_tool_calls`-shaped callable suitable for `LoopDeps`/
+        `AgentService(review_tool_calls=...)`.
+    """
+
+    def review_tool_calls(calls: list) -> dict[str, str]:
+        pending: list = []
+        for call in calls:
+            gate = provider.pending_gate_for(call.name, call.args)
+            if gate is not None:
+                pending.append(gate)
+        if not pending:
+            return {}
+        decisions = request_mcp_approvals(pending)
+        provider.apply_batch_decisions(decisions)
+        return {call.llm_name: "proceed" for call in pending}
+
+    return review_tool_calls
 
 
 def describe_stream_failure(exc: BaseException) -> str:
@@ -605,6 +674,61 @@ class ConsoleChatController:
             return float(get_cli_setting("mcp", "approval_timeout_seconds", _DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS))
         except (TypeError, ValueError):
             return _DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS
+
+    # -- MCP provider registration (task-6) ----------------------------------
+
+    async def _compose_mcp_provider(
+        self,
+    ) -> tuple[MCPToolProvider | None, Callable[[list["ToolCall"]], dict[str, str]] | None]:
+        """Build + compose THIS run's MCPToolProvider on the running main loop.
+
+        MUST be awaited from an async caller with the real Textual main
+        loop running (``_run_agent_reply``, BEFORE its own
+        ``asyncio.to_thread`` call) -- never from the agent bridge's
+        worker thread. See ``MCPToolProvider``'s own module docstring:
+        ``compose_catalog()`` performs async I/O
+        (``local_external_catalog()``) that is documented to run on the
+        main loop at registration time.
+
+        Returns ``(None, None)`` whenever MCP tools should not be offered
+        this run: no ``unified_mcp_service`` on the app, the kill switch
+        is on, ``get_kill_switch``/``compose_catalog`` raised, or the
+        composed catalog is empty (nothing to register, and -- since
+        ``not_connected_count`` is only ever non-zero for servers that
+        already contributed at least one eligible tool -- nothing an
+        empty catalog could usefully report either).
+
+        Returns:
+            ``(provider, review_tool_calls)`` when eligible -- a composed
+            ``MCPToolProvider`` ready to hand to ``ConsoleAgentBridge.
+            run_reply`` and this run's ``build_mcp_review_hook``-built
+            batch-review closure; ``(None, None)`` otherwise.
+        """
+        service = getattr(self.app, "unified_mcp_service", None)
+        if service is None:
+            return None, None
+        try:
+            kill_switch = service.get_kill_switch()
+        except Exception:  # noqa: BLE001 -- fail closed to "no MCP this run"
+            logger.opt(exception=True).warning(
+                "ConsoleChatController: get_kill_switch failed; skipping MCP this run")
+            return None, None
+        if kill_switch:
+            return None, None
+        provider = MCPToolProvider(
+            service=service,
+            main_loop=asyncio.get_running_loop(),
+            approval_callback=self.request_mcp_approvals,
+        )
+        try:
+            await provider.compose_catalog()
+        except Exception:  # noqa: BLE001 -- a composition failure must not abort the send
+            logger.opt(exception=True).warning(
+                "ConsoleChatController: MCP compose_catalog failed; skipping MCP this run")
+            return None, None
+        if not provider.list_catalog():
+            return None, None
+        return provider, build_mcp_review_hook(provider, self.request_mcp_approvals)
 
     def resolve_pending_approval(self, decisions: dict[str, str]) -> None:
         """UI THREAD: apply the user's batch decision, releasing the waiting worker thread.
@@ -1292,6 +1416,15 @@ class ConsoleChatController:
         # late poll from the surviving thread still sees the cancellation.
         should_cancel = lambda: self._stop_requested or cancel_event.is_set()  # noqa: E731
 
+        # P5-T6: compose this run's MCP tool provider (if eligible) HERE,
+        # on the running main loop, BEFORE the bridge is dispatched onto
+        # asyncio.to_thread below -- see `_compose_mcp_provider`'s own
+        # docstring for why `compose_catalog()`'s async I/O can never run
+        # from the worker thread. `(None, None)` (no service, kill switch
+        # on, or nothing composed) leaves the bridge's MCP-free path
+        # byte-identical to before this task.
+        mcp_provider, mcp_review_hook = await self._compose_mcp_provider()
+
         # Swap site: the agent loop runs synchronously on a worker thread via
         # asyncio.to_thread, so Stop is cooperative-only -- `should_cancel` is
         # polled between chunks/steps inside the bridge, never preempts the
@@ -1312,6 +1445,8 @@ class ConsoleChatController:
                 agent_messages=agent_messages,
                 should_cancel=should_cancel,
                 supersede_previous=bool(prepare_retry or variant_mode),
+                mcp_provider=mcp_provider,
+                review_tool_calls=mcp_review_hook,
             )
         except asyncio.CancelledError:
             if self._stop_requested:

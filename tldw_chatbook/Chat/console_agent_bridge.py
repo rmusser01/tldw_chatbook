@@ -18,7 +18,8 @@ from typing import Any, Callable
 from tldw_chatbook.Agents.agent_models import (
     AGENT_KIND_PRIMARY, AGENT_KIND_SUBAGENT, FIND_TOOLS_NAME, LOAD_TOOLS_NAME,
     RunBudget, RUNTIME_TOOL_NAMES, SPAWN_TOOL_NAME, STEP_ERROR, STEP_SPAWN,
-    STEP_TOOL_RESULT, AgentConfig, AgentStep, RunOutcome, ToolResult,
+    STEP_TOOL_RESULT, AgentConfig, AgentStep, RunOutcome, ToolCatalogEntry,
+    ToolResult, ToolSchema,
 )
 from tldw_chatbook.Agents.agent_service import SUBAGENT_SYSTEM_PROMPT, AgentService
 from tldw_chatbook.Agents.agent_stream import StreamGate
@@ -473,8 +474,82 @@ def _compose_run_allowed_tools(
     return tuple(builtin_names) + skill_names + (SPAWN_TOOL_NAME,)
 
 
+class _CollisionFilteredMCPProvider:
+    """View over a composed MCP provider that hides collision-excluded entries.
+
+    Registered into the run's registry INSTEAD OF the raw provider, so
+    ``ToolCatalogRegistry.list_catalog()`` (a raw sweep across every
+    registered provider) never surfaces a shadowed MCP entry either --
+    mirrors ``_non_colliding_skill_entries``'s own raw-catalog exclusion
+    invariant (a colliding skill is filtered out before ``SkillToolProvider``
+    is even constructed, so its catalog never contains it). MCP tools are
+    already fully composed by the time this run sees them (T3: composed
+    once, by the caller, on the main loop), so this wraps rather than
+    reconstructs -- a read-time filter only. The underlying provider's own
+    state (its composed catalog, per-turn decision stamps) is never
+    touched, and ``invoke``/``load_schema`` are simple pass-throughs: a
+    filtered-out tool id can never reach them anyway, since the registry's
+    own owner/name caches are built exclusively from this wrapper's
+    (already-filtered) ``list_catalog()``.
+    """
+
+    def __init__(self, provider: Any, allowed_names: frozenset[str]) -> None:
+        self._provider = provider
+        self._allowed_names = allowed_names
+
+    def list_catalog(self) -> list[ToolCatalogEntry]:
+        return [
+            entry for entry in self._provider.list_catalog()
+            if entry.name in self._allowed_names
+        ]
+
+    def load_schema(self, tool_id: str) -> ToolSchema:
+        return self._provider.load_schema(tool_id)
+
+    def invoke(self, tool_id: str, args: dict) -> ToolResult:
+        return self._provider.invoke(tool_id, args)
+
+
+def _non_colliding_mcp_names(
+    mcp_provider: Any, collision_names: frozenset[str] | set[str],
+) -> tuple[str, ...]:
+    """Eligible MCP tool names, excluding any collision with a builtin, a
+    runtime tool, or an already-included skill name.
+
+    Mirrors ``_non_colliding_skill_entries``'s shadowing precedent (Task 11
+    review note 2 / Qodo finding 4, PR #636 -- see that function's own
+    docstring): MCP is the LAST provider registered for a run (see
+    ``_compose_run_registry_and_allowed``), so excluding a collision here
+    at composition time keeps this the single place a cross-provider name
+    conflict is resolved. A colliding MCP tool is simply never advertised
+    in the run's allow-list/registry -- the underlying
+    ``MCPToolProvider``'s own internal catalog (already deduplicated
+    within itself by T1's ``dedupe_names``) is left untouched; only what
+    THIS run offers the model is filtered.
+
+    Args:
+        mcp_provider: A composed ``MCPToolProvider`` (or any
+            ``ToolProvider``-shaped double in tests) whose ``list_catalog()``
+            has already been built (T3: composed once, on the main loop,
+            before this run's worker thread starts).
+        collision_names: Names that must never be treated as a distinct
+            MCP tool -- builtins, ``RUNTIME_TOOL_NAMES``, and this run's
+            own eligible skill names.
+
+    Returns:
+        The subset of ``mcp_provider.list_catalog()`` names not present in
+        ``collision_names``, in catalog order.
+    """
+    return tuple(
+        entry.name for entry in mcp_provider.list_catalog()
+        if entry.name not in collision_names
+    )
+
+
 def _compose_run_registry_and_allowed(
     context: Mapping[str, Any],
+    *,
+    mcp_provider: Any | None = None,
 ) -> tuple[ToolCatalogRegistry, tuple[str, ...], tuple[str, ...]]:
     """Build a fresh per-run tool registry + allow-list from a skills snapshot.
 
@@ -482,20 +557,27 @@ def _compose_run_registry_and_allowed(
     the per-run freshness doctrine: a skill approved/edited/revoked since
     the last run must take effect on the very next one). Registers
     ``BuiltinToolProvider`` first, then (only when there is at least one
-    non-colliding eligible entry) a ``SkillToolProvider`` snapshot --
-    shadowing order: builtins are registered before skills, matching the
-    allow-list's own ``builtins ∪ skills`` ordering.
+    non-colliding eligible entry) a ``SkillToolProvider`` snapshot, then
+    (P5-T6, only when there is at least one non-colliding eligible entry)
+    an already-composed MCP provider -- shadowing order: builtins beat
+    skills beat MCP, matching the allow-list's own
+    ``builtins ∪ skills ∪ mcp`` ordering.
 
     Args:
         context: A fresh ``get_context(mode="local")`` payload.
+        mcp_provider: This run's already-composed MCP tool provider (see
+            ``MCPToolProvider.compose_catalog`` -- composed by the caller
+            on the main loop BEFORE this function runs), or ``None`` when
+            no MCP tools should be offered this run (no service, kill
+            switch on, or composition yielded nothing).
 
     Returns:
         ``(registry, allowed_tools, builtin_names)`` -- the per-run
         registry, its full allow-list (builtins + eligible skills +
-        spawn), and just the builtin names (needed separately by
-        ``_BridgeSkillRunner`` to intersect a skill's own declared
-        ``allowed_tools`` against -- never against skill names, so a
-        skill's sub-agent can never call another skill).
+        eligible MCP tools + spawn), and just the builtin names (needed
+        separately by ``_BridgeSkillRunner`` to intersect a skill's own
+        declared ``allowed_tools`` against -- never against skill names,
+        so a skill's sub-agent can never call another skill).
     """
     registry = ToolCatalogRegistry()
     builtin_provider = BuiltinToolProvider()
@@ -504,8 +586,16 @@ def _compose_run_registry_and_allowed(
     eligible = _non_colliding_skill_entries(context, builtin_names)
     if eligible:
         registry.register_provider(SkillToolProvider(eligible))
-    allowed_tools = tuple(builtin_names) + tuple(
-        str(item["name"]) for item in eligible) + (SPAWN_TOOL_NAME,)
+    skill_names = tuple(str(item["name"]) for item in eligible)
+    allowed_tools = tuple(builtin_names) + skill_names
+    if mcp_provider is not None:
+        collision_names = set(builtin_names) | set(skill_names) | RUNTIME_TOOL_NAMES
+        mcp_names = _non_colliding_mcp_names(mcp_provider, collision_names)
+        if mcp_names:
+            registry.register_provider(
+                _CollisionFilteredMCPProvider(mcp_provider, frozenset(mcp_names)))
+            allowed_tools += mcp_names
+    allowed_tools += (SPAWN_TOOL_NAME,)
     return registry, allowed_tools, builtin_names
 
 
@@ -574,29 +664,41 @@ class ConsoleAgentBridge:
     def run_reply(self, *, conversation_id: str, session_id: str, resolution: Any,
                   assistant_message_id: str, model: str, session_system_prompt: str,
                   agent_messages: list[dict], should_cancel: Callable[[], bool],
-                  supersede_previous: bool = False) -> RunOutcome:
-        # Per-run tool registry + allow-list (Task 12): when a skills
-        # service is wired, both are rebuilt FRESH for this run (never
+                  supersede_previous: bool = False,
+                  mcp_provider: Any | None = None,
+                  review_tool_calls: Callable[[list], dict[str, str]] | None = None,
+                  ) -> RunOutcome:
+        # Per-run tool registry + allow-list (Task 12, extended by P5-T6 for
+        # MCP): rebuilt FRESH for this run whenever there is a skills
+        # service OR an already-composed MCP provider for this run (never
         # cached across runs, and never the shared self._registry/
-        # self._allowed_tools built at construction) from a get_context
-        # snapshot filtered to trusted + model-invocable skills -- so a
-        # skill approved/edited/revoked since the last run always takes
-        # effect on the very next one. Without a skills service, the
-        # shipped shared registry/allow-list is used unchanged -- the
-        # no-skills path stays byte-identical to before this task.
+        # self._allowed_tools built at construction) -- so a skill or MCP
+        # tool approved/edited/revoked since the last run always takes
+        # effect on the very next one. `mcp_provider` is built and
+        # composed by the CALLER (ConsoleChatController._compose_mcp_
+        # provider, on the running Textual main loop, BEFORE this method
+        # is dispatched onto asyncio.to_thread) -- see MCPToolProvider's
+        # own module docstring for why `compose_catalog()`'s async I/O can
+        # never run from inside this worker-thread method. Neither a
+        # skills service nor an MCP provider: the shipped shared
+        # registry/allow-list is used unchanged -- the no-skills, no-MCP
+        # path stays byte-identical to before this task.
         registry = self._registry
         allowed_tools = self._allowed_tools
         skill_runner = None
-        if self._skills_service is not None:
-            context = asyncio.run(self._skills_service.get_context(mode="local"))
+        if self._skills_service is not None or mcp_provider is not None:
+            context: Mapping[str, Any] = {}
+            if self._skills_service is not None:
+                context = asyncio.run(self._skills_service.get_context(mode="local"))
             registry, allowed_tools, builtin_names = (
-                _compose_run_registry_and_allowed(context))
-            skill_names = frozenset(
-                str(item["name"])
-                for item in _non_colliding_skill_entries(context, builtin_names))
-            skill_runner = _BridgeSkillRunner(
-                skills_service=self._skills_service, skill_names=skill_names,
-                builtin_names=builtin_names)
+                _compose_run_registry_and_allowed(context, mcp_provider=mcp_provider))
+            if self._skills_service is not None:
+                skill_names = frozenset(
+                    str(item["name"])
+                    for item in _non_colliding_skill_entries(context, builtin_names))
+                skill_runner = _BridgeSkillRunner(
+                    skills_service=self._skills_service, skill_names=skill_names,
+                    builtin_names=builtin_names)
         # [console] native_tool_calls kill-switch (Task 5): a caller-supplied
         # predicate (chat_screen.py's _console_native_tool_calls_enabled)
         # gates whether this run may use native provider tool-calls at all;
@@ -654,7 +756,8 @@ class ConsoleAgentBridge:
 
         service = AgentService(
             self._db, registry, chat_call=adapter.chat_call,
-            clock=self._clock, on_step=on_step, skill_runner=skill_runner)
+            clock=self._clock, on_step=on_step, skill_runner=skill_runner,
+            review_tool_calls=review_tool_calls)
 
         supersede_run_id = (
             self._previous_primary_run_id(conversation_id) if supersede_previous else None)

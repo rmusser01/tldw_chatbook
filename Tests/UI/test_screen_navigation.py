@@ -776,6 +776,64 @@ async def test_app_shutdown_helper_closes_server_context_provider_cached_client(
     assert provider.close_calls == 1
 
 
+@pytest.mark.asyncio
+async def test_app_shutdown_helper_disconnects_local_mcp_client_with_sessions():
+    class FakeMCPClient:
+        def __init__(self, sessions) -> None:
+            self.sessions = sessions
+            self.disconnect_calls = 0
+
+        async def disconnect_all(self) -> None:
+            self.disconnect_calls += 1
+
+    client = FakeMCPClient({"srv": object()})
+    app_like = SimpleNamespace(
+        local_mcp_control_service=SimpleNamespace(client=client)
+    )
+
+    await TldwCli._disconnect_local_mcp_client(app_like)
+
+    assert client.disconnect_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_app_shutdown_helper_skips_mcp_disconnect_when_no_sessions():
+    class FakeMCPClient:
+        def __init__(self, sessions) -> None:
+            self.sessions = sessions
+            self.disconnect_calls = 0
+
+        async def disconnect_all(self) -> None:
+            self.disconnect_calls += 1
+
+    client = FakeMCPClient({})
+    app_like = SimpleNamespace(
+        local_mcp_control_service=SimpleNamespace(client=client)
+    )
+
+    await TldwCli._disconnect_local_mcp_client(app_like)
+
+    assert client.disconnect_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_app_shutdown_helper_skips_mcp_disconnect_when_client_never_connected():
+    """`LocalMCPControlService.client` stays `None` until a profile is
+    actually connected -- must be a no-op, not an AttributeError."""
+    app_like = SimpleNamespace(
+        local_mcp_control_service=SimpleNamespace(client=None)
+    )
+
+    await TldwCli._disconnect_local_mcp_client(app_like)  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_app_shutdown_helper_skips_mcp_disconnect_when_service_missing():
+    app_like = SimpleNamespace()
+
+    await TldwCli._disconnect_local_mcp_client(app_like)  # must not raise
+
+
 def test_app_wires_local_and_server_skills_services():
     app = _build_test_app()
 

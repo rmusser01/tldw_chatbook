@@ -52,6 +52,34 @@ def _is_blocked_rag_status(value: Any) -> bool:
     return text.startswith("missing") or text in {"blocked", "unavailable"}
 
 
+def _mcp_inspector_row(
+    tool_count: Any, not_connected_count: Any
+) -> "ConsoleDisplayRow | None":
+    """Build the "MCP" inspector row, or ``None`` when there is nothing to show.
+
+    ``tool_count`` is ``None`` (the P5-T6 default) whenever the caller has
+    no MCP composition to report at all -- no ``unified_mcp_service`` on
+    the app, or the kill switch is on -- and the row is omitted entirely.
+    Otherwise: a non-zero tool count wins ("N tools ready", ready); failing
+    that, a non-zero not-connected-server count falls back to a blocked
+    warning ("M servers enabled, not connected"); both zero omits the row
+    just like the ``None`` case -- nothing worth telling the user about.
+    """
+    if tool_count is None:
+        return None
+    normalized_tool_count = coerce_non_negative_int(tool_count)
+    if normalized_tool_count > 0:
+        return ConsoleDisplayRow("MCP", f"{normalized_tool_count} tools ready")
+    normalized_not_connected_count = coerce_non_negative_int(not_connected_count)
+    if normalized_not_connected_count > 0:
+        return ConsoleDisplayRow(
+            "MCP",
+            f"{normalized_not_connected_count} servers enabled, not connected",
+            status="blocked",
+        )
+    return None
+
+
 def build_console_disabled_reason(
     *,
     action_id: str,
@@ -371,6 +399,8 @@ class ConsoleInspectorState:
         artifact_status: Any = None,
         tool_count: int = 0,
         approval_count: int = 0,
+        mcp_tool_count: int | None = None,
+        mcp_not_connected_count: int = 0,
         can_save_chatbook: bool = False,
     ) -> "ConsoleInspectorState":
         provider_status = "ready" if provider_ready else "blocked"
@@ -405,6 +435,9 @@ class ConsoleInspectorState:
                 status="blocked" if normalized_approval_count > 0 else "ready",
             ),
         ]
+        mcp_row = _mcp_inspector_row(mcp_tool_count, mcp_not_connected_count)
+        if mcp_row is not None:
+            rows.append(mcp_row)
         if _clean(evidence_summary, ""):
             rows.append(
                 ConsoleDisplayRow(
