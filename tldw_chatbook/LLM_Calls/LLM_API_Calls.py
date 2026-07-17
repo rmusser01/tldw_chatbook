@@ -1155,6 +1155,80 @@ def chat_with_anthropic(
         raise ChatProviderError(provider="anthropic", message=f"Unexpected error: {e}")
 
 
+def _cohere_tools_payload(tools: list) -> list:
+    """Normalize OpenAI-format ``tools`` entries for Cohere v2 -- v2 IS
+    OpenAI-shaped end-to-end, so this is passthrough with a light validity
+    filter: entries missing ``function.name`` are dropped with a warning
+    instead of being forwarded into a 400 (mirrors `_google_tools_payload`'s
+    blank-name guard, task-267 Task 2).
+
+    Args:
+        tools: The ``tools`` list as received (OpenAI shaped).
+
+    Returns:
+        A Cohere v2 ``tools`` list.
+    """
+    converted = []
+    for entry in tools or []:
+        if not isinstance(entry, dict):
+            logger.warning("Cohere: dropping non-dict tools entry.")
+            continue
+        function = entry.get("function")
+        if entry.get("type") == "function" and isinstance(function, dict):
+            name = str(function.get("name") or "").strip()
+            if not name:
+                logger.warning("Cohere: dropping tool entry with a blank function name.")
+                continue
+            parameters = function.get("parameters")
+            if not isinstance(parameters, dict) or not parameters:
+                parameters = {"type": "object", "properties": {}}
+            converted.append({
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": str(function.get("description") or ""),
+                    "parameters": parameters,
+                },
+            })
+        else:
+            converted.append(entry)
+    return converted
+
+
+def _cohere_request_tool_calls(tool_calls: list) -> list:
+    """Convert an OpenAI-shape assistant ``tool_calls`` list into Cohere
+    v2's echo shape: ``arguments`` normalized to a JSON STRING (dict ->
+    ``json.dumps``; an unparseable string passes through as-is, since v2
+    takes strings either way). Junk entries (non-dict, no dict
+    ``function``, blank ``name``) are skipped rather than raising --
+    callers fall back to plain-content handling when NO entry survives
+    (task-267 Task 2; mirrors the anthropic/google all-junk precedent).
+    """
+    converted = []
+    for call in tool_calls or []:
+        if not isinstance(call, dict):
+            continue
+        function = call.get("function")
+        if not isinstance(function, dict):
+            continue
+        name = str(function.get("name") or "").strip()
+        if not name:
+            continue
+        raw_args = function.get("arguments")
+        if isinstance(raw_args, dict):
+            arguments = json.dumps(raw_args)
+        elif isinstance(raw_args, str):
+            arguments = raw_args
+        else:
+            arguments = "{}"
+        converted.append({
+            "id": str(call.get("id") or ""),
+            "type": "function",
+            "function": {"name": name, "arguments": arguments},
+        })
+    return converted
+
+
 def chat_with_cohere(
         input_data: List[Dict[str, Any]],
         model: Optional[str] = None,
@@ -1227,12 +1301,50 @@ def chat_with_cohere(
         cohere_messages.append({"role": "system", "content": str(sys_content)})
         logger.debug(f"Cohere: Using leading system message as v2 system entry: '{str(sys_content)[:100]}...'")
 
-    # NOTE (task-267 Task 1 scope): only plain user/assistant text turns are
-    # handled here. role="tool" history and assistant tool_calls echoes are
-    # NOT yet converted -- Task 2 adds that conversion to this loop.
+    # task-267 Task 2: role="tool" history and assistant tool_calls echoes
+    # convert to v2's shapes here; plain user/assistant text turns pass
+    # through as before (Task 1).
+    last_tool_call_id: Optional[str] = None
     for msg in temp_messages:
         role = str(msg.get('role') or '').lower()
         content = msg.get('content')
+
+        if role == 'tool':
+            # OpenAI tool-result history -> v2 tool-role message. A result
+            # missing tool_call_id falls back to the most recent assistant
+            # tool_call id (positional pairing, mirrors google's fallback
+            # -- task-266).
+            tool_call_id = msg.get('tool_call_id') or last_tool_call_id or ""
+            cohere_messages.append({
+                "role": "tool",
+                "tool_call_id": str(tool_call_id),
+                "content": [{"type": "document",
+                            "document": {"data": str(content or "")}}],
+            })
+            continue
+
+        if role == 'assistant' and msg.get('tool_calls'):
+            # OpenAI assistant tool_calls echo -> v2 assistant turn carrying
+            # tool_calls (+ tool_plan when present). Guards mirror the
+            # anthropic/google precedent: if every tool_calls entry is
+            # junk, fall through to the plain-content handling below
+            # instead of sending a tool_calls-less message with an empty
+            # [] array.
+            entries = _cohere_request_tool_calls(msg.get('tool_calls'))
+            if entries:
+                assistant_msg: Dict[str, Any] = {"role": "assistant"}
+                tool_plan = msg.get('cohere_tool_plan')
+                if tool_plan:
+                    assistant_msg["tool_plan"] = str(tool_plan)
+                elif isinstance(content, str) and content.strip():
+                    # No preserved tool_plan extra -- fall back to the
+                    # turn's own visible content so the model's reasoning
+                    # isn't silently dropped from the echoed history.
+                    assistant_msg["tool_plan"] = content
+                assistant_msg["tool_calls"] = entries
+                cohere_messages.append(assistant_msg)
+                last_tool_call_id = entries[-1]["id"] or last_tool_call_id
+                continue
 
         if role not in ('user', 'assistant'):
             logger.warning(f"Cohere: skipping message with unsupported role: {role!r}")
@@ -1253,9 +1365,9 @@ def chat_with_cohere(
         else:
             cohere_messages.append({"role": "user", "content": custom_prompt_arg})
 
-    if not any(m['role'] in ('user', 'assistant') for m in cohere_messages):
+    if not any(m['role'] in ('user', 'assistant', 'tool') for m in cohere_messages):
         raise ChatBadRequestError(provider="cohere",
-                                  message="No user/assistant messages found for Cohere chat after processing system message.")
+                                  message="No user/assistant/tool messages found for Cohere chat after processing system message.")
 
     payload: Dict[str, Any] = {
         "model": final_model,
@@ -1271,9 +1383,7 @@ def chat_with_cohere(
     if seed is not None: payload["seed"] = seed
     if frequency_penalty is not None: payload["frequency_penalty"] = frequency_penalty
     if presence_penalty is not None: payload["presence_penalty"] = presence_penalty
-    # NOTE (task-267 Task 1 scope): naive passthrough for now -- Task 2 adds
-    # `_cohere_tools_payload`'s OpenAI-shape validity filter.
-    if tools: payload["tools"] = tools
+    if tools: payload["tools"] = _cohere_tools_payload(tools)
 
     if num_generations is not None:
         # task-267: 'num_generations' is v1-only -- v2 has no equivalent

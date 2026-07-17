@@ -275,3 +275,157 @@ def test_plain_chat_payload_unchanged(mock_post):
         {"role": "user", "content": "hi"},
         {"role": "assistant", "content": "there"},
     ]
+
+
+# ---------------------------------------------------------------------------
+# Task 2: request-side tools + tool history
+# ---------------------------------------------------------------------------
+
+OPENAI_TOOLS = [{"type": "function", "function": {
+    "name": "calculator", "description": "Evaluate math.",
+    "parameters": {"type": "object",
+                   "properties": {"expression": {"type": "string"}},
+                   "required": ["expression"]}}}]
+
+
+@patch("requests.Session.post")
+def test_openai_tools_passthrough_into_v2_payload(mock_post):
+    """v2 IS OpenAI-shaped end-to-end -- tools pass through, normalized
+    onto the canonical {"type":"function","function":{...}} shape."""
+    sent = _call_cohere(
+        mock_post, [{"role": "user", "content": "2+2?"}],
+        tools=OPENAI_TOOLS,
+    )
+    assert sent["tools"] == [{
+        "type": "function",
+        "function": {
+            "name": "calculator",
+            "description": "Evaluate math.",
+            "parameters": OPENAI_TOOLS[0]["function"]["parameters"],
+        },
+    }]
+
+
+@patch("requests.Session.post")
+def test_blank_name_tool_is_dropped_locally(mock_post):
+    """Mirrors `_google_tools_payload`'s blank-name guard: an entry missing
+    a usable function name must be dropped rather than forwarded."""
+    bad_tools = [{"type": "function", "function": {"name": "  "}}, OPENAI_TOOLS[0]]
+    sent = _call_cohere(
+        mock_post, [{"role": "user", "content": "hi"}],
+        tools=bad_tools,
+    )
+    assert [t["function"]["name"] for t in sent["tools"]] == ["calculator"]
+
+
+@patch("requests.Session.post")
+def test_assistant_tool_calls_history_converts_to_v2_shape(mock_post):
+    messages = [
+        {"role": "user", "content": "2+2?"},
+        {"role": "assistant", "content": "",
+         "tool_calls": [
+             {"id": "call_A", "type": "function",
+              "function": {"name": "calculator",
+                           "arguments": "{\"expression\": \"2+2\"}"}},
+             {"id": "call_B", "type": "function",
+              "function": {"name": "calculator",
+                           "arguments": "{\"expression\": \"3+3\"}"}}]},
+        {"role": "tool", "tool_call_id": "call_A", "content": "4"},
+        {"role": "tool", "tool_call_id": "call_B", "content": "6"},
+    ]
+    sent = _call_cohere(mock_post, messages)["messages"]
+
+    assert sent[1]["role"] == "assistant"
+    assert sent[1]["tool_calls"] == [
+        {"id": "call_A", "type": "function",
+         "function": {"name": "calculator", "arguments": "{\"expression\": \"2+2\"}"}},
+        {"id": "call_B", "type": "function",
+         "function": {"name": "calculator", "arguments": "{\"expression\": \"3+3\"}"}},
+    ]
+    assert sent[2] == {"role": "tool", "tool_call_id": "call_A",
+                       "content": [{"type": "document", "document": {"data": "4"}}]}
+    assert sent[3] == {"role": "tool", "tool_call_id": "call_B",
+                       "content": [{"type": "document", "document": {"data": "6"}}]}
+
+
+@patch("requests.Session.post")
+def test_dict_arguments_normalized_via_json_dumps(mock_post):
+    messages = [
+        {"role": "user", "content": "2+2?"},
+        {"role": "assistant", "content": "",
+         "tool_calls": [{"id": "call_A", "type": "function",
+                         "function": {"name": "calculator",
+                                      "arguments": {"expression": "2+2"}}}]},
+    ]
+    sent = _call_cohere(mock_post, messages)["messages"]
+    assert sent[1]["tool_calls"][0]["function"]["arguments"] == json.dumps({"expression": "2+2"})
+
+
+@patch("requests.Session.post")
+def test_unparseable_string_arguments_pass_through_as_is(mock_post):
+    """v2 takes `arguments` as a string regardless -- an unparseable string
+    is NOT re-validated/rejected, just forwarded as-is."""
+    messages = [
+        {"role": "user", "content": "2+2?"},
+        {"role": "assistant", "content": "",
+         "tool_calls": [{"id": "call_A", "type": "function",
+                         "function": {"name": "calculator", "arguments": "{broken"}}]},
+    ]
+    sent = _call_cohere(mock_post, messages)["messages"]
+    assert sent[1]["tool_calls"][0]["function"]["arguments"] == "{broken"
+
+
+@patch("requests.Session.post")
+def test_tool_plan_reattached_from_cohere_tool_plan_extra(mock_post):
+    messages = [
+        {"role": "user", "content": "2+2?"},
+        {"role": "assistant", "content": "visible text",
+         "cohere_tool_plan": "I should call the calculator.",
+         "tool_calls": [{"id": "call_A", "type": "function",
+                         "function": {"name": "calculator", "arguments": "{}"}}]},
+    ]
+    sent = _call_cohere(mock_post, messages)["messages"]
+    assert sent[1]["tool_plan"] == "I should call the calculator."
+
+
+@patch("requests.Session.post")
+def test_tool_plan_falls_back_to_content_when_no_extra(mock_post):
+    messages = [
+        {"role": "user", "content": "2+2?"},
+        {"role": "assistant", "content": "Let me check.",
+         "tool_calls": [{"id": "call_A", "type": "function",
+                         "function": {"name": "calculator", "arguments": "{}"}}]},
+    ]
+    sent = _call_cohere(mock_post, messages)["messages"]
+    assert sent[1]["tool_plan"] == "Let me check."
+
+
+@patch("requests.Session.post")
+def test_tool_result_missing_id_falls_back_to_most_recent_assistant_id(mock_post):
+    """Mirrors google's positional fallback (task-266): a tool-result
+    message missing tool_call_id pairs with the most recent assistant
+    tool_call id."""
+    messages = [
+        {"role": "user", "content": "go"},
+        {"role": "assistant", "content": "",
+         "tool_calls": [{"id": "call_X", "type": "function",
+                         "function": {"name": "calculator", "arguments": "{}"}}]},
+        {"role": "tool", "content": "4"},  # tool_call_id omitted
+    ]
+    sent = _call_cohere(mock_post, messages)["messages"]
+    assert sent[2] == {"role": "tool", "tool_call_id": "call_X",
+                       "content": [{"type": "document", "document": {"data": "4"}}]}
+
+
+@patch("requests.Session.post")
+def test_all_junk_tool_calls_fall_back_to_plain_content(mock_post):
+    """When every tool_calls entry is junk, the assistant turn must be sent
+    as a normal plain-text turn instead of a tool_calls-less message with an
+    empty [] array (task-263/task-266 precedent)."""
+    messages = [
+        {"role": "user", "content": "2+2?"},
+        {"role": "assistant", "content": "hello",
+         "tool_calls": ["junk", {"function": "junk"}, {"function": {"name": ""}}]},
+    ]
+    sent = _call_cohere(mock_post, messages)["messages"]
+    assert sent[1] == {"role": "assistant", "content": "hello"}
