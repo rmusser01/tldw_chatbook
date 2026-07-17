@@ -107,6 +107,22 @@ async def test_bracket_text_in_entries_not_backslash_escaped():
         assert "\\" not in content_cell.plain and "[aside]" in content_cell.plain
 
 
+@pytest.mark.asyncio
+async def test_entry_priority_round_trips_through_form():
+    app = _DetailHost()
+    async with app.run_test(size=(140, 40)) as pilot:
+        widget = app.query_one(PersonasLoreDetailWidget)
+        widget.load_book({"id": 1, "name": "B", "description": "", "scan_depth": 3,
+                          "token_budget": 500, "recursive_scanning": False, "enabled": True})
+        app.query_one("#personas-lore-entry-keys", Input).value = "Warden"
+        app.query_one("#personas-lore-entry-content", TextArea).text = "grim jailer"
+        app.query_one("#personas-lore-entry-priority", Input).value = "80"
+        await pilot.pause()
+        await pilot.click("#personas-lore-entry-add")
+        await pilot.pause()
+        assert app.posted[-1]["priority"] == 80
+
+
 class _TryItHost(App):
     def compose(self) -> ComposeResult:
         yield PersonasLoreTryItWidget(id="personas-lore-tryit")
