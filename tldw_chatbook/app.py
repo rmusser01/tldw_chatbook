@@ -7757,7 +7757,12 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             self.notify("Error changing RAG pipeline", severity="error")
     
     async def handle_query_expansion_method_changed(self, event: Select.Changed) -> None:
-        """Handles query expansion method selection - shows/hides appropriate fields."""
+        """Handles query expansion method selection - shows/hides appropriate fields.
+
+        NOTE (task-252): UI-only stub. The RAG_Search/query_expansion.py module was
+        removed as dead code; this handler just stores the selected method string
+        and no runtime code performs query expansion with it.
+        """
         try:
             method = event.value
             

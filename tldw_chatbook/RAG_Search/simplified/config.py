@@ -69,10 +69,6 @@ class ChunkingConfig:
     enable_parent_retrieval: bool = False
     parent_size_multiplier: int = 3  # Parent chunks are this many times larger
     
-    # Late chunking settings
-    enable_late_chunking: bool = False
-    late_chunking_cache_size: int = 100  # Number of documents to cache
-    
     # Structural chunking settings
     preserve_structure: bool = False
     clean_artifacts: bool = False  # Clean PDF artifacts
@@ -117,7 +113,14 @@ class SearchConfig:
 
 @dataclass
 class QueryExpansionConfig:
-    """Configuration for query expansion/rewriting."""
+    """Configuration for query expansion/rewriting.
+
+    NOTE (task-252): The QueryExpander module (RAG_Search/query_expansion.py) that
+    consumed this config was removed as dead code. This dataclass is intentionally
+    kept so the [AppRAGSearchConfig.rag.query_expansion] TOML section and RAGConfig
+    to_dict/from_dict round-trips keep working; no runtime code performs query
+    expansion with it today.
+    """
     enabled: bool = False
     method: str = "llm"  # "llm", "local_llm", "llamafile", "keywords"
     max_sub_queries: int = 3
