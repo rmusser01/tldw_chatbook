@@ -1531,7 +1531,11 @@ def test_active_http_client_concurrent_swap_never_leaves_client_bound_to_wrong_l
     def hammer(loop: asyncio.AbstractEventLoop) -> None:
         for _ in range(rounds):
             try:
-                barrier.wait(timeout=10)
+                # Kept >= the (test-widened) probe timeout: a slower-than-
+                # barrier probe would BrokenBarrier the other threads into an
+                # early return, silently shrinking the round count instead of
+                # failing.
+                barrier.wait(timeout=30)
             except threading.BrokenBarrierError:
                 return
             try:

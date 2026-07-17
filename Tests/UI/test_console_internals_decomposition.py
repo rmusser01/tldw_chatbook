@@ -566,6 +566,10 @@ async def test_console_composer_cursor_blink_toggles():
         visible_draft = composer.query_one("#console-command-visible-text", Static)
 
         composer.focus()
+        # De-flake (2026-07-17): same hazard as the wrap-width test below —
+        # focus auto-resumes the real 0.53s blink interval; pause it so the
+        # manual toggles below own every phase flip.
+        composer._cursor_blink_timer.pause()
         await pilot.pause(0.1)
         assert ConsoleComposerBar.CURSOR_GLYPH in visible_draft.renderable.plain
 
