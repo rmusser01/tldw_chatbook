@@ -6717,7 +6717,7 @@ class LibraryScreen(BaseAppScreen):
             return
 
         try:
-            await self._run_library_service_call(
+            record = await self._run_library_service_call(
                 import_skill_file,
                 data,
                 mode="local",
@@ -6732,8 +6732,17 @@ class LibraryScreen(BaseAppScreen):
             )
             return
 
+        # Report the SERVICE-derived name, not the raw file stem: the
+        # service kebab-normalizes ("My Notes.md" -> "my-notes"), and the
+        # outcome line must match what the trust panel/list actually show
+        # (task-291 review).
+        stored_name = ""
+        if isinstance(record, dict):
+            stored_name = str(record.get("name") or "")
         self._apply_library_skills_import_success(
-            self._safe_text(file_path.stem, max_length=64)
+            self._safe_text(stored_name, max_length=64)
+            if stored_name
+            else self._safe_text(file_path.stem, max_length=64)
         )
 
     def _apply_library_skills_import_success(self, skill_name: str) -> None:

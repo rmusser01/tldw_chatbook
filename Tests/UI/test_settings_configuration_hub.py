@@ -81,21 +81,14 @@ class StyledSettingsDestinationHarness(DestinationHarness):
 
 
 async def _settle_settings_mount_storm(pilot) -> None:
-    """Deterministically outwait SettingsScreen's mount-time recompose storm.
+    """Deterministically wait out the Settings mount-time refresh.
 
-    `SettingsScreen.on_mount` queues two `@work(thread=True)` refreshes
-    (`settings-manual-sync-preview` + the server/sync/workspace handoff
-    rows) whose thread-completion callbacks set `recompose=True` reactives
-    -- i.e. a FULL screen recompose fires at a nondeterministic later
-    moment. A `pilot.click`/`query_one`/`_visible_text` that lands
-    mid-recompose sees an empty DOM (NoMatches / empty text), so tests that
-    touched the screen immediately after `run_test` were always racy; they
-    just happened to win the race while every `BaseAppScreen` still
-    composed Textual's binding-scanning `Footer` (its per-focus-change work
-    slowed the loop enough for the threads to finish first). task-264's
-    lighter per-screen `AppFooterStatus` sped the loop up and exposed the
-    race (~1% of tests per run). Waiting for the workers is deterministic:
-    after they complete, nothing else recomposes the screen unprompted.
+    Mounting Settings queues the combined ``_refresh_sync_rows`` thread
+    worker (task-290 coalesced the former two-worker storm); its completion
+    applies both row sets in one hop, triggering ONE ``recompose=True``
+    rebuild at a nondeterministic moment shortly after mount. Waiting for
+    worker completion plus a pause makes every later query/click land on
+    the settled DOM.
     """
     await pilot.app.workers.wait_for_complete()
     await pilot.pause()

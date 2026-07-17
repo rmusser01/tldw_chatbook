@@ -2643,12 +2643,6 @@ class SettingsScreen(BaseAppScreen):
             )
         return self._manual_sync_rows_from_preview(preview)
 
-    def _apply_server_sync_workspace_handoff_rows(
-        self,
-        rows: tuple[tuple[str, str], ...],
-    ) -> None:
-        self.server_sync_workspace_handoff_rows = rows
-
     def _apply_manual_sync_rows(
         self,
         rows: tuple[tuple[str, str], ...],
@@ -3575,6 +3569,7 @@ class SettingsScreen(BaseAppScreen):
         self._navigation_provider = None
         self._navigation_model = None
         self._navigation_field = None
+        self._pending_navigation_focus_selector = None
 
     @staticmethod
     def _normalise_optional_float(

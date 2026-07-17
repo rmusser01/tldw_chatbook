@@ -203,6 +203,36 @@ async def test_import_skill_via_skill_md_file_path_derives_name_from_parent_dire
 
 
 @pytest.mark.asyncio
+async def test_loose_file_import_success_line_names_the_service_derived_skill(tmp_path):
+    """task-291 review: the loose-file branch imports via
+    ``import_skill_file`` with NO explicit name, so the service derives it
+    (lowercase kebab). The success line must show that STORED name, not the
+    raw file stem -- 'My Notes.md' imports as 'my-notes' and must say so."""
+    local_service, service = _real_skills_scope_service_with_trust(tmp_path)
+    app = _build_test_app()
+    _wire_empty_non_skill_services(app)
+    app.skills_scope_service = service
+    host = LibraryHarness(app)
+
+    loose = tmp_path / "My Notes.md"
+    loose.write_text(
+        "---\ndescription: A loose skill file.\n---\n\nLoose body.\n",
+        encoding="utf-8",
+    )
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_skills_import_row(screen, pilot)
+
+        status = await _run_skills_import_via_ui(screen, pilot, loose)
+        assert status == 'Imported "my-notes" · re-review it in the trust panel'
+
+    record = await local_service.get_skill("my-notes")
+    assert record["name"] == "my-notes"
+
+
+@pytest.mark.asyncio
 async def test_import_skill_with_supporting_reference_file_threads_it_through(tmp_path):
     """``requesting-code-review`` has one real flat sibling file
     (``code-reviewer.md``) alongside its ``SKILL.md`` -- importing it by
