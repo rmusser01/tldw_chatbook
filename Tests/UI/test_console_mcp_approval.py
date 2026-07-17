@@ -416,3 +416,38 @@ def test_chat_screen_approval_decided_handler_tolerates_no_controller(mock_chat_
 
     event = ChatApprovalCard.ApprovalDecided({"mcp__a__b": "deny"})
     screen.handle_console_approval_decided(event)  # must not raise
+
+
+def test_request_mcp_approvals_survives_marshal_failure_during_teardown():
+    """The finally-block clear must not raise (nor destroy the computed
+    decisions) when `call_from_thread` fails mid-teardown — e.g. the app
+    stopped between resolution and cleanup. Regression for the `self.logger`
+    AttributeError found in review: the teardown guard itself must not blow
+    up."""
+    controller, _ = _build_controller()
+    calls: list[dict | None] = []
+
+    class _TeardownApp:
+        def call_from_thread(self, fn, *args, **kwargs):
+            # Surface the card normally, then fail on the clearing call.
+            if args and args[0] is None:
+                raise RuntimeError("App is not running")
+            calls.append(args[0] if args else None)
+            return fn(*args, **kwargs)
+
+    controller.app = _TeardownApp()
+    controller.set_pending_approval = lambda payload: None
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    def _resolve_soon() -> None:
+        time.sleep(0.05)
+        controller.resolve_pending_approval({"mcp__srv__tool": "approve_once"})
+
+    resolver = threading.Thread(target=_resolve_soon)
+    resolver.start()
+    try:
+        decisions = controller.request_mcp_approvals([_pending()])
+    finally:
+        resolver.join()
+
+    assert decisions == {"mcp__srv__tool": "approve_once"}

@@ -33,6 +33,8 @@ from tldw_chatbook.Chat.console_skill_resolver import (
     cap_skill_args,
     resolve_skill_command,
 )
+from loguru import logger
+
 from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
@@ -584,7 +586,9 @@ class ConsoleChatController:
             try:
                 self._marshal_pending_approval(None)
             except Exception:  # noqa: BLE001 -- suppress teardown-time errors
-                self.logger.debug("Failed to marshal approval clear during teardown", exc_info=True)
+                logger.opt(exception=True).debug(
+                    "Failed to marshal approval clear during teardown"
+                )
 
     def _marshal_pending_approval(self, payload: dict[str, Any] | None) -> None:
         """Push ``payload`` (or clear it) onto the UI thread, if wired."""
