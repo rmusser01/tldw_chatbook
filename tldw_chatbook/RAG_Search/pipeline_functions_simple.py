@@ -10,6 +10,15 @@ from typing import List, Dict, Any, Optional
 from loguru import logger
 
 from .pipeline_types import SearchResult
+from .semantic_availability import (
+    record_semantic_empty_index,
+    record_semantic_ok,
+    record_semantic_unavailable,
+    resolve_semantic_rag_service,
+    semantic_index_is_empty,
+    SEMANTIC_REASON_SEARCH_ERROR,
+    SEMANTIC_UNAVAILABLE_MESSAGES,
+)
 
 
 # ==============================================================================
@@ -221,17 +230,47 @@ async def search_semantic(
     query: str,
     sources: Dict[str, bool],
     limit: int = 10,
+    diagnostics: Optional[Dict[str, Any]] = None,
     **kwargs
 ) -> List[SearchResult]:
-    """Search using semantic embeddings."""
-    if not hasattr(app, '_rag_service') or not app._rag_service:
-        logger.warning("RAG service not initialized")
+    """Search using semantic embeddings, initializing the runtime lazily.
+
+    A missing ``app._rag_service`` no longer means a silent empty result
+    (task-250): the shared process-wide RAG service is initialized on first
+    use (deps-gated, off the event loop), and when semantic retrieval is
+    unavailable or the index is verifiably empty the WHY is recorded into
+    ``diagnostics`` so calling surfaces can report it honestly.
+
+    Args:
+        app: App-like object carrying (or receiving) ``_rag_service``.
+        query: Search query text.
+        sources: Enabled sources mapping (currently unused by the vector leg).
+        limit: Maximum number of results (``top_k`` for the RAG service).
+        diagnostics: Optional dict that receives the semantic-leg state under
+            ``SEMANTIC_DIAGNOSTICS_KEY`` (ok / unavailable+reason /
+            empty_index).
+        **kwargs: Extra kwargs forwarded verbatim to ``rag_service.search``
+            (call sites whitelist these; see pipeline_builder_simple).
+
+    Returns:
+        SearchResult list; empty when semantic retrieval is unavailable (the
+        reason then rides in ``diagnostics``) or genuinely matches nothing.
+    """
+    rag_service, unavailable_reason = await resolve_semantic_rag_service(app)
+    if rag_service is None:
+        logger.warning(
+            "Semantic search unavailable ({}): {}".format(
+                unavailable_reason,
+                SEMANTIC_UNAVAILABLE_MESSAGES.get(unavailable_reason, ""),
+            )
+        )
+        record_semantic_unavailable(diagnostics, unavailable_reason)
         return []
-    
+
     logger.debug(f"Performing semantic search for: {query}")
-    
-    # Use the existing RAG service
-    rag_results = await app._rag_service.search(
+
+    # Use the shared RAG service
+    rag_results = await rag_service.search(
         query=query,
         search_type="semantic",
         top_k=limit,
@@ -267,7 +306,14 @@ async def search_semantic(
                 score=result.score,
                 metadata=result.metadata if hasattr(result, 'metadata') else {}
             ))
-    
+
+    # Distinguish "no matches" from "nothing indexed yet" (task-250): only a
+    # trustworthy zero-document count reports the empty-index state.
+    if not results and await semantic_index_is_empty(rag_service):
+        record_semantic_empty_index(diagnostics)
+    else:
+        record_semantic_ok(diagnostics, len(results))
+
     return results
 
 
@@ -398,37 +444,61 @@ async def parallel_search(
     app: Any,
     query: str,
     sources: Dict[str, bool],
-    functions: List[Dict[str, Any]]
+    functions: List[Dict[str, Any]],
+    diagnostics: Optional[Dict[str, Any]] = None
 ) -> List[SearchResult]:
     """Execute multiple search functions in parallel."""
     tasks = []
-    
+    task_func_names = []
+
     for func_config in functions:
         func_name = func_config['function']
         config = func_config.get('config', {})
-        
+
         if func_name == 'search_fts5':
             # Run FTS5 searches for each enabled source
             if sources.get('media'):
                 tasks.append(search_media_fts5(app, query, **config))
+                task_func_names.append('search_media_fts5')
             if sources.get('conversations'):
                 tasks.append(search_conversations_fts5(app, query, **config))
+                task_func_names.append('search_conversations_fts5')
             if sources.get('notes'):
                 tasks.append(search_notes_fts5(app, query, **config))
+                task_func_names.append('search_notes_fts5')
         elif func_name == 'search_semantic':
-            tasks.append(search_semantic(app, query, sources, **config))
-    
+            # Forward only kwargs the RAG service accepts (same fix as the
+            # pipeline builder's parallel/retrieve steps, tasks 256/250):
+            # splatting the raw config duplicated top_k inside the service
+            # call, and gather() below swallowed the resulting TypeError.
+            semantic_kwargs = {
+                key: config[key]
+                for key in ('score_threshold', 'filter_metadata')
+                if key in config
+            }
+            tasks.append(search_semantic(
+                app, query, sources,
+                limit=config.get('top_k', config.get('limit', 10)),
+                diagnostics=diagnostics,
+                **semantic_kwargs
+            ))
+            task_func_names.append('search_semantic')
+
     # Execute all searches in parallel
     results_lists = await asyncio.gather(*tasks, return_exceptions=True)
-    
+
     # Combine results
     all_results = []
-    for results in results_lists:
+    for func_name, results in zip(task_func_names, results_lists):
         if isinstance(results, Exception):
-            logger.error(f"Search failed: {results}")
+            logger.error(f"Search failed ({func_name}): {results}")
+            if func_name == 'search_semantic':
+                # The vector leg died mid-search: record it so callers can
+                # say the results are keyword-only (task-250).
+                record_semantic_unavailable(diagnostics, SEMANTIC_REASON_SEARCH_ERROR)
             continue
         all_results.extend(results)
-    
+
     return all_results
 
 

@@ -12,6 +12,15 @@ import os
 from ...RAG_Search.pipeline_builder_simple import execute_pipeline, BUILTIN_PIPELINES
 from ...RAG_Search.pipeline_loader import get_pipeline_loader
 from ...RAG_Search.fusion import resolve_hybrid_alpha
+from ...RAG_Search.semantic_availability import (
+    resolve_semantic_rag_service,
+    SEMANTIC_DIAGNOSTICS_KEY,
+    SEMANTIC_EMPTY_INDEX_MESSAGE,
+    SEMANTIC_REASON_INIT_FAILED,
+    SEMANTIC_STATUS_EMPTY_INDEX,
+    SEMANTIC_STATUS_UNAVAILABLE,
+    SEMANTIC_UNAVAILABLE_MESSAGES,
+)
 
 if TYPE_CHECKING:
     from ...app import TldwCli
@@ -36,7 +45,8 @@ async def perform_plain_rag_search(
     max_context_length: int = 10000,
     enable_rerank: bool = True,
     reranker_model: str = "flashrank",
-    keyword_filter_list: Optional[List[str]] = None
+    keyword_filter_list: Optional[List[str]] = None,
+    diagnostics: Optional[Dict[str, Any]] = None
 ) -> Tuple[List[Dict[str, Any]], str]:
     """
     Perform a plain RAG search using the pipeline system.
@@ -60,9 +70,11 @@ async def perform_plain_rag_search(
         for step in config['steps']:
             if step.get('function') == 'rerank_results':
                 step.setdefault('config', {})['model'] = reranker_model
-    
+
     # Execute pipeline
-    return await execute_pipeline(config, app, query, sources, top_k=top_k)
+    return await execute_pipeline(
+        config, app, query, sources, diagnostics=diagnostics, top_k=top_k
+    )
 
 
 async def perform_full_rag_pipeline(
@@ -77,7 +89,8 @@ async def perform_full_rag_pipeline(
     include_metadata: bool = True,
     enable_rerank: bool = True,
     reranker_model: str = "flashrank",
-    keyword_filter_list: Optional[List[str]] = None
+    keyword_filter_list: Optional[List[str]] = None,
+    diagnostics: Optional[Dict[str, Any]] = None
 ) -> Tuple[List[Dict[str, Any]], str]:
     """
     Perform a full semantic RAG pipeline using the pipeline system.
@@ -103,9 +116,11 @@ async def perform_full_rag_pipeline(
         for step in config['steps']:
             if step.get('function') == 'rerank_results':
                 step.setdefault('config', {})['model'] = reranker_model
-    
+
     # Execute pipeline
-    return await execute_pipeline(config, app, query, sources, top_k=top_k)
+    return await execute_pipeline(
+        config, app, query, sources, diagnostics=diagnostics, top_k=top_k
+    )
 
 
 async def perform_hybrid_rag_search(
@@ -122,7 +137,8 @@ async def perform_hybrid_rag_search(
     hybrid_alpha: Optional[float] = None,
     bm25_weight: Optional[float] = None,
     vector_weight: Optional[float] = None,
-    keyword_filter_list: Optional[List[str]] = None
+    keyword_filter_list: Optional[List[str]] = None,
+    diagnostics: Optional[Dict[str, Any]] = None
 ) -> Tuple[List[Dict[str, Any]], str]:
     """Perform a hybrid RAG search using the pipeline system.
 
@@ -151,6 +167,8 @@ async def perform_hybrid_rag_search(
             vector_weight when hybrid_alpha is not given.
         vector_weight: Legacy vector-leg weight; see bm25_weight.
         keyword_filter_list: Optional keywords the media FTS leg must match.
+        diagnostics: Optional dict receiving the semantic-leg availability
+            state (task-250) so callers can say when results are FTS-only.
 
     Returns:
         Tuple of (result dicts sorted by fused score, formatted context
@@ -193,9 +211,11 @@ async def perform_hybrid_rag_search(
         for step in config['steps']:
             if step.get('function') == 'rerank_results':
                 step.setdefault('config', {})['model'] = reranker_model
-    
+
     # Execute pipeline
-    return await execute_pipeline(config, app, query, sources, top_k=top_k)
+    return await execute_pipeline(
+        config, app, query, sources, diagnostics=diagnostics, top_k=top_k
+    )
 
 
 async def perform_search_with_pipeline(
@@ -203,11 +223,12 @@ async def perform_search_with_pipeline(
     query: str,
     sources: Dict[str, bool],
     pipeline_id: str,
+    diagnostics: Optional[Dict[str, Any]] = None,
     **kwargs
 ) -> Tuple[List[Dict[str, Any]], str]:
     """
     Perform a search using a specific pipeline ID.
-    
+
     This allows using custom pipelines defined in TOML files.
     """
     logger.info(f"Performing search with pipeline '{pipeline_id}' for query: '{query}'")
@@ -226,9 +247,11 @@ async def perform_search_with_pipeline(
     # Merge any pipeline-specific parameters with runtime parameters
     pipeline_params = config.get('parameters', {})
     merged_params = {**pipeline_params, **kwargs}
-    
+
     # Execute pipeline with merged parameters
-    return await execute_pipeline(config, app, query, sources, **merged_params)
+    return await execute_pipeline(
+        config, app, query, sources, diagnostics=diagnostics, **merged_params
+    )
 
 
 # Helper function to format results (kept for compatibility)
@@ -262,42 +285,68 @@ async def get_or_initialize_rag_service(app: "TldwCli") -> Optional[Any]:
     Resolves through the process-wide shared service
     (``RAG_Search.ingestion_indexing.get_shared_rag_service``) so search uses
     the exact same instance -- same vector store, collection, and embedding
-    model -- that ingestion-time indexing writes to (task-247).
+    model -- that ingestion-time indexing writes to (task-247). First-time
+    construction runs off the event loop via the shared resolver (task-250);
+    callers that need the WHY on failure should call
+    ``resolve_semantic_rag_service`` directly.
     """
     if not RAG_SERVICES_AVAILABLE:
         return None
 
-    if hasattr(app, '_rag_service') and app._rag_service:
-        return app._rag_service
-
+    # Profile preference from config (first construction only; the shared
+    # factory ignores the profile once the service exists).
+    profile_name = None
     try:
-        # Initialize RAG service with profile based on config
-        # Default to hybrid_basic for semantic search in pipelines
-        profile_name = "hybrid_basic"
-
-        # Check if there's a profile preference in config
         if hasattr(app, 'config') and app.config:
             rag_config = app.config.get('rag', {})
             service_config = rag_config.get('service', {})
-            profile_name = service_config.get('profile', 'hybrid_basic')
-
-        # Get (or create) the shared service used by both search and indexing
-        from ...RAG_Search.ingestion_indexing import get_shared_rag_service
-        rag_service = get_shared_rag_service(profile_name)
-        if rag_service is None:
-            return None
-        app._rag_service = rag_service
-        return rag_service
-
+            profile_name = service_config.get('profile')
     except Exception as e:
-        logger.error(f"Failed to initialize RAG service: {e}")
-        return None
+        logger.debug(f"Could not read RAG profile preference from app config: {e}")
+
+    service, _reason = await resolve_semantic_rag_service(app, profile_name)
+    return service
+
+
+def _notify_semantic_leg_state(
+    app: "TldwCli", search_mode: str, diagnostics: Dict[str, Any]
+) -> None:
+    """Tell the user when the semantic leg was skipped, failed, or was empty.
+
+    Hybrid (or custom) searches that quietly ran keyword-only, and semantic
+    searches over an unavailable runtime or an empty index, all surface an
+    honest notification instead of degrading silently (task-250, AC #1/#2).
+
+    Args:
+        app: App instance used for ``notify``.
+        search_mode: The mode that actually executed (post-fallback).
+        diagnostics: Pipeline diagnostics collected during the search.
+    """
+    semantic_state = diagnostics.get(SEMANTIC_DIAGNOSTICS_KEY) or {}
+    status = semantic_state.get('status')
+    if status not in (SEMANTIC_STATUS_UNAVAILABLE, SEMANTIC_STATUS_EMPTY_INDEX):
+        return
+    if status == SEMANTIC_STATUS_UNAVAILABLE:
+        message = semantic_state.get('message') or SEMANTIC_UNAVAILABLE_MESSAGES[
+            SEMANTIC_REASON_INIT_FAILED
+        ]
+    else:
+        message = semantic_state.get('message') or SEMANTIC_EMPTY_INDEX_MESSAGE
+    if search_mode == "hybrid":
+        notification = f"Hybrid RAG context is keyword-only (FTS): {message}"
+    else:
+        notification = f"Semantic retrieval returned no context: {message}"
+    logger.warning(notification)
+    try:
+        app.notify(notification, severity="warning")
+    except Exception as e:
+        logger.debug(f"Could not notify semantic-leg state: {e}")
 
 
 async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optional[str]:
     """
     Get RAG context for a chat message based on current settings.
-    
+
     Returns the context string to be prepended to the user message, or None if RAG is disabled.
     """
     from textual.css.query import NoMatches
@@ -370,17 +419,33 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
         app.notify("Please select at least one RAG source", severity="warning")
         return None
     
-    # Initialize RAG service if needed for semantic search
+    # Initialize RAG service if needed for semantic search. When the runtime
+    # is unavailable the user is TOLD why before the search degrades to
+    # keyword-only (task-250) -- the old path fell back with only a log line.
     if search_mode == "semantic":
-        rag_service = await get_or_initialize_rag_service(app)
+        rag_service, unavailable_reason = await resolve_semantic_rag_service(app)
         if not rag_service:
-            logger.warning("RAG service not available, falling back to plain search")
+            message = SEMANTIC_UNAVAILABLE_MESSAGES.get(
+                unavailable_reason,
+                SEMANTIC_UNAVAILABLE_MESSAGES[SEMANTIC_REASON_INIT_FAILED],
+            )
+            logger.warning(
+                f"RAG service not available ({unavailable_reason}), "
+                "falling back to plain search"
+            )
+            app.notify(
+                f"{message} Using keyword (FTS) search instead.",
+                severity="warning",
+            )
             search_mode = "plain"
-    
+
+    # Semantic-leg availability states ride out of the pipeline here.
+    diagnostics: Dict[str, Any] = {}
+
     # Perform the search
     try:
         logger.info(f"Performing {search_mode} RAG search for: '{user_message}'")
-        
+
         if search_mode == "plain":
             results, context = await perform_plain_rag_search(
                 app, user_message, sources,
@@ -388,7 +453,8 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
                 max_context_length=max_context_length,
                 enable_rerank=enable_rerank,
                 reranker_model=reranker_model,
-                keyword_filter_list=keyword_filter_list
+                keyword_filter_list=keyword_filter_list,
+                diagnostics=diagnostics
             )
         elif search_mode == "semantic" or search_mode == "full":
             results, context = await perform_full_rag_pipeline(
@@ -401,7 +467,8 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
                 include_metadata=include_metadata,
                 enable_rerank=enable_rerank,
                 reranker_model=reranker_model,
-                keyword_filter_list=keyword_filter_list
+                keyword_filter_list=keyword_filter_list,
+                diagnostics=diagnostics
             )
         elif search_mode == "hybrid":
             results, context = await perform_hybrid_rag_search(
@@ -413,7 +480,8 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
                 chunk_size=chunk_size,
                 chunk_overlap=chunk_overlap,
                 chunk_type=chunk_type,
-                keyword_filter_list=keyword_filter_list
+                keyword_filter_list=keyword_filter_list,
+                diagnostics=diagnostics
             )
         else:
             # Custom pipeline
@@ -426,9 +494,12 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
                 chunk_size=chunk_size,
                 chunk_overlap=chunk_overlap,
                 chunk_type=chunk_type,
-                keyword_filter_list=keyword_filter_list
+                keyword_filter_list=keyword_filter_list,
+                diagnostics=diagnostics
             )
-        
+
+        _notify_semantic_leg_state(app, search_mode, diagnostics)
+
         if context and context.strip():
             logger.info(f"RAG context generated: {len(context)} characters")
             return context

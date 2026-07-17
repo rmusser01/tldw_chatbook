@@ -429,6 +429,138 @@ class TestSearchRAGWindow:
 
 
 @pytest.mark.ui
+class TestSemanticHonestStates:
+    """Task-250: the standalone Search surface reports semantic-leg states."""
+
+    def test_sources_from_config_maps_filter_checkboxes(
+        self,
+        mock_app_instance: MagicMock,
+        search_rag_test_env,
+    ) -> None:
+        window = SearchRAGWindow(mock_app_instance, id="test-search-window")
+
+        sources = window._sources_from_config(
+            {"filters": {"media": True, "conversations": False, "notes": True}}
+        )
+
+        assert sources == {"media": True, "conversations": False, "notes": True}
+        # Missing filters default to searching everything
+        assert window._sources_from_config({}) == {
+            "media": True, "conversations": True, "notes": True,
+        }
+
+    @pytest.mark.asyncio
+    async def test_perform_hybrid_search_uses_pipeline_contract_and_diagnostics(
+        self,
+        mock_app_instance: MagicMock,
+        search_rag_test_env,
+    ) -> None:
+        """The hybrid seam must call the real pipeline signature and keep WHY."""
+        from tldw_chatbook.RAG_Search.semantic_availability import (
+            SEMANTIC_DIAGNOSTICS_KEY,
+            SEMANTIC_REASON_DEPS_MISSING,
+            SEMANTIC_STATUS_UNAVAILABLE,
+            SEMANTIC_UNAVAILABLE_MESSAGES,
+        )
+
+        window = SearchRAGWindow(mock_app_instance, id="test-search-window")
+        captured = {}
+
+        async def fake_hybrid(app, query, sources, top_k=10, diagnostics=None, **kwargs):
+            captured["app"] = app
+            captured["query"] = query
+            captured["sources"] = sources
+            captured["top_k"] = top_k
+            if diagnostics is not None:
+                diagnostics[SEMANTIC_DIAGNOSTICS_KEY] = {
+                    "status": SEMANTIC_STATUS_UNAVAILABLE,
+                    "reason": SEMANTIC_REASON_DEPS_MISSING,
+                    "message": SEMANTIC_UNAVAILABLE_MESSAGES[SEMANTIC_REASON_DEPS_MISSING],
+                }
+            return ([{"id": "1", "title": "Doc", "content": "x", "source": "media"}], "ctx")
+
+        with patch.object(search_rag_window_module, "perform_hybrid_rag_search", fake_hybrid):
+            results = await window._perform_hybrid_search(
+                "query",
+                {"top_k": 7, "filters": {"media": True, "conversations": False, "notes": False}},
+            )
+
+        assert captured["app"] is mock_app_instance
+        assert captured["query"] == "query"
+        assert captured["sources"] == {"media": True, "conversations": False, "notes": False}
+        assert captured["top_k"] == 7
+        assert [r["id"] for r in results] == ["1"]
+        semantic_state = window.last_search_diagnostics[SEMANTIC_DIAGNOSTICS_KEY]
+        assert semantic_state["status"] == SEMANTIC_STATUS_UNAVAILABLE
+
+    @pytest.mark.asyncio
+    async def test_perform_contextual_search_unpacks_pipeline_tuple(
+        self,
+        mock_app_instance: MagicMock,
+        search_rag_test_env,
+    ) -> None:
+        window = SearchRAGWindow(mock_app_instance, id="test-search-window")
+
+        async def fake_full(app, query, sources, top_k=10, diagnostics=None, **kwargs):
+            return ([{"id": "v1", "title": "Vec", "content": "y", "source": "media"}], "ctx")
+
+        with patch.object(search_rag_window_module, "perform_full_rag_pipeline", fake_full):
+            results = await window._perform_contextual_search("query", {"top_k": 3})
+
+        assert [r["id"] for r in results] == ["v1"]
+
+    def test_semantic_leg_notice_states(
+        self,
+        mock_app_instance: MagicMock,
+        search_rag_test_env,
+    ) -> None:
+        from tldw_chatbook.RAG_Search.semantic_availability import (
+            SEMANTIC_DIAGNOSTICS_KEY,
+            SEMANTIC_EMPTY_INDEX_MESSAGE,
+            SEMANTIC_REASON_DEPS_MISSING,
+            SEMANTIC_STATUS_EMPTY_INDEX,
+            SEMANTIC_STATUS_UNAVAILABLE,
+            SEMANTIC_UNAVAILABLE_MESSAGES,
+        )
+
+        window = SearchRAGWindow(mock_app_instance, id="test-search-window")
+
+        # No diagnostics -> nothing to report
+        window.last_search_diagnostics = {}
+        assert window._semantic_leg_notice("hybrid") is None
+
+        # Semantic leg ran fine -> nothing to report
+        window.last_search_diagnostics = {
+            SEMANTIC_DIAGNOSTICS_KEY: {"status": "ok", "result_count": 2}
+        }
+        assert window._semantic_leg_notice("hybrid") is None
+
+        # Hybrid with unavailable leg -> keyword-only marker + full reason
+        window.last_search_diagnostics = {
+            SEMANTIC_DIAGNOSTICS_KEY: {
+                "status": SEMANTIC_STATUS_UNAVAILABLE,
+                "reason": SEMANTIC_REASON_DEPS_MISSING,
+                "message": SEMANTIC_UNAVAILABLE_MESSAGES[SEMANTIC_REASON_DEPS_MISSING],
+            }
+        }
+        marker, message = window._semantic_leg_notice("hybrid")
+        assert "keyword-only" in marker
+        assert "keyword-only (FTS)" in message
+        assert "embeddings" in message
+
+        # Contextual with empty index -> distinct index-empty copy
+        window.last_search_diagnostics = {
+            SEMANTIC_DIAGNOSTICS_KEY: {
+                "status": SEMANTIC_STATUS_EMPTY_INDEX,
+                "message": SEMANTIC_EMPTY_INDEX_MESSAGE,
+            }
+        }
+        marker, message = window._semantic_leg_notice("contextual")
+        assert marker == "semantic index empty"
+        assert message == SEMANTIC_EMPTY_INDEX_MESSAGE
+
+
+@pytest.mark.ui
 class TestSearchHistoryDropdown:
     """Search history auto-complete behavior."""
 
