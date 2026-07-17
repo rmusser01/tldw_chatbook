@@ -1976,6 +1976,9 @@ class PersonasScreen(BaseAppScreen):
                 position=payload.get("position", "before_char"),
                 insertion_order=payload.get("insertion_order", 0),
                 priority=payload.get("priority", 0),
+                selective=payload.get("selective", False),
+                secondary_keys=payload.get("secondary_keys", []),
+                case_sensitive=payload.get("case_sensitive", False),
             ),
             "Could not add the entry",
         )

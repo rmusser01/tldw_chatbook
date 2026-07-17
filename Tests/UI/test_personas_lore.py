@@ -634,3 +634,60 @@ async def test_add_entry_persists_priority_through_real_screen_handler(
         entries = WorldBookManager(lore_db).get_world_book_entries(seeded_lore_book["book_id"])
         ghost = next(e for e in entries if e["keys"] == ["Ghost"])
         assert ghost["priority"] == 80
+
+
+@pytest.mark.asyncio
+async def test_add_entry_persists_matching_fields_through_real_screen_handler(
+    mock_app_instance, stub_characters_lore, lore_db, seeded_lore_book
+):
+    """The real _handle_lore_entry_add must forward selective/secondary_keys/
+    case_sensitive to the DB — regression against the explicit-kwarg drop that
+    bit `priority` in P2c."""
+    mock_app_instance.chachanotes_db = lore_db
+    app = LorePersonasTestApp(mock_app_instance)
+    async with app.run_test(size=(200, 60)) as pilot:
+        screen = await _enter_lore(pilot)
+        await _select_first_lore(pilot, screen)
+        screen.query_one("#personas-lore-entry-keys", Input).value = "Ghost"
+        screen.query_one("#personas-lore-entry-content", TextArea).text = "a pale spirit"
+        screen.query_one("#personas-lore-entry-case-sensitive", Switch).value = True
+        screen.query_one("#personas-lore-entry-selective", Switch).value = True
+        screen.query_one("#personas-lore-entry-secondary-keys", Input).value = "sword"
+        await pilot.pause()
+        await pilot.click("#personas-lore-entry-add")
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        entries = WorldBookManager(lore_db).get_world_book_entries(seeded_lore_book["book_id"])
+        ghost = next(e for e in entries if e["keys"] == ["Ghost"])
+        assert ghost["case_sensitive"] is True
+        assert ghost["selective"] is True
+        assert ghost["secondary_keys"] == ["sword"]
+
+
+@pytest.mark.asyncio
+async def test_update_entry_persists_matching_fields_through_real_screen_handler(
+    mock_app_instance, stub_characters_lore, lore_db, seeded_lore_book
+):
+    """_handle_lore_entry_update forwards the three fields via **payload."""
+    mock_app_instance.chachanotes_db = lore_db
+    app = LorePersonasTestApp(mock_app_instance)
+    async with app.run_test(size=(200, 60)) as pilot:
+        screen = await _enter_lore(pilot)
+        await _select_first_lore(pilot, screen)
+        table = screen.query_one("#personas-lore-entries-table", DataTable)
+        table.move_cursor(row=0)          # select the seeded "Warden" entry → fills form
+        await pilot.pause()
+        screen.query_one("#personas-lore-entry-case-sensitive", Switch).value = True
+        screen.query_one("#personas-lore-entry-selective", Switch).value = True
+        screen.query_one("#personas-lore-entry-secondary-keys", Input).value = "prison"
+        await pilot.pause()
+        await pilot.click("#personas-lore-entry-update")
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        entries = WorldBookManager(lore_db).get_world_book_entries(seeded_lore_book["book_id"])
+        warden = next(e for e in entries if e["keys"] == ["Warden"])
+        assert warden["case_sensitive"] is True
+        assert warden["selective"] is True
+        assert warden["secondary_keys"] == ["prison"]
