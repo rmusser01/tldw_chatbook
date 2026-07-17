@@ -7757,49 +7757,21 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             self.notify("Error changing RAG pipeline", severity="error")
     
     async def handle_query_expansion_method_changed(self, event: Select.Changed) -> None:
-        """Handles query expansion method selection - shows/hides appropriate fields.
+        """Stores the selected query expansion method string.
 
         NOTE (task-252): UI-only stub. The RAG_Search/query_expansion.py module was
         removed as dead code; this handler just stores the selected method string
         and no runtime code performs query expansion with it.
+
+        Args:
+            event: The Select.Changed event carrying the chosen expansion method.
         """
         try:
             method = event.value
-            
             # In screen navigation mode, these widgets don't exist at app level
             self.loguru_logger.debug(f"Query expansion method change in screen mode - method: {method}")
             # Store the method for the screen to handle
             self.query_expansion_method = method
-            return
-            
-            # Show/hide based on method
-            if method == "llm":
-                # Show provider and model selection, hide local model
-                provider_label.remove_class("hidden")
-                provider_select.remove_class("hidden")
-                llm_model_label.remove_class("hidden")
-                llm_model_select.remove_class("hidden")
-                local_model_label.add_class("hidden")
-                local_model_input.add_class("hidden")
-            elif method == "llamafile":
-                # Show local model input, hide provider and model selection
-                provider_label.add_class("hidden")
-                provider_select.add_class("hidden")
-                llm_model_label.add_class("hidden")
-                llm_model_select.add_class("hidden")
-                local_model_label.remove_class("hidden")
-                local_model_input.remove_class("hidden")
-            elif method == "keywords":
-                # Hide all model fields
-                provider_label.add_class("hidden")
-                provider_select.add_class("hidden")
-                llm_model_label.add_class("hidden")
-                llm_model_select.add_class("hidden")
-                local_model_label.add_class("hidden")
-                local_model_input.add_class("hidden")
-            
-            self.loguru_logger.info(f"Query expansion method changed to: {method}")
-            
         except Exception as e:
             self.loguru_logger.error(f"Error handling query expansion method change: {e}")
             self.notify("Error updating query expansion settings", severity="error")
