@@ -85,33 +85,51 @@ async def search_conversations_fts5(
     query: str,
     limit: int = 10
 ) -> List[SearchResult]:
-    """Search conversations database using FTS5."""
+    """Search conversations database using FTS5.
+
+    Args:
+        app: App-like object exposing ``db_config['chacha_db_path']``.
+        query: FTS search text.
+        limit: Maximum number of conversation results to return.
+
+    Returns:
+        SearchResult entries in content-relevance order, each carrying a
+        snippet built from the conversation's first messages.
+    """
     if not hasattr(app, 'db_config') or not app.db_config.get('chacha_db_path'):
         return []
     
     logger.debug(f"Searching conversations for: {query}")
     
-    from ...DB.ChaChaNotes_DB import CharactersRAGDB
+    # Two dots, not three: this module was flattened out of simplified/ and
+    # the old ...DB import resolved beyond the top-level package, raising
+    # ImportError at call time (task-260).
+    from ..DB.ChaChaNotes_DB import CharactersRAGDB
     
-    db = CharactersRAGDB(app.db_config['chacha_db_path'])
+    # client_id is a required ctor arg (was missing here -- third latent
+    # defect in this never-exercised path, caught by the task-260 tests).
+    db = CharactersRAGDB(app.db_config['chacha_db_path'], client_id='rag_pipeline')
     conv_results = await asyncio.to_thread(
         db.search_conversations_by_content,
         search_query=query,
         limit=limit * 2
     )
     
+    # task-260: one batched query for all matched conversations' context
+    # messages (was one query per conversation), and text-only snippets
+    # never fetch image BLOBs.
+    messages_by_conv = await asyncio.to_thread(
+        db.get_messages_for_conversations_batch,
+        conversation_ids=[conv['id'] for conv in conv_results],
+        limit_per_conversation=5,
+        include_image_data=False,
+    )
+    
     results = []
     for conv in conv_results:
-        # Get some messages for context
-        messages = await asyncio.to_thread(
-            db.get_messages_for_conversation,
-            conversation_id=conv['id'],
-            limit=5
-        )
-        
         # Build content from messages
         content_parts = []
-        for msg in messages:
+        for msg in messages_by_conv.get(conv['id'], []):
             content_parts.append(f"{msg['sender']}: {msg['content']}")
         
         results.append(SearchResult(
