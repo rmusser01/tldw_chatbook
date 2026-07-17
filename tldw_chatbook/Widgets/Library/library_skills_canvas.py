@@ -231,7 +231,7 @@ class LibrarySkillsListCanvas(VerticalScroll):
         import_path: The Import row's path ``Input`` prefilled value. Only
             meaningful while ``import_open`` is ``True``.
         import_status: Muted outcome line shown below the Import row
-            (e.g. ``"1 imported · re-review it in the trust panel"``), or
+            (e.g. ``'Imported "executing-plans" · re-review it in the trust panel'``), or
             ``""`` when idle/not yet run.
     """
 

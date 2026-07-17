@@ -3,9 +3,11 @@ id: TASK-291
 title: >-
   Skills-import test: positive completion signal so repeat imports cannot
   false-pass
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-17 17:25'
+updated_date: '2026-07-17 22:45'
 labels:
   - testing
 dependencies: []
@@ -20,6 +22,12 @@ The Import row's outcome Static is never cleared between imports and all five su
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A slow-but-successful repeat import cannot be reported as complete by stale outcome text
-- [ ] #2 The skills-import suite still passes deterministically
+- [x] #1 A slow-but-successful repeat import cannot be reported as complete by stale outcome text
+- [x] #2 The skills-import suite still passes deterministically
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Product-side fix (stronger than a test-only signal): the import success line now names the imported skill ('Imported "<name>" · re-review it in the trust panel') — stale text from the previous import can never equal the next expected line, and users can attribute the outcome. All 7 test assertions are name-specific; duplicate-skip copy already carried the name. Suites: Tests/Skills 9+ passed, Tests/UI/test_library_skills_canvas.py green (168 total across both). Commit a816c65e.
+<!-- SECTION:NOTES:END -->

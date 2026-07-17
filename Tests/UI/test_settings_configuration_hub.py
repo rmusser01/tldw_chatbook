@@ -5,6 +5,7 @@ import builtins
 from collections import UserDict
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -80,21 +81,14 @@ class StyledSettingsDestinationHarness(DestinationHarness):
 
 
 async def _settle_settings_mount_storm(pilot) -> None:
-    """Deterministically outwait SettingsScreen's mount-time recompose storm.
+    """Deterministically wait out the Settings mount-time refresh.
 
-    `SettingsScreen.on_mount` queues two `@work(thread=True)` refreshes
-    (`settings-manual-sync-preview` + the server/sync/workspace handoff
-    rows) whose thread-completion callbacks set `recompose=True` reactives
-    -- i.e. a FULL screen recompose fires at a nondeterministic later
-    moment. A `pilot.click`/`query_one`/`_visible_text` that lands
-    mid-recompose sees an empty DOM (NoMatches / empty text), so tests that
-    touched the screen immediately after `run_test` were always racy; they
-    just happened to win the race while every `BaseAppScreen` still
-    composed Textual's binding-scanning `Footer` (its per-focus-change work
-    slowed the loop enough for the threads to finish first). task-264's
-    lighter per-screen `AppFooterStatus` sped the loop up and exposed the
-    race (~1% of tests per run). Waiting for the workers is deterministic:
-    after they complete, nothing else recomposes the screen unprompted.
+    Mounting Settings queues the combined ``_refresh_sync_rows`` thread
+    worker (task-290 coalesced the former two-worker storm); its completion
+    applies both row sets in one hop, triggering ONE ``recompose=True``
+    rebuild at a nondeterministic moment shortly after mount. Waiting for
+    worker completion plus a pause makes every later query/click land on
+    the settled DOM.
     """
     await pilot.app.workers.wait_for_complete()
     await pilot.pause()
@@ -1362,7 +1356,7 @@ async def test_settings_overview_detail_uses_cached_server_sync_rows(monkeypatch
 
     monkeypatch.setattr(
         SettingsScreen,
-        "_refresh_server_sync_workspace_handoff_rows",
+        "_refresh_sync_rows",
         lambda _self: None,
         raising=False,
     )
@@ -1376,9 +1370,9 @@ async def test_settings_overview_detail_uses_cached_server_sync_rows(monkeypatch
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        # The handoff refresh is patched to a no-op above, but the manual
-        # sync thread worker still recomposes the screen when it lands --
-        # settle it so _visible_text cannot read a mid-recompose empty DOM.
+        # The combined sync-rows refresh (task-290) is patched to a no-op
+        # above; settle anyway so _visible_text cannot race any other
+        # worker's landing.
         await _settle_settings_mount_storm(pilot)
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
@@ -1394,7 +1388,7 @@ async def test_settings_overview_reselect_refreshes_cached_source_rows(monkeypat
         nonlocal refresh_calls
         refresh_calls += 1
 
-    monkeypatch.setattr(SettingsScreen, "_refresh_server_sync_workspace_handoff_rows", fake_refresh)
+    monkeypatch.setattr(SettingsScreen, "_refresh_sync_rows", fake_refresh)
 
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -1414,7 +1408,7 @@ async def test_settings_screen_resume_refreshes_cached_source_rows(monkeypatch):
         nonlocal refresh_calls
         refresh_calls += 1
 
-    monkeypatch.setattr(SettingsScreen, "_refresh_server_sync_workspace_handoff_rows", fake_refresh)
+    monkeypatch.setattr(SettingsScreen, "_refresh_sync_rows", fake_refresh)
 
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -3777,6 +3771,10 @@ async def test_settings_provider_navigation_context_focuses_api_key_field():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
+        # Settle the mount-time sync-rows worker FIRST so its landing cannot
+        # race the navigation focus dance nondeterministically -- the
+        # interleaved case has its own deterministic test below (task-290).
+        await _settle_settings_mount_storm(pilot)
         screen = _active_destination_screen(host)
 
         screen.apply_navigation_context(
@@ -3787,6 +3785,44 @@ async def test_settings_provider_navigation_context_focuses_api_key_field():
                 "field": "api_key",
             }
         )
+        await pilot.pause()
+        await pilot.pause()
+
+        api_key = screen.query_one("#settings-provider-api-key", Input)
+        assert api_key.has_focus
+
+
+@pytest.mark.asyncio
+async def test_sync_rows_recompose_mid_navigation_still_focuses_target_field():
+    """task-290: a sync-rows landing used to recompose the screen between a
+    navigation focus intent and its deferred set_focus processing,
+    destroying the target and dropping focus. The pending-intent mechanism
+    re-issues the focus against the fresh children."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+
+        screen.apply_navigation_context(
+            {
+                "category": SettingsCategoryId.PROVIDERS_MODELS.value,
+                "provider": "openai",
+                "model": "gpt-4.1",
+                "field": "api_key",
+            }
+        )
+        # Deterministic interleave: land a sync-rows apply (fresh values ->
+        # recompose) while the navigation focus is still in flight.
+        screen._apply_sync_rows(
+            (("Active server profile", "interleaved-value"),),
+            (("Manual sync status", "interleaved"),),
+        )
+        await pilot.pause()
+        await pilot.pause()
         await pilot.pause()
 
         api_key = screen.query_one("#settings-provider-api-key", Input)
@@ -6317,3 +6353,35 @@ def test_settings_advanced_config_new_file_save_reports_no_backup(monkeypatch, t
     assert "backup: none (new file)" in result
     assert config_path.exists()
     assert not config_path.with_suffix(".toml.bak").exists()
+
+
+@pytest.mark.asyncio
+async def test_settings_mount_triggers_at_most_one_post_mount_recompose():
+    """task-290: on_mount used to fire TWO independent thread workers whose
+    completions each set a recompose=True reactive at its own moment -- two
+    full-screen recomposes shortly after mount (the "mount storm"). The
+    combined _refresh_sync_rows worker applies both row sets in one
+    message-loop slot, so compose runs at most twice total: the initial
+    mount compose plus ONE coalesced storm recompose."""
+    compose_calls = 0
+    original_compose = SettingsScreen.compose
+
+    def counting_compose(self):
+        nonlocal compose_calls
+        compose_calls += 1
+        yield from original_compose(self)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    with patch.object(SettingsScreen, "compose", counting_compose):
+        async with host.run_test(size=(180, 50)) as pilot:
+            await _settle_settings_mount_storm(pilot)
+            # Extra settles: give any straggler recompose a chance to fire
+            # so the assertion below is a real ceiling, not a lucky read.
+            await pilot.pause()
+            await pilot.pause()
+
+    assert compose_calls <= 2, (
+        f"Settings composed {compose_calls} times after mount -- the sync-rows "
+        "refresh storm is no longer coalesced (task-290)."
+    )
