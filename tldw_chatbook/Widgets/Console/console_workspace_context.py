@@ -210,6 +210,20 @@ class ConsoleWorkspaceContextTray(Vertical):
         Returns:
             None.
         """
+        # TASK-251 -- DEVIATION FROM THE BRIEF, documented in the task-251
+        # report: the brief's Change 2 asked for the same
+        # `if state == self.state: return` guard `ConsoleRunInspector` uses.
+        # Measured against the real test suite, that guard broke click
+        # targeting on grouped browser rows (workspace-conversation search
+        # + resume flows) -- skipping `refresh(recompose=True)` also skips
+        # rebuilding the row children, and this widget's own scroll/fit-pass
+        # (`_schedule_recomposed_content_fit`) alone does not settle correct
+        # on-screen regions for the (unrebuilt) existing children. Tried
+        # narrowing the guard to skip only the recompose while still always
+        # scheduling the fit-pass -- still broke the same two tests -- so
+        # this keeps the original unconditional recompose. The screen-side
+        # skip in `_sync_console_workspace_context` (the `call_after_refresh`
+        # legacy-alias kick) still applies and is safe/tested.
         self.state = state
         self.styles.min_height = 0
         scroll_parent = self._nearest_scroll_parent()
