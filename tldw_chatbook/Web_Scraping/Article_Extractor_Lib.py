@@ -65,27 +65,81 @@ except ImportError:
 PANDAS_AVAILABLE = importlib.util.find_spec("pandas") is not None
 pd = None
 
-try:
-    from playwright.async_api import (
-        TimeoutError,
-        async_playwright
-    )
-    from playwright.sync_api import sync_playwright
-    PLAYWRIGHT_AVAILABLE = True
-except ImportError:
-    PLAYWRIGHT_AVAILABLE = False
-    TimeoutError = Exception
-    async_playwright = None
-    sync_playwright = None
+# playwright and trafilatura are the two heaviest optional deps in this
+# module (playwright's browser-automation stack + trafilatura's own
+# dateparser/htmldate transitive deps, ~197ms combined -- see task-257).
+# They used to be imported at module scope via a real try/except import,
+# which meant a plain `import tldw_chatbook.app` paid the full cost
+# whenever web_search was installed, even though `web_search_enabled`
+# defaults to False and nothing had scraped yet. Probe availability
+# cheaply via find_spec (no import, mirrors PANDAS_AVAILABLE above) and
+# defer the real imports to the _ensure_playwright()/_ensure_trafilatura()
+# helpers below, called at the top of every function that actually uses
+# them (scrape_article, recursive_scrape). `TimeoutError` is intentionally
+# shadowed at module scope (as it was previously) so `except TimeoutError`
+# clauses transparently pick up playwright's TimeoutError once ensured, or
+# fall back to the builtin Exception placeholder when playwright is
+# unavailable -- unchanged behavior from before this deferral.
+PLAYWRIGHT_AVAILABLE = importlib.util.find_spec("playwright") is not None
+TimeoutError = Exception
+async_playwright = None
+sync_playwright = None
 
 import requests
 
-try:
-    import trafilatura
-    TRAFILATURA_AVAILABLE = True
-except ImportError:
-    TRAFILATURA_AVAILABLE = False
-    trafilatura = None
+TRAFILATURA_AVAILABLE = importlib.util.find_spec("trafilatura") is not None
+trafilatura = None
+
+
+def _ensure_playwright() -> bool:
+    """Import playwright on first actual use. No-op on repeated calls.
+
+    Returns:
+        True if `async_playwright`/`sync_playwright`/`TimeoutError` are
+        (now) bound to the real playwright objects, False if playwright is
+        unavailable or unimportable (e.g. a broken/partial install where
+        `find_spec` succeeds but the real import still fails).
+    """
+    global async_playwright, sync_playwright, TimeoutError
+    if async_playwright is not None:
+        # Already ensured -- or a test/caller has patched this module's
+        # `async_playwright` directly (e.g. via unittest.mock.patch), which
+        # must not be clobbered.
+        return True
+    if not PLAYWRIGHT_AVAILABLE:
+        return False
+    try:
+        from playwright.async_api import (
+            TimeoutError as _TimeoutError,
+            async_playwright as _async_playwright,
+        )
+        from playwright.sync_api import sync_playwright as _sync_playwright
+    except ImportError:
+        return False
+    TimeoutError = _TimeoutError
+    async_playwright = _async_playwright
+    sync_playwright = _sync_playwright
+    return True
+
+
+def _ensure_trafilatura() -> bool:
+    """Import trafilatura on first actual use. No-op on repeated calls.
+
+    Returns:
+        True if `trafilatura` is (now) bound to the real module, False if
+        it is unavailable or unimportable.
+    """
+    global trafilatura
+    if trafilatura is not None:
+        return True
+    if not TRAFILATURA_AVAILABLE:
+        return False
+    try:
+        import trafilatura as _trafilatura
+    except ImportError:
+        return False
+    trafilatura = _trafilatura
+    return True
 
 try:
     from tqdm import tqdm
@@ -314,8 +368,9 @@ async def scrape_article(url: str, custom_cookies: Optional[List[Dict[str, Any]]
     
     logging.info(f"Scraping article from URL: {url}")
     
-    # Check required dependencies
-    if not PLAYWRIGHT_AVAILABLE:
+    # Check required dependencies (find_spec probe first, avoids the real
+    # import for the common "not installed" case; then actually import).
+    if not PLAYWRIGHT_AVAILABLE or not _ensure_playwright():
         logging.error("Playwright not available. Install with: pip install tldw_chatbook[websearch]")
         return {
             'title': 'Error',
@@ -326,8 +381,8 @@ async def scrape_article(url: str, custom_cookies: Optional[List[Dict[str, Any]]
             'extraction_successful': False,
             'error': 'Playwright not installed'
         }
-    
-    if not TRAFILATURA_AVAILABLE:
+
+    if not TRAFILATURA_AVAILABLE or not _ensure_trafilatura():
         logging.error("Trafilatura not available. Install with: pip install tldw_chatbook[websearch]")
         return {
             'title': 'Error',
@@ -338,7 +393,7 @@ async def scrape_article(url: str, custom_cookies: Optional[List[Dict[str, Any]]
             'extraction_successful': False,
             'error': 'Trafilatura not installed'
         }
-    
+
     async def fetch_html(url: str) -> str:
             # Load and log the configuration
             loaded_config = load_and_log_configs()
@@ -1470,6 +1525,18 @@ async def recursive_scrape(
         custom_cookies: Optional[List[Dict[str, Any]]] = None,
         progress_callback: Optional[callable] = None
 ) -> List[Dict]:
+    # Ensure playwright is imported before it's dereferenced below. Preserves
+    # pre-existing behavior when unavailable: this function has never guarded
+    # against a missing playwright (calling `async_playwright()` when it is
+    # still `None` raises TypeError, same as before this deferral).
+    if not _ensure_playwright():
+        # PR #672 review: a silent False would surface as a cryptic
+        # "'NoneType' object is not callable" on async_playwright() below.
+        raise ImportError(
+            "playwright is required for browser-based scraping but is not "
+            "installed (pip install tldw_chatbook[websearch])."
+        )
+
     async def save_progress():
         temp_file = resume_file + ".tmp"
         with open(temp_file, 'w') as f:

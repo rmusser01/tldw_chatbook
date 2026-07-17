@@ -30,7 +30,7 @@ import sys
 import threading
 import time
 import traceback
-from typing import Union, Optional, Any, Dict, List, Callable
+from typing import TYPE_CHECKING, Union, Optional, Any, Dict, List, Callable
 from textual.widget import Widget
 #
 # 3rd-Party Libraries
@@ -160,7 +160,7 @@ from .Event_Handlers import (
     notes_events as notes_handlers,
     worker_events, ingest_events,
     llm_nav_events, media_events, notes_events, app_lifecycle, tab_events,
-    search_events, subscription_events,
+    subscription_events,
 )
 from .Event_Handlers.Chat_Events import chat_events as chat_handlers, chat_events_sidebar, chat_events_worldbooks
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events
@@ -350,7 +350,6 @@ from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer
 from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
 from tldw_chatbook.runtime_policy.types import PolicyDecision, RuntimeSourceState
 from tldw_chatbook.state import AppState
-from tldw_chatbook.tldw_api import MCPUnifiedClient
 from tldw_chatbook.Auth_Account_Interop import AuthAccountScopeService, ServerAuthAccountService
 from tldw_chatbook.Audio_Services_Interop import (
     AudioServicesScopeService,
@@ -358,6 +357,10 @@ from tldw_chatbook.Audio_Services_Interop import (
     ServerAudioServicesService,
 )
 from .Evals.eval_orchestrator import EvaluationOrchestrator
+
+if TYPE_CHECKING:
+    from tldw_chatbook.tldw_api import MCPUnifiedClient
+
 API_IMPORTS_SUCCESSFUL = True
 
 SEARCH_VIEW_RAG_QA = "search-view-rag-qa"
@@ -3678,7 +3681,10 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             get_user_data_dir() / "unified_mcp_context.json",
         )
 
-        def _build_unified_mcp_client_for_target(target: Any) -> MCPUnifiedClient:
+        def _build_unified_mcp_client_for_target(target: Any) -> "MCPUnifiedClient":
+            # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+            from tldw_chatbook.tldw_api import MCPUnifiedClient
+
             if getattr(target, "auth_reference", None) == "legacy:tldw_api":
                 root_client = build_runtime_api_client(
                     app_config=self.app_config,
@@ -4073,7 +4079,16 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 check_integrity_on_startup=check_integrity
             )
             logger.info(f"Media_DB_v2 initialized successfully for client '{CLI_APP_CLIENT_ID}' at {media_db_path}")
-            
+
+            # Wire ingestion-time RAG indexing (task-247). The hook no-ops
+            # when the embeddings_rag extras are missing; indexing failures
+            # are logged and surfaced without ever affecting ingestion.
+            try:
+                from .RAG_Search.ingestion_indexing import install_media_ingest_hook
+                install_media_ingest_hook(failure_notifier=self._notify_rag_indexing_failure)
+            except Exception as e:
+                logger.warning(f"Could not install RAG ingestion-indexing hook: {e}")
+
             # Pre-fetch media types for UI
             if self.media_db:
                 db_types = self.media_db.get_distinct_media_types(include_deleted=False, include_trash=False)
@@ -4085,7 +4100,19 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             logger.opt(exception=True).error(f"Failed to initialize media DB: {e}")
             self.media_db = None
             self._media_types_for_ui = ["Error: Exception fetching media types"]
-    
+
+    def _notify_rag_indexing_failure(self, message: str) -> None:
+        """Surface a background RAG-indexing failure as a toast (best effort).
+
+        Called from the ingestion-indexer worker thread, so the notification
+        is marshalled onto the UI thread; if the app isn't running yet (or
+        anymore) the failure stays log-only.
+        """
+        try:
+            self.call_from_thread(self.notify, message, severity="warning", timeout=6)
+        except Exception as e:
+            logger.debug(f"Could not surface RAG indexing failure in UI: {e}")
+
     def _init_worker_handlers(self) -> None:
         """Initialize the worker handler registry and register all handlers."""
         self.worker_handler_registry = WorkerHandlerRegistry(self)
@@ -4161,7 +4188,6 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                                                            reactive_attr="search_active_sub_tab"),
             SEARCH_NAV_EMBEDDINGS_MANAGE: functools.partial(_handle_nav, prefix="search",
                                                            reactive_attr="search_active_sub_tab"),
-            **search_events.SEARCH_BUTTON_HANDLERS,
         }
 
         # --- Ingest Handlers ---
@@ -7556,32 +7582,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         elif event.__class__.__name__ == 'BatchAnalysisStartEvent':
             from .Event_Handlers import multi_item_review_events
             await multi_item_review_events.handle_batch_analysis_start(self, event)
-        elif event.__class__.__name__ == 'TemplateDeleteConfirmationEvent':
-            from .Widgets.confirmation_dialog import ConfirmationDialog
-            from .Event_Handlers.template_events import TemplateDeleteConfirmationEvent
-            
-            if isinstance(event, TemplateDeleteConfirmationEvent):
-                # Show confirmation dialog
-                async def confirm_delete():
-                    # Find the widget and call delete
-                    try:
-                        from .Widgets.chunking_templates_widget import ChunkingTemplatesWidget
-                        # Find the templates widget in the current view
-                        for widget in self.query(ChunkingTemplatesWidget):
-                            widget.delete_template(event.template_id)
-                    except Exception as e:
-                        logger.error(f"Error deleting template: {e}")
-                        self.notify(f"Error deleting template: {str(e)}", severity="error")
-                
-                dialog = ConfirmationDialog(
-                    title="Delete Template",
-                    message=f"Are you sure you want to delete the template '{event.template_name}'?\n\nThis action cannot be undone.",
-                    confirm_label="Delete",
-                    cancel_label="Cancel",
-                    confirm_callback=confirm_delete
-                )
-                self.push_screen(dialog)
-    
+
     @on(SplashScreen.Closed)
     async def on_splash_screen_closed(self, event: SplashScreen.Closed) -> None:
         """Handle splash screen closing."""

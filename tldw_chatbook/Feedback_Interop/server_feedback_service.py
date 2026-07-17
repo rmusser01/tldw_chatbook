@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    ExplicitFeedbackRequest,
-    FeedbackUpdateRequest,
-    TLDWAPIClient,
-)
+if TYPE_CHECKING:
+    from ..tldw_api import TLDWAPIClient
 
 
 class ServerFeedbackService:
@@ -102,6 +99,9 @@ class ServerFeedbackService:
         session_id: str | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ExplicitFeedbackRequest
+
         self._enforce("feedback.create.server")
         request = ExplicitFeedbackRequest(
             conversation_id=conversation_id,
@@ -135,6 +135,9 @@ class ServerFeedbackService:
         issues: list[str] | None = None,
         user_notes: str | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import FeedbackUpdateRequest
+
         self._enforce("feedback.update.server")
         request = FeedbackUpdateRequest(issues=issues, user_notes=user_notes)
         return self._dump(await self._require_client().update_feedback(feedback_id, request))

@@ -2,17 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    SkillCreate,
-    SkillExecuteRequest,
-    SkillImportRequest,
-    SkillUpdate,
-    TLDWAPIClient,
-)
+if TYPE_CHECKING:
+    from ..tldw_api import TLDWAPIClient
 
 
 class ServerSkillsService:
@@ -122,6 +117,9 @@ class ServerSkillsService:
         content: str,
         supporting_files: dict[str, str] | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SkillCreate
+
         self._enforce("skills.create.server")
         request = SkillCreate(name=name, content=content, supporting_files=supporting_files)
         return self._dump(await self._require_client().create_skill(request))
@@ -134,6 +132,9 @@ class ServerSkillsService:
         supporting_files: dict[str, str | None] | None = None,
         expected_version: int | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SkillUpdate
+
         self._enforce("skills.update.server")
         request = SkillUpdate(content=content, supporting_files=supporting_files)
         return self._dump(
@@ -152,6 +153,9 @@ class ServerSkillsService:
         supporting_files: dict[str, str] | None = None,
         overwrite: bool = False,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SkillImportRequest
+
         self._enforce("skills.import.launch.server")
         request = SkillImportRequest(
             name=name,
@@ -184,6 +188,9 @@ class ServerSkillsService:
         return await self._require_client().export_skill(skill_name)
 
     async def execute_skill(self, skill_name: str, *, args: str | None = None) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SkillExecuteRequest
+
         self._enforce("skills.execute.launch.server")
         request = SkillExecuteRequest(args=args)
         return self._dump(await self._require_client().execute_skill(skill_name, request))

@@ -700,10 +700,11 @@ async def test_library_shell_search_mode_toggle_cycles_mode():
 
 
 @pytest.mark.asyncio
-async def test_library_shell_search_rag_mode_blocks_run_without_provider():
-    """Default ``search`` mode keeps Run enabled without a provider; cycling
-    to ``rag`` mode blocks Run behind the provider gate, and cycling back
-    re-enables it -- the app fake here has no ``_rag_service`` attribute.
+async def test_library_shell_search_rag_mode_keeps_run_enabled_without_runtime():
+    """Cycling to ``rag`` mode keeps Run enabled even though the app fake has
+    no ``_rag_service`` attribute (task-249): the runtime initializes lazily
+    at query time, and the retrieval service owns the recovery state when it
+    cannot -- the old provider gate that pre-disabled Run is retired.
     """
     app = _build_test_app()
     assert getattr(app, "_rag_service", None) is None
@@ -723,22 +724,18 @@ async def test_library_shell_search_rag_mode_blocks_run_without_provider():
 
         screen.query_one("#library-rag-mode-toggle", Button).press()
         for _ in range(120):
-            run_buttons = list(screen.query("#library-rag-run-query"))
-            if run_buttons and run_buttons[0].disabled:
+            toggles = list(screen.query("#library-rag-mode-toggle"))
+            if toggles and str(toggles[0].label) == "mode: RAG Answer ▸":
                 break
             await pilot.pause(0.02)
         else:
-            raise AssertionError("RAG mode never disabled Run without a provider.")
-        assert "Select a provider/model" in _visible_text(screen)
+            raise AssertionError("Mode toggle never switched to RAG Answer.")
 
-        screen.query_one("#library-rag-mode-toggle", Button).press()
-        for _ in range(120):
-            run_buttons = list(screen.query("#library-rag-run-query"))
-            if run_buttons and not run_buttons[0].disabled:
-                break
-            await pilot.pause(0.02)
-        else:
-            raise AssertionError("Search mode never re-enabled Run.")
+        # A few extra pauses so any pending query-state refresh settles.
+        await pilot.pause()
+        await pilot.pause()
+        assert screen.query_one("#library-rag-run-query", Button).disabled is False
+        assert "Select a provider/model" not in _visible_text(screen)
 
 
 @pytest.mark.asyncio

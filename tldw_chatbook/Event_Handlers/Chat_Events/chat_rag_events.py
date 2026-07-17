@@ -230,29 +230,38 @@ def format_results_for_llm(
 
 # Initialize/get RAG service (kept for compatibility)
 async def get_or_initialize_rag_service(app: "TldwCli") -> Optional[Any]:
-    """Get or initialize the RAG service."""
+    """Get or initialize the RAG service.
+
+    Resolves through the process-wide shared service
+    (``RAG_Search.ingestion_indexing.get_shared_rag_service``) so search uses
+    the exact same instance -- same vector store, collection, and embedding
+    model -- that ingestion-time indexing writes to (task-247).
+    """
     if not RAG_SERVICES_AVAILABLE:
         return None
-    
+
     if hasattr(app, '_rag_service') and app._rag_service:
         return app._rag_service
-    
+
     try:
         # Initialize RAG service with profile based on config
         # Default to hybrid_basic for semantic search in pipelines
         profile_name = "hybrid_basic"
-        
+
         # Check if there's a profile preference in config
         if hasattr(app, 'config') and app.config:
             rag_config = app.config.get('rag', {})
             service_config = rag_config.get('service', {})
             profile_name = service_config.get('profile', 'hybrid_basic')
-        
-        # Create the service
-        rag_service = create_rag_service(profile_name=profile_name)
+
+        # Get (or create) the shared service used by both search and indexing
+        from ...RAG_Search.ingestion_indexing import get_shared_rag_service
+        rag_service = get_shared_rag_service(profile_name)
+        if rag_service is None:
+            return None
         app._rag_service = rag_service
         return rag_service
-        
+
     except Exception as e:
         logger.error(f"Failed to initialize RAG service: {e}")
         return None

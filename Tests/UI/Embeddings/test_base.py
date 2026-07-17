@@ -62,28 +62,6 @@ class EmbeddingsTestBase:
             yield instance
     
     @pytest.fixture
-    def mock_model_preferences(self, tmp_path):
-        """Mock ModelPreferencesManager with temp file storage."""
-        with patch('tldw_chatbook.Utils.model_preferences.ModelPreferencesManager') as mock_prefs:
-            instance = MagicMock()
-            mock_prefs.return_value = instance
-            
-            # Setup test data
-            instance.preferences_dir = tmp_path / ".config" / "tldw_cli"
-            instance.preferences_file = instance.preferences_dir / "model_preferences.json"
-            instance.model_usage = {}
-            instance.recent_models = []
-            
-            # Mock methods
-            instance.is_favorite = MagicMock(return_value=False)
-            instance.toggle_favorite = MagicMock(return_value=True)
-            instance.get_recent_models = MagicMock(return_value=[])
-            instance.get_favorite_models = MagicMock(return_value=[])
-            instance.record_model_use = MagicMock()
-            
-            yield instance
-    
-    @pytest.fixture
     def mock_app_instance(self, mock_embedding_factory, mock_chroma_manager):
         """Mock app instance with required attributes."""
         app = MagicMock()

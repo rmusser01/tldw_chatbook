@@ -86,7 +86,6 @@ class RAGSearchTool(Tool):
             # Import RAG components dynamically to handle optional dependencies
             try:
                 from ..RAG_Search.simplified import RAGService, create_config_for_collection
-                from ..Event_Handlers.Chat_Events.chat_rag_integration import perform_modular_rag_search
                 RAG_AVAILABLE = True
             except ImportError as e:
                 logger.warning(f"RAG dependencies not available: {e}")

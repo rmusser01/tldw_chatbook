@@ -24,7 +24,12 @@ class WorldInfoProcessor:
         self.scan_depth = 3  # Default scan depth
         self.token_budget = 500  # Default token budget
         self.recursive_scanning = False
-        
+
+        # Parallel diagnostics candidate list: ALL entries (incl. disabled), each
+        # tagged with source-book + id + enabled metadata. Built alongside
+        # self.entries but never consumed by the plain process_messages() path.
+        self._candidate_entries: List[Dict[str, Any]] = []
+
         # Process character book if available
         if character_data:
             self.character_book = self._extract_character_book(character_data)
@@ -59,15 +64,23 @@ class WorldInfoProcessor:
         
         # Extract and prepare entries
         raw_entries = self.character_book.get('entries', [])
+        character_book_name = self.character_book.get('name', 'Character book')
         for entry in raw_entries:
             if entry.get('enabled', True):
                 processed_entry = self._process_entry(entry)
                 if processed_entry:
                     self.entries.append(processed_entry)
-        
+
+            # Diagnostics: candidate list carries EVERY entry (enabled or not).
+            # Does not affect self.entries / the plain path.
+            candidate = self._make_candidate(entry, None, character_book_name)
+            if candidate is not None:
+                self._candidate_entries.append(candidate)
+
         # Sort by insertion order
         self.entries.sort(key=lambda x: x.get('insertion_order', 0))
-        
+        self._candidate_entries.sort(key=lambda x: x.get('insertion_order', 0))
+
         logger.debug(f"Loaded {len(self.entries)} active world info entries from character book")
     
     def _process_world_books(self, world_books: List[Dict[str, Any]]):
@@ -84,7 +97,9 @@ class WorldInfoProcessor:
             # Process entries from this book
             book_entries = book.get('entries', [])
             priority_offset = book.get('priority', 0) * 1000  # Use priority to offset insertion order
-            
+            book_id = book.get('id')
+            book_name = book.get('name', '')
+
             for entry in book_entries:
                 if entry.get('enabled', True):
                     processed_entry = self._process_entry(entry)
@@ -92,10 +107,17 @@ class WorldInfoProcessor:
                         # Adjust insertion order based on book priority
                         processed_entry['insertion_order'] += priority_offset
                         self.entries.append(processed_entry)
-        
+
+                # Diagnostics: candidate list carries EVERY entry (enabled or not).
+                # Does not affect self.entries / the plain path.
+                candidate = self._make_candidate(entry, book_id, book_name, priority_offset)
+                if candidate is not None:
+                    self._candidate_entries.append(candidate)
+
         # Re-sort all entries by insertion order
         self.entries.sort(key=lambda x: x.get('insertion_order', 0))
-        
+        self._candidate_entries.sort(key=lambda x: x.get('insertion_order', 0))
+
         logger.debug(f"Total {len(self.entries)} active world info entries after processing {len(world_books)} world books")
     
     def _process_entry(self, entry: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -133,8 +155,24 @@ class WorldInfoProcessor:
             'case_sensitive': entry.get('case_sensitive', False),
             'extensions': entry.get('extensions', {})
         }
-    
-    def process_messages(self, current_message: str, conversation_history: List[Dict[str, str]], 
+
+    def _make_candidate(self, entry: Dict[str, Any], book_id: Optional[Any], book_name: str,
+                         priority_offset: int = 0) -> Optional[Dict[str, Any]]:
+        """Build a diagnostics candidate for ANY entry (enabled or not), carrying
+        source-book + id + enabled metadata. Does NOT affect self.entries / the
+        plain path. Returns None only if the entry has no usable keys."""
+        processed = self._process_entry(entry)
+        if processed is None:
+            return None
+        processed = dict(processed)
+        processed['insertion_order'] = processed.get('insertion_order', 0) + priority_offset
+        processed['_entry_id'] = entry.get('id')
+        processed['_book_id'] = book_id
+        processed['_book_name'] = book_name
+        processed['_enabled'] = bool(entry.get('enabled', True))
+        return processed
+
+    def process_messages(self, current_message: str, conversation_history: List[Dict[str, str]],
                         scan_depth: Optional[int] = None, apply_token_budget: bool = True) -> Dict[str, Any]:
         """
         Process messages and find matching world info entries.
@@ -176,7 +214,141 @@ class WorldInfoProcessor:
             'tokens_used': tokens_used
         }
     
-    def _build_scan_text(self, current_message: str, conversation_history: List[Dict[str, str]], 
+    def process_messages_with_diagnostics(self, current_message: str, conversation_history: List[Dict[str, str]],
+                                          scan_depth: Optional[int] = None, apply_token_budget: bool = True
+                                          ) -> Tuple[Dict[str, Any], "WorldBookScanDiagnostics"]:
+        """Instrumented sibling of ``process_messages`` for the Try-it panel.
+
+        ``result`` is byte-identical to ``process_messages`` (it IS the plain
+        path's return value — the fired-set pin), and ``diagnostics`` classifies
+        every candidate as fired / skipped:disabled / skipped:secondary /
+        skipped:budget. Never raises on a bad entry.
+
+        Args:
+            current_message: The message being previewed/sent.
+            conversation_history: Prior turns (oldest-first) scanned up to
+                ``scan_depth``.
+            scan_depth: Override for the effective scan depth; ``None`` uses the
+                processor's own ``scan_depth``.
+            apply_token_budget: Whether the plain path enforces the token budget.
+
+        Returns:
+            A ``(result, diagnostics)`` tuple where ``result`` is the plain
+            ``process_messages`` dict (``injections`` / ``matched_entries`` /
+            ``tokens_used``) and ``diagnostics`` is a ``WorldBookScanDiagnostics``
+            whose ``fired`` set equals ``result["matched_entries"]``.
+        """
+        from .world_info_diagnostics import WorldBookScanDiagnostics, WorldBookEntryDiagnostic
+
+        # Authoritative result — literally the plain path (guarantees agreement).
+        result = self.process_messages(current_message, conversation_history,
+                                       scan_depth, apply_token_budget)
+        fired_list = result.get("matched_entries", [])
+
+        depth = scan_depth if scan_depth is not None else self.scan_depth
+        scan_text = self._build_scan_text(current_message, conversation_history, depth)
+        scan_text_lower = scan_text.lower()
+
+        # Identify entries by insertion_order + content + position (the stable
+        # non-meta fields shared between self.entries/matched_entries and
+        # self._candidate_entries — matched_entries carry no _entry_id).
+        # Two distinct entries that share an identical (insertion_order,
+        # content, position) triple collide on this signature (a degenerate
+        # authoring case). Keep ALL candidates per signature in a list and
+        # consume one per fired occurrence, so multiplicity and per-occurrence
+        # attribution (entry_id / source book) are preserved and any leftover
+        # candidates fall through to the near-miss pass.
+        def sig(e):
+            return (e.get("insertion_order", 0), e.get("content", ""), e.get("position", "before_char"))
+
+        candidates_by_sig: Dict[Any, list] = {}
+        for cand in self._candidate_entries:
+            candidates_by_sig.setdefault(sig(cand), []).append(cand)
+
+        records = []
+
+        # Fired records are derived from the AUTHORITATIVE send result
+        # (result["matched_entries"]), never from re-matching the original
+        # scan text: when recursive_scanning is on, an entry can legitimately
+        # fire because its key only appears inside ANOTHER entry's content,
+        # not in the original message/history. Re-classifying against the
+        # original text (as before) silently dropped those entries from the
+        # diagnostics, under-reporting `fired` vs. the real send.
+        for order, entry in enumerate(fired_list):
+            bucket = candidates_by_sig.get(sig(entry))
+            cand = bucket.pop(0) if bucket else entry
+            try:
+                primary_hit, pk, sec_req, sec_hit, sk = self._classify_entry_match(
+                    cand, scan_text, scan_text_lower)
+            except Exception:
+                primary_hit, pk, sk = False, None, None
+
+            if primary_hit:
+                depth_level = 0
+                reason = f"matched key '{pk}'" + (f" + secondary '{sk}'" if sk else "")
+            else:
+                # Fired, but its own key never hit the original scan text →
+                # it only fired via recursive_scanning's rescan of other
+                # matched entries' content.
+                depth_level = 1
+                reason = "matched in another entry's content (recursive)"
+
+            records.append(WorldBookEntryDiagnostic(
+                entry_id=cand.get("_entry_id"), source_book_id=cand.get("_book_id"),
+                source_book_name=str(cand.get("_book_name") or ""),
+                keys=list(cand.get("keys") or []), activation_reason=reason, status="fired",
+                token_cost=self._estimate_entry_tokens(cand), injection_order=order,
+                position=cand.get("position", "before_char"),
+                content_preview=(cand.get("content", "") or "")[:80], depth_level=depth_level,
+            ))
+
+        # Near-misses: every candidate NOT consumed by the fired loop above
+        # (whatever remains in the per-signature buckets), classified against
+        # the original scan text.
+        for cand in [c for bucket in candidates_by_sig.values() for c in bucket]:
+            try:
+                primary_hit, pk, sec_req, sec_hit, sk = self._classify_entry_match(
+                    cand, scan_text, scan_text_lower)
+            except Exception:
+                continue
+            if not primary_hit:
+                continue  # key never appeared → neither fired nor a near-miss
+
+            if cand.get("_enabled", True) is False:
+                status, reason = "skipped:disabled", f"disabled (key '{pk}' matched)"
+            elif sec_req and not sec_hit:
+                status, reason = "skipped:secondary", "secondary key not found"
+            else:
+                # Matched originally, enabled, secondary-ok — but not part of
+                # the fired set, so it was dropped by the budget hard-break.
+                status, reason = "skipped:budget", "dropped by token budget"
+
+            records.append(WorldBookEntryDiagnostic(
+                entry_id=cand.get("_entry_id"), source_book_id=cand.get("_book_id"),
+                source_book_name=str(cand.get("_book_name") or ""),
+                keys=list(cand.get("keys") or []), activation_reason=reason, status=status,
+                token_cost=self._estimate_entry_tokens(cand), injection_order=None,
+                position=cand.get("position", "before_char"),
+                content_preview=(cand.get("content", "") or "")[:80], depth_level=0,
+            ))
+
+        fired_count = len(fired_list)
+        diagnostics = WorldBookScanDiagnostics(
+            entries=records, matched=len(records), fired=fired_count,
+            skipped=len(records) - fired_count, tokens_used=result.get("tokens_used", 0),
+            token_budget=self.token_budget,
+            # Truncation-derived (mirrors the dictionary diagnostics): true when the
+            # budget dropped at least one matched entry. The fired set's tokens_used
+            # is always <= budget by construction, so don't compare against it.
+            budget_exceeded=any(r.status == "skipped:budget" for r in records),
+            # Distinct source books, INCLUDING character-embedded books (whose
+            # _book_id is None) — id alone would collapse every character book
+            # into a single None bucket, so key on (id, name).
+            books_scanned=len({(c.get("_book_id"), c.get("_book_name")) for c in self._candidate_entries}),
+        )
+        return result, diagnostics
+
+    def _build_scan_text(self, current_message: str, conversation_history: List[Dict[str, str]],
                         depth: int) -> str:
         """Build the text to scan for keywords."""
         texts = [current_message]
@@ -248,7 +420,28 @@ class WorldInfoProcessor:
                     return True
         
         return False
-    
+
+    def _classify_entry_match(self, entry: Dict[str, Any], scan_text: str,
+                               scan_text_lower: str) -> Tuple[bool, Optional[str], bool, bool, Optional[str]]:
+        """Decompose an entry's match for diagnostics. Returns
+        (primary_hit, primary_key, secondary_required, secondary_hit, secondary_key).
+        Mirrors _entry_matches' logic exactly but reports WHICH key matched / why not."""
+        case = entry.get('case_sensitive', False)
+
+        def hit(key):
+            return (self._keyword_in_text(key, scan_text) if case
+                    else self._keyword_in_text(key.lower(), scan_text_lower))
+
+        primary_key = next((k for k in (entry.get('keys') or []) if hit(k)), None)
+        primary_hit = primary_key is not None
+        if not primary_hit:
+            return (False, None, False, False, None)
+        secondary_required = bool(entry.get('selective', False) and entry.get('secondary_keys'))
+        if not secondary_required:
+            return (True, primary_key, False, False, None)
+        secondary_key = next((k for k in (entry.get('secondary_keys') or []) if hit(k)), None)
+        return (True, primary_key, True, secondary_key is not None, secondary_key)
+
     def _keyword_in_text(self, keyword: str, text: str) -> bool:
         """Check if a keyword appears in text with word boundary matching."""
         # Use word boundary regex for more accurate matching

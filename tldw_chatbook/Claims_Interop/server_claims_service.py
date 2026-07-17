@@ -2,26 +2,27 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    ClaimNotificationsAckRequest,
-    ClaimReviewBulkRequest,
-    ClaimReviewRequest,
-    ClaimReviewRuleCreate,
-    ClaimReviewRuleUpdate,
-    ClaimUpdateRequest,
-    ClaimsAlertConfigCreate,
-    ClaimsAlertConfigUpdate,
-    ClaimsAnalyticsExportRequest,
-    ClaimsClusterLinkCreate,
-    ClaimsMonitoringSettingsUpdate,
-    ClaimsSettingsUpdate,
-    FVAVerifyRequest,
-    TLDWAPIClient,
-)
+if TYPE_CHECKING:
+    from ..tldw_api import (
+        ClaimNotificationsAckRequest,
+        ClaimReviewBulkRequest,
+        ClaimReviewRequest,
+        ClaimReviewRuleCreate,
+        ClaimReviewRuleUpdate,
+        ClaimUpdateRequest,
+        ClaimsAlertConfigCreate,
+        ClaimsAlertConfigUpdate,
+        ClaimsAnalyticsExportRequest,
+        ClaimsClusterLinkCreate,
+        ClaimsMonitoringSettingsUpdate,
+        ClaimsSettingsUpdate,
+        FVAVerifyRequest,
+        TLDWAPIClient,
+    )
 
 
 class ServerClaimsService:
@@ -210,6 +211,9 @@ class ServerClaimsService:
         return self._normalize_response(await self._require_client().get_claims_settings())
 
     async def update_claims_settings(self, request_data: ClaimsSettingsUpdate | dict[str, Any]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ClaimsSettingsUpdate
+
         self._enforce("claims.settings.update.server")
         request = self._model(request_data, ClaimsSettingsUpdate)
         return self._normalize_response(await self._require_client().update_claims_settings(request))
@@ -222,6 +226,9 @@ class ServerClaimsService:
         self,
         request_data: ClaimsMonitoringSettingsUpdate | dict[str, Any],
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ClaimsMonitoringSettingsUpdate
+
         self._enforce("claims.monitoring.update.server")
         request = self._model(request_data, ClaimsMonitoringSettingsUpdate)
         return self._normalize_response(await self._require_client().update_claims_monitoring_config(request))
@@ -235,6 +242,9 @@ class ServerClaimsService:
         return self._normalize_response(await self._require_client().get_claim_notifications_digest(**kwargs))
 
     async def ack_claim_notifications(self, request_data: ClaimNotificationsAckRequest | dict[str, Any]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ClaimNotificationsAckRequest
+
         self._enforce("claims.notifications.update.server")
         request = self._model(request_data, ClaimNotificationsAckRequest)
         return self._normalize_response(await self._require_client().ack_claim_notifications(request))
@@ -248,11 +258,17 @@ class ServerClaimsService:
         return self._normalize_response(await self._require_client().list_claim_alerts(**kwargs), kind="claim_alert")
 
     async def create_claim_alert(self, request_data: ClaimsAlertConfigCreate | dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ClaimsAlertConfigCreate
+
         self._enforce("claims.alerts.create.server")
         request = self._model(request_data, ClaimsAlertConfigCreate)
         return self._normalize_response(await self._require_client().create_claim_alert(request, **kwargs), kind="claim_alert")
 
     async def update_claim_alert(self, config_id: int, request_data: ClaimsAlertConfigUpdate | dict[str, Any]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ClaimsAlertConfigUpdate
+
         self._enforce("claims.alerts.update.server")
         request = self._model(request_data, ClaimsAlertConfigUpdate)
         return self._normalize_response(await self._require_client().update_claim_alert(config_id, request), kind="claim_alert")
@@ -274,6 +290,9 @@ class ServerClaimsService:
         return self._normalize_response(await self._require_client().get_claim_review_queue(**kwargs), kind="claim")
 
     async def review_claim(self, claim_id: int, request_data: ClaimReviewRequest | dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ClaimReviewRequest
+
         self._enforce("claims.review.update.server")
         request = self._model(request_data, ClaimReviewRequest)
         return self._normalize_response(await self._require_client().review_claim(claim_id, request, **kwargs), kind="claim")
@@ -287,6 +306,9 @@ class ServerClaimsService:
         request_data: ClaimReviewBulkRequest | dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ClaimReviewBulkRequest
+
         self._enforce("claims.review.launch.server")
         payload = dict(request_data or {})
         request_kwargs = {key: value for key, value in kwargs.items() if key != "user_id"}
@@ -300,11 +322,17 @@ class ServerClaimsService:
         return self._normalize_response(await self._require_client().list_claim_review_rules(**kwargs), kind="claim_review_rule")
 
     async def create_claim_review_rule(self, request_data: ClaimReviewRuleCreate | dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ClaimReviewRuleCreate
+
         self._enforce("claims.review_rules.create.server")
         request = self._model(request_data, ClaimReviewRuleCreate)
         return self._normalize_response(await self._require_client().create_claim_review_rule(request, **kwargs), kind="claim_review_rule")
 
     async def update_claim_review_rule(self, rule_id: int, request_data: ClaimReviewRuleUpdate | dict[str, Any]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ClaimReviewRuleUpdate
+
         self._enforce("claims.review_rules.update.server")
         request = self._model(request_data, ClaimReviewRuleUpdate)
         return self._normalize_response(await self._require_client().update_claim_review_rule(rule_id, request), kind="claim_review_rule")
@@ -330,6 +358,9 @@ class ServerClaimsService:
         return self._normalize_response(await self._require_client().get_claims_analytics_dashboard(**kwargs))
 
     async def export_claims_analytics(self, request_data: ClaimsAnalyticsExportRequest | dict[str, Any]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ClaimsAnalyticsExportRequest
+
         self._enforce("claims.analytics.export.server")
         request = self._model(request_data, ClaimsAnalyticsExportRequest)
         return self._normalize_response(await self._require_client().export_claims_analytics(request), kind="claim_analytics_export")
@@ -363,6 +394,9 @@ class ServerClaimsService:
         return self._normalize_response(await self._require_client().list_claim_cluster_links(cluster_id, **kwargs), kind="claim_cluster_link")
 
     async def create_claim_cluster_link(self, cluster_id: int, request_data: ClaimsClusterLinkCreate | dict[str, Any]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ClaimsClusterLinkCreate
+
         self._enforce("claims.cluster_links.create.server")
         request = self._model(request_data, ClaimsClusterLinkCreate)
         return self._normalize_response(await self._require_client().create_claim_cluster_link(cluster_id, request), kind="claim_cluster_link")
@@ -396,6 +430,9 @@ class ServerClaimsService:
         return self._normalize_response(await self._require_client().get_claim_item(claim_id, **kwargs), kind="claim")
 
     async def update_claim_item(self, claim_id: int, request_data: ClaimUpdateRequest | dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ClaimUpdateRequest
+
         self._enforce("claims.items.update.server")
         request = self._model(request_data, ClaimUpdateRequest)
         return self._normalize_response(await self._require_client().update_claim_item(claim_id, request, **kwargs), kind="claim")
@@ -413,6 +450,9 @@ class ServerClaimsService:
         return self._normalize_response(await self._require_client().rebuild_claims_fts(**kwargs))
 
     async def verify_claims_fva(self, request_data: FVAVerifyRequest | dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import FVAVerifyRequest
+
         self._enforce("claims.fva.launch.server")
         request = self._model(request_data, FVAVerifyRequest)
         return self._normalize_response(await self._require_client().verify_claims_fva(request, **kwargs), kind="claims_fva")

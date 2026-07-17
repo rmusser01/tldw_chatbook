@@ -20,7 +20,6 @@ from tldw_chatbook.runtime_policy.engine import PolicyEngine
 from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.UI.MediaWindow_v2 import MediaWindow
-from tldw_chatbook.UI.SearchWindow import SearchWindow
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.media_runtime_state import MediaRuntimeState
 from tldw_chatbook.UI.Chatbooks_Window_Improved import ChatbooksWindowImproved
@@ -579,95 +578,6 @@ async def test_contract_blocked_rag_search_console_launch_explains_recovery_with
             app.app_instance.open_chat_with_handoff.assert_not_called()
             message = app.app_instance.notify.call_args.args[0]
             assert "rag.media_embeddings.search.server requires server mode" in message
-            assert "source authority: runtime_policy/server" in message.lower()
-            assert "ux interop: active source local" in message.lower()
-            assert "switch source to server" in message.lower()
-
-
-class WebSearchResultHandoffSmokeApp(App[None]):
-    def __init__(self) -> None:
-        super().__init__()
-        self.app_instance = SimpleNamespace(
-            notify=Mock(),
-            api_endpoint="test-endpoint",
-            search_active_sub_tab=None,
-            get_authoritative_runtime_source=Mock(return_value="local"),
-            open_chat_with_handoff=Mock(),
-        )
-        self.window = SearchWindow(self.app_instance)
-
-    def compose(self) -> ComposeResult:
-        yield self.window
-
-
-@pytest.mark.asyncio
-async def test_valid_web_search_handoff_replays_from_mounted_window_to_app_seam(monkeypatch):
-    monkeypatch.setattr("tldw_chatbook.UI.SearchWindow.WEB_SEARCH_AVAILABLE", True)
-    app = WebSearchResultHandoffSmokeApp()
-
-    async with app.run_test(size=(160, 40)) as pilot:
-        await pilot.pause(0.1)
-        app.window.web_search_results = [
-            {
-                "title": "Article",
-                "content": "Snippet body",
-                "source": "web",
-                "metadata": {"url": "https://example.com", "displayUrl": "example.com"},
-            }
-        ]
-        await app.window._render_web_search_result_cards()
-        await pilot.pause(0.05)
-
-        button = app.window.query_one("#use-in-chat-0", Button)
-        button.press()
-        await pilot.pause(0.05)
-
-        payload = _assert_single_handoff_payload(app.app_instance.open_chat_with_handoff)
-        assert payload.source == "search-web"
-        assert payload.item_type == "web-result"
-        assert payload.metadata["url"] == "https://example.com"
-        assert payload.body == "Snippet body"
-
-
-@pytest.mark.asyncio
-async def test_contract_blocked_web_search_handoff_explains_recovery_without_staging(monkeypatch, tmp_path):
-    with (
-        patch.dict(search_rag_window.DEPENDENCIES_AVAILABLE, {"embeddings_rag": True}, clear=False),
-        patch(
-            "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.get_user_data_dir",
-            return_value=tmp_path,
-        ),
-        patch(
-            "tldw_chatbook.UI.Views.RAGSearch.saved_searches_panel.get_user_data_dir",
-            return_value=tmp_path,
-        ),
-    ):
-        monkeypatch.setattr("tldw_chatbook.UI.SearchWindow.WEB_SEARCH_AVAILABLE", True)
-        app = WebSearchResultHandoffSmokeApp()
-        app.app_instance.get_authoritative_runtime_source = Mock(return_value="server")
-        app.app_instance.runtime_policy = SimpleNamespace(state=RuntimeSourceState(active_source="local"))
-        app.app_instance.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
-
-        async with app.run_test(size=(160, 40)) as pilot:
-            await pilot.pause(0.1)
-            app.window.web_search_results = [
-                {
-                    "title": "Article",
-                    "content": "Snippet body",
-                    "source": "web",
-                    "metadata": {"url": "https://example.com", "displayUrl": "example.com"},
-                }
-            ]
-            await app.window._render_web_search_result_cards()
-            await pilot.pause(0.05)
-
-            button = app.window.query_one("#use-in-chat-0", Button)
-            button.press()
-            await pilot.pause(0.05)
-
-            app.app_instance.open_chat_with_handoff.assert_not_called()
-            message = app.app_instance.notify.call_args.args[0]
-            assert "research.search.providers.launch.server requires server mode" in message
             assert "source authority: runtime_policy/server" in message.lower()
             assert "ux interop: active source local" in message.lower()
             assert "switch source to server" in message.lower()

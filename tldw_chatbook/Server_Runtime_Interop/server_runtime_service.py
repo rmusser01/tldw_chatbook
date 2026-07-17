@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import ProviderValidateRequest, TLDWAPIClient, TokenizerUpdateRequest
+if TYPE_CHECKING:
+    from ..tldw_api import TLDWAPIClient
 
 
 class ServerRuntimeService:
@@ -127,6 +128,9 @@ class ServerRuntimeService:
         return self._dump(await self._require_client().get_tokenizer_config())
 
     async def update_tokenizer_config(self, *, mode: str, divisor: int = 4) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import TokenizerUpdateRequest
+
         self._enforce("server.runtime.config.update.server")
         request = TokenizerUpdateRequest(mode=mode, divisor=divisor)  # type: ignore[arg-type]
         return self._dump(await self._require_client().update_tokenizer_config(request))
@@ -140,6 +144,9 @@ class ServerRuntimeService:
         return self._dump(await self._require_client().list_config_providers())
 
     async def validate_provider_key(self, *, provider: str, api_key: str | None = None) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ProviderValidateRequest
+
         self._enforce("server.runtime.providers.validate.server")
         request = ProviderValidateRequest(provider=provider, api_key=api_key)
         return self._dump(await self._require_client().validate_provider_key(request))

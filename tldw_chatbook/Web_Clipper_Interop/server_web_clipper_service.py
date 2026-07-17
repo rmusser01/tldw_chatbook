@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    TLDWAPIClient,
-    WebClipperEnrichmentPayload,
-    WebClipperSaveRequest,
-)
+if TYPE_CHECKING:
+    from ..tldw_api import TLDWAPIClient
 
 
 class ServerWebClipperService:
@@ -102,6 +99,9 @@ class ServerWebClipperService:
         capture_metadata: dict[str, Any] | None = None,
         source_note_version: int | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import WebClipperSaveRequest
+
         self._enforce("web_clipper.capture.server")
         request = WebClipperSaveRequest(
             clip_id=clip_id,
@@ -134,6 +134,9 @@ class ServerWebClipperService:
         structured_payload: dict[str, Any] | None = None,
         error: str | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import WebClipperEnrichmentPayload
+
         self._enforce("web_clipper.capture.server")
         request = WebClipperEnrichmentPayload(
             clip_id=clip_id,

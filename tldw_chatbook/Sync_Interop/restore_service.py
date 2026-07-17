@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from tldw_chatbook.Sync_Interop.crypto import unwrap_recovery_bundle
 from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
@@ -10,7 +10,9 @@ from tldw_chatbook.Sync_Interop.validation import (
     validate_pull_pagination_state,
     validate_pulled_response_scope,
 )
-from tldw_chatbook.tldw_api import SyncV2Envelope
+if TYPE_CHECKING:
+    from tldw_chatbook.tldw_api import SyncV2Envelope
+
 
 
 class SyncRestoreService:
@@ -72,6 +74,9 @@ class SyncRestoreService:
         recovery_device_id: str | None = None,
         key_record_id: str | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api import SyncV2Envelope
+
         key = await self._resolve_dataset_key(
             dataset_id=dataset_id,
             dataset_key=dataset_key,

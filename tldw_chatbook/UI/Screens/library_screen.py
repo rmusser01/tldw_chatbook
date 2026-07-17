@@ -2880,9 +2880,14 @@ class LibraryScreen(BaseAppScreen):
             # Deliberately always ready: the UI path never imports torch (or
             # any other optional Search/RAG dependency), and the retrieval
             # service double-guards missing runtimes/indexes at call time.
+            # `provider_ready` joined that contract in task-249: rag mode now
+            # lazily initializes the shared RAG runtime at query time, and
+            # when embeddings support is missing the retrieval service itself
+            # returns the "RAG unavailable" recovery state routing to setup
+            # -- honest copy a disabled Run button could not carry.
             dependencies_ready=True,
             index_ready=True,
-            provider_ready=(getattr(self.app_instance, "_rag_service", None) is not None),
+            provider_ready=True,
             selected_source_types=selected_source_types,
             history=self._library_search_history,
             history_collapsed=self._library_rag_history_collapsed,

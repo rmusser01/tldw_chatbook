@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CONVERSATION_SCOPE_ALL
-from tldw_chatbook.tldw_api.chat_conversation_schemas import ALLOWED_CONVERSATION_STATES
 
 
 def _clean_text(value: Any) -> str | None:
@@ -17,6 +16,9 @@ def _clean_text(value: Any) -> str | None:
 
 
 def _normalize_state(value: Any) -> str | None:
+    # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+    from tldw_chatbook.tldw_api.chat_conversation_schemas import ALLOWED_CONVERSATION_STATES
+
     text = _clean_text(value)
     if text is None:
         return None

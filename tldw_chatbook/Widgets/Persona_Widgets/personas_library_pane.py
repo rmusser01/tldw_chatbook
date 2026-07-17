@@ -137,14 +137,14 @@ class PersonasLibraryPane(Vertical):
             yield Button(
                 "Duplicate",
                 id="personas-library-duplicate",
-                tooltip="Duplicate the selected dictionary.",
+                tooltip="Duplicate the selected item.",
                 classes="console-action-secondary",
             )
         yield ListView(id="personas-library-rows")
         yield Static("", id="personas-library-count", classes="destination-purpose")
 
     def set_mode(self, mode: str) -> None:
-        """Gate the toolbar per mode: Import for characters+dictionaries, Duplicate for dictionaries."""
+        """Gate the toolbar per mode: Import for characters+dictionaries, Duplicate for dictionaries+lore."""
         self._import_visible = mode in ("characters", "dictionaries")
         import_button = self.query_one("#personas-library-import", Button)
         import_button.display = self._import_visible
@@ -153,7 +153,7 @@ class PersonasLibraryPane(Vertical):
             if mode == "dictionaries"
             else "Import a character card (PNG or JSON)."
         )
-        self.query_one("#personas-library-duplicate", Button).display = mode == "dictionaries"
+        self.query_one("#personas-library-duplicate", Button).display = mode in ("dictionaries", "lore")
 
     async def update_rows(
         self,

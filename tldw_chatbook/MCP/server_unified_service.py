@@ -1,33 +1,15 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any, Callable, TYPE_CHECKING
 
 from loguru import logger
 
 from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer, classify_backend_exception
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
-from tldw_chatbook.tldw_api.mcp_unified_schemas import (
-    ACPProfileCreateRequest,
-    ACPProfileUpdateRequest,
-    ApprovalDecisionCreateRequest,
-    ApprovalPolicyCreateRequest,
-    ApprovalPolicyUpdateRequest,
-    ExternalSecretSetRequest,
-    ExternalServerAuthTemplateUpdateRequest,
-    ExternalServerCreateRequest,
-    ExternalServerCredentialSlotCreateRequest,
-    ExternalServerCredentialSlotUpdateRequest,
-    ExternalServerUpdateRequest,
-    PermissionProfileCreateRequest,
-    PermissionProfileUpdateRequest,
-    PolicyAssignmentCreateRequest,
-    PolicyAssignmentUpdateRequest,
-    PolicyOverrideUpsertRequest,
-    ScopedToolCatalogCreateRequest,
-    ScopedToolCatalogEntryCreateRequest,
-    UnifiedMCPAccessContext,
-)
+if TYPE_CHECKING:
+    from tldw_chatbook.tldw_api.mcp_unified_schemas import UnifiedMCPAccessContext
+
 
 from .server_target_store import ConfiguredServerTargetStore
 from .unified_control_models import (
@@ -402,6 +384,9 @@ class ServerUnifiedMCPService:
         access_context: ServerAccessContext,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api.mcp_unified_schemas import ScopedToolCatalogCreateRequest
+
         self._require_allowed(
             action_id="mcp.catalogs.configure.server",
             runtime_state_override=self._runtime_state_for_target(target, access_context),
@@ -433,6 +418,9 @@ class ServerUnifiedMCPService:
         catalog_id: str | int,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api.mcp_unified_schemas import ScopedToolCatalogEntryCreateRequest
+
         self._require_allowed(
             action_id="mcp.catalogs.configure.server",
             runtime_state_override=self._runtime_state_for_target(target, access_context),
@@ -526,6 +514,9 @@ class ServerUnifiedMCPService:
         access_context: ServerAccessContext,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api.mcp_unified_schemas import ExternalServerCreateRequest
+
         self._require_allowed(
             action_id="mcp.external_servers.configure.server",
             runtime_state_override=self._runtime_state_for_target(target, access_context),
@@ -562,6 +553,9 @@ class ServerUnifiedMCPService:
         server_id: str,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api.mcp_unified_schemas import ExternalServerUpdateRequest
+
         self._require_allowed(
             action_id="mcp.external_servers.configure.server",
             runtime_state_override=self._runtime_state_for_target(target, access_context),
@@ -653,6 +647,9 @@ class ServerUnifiedMCPService:
         server_id: str,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api.mcp_unified_schemas import ExternalServerAuthTemplateUpdateRequest
+
         self._require_allowed(
             action_id="mcp.credentials.configure.server",
             runtime_state_override=self._runtime_state_for_target(target, access_context),
@@ -700,6 +697,9 @@ class ServerUnifiedMCPService:
         server_id: str,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api.mcp_unified_schemas import ExternalServerCredentialSlotCreateRequest
+
         self._require_allowed(
             action_id="mcp.credentials.configure.server",
             runtime_state_override=self._runtime_state_for_target(target, access_context),
@@ -726,6 +726,9 @@ class ServerUnifiedMCPService:
         slot_name: str,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api.mcp_unified_schemas import ExternalServerCredentialSlotUpdateRequest
+
         self._require_allowed(
             action_id="mcp.credentials.configure.server",
             runtime_state_override=self._runtime_state_for_target(target, access_context),
@@ -775,6 +778,9 @@ class ServerUnifiedMCPService:
         slot_name: str,
         secret: str,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api.mcp_unified_schemas import ExternalSecretSetRequest
+
         self._require_allowed(
             action_id="mcp.credentials.configure.server",
             runtime_state_override=self._runtime_state_for_target(target, access_context),
@@ -822,6 +828,9 @@ class ServerUnifiedMCPService:
         access_context: ServerAccessContext,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api.mcp_unified_schemas import PermissionProfileCreateRequest
+
         self._require_allowed(
             action_id="mcp.governance.configure.server",
             runtime_state_override=self._runtime_state_for_target(target, access_context),
@@ -851,6 +860,9 @@ class ServerUnifiedMCPService:
         profile_id: str | int,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api.mcp_unified_schemas import PermissionProfileUpdateRequest
+
         self._require_allowed(
             action_id="mcp.governance.configure.server",
             runtime_state_override=self._runtime_state_for_target(target, access_context),
@@ -894,6 +906,9 @@ class ServerUnifiedMCPService:
         access_context: ServerAccessContext,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api.mcp_unified_schemas import PolicyAssignmentCreateRequest
+
         self._require_allowed(
             action_id="mcp.governance.configure.server",
             runtime_state_override=self._runtime_state_for_target(target, access_context),
@@ -923,6 +938,9 @@ class ServerUnifiedMCPService:
         assignment_id: str | int,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api.mcp_unified_schemas import PolicyAssignmentUpdateRequest
+
         self._require_allowed(
             action_id="mcp.governance.configure.server",
             runtime_state_override=self._runtime_state_for_target(target, access_context),
@@ -982,6 +1000,9 @@ class ServerUnifiedMCPService:
         assignment_id: str | int,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api.mcp_unified_schemas import PolicyOverrideUpsertRequest
+
         self._require_allowed(
             action_id="mcp.governance.configure.server",
             runtime_state_override=self._runtime_state_for_target(target, access_context),
@@ -1025,6 +1046,9 @@ class ServerUnifiedMCPService:
         access_context: ServerAccessContext,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api.mcp_unified_schemas import ApprovalPolicyCreateRequest
+
         self._require_allowed(
             action_id="mcp.governance.configure.server",
             runtime_state_override=self._runtime_state_for_target(target, access_context),
@@ -1054,6 +1078,9 @@ class ServerUnifiedMCPService:
         approval_policy_id: str | int,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api.mcp_unified_schemas import ApprovalPolicyUpdateRequest
+
         self._require_allowed(
             action_id="mcp.governance.configure.server",
             runtime_state_override=self._runtime_state_for_target(target, access_context),
@@ -1097,6 +1124,9 @@ class ServerUnifiedMCPService:
         access_context: ServerAccessContext,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api.mcp_unified_schemas import ApprovalDecisionCreateRequest
+
         self._require_allowed(
             action_id="mcp.governance.approve.server",
             runtime_state_override=self._runtime_state_for_target(target, access_context),
@@ -1114,6 +1144,9 @@ class ServerUnifiedMCPService:
         access_context: ServerAccessContext,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api.mcp_unified_schemas import ACPProfileCreateRequest
+
         self._require_allowed(
             action_id="mcp.governance.configure.server",
             runtime_state_override=self._runtime_state_for_target(target, access_context),
@@ -1143,6 +1176,9 @@ class ServerUnifiedMCPService:
         profile_id: str | int,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api.mcp_unified_schemas import ACPProfileUpdateRequest
+
         self._require_allowed(
             action_id="mcp.governance.configure.server",
             runtime_state_override=self._runtime_state_for_target(target, access_context),
@@ -1528,6 +1564,9 @@ class ServerUnifiedMCPService:
         server_id: str,
         secret: str,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api.mcp_unified_schemas import ExternalSecretSetRequest
+
         self._require_allowed(
             action_id="mcp.credentials.configure.server",
             runtime_state_override=self._runtime_state_for_target(target, access_context),
@@ -2585,6 +2624,9 @@ class ServerUnifiedMCPService:
         selected_scope: str | None,
         selected_scope_ref: str | None,
     ) -> UnifiedMCPAccessContext:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api.mcp_unified_schemas import UnifiedMCPAccessContext
+
         scope_kind = selected_scope or "personal"
         payload: dict[str, Any] = {"scope_kind": scope_kind}
         if scope_kind in {"team", "org"} and selected_scope_ref:

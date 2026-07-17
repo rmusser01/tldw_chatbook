@@ -2,32 +2,32 @@
 
 from __future__ import annotations
 
-from typing import Any, AsyncGenerator, Mapping, Optional
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    PromptStudioCompareStrategiesRequest,
-    PromptStudioEvaluationCreate,
-    PromptStudioOptimizationCreate,
-    PromptStudioOptimizationIterationCreate,
-    PromptStudioOptimizationSimpleCreateRequest,
-    PromptStudioPromptConvertRequest,
-    PromptStudioPromptCreate,
-    PromptStudioPromptExecuteRequest,
-    PromptStudioPromptPreviewRequest,
-    PromptStudioPromptUpdate,
-    PromptStudioProjectCreate,
-    PromptStudioProjectUpdate,
-    PromptStudioRunTestCasesRequest,
-    PromptStudioTestCaseBulkCreate,
-    PromptStudioTestCaseCreate,
-    PromptStudioTestCaseExportRequest,
-    PromptStudioTestCaseGenerateRequest,
-    PromptStudioTestCaseImportRequest,
-    PromptStudioTestCaseUpdate,
-    TLDWAPIClient,
-)
+if TYPE_CHECKING:
+    from ..tldw_api import (
+        PromptStudioCompareStrategiesRequest,
+        PromptStudioEvaluationCreate,
+        PromptStudioOptimizationCreate,
+        PromptStudioOptimizationIterationCreate,
+        PromptStudioOptimizationSimpleCreateRequest,
+        PromptStudioProjectCreate,
+        PromptStudioProjectUpdate,
+        PromptStudioPromptConvertRequest,
+        PromptStudioPromptCreate,
+        PromptStudioPromptExecuteRequest,
+        PromptStudioPromptPreviewRequest,
+        PromptStudioPromptUpdate,
+        PromptStudioRunTestCasesRequest,
+        PromptStudioTestCaseBulkCreate,
+        PromptStudioTestCaseCreate,
+        PromptStudioTestCaseExportRequest,
+        PromptStudioTestCaseImportRequest,
+        PromptStudioTestCaseUpdate,
+        TLDWAPIClient,
+    )
 
 
 class ServerPromptStudioService:
@@ -245,6 +245,9 @@ class ServerPromptStudioService:
         return cls._normalize_record(payload, kind=kind, identifier=identifier, parent_id=parent_id)
 
     async def create_project(self, request_data: PromptStudioProjectCreate | dict[str, Any], *, idempotency_key: str | None = None) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import PromptStudioProjectCreate
+
         self._enforce("prompt_studio.projects.create.server")
         request = self._model(request_data, PromptStudioProjectCreate)
         return self._normalize_response(
@@ -261,6 +264,9 @@ class ServerPromptStudioService:
         return self._normalize_response(await self._require_client().get_prompt_studio_project(project_id), kind="project")
 
     async def update_project(self, project_id: int, request_data: PromptStudioProjectUpdate | dict[str, Any]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import PromptStudioProjectUpdate
+
         self._enforce("prompt_studio.projects.update.server")
         request = self._model(request_data, PromptStudioProjectUpdate)
         return self._normalize_response(await self._require_client().update_prompt_studio_project(project_id, request), kind="project", identifier=project_id)
@@ -289,6 +295,9 @@ class ServerPromptStudioService:
         )
 
     async def create_prompt(self, request_data: PromptStudioPromptCreate | dict[str, Any], *, idempotency_key: str | None = None) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import PromptStudioPromptCreate
+
         self._enforce("prompt_studio.prompts.create.server")
         request = self._model(request_data, PromptStudioPromptCreate)
         return self._normalize_response(
@@ -305,6 +314,9 @@ class ServerPromptStudioService:
         return self._normalize_response(await self._require_client().get_prompt_studio_prompt(prompt_id), kind="prompt", identifier=prompt_id)
 
     async def update_prompt(self, prompt_id: int, request_data: PromptStudioPromptUpdate | dict[str, Any]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import PromptStudioPromptUpdate
+
         self._enforce("prompt_studio.prompts.update.server")
         request = self._model(request_data, PromptStudioPromptUpdate)
         return self._normalize_response(await self._require_client().update_prompt_studio_prompt(prompt_id, request), kind="prompt", identifier=prompt_id)
@@ -326,6 +338,9 @@ class ServerPromptStudioService:
         )
 
     async def preview_prompt(self, request_data: PromptStudioPromptPreviewRequest | dict[str, Any]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import PromptStudioPromptPreviewRequest
+
         self._enforce("prompt_studio.prompts.preview.server")
         request = self._model(request_data, PromptStudioPromptPreviewRequest)
         return self._normalize_response(
@@ -335,6 +350,9 @@ class ServerPromptStudioService:
         )
 
     async def convert_prompt(self, request_data: PromptStudioPromptConvertRequest | dict[str, Any]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import PromptStudioPromptConvertRequest
+
         self._enforce("prompt_studio.prompts.process.server")
         request = self._model(request_data, PromptStudioPromptConvertRequest)
         return self._normalize_response(
@@ -344,6 +362,9 @@ class ServerPromptStudioService:
         )
 
     async def execute_prompt(self, request_data: PromptStudioPromptExecuteRequest | dict[str, Any]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import PromptStudioPromptExecuteRequest
+
         self._enforce("prompt_studio.prompts.launch.server")
         request = self._model(request_data, PromptStudioPromptExecuteRequest)
         return self._normalize_response(
@@ -353,11 +374,17 @@ class ServerPromptStudioService:
         )
 
     async def create_test_case(self, request_data: PromptStudioTestCaseCreate | dict[str, Any]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import PromptStudioTestCaseCreate
+
         self._enforce("prompt_studio.test_cases.create.server")
         request = self._model(request_data, PromptStudioTestCaseCreate)
         return self._normalize_response(await self._require_client().create_prompt_studio_test_case(request), kind="test_case")
 
     async def create_test_cases_bulk(self, request_data: PromptStudioTestCaseBulkCreate | dict[str, Any]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import PromptStudioTestCaseBulkCreate
+
         self._enforce("prompt_studio.test_cases.create.server")
         request = self._model(request_data, PromptStudioTestCaseBulkCreate)
         return self._normalize_response(await self._require_client().create_prompt_studio_test_cases_bulk(request), kind="test_case")
@@ -371,6 +398,9 @@ class ServerPromptStudioService:
         return self._normalize_response(await self._require_client().get_prompt_studio_test_case(test_case_id), kind="test_case", identifier=test_case_id)
 
     async def update_test_case(self, test_case_id: int, request_data: PromptStudioTestCaseUpdate | dict[str, Any]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import PromptStudioTestCaseUpdate
+
         self._enforce("prompt_studio.test_cases.update.server")
         request = self._model(request_data, PromptStudioTestCaseUpdate)
         return self._normalize_response(
@@ -387,6 +417,9 @@ class ServerPromptStudioService:
         )
 
     async def import_test_cases(self, request_data: PromptStudioTestCaseImportRequest | dict[str, Any]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import PromptStudioTestCaseImportRequest
+
         self._enforce("prompt_studio.test_cases.import.server")
         request = self._model(request_data, PromptStudioTestCaseImportRequest)
         return self._normalize_response(
@@ -426,6 +459,9 @@ class ServerPromptStudioService:
         )
 
     async def export_test_cases(self, project_id: int, request_data: PromptStudioTestCaseExportRequest | dict[str, Any]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import PromptStudioTestCaseExportRequest
+
         self._enforce("prompt_studio.test_cases.export.server")
         request = self._model(request_data, PromptStudioTestCaseExportRequest)
         return self._normalize_response(
@@ -435,6 +471,9 @@ class ServerPromptStudioService:
         )
 
     async def generate_test_cases(self, **kwargs: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import PromptStudioTestCaseGenerateRequest
+
         self._enforce("prompt_studio.test_cases.launch.server")
         request_data = kwargs.pop("request_data", None)
         if request_data is not None and not isinstance(request_data, PromptStudioTestCaseGenerateRequest):
@@ -449,6 +488,9 @@ class ServerPromptStudioService:
         )
 
     async def run_test_cases(self, request_data: PromptStudioRunTestCasesRequest | dict[str, Any]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import PromptStudioRunTestCasesRequest
+
         self._enforce("prompt_studio.test_cases.launch.server")
         request = self._model(request_data, PromptStudioRunTestCasesRequest)
         return self._normalize_response(
@@ -458,6 +500,9 @@ class ServerPromptStudioService:
         )
 
     async def create_evaluation(self, request_data: PromptStudioEvaluationCreate | dict[str, Any]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import PromptStudioEvaluationCreate
+
         self._enforce("prompt_studio.evaluations.create.server")
         request = self._model(request_data, PromptStudioEvaluationCreate)
         return self._normalize_response(await self._require_client().create_prompt_studio_evaluation(request), kind="evaluation")
@@ -475,6 +520,9 @@ class ServerPromptStudioService:
         return self._normalize_response(await self._require_client().delete_prompt_studio_evaluation(evaluation_id), identifier=evaluation_id)
 
     async def create_optimization(self, request_data: PromptStudioOptimizationCreate | dict[str, Any], *, idempotency_key: str | None = None) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import PromptStudioOptimizationCreate
+
         self._enforce("prompt_studio.optimizations.create.server")
         request = self._model(request_data, PromptStudioOptimizationCreate)
         return self._normalize_response(
@@ -483,6 +531,9 @@ class ServerPromptStudioService:
         )
 
     async def create_optimization_simple(self, request_data: PromptStudioOptimizationSimpleCreateRequest | dict[str, Any]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import PromptStudioOptimizationSimpleCreateRequest
+
         self._enforce("prompt_studio.optimizations.launch.server")
         request = self._model(request_data, PromptStudioOptimizationSimpleCreateRequest)
         return self._normalize_response(await self._require_client().create_prompt_studio_optimization_simple(request), kind="optimization_job")
@@ -536,6 +587,9 @@ class ServerPromptStudioService:
         optimization_id: int,
         request_data: PromptStudioOptimizationIterationCreate | dict[str, Any],
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import PromptStudioOptimizationIterationCreate
+
         self._enforce("prompt_studio.optimization_iterations.create.server")
         request = self._model(request_data, PromptStudioOptimizationIterationCreate)
         return self._normalize_response(
@@ -553,6 +607,9 @@ class ServerPromptStudioService:
         )
 
     async def compare_optimization_strategies(self, request_data: PromptStudioCompareStrategiesRequest | dict[str, Any]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import PromptStudioCompareStrategiesRequest
+
         self._enforce("prompt_studio.optimization_strategies.launch.server")
         request = self._model(request_data, PromptStudioCompareStrategiesRequest)
         return self._normalize_response(

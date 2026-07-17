@@ -5,24 +5,23 @@ Service helpers for server-backed notes and workspace resources.
 from __future__ import annotations
 
 import json
-from typing import Any, Mapping, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Optional, Sequence
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
-from ..tldw_api import (
-    NoteCreateRequest,
-    NoteGraphRequest,
-    NoteLinkCreate,
-    NoteUpdateRequest,
-    TLDWAPIClient,
-    WorkspaceArtifactCreateRequest,
-    WorkspaceArtifactUpdateRequest,
-    WorkspaceCreateRequest,
-    WorkspaceNoteCreateRequest,
-    WorkspaceNoteUpdateRequest,
-    WorkspaceSourceCreateRequest,
-    WorkspaceSourceUpdateRequest,
-    WorkspaceUpdateRequest,
-)
+if TYPE_CHECKING:
+    from ..tldw_api import (
+        NoteCreateRequest,
+        NoteUpdateRequest,
+        TLDWAPIClient,
+        WorkspaceArtifactCreateRequest,
+        WorkspaceArtifactUpdateRequest,
+        WorkspaceCreateRequest,
+        WorkspaceNoteCreateRequest,
+        WorkspaceNoteUpdateRequest,
+        WorkspaceSourceCreateRequest,
+        WorkspaceSourceUpdateRequest,
+        WorkspaceUpdateRequest,
+    )
 
 _UNSET = object()
 
@@ -229,6 +228,9 @@ class ServerNotesWorkspaceService:
         note_id: Optional[str] = None,
         keywords: Optional[Sequence[str]] = None,
     ) -> NoteCreateRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import NoteCreateRequest
+
         return NoteCreateRequest(
             id=note_id,
             title=title,
@@ -243,6 +245,9 @@ class ServerNotesWorkspaceService:
         content: Any = _UNSET,
         keywords: Any = _UNSET,
     ) -> NoteUpdateRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import NoteUpdateRequest
+
         payload = self._with_optional_update_fields(title=title, content=content)
         if keywords is not _UNSET and keywords is not None:
             payload["keywords"] = self._normalize_keywords(keywords)
@@ -255,6 +260,9 @@ class ServerNotesWorkspaceService:
         archived: bool = False,
         study_materials_policy: str = "general",
     ) -> WorkspaceCreateRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import WorkspaceCreateRequest
+
         return WorkspaceCreateRequest(
             name=name,
             archived=archived,
@@ -276,6 +284,9 @@ class ServerNotesWorkspaceService:
         audio_voice: Any = _UNSET,
         audio_speed: Any = _UNSET,
     ) -> WorkspaceUpdateRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import WorkspaceUpdateRequest
+
         return WorkspaceUpdateRequest(
             version=version,
             **self._with_optional_update_fields(
@@ -299,6 +310,9 @@ class ServerNotesWorkspaceService:
         content: str,
         keywords: Optional[Sequence[str]] = None,
     ) -> WorkspaceNoteCreateRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import WorkspaceNoteCreateRequest
+
         return WorkspaceNoteCreateRequest(
             title=title,
             content=content,
@@ -313,6 +327,9 @@ class ServerNotesWorkspaceService:
         keywords: Any = _UNSET,
         version: int,
     ) -> WorkspaceNoteUpdateRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import WorkspaceNoteUpdateRequest
+
         payload = self._with_optional_update_fields(title=title, content=content)
         if keywords is not _UNSET and keywords is not None:
             payload["keywords_json"] = json.dumps(self._normalize_keywords(keywords))
@@ -329,6 +346,9 @@ class ServerNotesWorkspaceService:
         position: int = 0,
         selected: bool = True,
     ) -> WorkspaceSourceCreateRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import WorkspaceSourceCreateRequest
+
         return WorkspaceSourceCreateRequest(
             id=source_id,
             media_id=media_id,
@@ -349,6 +369,9 @@ class ServerNotesWorkspaceService:
         position: Any = _UNSET,
         selected: Any = _UNSET,
     ) -> WorkspaceSourceUpdateRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import WorkspaceSourceUpdateRequest
+
         return WorkspaceSourceUpdateRequest(
             version=version,
             **self._with_optional_update_fields(
@@ -369,6 +392,9 @@ class ServerNotesWorkspaceService:
         status: str = "pending",
         content: Optional[str] = None,
     ) -> WorkspaceArtifactCreateRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import WorkspaceArtifactCreateRequest
+
         return WorkspaceArtifactCreateRequest(
             id=artifact_id,
             artifact_type=artifact_type,
@@ -388,6 +414,9 @@ class ServerNotesWorkspaceService:
         total_cost_usd: Any = _UNSET,
         completed_at: Any = _UNSET,
     ) -> WorkspaceArtifactUpdateRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import WorkspaceArtifactUpdateRequest
+
         return WorkspaceArtifactUpdateRequest(
             version=version,
             **self._with_optional_update_fields(
@@ -481,6 +510,9 @@ class ServerNotesWorkspaceService:
         return await client.delete_server_note(note_id, expected_version=version)
 
     async def get_notes_graph(self, **kwargs: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import NoteGraphRequest
+
         self._enforce_policy(self._graph_action_id("list"))
         client = self._require_client()
         return await client.get_notes_graph(NoteGraphRequest(**kwargs))
@@ -499,6 +531,9 @@ class ServerNotesWorkspaceService:
         weight: float | None = 1.0,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import NoteLinkCreate
+
         self._enforce_policy(self._graph_action_id("create"))
         client = self._require_client()
         return await client.create_note_link(
