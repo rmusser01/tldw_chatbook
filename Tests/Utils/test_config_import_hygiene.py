@@ -306,6 +306,10 @@ def _run_isolated_python(tmp_path: Path, code: str) -> "subprocess.CompletedProc
         "XDG_CONFIG_HOME": str(config_home),
         "HOME": str(home),
         "PYTHONPATH": str(REPO_ROOT),
+        # PR #679 review: pin the config path explicitly too — HOME/XDG
+        # isolation alone leaks if Path.home() ignores HOME on some
+        # platforms or an inherited TLDW_CONFIG_PATH slips through.
+        "TLDW_CONFIG_PATH": str(config_home / "tldw_cli" / "config.toml"),
     }
     env.pop("PYTEST_CURRENT_TEST", None)
 
