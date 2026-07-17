@@ -1229,6 +1229,32 @@ def _cohere_request_tool_calls(tool_calls: list) -> list:
     return converted
 
 
+def _cohere_response_tool_calls(raw_tool_calls: list) -> list:
+    """Normalize a v2 ``message.tool_calls`` list into OpenAI-shape
+    entries: ``id``/``type``/``function.name`` passthrough, ``arguments``
+    GUARANTEED a string (dict -> ``json.dumps``; anything else falsy/wrong
+    type -> ``"{}"``, never crashes the parser -- task-267 Task 3).
+    """
+    converted = []
+    for tc in raw_tool_calls or []:
+        if not isinstance(tc, dict):
+            continue
+        function = tc.get("function") or {}
+        raw_args = function.get("arguments")
+        if isinstance(raw_args, str):
+            arguments = raw_args
+        elif isinstance(raw_args, dict):
+            arguments = json.dumps(raw_args)
+        else:
+            arguments = "{}"
+        converted.append({
+            "id": str(tc.get("id") or ""),
+            "type": str(tc.get("type") or "function"),
+            "function": {"name": function.get("name"), "arguments": arguments},
+        })
+    return converted
+
+
 def chat_with_cohere(
         input_data: List[Dict[str, Any]],
         model: Optional[str] = None,
@@ -1537,9 +1563,19 @@ def chat_with_cohere(
             finish_reason = fr_map.get(raw_finish_reason,
                                        raw_finish_reason.lower() if raw_finish_reason else "stop")
 
-            # NOTE (task-267 Task 1 scope): message.tool_calls / tool_plan are
-            # not yet normalized here -- Task 3 adds that.
+            # task-267 Task 3: message.tool_calls -> OpenAI tool_calls,
+            # attached ONLY when non-empty; message.tool_plan preserved
+            # onto the assistant message as `cohere_tool_plan` (mirrors the
+            # shipped `google_thought_signature` round-trip mechanism --
+            # task-266 -- so the request converter can re-attach it, see
+            # Task 2's `cohere_tool_plan` read).
             message_payload: Dict[str, Any] = {"role": "assistant", "content": text}
+            converted_tool_calls = _cohere_response_tool_calls(message.get("tool_calls"))
+            if converted_tool_calls:
+                message_payload["tool_calls"] = converted_tool_calls
+            tool_plan = message.get("tool_plan")
+            if tool_plan:
+                message_payload["cohere_tool_plan"] = str(tool_plan)
             choices_payload = [{"index": 0, "message": message_payload, "finish_reason": finish_reason}]
 
             usage_data = None

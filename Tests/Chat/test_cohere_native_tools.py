@@ -429,3 +429,99 @@ def test_all_junk_tool_calls_fall_back_to_plain_content(mock_post):
     ]
     sent = _call_cohere(mock_post, messages)["messages"]
     assert sent[1] == {"role": "assistant", "content": "hello"}
+
+
+# ---------------------------------------------------------------------------
+# Task 3: non-streaming response tool_calls
+# ---------------------------------------------------------------------------
+
+def _cohere_tool_call_response(text=None, tool_plan=None,
+                               finish_reason="TOOL_CALL"):
+    message = {"role": "assistant", "content": []}
+    if text is not None:
+        message["content"] = [{"type": "text", "text": text}]
+    message["tool_calls"] = [{
+        "id": "call_A", "type": "function",
+        "function": {"name": "calculator",
+                     "arguments": json.dumps({"expression": "2+2"})},
+    }]
+    if tool_plan is not None:
+        message["tool_plan"] = tool_plan
+    return {"id": "resp_2", "message": message, "finish_reason": finish_reason}
+
+
+@patch("requests.Session.post")
+def test_tool_calls_response_normalizes_to_openai_shape(mock_post):
+    result = _call_cohere_get_result(
+        mock_post, _cohere_tool_call_response(),
+        [{"role": "user", "content": "2+2?"}],
+    )
+    choice = result["choices"][0]
+    assert choice["finish_reason"] == "tool_calls"
+    assert choice["message"]["tool_calls"] == [{
+        "id": "call_A", "type": "function",
+        "function": {"name": "calculator",
+                     "arguments": json.dumps({"expression": "2+2"})},
+    }]
+    # round-trips through the runtime parser:
+    from tldw_chatbook.Agents.native_tools import parse_native_tool_calls
+    parsed = parse_native_tool_calls(choice["message"])
+    assert parsed[0].name == "calculator"
+
+
+@patch("requests.Session.post")
+def test_tool_calls_absent_means_no_tool_calls_key(mock_post):
+    result = _call_cohere_get_result(
+        mock_post, _cohere_text_response("hi there"),
+        [{"role": "user", "content": "hi"}],
+    )
+    assert "tool_calls" not in result["choices"][0]["message"]
+
+
+@patch("requests.Session.post")
+def test_tool_plan_preserved_as_cohere_tool_plan_extra(mock_post):
+    result = _call_cohere_get_result(
+        mock_post,
+        _cohere_tool_call_response(tool_plan="I will use the calculator."),
+        [{"role": "user", "content": "2+2?"}],
+    )
+    assert result["choices"][0]["message"]["cohere_tool_plan"] == "I will use the calculator."
+
+
+@patch("requests.Session.post")
+def test_tool_plan_absent_omits_extra(mock_post):
+    result = _call_cohere_get_result(
+        mock_post, _cohere_tool_call_response(),
+        [{"role": "user", "content": "2+2?"}],
+    )
+    assert "cohere_tool_plan" not in result["choices"][0]["message"]
+
+
+@patch("requests.Session.post")
+def test_text_and_tool_calls_both_present_populate_both(mock_post):
+    result = _call_cohere_get_result(
+        mock_post, _cohere_tool_call_response(text="Checking."),
+        [{"role": "user", "content": "2+2?"}],
+    )
+    message = result["choices"][0]["message"]
+    assert message["content"] == "Checking."
+    assert message["tool_calls"][0]["function"]["name"] == "calculator"
+
+
+@patch("requests.Session.post")
+def test_malformed_tool_call_arguments_guaranteed_string(mock_post):
+    """Response-side junk: a tool_calls entry whose arguments came through
+    as something other than a string (e.g. None) must not crash the parser
+    and must guarantee a string on the OpenAI-shape entry."""
+    response = {
+        "id": "resp_3",
+        "message": {"role": "assistant", "content": [],
+                    "tool_calls": [{"id": "call_N", "type": "function",
+                                    "function": {"name": "calculator",
+                                                 "arguments": None}}]},
+        "finish_reason": "TOOL_CALL",
+    }
+    result = _call_cohere_get_result(
+        mock_post, response, [{"role": "user", "content": "go"}])
+    entry = result["choices"][0]["message"]["tool_calls"][0]
+    assert entry["function"]["arguments"] == "{}"
