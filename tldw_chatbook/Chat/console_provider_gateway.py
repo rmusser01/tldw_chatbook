@@ -938,6 +938,8 @@ class ConsoleProviderGateway:
                 accumulator = _ToolCallAccumulator() if tools else None
                 if accumulator is not None:
                     response = _tee_tool_calls(response, accumulator)
+                suppressed_fallback_copy = False
+                emitted_content = False
                 for text in self.normalize_provider_response(response):
                     if stop_event.is_set():
                         break
@@ -947,12 +949,29 @@ class ConsoleProviderGateway:
                         # tools= runs: fallback UI copy must never leak into
                         # agent history -- a tool-call-only turn legitimately
                         # has no visible content.
+                        suppressed_fallback_copy = True
                         continue
+                    if text:
+                        emitted_content = True
                     enqueue(_QueueItem.content(text))
                 if accumulator is not None:
                     calls = accumulator.calls()
                     if calls:
                         enqueue(_QueueItem.native_tool_calls(calls))
+                    elif suppressed_fallback_copy and not emitted_content:
+                        # PR #648 review Minor 1: the turn produced NEITHER
+                        # visible content NOR tool-calls -- only filtered
+                        # fallback copy. On the fence path that copy surfaces
+                        # as the (diagnostic) answer; silently completing here
+                        # would make a misbehaving provider's junk 200-body
+                        # indistinguishable from a legitimate empty answer.
+                        # Surface it as a provider error instead, feeding the
+                        # run's existing honest RUN_ERROR outcome path.
+                        enqueue(_QueueItem.error(self._safe_error_copy(
+                            resolution.provider,
+                            ChatProviderError(
+                                "Provider returned no content and no tool calls.",
+                                provider=resolution.provider))))
             except BaseException as exc:
                 enqueue(_QueueItem.error(self._safe_error_copy(resolution.provider, exc)))
             finally:

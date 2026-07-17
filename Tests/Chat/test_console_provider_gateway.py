@@ -1748,3 +1748,50 @@ async def test_tool_call_only_stream_yields_no_fallback_copy() -> None:
     texts = [i for i in items if isinstance(i, str)]
     assert NO_PROVIDER_CONTENT_COPY not in texts
     assert UNSUPPORTED_PROVIDER_RESPONSE_COPY not in texts
+
+
+@pytest.mark.asyncio
+async def test_tools_run_with_neither_content_nor_calls_raises_instead_of_silent_empty() -> None:
+    """PR #648 review Minor 1: a tools= turn whose provider response carries
+    NEITHER visible content NOR tool-calls must surface as a provider error,
+    not complete as a silent empty turn. On the fence path the same junk
+    response surfaces diagnostic copy as the answer; in tools mode that copy
+    is filtered from agent history, so without this guard a misbehaving
+    provider's junk 200-body becomes an indistinguishable empty RUN_DONE."""
+    response = {"choices": [{"message": {}}]}  # junk: no content, no tool_calls
+
+    def fake_chat_api_call(**_kwargs):
+        return response
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"groq": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="groq", explicit_model="llama3-groq", streaming=False)
+    )
+
+    with pytest.raises(ChatProviderError):
+        await _collect(gateway, resolution, tools=TOOLS)
+
+
+@pytest.mark.asyncio
+async def test_tools_run_with_real_content_and_no_calls_stays_a_normal_answer() -> None:
+    """Guard scope check: a tools= turn that answers with plain text (no tool
+    calls) is a perfectly normal final answer and must NOT raise."""
+    response = {"choices": [{"message": {"content": "Just an answer."}}]}
+
+    def fake_chat_api_call(**_kwargs):
+        return response
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"groq": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="groq", explicit_model="llama3-groq", streaming=False)
+    )
+
+    items = await _collect(gateway, resolution, tools=TOOLS)
+
+    assert items == ["Just an answer."]
