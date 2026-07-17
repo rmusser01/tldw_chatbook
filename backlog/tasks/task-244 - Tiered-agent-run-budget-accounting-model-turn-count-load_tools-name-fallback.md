@@ -3,9 +3,11 @@ id: TASK-244
 title: >-
   Tiered agent-run budget accounting (model-turn count) + load_tools
   name-fallback
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-07-16 16:00'
+updated_date: '2026-07-17 01:03'
 labels:
   - agents
   - console
@@ -26,3 +28,9 @@ CONSOLE_RUN_BUDGET.max_steps counts STEP_MODEL/STEP_TOOL_CALL/STEP_TOOL_RESULT i
 - [ ] #3 load_schemas resolves a bare tool name via registry.resolve_name() as a fallback when the direct catalog-id lookup fails, before giving up on that id
 - [ ] #4 A new test reproduces a model calling load_tools with a bare name (not a catalog id) and confirms the tool loads instead of erroring
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Plan at Docs/superpowers/plans/2026-07-17-tiered-budgets-load-name-fallback.md — 2 SDD tasks: (1) RunBudget.max_model_turns (default 8 == max_steps, provably unreachable at engine defaults; clamp_child_budget passthrough) + loop model-turn check w/ distinct 'model-turn budget exhausted' copy + CONSOLE_RUN_BUDGET -> max_model_turns=8/max_steps=32 backstop + comment rewrite; (2) load_schemas resolve_name fallback for bare tool names, gates unchanged.
+<!-- SECTION:PLAN:END -->
