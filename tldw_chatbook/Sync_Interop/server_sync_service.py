@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from tldw_chatbook.Sync_Interop.sync_state import SyncV2ProfileMode
 from tldw_chatbook.Sync_Interop.validation import (
@@ -22,8 +22,9 @@ from ..tldw_api import (
     SyncV2Envelope,
     SyncV2KeyRecoveryBundleRequest,
     SyncV2PushRequest,
-    TLDWAPIClient,
 )
+if TYPE_CHECKING:
+    from ..tldw_api import TLDWAPIClient
 
 
 class ServerSyncService:

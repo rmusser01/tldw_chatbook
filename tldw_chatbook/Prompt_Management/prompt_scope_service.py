@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 import sqlite3
 from enum import Enum
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from ..runtime_policy.bootstrap import (
     build_runtime_api_client_provider_from_config,
@@ -15,8 +15,9 @@ from ..tldw_api import (
     PromptCollectionCreateRequest,
     PromptCollectionUpdateRequest,
     PromptCreateRequest,
-    TLDWAPIClient,
 )
+if TYPE_CHECKING:
+    from ..tldw_api import TLDWAPIClient
 from .prompt_normalizers import (
     normalize_prompt_collection_list,
     normalize_prompt_collection_record,
