@@ -1946,6 +1946,10 @@ def chat_with_google(
                 nonlocal response
                 completion_id = f"chatcmpl-gemini-{time.time_ns()}"
                 created_ts = int(time.time())
+                # task-266: 0-based running position across the whole stream
+                # for synthesizing OpenAI tool_calls[].index (Gemini streams
+                # functionCall parts WHOLE, one complete fragment per call).
+                next_tool_position = 0
                 try:
                     for line in response.iter_lines(decode_unicode=True):
                         if line and line.strip().startswith('data:'):
@@ -1957,10 +1961,26 @@ def chat_with_google(
                                 if candidates:
                                     candidate = candidates[0]
                                     chunk_text = ""
+                                    chunk_tool_calls = []
                                     if candidate.get('content', {}).get('parts', []):
                                         for part in candidate['content']['parts']:
                                             if 'text' in part:
                                                 chunk_text += part.get('text', '')
+                                            if isinstance(part, dict) and 'functionCall' in part:
+                                                fc = part.get('functionCall') or {}
+                                                name = str(fc.get('name') or '').strip()
+                                                if not name:
+                                                    continue
+                                                chunk_tool_calls.append({
+                                                    "index": next_tool_position,
+                                                    "id": f"call_gemini_{time.time_ns()}_{next_tool_position}",
+                                                    "type": "function",
+                                                    "function": {
+                                                        "name": name,
+                                                        "arguments": json.dumps(fc.get('args') or {}),
+                                                    },
+                                                })
+                                                next_tool_position += 1
                                     raw_finish_reason = candidate.get("finishReason")
                                     openai_finish_reason = None
                                     if raw_finish_reason:
@@ -1971,6 +1991,8 @@ def chat_with_google(
                                     delta_payload_for_choice = {}
                                     if chunk_text:
                                         delta_payload_for_choice["content"] = chunk_text
+                                    if chunk_tool_calls:
+                                        delta_payload_for_choice["tool_calls"] = chunk_tool_calls
                                     if delta_payload_for_choice or openai_finish_reason:
                                         openai_sse_choice = {"index": 0, "delta": delta_payload_for_choice}
                                         if openai_finish_reason:

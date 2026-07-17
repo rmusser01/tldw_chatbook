@@ -12,6 +12,7 @@ patch `requests.Session.post`, drive the real dispatcher via `chat_api_call`,
 and inspect the JSON payload actually sent.
 """
 
+import json
 from unittest.mock import Mock, patch
 
 from tldw_chatbook.Chat.Chat_Functions import chat_api_call
@@ -239,3 +240,198 @@ def test_list_content_with_tool_calls_keeps_text_parts(mock_post):
     model_turn = sent["contents"][1]
     assert model_turn["parts"][0] == {"text": "Let me check."}
     assert "functionCall" in model_turn["parts"][-1]
+
+
+# ---------------------------------------------------------------------------
+# Task 2: response-side normalization (non-streaming pin + streaming emission)
+# ---------------------------------------------------------------------------
+
+def _gemini_function_call_response():
+    return {"candidates": [{"content": {"parts": [
+                {"text": "Checking."},
+                {"functionCall": {"name": "calculator",
+                                  "args": {"expression": "2+2"}}}],
+                "role": "model"},
+            "finishReason": "STOP", "index": 0}],
+            "usageMetadata": {"promptTokenCount": 5, "candidatesTokenCount": 9}}
+
+
+def _call_google_get_result(mock_post, response_json, messages, **extra):
+    """Like `_call_google` but returns the normalized `chat_api_call` result
+    instead of the request JSON that was sent."""
+    mock_response = Mock()
+    mock_response.json.return_value = response_json
+    mock_response.status_code = 200
+    mock_response.raise_for_status = Mock()
+    mock_post.return_value = mock_response
+
+    return chat_api_call(
+        "google",
+        messages_payload=messages,
+        api_key="test-key",
+        model="gemini-1.5-flash-latest",
+        streaming=False,
+        **extra,
+    )
+
+
+@patch("requests.Session.post")
+def test_non_streaming_function_call_normalizes_to_tool_calls(mock_post):
+    """PIN of EXISTING behavior (scout: lines ~1868-1884): functionCall
+    parts already normalize to OpenAI tool_calls with synthesized ids."""
+    result = _call_google_get_result(
+        mock_post, _gemini_function_call_response(),
+        [{"role": "user", "content": "2+2?"}],
+    )
+    message = result["choices"][0]["message"]
+    (entry,) = message["tool_calls"]
+    assert entry["type"] == "function"
+    assert entry["function"]["name"] == "calculator"
+    assert json.loads(entry["function"]["arguments"]) == {"expression": "2+2"}
+    assert entry["id"]  # synthesized, non-empty
+    # round-trips through the runtime parser:
+    from tldw_chatbook.Agents.native_tools import parse_native_tool_calls
+    parsed = parse_native_tool_calls(message)
+    assert parsed[0].name == "calculator"
+
+
+def _gemini_stream_lines(events):
+    return [f"data: {json.dumps(e)}" for e in events]
+
+
+def _call_google_stream(mock_post, sse_lines, messages, **extra):
+    """Streaming counterpart of `_call_google_get_result`: stub a streaming
+    Gemini response (`iter_lines` yields decoded SSE text lines, matching
+    `chat_with_google`'s `iter_lines(decode_unicode=True)`) and return the
+    consumed generator's yielded SSE strings."""
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.raise_for_status = Mock()
+    mock_response.iter_lines.return_value = sse_lines
+    mock_response.close = Mock()
+    mock_post.return_value = mock_response
+
+    result = chat_api_call(
+        "google",
+        messages_payload=messages,
+        api_key="test-key",
+        model="gemini-1.5-flash-latest",
+        streaming=True,
+        **extra,
+    )
+    return list(result)
+
+
+def _decode_sse_chunks(sse_lines):
+    chunks = []
+    for line in sse_lines:
+        assert line.startswith("data: ")
+        payload = line[len("data: "):].strip()
+        if payload == "[DONE]":
+            continue
+        chunks.append(json.loads(payload))
+    return chunks
+
+
+@patch("requests.Session.post")
+def test_streaming_function_call_chunk_emits_whole_openai_fragment(mock_post):
+    # SSE lines: a text chunk, then a chunk whose parts carry a complete
+    # functionCall, then a STOP finish. Assert exactly one delta.tool_calls
+    # fragment: [{"index": 0, "id": <non-empty>, "type": "function",
+    #   "function": {"name": "calculator",
+    #                "arguments": json.dumps({"expression": "2+2"})}}]
+    # (Gemini streams functionCall parts WHOLE — one complete fragment is
+    # accumulator-compatible: first fragment carries everything.)
+    events = [
+        {"candidates": [{"content": {"parts": [{"text": "Checking."}],
+                                     "role": "model"}, "index": 0}]},
+        {"candidates": [{"content": {"parts": [
+            {"functionCall": {"name": "calculator",
+                              "args": {"expression": "2+2"}}}],
+            "role": "model"}, "index": 0}]},
+        {"candidates": [{"finishReason": "STOP", "index": 0}]},
+    ]
+    sse_lines = _call_google_stream(
+        mock_post, _gemini_stream_lines(events),
+        [{"role": "user", "content": "2+2?"}],
+    )
+    chunks = _decode_sse_chunks(sse_lines)
+
+    fragments = [c["choices"][0]["delta"]["tool_calls"]
+                 for c in chunks if "tool_calls" in c["choices"][0].get("delta", {})]
+    assert len(fragments) == 1
+    assert len(fragments[0]) == 1
+    entry = fragments[0][0]
+    assert entry["index"] == 0
+    assert entry["id"]
+    assert entry["type"] == "function"
+    assert entry["function"] == {"name": "calculator",
+                                  "arguments": json.dumps({"expression": "2+2"})}
+
+    # text still streams; a tool-calls-only chunk (no text) must still yield.
+    texts = [c["choices"][0].get("delta", {}).get("content") for c in chunks]
+    assert "Checking." in texts
+    finishes = [c["choices"][0].get("finish_reason") for c in chunks]
+    assert "stop" in finishes
+
+
+@patch("requests.Session.post")
+def test_streaming_two_function_calls_get_distinct_indexes(mock_post):
+    # one chunk carrying two functionCall parts -> fragments with index 0
+    # and 1, distinct synthesized ids
+    events = [
+        {"candidates": [{"content": {"parts": [
+            {"functionCall": {"name": "calculator",
+                              "args": {"expression": "2+2"}}},
+            {"functionCall": {"name": "calculator",
+                              "args": {"expression": "3+3"}}}],
+            "role": "model"}, "index": 0}]},
+        {"candidates": [{"finishReason": "STOP", "index": 0}]},
+    ]
+    sse_lines = _call_google_stream(
+        mock_post, _gemini_stream_lines(events),
+        [{"role": "user", "content": "go"}],
+    )
+    chunks = _decode_sse_chunks(sse_lines)
+
+    fragments = [c["choices"][0]["delta"]["tool_calls"]
+                 for c in chunks if "tool_calls" in c["choices"][0].get("delta", {})]
+    assert len(fragments) == 1
+    (only_fragment,) = fragments
+    assert [f["index"] for f in only_fragment] == [0, 1]
+    assert only_fragment[0]["id"] != only_fragment[1]["id"]
+    assert only_fragment[0]["function"]["arguments"] == json.dumps({"expression": "2+2"})
+    assert only_fragment[1]["function"]["arguments"] == json.dumps({"expression": "3+3"})
+
+
+@patch("requests.Session.post")
+def test_streaming_fragments_reassemble_via_gateway_accumulator(mock_post):
+    """Cross-layer contract pin: feed this handler's yielded SSE strings
+    through the REAL gateway accumulator path (`_decode_stream_item` +
+    `_ToolCallAccumulator` from `tldw_chatbook.Chat.console_provider_gateway`,
+    task-243) and assert they reassemble into one merged tool call."""
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        _decode_stream_item, _ToolCallAccumulator,
+    )
+
+    events = [
+        {"candidates": [{"content": {"parts": [{"text": "Checking."}],
+                                     "role": "model"}, "index": 0}]},
+        {"candidates": [{"content": {"parts": [
+            {"functionCall": {"name": "calculator",
+                              "args": {"expression": "2+2"}}}],
+            "role": "model"}, "index": 0}]},
+        {"candidates": [{"finishReason": "STOP", "index": 0}]},
+    ]
+    sse_lines = _call_google_stream(
+        mock_post, _gemini_stream_lines(events),
+        [{"role": "user", "content": "2+2?"}],
+    )
+
+    accumulator = _ToolCallAccumulator()
+    for line in sse_lines:
+        accumulator.feed_payload(_decode_stream_item(line))
+
+    assert accumulator.calls()[0]["function"]["name"] == "calculator"
+    assert accumulator.calls()[0]["function"]["arguments"] == json.dumps({"expression": "2+2"})
+    assert len(accumulator.calls()) == 1
