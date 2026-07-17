@@ -13,12 +13,85 @@ from typing import Dict, List, Optional, Any, Union
 from datetime import datetime
 from loguru import logger
 
-# Import processing libraries
-from .PDF_Processing_Lib import process_pdf
-from .Document_Processing_Lib import process_document
-from .Book_Ingestion_Lib import process_ebook
-from .audio_processing import LocalAudioProcessor
-from .video_processing import LocalVideoProcessor
+# Per-format processing libraries (process_pdf/process_document/process_ebook/
+# LocalAudioProcessor/LocalVideoProcessor) are intentionally NOT imported at
+# module scope here. This module is imported directly by app.py (for
+# classify_ingest_source/persist_parsed_media), which bypasses
+# Local_Ingestion's own lazy `__init__.py` (PEP 562 `__getattr__`) --
+# standard Python import semantics run this file's module body regardless of
+# which name was requested. Before this deferral, that meant pymupdf/
+# onnxruntime (~170ms, via PDF_Processing_Lib) and the Document/ebook
+# processing stack (~59ms) were paid on every app startup even when no PDF/
+# document/ebook ingestion had happened (see task-257).
+#
+# Each processor is now imported lazily via the module-level placeholders +
+# `_ensure_*()` helpers below (mirroring the pattern already used by
+# `Embeddings/Chroma_Lib.py` and `Web_Scraping/Article_Extractor_Lib.py`),
+# called at the top of `parse_local_file_for_ingest()`'s branch for that
+# `file_type`, once per process (Python caches `sys.modules`, so repeated
+# calls don't re-pay the cost). The module-level names are kept (rather than
+# using plain local `from .X import Y` statements inside each branch) so
+# that `unittest.mock.patch("...local_file_ingestion.process_pdf", ...)` /
+# `monkeypatch.setattr("...local_file_ingestion.LocalVideoProcessor", ...)`
+# -- used by existing tests -- continue to work: each `_ensure_*()` helper
+# no-ops when its name is already bound to something other than the
+# placeholder (e.g. a test's mock), so a patched value is never clobbered.
+process_pdf = None
+process_document = None
+process_ebook = None
+LocalAudioProcessor = None
+LocalVideoProcessor = None
+
+
+def _ensure_process_pdf():
+    """Import PDF_Processing_Lib.process_pdf on first actual use (or return
+    an already-bound value, e.g. a test's mock)."""
+    global process_pdf
+    if process_pdf is None:
+        from .PDF_Processing_Lib import process_pdf as _process_pdf
+        process_pdf = _process_pdf
+    return process_pdf
+
+
+def _ensure_process_document():
+    """Import Document_Processing_Lib.process_document on first actual use
+    (or return an already-bound value, e.g. a test's mock)."""
+    global process_document
+    if process_document is None:
+        from .Document_Processing_Lib import process_document as _process_document
+        process_document = _process_document
+    return process_document
+
+
+def _ensure_process_ebook():
+    """Import Book_Ingestion_Lib.process_ebook on first actual use (or
+    return an already-bound value, e.g. a test's mock)."""
+    global process_ebook
+    if process_ebook is None:
+        from .Book_Ingestion_Lib import process_ebook as _process_ebook
+        process_ebook = _process_ebook
+    return process_ebook
+
+
+def _ensure_local_audio_processor():
+    """Import audio_processing.LocalAudioProcessor on first actual use (or
+    return an already-bound value, e.g. a test's mock)."""
+    global LocalAudioProcessor
+    if LocalAudioProcessor is None:
+        from .audio_processing import LocalAudioProcessor as _LocalAudioProcessor
+        LocalAudioProcessor = _LocalAudioProcessor
+    return LocalAudioProcessor
+
+
+def _ensure_local_video_processor():
+    """Import video_processing.LocalVideoProcessor on first actual use (or
+    return an already-bound value, e.g. a test's mock)."""
+    global LocalVideoProcessor
+    if LocalVideoProcessor is None:
+        from .video_processing import LocalVideoProcessor as _LocalVideoProcessor
+        LocalVideoProcessor = _LocalVideoProcessor
+    return LocalVideoProcessor
+
 
 # Import database
 from ..DB.Client_Media_DB_v2 import MediaDatabase
@@ -371,7 +444,7 @@ def parse_local_file_for_ingest(file_path: Union[str, Path], options: Dict[str, 
         
         # Process based on file type
         if file_type == 'pdf':
-            result = process_pdf(
+            result = _ensure_process_pdf()(
                 file_input=str(file_path),
                 filename=file_path.name,
                 title_override=title,
@@ -387,7 +460,7 @@ def parse_local_file_for_ingest(file_path: Union[str, Path], options: Dict[str, 
             )
             
         elif file_type == 'document':
-            result = process_document(
+            result = _ensure_process_document()(
                 file_path=str(file_path),
                 title_override=title,
                 author_override=author,
@@ -401,7 +474,7 @@ def parse_local_file_for_ingest(file_path: Union[str, Path], options: Dict[str, 
             )
             
         elif file_type == 'ebook':
-            result = process_ebook(
+            result = _ensure_process_ebook()(
                 file_path=str(file_path),
                 title_override=title,
                 author_override=author,
@@ -424,7 +497,7 @@ def parse_local_file_for_ingest(file_path: Union[str, Path], options: Dict[str, 
             # via content-hash dedup and no-ops against -- returning
             # media_id=None for every audio ingest (see the docstring's
             # bug-mechanism paragraph and the regression test named there).
-            audio_processor = LocalAudioProcessor(None)
+            audio_processor = _ensure_local_audio_processor()(None)
 
             # Process single audio file
             results = audio_processor.process_audio_files(
@@ -472,7 +545,7 @@ def parse_local_file_for_ingest(file_path: Union[str, Path], options: Dict[str, 
         elif file_type == 'video':
             # Initialize video processor. media_db is intentionally None --
             # see the matching comment in the 'audio' branch above.
-            video_processor = LocalVideoProcessor(None)
+            video_processor = _ensure_local_video_processor()(None)
 
             # Process single video file
             results = video_processor.process_videos(
