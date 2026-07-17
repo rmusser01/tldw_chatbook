@@ -23,10 +23,10 @@ P2c gives entries a `priority` so important lore survives budget pressure and in
 
 Unlike P2a (which held the legacy send byte-identical), P2c *may* change the live legacy send (`chat_events.py:1000`) — but the change is **opt-in and nearly inert for existing data**:
 
-- Every existing entry gets `priority = 0` (column default). The new sort key is `(-priority, insertion_order)`, which for all-equal priorities collapses to an insertion-order sort — what the send already effectively does. So for all-priority-0 books (every book today), output is unchanged **except** the recursive-scan normalization below.
-- **Recursive-scan normalization (the one order change at default priority):** today `_find_matching_entries` *appends* recursively-matched entries after the direct matches; the new global `(-priority, insertion_order)` sort re-orders all matched entries by their own fields, so a recursively-fired entry may move ahead of direct matches. This is accepted as more consistent (order by the entry, not by how it matched) and is pinned by an explicit test. `recursive_scanning` is opt-in and uncommon.
+- Every existing entry gets `priority = 0` (column default). The new sort key is `(-priority, insertion_order)`; Python's sort is **stable**, so with all-equal priorities and the entries already in `insertion_order`, the sort is a **no-op** — output is unchanged for existing data.
+- **Recursive-scan normalization (the one possible order change at default priority):** today `_find_matching_entries` *appends* recursively-matched entries after the direct matches. The new global sort re-orders all matched entries by `(-priority, insertion_order)`, so a recursively-matched entry re-orders by its own `insertion_order` instead of always trailing. This only *visibly* changes output when a recursively-matched entry has a **lower `insertion_order` than a directly-matched one** (uncommon); it is accepted as more consistent (order by the entry, not by how it matched).
 
-So P2a's existing budget/order pins largely survive (equal-priority data); P2c mostly **adds** priority tests, and updates only the recursive-order expectation.
+So P2a's existing budget/order pins hold **unchanged** — they use default `insertion_order`, where the sort is a stable no-op (verified against `test_diagnostics_classifies_disabled_secondary_and_budget` and `test_diagnostics_reports_recursively_fired_entries`). P2c is almost purely **additive** tests; it adds one test pinning the recursive-normalization case explicitly.
 
 ## Ground truths (verified at dev `5c0de75a`)
 
@@ -44,7 +44,7 @@ So P2a's existing budget/order pins largely survive (equal-priority data); P2c m
   - `DROP TRIGGER IF EXISTS world_book_entries_sync_create; CREATE TRIGGER …` and same for `world_book_entries_sync_update`, adding `'priority', NEW.priority` to both payloads and `OR OLD.priority IS NOT NEW.priority` to the update `WHEN` clause.
 - Bump `_CURRENT_SCHEMA_VERSION = 21`; register `20: self._migrate_from_v20_to_v21` in `migration_steps`.
 - Update the **base DDL** (`world_book_entries` table + the two sync triggers) so a fresh DB matches a migrated one exactly.
-- Mirror to `migrations/*.sql` (doc-mirror, per the P1e pattern). **Next ChaChaNotes migration = v21→v22.**
+- Mirror to `tldw_chatbook/DB/migrations/chachanotes_v20_to_v21_world_book_entry_priority.sql` (doc-mirror, matching the `chachanotes_v19_to_v20_conversation_metadata.sql` convention). **Next ChaChaNotes migration = v21→v22.** Test by mirroring the existing migration-test precedent (`Tests/DB/…::test_existing_database_migration` / the P1e v19→v20 downgrade-replay test): assert the column + recreated triggers exist post-migration and that re-running the step is a no-op.
 
 ### 2. `WorldBookManager` (`world_book_manager.py`)
 
