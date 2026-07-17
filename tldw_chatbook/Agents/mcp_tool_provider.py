@@ -294,12 +294,16 @@ class MCPToolProvider:
     def invoke(self, tool_id: str, args: dict) -> ToolResult:
         """Execute one tool call. WORKER THREAD. Never raises, never hangs unbounded.
 
-        Order: a stamped verdict from `consume_decision()` (set by T6's
-        batch-review closure earlier this turn) wins outright; absent a
-        stamp, this resolves a fresh gate itself (direct `gate_tool_test`
-        call -- see module docstring) and, for an `"ask"` verdict, falls
-        back to `self._approval_callback` as a single-call list (no
-        callback -> fail closed to deny).
+        Order: the kill switch is checked FIRST (Minor 5) and wins over
+        everything else, including an already-stamped verdict from this
+        turn's batch review. Absent a kill-switch refusal, a stamped
+        verdict from `consume_decision()` (set by T6's batch-review
+        closure earlier this turn) wins outright; absent a stamp, this
+        resolves a fresh gate itself (direct `gate_tool_test` call -- see
+        module docstring), a live session approval short-circuits an
+        `"ask"` state to execute (decision="approved"), and otherwise an
+        `"ask"` verdict falls back to `self._approval_callback` as a
+        single-call list (no callback -> fail closed to deny).
         """
         entry = self._entry_by_llm_name.get(tool_id)
         if entry is None:
