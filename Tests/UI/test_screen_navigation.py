@@ -353,6 +353,25 @@ def test_skills_route_resolves_to_library_screen():
     assert screen_class is LibraryScreen
 
 
+def test_research_route_resolves_to_library_screen():
+    """Verify the retired "research" route id resolves to ``LibraryScreen``.
+
+    The orphan "research" screen registration is removed (Task 255): no
+    shell destination or navigation call ever targeted it, and the Workbench
+    route inventory already mapped research -> library. The legacy "research"
+    route id (still a command-palette direct command via ``TAB_RESEARCH`` and
+    valid in saved startup configs) must resolve to ``LibraryScreen`` instead
+    of dead-ending, mirroring the "notes"/"prompts"/"skills" compatibility
+    aliases above. ``ResearchScreen`` itself is deleted; ``ResearchWindow``/
+    ``Research_Modules`` remain (their removal is a separate decision).
+    """
+    from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_target
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    _screen_name, _canonical_tab, screen_class = resolve_screen_target("research")
+    assert screen_class is LibraryScreen
+
+
 def test_all_master_shell_primary_routes_resolve_before_nav_exposure():
     app = _build_test_app()
     expected_routes = {

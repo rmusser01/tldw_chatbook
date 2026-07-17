@@ -86,7 +86,6 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
     "stts": ScreenRoute("stts", "stts", "tldw_chatbook.UI.Screens.stts_screen", "STTSScreen"),
     "study": ScreenRoute("study", "study", "tldw_chatbook.UI.Screens.study_screen", "StudyScreen"),
     "writing": ScreenRoute("writing", "writing", "tldw_chatbook.UI.Screens.writing_screen", "WritingScreen"),
-    "research": ScreenRoute("research", "research", "tldw_chatbook.UI.Screens.research_screen", "ResearchScreen"),
     "chatbooks": ScreenRoute("chatbooks", "chatbooks", "tldw_chatbook.UI.Screens.chatbooks_screen", "ChatbooksScreen"),
     "subscriptions": ScreenRoute(
         "subscriptions",
@@ -121,6 +120,16 @@ _SCREEN_ALIASES = {
     # test suite, and its trust passphrase modal is reused by the Library
     # skill editor's trust panel (Task 4).
     "skills": "library",
+    # The orphan "research" screen registration is removed (Task 255, from
+    # the 2026-07-12 RAG module audit): no shell destination or navigation
+    # call ever targeted it, and the Workbench route inventory already maps
+    # research -> library. TAB_RESEARCH remains in ALL_TABS (command palette
+    # direct command) and startup configs may still say "research", so the
+    # route id resolves to Library instead of dead-ending -- mirrors the
+    # "notes"/"prompts"/"skills" aliases above. ``Research_Window.py`` /
+    # ``Research_Modules/`` are intentionally NOT deleted here; that is a
+    # separate, larger decision.
+    "research": "library",
 }
 
 
