@@ -32,6 +32,8 @@ class ConsoleSettingsSummary(Vertical):
 
     def sync_state(self, state: ConsoleSettingsSummaryState) -> None:
         """Refresh the summary from a new state snapshot."""
+        if state == self.state:
+            return
         self.state = state
         try:
             self.query_one("#console-settings-provider-row", Static).update(

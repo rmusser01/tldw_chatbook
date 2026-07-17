@@ -1292,6 +1292,19 @@ class ChatScreen(BaseAppScreen):
         self._console_subagent_counts_cache: Dict[str, int] = {}
         self._console_subagent_counts_cache_row_ids: frozenset = frozenset()
         self._console_subagent_counts_cache_at: float = 0.0
+        # TASK-251: TTL cache for `_sync_persisted_console_browser_rows` --
+        # see `CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS`.
+        self._console_persisted_rows_cache: (
+            tuple[list[ConsoleConversationBrowserInputRow], int | None, str] | None
+        ) = None
+        self._console_persisted_rows_cache_key: tuple[str, str | None] | None = None
+        self._console_persisted_rows_cache_at: float = 0.0
+        # TASK-251: last-applied payloads for equality-guarded tick sub-syncs
+        # (skip Static.update()/style work when the computed payload hasn't
+        # changed since the last successful apply).
+        self._console_agent_section_last: tuple[str, str, str, bool] | None = None
+        self._console_rail_system_line_last: tuple[str, bool] | None = None
+        self._console_copy_block_last: dict[int, tuple[str, bool]] = {}
         self._console_rail_prune_dispatched = False
         self._console_workspace_conversation_query = ""
         self._console_workspace_conversation_search_timer: Any | None = None
@@ -1872,14 +1885,23 @@ class ChatScreen(BaseAppScreen):
         return line_text, is_dim
 
     def _sync_console_rail_system_line(self) -> None:
-        """Targeted update of the mounted rail ``System:`` line, no recompose."""
-        line_text, is_dim = self._console_rail_system_line_state()
+        """Targeted update of the mounted rail ``System:`` line, no recompose.
+
+        TASK-251: equality-guarded -- the 0.2s tick called this
+        unconditionally, forcing a ``Static.update()`` even when the system
+        prompt hadn't changed since the last apply.
+        """
+        payload = self._console_rail_system_line_state()
+        if payload == self._console_rail_system_line_last:
+            return
         try:
             system_line = self.query_one("#console-rail-system-line", Static)
         except (NoMatches, QueryError):
             return
+        line_text, is_dim = payload
         system_line.update(line_text)
         system_line.set_class(is_dim, "console-rail-system-line-dim")
+        self._console_rail_system_line_last = payload
 
     def _sync_console_settings_summary(self) -> None:
         """Refresh the mounted Console settings summary surfaces if present."""
@@ -1991,18 +2013,27 @@ class ChatScreen(BaseAppScreen):
         return (status, steps, subagents)
 
     def _sync_console_agent_section(self) -> None:
-        """Refresh the mounted Agent rail Statics + Back-button visibility."""
+        """Refresh the mounted Agent rail Statics + Back-button visibility.
+
+        TASK-251: equality-guarded against the last successfully-applied
+        payload -- the 0.2s tick called this unconditionally, forcing three
+        ``Static.update()`` calls plus a style write per tick even when
+        nothing agent-related had changed.
+        """
+        status_line, steps_text, subagents_text = self._console_agent_section_lines()
+        back_visible = bool(self._console_agent_drilldown_run_id)
+        payload = (status_line, steps_text, subagents_text, back_visible)
+        if payload == self._console_agent_section_last:
+            return
         try:
-            status_line, steps_text, subagents_text = self._console_agent_section_lines()
             self.query_one("#console-agent-section-status", Static).update(status_line)
             self.query_one("#console-agent-section-steps", Static).update(steps_text)
             self.query_one("#console-agent-section-subagents", Static).update(subagents_text)
             back_button = self.query_one("#console-agent-drilldown-back", Button)
-            back_button.styles.display = (
-                "block" if self._console_agent_drilldown_run_id else "none"
-            )
+            back_button.styles.display = "block" if back_visible else "none"
         except (NoMatches, QueryError):
-            pass
+            return
+        self._console_agent_section_last = payload
 
     def _toggle_console_agent_drilldown_from_subagents_click(self) -> None:
         """Step the drill-in through this conversation's sub-agent runs.
@@ -4958,6 +4989,13 @@ class ChatScreen(BaseAppScreen):
                 ConsoleWorkspaceContextTray,
             )
             state = self._build_console_workspace_context_state(session_data)
+            # TASK-251: read the widget's OWN current state before it's
+            # overwritten -- this is intentionally not a screen-level cache
+            # (which would go stale across a full-screen recompose); the
+            # freshly-(re)composed widget's ``.state`` is always correct at
+            # construction time, so comparing against it here stays safe
+            # across recomposes too.
+            state_changed = state != workspace_context.state
             workspace_context.sync_state(state)
             try:
                 details_tray = self.query_one(
@@ -4967,13 +5005,14 @@ class ChatScreen(BaseAppScreen):
                 pass
             else:
                 details_tray.sync_state(state)
-            self.call_after_refresh(
-                lambda: self.run_worker(
-                    self._sync_console_legacy_workspace_context_aliases,
-                    group="console-workspace-context-legacy-aliases",
-                    exclusive=True,
+            if state_changed:
+                self.call_after_refresh(
+                    lambda: self.run_worker(
+                        self._sync_console_legacy_workspace_context_aliases,
+                        group="console-workspace-context-legacy-aliases",
+                        exclusive=True,
+                    )
                 )
-            )
         except (NoMatches, QueryError):
             logger.debug("No Console workspace context tray available for sync")
 
@@ -5784,14 +5823,28 @@ class ChatScreen(BaseAppScreen):
         self._console_guidance_dismissed = True
         self._sync_console_transcript_guidance()
 
-    @staticmethod
     def _configure_console_copy_block(
+        self,
         widget: Static,
         copy: str,
         *,
         visible: bool,
     ) -> None:
-        """Update a compact Console status copy block without remounting it."""
+        """Update a compact Console status copy block without remounting it.
+
+        TASK-251: skips the ``.update()``/style writes when both the copy
+        and the show/hide state already match what was last applied to this
+        exact widget instance. Cached by ``id(widget)`` (object identity),
+        not the widget's DOM id -- a full-screen recompose (e.g.
+        ``_stage_console_library_rag_launch``) destroys and reconstructs
+        these widgets from scratch with no styles pre-applied, so keying on
+        the DOM id alone could skip the very first apply on a fresh
+        instance and leave it visually wrong (unset display/height).
+        """
+        cache_key = id(widget)
+        cache_value = (copy, visible)
+        if self._console_copy_block_last.get(cache_key) == cache_value:
+            return
         should_show = visible and bool(copy.strip())
         widget.update(copy if should_show else "")
         if should_show:
@@ -5800,11 +5853,12 @@ class ChatScreen(BaseAppScreen):
             widget.styles.height = row_count
             widget.styles.min_height = row_count
             widget.styles.max_height = row_count
-            return
-        widget.styles.display = "none"
-        widget.styles.height = 0
-        widget.styles.min_height = 0
-        widget.styles.max_height = 0
+        else:
+            widget.styles.display = "none"
+            widget.styles.height = 0
+            widget.styles.min_height = 0
+            widget.styles.max_height = 0
+        self._console_copy_block_last[cache_key] = cache_value
 
     def _sync_console_transcript_guidance(self) -> None:
         """Refresh Console onboarding and provider recovery copy in place."""
@@ -7765,15 +7819,18 @@ class ChatScreen(BaseAppScreen):
             # build already sees the freshly recomputed cache instead of one
             # stale frame behind.
             await self._refresh_active_dictionaries_summary_if_scope_changed()
-            self._sync_console_control_bar()
+            # TASK-251 (now task-280): compute once and hand it to
+            # `_sync_console_control_bar` -- it used to be computed
+            # independently here AND inside that call (which itself rebuilds
+            # workspace-context/inspector state), doubling that work every tick.
+            rail_state = self._current_console_rail_state()
+            self._sync_console_control_bar(rail_state)
             self._sync_console_settings_summary()
             self._sync_console_mode_bar()
             await self._sync_console_native_session_tabs()
             self._sync_console_workspace_context()
             await self._sync_native_console_transcript_to_legacy_surface()
-            self._sync_console_rail_visibility_if_changed(
-                self._current_console_rail_state()
-            )
+            self._sync_console_rail_visibility_if_changed(rail_state)
             self._dispatch_console_rail_preference_prune()
         finally:
             self._record_ui_worker_finished("console-sync")
@@ -9855,8 +9912,20 @@ class ChatScreen(BaseAppScreen):
             logger.debug(f"Legacy compact model bar unavailable: {e}")
             return None
 
-    def _sync_console_control_bar(self) -> None:
-        """Refresh Console-owned control labels from current selection state."""
+    def _sync_console_control_bar(
+        self,
+        rail_state: Optional[ConsoleRailState] = None,
+    ) -> None:
+        """Refresh Console-owned control labels from current selection state.
+
+        Args:
+            rail_state: Pre-computed rail state (TASK-251: the 0.2s tick
+                computes this once in ``_sync_native_console_chat_ui`` and
+                passes it in here, instead of this method redundantly
+                recomputing it -- which itself rebuilds workspace-context
+                and inspector state). Other callers may omit it; it is
+                computed on demand when not given.
+        """
         self._sync_console_pending_delete_confirmation()
         control_state = self._build_console_control_state(
             self._pending_console_launch_context
@@ -9888,7 +9957,9 @@ class ChatScreen(BaseAppScreen):
             can_save_chatbook=inspector_state.can_save_chatbook
             and self._console_chatbook_action_available()
         )
-        self._sync_console_rail_visibility_if_changed(self._current_console_rail_state())
+        if rail_state is None:
+            rail_state = self._current_console_rail_state()
+        self._sync_console_rail_visibility_if_changed(rail_state)
 
     def _sync_console_workbench_state(
         self,
