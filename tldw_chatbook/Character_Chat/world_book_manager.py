@@ -308,10 +308,11 @@ class WorldBookManager:
                                insertion_order: int = 0, selective: bool = False,
                                secondary_keys: Optional[List[str]] = None,
                                case_sensitive: bool = False,
-                               extensions: Optional[Dict[str, Any]] = None) -> int:
+                               extensions: Optional[Dict[str, Any]] = None,
+                               priority: int = 0) -> int:
         """
         Create a new world book entry.
-        
+
         Args:
             world_book_id: The ID of the world book this entry belongs to
             keys: List of keywords that trigger this entry
@@ -323,10 +324,11 @@ class WorldBookManager:
             secondary_keys: Additional keys required if selective
             case_sensitive: Whether keyword matching is case sensitive
             extensions: Additional data for future features
-            
+            priority: Priority for budget-aware inclusion (higher wins under token pressure)
+
         Returns:
             The ID of the created entry
-            
+
         Raises:
             InputError: If keys or content are empty
         """
@@ -334,18 +336,18 @@ class WorldBookManager:
             raise InputError("Entry must have at least one non-empty key")
         if not content or not content.strip():
             raise InputError("Entry content cannot be empty")
-        
+
         # Clean and validate keys
         clean_keys = [k.strip() for k in keys if k.strip()]
         clean_secondary = [k.strip() for k in (secondary_keys or [])] if secondary_keys else []
-        
+
         query = """
         INSERT INTO world_book_entries (world_book_id, keys, content, enabled, position,
                                        insertion_order, selective, secondary_keys,
-                                       case_sensitive, extensions)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                       case_sensitive, extensions, priority)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
-        
+
         with self.db.transaction() as cursor:
             cursor.execute(query, (
                 world_book_id,
@@ -357,7 +359,8 @@ class WorldBookManager:
                 selective,
                 json.dumps(clean_secondary) if clean_secondary else None,
                 case_sensitive,
-                json.dumps(extensions) if extensions else None
+                json.dumps(extensions) if extensions else None,
+                int(priority)
             ))
             entry_id = cursor.lastrowid
             logger.info(f"Created world book entry {entry_id} for book {world_book_id}")
@@ -376,19 +379,20 @@ class WorldBookManager:
         """
         query = """
         SELECT id, world_book_id, keys, content, enabled, position, insertion_order,
-               selective, secondary_keys, case_sensitive, extensions, created_at, last_modified
+               selective, secondary_keys, case_sensitive, extensions, created_at, last_modified,
+               priority
         FROM world_book_entries
         WHERE world_book_id = ?
         """
-        
+
         if enabled_only:
             query += " AND enabled = 1"
-        
+
         query += " ORDER BY insertion_order, id"
-        
+
         with self.db.transaction() as cursor:
             cursor.execute(query, (world_book_id,))
-            
+
             entries = []
             for row in cursor.fetchall():
                 entries.append({
@@ -404,9 +408,10 @@ class WorldBookManager:
                     'case_sensitive': bool(row[9]),
                     'extensions': json.loads(row[10]) if row[10] else {},
                     'created_at': row[11],
-                    'last_modified': row[12]
+                    'last_modified': row[12],
+                    'priority': row[13]
                 })
-            
+
             return entries
     
     def update_world_book_entry(self, entry_id: int, **kwargs) -> bool:
@@ -426,11 +431,13 @@ class WorldBookManager:
         
         # Handle each possible field
         for field in ['keys', 'content', 'enabled', 'position', 'insertion_order',
-                     'selective', 'secondary_keys', 'case_sensitive', 'extensions']:
+                     'selective', 'secondary_keys', 'case_sensitive', 'extensions', 'priority']:
             if field in kwargs:
                 value = kwargs[field]
                 if field in ['keys', 'secondary_keys', 'extensions']:
                     value = json.dumps(value) if value else None
+                elif field == 'priority':
+                    value = int(value)
                 updates.append(f"{field} = ?")
                 params.append(value)
         
@@ -589,9 +596,10 @@ class WorldBookManager:
                 'selective': entry['selective'],
                 'secondary_keys': entry['secondary_keys'],
                 'case_sensitive': entry['case_sensitive'],
-                'extensions': entry['extensions']
+                'extensions': entry['extensions'],
+                'priority': entry['priority']
             })
-        
+
         return export_data
     
     def import_world_book(self, data: Dict[str, Any], name_override: Optional[str] = None) -> int:
@@ -634,7 +642,8 @@ class WorldBookManager:
                 selective=entry.get('selective', False),
                 secondary_keys=entry.get('secondary_keys', []),
                 case_sensitive=entry.get('case_sensitive', False),
-                extensions=entry.get('extensions', {})
+                extensions=entry.get('extensions', {}),
+                priority=entry.get('priority', 0)
             )
         
         logger.info(f"Imported world book '{name}' with {len(entries)} entries")
