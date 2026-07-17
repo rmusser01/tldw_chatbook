@@ -106,6 +106,8 @@ class AgentService:
                  clock: Callable[[], float] = time.monotonic,
                  on_step: Callable[[AgentStep, str], None] | None = None,
                  skill_runner: SkillRunner | None = None,
+                 review_tool_calls: Callable[[list[ToolCall]], dict[str, str]]
+                 | None = None,
                  ) -> None:
         self.db = db
         self.registry = registry
@@ -113,6 +115,12 @@ class AgentService:
         self.clock = clock
         self._on_step = on_step
         self.skill_runner = skill_runner
+        # P5 Task 4: generic pre-dispatch batch-review hook, threaded
+        # straight into every LoopDeps this service builds (mirrors how
+        # should_cancel flows through run_turn/_run_one). MCP-specific
+        # wiring (Task 6) builds the callable passed here; this service
+        # stays agnostic to what it does.
+        self.review_tool_calls = review_tool_calls
 
     # -- internals -------------------------------------------------------
 
@@ -404,6 +412,7 @@ class AgentService:
             clock=self.clock,
             on_step=((lambda s: self._on_step(s, agent_kind))
                      if self._on_step is not None else (lambda s: None)),
+            review_tool_calls=self.review_tool_calls,
         )
         try:
             outcome = run_agent_loop(config, messages, active, deps)
