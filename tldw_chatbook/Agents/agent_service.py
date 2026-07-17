@@ -120,8 +120,18 @@ class AgentService:
                          runtime_schemas: list):
         native = (config.native_tools
                   and provider_supports_native_tools(api_endpoint))
+        # task-245: one render per active-set change, not per turn. Keyed by
+        # schema NAMES (the set only ever grows via load_tools — AC #2), and
+        # scoped to this closure = this run, so sub-agents (their own
+        # _run_one -> their own closure) never share a cache. Byte-stable
+        # repeated turns are the precondition for provider-side prompt
+        # caching (see Docs/superpowers/reviews/
+        # 2026-07-17-provider-prompt-caching-note.md).
+        protocol_key: tuple | None = None
+        protocol_text = ""
 
         def call_model(messages: list[dict], active_schemas: tuple) -> ModelTurn:
+            nonlocal protocol_key, protocol_text
             schemas = runtime_schemas + list(active_schemas)
             system_content = config.system_prompt
             call_kwargs: dict = {}
@@ -132,9 +142,12 @@ class AgentService:
                 if tools:
                     call_kwargs["tools"] = tools
             else:
-                protocol = render_tool_protocol(schemas)
-                if protocol:
-                    system_content = f"{config.system_prompt}\n\n{protocol}"
+                key = tuple(s.name for s in schemas)
+                if key != protocol_key:
+                    protocol_text = render_tool_protocol(schemas)
+                    protocol_key = key
+                if protocol_text:
+                    system_content = f"{config.system_prompt}\n\n{protocol_text}"
             payload = [{"role": "system", "content": system_content}]
             payload.extend(messages)
             resp = self.chat_call(

@@ -599,3 +599,77 @@ def test_load_tools_same_batch_name_and_id_aliases_load_once(db):
     load_result = [s for s in run["steps"] if s["kind"] == "tool_result"][0]
     # Exactly one mention: "loaded: calculator" — not "calculator, calculator".
     assert load_result["result"] == "loaded: calculator"
+
+
+# --- task-245: memoize the per-run fence-protocol render so an unchanged
+# active tool set is rendered once, not once per model turn. ---
+
+def test_protocol_render_memoized_across_unchanged_turns(db, monkeypatch):
+    """AC #1: three fence turns with an unchanged active set must render the
+    protocol exactly once; the payload text stays byte-identical per turn."""
+    import tldw_chatbook.Agents.agent_service as svc
+    real_render = svc.render_tool_protocol
+    calls = []
+
+    def counting_render(schemas):
+        calls.append(tuple(s.name for s in schemas))
+        return real_render(schemas)
+
+    monkeypatch.setattr(svc, "render_tool_protocol", counting_render)
+    # script: two calculator fence rounds + final answer = 3 model turns,
+    # active set never changes (direct-disclose catalog, no load_tools).
+    service, chat = make_service(db, [
+        fence("calculator", {"expression": "1+1"}),
+        fence("calculator", {"expression": "2+2"}),
+        "done"])
+    _run_id, outcome = service.run_turn(
+        conversation_id="c", messages=[{"role": "user", "content": "go"}],
+        config=CFG, api_endpoint="llama_cpp", should_cancel=lambda: False)
+    assert outcome.status == RUN_DONE
+    assert len(calls) == 1                       # rendered once, reused twice
+    first_system = chat.calls[0]["messages_payload"][0]["content"]
+    for later in chat.calls[1:]:
+        assert later["messages_payload"][0]["content"] == first_system  # byte-stable
+
+
+def test_protocol_rerenders_when_load_tools_admits_new_schema(db, monkeypatch):
+    """AC #2: the cache invalidates the moment load_tools grows the active
+    set — the very next turn's protocol includes the new tool."""
+    import tldw_chatbook.Agents.agent_service as svc
+    real_render = svc.render_tool_protocol
+    calls = []
+
+    def counting_render(schemas):
+        calls.append(tuple(s.name for s in schemas))
+        return real_render(schemas)
+
+    monkeypatch.setattr(svc, "render_tool_protocol", counting_render)
+    # Mirror the file's existing find/load test setup (FakeBigProvider forces
+    # the load path). Script: load_tools fence -> calculator fence -> "done".
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    registry.register_provider(FakeBigProvider())  # catalog > threshold: forces find/load
+    config = AgentConfig(
+        model="m", system_prompt="s",
+        allowed_tools=("calculator", "get_current_datetime"),
+        budget=RunBudget(max_active_tools=8, max_steps=20))
+    chat = ScriptedChat([
+        fence(LOAD_TOOLS_NAME, {"ids": ["calculator"]}),
+        fence("calculator", {"expression": "2+2"}),
+        "done",
+    ])
+    service = AgentService(db=db, registry=registry, chat_call=chat)
+    _run_id, outcome = service.run_turn(
+        conversation_id="c", messages=[{"role": "user", "content": "2+2?"}],
+        config=config, api_endpoint="llama_cpp")
+
+    assert outcome.status == RUN_DONE and outcome.final_text == "done"
+    # Assert: counting_render was called exactly twice; the second recorded
+    # name-tuple includes the newly loaded tool; the post-load turn's system
+    # content contains the new tool's name while the pre-load turn's does not.
+    assert len(calls) == 2
+    assert "calculator" in calls[1]
+    pre_load_system = chat.calls[0]["messages_payload"][0]["content"]
+    post_load_system = chat.calls[1]["messages_payload"][0]["content"]
+    assert "calculator" not in pre_load_system
+    assert "calculator" in post_load_system
