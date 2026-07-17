@@ -219,7 +219,17 @@ class AgentService:
                 try:
                     schema = self.registry.load_schema(str(tool_id))
                 except KeyError:
-                    continue
+                    # task-244 AC#3: models often echo a bare tool NAME from
+                    # a find_tools result line instead of the catalog id —
+                    # resolve it before giving up on this entry, instead of
+                    # burning the whole round on a generic load error.
+                    resolved = self.registry.resolve_name(str(tool_id))
+                    if resolved is None:
+                        continue
+                    try:
+                        schema = self.registry.load_schema(resolved)
+                    except KeyError:
+                        continue
                 # Q7(c): never disclose a tool outside the allow-list.
                 if schema.name not in config.allowed_tools:
                     continue

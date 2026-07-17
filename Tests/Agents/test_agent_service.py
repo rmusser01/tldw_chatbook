@@ -463,6 +463,91 @@ def test_find_and_load_tools_respect_allowed_tools(db):
     assert "Tool not permitted: t1" in t1_result["result"]
 
 
+# --- task-244 AC #3/#4: load_tools must fall back to resolve_name() when
+# a model echoes a bare tool NAME (as seen in a find_tools result line)
+# instead of the catalog id. ---
+
+def test_load_tools_with_bare_name_loads_via_resolve_name_fallback(db):
+    """AC #4: models echo the tool NAME from a find_tools result line, not
+    the catalog id. load_tools(ids=["calculator"]) must load the tool."""
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    registry.register_provider(FakeBigProvider())  # catalog > threshold: forces find/load
+    config = AgentConfig(
+        model="m", system_prompt="s",
+        allowed_tools=("calculator", "get_current_datetime"),
+        budget=RunBudget(max_active_tools=8, max_steps=20))
+    chat = ScriptedChat([
+        fence(LOAD_TOOLS_NAME, {"ids": ["calculator"]}),
+        fence("calculator", {"expression": "2+2"}),
+        "4.",
+    ])
+    service = AgentService(db=db, registry=registry, chat_call=chat)
+    run_id, outcome = service.run_turn(
+        conversation_id="c", messages=[{"role": "user", "content": "2+2?"}],
+        config=config, api_endpoint="llama_cpp")
+
+    assert outcome.status == RUN_DONE and outcome.final_text == "4."
+    run = db.get_run(run_id)
+    tool_results = [s for s in run["steps"] if s["kind"] == "tool_result"]
+    load_result, calc_result = tool_results
+    # The bare name must actually LOAD -- not just avoid the error string.
+    assert load_result["result"] == "loaded: calculator"
+    calc_payload = json.loads(calc_result["result"])
+    assert calc_payload["result"] == 4
+
+
+def test_load_tools_bare_name_still_respects_allow_list(db):
+    """A resolvable bare name OUTSIDE config.allowed_tools stays refused
+    with the generic load error (Q7(c) gate unchanged)."""
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    registry.register_provider(FakeBigProvider())
+    config = AgentConfig(
+        model="m", system_prompt="s", allowed_tools=("calculator",),
+        budget=RunBudget(max_active_tools=8, max_steps=20))
+    chat = ScriptedChat([
+        # "get_current_datetime" resolves via resolve_name(), but it is
+        # not in config.allowed_tools -- Q7(c) must still refuse it.
+        fence(LOAD_TOOLS_NAME, {"ids": ["get_current_datetime"]}),
+        "done",
+    ])
+    service = AgentService(db=db, registry=registry, chat_call=chat)
+    run_id, outcome = service.run_turn(
+        conversation_id="c", messages=[{"role": "user", "content": "q"}],
+        config=config, api_endpoint="llama_cpp")
+
+    assert outcome.status == RUN_DONE and outcome.final_text == "done"
+    run = db.get_run(run_id)
+    tool_results = [s for s in run["steps"] if s["kind"] == "tool_result"]
+    load_result, = tool_results
+    assert load_result["result"] == "ERROR: No valid tools found to load"
+
+
+def test_load_tools_unresolvable_junk_still_errors_generically(db):
+    """ids=["definitely-not-a-tool"] -> 'No valid tools found to load'."""
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    registry.register_provider(FakeBigProvider())
+    config = AgentConfig(
+        model="m", system_prompt="s", allowed_tools=("calculator",),
+        budget=RunBudget(max_active_tools=8, max_steps=20))
+    chat = ScriptedChat([
+        fence(LOAD_TOOLS_NAME, {"ids": ["definitely-not-a-tool"]}),
+        "done",
+    ])
+    service = AgentService(db=db, registry=registry, chat_call=chat)
+    run_id, outcome = service.run_turn(
+        conversation_id="c", messages=[{"role": "user", "content": "q"}],
+        config=config, api_endpoint="llama_cpp")
+
+    assert outcome.status == RUN_DONE and outcome.final_text == "done"
+    run = db.get_run(run_id)
+    tool_results = [s for s in run["steps"] if s["kind"] == "tool_result"]
+    load_result, = tool_results
+    assert load_result["result"] == "ERROR: No valid tools found to load"
+
+
 def test_idless_native_call_gets_synthesized_id_pairing_echo_and_result(db):
     """PR #648 review: some OpenAI-compatible servers omit tool-call ids. A
     synthesized id must appear identically in the assistant echo and the
