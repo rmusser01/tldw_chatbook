@@ -9,6 +9,9 @@ as snappy as possible **without affecting functionality**.
 
 Fix tracking: backlog tasks **246–262** (each finding names its task).
 
+Path convention: file references are relative to the `tldw_chatbook/` package
+root (e.g. `DB/ChaChaNotes_DB.py` = `tldw_chatbook/DB/ChaChaNotes_DB.py`).
+
 ## Headline diagnosis
 
 Three structural patterns account for most of the perceived sluggishness:
@@ -46,7 +49,7 @@ not debugging") so the f-string — including `str(params)` over raw
 4.96 ms @1 MB, **14.3 ms @3 MB**, paid on the send-completion persist path of
 every image message. Systemic: same pattern at `DB/Prompts_DB.py:433`,
 `DB/Client_Media_DB_v2.py:626` (full ingested document text), and
-`DB/Sync_Client.py:667,674`. Fix: restore the guard / loguru lazy form;
+`DB/Sync_Client.py:667,674`. Fix: loguru has no isEnabledFor — use logger.opt(lazy=True) with callables (or a loguru min-level check);
 truncate params *before* stringifying. Risk: none (logging-only).
 
 ### A2. Console `save_state()` runs twice per tab-switch-away — task-247

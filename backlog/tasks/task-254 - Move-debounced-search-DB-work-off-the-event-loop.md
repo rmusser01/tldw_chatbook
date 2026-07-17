@@ -12,7 +12,7 @@ priority: medium
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-run_worker(coroutine) is NOT a thread: Console browser search (chat_screen 661-671 → chat_conversation_scope_service._maybe_await → SYNC list_conversations ×(1+workspaces)), CCP search (conv_char_events 615/1248), and media search (media_events 363/518) all execute sync sqlite/FTS on the event loop when their debounce fires (~3ms p50 @1.5k convs, grows with data). Fix at the service leaf with asyncio.to_thread; connections are thread-local. Note exclusive=True cancellation cannot interrupt an in-flight thread call — guard result application with the existing tokens. Full analysis with measurements: Docs/Design/2026-07-16-performance-audit.md (§P1 B4).
+run_worker(coroutine) is NOT a thread: Console browser search (chat_screen 661-671 → chat_conversation_scope_service._maybe_await → SYNC list_conversations ×(1+workspaces)), CCP search (conv_char_events 615/1248), and media search (media_events 363/518) all execute sync sqlite/FTS on the event loop when their debounce fires (~3ms p50 @1.5k convs, grows with data). Fix at the service leaf with asyncio.to_thread; connections are thread-local. Note exclusive=True cancellation cannot interrupt an in-flight thread call — guard result application with the existing tokens. NOTE (review): sqlite :memory: databases are per-connection, so unconditional asyncio.to_thread at the leaf would hand test DBs a separate EMPTY database — gate the offload on `not db.is_memory_db` (the attribute already exists on CharactersRAGDB). Full analysis with measurements: Docs/Design/2026-07-16-performance-audit.md (§P1 B4).
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

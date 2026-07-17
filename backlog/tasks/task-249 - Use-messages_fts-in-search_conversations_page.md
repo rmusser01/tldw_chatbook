@@ -12,7 +12,7 @@ priority: high
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-ChaChaNotes_DB.search_conversations_page (4924-4936) matches message content via correlated EXISTS + leading-wildcard LIKE per candidate row; the schema already maintains messages_fts and search_messages_by_content (6336-6360) uses it correctly. Measured 1.4→7.8ms per scope with an active query; multiplied by Console's per-tick scope loop this reaches ~70ms/tick during streams (see task-251). Full analysis with measurements: Docs/Design/2026-07-16-performance-audit.md (§P0 A4).
+ChaChaNotes_DB.search_conversations_page (4924-4936) matches message content via correlated EXISTS + leading-wildcard LIKE per candidate row; the schema already maintains messages_fts and search_messages_by_content (6336-6360) uses it correctly. Measured 1.4→7.8ms per scope with an active query; multiplied by Console's per-tick scope loop this reaches ~70ms/tick during streams (see task-251). NOTE (review): LIKE '%q%' matches arbitrary substrings (mid-word) while FTS5 MATCH is token/prefix-based — format the query for prefix matching (append *) and document the residual semantic difference; AC#1 binds representative queries, not mid-word substrings. Full analysis with measurements: Docs/Design/2026-07-16-performance-audit.md (§P0 A4).
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
