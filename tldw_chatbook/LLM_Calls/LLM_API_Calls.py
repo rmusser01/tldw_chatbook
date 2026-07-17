@@ -1707,6 +1707,75 @@ def chat_with_deepseek(
         raise ChatProviderError(provider="deepseek", message=f"Unexpected error: {e}")
 
 
+def _google_tools_payload(tools: list) -> list:
+    """Wrap OpenAI function-format tool entries as Gemini functionDeclarations.
+
+    Entries already Gemini-shaped (carrying ``functionDeclarations`` /
+    ``function_declarations`` or other non-OpenAI keys) pass through
+    untouched. OpenAI entries with a blank name are dropped locally —
+    Gemini rejects empty tool names (task-263 review precedent).
+
+    Args:
+        tools: The ``tools`` list as received (OpenAI or Gemini shaped).
+
+    Returns:
+        A Gemini ``tools`` list; OpenAI entries collapse into ONE
+        ``{"functionDeclarations": [...]}`` entry, passthrough entries keep
+        their positions.
+    """
+    declarations = []
+    passthrough = []
+    for entry in tools or []:
+        if not isinstance(entry, dict):
+            continue
+        function = entry.get("function")
+        if entry.get("type") == "function" and isinstance(function, dict):
+            name = str(function.get("name") or "").strip()
+            if not name:
+                continue
+            parameters = function.get("parameters")
+            if not isinstance(parameters, dict) or not parameters:
+                parameters = {"type": "object", "properties": {}}
+            declarations.append({
+                "name": name,
+                "description": str(function.get("description") or ""),
+                "parameters": parameters,
+            })
+        else:
+            passthrough.append(entry)
+    result = list(passthrough)
+    if declarations:
+        result.append({"functionDeclarations": declarations})
+    return result
+
+
+def _google_function_response(name: str, content) -> dict:
+    """Build a Gemini functionResponse part from an OpenAI tool result.
+
+    Gemini requires ``response`` to be a JSON OBJECT: dict-parseable string
+    content is used directly; anything else wraps as ``{"result": <str>}``.
+
+    Args:
+        name: The function name this result answers (Gemini pairs by name
+            plus position — it has no call ids).
+        content: The tool result content (string, typically).
+
+    Returns:
+        ``{"functionResponse": {"name": ..., "response": {...}}}``.
+    """
+    response = None
+    if isinstance(content, str) and content.strip():
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict):
+            response = parsed
+    if response is None:
+        response = {"result": str(content or "")}
+    return {"functionResponse": {"name": name, "response": response}}
+
+
 def chat_with_google(
         input_data: List[Dict[str, Any]],
         model: Optional[str] = None,
@@ -1739,9 +1808,94 @@ def chat_with_google(
     log_counter("google_api_request", labels={"model": current_model, "streaming": str(current_streaming)})
 
     gemini_contents = []
+    tool_call_names: Dict[str, str] = {}
+    last_function_call_names: List[str] = []
+    consecutive_tool_results = 0
     for msg in input_data:
         role = msg.get("role")
         content = msg.get("content")
+
+        if role == "tool":
+            name = tool_call_names.get(str(msg.get("tool_call_id") or ""))
+            if name is None:
+                # Positional fallback: pair the nth consecutive result with
+                # the nth functionCall of the preceding model turn (Gemini
+                # pairs by name + order; it has no call ids).
+                name = (last_function_call_names[consecutive_tool_results]
+                        if consecutive_tool_results < len(last_function_call_names)
+                        else "")
+            if not name:
+                # Unpairable result (id miss + positional fallback
+                # exhausted): Gemini rejects empty tool names, so emitting
+                # it would 400 the whole request — skip just this part
+                # (PR #662 review).
+                logger.warning(
+                    "Google Gemini: dropping unpairable tool result "
+                    f"(tool_call_id={str(msg.get('tool_call_id') or '')!r})")
+                consecutive_tool_results += 1
+                continue
+            part = _google_function_response(name, content)
+            consecutive_tool_results += 1
+            last = gemini_contents[-1] if gemini_contents else None
+            if (last is not None and last.get("role") == "user"
+                    and isinstance(last.get("parts"), list)
+                    and any("functionResponse" in p for p in last["parts"]
+                            if isinstance(p, dict))):
+                last["parts"].append(part)
+            else:
+                gemini_contents.append({"role": "user", "parts": [part]})
+            continue
+        consecutive_tool_results = 0
+        if role == "assistant" and msg.get("tool_calls"):
+            parts = []
+            if isinstance(content, str) and content.strip():
+                parts.append({"text": content})
+            elif isinstance(content, list):
+                # List-form (multimodal) content: keep its text parts —
+                # dropping them would silently lose visible text that
+                # accompanied the tool calls (same bug class as the
+                # anthropic sibling, PR #659 review).
+                for part in content:
+                    if (isinstance(part, dict)
+                            and part.get("type") == "text"
+                            and isinstance(part.get("text"), str)
+                            and part["text"].strip()):
+                        parts.append({"text": part["text"]})
+            call_names = []
+            for call in msg.get("tool_calls") or []:
+                if not isinstance(call, dict):
+                    continue
+                function = call.get("function") or {}
+                if not isinstance(function, dict):
+                    continue
+                name = str(function.get("name") or "").strip()
+                if not name:
+                    continue
+                raw_args = function.get("arguments")
+                args = raw_args if isinstance(raw_args, dict) else {}
+                if isinstance(raw_args, str) and raw_args.strip():
+                    try:
+                        parsed = json.loads(raw_args)
+                    except json.JSONDecodeError:
+                        parsed = None
+                    if isinstance(parsed, dict):
+                        args = parsed
+                tool_call_names[str(call.get("id") or "")] = name
+                call_names.append(name)
+                part = {"functionCall": {"name": name, "args": args}}
+                signature = (call.get("google_thought_signature")
+                             or call.get("thoughtSignature"))
+                if signature:
+                    # Echo Gemini 3 thought signatures back verbatim —
+                    # required for tools on current models (live-gate 400).
+                    part["thoughtSignature"] = str(signature)
+                parts.append(part)
+            if call_names:
+                last_function_call_names = call_names
+                gemini_contents.append({"role": "model", "parts": parts})
+                continue
+            # All-junk tool_calls: fall through to plain content handling.
+
         gemini_role = "user" if role == "user" else "model" if role == "assistant" else None
         if not gemini_role:
             continue
@@ -1773,7 +1927,7 @@ def chat_with_google(
     payload = {"contents": gemini_contents}
     if generation_config: payload["generationConfig"] = generation_config
     if system_message: payload["system_instruction"] = {"parts": [{"text": system_message}]}
-    if tools: payload["tools"] = tools
+    if tools: payload["tools"] = _google_tools_payload(tools)
 
     stream_suffix = ":streamGenerateContent?alt=sse" if current_streaming else ":generateContent"
     api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{current_model}{stream_suffix}"
@@ -1809,6 +1963,10 @@ def chat_with_google(
                 nonlocal response
                 completion_id = f"chatcmpl-gemini-{time.time_ns()}"
                 created_ts = int(time.time())
+                # task-266: 0-based running position across the whole stream
+                # for synthesizing OpenAI tool_calls[].index (Gemini streams
+                # functionCall parts WHOLE, one complete fragment per call).
+                next_tool_position = 0
                 try:
                     for line in response.iter_lines(decode_unicode=True):
                         if line and line.strip().startswith('data:'):
@@ -1820,10 +1978,41 @@ def chat_with_google(
                                 if candidates:
                                     candidate = candidates[0]
                                     chunk_text = ""
+                                    chunk_tool_calls = []
                                     if candidate.get('content', {}).get('parts', []):
                                         for part in candidate['content']['parts']:
                                             if 'text' in part:
                                                 chunk_text += part.get('text', '')
+                                            if isinstance(part, dict) and 'functionCall' in part:
+                                                fc = part.get('functionCall')
+                                                if not isinstance(fc, dict):
+                                                    # Malformed part: skip it —
+                                                    # never abort an otherwise-
+                                                    # valid stream (task-263
+                                                    # sibling bug class).
+                                                    continue
+                                                name = str(fc.get('name') or '').strip()
+                                                if not name:
+                                                    continue
+                                                fragment = {
+                                                    "index": next_tool_position,
+                                                    "id": f"call_gemini_{time.time_ns()}_{next_tool_position}",
+                                                    "type": "function",
+                                                    "function": {
+                                                        "name": name,
+                                                        "arguments": json.dumps(
+                                                            fc['args'] if isinstance(fc.get('args'), dict) else {}),
+                                                    },
+                                                }
+                                                # Gemini 3 thought signature:
+                                                # must round-trip (see the
+                                                # non-streaming parser note).
+                                                signature = (part.get('thoughtSignature')
+                                                             or part.get('thought_signature'))
+                                                if signature:
+                                                    fragment["google_thought_signature"] = str(signature)
+                                                chunk_tool_calls.append(fragment)
+                                                next_tool_position += 1
                                     raw_finish_reason = candidate.get("finishReason")
                                     openai_finish_reason = None
                                     if raw_finish_reason:
@@ -1834,6 +2023,8 @@ def chat_with_google(
                                     delta_payload_for_choice = {}
                                     if chunk_text:
                                         delta_payload_for_choice["content"] = chunk_text
+                                    if chunk_tool_calls:
+                                        delta_payload_for_choice["tool_calls"] = chunk_tool_calls
                                     if delta_payload_for_choice or openai_finish_reason:
                                         openai_sse_choice = {"index": 0, "delta": delta_payload_for_choice}
                                         if openai_finish_reason:
@@ -1873,15 +2064,32 @@ def chat_with_google(
                         if "text" in part:
                             assistant_content += part.get("text", "")
                         if "functionCall" in part:
+                            fc = part.get("functionCall")
+                            if not isinstance(fc, dict):
+                                # Malformed part: skip it — never crash the
+                                # parser (PR #662 review; mirrors the
+                                # streaming guard).
+                                continue
                             if tool_calls is None: tool_calls = []
-                            tool_calls.append({
+                            entry = {
                                 "id": f"call_gemini_{time.time_ns()}_{len(tool_calls)}",
                                 "type": "function",
                                 "function": {
-                                    "name": part["functionCall"].get("name"),
-                                    "arguments": json.dumps(part["functionCall"].get("args", {}))
+                                    "name": fc.get("name"),
+                                    "arguments": json.dumps(
+                                        fc.get("args") if isinstance(fc.get("args"), dict) else {})
                                 }
-                            })
+                            }
+                            # Gemini 3-family models REQUIRE the part's
+                            # thoughtSignature to be echoed back verbatim on
+                            # the follow-up request (live-gate 400 without
+                            # it). Carry it opaquely on the OpenAI-shape
+                            # entry; the request converter re-attaches it.
+                            signature = (part.get("thoughtSignature")
+                                         or part.get("thought_signature"))
+                            if signature:
+                                entry["google_thought_signature"] = str(signature)
+                            tool_calls.append(entry)
                 raw_finish_reason = candidate.get("finishReason")
                 if raw_finish_reason:
                     fr_map = {"MAX_TOKENS": "length", "STOP": "stop", "SAFETY": "content_filter",
