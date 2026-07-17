@@ -502,6 +502,64 @@ def test_request_mcp_approvals_active_cancel_event_denies_undecided():
     assert decisions == {"mcp__srv__tool": "deny"}
 
 
+def test_request_mcp_approvals_cancellation_records_denied_decision_to_execution_log(tmp_path):
+    """Finding I3: a stop/unmount that resolves this round via cancellation
+    must still leave an audit record. Pre-fix, `run_agent_loop`'s own
+    `should_cancel()` check fires for every call in the batch BEFORE any
+    of them reaches `invoke()` once cancellation has resolved the round,
+    so the "deny" verdict `request_mcp_approvals` hands back is never
+    consumed/logged downstream -- the JSONL execution log would otherwise
+    have NO record at all for a call denied this way (contrast with a
+    timeout, whose calls DO still reach `invoke()`'s own gate and get
+    logged there, since a timeout is not a cancellation). Uses the REAL
+    `UnifiedMCPControlPlaneService` + JSONL-backed execution log (not the
+    lighter `FakeMCPService`) so this proves the fix end-to-end through
+    the actual persistence path."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.MCP.execution_log import MCPExecutionLog
+    from tldw_chatbook.MCP.local_store import LocalExternalMCPProfile, LocalMCPStore
+    from tldw_chatbook.MCP.unified_control_plane_service import UnifiedMCPControlPlaneService
+
+    store = LocalMCPStore(tmp_path / "store.json")
+    store.save_profile(
+        LocalExternalMCPProfile(profile_id="docs", command="python", args=("-m", "demo"))
+    )
+    service = UnifiedMCPControlPlaneService(
+        local_service=SimpleNamespace(store=store),
+        server_service=None, target_store=None, context_store=None,
+    )
+
+    controller, _ = _build_controller()
+    controller.app = SimpleNamespace(
+        call_from_thread=lambda fn, *a, **kw: fn(*a, **kw),
+        unified_mcp_service=service,
+    )
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    def _cancel_soon() -> None:
+        time.sleep(0.05)
+        controller._stop_requested = True
+
+    canceller = threading.Thread(target=_cancel_soon)
+    canceller.start()
+    decisions = controller.request_mcp_approvals(
+        [_pending(server_key="local:docs", tool_name="search", llm_name="mcp__docs__search")]
+    )
+    canceller.join()
+
+    assert decisions == {"mcp__docs__search": "deny"}
+
+    log_path = Path(store.path).with_name("mcp_execution_log.jsonl")
+    records = MCPExecutionLog(log_path).read_recent()
+    assert records, "the stop-mid-approval path left no audit record at all"
+    assert records[0]["server_key"] == "local:docs"
+    assert records[0]["tool_name"] == "search"
+    assert records[0]["decision"] == "denied"
+    assert records[0]["ok"] is False
+    assert "run stopped while approval pending" in (records[0].get("error") or "")
+
+
 def test_switch_session_denies_a_pending_approval_round():
     controller, store = _build_controller()
     other_session = store.ensure_session(title="Other")

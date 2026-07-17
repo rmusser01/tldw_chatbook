@@ -599,10 +599,12 @@ class ConsoleChatController:
         """
         unique_names: list[str] = []
         seen: set[str] = set()
+        call_by_name: dict[str, "MCPPendingCall"] = {}
         for call in pending:
             if call.llm_name not in seen:
                 seen.add(call.llm_name)
                 unique_names.append(call.llm_name)
+                call_by_name[call.llm_name] = call
         if not unique_names:
             return {}
 
@@ -635,8 +637,26 @@ class ConsoleChatController:
                     self._active_cancel_event is not None
                     and self._active_cancel_event.is_set()
                 ):
+                    # Finding I3: a stop/unmount that resolves THIS round
+                    # denies every still-undecided call, but
+                    # `run_agent_loop`'s own `should_cancel()` check fires
+                    # for every call in this turn's batch BEFORE any of
+                    # them reaches `invoke()` -- so the "deny" verdict
+                    # stamped below is never consumed there and would
+                    # otherwise leave no audit record at all (contrast
+                    # with the timeout branch, whose calls DO still reach
+                    # `invoke()`'s own gate and get logged there, since a
+                    # timeout is not itself a cancellation). Log directly
+                    # here, best-effort, for exactly the names this branch
+                    # is about to fail closed.
+                    cancelled_names = [
+                        name for name in unique_names if name not in decisions
+                    ]
                     for name in unique_names:
                         decisions.setdefault(name, "deny")
+                    self._record_cancelled_approval_decisions(
+                        cancelled_names, call_by_name,
+                    )
                     break
                 if time.monotonic() >= deadline:
                     for name in unique_names:
@@ -657,6 +677,47 @@ class ConsoleChatController:
             except Exception:  # noqa: BLE001 -- suppress teardown-time errors
                 logger.opt(exception=True).debug(
                     "Failed to marshal approval clear during teardown"
+                )
+
+    def _record_cancelled_approval_decisions(
+        self,
+        names: list[str],
+        call_by_name: dict[str, "MCPPendingCall"],
+    ) -> None:
+        """Best-effort audit log for calls denied by a stop/unmount mid-approval.
+
+        Finding I3: see the cancellation branch's own comment in
+        ``request_mcp_approvals`` for why this direct call is necessary --
+        `MCPToolProvider._record_decision_safe` (the normal recording
+        path) is never reached for these calls, since `run_agent_loop`
+        cancels the whole turn before dispatching any of them. Reached via
+        `self.app.unified_mcp_service` (the same object
+        `_compose_mcp_provider` built this run's `MCPToolProvider` from --
+        see that method), never raises: a missing app/service, or the
+        service lacking `record_tool_decision`, is a silent no-op, and any
+        exception the real call raises is logged and swallowed, mirroring
+        `MCPToolProvider._record_decision_safe`'s own never-raise
+        contract.
+        """
+        service = getattr(self.app, "unified_mcp_service", None)
+        if service is None:
+            return
+        record = getattr(service, "record_tool_decision", None)
+        if not callable(record):
+            return
+        for name in names:
+            call = call_by_name.get(name)
+            if call is None:
+                continue
+            try:
+                record(
+                    call.server_key, call.tool_name,
+                    decision="denied", initiator="agent",
+                    error="run stopped while approval pending",
+                )
+            except Exception:  # noqa: BLE001 -- best-effort audit trail only
+                logger.opt(exception=True).debug(
+                    "Failed to record cancelled MCP approval decision"
                 )
 
     def _marshal_pending_approval(self, payload: dict[str, Any] | None) -> None:
