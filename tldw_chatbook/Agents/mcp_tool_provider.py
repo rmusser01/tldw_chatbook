@@ -31,6 +31,8 @@ and does not need any cross-thread submission of its own.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
+import contextlib
 import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -324,6 +326,36 @@ class MCPToolProvider:
         """
         return self._stamped_decisions.get(llm_name)
 
+    @contextlib.contextmanager
+    def stamp_scope(self):
+        """Snapshot `_stamped_decisions` on enter; RESTORE (not merge) on exit.
+
+        C1 (probe-verified security regression): wired as `AgentService`'s
+        `review_state_scope` (see that class's own docstring comment) by
+        `console_agent_bridge.ConsoleAgentBridge.run_reply`, wrapping every
+        NESTED sub-agent run this provider's turn spawns. `spawn_subagent`
+        runs the child's entire loop INLINE, synchronously, before the
+        parent's own remaining same-batch tool calls are dispatched
+        (`agent_service.AgentService._run_one`'s `spawn` closure, called
+        from `agent_runtime.run_agent_loop`'s per-call dispatch loop). Since
+        `apply_batch_decisions` REPLACES `_stamped_decisions` every turn
+        (Finding F1 -- never merges), the child's OWN turn(s) would
+        otherwise silently clobber whatever the PARENT's turn had already
+        stamped for a same-named tool before the parent gets to consume it
+        -- letting a call the user just denied execute anyway (the child
+        happens to approve the same tool name), or wiping a genuine parent
+        approval (the child's own routine `apply_batch_decisions({})` clear
+        for an unrelated, non-MCP tool call). Snapshotting on enter and
+        unconditionally restoring that exact snapshot on exit (regardless of
+        what the child did in between) undoes every mutation the child made
+        to this shared dict the instant it returns control to the parent.
+        """
+        snapshot = dict(self._stamped_decisions)
+        try:
+            yield
+        finally:
+            self._stamped_decisions = snapshot
+
     # -- gate resolution for the batch-review hook (worker thread) --------
 
     def pending_gate_for(self, llm_name: str, args: dict) -> MCPPendingCall | None:
@@ -496,6 +528,19 @@ class MCPToolProvider:
         persists a tool-level allow keyed to this call's live `HubTool` (the
         rug-pull guard's definition hash); `"timeout"`/`"deny"`/anything
         unrecognized fail closed to the exact model-facing refusal copy.
+
+        Minor 4: a stamped verdict is PEEKED, not popped (Finding F1), so
+        TWO calls to the same tool id in one turn both run through here with
+        the identical `"approve_session"`/`"always_allow"` verdict -- each
+        re-triggers `approve_for_session`/`set_tool_state`. This is
+        harmless today, not an apply-once bug: `approve_for_session` just
+        re-adds the same key to an in-memory set, and `set_tool_state`
+        persists the same last-write-wins `"allow"` state keyed by the same
+        live `HubTool` hash -- both idempotent, so a redundant second call
+        wastes a little I/O but changes nothing observable. Left as a
+        documented redundancy rather than an apply-once guard, which would
+        need its own per-turn "already applied" state to track and would
+        only ever save that one redundant write.
         """
         if verdict == "approve_once":
             return self._execute(tool, args, decision="approved")
@@ -554,7 +599,8 @@ class MCPToolProvider:
             args: The call's arguments, passed through unchanged.
             decision: The audit decision string this call was authorized
                 under (e.g. `"allowed"`/`"approved"`), forwarded to
-                `execute_hub_tool` and, on a bridge failure (Finding F2),
+                `execute_hub_tool` and, on a bridge failure this method
+                itself must record (see the discriminator comment below),
                 to the best-effort audit record below.
 
         Returns:
@@ -562,7 +608,7 @@ class MCPToolProvider:
             success; `ok=False` with a non-empty, length-capped `error`
             on any failure. Never raises.
         """
-        future: asyncio.Future | None = None
+        future: concurrent.futures.Future | None = None
         try:
             timeout = self._service._tool_call_timeout() + _RESULT_WAIT_SLACK_SECONDS
             future = asyncio.run_coroutine_threadsafe(
@@ -587,14 +633,33 @@ class MCPToolProvider:
             # Finding 1: TimeoutError/CancelledError have empty str(), so guarantee
             # non-empty error via (str(exc) or repr(exc)) so the model receives actual info.
             error = (str(exc) or repr(exc))[:_MAX_ERROR_CHARS]
-            # Finding F2: a bridge failure here (submit-time raise, or the
-            # bounded wait timing/erroring out) previously left NO audit
-            # trail at all -- best-effort record it now so Findings mode
-            # can still see the call happened and why it failed.
-            self._record_decision_safe(
-                tool, decision=decision,
-                error=f"bridge execution failed: {(str(exc) or repr(exc))[:200]}",
-            )
+            # C2: record here ONLY when `execute_hub_tool` could NOT have
+            # recorded this failure itself. The real service's contract
+            # (`UnifiedMCPControlPlaneService.execute_hub_tool`) records via
+            # `_record_tool_execution` BEFORE every exception that
+            # propagates through `future.result()` normally -- its own
+            # inner `asyncio.TimeoutError` branch and its generic
+            # except-and-reraise branch both record-then-raise. Recording
+            # again here for those would double the audit trail for one
+            # logical failure (Finding F2 originally fixed a genuine gap;
+            # this discriminator fixes the over-correction). The three
+            # cases where `execute_hub_tool` truly never got a chance to
+            # record are:
+            #   - the submit itself raised (`future is None` -- the
+            #     coroutine never started, e.g. a dead/closed loop);
+            #   - the OUTER slack wait timed out
+            #     (`concurrent.futures.TimeoutError` -- the wedged-loop
+            #     case: the coroutine hadn't finished, and may not even
+            #     have reached its own inner timeout clock yet);
+            #   - the future was cancelled before completing
+            #     (`concurrent.futures.CancelledError`).
+            if (future is None
+                    or isinstance(exc, concurrent.futures.TimeoutError)
+                    or isinstance(exc, concurrent.futures.CancelledError)):
+                self._record_decision_safe(
+                    tool, decision=decision,
+                    error=f"bridge execution failed: {(str(exc) or repr(exc))[:200]}",
+                )
             return ToolResult(ok=False, error=error)
         return self._format_result(raw_result)
 

@@ -9,12 +9,14 @@ rather than being hidden by a permissive fake.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import threading
 import time
 from types import SimpleNamespace
 
 import pytest
 
+import tldw_chatbook.Agents.mcp_tool_provider as mcp_tool_provider_module
 from tldw_chatbook.Agents.mcp_tool_provider import (
     DENY_REFUSAL,
     KILL_SWITCH_REFUSAL,
@@ -796,6 +798,175 @@ def test_invoke_execute_on_closed_loop_returns_error_never_raises():
     )
     error = service.record_tool_decision_calls[-1][4]
     assert error is not None and error.startswith("bridge execution failed:")
+
+
+# ---------------------------------------------------------------------------
+# invoke() -- C2: _execute must not double-record a failure execute_hub_tool
+# already recorded itself.
+#
+# `FakeMCPService` above never records anything internally on its own (its
+# `execute_raises`/`execute_delay` knobs just raise/sleep directly), so it
+# cannot catch a double-record regression: EVERY exception path through it
+# looks identical to "execute_hub_tool never got a chance to record" to a
+# test built on top of it. This mirrors the repo's own tasks-217/222 lesson
+# ("fakes-mask-contract trap") -- a fake with a permissive/simplified
+# contract can hide a bug a test built on it would otherwise catch. The
+# double below instead mirrors the REAL
+# `UnifiedMCPControlPlaneService.execute_hub_tool` contract byte-for-byte:
+# every one of its three exit paths (inner timeout, coroutine exception,
+# success) records via a `record_tool_decision`-shaped call to
+# `self.audit_log` BEFORE returning/raising, exactly like
+# `_record_tool_execution` does in production
+# (unified_control_plane_service.py:2035-2059). A double-record bug in
+# `MCPToolProvider._execute` then shows up as `len(service.audit_log) == 2`
+# for a single logical failure.
+# ---------------------------------------------------------------------------
+
+class RealContractFakeMCPService:
+    """`execute_hub_tool` double that records-then-raises exactly like the
+    real service (unified_control_plane_service.py:1973-2059): wraps an
+    inner coroutine in `asyncio.wait_for(..., timeout=self._tool_call_timeout())`,
+    records to `self.audit_log` in EVERY one of the three exit branches
+    (inner `asyncio.TimeoutError`, any other coroutine exception, success),
+    then re-raises/returns exactly as the real method does.
+    """
+
+    def __init__(self, *, inner_delay: float = 0.0,
+                 inner_raises: Exception | None = None,
+                 tool_call_timeout: float = 5.0) -> None:
+        self.audit_log: list[tuple] = []
+        self.record_tool_decision_calls: list[tuple] = []
+        self._inner_delay = inner_delay
+        self._inner_raises = inner_raises
+        self._timeout_value = tool_call_timeout
+        self.local_service = SimpleNamespace(get_inventory=lambda: {"tools": []})
+
+    def get_kill_switch(self) -> bool:
+        return False
+
+    async def local_external_catalog(self) -> list[dict]:
+        return [_catalog_record("srv", [_tool_dict("run")])]
+
+    def effective_tool_states(self, tools: list[HubTool]) -> dict[tuple[str, str], EffectiveToolState]:
+        return {(t.server_key, t.name): EffectiveToolState(state="allow", origin="tool_override")
+                for t in tools}
+
+    def gate_tool_test(self, tool: HubTool) -> EffectiveToolState:
+        return EffectiveToolState(state="allow", origin="tool_override")
+
+    def is_session_approved(self, server_key: str, tool_name: str) -> bool:
+        return False
+
+    def record_tool_decision(
+        self, server_key: str, tool_name: str, *, decision: str,
+        initiator: str = "agent", error: str | None = None,
+    ) -> None:
+        # Bridge-failure record path (MCPToolProvider._record_decision_safe).
+        self.record_tool_decision_calls.append((server_key, tool_name, decision, initiator, error))
+        self.audit_log.append(("bridge_decision", decision, error))
+
+    def _tool_call_timeout(self) -> float:
+        return self._timeout_value
+
+    async def execute_hub_tool(
+        self, server_key: str, tool_name: str, arguments: dict | None = None, *,
+        initiator: str = "test", decision: str = "allowed", timeout_seconds: float | None = None,
+    ) -> dict:
+        timeout = timeout_seconds if timeout_seconds is not None else self._tool_call_timeout()
+
+        async def _inner() -> dict:
+            if self._inner_delay:
+                await asyncio.sleep(self._inner_delay)
+            if self._inner_raises is not None:
+                raise self._inner_raises
+            return {"content": [{"type": "text", "text": "ok"}]}
+
+        try:
+            result = await asyncio.wait_for(_inner(), timeout=timeout)
+        except asyncio.TimeoutError:
+            # Mirrors execute_hub_tool's own inner-timeout record-then-raise
+            # (unified_control_plane_service.py:2035-2043).
+            self.audit_log.append(("execution", False, "timed out"))
+            raise RuntimeError(f"Timed out after {timeout:.0f}s") from None
+        except Exception as exc:  # noqa: BLE001 -- mirrors the real except-and-reraise
+            # Mirrors execute_hub_tool's own coroutine-exception record-then-
+            # reraise (unified_control_plane_service.py:2044-2051).
+            self.audit_log.append(("execution", False, str(exc)))
+            raise
+        self.audit_log.append(("execution", True, None))
+        return result
+
+
+def test_execute_ordinary_tool_error_records_exactly_once_real_contract(running_loop):
+    """(a) An ordinary coroutine exception is recorded ONCE by
+    execute_hub_tool's own except-and-reraise before it propagates through
+    `future.result()` -- `_execute`'s except must not record it again."""
+    service = RealContractFakeMCPService(inner_raises=RuntimeError("boom"))
+    provider = MCPToolProvider(service=service, main_loop=running_loop)
+    asyncio.run(provider.compose_catalog())
+    tool_id = provider.list_catalog()[0].id
+
+    result = provider.invoke(tool_id, {})
+
+    assert result.ok is False
+    assert len(service.audit_log) == 1, service.audit_log
+
+
+def test_execute_inner_timeout_records_exactly_once_real_contract(running_loop):
+    """(b) The coroutine's OWN `asyncio.wait_for` firing (the tool itself is
+    slow, well within the provider's outer wait) records once internally via
+    execute_hub_tool's inner-timeout branch, then re-raises RuntimeError --
+    `_execute` must not record a second time for that RuntimeError
+    propagating normally through `future.result()`."""
+    service = RealContractFakeMCPService(inner_delay=0.3, tool_call_timeout=0.05)
+    provider = MCPToolProvider(service=service, main_loop=running_loop)
+    asyncio.run(provider.compose_catalog())
+    tool_id = provider.list_catalog()[0].id
+
+    result = provider.invoke(tool_id, {})
+
+    assert result.ok is False
+    assert len(service.audit_log) == 1, service.audit_log
+
+
+def test_execute_submit_raise_closed_loop_records_exactly_once_real_contract():
+    """(c) `future` stays `None` (a closed loop makes
+    `run_coroutine_threadsafe` raise immediately) -- execute_hub_tool's
+    coroutine never even started, so it never had a chance to record;
+    `_execute`'s own bridge-failure record is the ONLY one that should
+    exist."""
+    closed_loop = asyncio.new_event_loop()
+    closed_loop.close()
+    service = RealContractFakeMCPService()
+    provider = MCPToolProvider(service=service, main_loop=closed_loop)
+    asyncio.run(provider.compose_catalog())
+    tool_id = provider.list_catalog()[0].id
+
+    result = provider.invoke(tool_id, {})
+
+    assert result.ok is False
+    assert len(service.audit_log) == 1, service.audit_log
+
+
+def test_execute_outer_timeout_wedged_loop_records_exactly_once_real_contract(running_loop, monkeypatch):
+    """(d) The wedged-loop case: the OUTER slack wait on the worker thread
+    times out (`concurrent.futures.TimeoutError` from `future.result()`)
+    while the coroutine is still running and has not reached its OWN inner
+    timeout/record logic yet -- simulated by shrinking
+    `_RESULT_WAIT_SLACK_SECONDS` well below the service's own
+    `tool_call_timeout`, so the outer bound is tiny while the inner one
+    stays generous. `_execute`'s bridge-failure record must be the ONLY one
+    that fires within this window."""
+    monkeypatch.setattr(mcp_tool_provider_module, "_RESULT_WAIT_SLACK_SECONDS", -4.99)
+    service = RealContractFakeMCPService(inner_delay=3.0, tool_call_timeout=5.0)
+    provider = MCPToolProvider(service=service, main_loop=running_loop)
+    asyncio.run(provider.compose_catalog())
+    tool_id = provider.list_catalog()[0].id
+
+    result = provider.invoke(tool_id, {})
+
+    assert result.ok is False
+    assert len(service.audit_log) == 1, service.audit_log
 
 
 # ---------------------------------------------------------------------------

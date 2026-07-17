@@ -1,5 +1,6 @@
 """Console agent bridge: streaming, markers, spawn, supersede (fakes only)."""
 import asyncio
+import contextlib
 import json
 
 import pytest
@@ -30,6 +31,7 @@ class _FakeMCPProvider:
         # entries: iterable of (name, description) pairs
         self._entries = list(entries)
         self.invoke_calls: list[tuple[str, dict]] = []
+        self.stamp_scope_calls = 0
 
     def list_catalog(self):
         return [
@@ -45,6 +47,16 @@ class _FakeMCPProvider:
     def invoke(self, tool_id, args):
         self.invoke_calls.append((tool_id, dict(args or {})))
         return ToolResult(ok=True, content=f"mcp-result:{tool_id}")
+
+    @contextlib.contextmanager
+    def stamp_scope(self):
+        # C1 (probe-verified security regression): stands in for
+        # MCPToolProvider.stamp_scope -- a no-op snapshot/restore here since
+        # this fake carries no per-turn stamp state of its own, just a call
+        # counter so bridge-level wiring tests can assert `run_reply` threads
+        # it through to AgentService(review_state_scope=...).
+        self.stamp_scope_calls += 1
+        yield
 
 
 def _fence(name, args):
@@ -945,6 +957,30 @@ def test_run_reply_forwards_review_tool_calls_hook_to_agent_service(tmp_path):
     tool_rows = [m for m in store.messages_for_session(session.id)
                  if m.role is ConsoleMessageRole.TOOL]
     assert any("blocked by test hook" in row.content for row in tool_rows)
+
+
+def test_run_reply_wires_mcp_provider_stamp_scope_around_a_spawned_child(tmp_path):
+    """C1 (probe-verified security regression): `run_reply` must thread
+    `mcp_provider.stamp_scope` through to `AgentService(review_state_scope=
+    ...)` whenever an MCP provider is composed for this run -- that seam is
+    what protects a parent turn's MCP approval stamps from being clobbered by
+    a sub-agent's own inline nested run (see `MCPToolProvider.stamp_scope`'s
+    own docstring and `Tests/Agents/test_agent_service_review_state_scope.py`
+    for the full adversarial reproduction). This is the bridge-level wiring
+    check: a run that spawns exactly one sub-agent must enter/exit the
+    composed MCP provider's `stamp_scope()` exactly once around that spawn."""
+    scripts = [
+        [_fence("spawn_subagent", {"task": "compute 1+1"})],  # primary turn 1
+        ["2"],                                                 # sub-agent turn
+        ["Done: ", "2."],                                     # primary final
+    ]
+    bridge, _db, store, session, aid = _bridge(tmp_path, scripts)
+    mcp_provider = _FakeMCPProvider([("mcp__srv_a__search", "Search the web")])
+
+    outcome = _run(bridge, store, session, aid, mcp_provider=mcp_provider)
+
+    assert outcome.status == "done"
+    assert mcp_provider.stamp_scope_calls == 1
 
 
 def test_skill_named_like_a_runtime_tool_never_shadows_it_at_invocation(tmp_path):

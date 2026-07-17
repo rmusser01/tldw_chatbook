@@ -754,10 +754,26 @@ class ConsoleAgentBridge:
                 status="running", step=len(live_steps),
                 steps=tuple(live_steps[-5:]), subagents=tuple(subagents))
 
+        # C1 (probe-verified security regression): thread the composed MCP
+        # provider's stamp_scope() through as AgentService's generic
+        # review_state_scope seam whenever one was composed for this run --
+        # see AgentService.__init__'s own comment and
+        # MCPToolProvider.stamp_scope's docstring for the exact adversarial
+        # interleave this protects against (a spawned child's own turn(s)
+        # clobbering the parent turn's already-decided MCP approval stamps).
+        # getattr(..., None) rather than a bare attribute access: mcp_provider
+        # is typed Any (a ToolProvider-shaped double in tests may not define
+        # stamp_scope at all, and MUST NOT be forced to); production always
+        # hands in a real, fully-composed MCPToolProvider here, which always
+        # has it.
+        review_state_scope = (
+            getattr(mcp_provider, "stamp_scope", None)
+            if mcp_provider is not None else None)
         service = AgentService(
             self._db, registry, chat_call=adapter.chat_call,
             clock=self._clock, on_step=on_step, skill_runner=skill_runner,
-            review_tool_calls=review_tool_calls)
+            review_tool_calls=review_tool_calls,
+            review_state_scope=review_state_scope)
 
         supersede_run_id = (
             self._previous_primary_run_id(conversation_id) if supersede_previous else None)
