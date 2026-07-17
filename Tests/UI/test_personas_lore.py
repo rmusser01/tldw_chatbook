@@ -11,6 +11,8 @@ from textual.widgets import Button, DataTable, Input, ListView, Static, TextArea
 
 from tldw_chatbook.Widgets.Persona_Widgets.personas_lore_detail import (
     PersonasLoreDetailWidget,
+    LoreBookEnableToggled,
+    LoreBookSettingsSaveRequested,
     LoreEntryAddRequested,
 )
 from tldw_chatbook.Widgets.Persona_Widgets.personas_lore_tryit import PersonasLoreTryItWidget
@@ -427,3 +429,35 @@ class TestLoreModeCrudRoundTrip:
             assert manager.list_world_books(True) == []
             assert screen.query_one(PersonasLoreDetailWidget).display is False
             assert screen.state.selected_entity_id is None
+
+    async def test_enable_toggle_then_settings_save_no_stale_version_conflict(
+        self, mock_app_instance, stub_characters_lore, lore_db, seeded_lore_book
+    ):
+        """Toggling Enabled bumps world_books.version; a subsequent Settings save
+        in the SAME selection must NOT hit a stale-expected_version ConflictError
+        (regression for the whole-branch-review Important finding)."""
+        mock_app_instance.chachanotes_db = lore_db
+        app = LorePersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _enter_lore(pilot)
+            await _select_first_lore(pilot, screen)
+            # Toggle enabled off — persists and bumps the book version to 2.
+            screen.post_message(LoreBookEnableToggled(enabled=False))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            # Now edit + save settings in the same selection.
+            screen.post_message(LoreBookSettingsSaveRequested({
+                "name": "Blackreach Renamed", "description": "",
+                "scan_depth": 5, "token_budget": 750,
+                "recursive_scanning": True, "enabled": False,
+            }))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            status = str(screen.query_one("#personas-lore-status", Static).renderable)
+            assert "changed since it was loaded" not in status
+            manager = WorldBookManager(lore_db)
+            book = manager.get_world_book(seeded_lore_book["book_id"])
+            assert book["name"] == "Blackreach Renamed"
+            assert book["enabled"] is False and book["scan_depth"] == 5
