@@ -96,6 +96,9 @@ class InspectorApp(App):
     def on_mcp_inspector_reallow_requested(self, event) -> None:
         self.events.append(event)
 
+    def on_mcp_inspector_change_in_permissions_requested(self, event) -> None:
+        self.events.append(event)
+
 
 def _stale_snap() -> ReadinessSnapshot:
     return ReadinessSnapshot(
@@ -1617,6 +1620,292 @@ async def test_show_permission_origin_sentence_falls_back_for_unrecognized_origi
             app.query_one("#mcp-inspector-permission-origin", Static).renderable
         )
         assert origin == "Permission state could not be resolved."
+
+
+# -- Task 3 (MCP Hub Phase 6): cascade provenance ----------------------------
+
+
+@pytest.mark.asyncio
+async def test_show_permission_cascade_none_falls_back_to_origin_sentence():
+    """The default (`cascade=None`, every pre-Task-3 call shape) must
+    render exactly the old single-sentence origin block -- no cascade rungs
+    at all."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_permission(
+            _tool(), EffectiveToolState(state="allow", origin="tool_override")
+        )
+        await pilot.pause()
+        origin = str(app.query_one("#mcp-inspector-permission-origin", Static).renderable)
+        assert origin == "From this tool's override."
+        assert not list(app.query("#mcp-inspector-permission-cascade-tool"))
+        assert not list(app.query("#mcp-inspector-permission-cascade-server"))
+        assert not list(app.query("#mcp-inspector-permission-cascade-global"))
+
+
+@pytest.mark.asyncio
+async def test_show_permission_cascade_tool_override_wins():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_permission(
+            _tool(),
+            EffectiveToolState(state="allow", origin="tool_override"),
+            cascade=("allow", "ask", "ask"),
+        )
+        await pilot.pause()
+        assert not list(app.query("#mcp-inspector-permission-origin"))
+
+        tool_rung = app.query_one("#mcp-inspector-permission-cascade-tool", Static)
+        server_rung = app.query_one("#mcp-inspector-permission-cascade-server", Static)
+        global_rung = app.query_one("#mcp-inspector-permission-cascade-global", Static)
+
+        assert str(tool_rung.renderable) == "▸ Tool override: Allow •"
+        assert str(server_rung.renderable) == "Server default: Ask •"
+        assert str(global_rung.renderable) == "Global default: Ask"
+
+        assert "mcp-status-ready" in tool_rung.classes
+        assert "mcp-status-muted" in server_rung.classes
+        assert "mcp-status-muted" in global_rung.classes
+
+
+@pytest.mark.asyncio
+async def test_show_permission_cascade_server_default_wins_when_tool_unset():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_permission(
+            _tool(),
+            EffectiveToolState(state="ask", origin="server_default"),
+            cascade=(None, "ask", "allow"),
+        )
+        await pilot.pause()
+
+        tool_rung = app.query_one("#mcp-inspector-permission-cascade-tool", Static)
+        server_rung = app.query_one("#mcp-inspector-permission-cascade-server", Static)
+        global_rung = app.query_one("#mcp-inspector-permission-cascade-global", Static)
+
+        assert str(tool_rung.renderable) == "Tool override: —"
+        assert str(server_rung.renderable) == "▸ Server default: Ask •"
+        assert str(global_rung.renderable) == "Global default: Allow"
+
+        assert "mcp-status-muted" in tool_rung.classes
+        assert "mcp-status-warning" in server_rung.classes
+        assert "mcp-status-muted" in global_rung.classes
+
+
+@pytest.mark.asyncio
+async def test_show_permission_cascade_global_default_wins_when_nothing_overridden():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_permission(
+            _tool(),
+            EffectiveToolState(state="ask", origin="global_default"),
+            cascade=(None, None, "ask"),
+        )
+        await pilot.pause()
+
+        tool_rung = app.query_one("#mcp-inspector-permission-cascade-tool", Static)
+        server_rung = app.query_one("#mcp-inspector-permission-cascade-server", Static)
+        global_rung = app.query_one("#mcp-inspector-permission-cascade-global", Static)
+
+        assert str(tool_rung.renderable) == "Tool override: —"
+        assert str(server_rung.renderable) == "Server default: —"
+        assert str(global_rung.renderable) == "▸ Global default: Ask"
+
+        assert "mcp-status-muted" in tool_rung.classes
+        assert "mcp-status-muted" in server_rung.classes
+        assert "mcp-status-warning" in global_rung.classes
+
+
+@pytest.mark.asyncio
+async def test_show_permission_cascade_deny_winner_uses_error_class():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_permission(
+            _tool(),
+            EffectiveToolState(state="deny", origin="tool_override"),
+            cascade=("deny", None, "ask"),
+        )
+        await pilot.pause()
+        tool_rung = app.query_one("#mcp-inspector-permission-cascade-tool", Static)
+        assert str(tool_rung.renderable) == "▸ Tool override: Off •"
+        assert "mcp-status-error" in tool_rung.classes
+
+
+@pytest.mark.asyncio
+async def test_show_tool_effective_block_never_renders_cascade_rungs():
+    """Task 3's cascade wiring is `show_permission()`-only (per the brief) --
+    Tools-mode's own combined call (`show_tool(tool, effective=...)`) keeps
+    rendering the plain origin sentence, never the cascade rungs, since it
+    has no cascade tuple to pass."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(
+            _tool(), effective=EffectiveToolState(state="allow", origin="tool_override")
+        )
+        await pilot.pause()
+        assert app.query_one("#mcp-inspector-permission-origin", Static)
+        assert not list(app.query("#mcp-inspector-permission-cascade-tool"))
+
+
+# -- Task 3 (MCP Hub Phase 6): Change in Permissions cross-mode jump ---------
+
+
+@pytest.mark.asyncio
+async def test_tools_mode_permission_block_renders_change_in_permissions_button():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(
+            _tool(server_key="local:docs", name="search"),
+            effective=EffectiveToolState(state="ask", origin="global_default"),
+        )
+        await pilot.pause()
+        button = app.query_one("#mcp-inspector-goto-permission", Button)
+        assert button.tooltip
+
+        await pilot.click("#mcp-inspector-goto-permission")
+        await pilot.pause()
+        events = [
+            e for e in app.events if isinstance(e, MCPInspector.ChangeInPermissionsRequested)
+        ]
+        assert len(events) == 1
+        assert events[0].server_key == "local:docs"
+        assert events[0].tool_name == "search"
+
+
+@pytest.mark.asyncio
+async def test_standalone_show_permission_never_renders_change_in_permissions_button():
+    """The standalone Permissions-mode entry point (`show_permission()`) is
+    already showing this tool's Permissions-mode row -- jumping there again
+    would be a no-op affordance, so no button is rendered."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_permission(
+            _tool(), EffectiveToolState(state="ask", origin="global_default")
+        )
+        await pilot.pause()
+        assert not list(app.query("#mcp-inspector-goto-permission"))
+
+
+@pytest.mark.asyncio
+async def test_require_confirm_shows_test_panel_change_in_permissions_button():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool(server_key="local:docs", name="search")
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+
+        goto_button = app.query_one("#mcp-inspector-goto-permission-test", Button)
+        assert goto_button.display is False
+        assert goto_button.tooltip
+
+        inspector.require_confirm(None)
+        await pilot.pause()
+        assert goto_button.display is True
+
+        await pilot.click("#mcp-inspector-goto-permission-test")
+        await pilot.pause()
+        events = [
+            e for e in app.events if isinstance(e, MCPInspector.ChangeInPermissionsRequested)
+        ]
+        assert len(events) == 1
+        assert events[0].server_key == "local:docs"
+        assert events[0].tool_name == "search"
+
+
+@pytest.mark.asyncio
+async def test_disarm_test_run_hides_test_panel_change_in_permissions_button():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.require_confirm(None)
+        await pilot.pause()
+        goto_button = app.query_one("#mcp-inspector-goto-permission-test", Button)
+        assert goto_button.display is True
+
+        inspector.disarm_test_run()
+        await pilot.pause()
+        assert goto_button.display is False
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_blocked_shows_test_panel_change_in_permissions_button():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+
+        inspector.show_tool_result(
+            server_key=tool.server_key, tool_name=tool.name, ok=False,
+            text="Blocked — this tool is set to Off in Permissions.", duration_ms=0,
+            blocked=True,
+        )
+        await pilot.pause()
+        goto_button = app.query_one("#mcp-inspector-goto-permission-test", Button)
+        assert goto_button.display is True
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_non_blocked_hides_test_panel_change_in_permissions_button():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.require_confirm(None)
+        await pilot.pause()
+        assert app.query_one("#mcp-inspector-goto-permission-test", Button).display is True
+
+        inspector.show_tool_result(
+            server_key=tool.server_key, tool_name=tool.name, ok=True,
+            text="{}", duration_ms=10,
+        )
+        await pilot.pause()
+        assert app.query_one("#mcp-inspector-goto-permission-test", Button).display is False
+
+
+@pytest.mark.asyncio
+async def test_test_panel_and_permission_block_goto_buttons_coexist_without_duplicate_ids():
+    """Both the Test Tool panel's own button and the Tools-mode permission
+    block's button can be mounted at once (a tool selected with an open Test
+    Tool panel armed to Ask) -- they must carry distinct ids or Textual
+    raises `DuplicateIds`/`TooManyMatches`."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(
+            _tool(), effective=EffectiveToolState(state="ask", origin="global_default")
+        )
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.require_confirm(None)
+        await pilot.pause()
+
+        block_button = app.query_one("#mcp-inspector-goto-permission", Button)
+        test_button = app.query_one("#mcp-inspector-goto-permission-test", Button)
+        assert block_button is not test_button
 
 
 @pytest.mark.asyncio

@@ -538,6 +538,65 @@ async def test_preview_text_renders_verbatim():
         assert str(app.query_one("#mcp-perm-preview", Static).renderable) == preview
 
 
+# -- Task 3 (MCP Hub Phase 6): mutation echo ---------------------------------
+
+
+@pytest.mark.asyncio
+async def test_update_matrix_without_echo_renders_preview_unprefixed():
+    """`echo` defaults to `None` -- every pre-Task-3 `update_matrix()` call
+    site (every full `_sync_children()` pass) must render the preview
+    unchanged, exactly as before this parameter existed."""
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        preview = "global default: ask"
+        await canvas.update_matrix([_global_row()], kill_switch=False, preview=preview)
+        await pilot.pause()
+        assert str(app.query_one("#mcp-perm-preview", Static).renderable) == preview
+
+
+@pytest.mark.asyncio
+async def test_update_matrix_with_echo_prefixes_preview():
+    """A standalone mutation resync (Space-cycle/kill-switch/re-allow) passes
+    `echo` -- the workbench's own transient "{tool_name} → {ui_label} · "
+    (or kill-switch) copy -- and it is prepended verbatim to the preview
+    sentence, with no separator of its own (the echo string already carries
+    its trailing " · ")."""
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        preview = "global default: ask"
+        await canvas.update_matrix(
+            [_global_row()], kill_switch=False, preview=preview, echo="search → Allow · "
+        )
+        await pilot.pause()
+        assert (
+            str(app.query_one("#mcp-perm-preview", Static).renderable)
+            == "search → Allow · global default: ask"
+        )
+
+
+@pytest.mark.asyncio
+async def test_update_matrix_echo_none_clears_a_previously_shown_echo():
+    """The NEXT `update_matrix()` call that passes `echo=None` (a full
+    resync that isn't itself a standalone mutation resync) must clear
+    whatever transient echo a previous call rendered -- no separate "clear"
+    call, just the natural next render."""
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        await canvas.update_matrix(
+            [_global_row()], kill_switch=False, preview="global default: ask",
+            echo="search → Allow · ",
+        )
+        await pilot.pause()
+        await canvas.update_matrix(
+            [_global_row()], kill_switch=False, preview="global default: ask", echo=None,
+        )
+        await pilot.pause()
+        assert str(app.query_one("#mcp-perm-preview", Static).renderable) == "global default: ask"
+
+
 # -- UX batch item 4: marker legend ------------------------------------------
 
 

@@ -4032,8 +4032,12 @@ async def test_preview_shows_override_count_when_no_server_selected(tmp_path):
         await app.workers.wait_for_complete()
         await pilot.pause()
 
+        # Task 3 (MCP Hub Phase 6): the Space-cycle that just ran is a
+        # standalone mutation resync, so the preview also carries its
+        # transient echo prefix now -- the override-count SUFFIX this test
+        # exists to pin is still computed correctly underneath it.
         assert str(preview.renderable) == (
-            "global default: ask · 1 override across 1 server"
+            "search → Allow · global default: ask · 1 override across 1 server"
         )
 
 
@@ -4215,8 +4219,23 @@ async def test_permissions_mode_tool_row_selection_shows_permission_block(tmp_pa
         await pilot.pause()
 
         assert app.query_one("#mcp-inspector-permission").display is True
-        origin = str(app.query_one("#mcp-inspector-permission-origin", Static).renderable)
-        assert origin == "Inherited from the global default."
+        # Task 3 (MCP Hub Phase 6): `show_permission()` routed through the
+        # workbench now carries a cascade tuple -- the plain origin sentence
+        # is superseded by the three provenance rungs; nothing is overridden
+        # here, so the global rung wins.
+        assert not list(app.query("#mcp-inspector-permission-origin"))
+        assert (
+            str(app.query_one("#mcp-inspector-permission-cascade-tool", Static).renderable)
+            == "Tool override: —"
+        )
+        assert (
+            str(app.query_one("#mcp-inspector-permission-cascade-server", Static).renderable)
+            == "Server default: —"
+        )
+        assert (
+            str(app.query_one("#mcp-inspector-permission-cascade-global", Static).renderable)
+            == "▸ Global default: Ask"
+        )
         # Routed through show_permission(), NOT show_tool() -- the full
         # tool-detail-plus-Test-Tool block is Tools mode's own surface.
         assert not list(app.query("#mcp-inspector-tool-name"))
@@ -4245,8 +4264,10 @@ async def test_cycling_the_selected_tool_refreshes_its_open_permission_block(tmp
         table.move_cursor(row=3)  # local:docs::search
         await pilot.press("enter")
         await pilot.pause()
-        origin = str(app.query_one("#mcp-inspector-permission-origin", Static).renderable)
-        assert origin == "Inherited from the global default."
+        assert (
+            str(app.query_one("#mcp-inspector-permission-cascade-global", Static).renderable)
+            == "▸ Global default: Ask"
+        )
 
         await pilot.press("space")  # cycle_ui_state(None) == "allow"
         await pilot.pause()
@@ -4254,9 +4275,13 @@ async def test_cycling_the_selected_tool_refreshes_its_open_permission_block(tmp
         await pilot.pause()
 
         state = str(app.query_one("#mcp-inspector-permission-state", Static).renderable)
-        origin = str(app.query_one("#mcp-inspector-permission-origin", Static).renderable)
         assert state == "Permission: Allow"
-        assert origin == "From this tool's override."
+        # Task 3: the cascade rungs refresh along with the origin used to --
+        # the tool rung now wins with the freshly-cycled override.
+        assert (
+            str(app.query_one("#mcp-inspector-permission-cascade-tool", Static).renderable)
+            == "▸ Tool override: Allow •"
+        )
 
 
 @pytest.mark.asyncio
@@ -4326,6 +4351,317 @@ async def test_reallow_round_trip_clears_config_changed_marker_and_matrix_warnin
 
         assert _perm_table_texts(app, 3) == ["  search", "Allow •"]
         assert not list(app.query("#mcp-inspector-reallow"))
+
+
+# -- Task 3 (MCP Hub Phase 6): cascade provenance end-to-end -----------------
+
+
+@pytest.mark.asyncio
+async def test_permissions_row_selection_cascade_marks_tool_override_as_winner(tmp_path):
+    store_path = tmp_path / "mcp_permissions.json"
+    MCPPermissionStore(store_path).set_tool_state(
+        "local:docs", "search", "allow", definition_hash="anything"
+    )
+    app = PermissionsApp(store_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=3)  # local:docs::search
+        await pilot.press("enter")
+        await pilot.pause()
+
+        tool_rung = app.query_one("#mcp-inspector-permission-cascade-tool", Static)
+        assert "▸" in str(tool_rung.renderable)
+        assert "mcp-status-ready" in tool_rung.classes
+
+
+@pytest.mark.asyncio
+async def test_permissions_row_selection_cascade_marks_server_default_as_winner(tmp_path):
+    store_path = tmp_path / "mcp_permissions.json"
+    MCPPermissionStore(store_path).set_server_default("local:docs", "deny")
+    app = PermissionsApp(store_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=3)  # local:docs::search -- inherits the server default
+        await pilot.press("enter")
+        await pilot.pause()
+
+        tool_rung = app.query_one("#mcp-inspector-permission-cascade-tool", Static)
+        server_rung = app.query_one("#mcp-inspector-permission-cascade-server", Static)
+        assert str(tool_rung.renderable) == "Tool override: —"
+        assert str(server_rung.renderable) == "▸ Server default: Off •"
+        assert "mcp-status-error" in server_rung.classes
+        assert "mcp-status-muted" in tool_rung.classes
+
+
+@pytest.mark.asyncio
+async def test_reallow_refreshes_cascade_with_tool_rung_as_winner(tmp_path):
+    store_path = tmp_path / "mcp_permissions.json"
+    MCPPermissionStore(store_path).set_tool_state(
+        "local:docs", "search", "allow", definition_hash="stale-hash-from-a-different-tool-shape"
+    )
+    app = PermissionsApp(store_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=3)
+        await pilot.press("enter")
+        await pilot.pause()
+
+        await pilot.click("#mcp-inspector-reallow")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        tool_rung = app.query_one("#mcp-inspector-permission-cascade-tool", Static)
+        assert str(tool_rung.renderable) == "▸ Tool override: Allow •"
+        assert "mcp-status-ready" in tool_rung.classes
+
+
+# -- Task 3 (MCP Hub Phase 6): Change in Permissions cross-mode jump --------
+
+
+@pytest.mark.asyncio
+async def test_tools_mode_permission_block_change_button_jumps_to_permissions_row():
+    app = ToolTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
+        assert app.query_one("#mcp-inspector-permission").display is True
+
+        await pilot.click("#mcp-inspector-goto-permission")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert workbench.active_mode == "permissions"
+        perm_table = app.query_one("#mcp-perm-table", DataTable)
+        cursor_key, _ = perm_table.coordinate_to_cell_key((perm_table.cursor_row, 0))
+        assert cursor_key.value == "local:docs::fetch"
+        permission_text = str(app.query_one("#mcp-inspector-permission-tool", Static).renderable)
+        assert "fetch" in permission_text
+
+
+@pytest.mark.asyncio
+async def test_test_tool_blocked_change_button_jumps_to_permissions_row():
+    app = ToolTestApp()
+    app.unified_mcp_service.gate_state = "deny"
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        goto_button = app.query_one("#mcp-inspector-goto-permission-test", Button)
+        assert goto_button.display is True
+
+        await pilot.click("#mcp-inspector-goto-permission-test")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert workbench.active_mode == "permissions"
+        perm_table = app.query_one("#mcp-perm-table", DataTable)
+        cursor_key, _ = perm_table.coordinate_to_cell_key((perm_table.cursor_row, 0))
+        assert cursor_key.value == "local:docs::fetch"
+
+
+@pytest.mark.asyncio
+async def test_goto_permission_row_is_the_single_shared_implementation_for_all_three_triggers(
+    monkeypatch,
+):
+    """The brief's "no duplication" requirement, proven behaviorally: the
+    audit drill's "Adjust permission" button, the Tools-mode permission
+    block's "Change in Permissions" button, and the Test Tool panel's own
+    blocked-result button all route through the exact same
+    `MCPWorkbench._goto_permission_row()` coroutine -- spied here so a
+    regression that reintroduces a second, drifted copy for any of the three
+    would be caught even if their end-to-end OUTCOMES still happened to
+    match."""
+    # "fetch" (not "search") throughout -- "fetch" is raw/no-required-fields
+    # (mirrors `test_deny_gate_blocks_without_calling_service`'s own row-0
+    # choice for exactly this reason); "search" has a required "query"
+    # field, so an empty Test Tool Run would raise inside the inspector's
+    # own `form.collect_arguments()` before `ToolTestRequested` is even
+    # posted -- never reaching the gate check trigger 3 needs.
+    app = AuditApp([_audit_record(server_key="local:docs", tool_name="fetch")])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        calls: list[tuple[str, str]] = []
+        original = MCPWorkbench._goto_permission_row
+
+        async def _spy(self, server_key, tool_name):
+            calls.append((server_key, tool_name))
+            await original(self, server_key, tool_name)
+
+        monkeypatch.setattr(MCPWorkbench, "_goto_permission_row", _spy)
+
+        # Trigger 1: the audit drill's own "Adjust permission" button.
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await _select_audit_mode_row(app, pilot, 0)
+        await pilot.click("#mcp-audit-adjust-permission")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        # Trigger 2: the Tools-mode permission block's own button.
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
+        await pilot.click("#mcp-inspector-goto-permission")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        # Trigger 3: the Test Tool panel's own button (blocked path).
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
+        app.unified_mcp_service.gate_state = "deny"
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-goto-permission-test")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert calls == [
+            ("local:docs", "fetch"),
+            ("local:docs", "fetch"),
+            ("local:docs", "fetch"),
+        ]
+
+
+# -- Task 3 (MCP Hub Phase 6): mutation echo ---------------------------------
+
+
+@pytest.mark.asyncio
+async def test_space_cycle_prefixes_preview_with_mutation_echo(tmp_path):
+    app = PermissionsApp(tmp_path / "mcp_permissions.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=3)  # local:docs::search
+        await pilot.press("space")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        preview = str(app.query_one("#mcp-perm-preview", Static).renderable)
+        assert preview.startswith("search → Allow · ")
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_toggle_prefixes_preview_with_echo(tmp_path):
+    app = PermissionsApp(tmp_path / "mcp_permissions.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        await pilot.click("#mcp-perm-kill-switch")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        preview = str(app.query_one("#mcp-perm-preview", Static).renderable)
+        assert preview.startswith("kill switch → on · ")
+
+
+@pytest.mark.asyncio
+async def test_reallow_prefixes_preview_with_echo(tmp_path):
+    store_path = tmp_path / "mcp_permissions.json"
+    MCPPermissionStore(store_path).set_tool_state(
+        "local:docs", "search", "allow", definition_hash="stale-hash-from-a-different-tool-shape"
+    )
+    app = PermissionsApp(store_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=3)
+        await pilot.press("enter")
+        await pilot.pause()
+
+        await pilot.click("#mcp-inspector-reallow")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        preview = str(app.query_one("#mcp-perm-preview", Static).renderable)
+        assert preview.startswith("search → Allow · ")
+
+
+@pytest.mark.asyncio
+async def test_full_resync_clears_mutation_echo(tmp_path):
+    app = PermissionsApp(tmp_path / "mcp_permissions.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=3)  # local:docs::search
+        await pilot.press("space")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        preview = str(app.query_one("#mcp-perm-preview", Static).renderable)
+        assert preview.startswith("search → Allow · ")
+
+        # A full `_sync_children()` pass isn't itself a standalone mutation
+        # resync -- it must clear the echo without anyone calling a
+        # dedicated "clear" method.
+        await workbench._sync_children()
+        await pilot.pause()
+
+        preview = str(app.query_one("#mcp-perm-preview", Static).renderable)
+        assert not preview.startswith("search → Allow · ")
+        assert preview == "global default: ask · 1 override across 1 server"
 
 
 @pytest.mark.asyncio

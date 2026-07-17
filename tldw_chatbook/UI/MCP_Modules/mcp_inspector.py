@@ -129,6 +129,79 @@ _CONFIG_CHANGED_NOTICE = "Definition changed since you allowed it."
 _RISK_FLOORED_NOTICE = "High-risk tool — asks even though the inherited default is Allow."
 _REALLOW_TOOLTIP = "Store the new definition hash and allow again."
 
+# Task 3 (MCP Hub Phase 6): cascade provenance -- `show_permission()`'s
+# `cascade` tuple, when given, replaces the single `_ORIGIN_SENTENCES`
+# sentence above with three rungs (tool override / server default / global
+# default), so a user can see the WHOLE precedence chain at once instead of
+# just where the winning value came from. `_GOTO_PERMISSION_TOOLTIP` is
+# shared by both "Change in Permissions" buttons below (Task 3) -- one
+# copy, so the two call sites can never drift.
+_GOTO_PERMISSION_TOOLTIP = "Switch to Permissions mode and select this tool's row."
+
+
+def _cascade_rungs(cascade: tuple[str | None, str | None, str]) -> list[Static]:
+    """Build the three provenance-rung Statics for `show_permission()`'s
+    `cascade` tuple: `(tool_entry_state, server_default, global_default)`,
+    the raw STORE values straight off the permission-store payload for one
+    tool -- the SAME values `MCPWorkbench._build_permission_rows()` already
+    derives per tool (`PermRow.cycle_current`) and per server
+    (`server_cycle_current`), just packaged as one tuple per tool instead of
+    split across matrix rows.
+
+    Precedence mirrors `resolve_effective_state()`: the first non-`None`
+    rung, tool -> server -> global, is the WINNING rung -- prefixed `▸ ` and
+    colored by its resolved verdict (`tool_state_kind()`, the T1 kind->class
+    helper, via the existing `.mcp-status-{ready|warning|error}` classes);
+    the other two rungs are dimmed (`.mcp-status-muted`, defined in this
+    widget's own `DEFAULT_CSS` below -- no such class existed in the shared
+    bundle yet). `global_default` is never `None` (a permission store always
+    resolves SOME global default), so a winner always exists.
+
+    A set rung's value carries a trailing `" •"` marker -- whether or not it
+    wins -- the same "an explicit override is set at this level" convention
+    `_build_permission_rows()` already uses for a server row's own label; an
+    unset rung renders `"—"`. The global rung never carries the marker (it
+    has no parent level to override).
+    """
+    tool_state, server_state, global_state = cascade
+    if tool_state is not None:
+        winner = "tool"
+    elif server_state is not None:
+        winner = "server"
+    else:
+        winner = "global"
+    rungs = (
+        ("tool", "Tool override", tool_state, "tool_override"),
+        ("server", "Server default", server_state, "server_default"),
+        ("global", "Global default", global_state, "global_default"),
+    )
+    widgets: list[Static] = []
+    for key, label, state, origin in rungs:
+        if state is None:
+            value_text = "—"
+        elif key == "global":
+            # The global rung has no parent level to override -- never
+            # marked, even though it always carries a concrete state.
+            value_text = EffectiveToolState(state=state, origin=origin).ui_label
+        else:
+            value_text = f"{EffectiveToolState(state=state, origin=origin).ui_label} •"
+        is_winner = key == winner
+        prefix = "▸ " if is_winner else ""
+        classes = "ds-field-row"
+        if is_winner:
+            assert state is not None, "the winning rung always has a concrete state"
+            classes += f" mcp-status-{tool_state_kind(EffectiveToolState(state=state, origin=origin))}"
+        else:
+            classes += " mcp-status-muted"
+        widgets.append(
+            Static(
+                f"{prefix}{label}: {value_text}",
+                id=f"mcp-inspector-permission-cascade-{key}",
+                classes=classes, markup=False,
+            )
+        )
+    return widgets
+
 
 def format_duration_ms(duration_ms: int) -> str:
     """Format a duration in milliseconds for a status line or detail dump.
@@ -370,6 +443,18 @@ class MCPInspector(Vertical):
         color: $text-muted;
         text-style: none;
     }
+    /* Task 3 (MCP Hub Phase 6): dims a non-winning cascade-provenance rung
+    (`_cascade_rungs()` above) -- the shared bundle
+    (`css/tldw_cli_modular.tcss`) defines `.mcp-status-ready/-warning/-error/
+    -info` (Task 1) but no `-muted` variant yet. Scoped here rather than
+    added to the bundle for the same reason as the disabled-button rule just
+    above: this widget's own unit tests (test_mcp_inspector.py) mount it
+    without that bundle, and the raw `$text-muted` token (not the `$ds-text-
+    muted` alias) is what those two currently resolve to anyway (see
+    `css/core/_variables.tcss`) -- not a visual compromise. */
+    .mcp-status-muted {
+        color: $text-muted;
+    }
     """
 
     class HubActionRequested(Message, namespace="mcp_inspector"):
@@ -438,6 +523,26 @@ class MCPInspector(Vertical):
         view. Same resolve-then-route contract as `AuditOpenToolRequested`,
         but switches to Permissions mode and moves the matrix cursor to the
         tool's row instead."""
+
+        def __init__(self, server_key: str, tool_name: str) -> None:
+            super().__init__()
+            self.server_key = server_key
+            self.tool_name = tool_name
+
+    class ChangeInPermissionsRequested(Message, namespace="mcp_inspector"):
+        """Posted by either "Change in Permissions" button (Task 3, MCP Hub
+        Phase 6): the Tools-mode permission block's own button
+        (`#mcp-inspector-goto-permission`, `_render_permission_container()`'s
+        `show_goto_button` path -- rendered only for `show_tool()`'s
+        combined call, never the standalone Permissions-mode
+        `show_permission()`) and the Test Tool panel's blocked/ask button
+        (`#mcp-inspector-goto-permission-test`, shown by `require_confirm()`
+        for "ask" and `show_tool_result(blocked=True, ...)` for "deny").
+
+        Both route through `MCPWorkbench._goto_permission_row()` -- the SAME
+        shared helper the audit drill's `AuditAdjustPermissionRequested`
+        already uses: one implementation, three callers, no duplicated
+        mode-switch-plus-matrix-row-selection logic."""
 
         def __init__(self, server_key: str, tool_name: str) -> None:
             super().__init__()
@@ -813,10 +918,22 @@ class MCPInspector(Vertical):
                     )
                 )
             await container.mount_all(widgets)
-            await self._render_permission_container(tool, effective)
+            # Task 3 (MCP Hub Phase 6): `show_goto_button=True` -- Tools-
+            # mode's own combined call gets the "Change in Permissions" jump
+            # button; the standalone `show_permission()` below does not
+            # (jumping to the Permissions-mode row you're already looking at
+            # would be a no-op affordance). Never passes `cascade` -- that
+            # wiring is `show_permission()`-only per the brief, so this path
+            # keeps rendering the plain origin sentence.
+            await self._render_permission_container(tool, effective, show_goto_button=True)
 
     async def _render_permission_container(
-        self, tool: HubTool | None, effective: EffectiveToolState | None
+        self,
+        tool: HubTool | None,
+        effective: EffectiveToolState | None,
+        *,
+        cascade: tuple[str | None, str | None, str] | None = None,
+        show_goto_button: bool = False,
     ) -> None:
         """Rebuild `#mcp-inspector-permission` for one tool's resolved
         permission state, or hide it.
@@ -830,6 +947,15 @@ class MCPInspector(Vertical):
         covers an outright cleared selection (`show_tool(None)`) and a tool
         selected with no permission context supplied (`show_tool(tool)`,
         the plain T6 call shape every pre-Task-7 call site still uses).
+
+        Task 3 (MCP Hub Phase 6): `cascade`, when given (`show_permission()`
+        only), renders the three provenance rungs (`_cascade_rungs()`)
+        instead of the single `_ORIGIN_SENTENCES` sentence; `None` (every
+        other call shape, and a `show_permission()` caller with nothing to
+        report) keeps the old sentence. `show_goto_button` mounts the
+        "Change in Permissions" jump button (`#mcp-inspector-goto-
+        permission`) -- `show_tool()`'s own call site only; see its
+        docstring.
         """
         container = self.query_one("#mcp-inspector-permission", Vertical)
         await container.remove_children()
@@ -866,11 +992,16 @@ class MCPInspector(Vertical):
                 classes=f"ds-field-row mcp-status-{tool_state_kind(effective)}",
                 markup=False,
             ),
-            Static(
-                _ORIGIN_SENTENCES.get(effective.origin, _UNKNOWN_ORIGIN_SENTENCE),
-                id="mcp-inspector-permission-origin", classes="ds-field-row", markup=False,
-            ),
         ]
+        if cascade is not None:
+            widgets.extend(_cascade_rungs(cascade))
+        else:
+            widgets.append(
+                Static(
+                    _ORIGIN_SENTENCES.get(effective.origin, _UNKNOWN_ORIGIN_SENTENCE),
+                    id="mcp-inspector-permission-origin", classes="ds-field-row", markup=False,
+                )
+            )
         if effective.config_changed:
             widgets.append(
                 Static(
@@ -892,9 +1023,23 @@ class MCPInspector(Vertical):
                     id="mcp-inspector-permission-notice", classes="ds-field-row", markup=False,
                 )
             )
+        if show_goto_button:
+            widgets.append(
+                Button(
+                    "Change in Permissions", id="mcp-inspector-goto-permission",
+                    classes="console-action-secondary", compact=True,
+                    tooltip=_GOTO_PERMISSION_TOOLTIP,
+                )
+            )
         await container.mount_all(widgets)
 
-    async def show_permission(self, tool: HubTool, effective: EffectiveToolState) -> None:
+    async def show_permission(
+        self,
+        tool: HubTool,
+        effective: EffectiveToolState,
+        *,
+        cascade: tuple[str | None, str | None, str] | None = None,
+    ) -> None:
         """Render `#mcp-inspector-permission` standalone -- Permissions-mode's
         matrix tool-row selection entry point
         (`MCPWorkbench.on_mcp_permissions_mode_row_selected()`).
@@ -907,9 +1052,15 @@ class MCPInspector(Vertical):
         interleave their remove/mount cycles into `DuplicateIds` (mandatory
         regression, mirrors
         `test_second_show_tool_back_to_back_does_not_duplicate_ids`).
+
+        Task 3 (MCP Hub Phase 6): `cascade` is the raw
+        `(tool_entry_state, server_default, global_default)` tuple the
+        workbench already derives per tool while building the Permissions
+        matrix (`MCPWorkbench._build_permission_rows()`) -- `None` (the
+        default) falls back to the pre-Task-3 single origin sentence.
         """
         async with self._refresh_lock:
-            await self._render_permission_container(tool, effective)
+            await self._render_permission_container(tool, effective, cascade=cascade)
 
     async def show_audit_entry(self, entry: dict[str, Any] | None) -> None:
         """Render `#mcp-inspector-audit` for one execution-log entry, or hide it.
@@ -1115,9 +1266,30 @@ class MCPInspector(Vertical):
             # docstring.
             Static("", id="mcp-inspector-test-arm-notice", classes="ds-field-row", markup=False),
             Static("", id="mcp-inspector-test-result", classes="ds-field-row", markup=False),
+            # Task 3 (MCP Hub Phase 6): the Test Tool panel's own "Change in
+            # Permissions" jump button -- mounted once, hidden (`display =
+            # False`) until `require_confirm()` (ask) or `show_tool_result
+            # (blocked=True, ...)` (deny) reveals it; `disarm_test_run()` and
+            # a non-blocked `show_tool_result()` hide it again. A distinct id
+            # from the Tools-mode permission block's own button
+            # (`#mcp-inspector-goto-permission`) -- both can be mounted at
+            # once (this same tool selected, its permission block shown
+            # below the detail, AND this panel open+armed), and `query_one`
+            # requires a unique id across the whole subtree.
+            self._build_test_goto_permission_button(),
             id="mcp-inspector-test-panel",
         )
         await container.mount(panel)
+
+    @staticmethod
+    def _build_test_goto_permission_button() -> Button:
+        button = Button(
+            "Change in Permissions", id="mcp-inspector-goto-permission-test",
+            classes="console-action-secondary", compact=True,
+            tooltip=_GOTO_PERMISSION_TOOLTIP,
+        )
+        button.display = False
+        return button
 
     @property
     def current_tool(self) -> HubTool | None:
@@ -1238,6 +1410,15 @@ class MCPInspector(Vertical):
             pass
         else:
             notice_widget.update(notice or "")
+        # Task 3 (MCP Hub Phase 6): every arm is an "ask" gate resolution
+        # (this method's own docstring) -- reveal the jump button so the
+        # user can go fix the permission instead of confirming blind.
+        try:
+            goto_button = self.query_one("#mcp-inspector-goto-permission-test", Button)
+        except NoMatches:
+            pass
+        else:
+            goto_button.display = True
 
     def disarm_test_run(self) -> None:
         """Revert the Run button to its normal, unarmed state (no-op if
@@ -1273,6 +1454,16 @@ class MCPInspector(Vertical):
             pass
         else:
             notice_widget.update("")
+        # Task 3: "any other interaction disarms" (this method's own
+        # docstring) applies to the jump button's own visibility too -- a
+        # confirming press, a tool switch, or Close all hide it again,
+        # mirroring the hint/notice clears just above.
+        try:
+            goto_button = self.query_one("#mcp-inspector-goto-permission-test", Button)
+        except NoMatches:
+            pass
+        else:
+            goto_button.display = False
 
     def _handle_test_run(self) -> None:
         tool = self._current_tool
@@ -1343,6 +1534,18 @@ class MCPInspector(Vertical):
             self.query_one("#mcp-inspector-test-run", Button).disabled = False
         except NoMatches:
             pass
+        # Task 3 (MCP Hub Phase 6): `blocked=True` is the deny-gate's
+        # synthetic result (this method's own docstring) -- reveal the jump
+        # button there; any other outcome (a real, non-blocked run) hides it,
+        # covering the ask-then-confirmed-run case too (the Run press that
+        # consumed the arm already disarmed it via `disarm_test_run()`, but
+        # this keeps the button's state correct even if that ever changes).
+        try:
+            goto_button = self.query_one("#mcp-inspector-goto-permission-test", Button)
+        except NoMatches:
+            pass
+        else:
+            goto_button.display = blocked
 
     # -- advanced escape hatch -----------------------------------------------
 
@@ -1520,6 +1723,26 @@ class MCPInspector(Vertical):
             tool = self._current_permission_tool
             if tool is not None:
                 self.post_message(self.ReallowRequested(tool.server_key, tool.name))
+            return
+        if button_id == "mcp-inspector-goto-permission":
+            # Task 3: the Tools-mode permission block's own jump button --
+            # `_current_permission_tool` is the SAME tool `show_tool()`'s
+            # `effective` block is currently describing (set by
+            # `_render_permission_container()`, this button's own mount
+            # site).
+            event.stop()
+            tool = self._current_permission_tool
+            if tool is not None:
+                self.post_message(self.ChangeInPermissionsRequested(tool.server_key, tool.name))
+            return
+        if button_id == "mcp-inspector-goto-permission-test":
+            # Task 3: the Test Tool panel's own jump button -- always
+            # describes `_current_tool` (the panel only ever exists for that
+            # tool; see `_mount_test_tool_panel()`).
+            event.stop()
+            tool = self._current_tool
+            if tool is not None:
+                self.post_message(self.ChangeInPermissionsRequested(tool.server_key, tool.name))
             return
         if button_id == "mcp-audit-open-tool":
             event.stop()

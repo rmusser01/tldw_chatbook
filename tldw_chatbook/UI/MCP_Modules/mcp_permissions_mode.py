@@ -438,7 +438,7 @@ class MCPPermissionsMode(Vertical):
     # -- data -----------------------------------------------------------
 
     async def update_matrix(
-        self, rows: list[PermRow], *, kill_switch: bool, preview: str
+        self, rows: list[PermRow], *, kill_switch: bool, preview: str, echo: str | None = None
     ) -> None:
         """Rebuild the matrix from a fresh `PermRow` list.
 
@@ -447,6 +447,19 @@ class MCPPermissionsMode(Vertical):
         `_last_hub_tools` + `effective_tool_states()`); this widget is
         render-only, same division of labor as `MCPToolsMode.update_tools()`
         versus `filter_tools()`.
+
+        Task 3 (MCP Hub Phase 6): `echo`, when given, is prepended verbatim
+        to `preview` for this one render -- the workbench's transient
+        mutation-confirmation copy (`"{tool_name} → {ui_label} · "` after a
+        Space-cycle/re-allow, `"kill switch → on/off · "` after a kill-switch
+        toggle), already carrying its own trailing `" · "` separator so no
+        extra punctuation is added here. `None` (every full `_sync_children()`
+        pass, i.e. every resync that isn't itself a standalone mutation
+        resync) renders `preview` unprefixed -- this is how a previously
+        shown echo clears: there is no separate "clear" call, just the next
+        ordinary render passing `echo=None`. Plain state, not persisted
+        anywhere -- a resize/redraw with no new `update_matrix()` call simply
+        keeps whatever this Static already shows.
 
         Minor 7 (DuplicateKey guard parity): two `PermRow`s sharing the
         same `_row_key()` identity would raise Textual's `DuplicateKey`
@@ -536,7 +549,7 @@ class MCPPermissionsMode(Vertical):
             # default -- row 0 -- the same graceful fallback
             # `_restore_overview_cursor()` uses.
 
-        self.query_one("#mcp-perm-preview", Static).update(preview)
+        self.query_one("#mcp-perm-preview", Static).update(f"{echo}{preview}" if echo else preview)
 
     async def update_server_profiles(
         self, profiles: list[Mapping[str, Any]] | None
