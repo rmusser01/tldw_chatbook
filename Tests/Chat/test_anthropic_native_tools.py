@@ -250,3 +250,48 @@ def test_text_only_response_has_no_tool_calls_key(mock_post):
     message = result["choices"][0]["message"]
 
     assert "tool_calls" not in message
+
+
+@patch("requests.Session.post")
+def test_tool_use_only_response_has_empty_content_and_tool_calls(mock_post):
+    """T2 review Minor: a response carrying ONLY tool_use blocks (no text
+    parts) must normalize to content == "" with tool_calls present and
+    finish_reason "tool_calls"."""
+    response = {"id": "msg_4", "type": "message", "role": "assistant",
+                "model": "claude-x",
+                "content": [{"type": "tool_use", "id": "toolu_O",
+                             "name": "calculator",
+                             "input": {"expression": "1+1"}}],
+                "stop_reason": "tool_use",
+                "usage": {"input_tokens": 2, "output_tokens": 3}}
+    result = _call_anthropic_get_result(
+        mock_post, response, [{"role": "user", "content": "1+1?"}])
+    choice = result["choices"][0]
+    assert choice["message"]["content"] == ""
+    assert choice["finish_reason"] == "tool_calls"
+    assert choice["message"]["tool_calls"][0]["id"] == "toolu_O"
+
+
+@patch("requests.Session.post")
+def test_junk_tool_use_blocks_normalize_parseably(mock_post):
+    """T2 review Minor: response-side junk — a tool_use block with input
+    None must emit arguments "{}" (never "null"); a nameless block emits an
+    empty-name entry that downstream parse_native_tool_calls DROPS without
+    crashing (pinned here end-to-end)."""
+    from tldw_chatbook.Agents.native_tools import parse_native_tool_calls
+    response = {"id": "msg_5", "type": "message", "role": "assistant",
+                "model": "claude-x",
+                "content": [
+                    {"type": "tool_use", "id": "toolu_N",
+                     "name": "calculator", "input": None},
+                    {"type": "tool_use", "id": "toolu_E", "name": "",
+                     "input": {"x": 1}}],
+                "stop_reason": "tool_use",
+                "usage": {"input_tokens": 2, "output_tokens": 3}}
+    result = _call_anthropic_get_result(
+        mock_post, response, [{"role": "user", "content": "go"}])
+    entries = result["choices"][0]["message"]["tool_calls"]
+    assert entries[0]["function"]["arguments"] == "{}"
+    parsed = parse_native_tool_calls(result["choices"][0]["message"])
+    assert [(c.name, c.args, c.call_id) for c in parsed] == [
+        ("calculator", {}, "toolu_N")]  # nameless entry dropped, no crash
