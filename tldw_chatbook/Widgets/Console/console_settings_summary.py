@@ -31,7 +31,17 @@ class ConsoleSettingsSummary(Vertical):
         self.styles.max_height = CONSOLE_SETTINGS_SUMMARY_MAX_HEIGHT
 
     def sync_state(self, state: ConsoleSettingsSummaryState) -> None:
-        """Refresh the summary from a new state snapshot."""
+        """Refresh the summary from a new state snapshot.
+
+        No-ops when ``state`` equals the currently-applied snapshot
+        (task-280: the Console 0.2s tick calls this unconditionally).
+
+        Args:
+            state: Latest settings-summary display state.
+
+        Returns:
+            None.
+        """
         if state == self.state:
             return
         self.state = state

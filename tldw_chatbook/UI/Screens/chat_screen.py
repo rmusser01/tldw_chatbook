@@ -1304,7 +1304,6 @@ class ChatScreen(BaseAppScreen):
         # changed since the last successful apply).
         self._console_agent_section_last: tuple[str, str, str, bool] | None = None
         self._console_rail_system_line_last: tuple[str, bool] | None = None
-        self._console_copy_block_last: dict[int, tuple[str, bool]] = {}
         self._console_rail_prune_dispatched = False
         self._console_workspace_conversation_query = ""
         self._console_workspace_conversation_search_timer: Any | None = None
@@ -5005,7 +5004,17 @@ class ChatScreen(BaseAppScreen):
                 pass
             else:
                 details_tray.sync_state(state)
-            if state_changed:
+            # PR #660 review: a full-screen recompose constructs a FRESH tray
+            # already carrying the current state, so `state_changed` alone
+            # would never re-kick the legacy-alias worker after a recompose —
+            # leaving the transitional "New conversation" alias unmounted.
+            # The kicked-marker lives on the tray instance (dies with it), so
+            # a fresh tray always gets one kick regardless of state equality.
+            alias_kick_needed = state_changed or not getattr(
+                workspace_context, "_console_alias_kick_done", False
+            )
+            if alias_kick_needed:
+                workspace_context._console_alias_kick_done = True
                 self.call_after_refresh(
                     lambda: self.run_worker(
                         self._sync_console_legacy_workspace_context_aliases,
@@ -5856,18 +5865,24 @@ class ChatScreen(BaseAppScreen):
     ) -> None:
         """Update a compact Console status copy block without remounting it.
 
-        TASK-251: skips the ``.update()``/style writes when both the copy
+        task-280: skips the ``.update()``/style writes when both the copy
         and the show/hide state already match what was last applied to this
-        exact widget instance. Cached by ``id(widget)`` (object identity),
-        not the widget's DOM id -- a full-screen recompose (e.g.
-        ``_stage_console_library_rag_launch``) destroys and reconstructs
-        these widgets from scratch with no styles pre-applied, so keying on
-        the DOM id alone could skip the very first apply on a fresh
-        instance and leave it visually wrong (unset display/height).
+        exact widget instance. The applied tuple is stored ON the widget
+        (PR #660 review): it dies with the widget, so a recomposed fresh
+        instance always gets its first apply, nothing accumulates across
+        recomposes, and a recycled ``id()`` can never alias a new widget to
+        a dead one's cache entry.
+
+        Args:
+            widget: The Static copy block being configured.
+            copy: The status copy to display (may be empty).
+            visible: Whether the block should be shown at all.
+
+        Returns:
+            None.
         """
-        cache_key = id(widget)
         cache_value = (copy, visible)
-        if self._console_copy_block_last.get(cache_key) == cache_value:
+        if getattr(widget, "_console_copy_block_applied", None) == cache_value:
             return
         should_show = visible and bool(copy.strip())
         widget.update(copy if should_show else "")
@@ -5882,7 +5897,7 @@ class ChatScreen(BaseAppScreen):
             widget.styles.height = 0
             widget.styles.min_height = 0
             widget.styles.max_height = 0
-        self._console_copy_block_last[cache_key] = cache_value
+        widget._console_copy_block_applied = cache_value
 
     def _sync_console_transcript_guidance(self) -> None:
         """Refresh Console onboarding and provider recovery copy in place."""
@@ -7843,10 +7858,14 @@ class ChatScreen(BaseAppScreen):
             # build already sees the freshly recomputed cache instead of one
             # stale frame behind.
             await self._refresh_active_dictionaries_summary_if_scope_changed()
-            # TASK-251 (now task-280): compute once and hand it to
-            # `_sync_console_control_bar` -- it used to be computed
-            # independently here AND inside that call (which itself rebuilds
-            # workspace-context/inspector state), doubling that work every tick.
+            # task-280: hand the control bar a pre-await snapshot (its own
+            # pre-existing timing). The rail-VISIBILITY call below must NOT
+            # reuse this snapshot: `_sync_console_native_session_tabs` can
+            # create/activate a session, changing what the rail derivation
+            # sees, and pre-task-280 the visibility check always computed
+            # fresh post-await state (PR #660 review caught the reuse as a
+            # staleness regression — the one-tuple-per-tick dedupe is
+            # withdrawn for the visibility half).
             rail_state = self._current_console_rail_state()
             self._sync_console_control_bar(rail_state)
             self._sync_console_settings_summary()
@@ -7854,7 +7873,9 @@ class ChatScreen(BaseAppScreen):
             await self._sync_console_native_session_tabs()
             self._sync_console_workspace_context()
             await self._sync_native_console_transcript_to_legacy_surface()
-            self._sync_console_rail_visibility_if_changed(rail_state)
+            self._sync_console_rail_visibility_if_changed(
+                self._current_console_rail_state()
+            )
             self._dispatch_console_rail_preference_prune()
         finally:
             self._record_ui_worker_finished("console-sync")
