@@ -353,38 +353,42 @@ class TestWorkbenchShell:
             assert "Mode: Dictionaries" in str(status.renderable)
 
     async def test_placeholder_modes_show_placeholder_panel(self, mock_app_instance, stub_characters):
+        """"prompts" is the one remaining placeholder mode: dictionaries shipped
+        in Roleplay P1a and lore shipped in Roleplay P2a (Task 6); prompts is
+        retired to the Library (Task 7) and has no chip, so it is reached
+        directly via ``_apply_mode`` rather than a chip click."""
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
-            # Lore is the one remaining planned mode: dictionaries shipped in
-            # Roleplay P1a and prompts are retired to the Library (Task 7).
-            await pilot.click("#personas-mode-lore")
+            await screen._apply_mode("prompts")
             await pilot.pause()
-            assert screen.state.active_mode == "lore"
+            assert screen.state.active_mode == "prompts"
             placeholder = screen.query_one("#personas-mode-placeholder", Static)
             assert placeholder.display is True
-            # Roleplay P0 copy: planned modes read "Coming soon" with a purpose line.
-            assert "Coming soon" in str(placeholder.renderable)
-            assert "is-active" in screen.query_one("#personas-mode-lore", Button).classes
+            assert "moving to the Library" in str(placeholder.renderable)
 
     async def test_mode_chips_are_self_explaining_and_mark_coming_soon(self, mock_app_instance, stub_characters):
+        """All chip modes are live now (Lore shipped in Roleplay P2a Task 6);
+        no chip carries the "soon" suffix anymore."""
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             lore_chip = screen.query_one("#personas-mode-lore", Button)
             assert lore_chip.tooltip == "Lore — world facts injected on keywords."
-            assert "soon" in str(lore_chip.label).lower()
+            assert "soon" not in str(lore_chip.label).lower()
             char_chip = screen.query_one("#personas-mode-characters", Button)
             assert "soon" not in str(char_chip.label).lower()
 
     async def test_coming_soon_mode_shows_inviting_copy(self, mock_app_instance, stub_characters):
+        """"prompts" is the last mode still rendered as a placeholder (retired
+        to the Library, Task 7) - lore now has its own live detail view."""
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
-            await screen._apply_mode("lore")
+            await screen._apply_mode("prompts")
             await pilot.pause()
             body = str(screen.query_one("#personas-mode-placeholder", Static).renderable)
-            assert "coming soon" in body.lower()
+            assert "moving to the library" in body.lower()
             assert "not available yet" not in body.lower()
 
     async def test_title_reframed_to_roleplay_keeps_state_suffix(self, mock_app_instance, stub_characters):
