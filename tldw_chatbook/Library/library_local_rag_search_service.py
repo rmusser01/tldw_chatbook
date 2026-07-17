@@ -314,7 +314,12 @@ class LibraryLocalRagSearchService:
            seconds), so it runs in ``asyncio.to_thread`` -- never on the UI
            event loop. The factory is double-checked-locked, so concurrent
            Library queries racing here serialize inside it and share one
-           instance.
+           instance. The factory already converts construction failures to
+           None; the guard here additionally maps anything it might still
+           raise to None, so a failed first initialization always renders
+           the RAG-unavailable recovery state (setup routing) rather than
+           ``run_library_rag_search``'s generic "Retrieval failed / Retry"
+           outcome -- retrying cannot fix a runtime that will not build.
 
         Returns:
             The RAG runtime, or None when it is unavailable (missing deps or
@@ -325,7 +330,14 @@ class LibraryLocalRagSearchService:
             return rag_service
         if not embeddings_rag_deps_installed():
             return None
-        service = await asyncio.to_thread(get_shared_rag_service)
+        try:
+            service = await asyncio.to_thread(get_shared_rag_service)
+        except Exception:
+            logger.opt(exception=True).error(
+                "Library RAG: shared RAG service initialization raised; "
+                "treating the runtime as unavailable."
+            )
+            return None
         if service is None or not callable(getattr(service, "search", None)):
             return None
         try:

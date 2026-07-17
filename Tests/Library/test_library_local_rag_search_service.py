@@ -730,6 +730,31 @@ async def test_rag_mode_factory_returning_none_yields_blocked_outcome(monkeypatc
     assert result.recovery_state.status_label == "RAG unavailable"
 
 
+# PR #671 review (gemini): a factory that RAISES during first initialization
+# (model load failure, config error, DB corruption) must degrade to the same
+# RAG-unavailable recovery state -- not propagate. Without the guard the
+# exception would surface as run_library_rag_search's generic "Retrieval
+# failed / Retry" outcome, which is wrong for an init failure retrying cannot
+# fix (and non-UI callers of the service would see a raw exception).
+@pytest.mark.asyncio
+async def test_rag_mode_factory_raising_yields_blocked_outcome(monkeypatch):
+    monkeypatch.setattr(rag_service_module, "embeddings_rag_deps_installed", lambda: True)
+
+    def _exploding_factory(*args, **kwargs):
+        raise RuntimeError("embedding model load exploded")
+
+    monkeypatch.setattr(rag_service_module, "get_shared_rag_service", _exploding_factory)
+    app = SimpleNamespace(_rag_service=None)
+    service = LibraryLocalRagSearchService(app)
+
+    result = await service.search("credential", ("notes",), "rag", top_k=5)
+
+    assert isinstance(result, LibraryRagSearchOutcome)
+    assert result.status == "blocked"
+    assert result.recovery_state.status_label == "RAG unavailable"
+    assert getattr(app, "_rag_service", None) is None
+
+
 # An injected app._rag_service always wins: no deps probe, no factory call
 # (pre-task-249 behavior for every existing caller/test fake).
 @pytest.mark.asyncio
