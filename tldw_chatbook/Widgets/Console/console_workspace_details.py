@@ -46,6 +46,8 @@ class ConsoleWorkspaceDetailsTray(Vertical):
         Returns:
             None.
         """
+        if state == self.state:
+            return
         self.state = state
         self.refresh(recompose=True)
 

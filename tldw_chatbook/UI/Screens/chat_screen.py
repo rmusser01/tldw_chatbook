@@ -340,6 +340,13 @@ CONSOLE_ACTIVE_RUN_STATUSES = (
 # is actively streaming (e.g. a sub-agent finished in a *different*
 # Console session/tab).
 CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS = 2.0
+# TASK-251 (audit P1 B1): the persisted conversation-browser rows behind
+# `_sync_persisted_console_browser_rows` re-query the DB per scope (global +
+# every workspace) on every 0.2s poll tick -- measured 11-70ms/tick. Modeled
+# directly on the sub-agent badge-count TTL cache above (same staleness
+# bound, same "explicit invalidation is a nice-to-have, the TTL is the
+# correctness backstop" philosophy).
+CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS = 2.0
 CONSOLE_FOCUS_REGISTRY = WorkbenchFocusRegistry(
     (
         "console-left-rail",
@@ -659,6 +666,10 @@ class ChatScreen(BaseAppScreen):
         next_query = str(event.value or "")
         if next_query == self._console_conversation_browser_query:
             return
+        # TASK-251: invalidate before kicking the refresh -- a same-text
+        # re-search within the TTL window (e.g. clear then retype) must not
+        # be served a stale persisted-rows cache entry.
+        self._invalidate_console_persisted_rows_cache()
         self._console_conversation_browser_query = next_query
         self._console_workspace_conversation_query = self._console_conversation_browser_query
         self._console_conversation_browser_search_token += 1
@@ -1009,6 +1020,9 @@ class ChatScreen(BaseAppScreen):
             except KeyError:
                 self.app_instance.notify("Console tab is no longer available.", severity="error")
                 return
+            # TASK-251: a renamed session's persisted conversation title
+            # must appear in the browser on the very next sync.
+            self._invalidate_console_persisted_rows_cache()
             self.run_worker(self._sync_native_console_chat_ui(), exclusive=True, group="console-sync")
 
         self.app.push_screen(
@@ -1187,6 +1201,9 @@ class ChatScreen(BaseAppScreen):
                 or self._default_console_session_settings()
             ),
         )
+        # TASK-251: new-chat-tab handler -- invalidate so the browser's
+        # "selected" row indicator picks up the new active session promptly.
+        self._invalidate_console_persisted_rows_cache()
         await self._sync_native_console_chat_ui()
         self._focus_console_composer_if_needed(force=True)
 
@@ -1275,6 +1292,18 @@ class ChatScreen(BaseAppScreen):
         self._console_subagent_counts_cache: Dict[str, int] = {}
         self._console_subagent_counts_cache_row_ids: frozenset = frozenset()
         self._console_subagent_counts_cache_at: float = 0.0
+        # TASK-251: TTL cache for `_sync_persisted_console_browser_rows` --
+        # see `CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS`.
+        self._console_persisted_rows_cache: (
+            tuple[list[ConsoleConversationBrowserInputRow], int | None, str] | None
+        ) = None
+        self._console_persisted_rows_cache_key: tuple[str, str | None] | None = None
+        self._console_persisted_rows_cache_at: float = 0.0
+        # TASK-251: last-applied payloads for equality-guarded tick sub-syncs
+        # (skip Static.update()/style work when the computed payload hasn't
+        # changed since the last successful apply).
+        self._console_agent_section_last: tuple[str, str, str, bool] | None = None
+        self._console_rail_system_line_last: tuple[str, bool] | None = None
         self._console_rail_prune_dispatched = False
         self._console_workspace_conversation_query = ""
         self._console_workspace_conversation_search_timer: Any | None = None
@@ -1855,14 +1884,23 @@ class ChatScreen(BaseAppScreen):
         return line_text, is_dim
 
     def _sync_console_rail_system_line(self) -> None:
-        """Targeted update of the mounted rail ``System:`` line, no recompose."""
-        line_text, is_dim = self._console_rail_system_line_state()
+        """Targeted update of the mounted rail ``System:`` line, no recompose.
+
+        TASK-251: equality-guarded -- the 0.2s tick called this
+        unconditionally, forcing a ``Static.update()`` even when the system
+        prompt hadn't changed since the last apply.
+        """
+        payload = self._console_rail_system_line_state()
+        if payload == self._console_rail_system_line_last:
+            return
         try:
             system_line = self.query_one("#console-rail-system-line", Static)
         except (NoMatches, QueryError):
             return
+        line_text, is_dim = payload
         system_line.update(line_text)
         system_line.set_class(is_dim, "console-rail-system-line-dim")
+        self._console_rail_system_line_last = payload
 
     def _sync_console_settings_summary(self) -> None:
         """Refresh the mounted Console settings summary surfaces if present."""
@@ -1974,18 +2012,27 @@ class ChatScreen(BaseAppScreen):
         return (status, steps, subagents)
 
     def _sync_console_agent_section(self) -> None:
-        """Refresh the mounted Agent rail Statics + Back-button visibility."""
+        """Refresh the mounted Agent rail Statics + Back-button visibility.
+
+        TASK-251: equality-guarded against the last successfully-applied
+        payload -- the 0.2s tick called this unconditionally, forcing three
+        ``Static.update()`` calls plus a style write per tick even when
+        nothing agent-related had changed.
+        """
+        status_line, steps_text, subagents_text = self._console_agent_section_lines()
+        back_visible = bool(self._console_agent_drilldown_run_id)
+        payload = (status_line, steps_text, subagents_text, back_visible)
+        if payload == self._console_agent_section_last:
+            return
         try:
-            status_line, steps_text, subagents_text = self._console_agent_section_lines()
             self.query_one("#console-agent-section-status", Static).update(status_line)
             self.query_one("#console-agent-section-steps", Static).update(steps_text)
             self.query_one("#console-agent-section-subagents", Static).update(subagents_text)
             back_button = self.query_one("#console-agent-drilldown-back", Button)
-            back_button.styles.display = (
-                "block" if self._console_agent_drilldown_run_id else "none"
-            )
+            back_button.styles.display = "block" if back_visible else "none"
         except (NoMatches, QueryError):
-            pass
+            return
+        self._console_agent_section_last = payload
 
     def _toggle_console_agent_drilldown_from_subagents_click(self) -> None:
         """Step the drill-in through this conversation's sub-agent runs.
@@ -3469,12 +3516,58 @@ class ChatScreen(BaseAppScreen):
                 return rows, total_count if saw_total else None, last_error
         return [], None, last_error
 
+    def _invalidate_console_persisted_rows_cache(self) -> None:
+        """Clear the TTL-cached persisted conversation-browser rows.
+
+        TASK-251: a dumb clear only -- callers that mutate the persisted
+        conversation set call this so the very next sync reflects the
+        change immediately, but nothing here tries to enumerate every
+        theoretical mutation site. ``CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS``
+        is the correctness backstop for whatever this misses (mirrors the
+        sub-agent badge-count cache's condition 3).
+        """
+        self._console_persisted_rows_cache = None
+        self._console_persisted_rows_cache_key = None
+        self._console_persisted_rows_cache_at = 0.0
+
     def _sync_persisted_console_browser_rows(
         self,
         query: str = "",
         current_conversation_id: str | None = None,
     ) -> tuple[list[ConsoleConversationBrowserInputRow], int | None, str]:
-        """Return persisted rows when the local listing seam is synchronous."""
+        """Return persisted rows when the local listing seam is synchronous.
+
+        TASK-251 (audit P1 B1): TTL-cached (see
+        ``CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS``) keyed on
+        ``(query, current_conversation_id)`` -- the 0.2s Console poll tick
+        used to re-issue this per-scope DB query chain unconditionally,
+        measured 11-70ms/tick. Explicit invalidation sites exist (see
+        ``_invalidate_console_persisted_rows_cache`` callers) but the TTL is
+        the correctness backstop, not those sites.
+        """
+        cache_key = (query, current_conversation_id)
+        if (
+            self._console_persisted_rows_cache is not None
+            and self._console_persisted_rows_cache_key == cache_key
+            and (time.monotonic() - self._console_persisted_rows_cache_at)
+            < CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS
+        ):
+            return self._console_persisted_rows_cache
+        result = self._compute_persisted_console_browser_rows(
+            query,
+            current_conversation_id,
+        )
+        self._console_persisted_rows_cache = result
+        self._console_persisted_rows_cache_key = cache_key
+        self._console_persisted_rows_cache_at = time.monotonic()
+        return result
+
+    def _compute_persisted_console_browser_rows(
+        self,
+        query: str = "",
+        current_conversation_id: str | None = None,
+    ) -> tuple[list[ConsoleConversationBrowserInputRow], int | None, str]:
+        """Uncached implementation behind ``_sync_persisted_console_browser_rows``."""
         services: list[tuple[Any, bool]] = []
         local_service = getattr(self.app_instance, "local_chat_conversation_service", None)
         scope_service = getattr(
@@ -4895,6 +4988,13 @@ class ChatScreen(BaseAppScreen):
                 ConsoleWorkspaceContextTray,
             )
             state = self._build_console_workspace_context_state(session_data)
+            # TASK-251: read the widget's OWN current state before it's
+            # overwritten -- this is intentionally not a screen-level cache
+            # (which would go stale across a full-screen recompose); the
+            # freshly-(re)composed widget's ``.state`` is always correct at
+            # construction time, so comparing against it here stays safe
+            # across recomposes too.
+            state_changed = state != workspace_context.state
             workspace_context.sync_state(state)
             try:
                 details_tray = self.query_one(
@@ -4904,13 +5004,24 @@ class ChatScreen(BaseAppScreen):
                 pass
             else:
                 details_tray.sync_state(state)
-            self.call_after_refresh(
-                lambda: self.run_worker(
-                    self._sync_console_legacy_workspace_context_aliases,
-                    group="console-workspace-context-legacy-aliases",
-                    exclusive=True,
-                )
+            # PR #660 review: a full-screen recompose constructs a FRESH tray
+            # already carrying the current state, so `state_changed` alone
+            # would never re-kick the legacy-alias worker after a recompose —
+            # leaving the transitional "New conversation" alias unmounted.
+            # The kicked-marker lives on the tray instance (dies with it), so
+            # a fresh tray always gets one kick regardless of state equality.
+            alias_kick_needed = state_changed or not getattr(
+                workspace_context, "_console_alias_kick_done", False
             )
+            if alias_kick_needed:
+                workspace_context._console_alias_kick_done = True
+                self.call_after_refresh(
+                    lambda: self.run_worker(
+                        self._sync_console_legacy_workspace_context_aliases,
+                        group="console-workspace-context-legacy-aliases",
+                        exclusive=True,
+                    )
+                )
         except (NoMatches, QueryError):
             logger.debug("No Console workspace context tray available for sync")
 
@@ -5009,6 +5120,22 @@ class ChatScreen(BaseAppScreen):
             return "not available for this item"
         return "unavailable"
 
+    def _console_can_save_chatbook_flag(
+        self,
+        pending_launch: Optional[ConsoleLiveWorkLaunch],
+    ) -> bool:
+        """Return whether a Chatbook artifact is available to save right now.
+
+        TASK-251: factored out of ``_build_console_inspector_state`` so the
+        composer's priority-action state can stay fresh from
+        ``_sync_console_control_bar`` even while the right rail (and
+        therefore the full inspector-state build) is hidden and skipped.
+        """
+        return bool(
+            getattr(self.app_instance, "console_chatbook_artifact_available", False)
+            or self._launch_targets_chatbook_artifact(pending_launch)
+        )
+
     def _build_console_inspector_state(
         self,
         pending_launch: Optional[ConsoleLiveWorkLaunch],
@@ -5037,10 +5164,7 @@ class ChatScreen(BaseAppScreen):
                 if provider_readiness.reason == "Missing API key"
                 else settings_readiness.detail
             )
-        can_save_chatbook = bool(
-            getattr(self.app_instance, "console_chatbook_artifact_available", False)
-            or self._launch_targets_chatbook_artifact(pending_launch)
-        )
+        can_save_chatbook = self._console_can_save_chatbook_flag(pending_launch)
         evidence_state = build_console_evidence_display_state(pending_launch)
         inspector_state = ConsoleInspectorState.from_values(
             live_work_title=pending_launch.title if pending_launch else None,
@@ -5412,7 +5536,18 @@ class ChatScreen(BaseAppScreen):
                     ),
                 )
             )
-        excerpt = self._console_message_excerpt(message, max_length=90)
+        # TASK-251 (audit P1 B1): while a message is streaming, its content
+        # (and therefore this excerpt) changes every tick -- rendering the
+        # live text here forced a full inspector-panel recompose 5x/second
+        # for the whole duration of the stream. The transcript already shows
+        # the live text, so the inspector shows a stable placeholder instead
+        # and reveals the real excerpt once the message settles. Deliberate
+        # UX change: flagged for the user gate per the task-251 report.
+        excerpt = (
+            "Streaming…"
+            if message.status == "streaming"
+            else self._console_message_excerpt(message, max_length=90)
+        )
         if excerpt:
             rows.append(ConsoleDisplayRow("Excerpt", excerpt))
         if self._pending_console_delete_message_id == message.id:
@@ -5721,14 +5856,34 @@ class ChatScreen(BaseAppScreen):
         self._console_guidance_dismissed = True
         self._sync_console_transcript_guidance()
 
-    @staticmethod
     def _configure_console_copy_block(
+        self,
         widget: Static,
         copy: str,
         *,
         visible: bool,
     ) -> None:
-        """Update a compact Console status copy block without remounting it."""
+        """Update a compact Console status copy block without remounting it.
+
+        task-280: skips the ``.update()``/style writes when both the copy
+        and the show/hide state already match what was last applied to this
+        exact widget instance. The applied tuple is stored ON the widget
+        (PR #660 review): it dies with the widget, so a recomposed fresh
+        instance always gets its first apply, nothing accumulates across
+        recomposes, and a recycled ``id()`` can never alias a new widget to
+        a dead one's cache entry.
+
+        Args:
+            widget: The Static copy block being configured.
+            copy: The status copy to display (may be empty).
+            visible: Whether the block should be shown at all.
+
+        Returns:
+            None.
+        """
+        cache_value = (copy, visible)
+        if getattr(widget, "_console_copy_block_applied", None) == cache_value:
+            return
         should_show = visible and bool(copy.strip())
         widget.update(copy if should_show else "")
         if should_show:
@@ -5737,11 +5892,12 @@ class ChatScreen(BaseAppScreen):
             widget.styles.height = row_count
             widget.styles.min_height = row_count
             widget.styles.max_height = row_count
-            return
-        widget.styles.display = "none"
-        widget.styles.height = 0
-        widget.styles.min_height = 0
-        widget.styles.max_height = 0
+        else:
+            widget.styles.display = "none"
+            widget.styles.height = 0
+            widget.styles.min_height = 0
+            widget.styles.max_height = 0
+        widget._console_copy_block_applied = cache_value
 
     def _sync_console_transcript_guidance(self) -> None:
         """Refresh Console onboarding and provider recovery copy in place."""
@@ -7702,7 +7858,16 @@ class ChatScreen(BaseAppScreen):
             # build already sees the freshly recomputed cache instead of one
             # stale frame behind.
             await self._refresh_active_dictionaries_summary_if_scope_changed()
-            self._sync_console_control_bar()
+            # task-280: hand the control bar a pre-await snapshot (its own
+            # pre-existing timing). The rail-VISIBILITY call below must NOT
+            # reuse this snapshot: `_sync_console_native_session_tabs` can
+            # create/activate a session, changing what the rail derivation
+            # sees, and pre-task-280 the visibility check always computed
+            # fresh post-await state (PR #660 review caught the reuse as a
+            # staleness regression — the one-tuple-per-tick dedupe is
+            # withdrawn for the visibility half).
+            rail_state = self._current_console_rail_state()
+            self._sync_console_control_bar(rail_state)
             self._sync_console_settings_summary()
             self._sync_console_mode_bar()
             await self._sync_console_native_session_tabs()
@@ -7764,6 +7929,10 @@ class ChatScreen(BaseAppScreen):
             controller = self._console_chat_controller
             if (controller is None
                     or controller.run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES):
+                # TASK-251: the run just left an active status -- invalidate
+                # so the finalized conversation's title/timestamps appear in
+                # the browser promptly instead of waiting out the TTL.
+                self._invalidate_console_persisted_rows_cache()
                 self._stop_console_transcript_sync_timer()
 
         self._console_transcript_sync_timer = self.set_interval(0.2, _poll_transcript)
@@ -7782,6 +7951,10 @@ class ChatScreen(BaseAppScreen):
         controller = self._ensure_console_chat_controller()
         self._start_console_transcript_sync_timer()
         result = await controller.submit_draft(draft)
+        # TASK-251: a submit may have created/updated a persisted
+        # conversation (title, updated_at) -- invalidate so the browser
+        # reflects it on the very next sync instead of the TTL window.
+        self._invalidate_console_persisted_rows_cache()
         if not result.accepted:
             # A resolved skill run (`_run_resolved_console_skill`) stages its
             # TOOL marker name BEFORE this worker even runs. `submit_draft`
@@ -9177,6 +9350,10 @@ class ChatScreen(BaseAppScreen):
                 return True
             self._pending_console_delete_message_id = None
             store.delete_message(message_id)
+            # TASK-251: a deleted message can change what the browser row
+            # shows for this conversation (title/updated_at) -- invalidate
+            # so the next sync reflects it immediately.
+            self._invalidate_console_persisted_rows_cache()
             await self._sync_native_console_chat_ui()
             self.app_instance.notify(result.visible_copy, severity="information")
             return True
@@ -9780,8 +9957,20 @@ class ChatScreen(BaseAppScreen):
             logger.debug(f"Legacy compact model bar unavailable: {e}")
             return None
 
-    def _sync_console_control_bar(self) -> None:
-        """Refresh Console-owned control labels from current selection state."""
+    def _sync_console_control_bar(
+        self,
+        rail_state: Optional[ConsoleRailState] = None,
+    ) -> None:
+        """Refresh Console-owned control labels from current selection state.
+
+        Args:
+            rail_state: Pre-computed rail state (TASK-251: the 0.2s tick
+                computes this once in ``_sync_native_console_chat_ui`` and
+                passes it in here, instead of this method redundantly
+                recomputing it -- which itself rebuilds workspace-context
+                and inspector state). Other callers may omit it; it is
+                computed on demand when not given.
+        """
         self._sync_console_pending_delete_confirmation()
         control_state = self._build_console_control_state(
             self._pending_console_launch_context
@@ -9800,6 +9989,23 @@ class ChatScreen(BaseAppScreen):
             self._last_console_control_state = control_state
             self._last_console_workbench_state = workbench_state
         self._sync_console_transcript_guidance()
+        # TASK-251 (audit P1 B1) -- DEVIATION FROM THE BRIEF, documented in
+        # the task-251 report: the brief's Change 3 asked to skip this
+        # build+push entirely while the right rail is hidden. Measured
+        # against the actual test suite, that broke real behavior --
+        # Console keeps the inspector's mounted content fresh in the
+        # background regardless of paint visibility (selecting a message,
+        # a setup blocker appearing, resuming a conversation, etc. all
+        # still need `#console-run-inspector-state`'s children to reflect
+        # the latest state even while collapsed, and several existing
+        # tests assert exactly that). The audit's actual measured
+        # complaint -- "streaming-excerpt selection = 5 teardowns/s" -- is
+        # already fixed below by `_selected_console_message_inspector_rows`
+        # rendering a stable "Streaming…" placeholder: the built state stops
+        # changing tick-to-tick while streaming, so `ConsoleRunInspector.
+        # sync_state`'s own equality guard (`if state == self.state: return`)
+        # already skips the recompose regardless of visibility. So this
+        # keeps building and pushing unconditionally, as before task-251.
         try:
             inspector = self.query_one("#console-run-inspector-state", ConsoleRunInspector)
         except QueryError:
@@ -9813,7 +10019,9 @@ class ChatScreen(BaseAppScreen):
             can_save_chatbook=inspector_state.can_save_chatbook
             and self._console_chatbook_action_available()
         )
-        self._sync_console_rail_visibility_if_changed(self._current_console_rail_state())
+        if rail_state is None:
+            rail_state = self._current_console_rail_state()
+        self._sync_console_rail_visibility_if_changed(rail_state)
 
     def _sync_console_workbench_state(
         self,
