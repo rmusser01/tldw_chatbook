@@ -15,6 +15,7 @@ Key Features:
 #
 # Imports
 import base64
+import inspect
 import json
 import logging
 import os
@@ -749,37 +750,13 @@ def chat_api_call(
     # Construct kwargs for the handler function based on the map
     # This requires careful mapping and ensuring the handler functions are adapted.
 
-    # Generic parameters available from chat_api_call signature
+    # Generic parameters available from chat_api_call, derived from the
+    # function's own signature so the dispatcher can never drift from it —
+    # a hand-maintained dict here previously allowed map keys that existed
+    # on the signature but were still silently dropped (PR #668 review).
     available_generic_params = {
-        'api_key': api_key,
-        'messages_payload': messages_payload, # This is the core change
-        'temp': temp,
-        'system_message': system_message,
-        'streaming': streaming,
-        'minp': minp,
-        'maxp': maxp, # Will be mapped to top_p by some providers
-        'model': model,
-        'topk': topk,
-        'topp': topp, # Will be mapped to top_p by some providers
-        'logprobs': logprobs,
-        'top_logprobs': top_logprobs,
-        'logit_bias': logit_bias,
-        'presence_penalty': presence_penalty,
-        'frequency_penalty': frequency_penalty,
-        'tools': tools,
-        'tool_choice': tool_choice,
-        'max_tokens': max_tokens,
-        'seed': seed,
-        'stop': stop,
-        'response_format': response_format,
-        'n': n,
-        'user_identifier': user_identifier,
-        'reasoning_effort': reasoning_effort,
-        'reasoning_summary': reasoning_summary,
-        'verbosity': verbosity,
-        'thinking_effort': thinking_effort,
-        'thinking_budget_tokens': thinking_budget_tokens,
-        'llm_fixed_tokens_kobold': llm_fixed_tokens_kobold # Added
+        name: value for name, value in locals().items()
+        if name in _CHAT_API_GENERIC_PARAMS
     }
 
     for generic_param_name, provider_param_name in params_map.items():
@@ -874,6 +851,12 @@ def chat_api_call(
         raise ChatAPIError(provider=endpoint_lower,
                            message=f"An unexpected internal error occurred in chat_api_call for {endpoint_lower}: {str(e)}",
                            status_code=500)
+
+
+_CHAT_API_GENERIC_PARAMS = frozenset(
+    inspect.signature(chat_api_call).parameters) - {"api_endpoint"}
+"""The dispatcher's generic parameter names — the single source of truth is
+``chat_api_call``'s own signature (see ``available_generic_params``)."""
 
 
 def chat(

@@ -404,15 +404,25 @@ class TestTemperatureForwarding:
         assert handler.call_args.kwargs.get("temp") == 0.42
 
 
-def test_provider_param_map_has_no_dead_generic_keys():
-    """task-286 invariant: every PROVIDER_PARAM_MAP generic-side key must be
-    an actual chat_api_call parameter — a key the dispatcher can never match
-    is silently dropped config (the 'temperature'/'prompt' bug class this
-    audit retired). Kills the class permanently."""
+def test_provider_param_map_has_no_dead_generic_keys() -> None:
+    """Pin the generic side of PROVIDER_PARAM_MAP to the dispatcher's truth.
+
+    task-286 invariant: every generic-side key must be a real dispatcher
+    parameter — a key the dispatcher can never match is silently dropped
+    config (the 'temperature'/'prompt' bug class this audit retired). The
+    dispatcher's ``available_generic_params`` is itself DERIVED from the
+    signature (PR #668 review), so signature == dispatcher key set and this
+    assertion is exact, not an approximation.
+    """
     import inspect
-    from tldw_chatbook.Chat.Chat_Functions import PROVIDER_PARAM_MAP, chat_api_call
+    from tldw_chatbook.Chat.Chat_Functions import (
+        _CHAT_API_GENERIC_PARAMS, PROVIDER_PARAM_MAP, chat_api_call,
+    )
 
     generic_params = set(inspect.signature(chat_api_call).parameters) - {"api_endpoint"}
+    # The derivation constant and the signature must agree exactly — this is
+    # what makes the invariant below equivalent to the dispatcher's own gate.
+    assert generic_params == set(_CHAT_API_GENERIC_PARAMS)
     dead = {
         (provider, key)
         for provider, mapping in PROVIDER_PARAM_MAP.items()
@@ -422,12 +432,17 @@ def test_provider_param_map_has_no_dead_generic_keys():
     assert not dead, f"dead PROVIDER_PARAM_MAP keys (never matched by the dispatcher): {sorted(dead)}"
 
 
-def test_provider_param_map_targets_exist_on_handlers():
-    """task-286 invariant #2 (provider side): every mapped TARGET must be an
-    actual parameter of that provider's handler (or the handler must accept
-    **kwargs) — a wrong target name TypeErrors the call the moment the
-    generic param is supplied (the tabbyapi/local-llm 'temperature' and the
-    five user_identifier->'user' bugs this audit retired)."""
+def test_provider_param_map_targets_exist_on_handlers() -> None:
+    """Pin the provider side of PROVIDER_PARAM_MAP to handler signatures.
+
+    task-286 invariant #2: every mapped TARGET must be a keyword-passable
+    parameter of that provider's handler (or the handler must accept
+    ``**kwargs``) — a wrong or keyword-incompatible target name TypeErrors
+    the call the moment the generic param is supplied (the tabbyapi /
+    local-llm 'temperature' and five ``user_identifier``->'user' bugs this
+    audit retired; keyword-compatibility per PR #668 review, since the
+    dispatcher calls handlers with ``**call_kwargs``).
+    """
     import inspect
     from tldw_chatbook.Chat.Chat_Functions import API_CALL_HANDLERS, PROVIDER_PARAM_MAP
 
@@ -444,4 +459,9 @@ def test_provider_param_map_targets_exist_on_handlers():
         for generic, target in mapping.items():
             if target not in sig.parameters:
                 problems.append((provider, generic, target))
+            elif sig.parameters[target].kind in (
+                    inspect.Parameter.POSITIONAL_ONLY,
+                    inspect.Parameter.VAR_POSITIONAL):
+                problems.append((provider, generic,
+                                 f"{target} (not keyword-passable)"))
     assert not problems, f"map targets missing on handlers: {sorted(problems)}"
