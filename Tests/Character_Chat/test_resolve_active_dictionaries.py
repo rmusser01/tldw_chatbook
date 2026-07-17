@@ -9,6 +9,7 @@ from tldw_chatbook.Character_Chat.Chat_Dictionary_Lib import (
     _resolve_active_dictionaries,
     summarize_active_dictionaries,
     collect_active_chatdict_entries,
+    conversation_dictionary_ids,
 )
 
 
@@ -93,3 +94,43 @@ def test_summary_entry_count_and_source_and_never_raises(db):
     char_data = db.get_character_card_by_id(char_id)
     # never raises on hostile embedded content
     assert summarize_active_dictionaries(db, None, char_data) == {"dictionaries": [], "source": "local"}
+
+
+# --- P1g Task 5: conversation_dictionary_ids ---------------------------------
+
+def test_conversation_dictionary_ids_reads_active_dictionaries_in_order(db):
+    service = LocalChatDictionaryService(db)
+    conv_id = db.add_conversation({"title": "chat"})
+    first = _attach_conv_dict(db, service, conv_id, "First")
+    second = _attach_conv_dict(db, service, conv_id, "Second")
+
+    assert conversation_dictionary_ids(db, conv_id) == [first, second]
+
+
+def test_conversation_dictionary_ids_never_raises_on_missing_or_none(db):
+    assert conversation_dictionary_ids(db, None) == []
+    assert conversation_dictionary_ids(None, "some-id") == []
+    assert conversation_dictionary_ids(db, "does-not-exist") == []
+
+
+def test_conversation_dictionary_ids_tolerates_non_dict_metadata(db):
+    """Regression companion to the P1e ``attach_survives_non_dict_metadata_json``
+    finding: a conversation's ``metadata`` can be valid JSON but not a JSON
+    object (e.g. a bare scalar). Must degrade to ``[]`` instead of raising."""
+    conv_id = db.add_conversation({"title": "chat"})
+    rec = db.get_conversation_by_id(conv_id)
+    db.update_conversation(conv_id, {"metadata": "5"}, expected_version=rec["version"])
+
+    assert conversation_dictionary_ids(db, conv_id) == []
+
+
+def test_conversation_dictionary_ids_coerces_and_dedups(db):
+    conv_id = db.add_conversation({"title": "chat"})
+    rec = db.get_conversation_by_id(conv_id)
+    db.update_conversation(
+        conv_id,
+        {"metadata": json.dumps({"active_dictionaries": [3, "3", "not-an-id", 5, 3]})},
+        expected_version=rec["version"],
+    )
+
+    assert conversation_dictionary_ids(db, conv_id) == [3, 5]

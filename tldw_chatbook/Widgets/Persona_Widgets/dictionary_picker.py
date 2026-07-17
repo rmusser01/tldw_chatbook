@@ -32,18 +32,27 @@ class DictionaryPicker(ModalScreen[int | None]):
     DictionaryPicker #dict-pick-list { height: auto; max-height: 16; }
     """
 
-    def __init__(self, dictionaries: list[dict[str, Any]], **kwargs: Any) -> None:
+    def __init__(
+        self,
+        dictionaries: list[dict[str, Any]],
+        *,
+        title: str = "Attach dictionary",
+        confirm_label: str = "Attach",
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         self._dictionaries = list(dictionaries)
         self._row_ids: list[int] = []
+        self._title = title
+        self._confirm_label = confirm_label
 
     def compose(self) -> ComposeResult:
         with Vertical():
-            yield Label("Attach dictionary", markup=False)
+            yield Label(self._title, markup=False)
             yield Input(placeholder="Search dictionaries…", id="dict-pick-search")
             yield ListView(id="dict-pick-list")
             with Vertical(id="dict-pick-actions"):
-                yield Button("Attach", id="dict-pick-confirm", classes="console-action-secondary")
+                yield Button(self._confirm_label, id="dict-pick-confirm", classes="console-action-secondary")
                 yield Button("Cancel", id="dict-pick-cancel", classes="console-action-secondary")
 
     def on_mount(self) -> None:
