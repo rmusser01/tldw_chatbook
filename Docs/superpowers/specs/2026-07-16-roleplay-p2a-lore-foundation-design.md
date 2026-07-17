@@ -1,6 +1,6 @@
 # Roleplay P2a — Lore mode foundation + Try-it diagnostics
 
-**Status:** Design approved (brainstorm), pending spec review.
+**Status:** Implemented (P2a).
 
 **Program:** Roleplay (Personas) redesign — P2 (Lore mode), first sub-project. Mirrors the completed Dictionaries mode (P1a foundation + P1b Try-it diagnostics, folded here).
 
