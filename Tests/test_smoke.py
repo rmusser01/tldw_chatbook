@@ -255,17 +255,20 @@ class TestSecurity:
 class TestRAGFunctionality:
     """Smoke tests for RAG functionality."""
     
-    def test_rag_service_initialization(self):
+    def test_rag_service_initialization(self, tmp_path):
         """Test that RAG service can be initialized."""
         try:
             from tldw_chatbook.RAG_Search.simplified.rag_service import RAGService
             from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
-            
-            # Create service with config (will skip if dependencies missing)
+
+            # Create service with config (will skip if dependencies missing).
+            # The vector store defaults to persistent chroma when embeddings
+            # deps are installed; redirect persistence to keep the test hermetic.
             config = RAGConfig()
+            config.vector_store.persist_directory = tmp_path / "chromadb"
             service = RAGService(config)
             assert service is not None
-            
+
         except ImportError:
             pytest.skip("RAG dependencies not installed")
     

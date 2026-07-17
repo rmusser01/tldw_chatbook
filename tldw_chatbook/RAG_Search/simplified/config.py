@@ -29,6 +29,91 @@ def _coerce_int_setting(value: Any, default: int) -> int:
     return int(parsed)
 
 
+# Cached result of the embeddings_rag optional-deps probe. Availability cannot
+# change without a restart, and the underlying check imports heavy modules
+# (torch, chromadb, ...), so probe at most once per process.
+_EMBEDDINGS_RAG_AVAILABLE: Optional[bool] = None
+
+
+def _embeddings_rag_available() -> bool:
+    """Return True when the `embeddings_rag` optional dependencies are installed.
+
+    Wraps `Utils.optional_deps.check_embeddings_rag_deps()` (the
+    'embeddings_rag' feature key) and caches the result. Any failure is
+    treated as "not available" so environments without the extras never error.
+
+    Returns:
+        True if all embeddings/RAG dependencies are importable.
+    """
+    global _EMBEDDINGS_RAG_AVAILABLE
+    if _EMBEDDINGS_RAG_AVAILABLE is None:
+        try:
+            from tldw_chatbook.Utils.optional_deps import check_embeddings_rag_deps
+            _EMBEDDINGS_RAG_AVAILABLE = bool(check_embeddings_rag_deps())
+        except Exception as e:
+            logger.debug(f"embeddings_rag availability check failed, assuming unavailable: {e}")
+            _EMBEDDINGS_RAG_AVAILABLE = False
+    return _EMBEDDINGS_RAG_AVAILABLE
+
+
+def _explicit_vector_store_setting(key: str) -> Optional[Any]:
+    """Read an explicit `[AppRAGSearchConfig.rag.vector_store]` user setting.
+
+    Args:
+        key: Setting name within the vector_store section (e.g. 'type').
+
+    Returns:
+        The configured value, or None when not explicitly set (or on any
+        config read failure).
+    """
+    try:
+        rag_section = get_cli_setting("AppRAGSearchConfig", "rag", {}) or {}
+        if not isinstance(rag_section, dict):
+            return None
+        vector_store_section = rag_section.get('vector_store', {})
+        if not isinstance(vector_store_section, dict):
+            return None
+        return vector_store_section.get(key)
+    except Exception as e:
+        logger.debug(f"Could not read vector_store.{key} from user config: {e}")
+        return None
+
+
+def default_vector_store_type() -> str:
+    """Resolve the default vector store type.
+
+    Priority: RAG_VECTOR_STORE env var > explicit
+    `[AppRAGSearchConfig.rag.vector_store].type` in user config > persistent
+    ChromaDB when the `embeddings_rag` optional deps are installed >
+    in-memory fallback. An explicit `type = "memory"` therefore always wins.
+
+    Returns:
+        Vector store type string ("chroma" or "memory", or the explicit
+        user-configured value).
+    """
+    explicit = os.getenv("RAG_VECTOR_STORE") or _explicit_vector_store_setting('type')
+    if explicit:
+        return str(explicit)
+    return "chroma" if _embeddings_rag_available() else "memory"
+
+
+def default_chroma_persist_directory() -> Path:
+    """Resolve the default persist directory for the ChromaDB store.
+
+    Priority: RAG_PERSIST_DIR env var > explicit
+    `[AppRAGSearchConfig.rag.vector_store].persist_directory` in user config >
+    `<user data dir>/chromadb` (the same user-data-dir convention as the
+    application databases).
+
+    Returns:
+        Path to the ChromaDB persist directory.
+    """
+    explicit = os.getenv("RAG_PERSIST_DIR") or _explicit_vector_store_setting('persist_directory')
+    if explicit:
+        return Path(str(explicit)).expanduser()
+    return get_user_data_dir() / "chromadb"
+
+
 @dataclass
 class EmbeddingConfig:
     """Configuration for embedding generation."""
@@ -44,8 +129,15 @@ class EmbeddingConfig:
 
 @dataclass
 class VectorStoreConfig:
-    """Configuration for vector storage."""
-    type: str = "memory"  # default to in-memory; set to "chroma" when persistence is configured
+    """Configuration for vector storage.
+
+    The default `type` is the "auto" sentinel, resolved on construction to
+    persistent ChromaDB when the `embeddings_rag` optional deps are installed
+    (persisting under the user data dir), and the in-memory store otherwise.
+    Explicit values — constructor arguments, `RAG_VECTOR_STORE` env var, or
+    `[AppRAGSearchConfig.rag.vector_store]` in the user config — always win.
+    """
+    type: str = "auto"  # resolved in __post_init__: chroma (persistent) with embeddings deps, else memory
     persist_directory: Optional[Path] = None
     collection_name: str = "default"
     distance_metric: str = "cosine"  # "cosine", "l2", "ip"
@@ -54,6 +146,12 @@ class VectorStoreConfig:
     chat_collection: str = "chat_embeddings"
     notes_collection: str = "notes_embeddings"
     character_collection: str = "character_embeddings"
+
+    def __post_init__(self):
+        if self.type == "auto":
+            self.type = default_vector_store_type()
+        if self.persist_directory is None and self.type == "chroma":
+            self.persist_directory = default_chroma_persist_directory()
 
 
 @dataclass
