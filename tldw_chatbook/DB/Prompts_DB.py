@@ -46,6 +46,7 @@ from loguru import logger as logging
 #
 # Local Imports
 from .sql_validation import validate_table_name, validate_column_name
+from .sql_logging import preview_params
 from ..Metrics.metrics_logger import log_counter, log_histogram
 #
 ########################################################################################################################
@@ -430,7 +431,13 @@ class PromptsDatabase:
         conn = self.get_connection()
         try:
             cursor = conn.cursor()
-            logging.debug(f"Executing Query: {query[:200]}... Params: {str(params)[:100]}...")
+            # Lazy + BLOB-safe (`logging` here is loguru, aliased -- see the
+            # module-level `from loguru import logger as logging` import --
+            # it has no isEnabledFor(); use opt(lazy=True) instead).
+            logging.opt(lazy=True).debug(
+                "Executing Query: {}",
+                lambda: f"{query[:200]}... Params: {preview_params(params)}",
+            )
             cursor.execute(query, params or ())
             if commit:
                 conn.commit()

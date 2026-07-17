@@ -48,6 +48,7 @@ from loguru import logger
 # Local Imports
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from .sql_validation import validate_table_name, validate_column_name
+from .sql_logging import preview_params
 #
 ########################################################################################################################
 #
@@ -623,7 +624,18 @@ class MediaDatabase:
         conn = self.get_connection()
         try:
             cursor = conn.cursor()
-            logging.debug(f"Executing Query: {query[:200]}... Params: {str(params)[:100]}...")
+            # Lazy + BLOB-safe: the module-scope `logging` here is the
+            # stdlib module (unconfigured -> effectively silent already),
+            # but the eager f-string below still built `str(params)` on
+            # every query regardless. Route through loguru's `logger`
+            # (already imported in this module) with opt(lazy=True) so
+            # nothing is built unless a sink actually admits DEBUG, and even
+            # then large params (e.g. ingested document text) are summarized
+            # instead of fully stringified. See DB/sql_logging.py.
+            logger.opt(lazy=True).debug(
+                "Executing Query: {}",
+                lambda: f"{query[:200]}... Params: {preview_params(params)}",
+            )
             cursor.execute(query, params or ())
             if commit:
                 conn.commit()
