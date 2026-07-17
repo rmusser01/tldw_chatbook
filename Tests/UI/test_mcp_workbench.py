@@ -5090,6 +5090,33 @@ async def test_audit_entry_detail_redacts_arguments():
 
 
 @pytest.mark.asyncio
+async def test_audit_entry_detail_redacts_json_object_result_excerpt():
+    """Important fix: `result_excerpt` is a caller-truncated STRING (see
+    `MCP/execution_log.py`'s `build_record()`) -- when a tool's result is
+    itself JSON-object-shaped text, `show_audit_entry()` must parse it and
+    redact secret-looking keys the same way it already does for
+    `arguments`, not just pass the raw string through.
+    """
+    app = AuditApp(
+        [
+            _audit_record(
+                result_excerpt=json.dumps({"api_key": "sk-super-secret", "status": "ok"}),
+            )
+        ]
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await _select_audit_mode_row(app, pilot, 0)
+
+        detail_text = str(app.query_one("#mcp-inspector-audit-detail", Static).renderable)
+        assert "sk-super-secret" not in detail_text
+        assert '"status": "ok"' in detail_text
+
+
+@pytest.mark.asyncio
 async def test_switching_mode_away_from_audit_clears_entry_detail():
     app = AuditApp([_audit_record()])
     async with app.run_test(size=(120, 40)) as pilot:
@@ -5129,6 +5156,15 @@ async def test_audit_open_tool_switches_to_tools_mode_selects_row_and_shows_deta
         tools_table = app.query_one("#mcp-tools-table", DataTable)
         cursor_key, _ = tools_table.coordinate_to_cell_key((tools_table.cursor_row, 0))
         assert cursor_key.value == "local:docs::search"
+
+        # Critical fix: the stale Audit-mode detail (with its own live
+        # drill buttons) must not survive the drill-through -- it used to
+        # rely on set_mode()'s _clear_tool_view() worker, which the SAME
+        # exclusive "mcp-tool-clear" dispatch above cancels before it ever
+        # runs (see _open_audit_tool()'s docstring).
+        assert app.query_one("#mcp-inspector-audit").display is False
+        assert not list(app.query("#mcp-audit-open-tool"))
+        assert not list(app.query("#mcp-audit-adjust-permission"))
 
 
 @pytest.mark.asyncio
@@ -5175,6 +5211,13 @@ async def test_audit_adjust_permission_switches_to_permissions_mode_and_selects_
         perm_table = app.query_one("#mcp-perm-table", DataTable)
         cursor_key, _ = perm_table.coordinate_to_cell_key((perm_table.cursor_row, 0))
         assert cursor_key.value == "local:docs::search"
+
+        # Critical fix: same stale-audit-panel hazard as the "Open tool"
+        # drill above -- the previous audit-entry detail must not survive
+        # under the new Permissions detail.
+        assert app.query_one("#mcp-inspector-audit").display is False
+        assert not list(app.query("#mcp-audit-open-tool"))
+        assert not list(app.query("#mcp-audit-adjust-permission"))
 
 
 @pytest.mark.asyncio

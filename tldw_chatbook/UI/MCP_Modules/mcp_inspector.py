@@ -153,6 +153,34 @@ def format_duration_ms(duration_ms: int) -> str:
     return f"{minutes}m {seconds}s"
 
 
+def _redacted_result_excerpt(result_excerpt: Any) -> Any:
+    """Redact `result_excerpt` for display in `show_audit_entry()`.
+
+    `result_excerpt` is always a caller-truncated STRING on the record
+    (`MCP/execution_log.py`'s `build_record()`/`ExecutionRecord`), never a
+    Mapping -- so `redact_mapping()` (Mapping-shaped input only) cannot be
+    applied to it directly the way it is to `arguments` just above. When
+    the string happens to be JSON-object-shaped text (the common shape: a
+    `json.dumps()` of a dict-shaped tool result, e.g.
+    `mcp_workbench.py`'s `_run_tool_test()`), parse it and redact the
+    parsed mapping, same as arguments, so a secret echoed back in a tool's
+    result string can't survive display even if some future write path
+    forgets to redact it first. Anything else -- not valid JSON, or valid
+    JSON that isn't an object (a bare string/number/list excerpt) -- is
+    returned unchanged: `show_audit_entry()`'s `markup=False` already
+    protects against Rich markup injection, and a dict-shaped result is
+    already redacted at write time too (defense in depth, not the only
+    layer).
+    """
+    if not isinstance(result_excerpt, str):
+        return result_excerpt
+    try:
+        parsed = json.loads(result_excerpt)
+    except (json.JSONDecodeError, ValueError):
+        return result_excerpt
+    return redact_mapping(parsed) if isinstance(parsed, Mapping) else result_excerpt
+
+
 def _is_blank(value: Any) -> bool:
     """Whether a Select value means "nothing selected".
 
@@ -813,14 +841,25 @@ class MCPInspector(Vertical):
         container instead of leaving a previous entry's facts on screen.
 
         UX-B8: the whole detail (timestamp, tool identity, initiator,
-        decision, duration, error, and REDACTED arguments/result excerpt)
-        is one `json.dumps(indent=2)` dump in a bounded scrollable block,
+        decision, duration, error, arguments, and result excerpt) is one
+        `json.dumps(indent=2)` dump in a bounded scrollable block,
         `markup=False` -- log fields are tool/server-derived free text that
         must never be interpreted as Rich markup. Arguments are redacted
         again here (`redact_mapping`) even though `MCPExecutionLog.append()`
         already redacts on write -- defense in depth, mirroring
         `mcp_workbench.py`'s `_redact_external_server_record()` rationale:
         cheap insurance against a future write path that forgets to.
+
+        `result_excerpt`, unlike `arguments`, is always a caller-truncated
+        STRING on the record (`MCP/execution_log.py`'s `build_record()`),
+        so it cannot be redacted the same way. `_redacted_result_excerpt()`
+        below gives it the same defense-in-depth treatment where it can:
+        when the string parses as a JSON object, it is redacted like
+        arguments; otherwise (not JSON, or JSON that isn't an object) it is
+        rendered as-is, relying on write-time redaction of dict-shaped
+        results (`_run_tool_test()` / `_record_tool_execution()`) plus this
+        method's own `markup=False` for injection safety -- it is NOT
+        additionally redacted here.
         """
         async with self._refresh_lock:
             container = self.query_one("#mcp-inspector-audit", Vertical)
@@ -843,7 +882,7 @@ class MCPInspector(Vertical):
                 "duration": format_duration_ms(int(entry.get("duration_ms") or 0)),
                 "error": entry.get("error"),
                 "arguments": redact_mapping(arguments) if isinstance(arguments, Mapping) else arguments,
-                "result_excerpt": entry.get("result_excerpt"),
+                "result_excerpt": _redacted_result_excerpt(entry.get("result_excerpt")),
             }
             detail_text = json.dumps(detail_payload, indent=2, default=str)
             widgets: list[Any] = [

@@ -1946,11 +1946,17 @@ class MCPWorkbench(Container):
         The populate work is dispatched into the SAME exclusive worker
         group (`"mcp-tool-clear"`) `set_mode()` just used for its own
         `_clear_tool_view()` call, added HERE synchronously (no `await`
-        between the two `run_worker()` calls) -- Textual cancels an
-        existing worker in an exclusive group at `add_worker()` time, not
-        at execution time (`WorkerManager.add_worker()`), so this
-        deterministically supersedes that clear rather than racing it for
-        which one finishes last.
+        between the two `run_worker()` calls) -- Textual cancels the
+        PREVIOUSLY-QUEUED worker in an exclusive group at `add_worker()`
+        time, before it ever runs, not at completion time. That means
+        `_clear_tool_view()`'s own `show_audit_entry(None)` call is an
+        orphaned coroutine that never executes here -- `_open_audit_tool()`
+        below does NOT rely on that cancelled worker to clear the audit
+        panel; it clears `#mcp-inspector-audit` itself, explicitly, before
+        populating the Tools-mode detail (Critical fix: the stale
+        audit-entry detail -- including its own live "Open tool"/"Adjust
+        permission" buttons -- used to stay mounted underneath the new
+        detail otherwise).
         """
         event.stop()
         tool = self._tool_for(event.server_key, event.tool_name)
@@ -1966,8 +1972,16 @@ class MCPWorkbench(Container):
         )
 
     async def _open_audit_tool(self, tool: HubTool) -> None:
+        inspector = self.query_one(MCPInspector)
+        # Explicit clear -- see on_mcp_inspector_audit_open_tool_requested()'s
+        # docstring: set_mode()'s _clear_tool_view() worker (which would
+        # otherwise hide #mcp-inspector-audit via show_audit_entry(None))
+        # is cancelled before it runs by this method's own dispatch into
+        # the same exclusive "mcp-tool-clear" group, so it must not be
+        # relied upon here.
+        await inspector.show_audit_entry(None)
         await self.query_one(MCPToolsMode).select_tool_row(tool.tool_id)
-        await self.query_one(MCPInspector).show_tool(tool, effective=self._effective_for_display(tool))
+        await inspector.show_tool(tool, effective=self._effective_for_display(tool))
 
     async def on_mcp_inspector_audit_adjust_permission_requested(
         self, event: MCPInspector.AuditAdjustPermissionRequested
@@ -1976,7 +1990,10 @@ class MCPWorkbench(Container):
         mirrors `on_mcp_inspector_audit_open_tool_requested()` above, but
         switches to Permissions mode and moves the matrix cursor to the
         tool's row instead of opening its full Tools-mode detail. Same
-        exclusive-group dispatch rationale (see that method's docstring).
+        exclusive-group dispatch rationale, and same explicit-clear fix,
+        as that method's docstring/body -- `_open_audit_permission()`
+        below does not rely on the cancelled `_clear_tool_view()` worker
+        to hide `#mcp-inspector-audit` either.
         """
         event.stop()
         tool = self._tool_for(event.server_key, event.tool_name)
@@ -1992,8 +2009,12 @@ class MCPWorkbench(Container):
         )
 
     async def _open_audit_permission(self, tool: HubTool) -> None:
+        inspector = self.query_one(MCPInspector)
+        # Explicit clear -- same stale-audit-panel hazard as
+        # _open_audit_tool() above; see its comment for the mechanism.
+        await inspector.show_audit_entry(None)
         self.query_one(MCPPermissionsMode).select_tool_row(tool.server_key, tool.name)
-        await self.query_one(MCPInspector).show_permission(tool, self._effective_for_display(tool))
+        await inspector.show_permission(tool, self._effective_for_display(tool))
 
     async def on_mcp_inspector_reallow_requested(
         self, event: MCPInspector.ReallowRequested
