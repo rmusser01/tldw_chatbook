@@ -2094,7 +2094,20 @@ class PersonasScreen(BaseAppScreen):
             # Revert the switch to the last-known-good value.
             detail.apply_enabled(not message.enabled)
             return
-        if self._selected_lore_book is not None:
+        # update_world_book bumped world_books.version — resync the tracked
+        # version (and record) exactly like the settings-save path does, so a
+        # subsequent "Save settings" in the same selection doesn't send a stale
+        # expected_version and hit a spurious ConflictError.
+        try:
+            record = await asyncio.to_thread(manager.get_world_book, int(entity_id))
+        except Exception:
+            logger.opt(exception=True).warning(f"Could not reload lore book {entity_id} after toggle.")
+            record = None
+        if record is not None:
+            raw_version = record.get("version")
+            self._selected_lore_book_version = int(raw_version) if raw_version is not None else None
+            self._selected_lore_book = record
+        elif self._selected_lore_book is not None:
             self._selected_lore_book["enabled"] = bool(message.enabled)
         await self._render_lore_rows(query=self.state.search_query)
         self.query_one(PersonasLibraryPane).mark_active_row("lore", entity_id)
