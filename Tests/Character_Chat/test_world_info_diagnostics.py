@@ -274,3 +274,19 @@ def test_diagnostic_record_carries_priority():
     fired = next(e for e in diag.entries if e.status == "fired")
     assert fired.priority == 42
     assert fired.to_dict()["priority"] == 42
+
+
+def test_null_insertion_order_does_not_crash_sort():
+    """An imported/hand-edited entry with insertion_order=None (or a non-numeric
+    priority) must not raise a TypeError. Equal priorities force the sort to
+    compare the insertion_order key element; None must be coerced first (Qodo
+    #682). The processor also sorts self.entries at construction, so a bad value
+    would otherwise crash before process_messages() even runs."""
+    book = _book(1, "B", [
+        _entry(1, ["a"], "content-a", insertion_order=None, priority="bad"),
+        _entry(2, ["b"], "content-b", insertion_order=1, priority=0),
+    ])
+    proc = WorldInfoProcessor(world_books=[book])   # must not raise
+    result = proc.process_messages("a b", [])       # must not raise
+    injected = result["injections"]["before_char"]
+    assert "content-a" in injected and "content-b" in injected

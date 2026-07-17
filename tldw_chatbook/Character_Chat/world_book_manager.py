@@ -16,6 +16,27 @@ from loguru import logger
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, InputError, ConflictError, CharactersRAGDBError
 
 
+def _coerce_int(value: Any, default: int = 0) -> int:
+    """Best-effort int coercion for loosely-typed entry fields.
+
+    Import/duplicate flows forward external ``priority``/``insertion_order``
+    values straight into DB writes; a non-numeric value (e.g. ``"high"`` from a
+    hand-edited export) must default rather than raise ``ValueError`` and abort
+    the operation.
+
+    Args:
+        value: Raw value from a payload or imported JSON.
+        default: Fallback when the value is missing or malformed.
+
+    Returns:
+        The coerced int, or ``default`` on None/non-numeric input.
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 class WorldBookManager:
     """Manages world books and their entries in the database."""
     
@@ -355,12 +376,12 @@ class WorldBookManager:
                 content.strip(),
                 enabled,
                 position,
-                insertion_order,
+                _coerce_int(insertion_order, 0),
                 selective,
                 json.dumps(clean_secondary) if clean_secondary else None,
                 case_sensitive,
                 json.dumps(extensions) if extensions else None,
-                int(priority or 0)
+                _coerce_int(priority, 0)
             ))
             entry_id = cursor.lastrowid
             logger.info(f"Created world book entry {entry_id} for book {world_book_id}")
@@ -436,8 +457,8 @@ class WorldBookManager:
                 value = kwargs[field]
                 if field in ['keys', 'secondary_keys', 'extensions']:
                     value = json.dumps(value) if value else None
-                elif field == 'priority':
-                    value = int(value or 0)
+                elif field in ('priority', 'insertion_order'):
+                    value = _coerce_int(value, 0)
                 updates.append(f"{field} = ?")
                 params.append(value)
         
