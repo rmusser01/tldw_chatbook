@@ -281,13 +281,7 @@ def run_agent_loop(config: AgentConfig, initial_messages: list[dict],
                 return RunOutcome(RUN_DONE, steps, final_text=turn.text,
                                   subagents_spawned=spawned)
             calls = [fenced]
-        # getattr, not turn.assistant_message: some existing test doubles
-        # construct ad hoc ModelTurn-like objects (e.g.
-        # Tests/Agents/test_agent_loop_load_dedupe.py's `type("M", (), {...})`
-        # stand-ins) that predate this field and only define `text` /
-        # `tool_calls`; treat a missing attribute the same as an explicit
-        # None so those fence-only doubles keep working unchanged.
-        messages.append(getattr(turn, "assistant_message", None)
+        messages.append(turn.assistant_message
                         or {"role": "assistant", "content": turn.text})
 
         for call in calls:

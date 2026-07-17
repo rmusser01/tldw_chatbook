@@ -10,7 +10,7 @@ against the room budget.
 import json
 
 from tldw_chatbook.Agents.agent_models import (
-    STEP_TOOL_RESULT, AgentConfig, RunBudget, ToolSchema,
+    STEP_TOOL_RESULT, AgentConfig, ModelTurn, RunBudget, ToolSchema,
 )
 from tldw_chatbook.Agents.agent_runtime import LoopDeps, run_agent_loop, FENCE_OPEN
 
@@ -22,8 +22,8 @@ def _fence(name, args):
 def test_load_tools_never_duplicates_an_active_schema():
     active = [ToolSchema(id="p:foo", name="foo", description="d", parameters={})]
     turns = iter([
-        type("M", (), {"text": _fence("load_tools", {"ids": ["p:foo"]}), "tool_calls": ()})(),
-        type("M", (), {"text": "done", "tool_calls": ()})(),
+        ModelTurn(text=_fence("load_tools", {"ids": ["p:foo"]})),
+        ModelTurn(text="done"),
     ])
     seen_active_sizes = []
 
@@ -55,10 +55,10 @@ def test_load_dedupe_at_cap_boundary_still_admits_a_new_tool():
     t1 = ToolSchema(id="p:t1", name="t1", description="d", parameters={})
     catalog = {"p:t0": t0, "p:t1": t1}
     turns = iter([
-        type("M", (), {"text": _fence("load_tools", {"ids": ["p:t0"]}), "tool_calls": ()})(),
-        type("M", (), {"text": _fence("load_tools", {"ids": ["p:t0"]}), "tool_calls": ()})(),
-        type("M", (), {"text": _fence("load_tools", {"ids": ["p:t1"]}), "tool_calls": ()})(),
-        type("M", (), {"text": "done", "tool_calls": ()})(),
+        ModelTurn(text=_fence("load_tools", {"ids": ["p:t0"]})),
+        ModelTurn(text=_fence("load_tools", {"ids": ["p:t0"]})),
+        ModelTurn(text=_fence("load_tools", {"ids": ["p:t1"]})),
+        ModelTurn(text="done"),
     ])
     seen_active_sizes = []
 
@@ -96,8 +96,8 @@ def test_load_tools_all_requested_already_active_reports_already_loaded_not_no_r
     must be distinguishable: "already loaded: <names>"."""
     active = [ToolSchema(id="p:foo", name="foo", description="d", parameters={})]
     turns = iter([
-        type("M", (), {"text": _fence("load_tools", {"ids": ["p:foo"]}), "tool_calls": ()})(),
-        type("M", (), {"text": "done", "tool_calls": ()})(),
+        ModelTurn(text=_fence("load_tools", {"ids": ["p:foo"]})),
+        ModelTurn(text="done"),
     ])
     steps: list = []
     deps = LoopDeps(
@@ -127,8 +127,8 @@ def test_load_tools_genuinely_out_of_room_is_still_distinct_from_already_loaded(
     new_tool = ToolSchema(id="p:new", name="new", description="d", parameters={})
     active = [occupying]
     turns = iter([
-        type("M", (), {"text": _fence("load_tools", {"ids": ["p:new"]}), "tool_calls": ()})(),
-        type("M", (), {"text": "done", "tool_calls": ()})(),
+        ModelTurn(text=_fence("load_tools", {"ids": ["p:new"]})),
+        ModelTurn(text="done"),
     ])
     steps: list = []
     deps = LoopDeps(

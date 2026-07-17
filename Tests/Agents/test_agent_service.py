@@ -63,9 +63,6 @@ CFG = AgentConfig(model="test-model", system_prompt="You are helpful.",
                   allowed_tools=("calculator", "get_current_datetime",
                                  SPAWN_TOOL_NAME))
 
-NATIVE_CFG = dataclasses.replace(CFG)  # native_tools defaults True
-
-
 def test_native_endpoint_sends_tools_and_suppresses_fence_protocol(db):
     service, chat = make_service(db, [
         {"content": None,
@@ -710,3 +707,22 @@ def test_native_endpoint_google_sends_tools_and_suppresses_fence(db):
     assert outcome.status == RUN_DONE and outcome.final_text == "4."
     assert "tools" in chat.calls[0]
     assert "tool_call" not in chat.calls[0]["messages_payload"][0]["content"]
+
+
+def test_native_endpoint_with_no_schemas_omits_tools_kwarg(db):
+    """Review minor m3 (task-243 final review): a native-capable endpoint
+    whose run has NO disclosable schemas (empty allow-list, no sub-agents)
+    must call the provider with no tools= kwarg at all — an empty tools
+    list is rejected by several providers."""
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    config = AgentConfig(
+        model="m", system_prompt="s", allowed_tools=(),
+        budget=RunBudget(max_subagents=0))
+    chat = ScriptedChat(["Just an answer."])
+    service = AgentService(db=db, registry=registry, chat_call=chat)
+    _run_id, outcome = service.run_turn(
+        conversation_id="c", messages=[{"role": "user", "content": "hi"}],
+        config=config, api_endpoint="groq", should_cancel=lambda: False)
+    assert outcome.status == RUN_DONE
+    assert "tools" not in chat.calls[0]

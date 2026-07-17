@@ -58,9 +58,13 @@ CONSOLE_AGENT_OPERATING_PROMPT = (
 # limiter. Two additional real tool rounds beyond the 4-turn/10-step floor
 # cost 2 more turns / 6 more steps (6 turns / 16 steps total); under
 # max_model_turns=8 the floor plus those two extra rounds fits with 2 turns
-# to spare. max_steps=32 is now a pure backstop (~4 steps/turn worst case
-# across all 8 turns) that can no longer starve a discovery run one step
-# short of its wrap-up the way the bare step default once did.
+# to spare. max_steps=32 is a backstop, not a derived worst case: fence
+# turns cost at most 3 steps (one tool call per reply), but a NATIVE
+# multi-call batch (task-243) costs 1 + 2N steps per turn, so a run of
+# heavy parallel batches can legitimately hit the step backstop before the
+# 8-turn cap — that is the backstop doing its job. Either way it can no
+# longer starve a discovery run one step short of its wrap-up the way the
+# bare step default once did.
 # max_wall_seconds stays at the prior 480s (25-50s/turn x up to 8 model
 # turns at the slow local-model pace this gate exercises). The engine's own
 # RunBudget defaults (agent_models.RunBudget) are left UNCHANGED -- this

@@ -1844,9 +1844,36 @@ def test_tool_call_accumulator_preserves_extra_fragment_keys() -> None:
     (call,) = acc.calls()
     assert call["google_thought_signature"] == "sig-x"
     assert call["function"]["name"] == "calculator"
-    # PR #662 review: falsy-but-present extras survive verbatim (None drops).
+    # PR #662 review: falsy-but-present ALLOW-LISTED extras survive verbatim
+    # (None drops); unknown extra keys are NOT forwarded (PR #662 final
+    # review: open-ended passthrough let any provider inject echoed keys).
     acc.feed_payload({"choices": [{"delta": {"tool_calls": [
-        {"index": 0, "empty_extra": "", "none_extra": None}]}}]})
+        {"index": 0, "google_thought_signature": "",
+         "arbitrary_extra": "nope", "none_extra": None}]}}]})
     (call,) = acc.calls()
-    assert call["empty_extra"] == ""
+    assert call["google_thought_signature"] == ""
+    assert "arbitrary_extra" not in call
     assert "none_extra" not in call
+
+
+@pytest.mark.asyncio
+async def test_tools_run_real_answer_equal_to_fallback_copy_survives() -> None:
+    """Review minor m4: a REAL model answer that happens to equal the
+    fallback copy string must flow through in tools mode — suppression now
+    happens at generation (provenance), not by string equality."""
+    response = {"choices": [{"message": {"content": NO_PROVIDER_CONTENT_COPY}}]}
+
+    def fake_chat_api_call(**_kwargs):
+        return response
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"groq": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="groq", explicit_model="llama3-groq", streaming=False)
+    )
+
+    items = await _collect(gateway, resolution, tools=TOOLS)
+
+    assert items == [NO_PROVIDER_CONTENT_COPY]  # it IS the model's answer here

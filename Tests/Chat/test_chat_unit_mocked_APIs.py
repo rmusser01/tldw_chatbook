@@ -366,3 +366,29 @@ To run only these unit tests:
 To run alongside integration tests:
     pytest Tests/Chat/ -k "test_chat"
 """
+
+class TestTemperatureForwarding:
+    """Review-minors sweep: the PROVIDER_PARAM_MAP entries for groq,
+    deepseek, mistral(+mistralai), and google keyed temperature under the
+    nonexistent generic name 'temperature' (the dispatcher's generic name
+    is 'temp'), so temperature was silently dropped for those providers.
+    Pin that temp now reaches each handler as its 'temp' parameter."""
+
+    @pytest.mark.parametrize("endpoint", ["groq", "deepseek", "mistral", "google"])
+    def test_temp_reaches_handler(self, endpoint):
+        handler = Mock(return_value={"choices": [{"message": {"content": "ok"}}]})
+        handler.__name__ = f"chat_with_{endpoint}"
+        original = API_CALL_HANDLERS.get(endpoint)
+        API_CALL_HANDLERS[endpoint] = handler
+        try:
+            chat_api_call(
+                api_endpoint=endpoint,
+                messages_payload=[{"role": "user", "content": "hi"}],
+                api_key="test_key",
+                model="m",
+                temp=0.42,
+                streaming=False,
+            )
+        finally:
+            API_CALL_HANDLERS[endpoint] = original
+        assert handler.call_args.kwargs.get("temp") == 0.42
