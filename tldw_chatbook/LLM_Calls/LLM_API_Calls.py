@@ -906,6 +906,13 @@ def chat_with_anthropic(
                 # Note: Anthropic event types: message_start, content_block_start, content_block_delta, content_block_stop, message_delta, message_stop
                 # We primarily care about content_block_delta for text and message_delta/message_stop for finish_reason.
 
+                # task-263: map Anthropic tool_use content-block indexes to
+                # 0-based OpenAI tool_calls positions (Anthropic's index also
+                # counts text blocks; OpenAI consumers key fragments by
+                # tool-call position — see the gateway's _ToolCallAccumulator).
+                tool_call_positions = {}
+                next_tool_position = 0
+
                 try:
                     for line_bytes in response.iter_lines():  # iter_lines gives bytes
                         line = line_bytes.decode('utf-8').strip()
@@ -924,10 +931,33 @@ def chat_with_anthropic(
                                 finish_reason = None
                                 tool_calls_delta = None  # For future tool streaming
 
-                                if anthropic_event.get("type") == "content_block_delta":
+                                if anthropic_event.get("type") == "content_block_start":
+                                    block = anthropic_event.get("content_block") or {}
+                                    if block.get("type") == "tool_use":
+                                        index = int(anthropic_event.get("index", 0))
+                                        position = next_tool_position
+                                        next_tool_position += 1
+                                        tool_call_positions[index] = position
+                                        tool_calls_delta = [{
+                                            "index": position,
+                                            "id": str(block.get("id") or ""),
+                                            "type": "function",
+                                            "function": {
+                                                "name": str(block.get("name") or ""),
+                                                "arguments": ""},
+                                        }]
+                                elif anthropic_event.get("type") == "content_block_delta":
                                     delta = anthropic_event.get("delta", {})
                                     if delta.get("type") == "text_delta":
                                         delta_content = delta.get("text")
+                                    elif delta.get("type") == "input_json_delta":
+                                        index = int(anthropic_event.get("index", 0))
+                                        if index in tool_call_positions:
+                                            tool_calls_delta = [{
+                                                "index": tool_call_positions[index],
+                                                "function": {"arguments":
+                                                             delta.get("partial_json", "")},
+                                            }]
                                 elif anthropic_event.get("type") == "message_delta":
                                     finish_reason_anth = anthropic_event.get("delta", {}).get("stop_reason")
                                     # usage_anth = anthropic_event.get("usage") # Can capture usage here

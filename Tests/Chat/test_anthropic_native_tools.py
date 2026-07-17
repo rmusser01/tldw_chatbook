@@ -1,12 +1,16 @@
 """
-Tests for Anthropic native tool-calls request-side conversion (task-263 AC#2)
-and non-streaming response-side normalization (task-263 AC#1a).
+Tests for Anthropic native tool-calls request-side conversion (task-263 AC#2),
+non-streaming response-side normalization (task-263 AC#1a), and streaming
+response-side normalization (task-263 AC#1b).
 
 `chat_with_anthropic` must convert OpenAI-shaped ``tools`` and OpenAI-shaped
 tool-call history (assistant ``tool_calls`` + ``role="tool"`` messages) into
 Anthropic's native ``tool_use`` / ``tool_result`` block format before sending
 the request, and must normalize Anthropic ``tool_use`` content blocks in the
-response back into OpenAI-shaped ``message.tool_calls``.
+response back into OpenAI-shaped ``message.tool_calls`` -- both for the full
+non-streaming response and, fragment by fragment, for the streaming SSE
+generator (``content_block_start``/``input_json_delta`` -> OpenAI
+``delta.tool_calls`` fragments).
 
 Mirrors the mocking pattern from
 `Tests/Chat/test_chat_mocked_apis.py::test_anthropic_chat_mocked`: patch
@@ -295,3 +299,110 @@ def test_junk_tool_use_blocks_normalize_parseably(mock_post):
     parsed = parse_native_tool_calls(result["choices"][0]["message"])
     assert [(c.name, c.args, c.call_id) for c in parsed] == [
         ("calculator", {}, "toolu_N")]  # nameless entry dropped, no crash
+
+
+def _anthropic_sse_lines():
+    """A realistic Anthropic streaming transcript: a text block (index 0)
+    followed by a tool_use block (index 1) whose input arrives across two
+    `input_json_delta` fragments, then the terminal `tool_use` stop reason."""
+    events = [
+        {"type": "message_start", "message": {"id": "msg_3"}},
+        {"type": "content_block_start", "index": 0,
+         "content_block": {"type": "text", "text": ""}},
+        {"type": "content_block_delta", "index": 0,
+         "delta": {"type": "text_delta", "text": "Checking."}},
+        {"type": "content_block_stop", "index": 0},
+        {"type": "content_block_start", "index": 1,
+         "content_block": {"type": "tool_use", "id": "toolu_S",
+                           "name": "calculator", "input": {}}},
+        {"type": "content_block_delta", "index": 1,
+         "delta": {"type": "input_json_delta", "partial_json": '{"expres'}},
+        {"type": "content_block_delta", "index": 1,
+         "delta": {"type": "input_json_delta", "partial_json": 'sion": "2+2"}'}},
+        {"type": "content_block_stop", "index": 1},
+        {"type": "message_delta", "delta": {"stop_reason": "tool_use"}},
+        {"type": "message_stop"},
+    ]
+    return [f"data: {json.dumps(e)}".encode() for e in events]
+
+
+def _call_anthropic_stream(mock_post, sse_lines, messages, **extra):
+    """Streaming counterpart of `_call_anthropic_get_result`: stub a
+    streaming Anthropic response (`iter_lines` yields raw SSE byte-lines)
+    and return the consumed generator's yielded SSE strings."""
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.raise_for_status = Mock()
+    mock_response.iter_lines.return_value = sse_lines
+    mock_response.close = Mock()
+    mock_post.return_value = mock_response
+
+    result = chat_api_call(
+        "anthropic",
+        messages_payload=messages,
+        api_key="test-key",
+        model="claude-3-opus-20240229",
+        streaming=True,
+        **extra,
+    )
+    return list(result)
+
+
+@patch("requests.Session.post")
+def test_streaming_tool_use_emits_openai_delta_fragments(mock_post):
+    sse_lines = _call_anthropic_stream(
+        mock_post, _anthropic_sse_lines(),
+        [{"role": "user", "content": "2+2?"}],
+    )
+
+    chunks = []
+    for line in sse_lines:
+        assert line.startswith("data: ")
+        payload = line[len("data: "):].strip()
+        if payload == "[DONE]":
+            continue
+        chunks.append(json.loads(payload))
+
+    fragments = [c["choices"][0]["delta"]["tool_calls"]
+                 for c in chunks if "tool_calls" in c["choices"][0].get("delta", {})]
+    assert fragments[0] == [{"index": 0, "id": "toolu_S", "type": "function",
+                             "function": {"name": "calculator", "arguments": ""}}]
+    assert fragments[1] == [{"index": 0,
+                             "function": {"arguments": '{"expres'}}]
+    assert fragments[2] == [{"index": 0,
+                             "function": {"arguments": 'sion": "2+2"}'}}]
+    # text still streams, finish_reason still maps: not every chunk carries a
+    # "delta" (a finish_reason-only chunk doesn't), so default defensively.
+    texts = [c["choices"][0].get("delta", {}).get("content") for c in chunks]
+    assert "Checking." in texts
+    finishes = [c["choices"][0].get("finish_reason") for c in chunks]
+    assert "tool_calls" in finishes
+
+
+@patch("requests.Session.post")
+def test_streaming_fragments_reassemble_via_gateway_accumulator(mock_post):
+    """Cross-layer contract pin: feed this handler's yielded SSE strings
+    through the REAL gateway accumulator path (`_decode_stream_item` +
+    `_ToolCallAccumulator` from `tldw_chatbook.Chat.console_provider_gateway`,
+    task-243) and assert they reassemble into one merged tool call. These are
+    private module internals -- importing them directly here is intentional:
+    it pins the cross-layer fragment-shape contract between this handler and
+    the gateway's accumulator (task-263)."""
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        _decode_stream_item, _ToolCallAccumulator,
+    )
+
+    sse_lines = _call_anthropic_stream(
+        mock_post, _anthropic_sse_lines(),
+        [{"role": "user", "content": "2+2?"}],
+    )
+
+    accumulator = _ToolCallAccumulator()
+    for line in sse_lines:
+        accumulator.feed_payload(_decode_stream_item(line))
+
+    assert accumulator.calls() == ({
+        "id": "toolu_S", "type": "function",
+        "function": {"name": "calculator",
+                     "arguments": '{"expression": "2+2"}'},
+    },)
