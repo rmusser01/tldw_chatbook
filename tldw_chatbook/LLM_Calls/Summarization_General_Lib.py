@@ -997,6 +997,14 @@ def summarize_with_cohere(api_key, input_data, custom_prompt_arg, temp=None, sys
                 # "type"; summary text arrives as content-delta events at
                 # delta.message.content.text (mirrors chat_with_cohere's
                 # live-gated v2 loop, task-267).
+                try:
+                    yield from _stream_events()
+                finally:
+                    # Deterministic close even if the consumer abandons the
+                    # generator mid-stream (Qodo #698-1; sibling parity).
+                    response.close()
+
+            def _stream_events():
                 for line in response.iter_lines():
                     if not line:
                         continue
@@ -1012,7 +1020,10 @@ def summarize_with_cohere(api_key, input_data, custom_prompt_arg, temp=None, sys
                     elif decoded_line.startswith("event:"):
                         continue
                     elif not decoded_line.startswith("{"):
-                        logging.warning(f"Cohere: Unexpected stream line: {decoded_line[:120]}")
+                        # SSE transports may interleave metadata/comment lines
+                        # (id:, retry:, ": keep-alive") -- harmless, so debug
+                        # not warning (Qodo #698-3).
+                        logging.debug(f"Cohere: Skipping non-JSON stream line: {decoded_line[:120]}")
                         continue
                     if not decoded_line or decoded_line == "[DONE]":
                         continue
@@ -1020,6 +1031,11 @@ def summarize_with_cohere(api_key, input_data, custom_prompt_arg, temp=None, sys
                         event = json.loads(decoded_line)
                     except json.JSONDecodeError:
                         logging.error(f"Cohere: Error decoding JSON from line: {decoded_line}")
+                        continue
+                    if not isinstance(event, dict):
+                        # A JSON list/primitive line would crash .get() and
+                        # kill the generator (Gemini #698-1).
+                        logging.debug(f"Cohere: Skipping non-object stream event: {decoded_line[:120]}")
                         continue
                     if event.get("type") == "content-delta":
                         chunk = (
@@ -1056,10 +1072,13 @@ def summarize_with_cohere(api_key, input_data, custom_prompt_arg, temp=None, sys
             session.mount("https://", adapter)
             logging.debug("Cohere: Submitting request to API endpoint")
             response = session.post('https://api.cohere.com/v2/chat', headers=headers, json=data)
-            response_data = response.json()
-            logging.debug(f"API Response Data: {response_data}")
 
             if response.status_code == 200:
+                # json() only on success: a non-JSON error body (gateway/CDN
+                # HTML) would raise into the outer except and break the
+                # pinned failure format (Gemini/Qodo #698-2).
+                response_data = response.json()
+                logging.debug(f"API Response Data: {response_data}")
                 # v2 returns message.content as a parts array; concatenate
                 # the text parts (mirrors chat_with_cohere, task-267).
                 content_parts = (response_data.get('message') or {}).get('content') or []

@@ -202,3 +202,40 @@ def test_streaming_parses_raw_json_lines_without_sse_framing(mock_post):
     ))
 
     assert chunks == ["Raw ", "lines."]
+
+
+@patch("requests.Session.post")
+def test_non_200_with_non_json_body_keeps_pinned_error_format(mock_post):
+    """Gemini/Qodo #698-2: a gateway/CDN HTML error body must not break the
+    pinned failure format via a JSONDecodeError into the outer except."""
+    mock_response = Mock()
+    mock_response.status_code = 502
+    mock_response.text = "<html>Bad gateway</html>"
+    mock_response.json.side_effect = json.JSONDecodeError("x", "<html>", 0)
+    mock_post.return_value = mock_response
+
+    result = summarize_with_cohere("test-key", "Text.", "Prompt.")
+
+    assert result == "Cohere: API request failed: <html>Bad gateway</html>"
+
+
+@patch("requests.Session.post")
+def test_streaming_skips_non_object_json_and_closes_response(mock_post):
+    """Gemini #698-1 + Qodo #698-1: a JSON list/primitive line must not crash
+    the generator, and the response is closed when the stream ends."""
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.raise_for_status = Mock()
+    mock_response.iter_lines.return_value = [
+        b'[1, 2, 3]',
+        b'"just a string"',
+        b'{"type": "content-delta", "delta": {"message": {"content": {"text": "Still works."}}}}',
+    ]
+    mock_post.return_value = mock_response
+
+    chunks = list(summarize_with_cohere(
+        "test-key", "Text.", "Prompt.", streaming=True,
+    ))
+
+    assert chunks == ["Still works."]
+    mock_response.close.assert_called_once()
