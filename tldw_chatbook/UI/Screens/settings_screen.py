@@ -669,8 +669,11 @@ class SettingsScreen(BaseAppScreen):
         #: One-shot focus intent (task-290): `Widget.focus()` defers its
         #: set_focus via call_later, so a storm recompose can destroy the
         #: target between intent and processing. Recorded when navigation
-        #: focuses a provider field, cleared when ANY descendant focus
-        #: lands, consumed by the post-recompose restore.
+        #: focuses a provider field; cleared only when the INTENDED widget
+        #: itself lands focus (any-focus clearing was too eager -- the
+        #: stale category-chip focus the intent supersedes lands first),
+        #: consumed by the post-recompose restore, and reset on
+        #: navigation-away via _clear_navigation_provider_context.
         self._pending_navigation_focus_selector: str | None = None
         self._diagnostics_validation_result = "Config validation: not run"
         self._diagnostics_reload_result = "Config reload: not run"
