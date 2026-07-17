@@ -148,3 +148,37 @@ def test_diagnostics_multi_book_priority_offset_agrees_with_plain():
     plain = proc.process_messages("Warden", [])
     result, _diag = proc.process_messages_with_diagnostics("Warden", [])
     assert result == plain
+
+
+def test_diagnostics_reports_recursively_fired_entries():
+    """recursive_scanning=True: 'castle' is keyed off the user message, and
+    its content mentions 'dragon' — a second entry whose key never appears
+    in the user message or history, only inside 'castle's content. On a real
+    send this entry legitimately fires (mirrors test_recursive_scanning in
+    test_world_info.py). Diagnostics must report it as fired (not silently
+    drop it), with fired == len(matched_entries)."""
+    book = _book(1, "B", [
+        _entry(1, ["castle"], "The castle is protected by a dragon."),
+        _entry(2, ["dragon"], "Dragons breathe fire."),
+    ], recursive_scanning=True)
+    proc = WorldInfoProcessor(world_books=[book])
+    msg = "Tell me about the castle."
+
+    plain = proc.process_messages(msg, [])
+    result, diag = proc.process_messages_with_diagnostics(msg, [])
+
+    # The byte-identical pin still holds.
+    assert result == plain
+    # Both castle (primary hit) and dragon (recursive-only hit) fired.
+    assert len(result["matched_entries"]) == 2
+    assert diag.fired == len(result["matched_entries"])
+    assert diag.fired == 2
+
+    by_key = {tuple(e.keys): e for e in diag.entries}
+    castle = by_key[("castle",)]
+    assert castle.status == "fired" and castle.depth_level == 0
+
+    dragon = by_key[("dragon",)]
+    assert dragon.status == "fired"
+    assert dragon.depth_level == 1
+    assert "recursive" in dragon.activation_reason

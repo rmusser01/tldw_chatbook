@@ -232,58 +232,104 @@ class WorldInfoProcessor:
         scan_text = self._build_scan_text(current_message, conversation_history, depth)
         scan_text_lower = scan_text.lower()
 
-        # Identify the fired entries by insertion_order + content + position (the
-        # stable non-meta fields), so a candidate can be marked fired and given
-        # its injection order. (matched_entries carry no _entry_id.)
+        # Identify entries by insertion_order + content + position (the stable
+        # non-meta fields shared between self.entries/matched_entries and
+        # self._candidate_entries — matched_entries carry no _entry_id).
+        # NOTE: two distinct entries that happen to share an identical
+        # (insertion_order, content, position) triple collide on this
+        # signature — a degenerate authoring case; each fired slot still
+        # resolves to at most one (arbitrary) candidate.
         def sig(e):
             return (e.get("insertion_order", 0), e.get("content", ""), e.get("position", "before_char"))
-        fired_sig_order = {sig(e): i for i, e in enumerate(fired_list)}
+
+        candidates_by_sig: Dict[Any, Dict[str, Any]] = {}
+        for cand in self._candidate_entries:
+            candidates_by_sig.setdefault(sig(cand), cand)
 
         records = []
-        seen = set()
-        books = set()
+        fired_sigs = set()
+
+        # Fired records are derived from the AUTHORITATIVE send result
+        # (result["matched_entries"]), never from re-matching the original
+        # scan text: when recursive_scanning is on, an entry can legitimately
+        # fire because its key only appears inside ANOTHER entry's content,
+        # not in the original message/history. Re-classifying against the
+        # original text (as before) silently dropped those entries from the
+        # diagnostics, under-reporting `fired` vs. the real send.
+        for order, entry in enumerate(fired_list):
+            key = sig(entry)
+            cand = candidates_by_sig.get(key, entry)
+            fired_sigs.add(key)
+            try:
+                primary_hit, pk, sec_req, sec_hit, sk = self._classify_entry_match(
+                    cand, scan_text, scan_text_lower)
+            except Exception:
+                primary_hit, pk, sk = False, None, None
+
+            if primary_hit:
+                depth_level = 0
+                reason = f"matched key '{pk}'" + (f" + secondary '{sk}'" if sk else "")
+            else:
+                # Fired, but its own key never hit the original scan text →
+                # it only fired via recursive_scanning's rescan of other
+                # matched entries' content.
+                depth_level = 1
+                reason = "matched in another entry's content (recursive)"
+
+            records.append(WorldBookEntryDiagnostic(
+                entry_id=cand.get("_entry_id"), source_book_id=cand.get("_book_id"),
+                source_book_name=str(cand.get("_book_name") or ""),
+                keys=list(cand.get("keys", [])), activation_reason=reason, status="fired",
+                token_cost=self._estimate_entry_tokens(cand), injection_order=order,
+                position=cand.get("position", "before_char"),
+                content_preview=(cand.get("content", "") or "")[:80], depth_level=depth_level,
+            ))
+
+        # Near-misses: every candidate that did NOT fire this send, classified
+        # against the original scan text.
         for cand in self._candidate_entries:
-            books.add(cand.get("_book_id"))
+            key = sig(cand)
+            if key in fired_sigs:
+                continue
             try:
                 primary_hit, pk, sec_req, sec_hit, sk = self._classify_entry_match(
                     cand, scan_text, scan_text_lower)
             except Exception:
                 continue
             if not primary_hit:
-                continue  # key never appeared → not reported
-            key = sig(cand)
+                continue  # key never appeared → neither fired nor a near-miss
+
             if cand.get("_enabled", True) is False:
-                status, reason, order = "skipped:disabled", f"disabled (key '{pk}' matched)", None
+                status, reason = "skipped:disabled", f"disabled (key '{pk}' matched)"
             elif sec_req and not sec_hit:
-                status, reason, order = "skipped:secondary", "secondary key not found", None
-            elif key in fired_sig_order and key not in seen:
-                status = "fired"
-                order = fired_sig_order[key]
-                reason = (f"matched key '{pk}'" + (f" + secondary '{sk}'" if sk else ""))
-                seen.add(key)
+                status, reason = "skipped:secondary", "secondary key not found"
             else:
-                status = "skipped:budget"
-                order = None
-                reason = "dropped by token budget"
+                # Matched originally, enabled, secondary-ok — but not part of
+                # the fired set, so it was dropped by the budget hard-break.
+                status, reason = "skipped:budget", "dropped by token budget"
+
             records.append(WorldBookEntryDiagnostic(
                 entry_id=cand.get("_entry_id"), source_book_id=cand.get("_book_id"),
                 source_book_name=str(cand.get("_book_name") or ""),
                 keys=list(cand.get("keys", [])), activation_reason=reason, status=status,
-                token_cost=self._estimate_entry_tokens(cand), injection_order=order,
+                token_cost=self._estimate_entry_tokens(cand), injection_order=None,
                 position=cand.get("position", "before_char"),
                 content_preview=(cand.get("content", "") or "")[:80], depth_level=0,
             ))
 
-        fired = sum(1 for r in records if r.status == "fired")
+        fired_count = len(fired_list)
         diagnostics = WorldBookScanDiagnostics(
-            entries=records, matched=len(records), fired=fired,
-            skipped=len(records) - fired, tokens_used=result.get("tokens_used", 0),
+            entries=records, matched=len(records), fired=fired_count,
+            skipped=len(records) - fired_count, tokens_used=result.get("tokens_used", 0),
             token_budget=self.token_budget,
             # Truncation-derived (mirrors the dictionary diagnostics): true when the
             # budget dropped at least one matched entry. The fired set's tokens_used
             # is always <= budget by construction, so don't compare against it.
             budget_exceeded=any(r.status == "skipped:budget" for r in records),
-            books_scanned=len({b for b in books if b is not None}),
+            # Distinct source books, INCLUDING character-embedded books (whose
+            # _book_id is None) — id alone would collapse every character book
+            # into a single None bucket, so key on (id, name).
+            books_scanned=len({(c.get("_book_id"), c.get("_book_name")) for c in self._candidate_entries}),
         )
         return result, diagnostics
 
