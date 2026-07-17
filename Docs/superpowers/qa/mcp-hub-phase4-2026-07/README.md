@@ -421,6 +421,179 @@ fix code" instruction.
   Off/Ask-arm/Ask-confirm/Allow-through behaviors) matched the spec
   exactly with no further defects observed.
 
+## UX A-batch re-capture (2026-07-16, HEAD `4859d3cb`)
+
+Nine Permissions-mode PNGs re-taken **in place** (same filenames) after a
+UX fix/polish batch landed on top of this round's original HEAD
+(`1b106a46`): `5848a213` ("test(mcp-hub): fix stragglers left on the old
+inspector header/preview copy"), `cfe34ac6` ("fix(mcp-hub): armed-explainer
+hint, verb-first toast copy, vanished-tool notice"), `01e839c8`
+("feat(mcp-hub): Library-style kill-switch toggle, matrix legend, adaptive
+Tags column"), `9ebdd4a5` ("fix(mcp-hub): refresh stale copy across the
+Permissions/Tools inspector"), plus `4859d3cb` (docs-only, this round's
+actual HEAD). Same methodology as the rest of this document: textual-serve
+on port **9191**, headless bundled Chromium (Playwright, CDP-attached on a
+fresh port **9323**), viewport 2050×1240, route-abort non-localhost,
+DOM-rendered xterm text search, two-click DataTable row selection.
+
+**Seed reset before serving:** round 1 had left `read_file` re-allowed
+(its `definition_hash` rewritten by capture 6's own Re-allow flow), so
+`mcp_permissions.json` was rewritten back to the exact round-1 seed
+before starting the server this round: `kill_switch: false`,
+`global_default: "ask"`, `local:docs-server` with `search_docs` (allow,
+correct hash `33c51126…`), `read_file` (allow, deliberately wrong hash
+`"deadbeef"` — the rug-pull case), `list_files` (deny), no
+`builtin:tldw_chatbook` entries. Re-verified the seed resolves as
+intended the same way round 1 did (`resolve_effective_state()` against
+live `HubTool`s built from `local_mcp_store.json`'s own discovery
+snapshot) before touching the browser: `search_docs → Allow`,
+`read_file → Ask` (`config_changed=True`), `list_files → Off`. Isolated
+HOME reused unchanged otherwise: `/private/tmp/tldw-qa-mcp-hub-p4-20260716`
+(port 9191).
+
+### Per-capture notes
+
+1. **`permissions-matrix`** — fresh mount, **no selection** (rail reset to
+   "All servers" after a scoping detour — see UX item 3 below). Verified
+   in this state: UX item 1, the kill-switch is now a toggle **Button**
+   (`block MCP tools in chat: no ▸`, Checkbox gone); UX item 2, the
+   legend line (`• override · ⚠ definition changed · ⚑ high-risk floor ·
+   Space cycles Inherit → Allow → Ask → Off`); UX item 4, tool rows
+   two-space-indented under their "Server default — X" rows (`  list_files`,
+   `  read_file`, `  search_docs`); UX item 5, no `Tags` column header in
+   the matrix (`Tool | State` only — consistent with the seeded tools
+   having none); UX item 6, the inspector's empty header reads exactly
+   "Select an item to inspect." Preview strip (no selection): `global
+   default: ask · 3 overrides across 1 servers` (the 3 docs-server tool
+   overrides from the seed). PNG 155KB.
+
+2. **`matrix-space-cycle`** — cursor moved onto `list_characters`
+   (single click), `Space` pressed once. Row re-renders `list_characters
+   Allow •` in place. Persisted to `mcp_permissions.json`: a fresh
+   `servers."builtin:tldw_chatbook".tools.list_characters` entry,
+   `state: "allow"`. (Left in this state for the rest of the round, same
+   as round 1's own precedent — it doesn't collide with anything captured
+   afterwards this round.) PNG 155KB.
+
+3. **`kill-switch-toggled`** — UX item 1's toggle Button pressed once.
+   Label flips `block MCP tools in chat: no ▸` → `block MCP tools in
+   chat: yes ▸`; `mcp_permissions.json`'s `kill_switch` confirmed
+   `false → true` on disk at click time. **Toggled back to `false`
+   immediately after** (confirmed via a second disk read). PNG 155945B.
+   *Driver note, not filed as a defect:* the very first toggle-to-`yes`
+   this round rendered with the trailing `▸` chevron genuinely absent
+   from the DOM (confirmed via raw `outerHTML`, not a search-script
+   artifact) — but toggling back and forth 6 more times immediately after,
+   with only a 300ms settle each time, rendered the arrow correctly on
+   every single attempt (`_kill_switch_label()`'s source unconditionally
+   appends `" ▸"` regardless of state, and the button's own measured
+   width grew to accommodate it each time, ruling out a fixed-width
+   truncation theory). Read as a one-off first-paint render race, not a
+   reproducible app defect — the final captured PNG (re-armed cleanly
+   after the repro loop) shows the arrow present, matching source intent.
+
+   While investigating this, item 3's own per-server-scoped preview format
+   (`"<label>: N allow · M ask · K off — global default: <word>"`,
+   `mcp_workbench.py:1323-1368`) was separately confirmed by selecting
+   `docs-server` in the left Servers rail: preview line read exactly
+   `docs-server: 1 allow · 1 ask · 1 off — global default: ask` (counts
+   reflect this seed's actual state: `search_docs`=allow, `read_file`=ask
+   via the rug-pull downgrade, `list_files`=off). This format only appears
+   with a specific server selected in the rail; with no selection (this
+   round's `permissions-matrix` capture, and round 1's original spec) the
+   preview falls back to the plain `"global default: <word>"` (+ an
+   overrides-count suffix when any exist) sentence instead — both are
+   real, working UI states, just not the same DOM state simultaneously.
+   Rail selection was reset to "All servers" before any further captures.
+
+4. **`inspector-explanation-override`** — `search_docs` selected (two
+   clicks). Inspector now leads with UX item 7's identity line,
+   `search_docs — docs-server`, followed by `Permission: Allow` and
+   "From this tool's override." Verified: all three strings hit via DOM
+   text search on the same inspector pane. PNG 161KB.
+
+5. **`inspector-reallow`** — `read_file` selected instead. Inspector:
+   `read_file — docs-server`, `Permission: Ask`, "From this tool's
+   override.", "Definition changed since you allowed it.", `Re-allow`
+   button. Verified: all five strings hit. PNG 166KB.
+
+6. **`reallow-applied`** — pressed `Re-allow`. Matrix re-renders
+   `read_file` as `Allow •` (⚠ gone, confirmed via a column-scoped
+   substring read of that row, since the exact spacing differs slightly
+   from round 1's own note); inspector shows `Permission: Allow` / "From
+   this tool's override." with no config-changed notice. Confirmed on
+   disk: `read_file`'s `definition_hash` rewritten to
+   `c70c320dabad24764b2c472dc23bebdb41c53e64630eb6338def6af32c659742`
+   (matches round 1's own post-Re-allow value exactly — the tool's live
+   hash hasn't changed between rounds), no `config_changed` marker. PNG
+   161KB.
+
+7. **`tools-state-column`** — Tools mode, no filter, no selection.
+   **No manual refresh needed this round** — Defect 1 from this round's
+   original live-QA pass (`mcp_workbench.py`'s `_sync_permissions_mode()`
+   not propagating fresh states to `MCPToolsMode` on standalone
+   mutations) was fixed by `05eb0b2c` before this UX batch, and the fix
+   held: switching straight to Tools mode after captures 2/6's mutations
+   showed the State column already correct with no `r` press —
+   `list_files → Off •`, `read_file → Allow •`, `search_docs → Allow •`,
+   `list_characters → Allow •`, all other built-ins plain `Ask`. Also
+   re-verified UX item 5 here: header reads `Tool | State | Server |
+   Schema` — no `Tags` column at all (an explicit DOM search for the
+   literal string `Tags` came back empty across the whole buffer),
+   confirming the "adaptive Tags column" feature (`01e839c8`) hides the
+   column entirely rather than rendering an all-em-dash one, matching the
+   seeded tools having no tags anywhere in this catalog. PNG 156KB.
+
+8. **`test-tool-denied`** — `list_files` selected, Test Tool opened
+   (raw-JSON fallback, `{}`), Run pressed. Result: UX item 8's split —
+   status line reads exactly `Blocked · not run` (previously just
+   "Failed"/duration-style text), body unchanged: "Blocked — this tool is
+   set to Off in Permissions." Verified: both strings hit. PNG 125KB.
+
+9. **`test-tool-ask-armed`** — `ingest_media` selected (plain inherited
+   `Ask`, confirmed via the inspector's own "Inherited from the global
+   default." line before opening Test Tool), Test Tool opened, first
+   `Run` press. Button relabels to `Confirm run`; UX item 9's new armed
+   explainer appears above it verbatim: "This tool is set to Ask — press
+   again to run; anything else cancels." Verified: `Confirm run`,
+   `ingest_media` (inspector header), and the full explainer sentence all
+   hit. Did not press Run a second time (would have executed the tool,
+   out of scope for this capture). PNG 126KB.
+
+### UX items verified, cross-referenced to the captures above
+
+| # | Change | Verified in |
+|---|--------|--------------|
+| 1 | Kill-switch is a toggle Button, not a Checkbox; polarity yes=blocked | captures 1 (`no ▸`), 3 (`yes ▸`) |
+| 2 | Policy-preview legend line | capture 1 (and every capture after) |
+| 3 | Server-scoped preview counts format | side-probe during capture 3, documented above (not itself one of the 9 filenames — requires a server selected in the rail, a different DOM state than "fresh mount, no selection") |
+| 4 | Tool rows two-space indented | capture 1 |
+| 5 | Tags column absent when no tool has tags | captures 1 (matrix) and 7 (Tools mode) |
+| 6 | Inspector empty header "Select an item to inspect." | capture 1 |
+| 7 | Permission explanation `{tool} — {server}` identity line | captures 4, 5 |
+| 8 | Denied Test Tool status line "Blocked · not run" | capture 8 |
+| 9 | Armed-state explainer sentence | capture 9 |
+
+### New defects this round
+
+None confirmed. The one anomaly observed (capture 3's transient missing
+arrow glyph on the very first toggle) did not reproduce across 6
+follow-up toggles with the same click/settle pattern and is documented
+above as a driver-side/first-paint-race observation, not a filed defect.
+
+### Isolated HOME (after this round)
+
+`/private/tmp/tldw-qa-mcp-hub-p4-20260716` (port 9191), left on disk.
+`mcp_permissions.json` final state: `local:docs-server` — `search_docs`
+unchanged from the seed, `read_file` re-allowed again (hash
+`c70c320d…`, no `config_changed` marker — same end state round 1 reached),
+`list_files` unchanged (`deny`); `builtin:tldw_chatbook` carries one
+override, `list_characters → allow` (from capture 2's Space-cycle,
+intentionally left in place). `kill_switch` is `false` (toggled on for
+capture 3, then back off — confirmed via disk read both times). Both the
+`run_web_server` process and this round's driver Chromium instance were
+killed at the end of the round.
+
 ## Isolated HOME
 
 Left on disk at **`/private/tmp/tldw-qa-mcp-hub-p4-20260716`** (port 9191).
