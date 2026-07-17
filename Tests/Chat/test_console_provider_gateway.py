@@ -1844,3 +1844,9 @@ def test_tool_call_accumulator_preserves_extra_fragment_keys() -> None:
     (call,) = acc.calls()
     assert call["google_thought_signature"] == "sig-x"
     assert call["function"]["name"] == "calculator"
+    # PR #662 review: falsy-but-present extras survive verbatim (None drops).
+    acc.feed_payload({"choices": [{"delta": {"tool_calls": [
+        {"index": 0, "empty_extra": "", "none_extra": None}]}}]})
+    (call,) = acc.calls()
+    assert call["empty_extra"] == ""
+    assert "none_extra" not in call

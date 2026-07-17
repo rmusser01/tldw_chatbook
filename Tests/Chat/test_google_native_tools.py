@@ -531,3 +531,41 @@ def test_streaming_fragment_carries_thought_signature(mock_post):
     fragments = [f for c in parsed
                  for f in c["choices"][0].get("delta", {}).get("tool_calls", [])]
     assert fragments[0]["google_thought_signature"] == "sig-str"
+
+
+@patch("requests.Session.post")
+def test_non_streaming_malformed_function_call_part_is_skipped(mock_post):
+    """PR #662 review (Gemini): a non-dict functionCall in a NON-streaming
+    response must be skipped, not crash the parser (mirrors the streaming
+    guard)."""
+    response = {"candidates": [{"content": {"parts": [
+        {"functionCall": "not-a-dict"},
+        {"functionCall": {"name": "calculator",
+                          "args": {"expression": "2+2"}}}],
+        "role": "model"}, "finishReason": "STOP", "index": 0}],
+        "usageMetadata": {}}
+    result = _call_google_get_result(
+        mock_post, response, [{"role": "user", "content": "2+2?"}])
+    entries = result["choices"][0]["message"]["tool_calls"]
+    assert len(entries) == 1
+    assert entries[0]["function"]["name"] == "calculator"
+
+
+@patch("requests.Session.post")
+def test_unpairable_tool_result_is_skipped_not_empty_named(mock_post):
+    """PR #662 review (Qodo): a role=tool result whose id misses the map AND
+    whose positional fallback is exhausted must be SKIPPED — an empty-name
+    functionResponse would 400 the whole request."""
+    messages = [
+        {"role": "user", "content": "go"},
+        {"role": "assistant", "content": "",
+         "tool_calls": [{"id": "call_X", "type": "function",
+                         "function": {"name": "calculator",
+                                      "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "call_X", "content": "4"},
+        {"role": "tool", "tool_call_id": "mystery-2", "content": "orphan"},
+    ]
+    sent = _call_google(mock_post, messages)
+    result_turn = sent["contents"][2]
+    names = [p["functionResponse"]["name"] for p in result_turn["parts"]]
+    assert names == ["calculator"]  # the orphan (position 1 > 0 calls) dropped

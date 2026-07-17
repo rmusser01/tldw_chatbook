@@ -301,7 +301,7 @@ class _ToolCallAccumulator:
         for key, value in fragment.items():
             if key in ("index", "id", "type", "function"):
                 continue
-            if value:
+            if value is not None:
                 entry[key] = value
 
     def calls(self) -> tuple[dict, ...]:

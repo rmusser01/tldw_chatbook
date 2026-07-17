@@ -1824,6 +1824,16 @@ def chat_with_google(
                 name = (last_function_call_names[consecutive_tool_results]
                         if consecutive_tool_results < len(last_function_call_names)
                         else "")
+            if not name:
+                # Unpairable result (id miss + positional fallback
+                # exhausted): Gemini rejects empty tool names, so emitting
+                # it would 400 the whole request — skip just this part
+                # (PR #662 review).
+                logger.warning(
+                    "Google Gemini: dropping unpairable tool result "
+                    f"(tool_call_id={str(msg.get('tool_call_id') or '')!r})")
+                consecutive_tool_results += 1
+                continue
             part = _google_function_response(name, content)
             consecutive_tool_results += 1
             last = gemini_contents[-1] if gemini_contents else None
@@ -2054,13 +2064,20 @@ def chat_with_google(
                         if "text" in part:
                             assistant_content += part.get("text", "")
                         if "functionCall" in part:
+                            fc = part.get("functionCall")
+                            if not isinstance(fc, dict):
+                                # Malformed part: skip it — never crash the
+                                # parser (PR #662 review; mirrors the
+                                # streaming guard).
+                                continue
                             if tool_calls is None: tool_calls = []
                             entry = {
                                 "id": f"call_gemini_{time.time_ns()}_{len(tool_calls)}",
                                 "type": "function",
                                 "function": {
-                                    "name": part["functionCall"].get("name"),
-                                    "arguments": json.dumps(part["functionCall"].get("args", {}))
+                                    "name": fc.get("name"),
+                                    "arguments": json.dumps(
+                                        fc.get("args") if isinstance(fc.get("args"), dict) else {})
                                 }
                             }
                             # Gemini 3-family models REQUIRE the part's
