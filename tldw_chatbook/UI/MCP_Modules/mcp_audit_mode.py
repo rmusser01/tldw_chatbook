@@ -12,6 +12,7 @@ whatever the workbench hands you" contract.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
@@ -19,13 +20,51 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
-from textual.widgets import DataTable, Input, Select, Static
+from textual.widgets import Button, DataTable, Input, Select, Static
 
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import format_duration_ms
 
 _TABLE_COLUMNS = ("When", "Tool", "Initiator", "Decision", "Duration", "Outcome")
 
 _EMPTY_MESSAGE = "No tool executions recorded yet."
+
+# T8 (MCP Hub Phase 5): the Findings sub-view's own table shape and
+# empty-state copy. Findings are a SERVER-SOURCE-ONLY concept (governance
+# audit findings live on the tldw_server side; local/builtin profiles have
+# no such thing) -- three distinct empty states cover the three reasons
+# the table can be absent, each with its own copy so the user can tell
+# "not applicable" from "something went wrong":
+#   - not server source (or nothing fetched yet -- the same copy a fresh
+#     mount shows before the first `_sync_children()` pass, mirroring
+#     `MCPWorkbench._source`'s own "local" default)
+#   - server source, but the fetch itself failed (fail-soft -- a retry
+#     hint, not a crash)
+#   - server source, fetch succeeded, zero findings (a legitimately clean
+#     connection, not a failure)
+_FINDINGS_TABLE_COLUMNS = ("Severity", "Type", "Message")
+
+# Spec-verbatim (task-8-brief.md) -- tests assert this exact copy.
+_FINDINGS_LOCAL_EMPTY_MESSAGE = "Findings come from a tldw_server target."
+_FINDINGS_FETCH_FAILED_MESSAGE = (
+    "Findings could not be loaded. Try refreshing this server's connection."
+)
+_FINDINGS_NONE_FOUND_MESSAGE = "No governance findings for this connection."
+
+
+def _finding_field(finding: Mapping[str, Any], key: str) -> str:
+    """Defensive raw-dict read for one Findings-table cell.
+
+    Mirrors `hub_tool_catalog.server_tools_from_inventory()`'s own
+    tolerant-of-missing-keys style: a finding comes straight off the wire
+    (a server-side product, versioned independently), so every field is
+    optional -- a missing/blank value renders the same em dash the
+    Initiator/Decision columns already use for "not present" rather than
+    the literal string "None".
+    """
+    value = finding.get(key)
+    if value in (None, ""):
+        return "—"
+    return str(value)
 
 # Decision vocabulary (spec-verbatim, task-7-brief.md): the permission
 # decision under which one execution-log entry ran or stopped.
@@ -148,13 +187,66 @@ class MCPAuditMode(Vertical):
         height: auto;
         min-height: 0;
     }
+    /* T8 (MCP Hub Phase 5): the sub-view strip -- two plain Buttons
+    ("Executions"/"Findings"), the same "no RadioSet/TabbedContent, a
+    Button per option plus an `is-active` marker" house idiom
+    `library_skills_canvas.py`'s toggle Buttons and `mcp_rail.py`'s row
+    Buttons both already use (`set_class(condition, "is-active")` --
+    picked up by the bundle's already-global `.is-active` rule, so no
+    bundle edit is needed here at all). Sized to content, not `1fr` --
+    unlike the filter bar's Select slots above, a bare Button auto-sizes
+    to its label and never collapses to 0 the way a `width: 100%` child
+    of an auto-height parent does. */
+    #mcp-audit-subview-strip {
+        height: auto;
+        min-height: 0;
+    }
+    /* The two sub-view panes below split the canvas by CLIENT-SIDE Python
+    state (`self._sub_view`), not CSS `display: none` -- mirrors this
+    widget's own `_apply_filter()` precedent for `#mcp-audit-table`/
+    `#mcp-audit-empty` (no CSS-only hidden default there either): a single
+    source of truth, toggled explicitly by `_apply_subview_display()` at
+    `on_mount()` and on every sub-view Button press, rather than splitting
+    the "what's visible" answer across both a stylesheet rule and Python
+    code. `height: 1fr` (not `auto`) so `#mcp-audit-findings-table`'s own
+    `max-height: 70%` below resolves against a definite height, same
+    percentage-inside-a-definite-not-auto-parent discipline the Select
+    slot comment above documents for the filter bar. */
+    #mcp-audit-executions-view,
+    #mcp-audit-findings-view {
+        width: 1fr;
+        height: 1fr;
+        min-height: 0;
+    }
+    #mcp-audit-findings-table {
+        height: auto;
+        max-height: 70%;
+        min-height: 4;
+    }
+    #mcp-audit-findings-empty {
+        height: auto;
+        min-height: 0;
+    }
     """
 
     class EntrySelected(Message, namespace="mcp_audit_mode"):
-        """Posted when a table row is selected. `index` is the entry's
-        position in the FULL cached list `update_entries()` was last given
-        (the row key, a stable synthetic index -- stable across a client-
-        side re-filter, since that re-renders from the same cached list)."""
+        """Posted when an Executions-table row is selected. `index` is the
+        entry's position in the FULL cached list `update_entries()` was
+        last given (the row key, a stable synthetic index -- stable across
+        a client-side re-filter, since that re-renders from the same
+        cached list)."""
+
+        def __init__(self, index: int) -> None:
+            super().__init__()
+            self.index = index
+
+    class FindingSelected(Message, namespace="mcp_audit_mode"):
+        """Posted when a Findings-table row is selected (T8, MCP Hub
+        Phase 5). `index` is the finding's position in the full list
+        `update_findings()` was last given -- mirrors `EntrySelected`'s own
+        row-key contract exactly (Findings has no client-side filtering to
+        re-render against, but the same stable-synthetic-index shape keeps
+        both selection paths symmetric for the workbench's routing code)."""
 
         def __init__(self, index: int) -> None:
             super().__init__()
@@ -166,30 +258,61 @@ class MCPAuditMode(Vertical):
         self._filter_text: str = ""
         self._filter_decision: str | None = None
         self._filter_initiator: str | None = None
+        # T8 (MCP Hub Phase 5): Findings sub-view state. `_sub_view`
+        # defaults to "executions" per spec. `_findings_source` defaults to
+        # "local" -- mirrors `MCPWorkbench._source`'s own default -- so a
+        # fresh mount, before the workbench's first `_sync_children()` pass
+        # ever calls `update_findings()`, already renders the correct
+        # server-only empty copy rather than a blank Findings pane.
+        self._sub_view: str = "executions"
+        self._findings: list[dict[str, Any]] | None = None
+        self._findings_source: str = "local"
 
     def compose(self) -> ComposeResult:
-        with Horizontal(id="mcp-audit-filter-bar", classes="ds-toolbar"):
-            yield Input(placeholder="Filter tool or server…", id="mcp-audit-filter-text")
-            with Vertical(id="mcp-audit-filter-decision-slot"):
-                yield Select(
-                    _DECISION_OPTIONS, id="mcp-audit-filter-decision",
-                    prompt="All decisions", value=Select.NULL,
-                )
-            with Vertical(id="mcp-audit-filter-initiator-slot"):
-                yield Select(
-                    _INITIATOR_OPTIONS, id="mcp-audit-filter-initiator",
-                    prompt="All initiators", value=Select.NULL,
-                )
-        table = DataTable(id="mcp-audit-table")
-        table.cursor_type = "row"
-        yield table
-        with Vertical(id="mcp-audit-empty", classes="ds-recovery-callout"):
-            yield Static(_EMPTY_MESSAGE, id="mcp-audit-empty-message", markup=False)
+        with Horizontal(id="mcp-audit-subview-strip", classes="ds-toolbar"):
+            yield Button(
+                "Executions", id="mcp-audit-subview-executions",
+                classes="mcp-audit-subview-btn", compact=True,
+                tooltip="Show the tool execution log.",
+            )
+            yield Button(
+                "Findings", id="mcp-audit-subview-findings",
+                classes="mcp-audit-subview-btn", compact=True,
+                tooltip="Show governance findings for the active tldw_server target.",
+            )
+        with Vertical(id="mcp-audit-executions-view"):
+            with Horizontal(id="mcp-audit-filter-bar", classes="ds-toolbar"):
+                yield Input(placeholder="Filter tool or server…", id="mcp-audit-filter-text")
+                with Vertical(id="mcp-audit-filter-decision-slot"):
+                    yield Select(
+                        _DECISION_OPTIONS, id="mcp-audit-filter-decision",
+                        prompt="All decisions", value=Select.NULL,
+                    )
+                with Vertical(id="mcp-audit-filter-initiator-slot"):
+                    yield Select(
+                        _INITIATOR_OPTIONS, id="mcp-audit-filter-initiator",
+                        prompt="All initiators", value=Select.NULL,
+                    )
+            table = DataTable(id="mcp-audit-table")
+            table.cursor_type = "row"
+            yield table
+            with Vertical(id="mcp-audit-empty", classes="ds-recovery-callout"):
+                yield Static(_EMPTY_MESSAGE, id="mcp-audit-empty-message", markup=False)
+        with Vertical(id="mcp-audit-findings-view"):
+            findings_table = DataTable(id="mcp-audit-findings-table")
+            findings_table.cursor_type = "row"
+            yield findings_table
+            with Vertical(id="mcp-audit-findings-empty", classes="ds-recovery-callout"):
+                yield Static("", id="mcp-audit-findings-empty-message", markup=False)
 
     async def on_mount(self) -> None:
         table = self.query_one("#mcp-audit-table", DataTable)
         table.add_columns(*_TABLE_COLUMNS)
         self._apply_filter()
+        findings_table = self.query_one("#mcp-audit-findings-table", DataTable)
+        findings_table.add_columns(*_FINDINGS_TABLE_COLUMNS)
+        self._render_findings()
+        self._apply_subview_display()
 
     # -- data ---------------------------------------------------------------
 
@@ -278,7 +401,133 @@ class MCPAuditMode(Vertical):
         table.display = has_any
         self.query_one("#mcp-audit-empty", Vertical).display = not has_any
 
+    # -- T8 (MCP Hub Phase 5): Findings sub-view -----------------------------
+
+    async def update_findings(
+        self, findings: list[dict[str, Any]] | None, *, source: str
+    ) -> None:
+        """Rebuild the Findings sub-view from the workbench's latest fetch.
+
+        Args:
+            findings: The raw `governance_audit_findings.items` list from
+                the workbench's `(source, target)`-cached "advanced"
+                section fetch (mirrors `_load_server_governance_profiles()`'s
+                own T11 cache/fetch contract in mcp_workbench.py). `None`
+                means either `source` isn't `"server"` (findings are a
+                server-only concept) or the fetch itself failed --
+                `_render_findings()` below tells those two apart via
+                `source` itself, not by inspecting `findings`. An empty
+                list is a distinct, legitimate third case: a successful
+                fetch that genuinely found zero findings.
+            source: The workbench's current `_source` for THIS call, read
+                fresh every call rather than cached on first mount -- a
+                source switch is reflected the same pass its
+                `_sync_children()` resync runs.
+        """
+        self._findings = findings
+        self._findings_source = source
+        self._render_findings()
+
+    def _render_findings(self) -> None:
+        """Re-render `#mcp-audit-findings-table` from `self._findings`/
+        `self._findings_source`, and toggle the table/empty-state
+        visibility -- mirrors `_apply_filter()`'s own table/empty-state
+        toggle shape, but with three empty-state branches instead of one
+        (see `update_findings()`'s docstring for what each means).
+
+        Preserves the cursor's ROW KEY across the rebuild -- same
+        `DataTable.clear()`-resets-cursor-to-(0,0) rationale as
+        `_apply_filter()`'s own cursor-key restore: `update_findings()` can
+        be called again with an unchanged list on a later
+        `_sync_children()` pass that didn't touch this table's rows at
+        all, and an unguarded rebuild would still silently redirect the
+        cursor back to row 0.
+        """
+        table = self.query_one("#mcp-audit-findings-table", DataTable)
+        empty = self.query_one("#mcp-audit-findings-empty", Vertical)
+        message = self.query_one("#mcp-audit-findings-empty-message", Static)
+
+        cursor_key: str | None = None
+        if table.row_count > 0 and table.cursor_row >= 0:
+            try:
+                row_key, _ = table.coordinate_to_cell_key((table.cursor_row, 0))
+            except Exception:
+                # Defensive, same rationale as `_apply_filter()`'s own
+                # cursor-key read: a cursor position that doesn't resolve
+                # to a live cell is simply not restored, not a crash.
+                row_key = None
+            if row_key is not None and row_key.value is not None:
+                cursor_key = str(row_key.value)
+
+        table.clear(columns=True)
+        table.add_columns(*_FINDINGS_TABLE_COLUMNS)
+
+        if self._findings_source != "server":
+            table.display = False
+            empty.display = True
+            message.update(_FINDINGS_LOCAL_EMPTY_MESSAGE)
+            return
+        if self._findings is None:
+            table.display = False
+            empty.display = True
+            message.update(_FINDINGS_FETCH_FAILED_MESSAGE)
+            return
+        if not self._findings:
+            table.display = False
+            empty.display = True
+            message.update(_FINDINGS_NONE_FOUND_MESSAGE)
+            return
+
+        restored_index: int | None = None
+        for index, finding in enumerate(self._findings):
+            if not isinstance(finding, Mapping):
+                # Defensive, mirrors `server_tools_from_inventory()`'s own
+                # "skip non-dict entries entirely" style for a raw,
+                # wire-derived list.
+                continue
+            key = str(index)
+            table.add_row(
+                Text(_finding_field(finding, "severity")),
+                Text(_finding_field(finding, "finding_type")),
+                Text(_finding_field(finding, "message")),
+                key=key,
+            )
+            if cursor_key is not None and key == cursor_key:
+                restored_index = table.row_count - 1
+
+        if restored_index is not None:
+            table.move_cursor(row=restored_index)
+
+        table.display = True
+        empty.display = False
+
+    def _apply_subview_display(self) -> None:
+        """Toggle the Executions/Findings pane visibility and the sub-view
+        Buttons' `is-active` marker from `self._sub_view` -- the single
+        source of truth (see the DEFAULT_CSS comment above
+        `#mcp-audit-executions-view`/`#mcp-audit-findings-view` for why
+        this isn't split across a CSS default too)."""
+        executions_active = self._sub_view == "executions"
+        self.query_one("#mcp-audit-executions-view", Vertical).display = executions_active
+        self.query_one("#mcp-audit-findings-view", Vertical).display = not executions_active
+        self.query_one("#mcp-audit-subview-executions", Button).set_class(
+            executions_active, "is-active"
+        )
+        self.query_one("#mcp-audit-subview-findings", Button).set_class(
+            not executions_active, "is-active"
+        )
+
     # -- events ---------------------------------------------------------------
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "mcp-audit-subview-executions":
+            event.stop()
+            self._sub_view = "executions"
+            self._apply_subview_display()
+        elif event.button.id == "mcp-audit-subview-findings":
+            event.stop()
+            self._sub_view = "findings"
+            self._apply_subview_display()
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id != "mcp-audit-filter-text":
@@ -307,6 +556,11 @@ class MCPAuditMode(Vertical):
             self._apply_filter()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        """Route a row selection from EITHER table (both post the same
+        `DataTable.RowSelected` message type, distinguished here by
+        `event.data_table.id`) to its own message class -- `EntrySelected`
+        for the Executions table, `FindingSelected` (T8) for the Findings
+        table."""
         event.stop()
         if event.row_key is None or event.row_key.value is None:
             return
@@ -314,7 +568,11 @@ class MCPAuditMode(Vertical):
             index = int(str(event.row_key.value))
         except ValueError:
             # Defensive: row keys are always synthetic ints assigned by
-            # `_apply_filter()` above, but a mismatched cell key from a
-            # mid-rebuild race is a no-op, not a crash.
+            # `_apply_filter()`/`_render_findings()` above, but a
+            # mismatched cell key from a mid-rebuild race is a no-op, not
+            # a crash.
             return
-        self.post_message(self.EntrySelected(index))
+        if event.data_table.id == "mcp-audit-findings-table":
+            self.post_message(self.FindingSelected(index))
+        else:
+            self.post_message(self.EntrySelected(index))

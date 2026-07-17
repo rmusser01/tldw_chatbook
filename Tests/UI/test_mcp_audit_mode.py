@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import DataTable, Input, Select
+from textual.widgets import Button, DataTable, Input, Select
 
 import tldw_chatbook
 from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import MCPAuditMode
@@ -51,6 +51,9 @@ class AuditModeApp(App):
         yield MCPAuditMode(id="mcp-mode-canvas-audit")
 
     def on_mcp_audit_mode_entry_selected(self, event) -> None:
+        self.events.append(event)
+
+    def on_mcp_audit_mode_finding_selected(self, event) -> None:
         self.events.append(event)
 
 
@@ -475,3 +478,309 @@ async def test_table_and_filter_bar_have_nonzero_geometry_with_bundled_css():
         assert initiator_select.size.height > 0, (
             "filter-initiator Select collapsed to zero height under bundled CSS"
         )
+
+
+# -- T8 (MCP Hub Phase 5): sub-view strip --------------------------------
+
+
+@pytest.mark.asyncio
+async def test_default_subview_is_executions():
+    app = AuditModeApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.query_one("#mcp-audit-executions-view").display is True
+        assert app.query_one("#mcp-audit-findings-view").display is False
+        exec_btn = app.query_one("#mcp-audit-subview-executions", Button)
+        find_btn = app.query_one("#mcp-audit-subview-findings", Button)
+        assert "is-active" in exec_btn.classes
+        assert "is-active" not in find_btn.classes
+
+
+@pytest.mark.asyncio
+async def test_clicking_findings_button_switches_subview():
+    app = AuditModeApp()
+    async with app.run_test() as pilot:
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+        assert app.query_one("#mcp-audit-executions-view").display is False
+        assert app.query_one("#mcp-audit-findings-view").display is True
+        exec_btn = app.query_one("#mcp-audit-subview-executions", Button)
+        find_btn = app.query_one("#mcp-audit-subview-findings", Button)
+        assert "is-active" not in exec_btn.classes
+        assert "is-active" in find_btn.classes
+
+
+@pytest.mark.asyncio
+async def test_clicking_executions_button_switches_back():
+    app = AuditModeApp()
+    async with app.run_test() as pilot:
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+        await pilot.click("#mcp-audit-subview-executions")
+        await pilot.pause()
+        assert app.query_one("#mcp-audit-executions-view").display is True
+        assert app.query_one("#mcp-audit-findings-view").display is False
+
+
+@pytest.mark.asyncio
+async def test_subview_buttons_are_tooltipped():
+    app = AuditModeApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.query_one("#mcp-audit-subview-executions", Button).tooltip
+        assert app.query_one("#mcp-audit-subview-findings", Button).tooltip
+
+
+# -- T8 (MCP Hub Phase 5): Findings rendering ----------------------------
+
+
+def _finding(
+    *,
+    severity: str = "high",
+    finding_type: str = "orphaned_path_scope",
+    object_kind: str = "path_scope",
+    object_id: str = "5",
+    message: str = "Needs review",
+    remediation: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "severity": severity,
+        "finding_type": finding_type,
+        "object_kind": object_kind,
+        "object_id": object_id,
+        "message": message,
+    }
+    if remediation is not None:
+        payload["remediation"] = remediation
+    return payload
+
+
+@pytest.mark.asyncio
+async def test_findings_render_from_a_fake_payload():
+    app = AuditModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPAuditMode)
+        await canvas.update_findings(
+            [
+                _finding(severity="high", finding_type="orphaned_path_scope", message="Needs review"),
+                _finding(severity="low", finding_type="stale_binding", message="Check binding"),
+            ],
+            source="server",
+        )
+        await pilot.pause()
+
+        table = app.query_one("#mcp-audit-findings-table", DataTable)
+        assert table.display is True
+        assert table.row_count == 2
+        assert _row_texts(table, 0) == ["high", "orphaned_path_scope", "Needs review"]
+        assert _row_texts(table, 1) == ["low", "stale_binding", "Check binding"]
+        assert app.query_one("#mcp-audit-findings-empty").display is False
+
+
+@pytest.mark.asyncio
+async def test_findings_defensive_missing_fields_fall_back_to_em_dash():
+    """Mirrors `hub_tool_catalog.server_tools_from_inventory()`'s own
+    tolerant-of-missing-keys reads -- a raw finding straight off the wire
+    may be missing any field."""
+    app = AuditModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPAuditMode)
+        await canvas.update_findings([{"message": "only message"}], source="server")
+        await pilot.pause()
+        table = app.query_one("#mcp-audit-findings-table", DataTable)
+        assert _row_texts(table, 0) == ["—", "—", "only message"]
+
+
+@pytest.mark.asyncio
+async def test_findings_row_keys_are_stable_synthetic_index():
+    app = AuditModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPAuditMode)
+        await canvas.update_findings(
+            [_finding(message="a"), _finding(message="b")], source="server"
+        )
+        await pilot.pause()
+        table = app.query_one("#mcp-audit-findings-table", DataTable)
+        first_key, _ = table.coordinate_to_cell_key((0, 0))
+        second_key, _ = table.coordinate_to_cell_key((1, 0))
+        assert first_key.value == "0"
+        assert second_key.value == "1"
+
+
+@pytest.mark.asyncio
+async def test_findings_cursor_key_is_preserved_across_a_resync_with_same_rows():
+    """`DataTable.clear()` unconditionally resets the cursor to (0, 0) --
+    the next `_sync_children()` pass calls `update_findings()` again even
+    when the underlying list is unchanged, so without a row-key-based
+    restore the cursor would silently jump back to row 0 on every
+    background resync."""
+    app = AuditModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPAuditMode)
+        findings = [_finding(message="a"), _finding(message="b"), _finding(message="c")]
+        await canvas.update_findings(findings, source="server")
+        await pilot.pause()
+        table = app.query_one("#mcp-audit-findings-table", DataTable)
+        table.focus()
+        table.move_cursor(row=1)
+        await pilot.pause()
+
+        await canvas.update_findings(list(findings), source="server")
+        await pilot.pause()
+
+        row_key, _ = table.coordinate_to_cell_key((table.cursor_row, 0))
+        assert row_key.value == "1"
+
+
+# -- T8 (MCP Hub Phase 5): Findings empty states -------------------------
+
+
+@pytest.mark.asyncio
+async def test_local_source_shows_server_only_copy():
+    app = AuditModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPAuditMode)
+        await canvas.update_findings(None, source="local")
+        await pilot.pause()
+
+        table = app.query_one("#mcp-audit-findings-table", DataTable)
+        assert table.display is False
+        empty = app.query_one("#mcp-audit-findings-empty")
+        assert empty.display is True
+        message = str(app.query_one("#mcp-audit-findings-empty-message").renderable)
+        assert message == "Findings come from a tldw_server target."
+
+
+@pytest.mark.asyncio
+async def test_builtin_source_shows_server_only_copy():
+    app = AuditModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPAuditMode)
+        await canvas.update_findings(None, source="builtin")
+        await pilot.pause()
+        message = str(app.query_one("#mcp-audit-findings-empty-message").renderable)
+        assert message == "Findings come from a tldw_server target."
+
+
+@pytest.mark.asyncio
+async def test_mount_before_any_update_findings_call_shows_server_only_copy():
+    """Default `_findings_source` mirrors `MCPWorkbench._source`'s own
+    default ("local") -- a fresh mount before the first `_sync_children()`
+    pass renders the same server-only copy a local source shows, never a
+    blank or crashing Findings sub-view."""
+    app = AuditModeApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        message = str(app.query_one("#mcp-audit-findings-empty-message").renderable)
+        assert message == "Findings come from a tldw_server target."
+
+
+@pytest.mark.asyncio
+async def test_server_source_fetch_failure_shows_fail_soft_retry_hint():
+    """`findings=None` under `source="server"` means the fetch itself
+    failed (as opposed to `source != "server"`, meaning findings were never
+    applicable) -- distinct copy from the local/builtin empty state, per
+    the fail-soft "absent listing with a retry hint" contract."""
+    app = AuditModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPAuditMode)
+        await canvas.update_findings(None, source="server")
+        await pilot.pause()
+
+        table = app.query_one("#mcp-audit-findings-table", DataTable)
+        assert table.display is False
+        empty = app.query_one("#mcp-audit-findings-empty")
+        assert empty.display is True
+        message = str(app.query_one("#mcp-audit-findings-empty-message").renderable)
+        assert message != "Findings come from a tldw_server target."
+        assert message
+
+
+@pytest.mark.asyncio
+async def test_server_source_zero_findings_shows_distinct_empty_copy():
+    """A successful fetch that legitimately returns zero findings is not
+    the same case as a failed fetch -- distinct copy from both the
+    local/builtin empty state and the fetch-failure hint."""
+    app = AuditModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPAuditMode)
+        await canvas.update_findings([], source="server")
+        await pilot.pause()
+
+        assert app.query_one("#mcp-audit-findings-table").display is False
+        message = str(app.query_one("#mcp-audit-findings-empty-message").renderable)
+        assert message not in ("Findings come from a tldw_server target.", "")
+
+        await canvas.update_findings(None, source="server")
+        await pilot.pause()
+        failure_message = str(app.query_one("#mcp-audit-findings-empty-message").renderable)
+        assert failure_message != message
+
+
+@pytest.mark.asyncio
+async def test_going_from_absent_to_populated_findings_hides_empty_state():
+    app = AuditModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPAuditMode)
+        await canvas.update_findings(None, source="server")
+        await pilot.pause()
+        assert app.query_one("#mcp-audit-findings-empty").display is True
+
+        await canvas.update_findings([_finding()], source="server")
+        await pilot.pause()
+        assert app.query_one("#mcp-audit-findings-empty").display is False
+        table = app.query_one("#mcp-audit-findings-table", DataTable)
+        assert table.display is True
+        assert table.row_count == 1
+
+
+# -- T8 (MCP Hub Phase 5): Findings selection ----------------------------
+
+
+@pytest.mark.asyncio
+async def test_findings_row_selection_posts_finding_selected_with_synthetic_index():
+    app = AuditModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPAuditMode)
+        await canvas.update_findings(
+            [_finding(message="a"), _finding(message="b")], source="server"
+        )
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+        table = app.query_one("#mcp-audit-findings-table", DataTable)
+        table.focus()
+        table.move_cursor(row=1)
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert len(app.events) == 1
+        event = app.events[0]
+        assert isinstance(event, MCPAuditMode.FindingSelected)
+        assert event.index == 1
+
+
+# -- T8 (MCP Hub Phase 5): real bundled CSS ------------------------------
+
+
+@pytest.mark.asyncio
+async def test_subview_strip_and_findings_table_have_nonzero_geometry_with_bundled_css():
+    app = AuditModeAppWithBundledCSS()
+    async with app.run_test(size=(120, 40)) as pilot:
+        canvas = app.query_one(MCPAuditMode)
+        await canvas.update_findings([_finding()], source="server")
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+
+        exec_btn = app.query_one("#mcp-audit-subview-executions", Button)
+        find_btn = app.query_one("#mcp-audit-subview-findings", Button)
+        assert exec_btn.size.width > 0 and exec_btn.size.height > 0, (
+            "Executions sub-view button collapsed to zero size under bundled CSS"
+        )
+        assert find_btn.size.width > 0 and find_btn.size.height > 0, (
+            "Findings sub-view button collapsed to zero size under bundled CSS"
+        )
+
+        table = app.query_one("#mcp-audit-findings-table", DataTable)
+        assert table.size.width > 0, "findings table collapsed to zero width under bundled CSS"
+        assert table.size.height > 0, "findings table collapsed to zero height under bundled CSS"

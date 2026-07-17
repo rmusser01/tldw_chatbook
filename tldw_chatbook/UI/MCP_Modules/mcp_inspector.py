@@ -181,6 +181,42 @@ def _redacted_result_excerpt(result_excerpt: Any) -> Any:
     return redact_mapping(parsed) if isinstance(parsed, Mapping) else result_excerpt
 
 
+def _finding_text(finding: Mapping[str, Any], *keys: str) -> str:
+    """Defensive raw-dict read for one finding field (T8, MCP Hub
+    Phase 5) -- mirrors `hub_tool_catalog.server_tools_from_inventory()`'s
+    own tolerant-of-missing-keys style: a finding comes straight off the
+    wire (a server-side product, versioned independently), so every field
+    is optional. Tries each key in order and returns the first non-blank
+    value found, `"—"` when none match -- `mcp_audit_mode.py`'s own
+    `_finding_field()` does the identical single-key version for the
+    Findings table; this module accepts multiple key aliases since the
+    exact remediation field name isn't pinned down by the wire contract
+    yet (see `_finding_remediation()` below).
+    """
+    for key in keys:
+        value = finding.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return "—"
+
+
+def _finding_remediation(finding: Mapping[str, Any]) -> str | None:
+    """The finding's suggested-remediation text, or `None` when absent.
+
+    Unlike `_finding_text()`'s columns (always rendered, `"—"` fallback),
+    remediation is shown only "when present" per the spec (task-8-brief.md)
+    -- an absent remediation is not an error, most findings simply won't
+    carry one. Two key aliases are checked defensively (`"remediation"`
+    and `"suggested_remediation"`) since the real wire field name isn't
+    pinned down by any client/schema in this codebase yet.
+    """
+    for key in ("remediation", "suggested_remediation"):
+        value = finding.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
 def _is_blank(value: Any) -> bool:
     """Whether a Select value means "nothing selected".
 
@@ -240,6 +276,15 @@ class MCPInspector(Vertical):
     `#mcp-inspector-permission` above -- `show_audit_entry()`'s own display
     toggle is what reveals it. */
     #mcp-inspector-audit {
+        height: auto;
+        min-height: 0;
+        display: none;
+    }
+    /* T8 (MCP Hub Phase 5): the finding-detail container, populated by
+    `show_finding()` -- Audit mode's Findings sub-view row-selection entry
+    point. Same hidden-by-default discipline as `#mcp-inspector-audit`
+    above -- `show_finding()`'s own display toggle is what reveals it. */
+    #mcp-inspector-finding {
         height: auto;
         min-height: 0;
         display: none;
@@ -437,6 +482,12 @@ class MCPInspector(Vertical):
         # to know which `(server_key, tool_name)` to post without
         # re-querying the workbench.
         self._current_audit_entry: dict[str, Any] | None = None
+        # T8 (MCP Hub Phase 5): the raw finding dict `#mcp-inspector-
+        # finding` currently describes, or `None` when hidden -- set by
+        # `show_finding()`, the single writer. No action buttons read this
+        # back (unlike `_current_audit_entry` above) -- the finding detail
+        # is read-only this phase (no client-side fix actions).
+        self._current_finding: dict[str, Any] | None = None
         # Task 5: True once `require_confirm()` has armed the Test Tool Run
         # button into a one-shot "Confirm run" control (the tool's gate
         # resolved to "ask" -- `MCPWorkbench` decides that, this pane only
@@ -478,6 +529,10 @@ class MCPInspector(Vertical):
         # `show_audit_entry()` -- hidden (display: none, see DEFAULT_CSS)
         # until an Audit-mode row is selected.
         yield Vertical(id="mcp-inspector-audit")
+        # T8 (MCP Hub Phase 5): finding-detail container, populated by
+        # `show_finding()` -- hidden (display: none, see DEFAULT_CSS) until
+        # an Audit-mode Findings-table row is selected.
+        yield Vertical(id="mcp-inspector-finding")
         # T12: default collapsed unless the user has previously opened it --
         # per-user GLOBAL preference (Console rail section-preference
         # precedent), NOT per-server. `get_cli_setting` reads the real user
@@ -905,6 +960,63 @@ class MCPInspector(Vertical):
                     tooltip="Switch to Permissions mode and select this tool's row.",
                 ),
             ]
+            await container.mount_all(widgets)
+
+    async def show_finding(self, finding: dict[str, Any] | None) -> None:
+        """Render `#mcp-inspector-finding` for one Audit-mode Findings-table
+        row, or hide it (T8, MCP Hub Phase 5).
+
+        Findings-mode's own row-selection entry point (`MCPWorkbench.
+        on_mcp_audit_mode_finding_selected()`) -- standalone, same
+        `_refresh_lock` discipline as `show_permission()`/`show_audit_
+        entry()` (two selections back to back must not interleave their
+        remove/mount cycles into `DuplicateIds`). `finding=None` (a
+        stale/out-of-range selection, or a mode switch via `MCPWorkbench.
+        _clear_tool_view()`) hides the container instead of leaving a
+        previous finding's facts on screen.
+
+        Read-only: severity/type/message, plus a suggested-remediation
+        line only when the raw payload actually carries one -- no
+        client-side fix actions this phase (deferred; see task-8-brief.md),
+        so unlike `show_audit_entry()` this mounts no action buttons at
+        all. `markup=False` throughout -- finding fields are server-derived
+        free text that must never be interpreted as Rich markup.
+        """
+        async with self._refresh_lock:
+            container = self.query_one("#mcp-inspector-finding", Vertical)
+            await container.remove_children()
+            if finding is None:
+                container.display = False
+                self._current_finding = None
+                return
+            container.display = True
+            self._current_finding = finding
+            severity = _finding_text(finding, "severity")
+            finding_type = _finding_text(finding, "finding_type", "type")
+            message = _finding_text(finding, "message")
+            widgets: list[Any] = [
+                Static(
+                    f"Finding — {severity}",
+                    id="mcp-inspector-finding-name", classes="ds-field-row", markup=False,
+                ),
+                Static(
+                    f"Type: {finding_type}",
+                    id="mcp-inspector-finding-type", classes="ds-field-row", markup=False,
+                ),
+                Static(
+                    message,
+                    id="mcp-inspector-finding-message", classes="ds-field-row", markup=False,
+                ),
+            ]
+            remediation = _finding_remediation(finding)
+            if remediation:
+                widgets.append(
+                    Static(
+                        f"Suggested remediation: {remediation}",
+                        id="mcp-inspector-finding-remediation",
+                        classes="ds-field-row", markup=False,
+                    )
+                )
             await container.mount_all(widgets)
 
     async def _mount_test_tool_panel(self) -> None:

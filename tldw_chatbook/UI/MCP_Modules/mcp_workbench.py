@@ -499,6 +499,27 @@ class MCPWorkbench(Container):
         # list) is looked up against this cache when the event arrives,
         # rather than re-reading the log a second time.
         self._last_audit_entries: list[dict[str, Any]] = []
+        # T8 (MCP Hub Phase 5): the full findings list `_sync_audit_mode()`
+        # most recently pushed into `MCPAuditMode` -- `MCPAuditMode.
+        # FindingSelected.index` is looked up against this cache when the
+        # event arrives, mirroring `_last_audit_entries`/`EntrySelected`
+        # immediately above.
+        self._last_audit_findings: list[dict[str, Any]] = []
+        # T8: this pass's server-source Audit-mode Findings fetch
+        # (`_load_server_findings()`), cached by `(source, target)` --
+        # mirrors `_governance_profiles_cache`/`_governance_profiles_
+        # cache_key` (T11) exactly: STATIC server-side data, unaffected by
+        # anything a client-side interaction can do, so repeated
+        # `_sync_children()` passes under the same identity reuse this
+        # instead of re-awaiting `load_section("advanced")` every time.
+        # `_UNSET` seeds the key so the very first fetch always "changes"
+        # it and fetches once. `_sync_audit_mode()` has no standalone
+        # caller (unlike `_sync_permissions_mode()`'s three), so unlike
+        # `_server_governance_profiles()` there is no separate `refresh`
+        # gate here -- every call is part of a full `_sync_children()`
+        # pass already.
+        self._findings_cache: list[dict[str, Any]] | None = None
+        self._findings_cache_key: tuple[str, str | None] | Any = _UNSET
         # T11: this pass's server-source governance-listing fetch
         # (`_load_server_governance_profiles()`), cached by `(source,
         # target)` identity -- that data is STATIC server-side profile
@@ -941,6 +962,67 @@ class MCPWorkbench(Container):
                 entries = []
         self._last_audit_entries = entries
         await self.query_one(MCPAuditMode).update_entries(entries)
+
+        # T8 (MCP Hub Phase 5): Findings sub-view -- server source only.
+        findings = await self._server_findings(service)
+        self._last_audit_findings = findings or []
+        await self.query_one(MCPAuditMode).update_findings(findings, source=self._source)
+
+    async def _server_findings(self, service: Any) -> list[dict[str, Any]] | None:
+        """T8: this pass's server-source Audit-mode Findings listing,
+        fetched at most once per `(source, target)` identity -- mirrors
+        `_server_governance_profiles()` (T11) exactly, minus that method's
+        `refresh` gate (see `_findings_cache_key`'s own docstring in
+        `__init__` for why: `_sync_audit_mode()`, this method's only
+        caller, has no standalone invocation path the way `_sync_
+        permissions_mode()` does).
+        """
+        key = (self._source, self._active_service_target_id())
+        if key != self._findings_cache_key:
+            self._findings_cache = await self._load_server_findings(service)
+            self._findings_cache_key = key
+        return self._findings_cache
+
+    async def _load_server_findings(self, service: Any) -> list[dict[str, Any]] | None:
+        """T8: the server-source Audit-mode Findings fetch's data.
+
+        Only ever fetched under the server source -- local/builtin never
+        call `load_section("advanced")` for this at all. Guarded the same
+        fail-soft way as `_load_server_governance_profiles()`: any
+        exception (no active target, a backend error, a service too old to
+        expose the section) -> `None` -> `MCPAuditMode.update_findings()`
+        renders the fetch-failure retry hint rather than raising out of
+        `_sync_children()`.
+
+        `governance_audit_findings` is an ENVELOPE dict (`{"items": [...]}
+        `, `_envelope_payload()`'s own shape in `MCP/server_unified_
+        service.py`'s `get_advanced()` ~:392), not a bare list -- mirrors
+        `unified_mcp_sections.render_advanced_section()`'s own extraction
+        (`(payload.get("governance_audit_findings") or {}).get("items")`).
+        A malformed-but-present response (not a Mapping, a
+        `governance_audit_findings` that isn't a Mapping, or an `items`
+        that isn't a list) still counts as a successful fetch -- `[]`, same
+        as `_load_server_governance_profiles()`'s own malformed-but-present
+        contract, so the Findings table renders its "no findings" empty
+        copy rather than the fetch-failure one.
+        """
+        if self._source != "server" or service is None:
+            return None
+        loader = getattr(service, "load_section", None)
+        if not callable(loader):
+            return None
+        try:
+            advanced_payload = await loader("advanced")
+        except Exception as exc:
+            logger.warning(f"MCP audit findings fetch failed: {exc}")
+            return None
+        if not isinstance(advanced_payload, Mapping):
+            return []
+        findings_envelope = advanced_payload.get("governance_audit_findings")
+        if not isinstance(findings_envelope, Mapping):
+            return []
+        raw_items = findings_envelope.get("items")
+        return raw_items if isinstance(raw_items, list) else []
 
     async def _sync_tools_mode(
         self, tools: list[HubTool], states: dict[tuple[str, str], EffectiveToolState]
@@ -1579,6 +1661,10 @@ class MCPWorkbench(Container):
         # execution-log entry the inspector was showing -- same rationale
         # as the `show_tool(None)` call above, one line up.
         await self.query_one(MCPInspector).show_audit_entry(None)
+        # T8 (MCP Hub Phase 5): a mode change also invalidates whatever
+        # Findings-table selection the inspector was showing -- same
+        # rationale as the `show_audit_entry(None)` call above.
+        await self.query_one(MCPInspector).show_finding(None)
 
     async def _disarm_canvas_delete(self) -> None:
         # Under `_sync_children_lock`: `disarm_delete()` rebuilds the detail
@@ -1932,6 +2018,26 @@ class MCPWorkbench(Container):
             else None
         )
         await self.query_one(MCPInspector).show_audit_entry(entry)
+
+    async def on_mcp_audit_mode_finding_selected(
+        self, event: MCPAuditMode.FindingSelected
+    ) -> None:
+        """Route an Audit-mode Findings-table row selection to the
+        inspector's finding detail view (T8, MCP Hub Phase 5). Mirrors
+        `on_mcp_audit_mode_entry_selected()` exactly -- `event.index` is
+        looked up against `_last_audit_findings` (the SAME list `_sync_
+        audit_mode()` handed `MCPAuditMode` this pass); an out-of-range
+        index (a stale selection racing a background resync that shrank
+        the list) resolves to `None`, which `show_finding()` renders as
+        "nothing selected" rather than crashing.
+        """
+        event.stop()
+        finding = (
+            self._last_audit_findings[event.index]
+            if 0 <= event.index < len(self._last_audit_findings)
+            else None
+        )
+        await self.query_one(MCPInspector).show_finding(finding)
 
     async def on_mcp_inspector_audit_open_tool_requested(
         self, event: MCPInspector.AuditOpenToolRequested

@@ -5190,6 +5190,257 @@ async def test_audit_open_tool_missing_tool_notifies_instead_of_crashing():
         assert severity == "warning"
 
 
+# -- T8 (MCP Hub Phase 5): Audit mode Findings sub-view ----------------------
+#
+# Findings are a SERVER-SOURCE-ONLY concept: `_load_server_findings()`
+# fetches `load_section("advanced")` and reads its `governance_audit_
+# findings.items` list (the same payload key `unified_mcp_sections.
+# render_advanced_section()` already extracts, `MCP/server_unified_
+# service.py`'s `get_advanced()` ~:392), cached per `(source, target)`
+# exactly like `_load_server_governance_profiles()` (T11).
+
+
+class AuditFindingsHubService(AuditHubService):
+    """`AuditHubService` (T7's real docs::fetch/docs::search/notes::
+    list_notes catalog plus `execution_log`) with `context` pre-set to
+    SERVER source against one active target ("main") -- mirrors
+    `GovernanceCachingHubService`'s own constructor-set context, so a test
+    doesn't need a rail source-switch click just to exercise the
+    server-source-only findings fetch. `load_section("advanced")` returns a
+    canned `governance_audit_findings` envelope; every other section falls
+    through to `ToolTestHubService.load_section()` unchanged."""
+
+    def __init__(
+        self,
+        records: list[dict] | None = None,
+        *,
+        findings_items: list[dict] | None = None,
+    ) -> None:
+        super().__init__(records)
+        self.context = UnifiedMCPContext(
+            selected_source="server", selected_active_server_id="main"
+        )
+        self.advanced_fetch_calls = 0
+        self._findings_items = (
+            [
+                {
+                    "severity": "high",
+                    "finding_type": "orphaned_path_scope",
+                    "object_kind": "path_scope",
+                    "object_id": "5",
+                    "message": "Needs review",
+                    "remediation": "Remove the unused path scope.",
+                }
+            ]
+            if findings_items is None
+            else findings_items
+        )
+
+    async def load_section(self, section=None):
+        effective_section = section or self.context.selected_section or "overview"
+        if effective_section == "advanced":
+            self.advanced_fetch_calls += 1
+            return {
+                "server_id": "main",
+                "governance_audit_findings": {"items": list(self._findings_items)},
+            }
+        return await super().load_section(section)
+
+
+class AuditFindingsApp(App):
+    def __init__(
+        self,
+        records: list[dict] | None = None,
+        *,
+        findings_items: list[dict] | None = None,
+    ) -> None:
+        super().__init__()
+        self.unified_mcp_service = AuditFindingsHubService(
+            records, findings_items=findings_items
+        )
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+async def _select_findings_row(app: App, pilot, row: int) -> None:
+    table = app.query_one("#mcp-audit-findings-table", DataTable)
+    table.focus()
+    table.move_cursor(row=row)
+    await pilot.pause()
+    await pilot.press("enter")
+    await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_audit_mode_syncs_server_findings_into_findings_subview():
+    app = AuditFindingsApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        service = app.unified_mcp_service
+        assert service.advanced_fetch_calls == 1  # the mount-time full sync
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+
+        table = app.query_one("#mcp-audit-findings-table", DataTable)
+        assert table.row_count == 1
+        row = table.get_row_at(0)
+        assert [cell.plain for cell in row] == ["high", "orphaned_path_scope", "Needs review"]
+
+
+@pytest.mark.asyncio
+async def test_findings_fetch_cached_across_resyncs_under_same_source_target():
+    """T8, mirrors T11's own `test_space_press_resyncs_reuse_cached_
+    governance_profiles`: the findings listing is STATIC server-side data
+    -- a second full `_sync_children()` pass under the SAME `(source,
+    target)` identity must reuse the cache, not re-fetch."""
+    app = AuditFindingsApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        service = app.unified_mcp_service
+        assert service.advanced_fetch_calls == 1
+
+        await workbench.reload()
+        await pilot.pause()
+        assert service.advanced_fetch_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_local_source_never_fetches_findings_advanced_section():
+    app = WorkbenchApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+
+        table = app.query_one("#mcp-audit-findings-table", DataTable)
+        assert table.display is False
+        message = str(app.query_one("#mcp-audit-findings-empty-message", Static).renderable)
+        assert message == "Findings come from a tldw_server target."
+
+
+class RaisingAdvancedSectionHubService(AuditFindingsHubService):
+    """`load_section("advanced")` raises -- the guard in
+    `_load_server_findings()` must swallow it and leave the Findings table
+    absent with the fail-soft retry-hint copy rather than crashing."""
+
+    async def load_section(self, section=None):
+        effective_section = section or self.context.selected_section or "overview"
+        if effective_section == "advanced":
+            self.advanced_fetch_calls += 1
+            raise RuntimeError("advanced section backend unavailable")
+        return await super().load_section(section)
+
+
+class RaisingAdvancedSectionApp(App):
+    def __init__(self) -> None:
+        super().__init__()
+        self.unified_mcp_service = RaisingAdvancedSectionHubService()
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+@pytest.mark.asyncio
+async def test_findings_fetch_failure_is_fail_soft_not_a_crash():
+    app = RaisingAdvancedSectionApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()  # must not crash the whole app
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+
+        table = app.query_one("#mcp-audit-findings-table", DataTable)
+        assert table.display is False
+        message = str(app.query_one("#mcp-audit-findings-empty-message", Static).renderable)
+        assert message != "Findings come from a tldw_server target."
+        assert message
+
+
+@pytest.mark.asyncio
+async def test_finding_selection_shows_read_only_detail_with_remediation_in_inspector():
+    app = AuditFindingsApp(
+        findings_items=[
+            {
+                "severity": "high",
+                "finding_type": "orphaned_path_scope",
+                "message": "Needs review",
+                "remediation": "Remove the unused path scope.",
+            }
+        ]
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+        await _select_findings_row(app, pilot, 0)
+
+        container = app.query_one("#mcp-inspector-finding")
+        assert container.display is True
+        detail_text = "\n".join(
+            str(static.renderable) for static in container.query(Static)
+        )
+        assert "high" in detail_text
+        assert "orphaned_path_scope" in detail_text
+        assert "Needs review" in detail_text
+        assert "Remove the unused path scope." in detail_text
+        # No client-side fix actions this phase -- read-only detail only.
+        assert not list(container.query(Button))
+
+
+@pytest.mark.asyncio
+async def test_finding_selection_without_remediation_omits_remediation_line():
+    app = AuditFindingsApp(
+        findings_items=[{"severity": "low", "finding_type": "stale_binding", "message": "Check binding"}]
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+        await _select_findings_row(app, pilot, 0)
+
+        container = app.query_one("#mcp-inspector-finding")
+        detail_text = "\n".join(
+            str(static.renderable) for static in container.query(Static)
+        )
+        assert "remediation" not in detail_text.lower()
+
+
+@pytest.mark.asyncio
+async def test_switching_mode_away_from_audit_clears_finding_detail():
+    app = AuditFindingsApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+        await _select_findings_row(app, pilot, 0)
+        assert app.query_one("#mcp-inspector-finding").display is True
+
+        workbench.set_mode("servers")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert app.query_one("#mcp-inspector-finding").display is False
+
+
 @pytest.mark.asyncio
 async def test_audit_adjust_permission_switches_to_permissions_mode_and_selects_row():
     app = AuditApp([_audit_record(server_key="local:docs", tool_name="search")])
