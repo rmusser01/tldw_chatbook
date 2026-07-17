@@ -241,7 +241,6 @@ class ConfigProfileManager:
         hybrid_full_rag.chunking.enable_parent_retrieval = True
         hybrid_full_rag.chunking.parent_size_multiplier = 3
         hybrid_full_rag.chunking.clean_artifacts = True
-        hybrid_full_rag.chunking.enable_late_chunking = True
         hybrid_full_rag.chunking.preserve_structure = True
         hybrid_full_rag.search.default_search_mode = "hybrid"
         hybrid_full_rag.search.default_top_k = 20
