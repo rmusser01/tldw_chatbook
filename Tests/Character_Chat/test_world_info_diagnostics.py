@@ -201,6 +201,57 @@ def test_classify_entry_match_tolerates_null_keys():
     assert p is True and pk == "Warden" and sr is False
 
 
+def test_high_priority_entry_survives_budget_over_low_priority():
+    """Priority (not FIFO) decides budget survival: the high-priority entry
+    fires even though a low-priority one comes first by insertion_order."""
+    book = _book(1, "B", [
+        _entry(1, ["low"], "AAAA " * 200, insertion_order=0, priority=0),    # ~250 tok, first by order
+        _entry(2, ["high"], "BBBB " * 200, insertion_order=1, priority=90),  # ~250 tok, high priority
+    ], token_budget=300)   # fits exactly one entry, not two
+    proc = WorldInfoProcessor(world_books=[book])
+    result = proc.process_messages("low high", [])
+    fired = result["injections"]["before_char"]
+    assert any("BBBB" in c for c in fired)   # high-priority survives
+    assert all("AAAA" not in c for c in fired)  # low-priority dropped
+
+
+def test_low_book_token_budget_is_honored():
+    """A book token_budget below the old 500 default is honored (floor fix)."""
+    book = _book(1, "B", [
+        _entry(1, ["a"], "AAAA " * 30, insertion_order=0),   # ~30 tok
+        _entry(2, ["b"], "BBBB " * 30, insertion_order=1),   # ~30 tok, over a 40-token budget
+    ], token_budget=40)
+    proc = WorldInfoProcessor(world_books=[book])
+    result = proc.process_messages("a b", [])
+    fired = result["injections"]["before_char"]
+    assert any("AAAA" in c for c in fired) and all("BBBB" not in c for c in fired)
+
+
+def test_injection_order_reflects_priority():
+    book = _book(1, "B", [
+        _entry(1, ["a"], "content-a", insertion_order=0, priority=1),
+        _entry(2, ["b"], "content-b", insertion_order=1, priority=99),
+    ])
+    proc = WorldInfoProcessor(world_books=[book])
+    result = proc.process_messages("a b", [])
+    injected = result["injections"]["before_char"]
+    assert injected == ["content-b", "content-a"]   # priority 99 before priority 1
+
+
+def test_recursive_entry_reorders_by_insertion_order():
+    """Recursive-scan normalization: an entry that fires via recursion but has
+    a LOWER insertion_order than a direct match now orders ahead of it."""
+    book = _book(1, "B", [
+        _entry(1, ["castle"], "the castle guards a dragon", insertion_order=5),
+        _entry(2, ["dragon"], "a fearsome dragon", insertion_order=0),
+    ], recursive_scanning=True)
+    proc = WorldInfoProcessor(world_books=[book])
+    result = proc.process_messages("the castle", [])
+    injected = result["injections"]["before_char"]
+    # entry 2 (insertion_order 0, fired via recursion) now precedes entry 1 (order 5).
+    assert injected.index("a fearsome dragon") < injected.index("the castle guards a dragon")
+
+
 def test_diagnostics_duplicate_signature_entries_keep_distinct_ids():
     """Two entries sharing an identical (insertion_order, content, position)
     signature that BOTH fire must each be attributed to their own entry_id, not
