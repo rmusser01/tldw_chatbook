@@ -1183,13 +1183,20 @@ def chat_with_cohere(
         raise ChatAuthenticationError(provider="cohere", message="Cohere API key is missing.")
     logger.debug("Cohere: API key provided.")
 
-    final_model = model or cohere_config.get('model', 'command-r')
-    
+    # task-267: the config default is 'command-a-03-2025' (config.py); this
+    # inline fallback previously stated the stale v1-era 'command-r' (known
+    # discrepancy, fixed here) and is only reached when BOTH the caller and
+    # the loaded config omit a model.
+    final_model = model or cohere_config.get('model', 'command-a-03-2025')
+
     # Log request metrics
     log_counter("cohere_api_request", labels={"model": final_model, "streaming": str(streaming)})
     api_base_url = cohere_config.get('api_base_url', 'https://api.cohere.com').rstrip('/')
-    # Using /v1/chat is standard for Cohere's current Chat API
-    COHERE_CHAT_URL = f"{api_base_url}/v1/chat"
+    # task-267: migrated v1 /chat -> v2 /chat. v1's flat parameter_definitions
+    # cannot express nested JSON Schema (MCP tools inexpressible), tool_results
+    # lived outside the history model, and there were no call ids. v2 is
+    # OpenAI-shaped end-to-end.
+    COHERE_CHAT_URL = f"{api_base_url}/v2/chat"
 
     # Timeout for each attempt, retries will extend total possible time
     timeout_seconds = float(cohere_config.get('api_timeout', 180.0)) # Increased default
@@ -1200,72 +1207,62 @@ def chat_with_cohere(
         "Authorization": f"Bearer {final_api_key}",
         "Content-Type": "application/json",
         "Accept": "text/event-stream" if streaming else "application/json",
-        # Consider using a more recent API version or removing if not strictly needed, to get Cohere's latest defaults
-        "Cohere-Version": cohere_config.get('api_version_date', "2024-05-13")
     }
 
-    chat_history_for_cohere = []
-    current_user_message_str = ""
-    preamble_str = system_prompt or "" # 'preamble' is Cohere's term for system prompt
+    # --- task-267: build the v2 `messages` array -------------------------
+    # v2 takes the whole conversation as an OpenAI-shaped messages array
+    # (incl. role:"tool") instead of v1's separate message/chat_history/
+    # preamble split. A leading system message (or the `system_prompt` param)
+    # becomes one inline {"role": "system", ...} entry; any OTHER system
+    # message in the history is dropped, matching the v1 handler's prior
+    # behavior of only ever honoring ONE system/preamble slot.
+    temp_messages = list(input_data or []) # Make a mutable copy
+    cohere_messages: List[Dict[str, Any]] = []
 
-    temp_messages = list(input_data) # Make a mutable copy
+    if system_prompt:
+        cohere_messages.append({"role": "system", "content": system_prompt})
+    elif temp_messages and temp_messages[0].get('role') == 'system':
+        sys_msg = temp_messages.pop(0)
+        sys_content = sys_msg.get('content') or ''
+        cohere_messages.append({"role": "system", "content": str(sys_content)})
+        logger.debug(f"Cohere: Using leading system message as v2 system entry: '{str(sys_content)[:100]}...'")
 
-    if not preamble_str and temp_messages and temp_messages[0]['role'] == 'system':
-        preamble_str = temp_messages.pop(0)['content']
-        logger.debug(f"Cohere: Using system message from input_data as preamble: '{preamble_str[:100]}...'")
+    # NOTE (task-267 Task 1 scope): only plain user/assistant text turns are
+    # handled here. role="tool" history and assistant tool_calls echoes are
+    # NOT yet converted -- Task 2 adds that conversion to this loop.
+    for msg in temp_messages:
+        role = str(msg.get('role') or '').lower()
+        content = msg.get('content')
 
-    if not temp_messages: # Ensure there are messages left after potential preamble extraction
-        # If custom_prompt_arg is provided and meaningful as a user query, consider using it.
-        # For now, raising an error if no user/assistant messages remain.
-        if custom_prompt_arg:
-            current_user_message_str = custom_prompt_arg
-            logger.warning("Cohere: No user/assistant messages in input_data, using custom_prompt_arg as user message.")
-        else:
-            raise ChatBadRequestError(provider="cohere",
-                                      message="No user/assistant messages found for Cohere chat after processing system message.")
-    elif temp_messages[-1]['role'] == 'user':
-        last_msg_content = temp_messages[-1]['content']
-        # Handle cases where content might be a list (e.g. multimodal, though Cohere handles this differently)
-        if isinstance(last_msg_content, list): # Assuming OpenAI structure with type:text
-            current_user_message_str = next((part['text'] for part in last_msg_content if part.get('type') == 'text'), "")
-        else:
-            current_user_message_str = str(last_msg_content)
-        chat_history_for_cohere = temp_messages[:-1] # All but the last user message
-    else: # Last message is not 'user', problematic for Cohere's /chat
-        current_user_message_str = custom_prompt_arg or "Please respond." # Fallback user message
-        chat_history_for_cohere = temp_messages # Keep all as history, and append the placeholder user message
-        logger.warning(
-            f"Cohere: Last message in payload was not 'user'. Using fallback user message: '{current_user_message_str}'.")
+        if role not in ('user', 'assistant'):
+            logger.warning(f"Cohere: skipping message with unsupported role: {role!r}")
+            continue
 
-    # Append custom_prompt_arg to the current user message if it exists
-    if custom_prompt_arg and current_user_message_str != custom_prompt_arg: # Avoid duplication if already used as fallback
-        current_user_message_str += f"\n{custom_prompt_arg}"
-        logger.debug(f"Cohere: Appended custom_prompt_arg to current user message.")
-
-
-    if not current_user_message_str.strip():
-        raise ChatBadRequestError(provider="cohere", message="Current user message for Cohere is empty after processing.")
-
-    transformed_history = []
-    for msg in chat_history_for_cohere:
-        role = msg.get('role', '').lower()
-        content = msg.get('content', '')
+        text_content = content
         if isinstance(content, list): # Extract text if content is a list of parts
-            content = next((part['text'] for part in content if part.get('type') == 'text'), "")
+            text_content = next((part.get('text', '') for part in content
+                                 if isinstance(part, dict) and part.get('type') == 'text'), "")
+        cohere_messages.append({"role": role,
+                                "content": str(text_content) if text_content is not None else ""})
 
-        if role == "user":
-            transformed_history.append({"role": "USER", "message": str(content)}) # Cohere uses "USER"
-        elif role == "assistant":
-            transformed_history.append({"role": "CHATBOT", "message": str(content)}) # Cohere uses "CHATBOT"
-        # System messages are handled by preamble
+    if custom_prompt_arg:
+        # Legacy path: append (or fold into the trailing user turn) an
+        # extra user instruction.
+        if cohere_messages and cohere_messages[-1]['role'] == 'user':
+            cohere_messages[-1]['content'] = f"{cohere_messages[-1]['content']}\n{custom_prompt_arg}"
+        else:
+            cohere_messages.append({"role": "user", "content": custom_prompt_arg})
+
+    if not any(m['role'] in ('user', 'assistant') for m in cohere_messages):
+        raise ChatBadRequestError(provider="cohere",
+                                  message="No user/assistant messages found for Cohere chat after processing system message.")
 
     payload: Dict[str, Any] = {
         "model": final_model,
-        "message": current_user_message_str
+        "messages": cohere_messages,
+        "stream": bool(streaming),
     }
     # Add parameters to payload only if they are not None or have meaningful values
-    if transformed_history: payload["chat_history"] = transformed_history
-    if preamble_str: payload["preamble"] = preamble_str
     if temp is not None: payload["temperature"] = temp
     if topp is not None: payload["p"] = topp
     if topk is not None: payload["k"] = topk
@@ -1274,20 +1271,15 @@ def chat_with_cohere(
     if seed is not None: payload["seed"] = seed
     if frequency_penalty is not None: payload["frequency_penalty"] = frequency_penalty
     if presence_penalty is not None: payload["presence_penalty"] = presence_penalty
-    if tools: payload["tools"] = tools # Assuming 'tools' is already in Cohere's expected format
+    # NOTE (task-267 Task 1 scope): naive passthrough for now -- Task 2 adds
+    # `_cohere_tools_payload`'s OpenAI-shape validity filter.
+    if tools: payload["tools"] = tools
 
-    if streaming:
-        payload["stream"] = True
-    else:
-        # For non-streaming, 'stream: false' can be in payload or omitted.
-        # Cohere's API defaults to non-streaming if 'stream' is not true.
-        # To be explicit, we can add it.
-        payload["stream"] = False
-        if num_generations is not None and num_generations > 0 : # num_generations is for non-streaming
-            payload["num_generations"] = num_generations
-        elif num_generations is not None and num_generations <=0:
-             logger.warning("Cohere: 'num_generations' must be > 0. Ignoring.")
-
+    if num_generations is not None:
+        # task-267: 'num_generations' is v1-only -- v2 has no equivalent
+        # (each request produces exactly one assistant turn). Drop it
+        # rather than sending an unknown field.
+        logger.debug(f"Cohere: 'num_generations' ({num_generations}) is v1-only and has no v2 equivalent; dropping.")
 
     logger.debug(f"Cohere Request Payload: {json.dumps(payload, indent=2)}")
     logger.debug(f"Cohere Request URL: {COHERE_CHAT_URL}")
@@ -1328,67 +1320,71 @@ def chat_with_cohere(
             def stream_generator_cohere_sse(response_iterator):
                 completion_id = f"chatcmpl-cohere-{time.time_ns()}"
                 created_ts = int(time.time())
-                # model_name = final_model # Outer scope
                 stream_properly_closed = False
                 accumulated_text_for_log = []
+                # v2 SSE events are discriminated by "type" (v1 used
+                # "event_type"): message-start, content-start, content-delta
+                # (delta.message.content.text), content-end, message-end
+                # (delta.finish_reason, usage). tool-plan-delta/tool-call-*
+                # land in Task 4.
+                fr_map = {"COMPLETE": "stop", "MAX_TOKENS": "length",
+                          "STOP_SEQUENCE": "stop", "TOOL_CALL": "tool_calls"}
                 try:
                     for line_bytes in response_iterator:
                         if not line_bytes: continue
-                        decoded_line = line_bytes.decode('utf-8').strip()
+                        decoded_line = (line_bytes.decode('utf-8') if isinstance(line_bytes, bytes)
+                                       else str(line_bytes)).strip()
                         if not decoded_line: continue
 
-                        if decoded_line.startswith("data:"):
-                            json_data_str = decoded_line[len("data:"):].strip()
-                            if not json_data_str: continue
-                            try:
-                                cohere_event = json.loads(json_data_str)
-                                event_type = cohere_event.get("event_type")
-                                sse_payload_for_choice = None
+                        if not decoded_line.startswith("data:"):
+                            if not decoded_line.startswith("event:"):
+                                logger.warning(f"Cohere Stream: Unexpected line format: '{decoded_line}'")
+                            continue
 
-                                if event_type == "text-generation":
-                                    text_chunk = cohere_event.get("text")
-                                    if text_chunk:
-                                        accumulated_text_for_log.append(text_chunk)
-                                        sse_payload_for_choice = {"delta": {"content": text_chunk}, "index": 0}
-                                elif event_type == "stream-end":
-                                    stream_properly_closed = True
-                                    final_response_details = cohere_event.get("response", {})
-                                    finish_reason = final_response_details.get("finish_reason") or cohere_event.get("finish_reason", "UNKNOWN")
-                                    # Map Cohere finish reasons
-                                    fr_map = {"COMPLETE": "stop",
-                                                "MAX_TOKENS": "length",
-                                                "ERROR_TOXIC": "content_filter",
-                                                "ERROR_LIMIT": "length",
-                                                "ERROR": "error",
-                                                "USER_CANCEL": "stop",
-                                                "TOOL_CALLS": "tool_calls"}
-                                    openai_fr = fr_map.get(finish_reason, finish_reason.lower() if finish_reason else "unknown")
-                                    logger.info(
-                                        f"Cohere stream: 'stream-end' event. Finish: {finish_reason} (Mapped: {openai_fr}). Fragments: {len(accumulated_text_for_log)}")
-                                    sse_payload_for_choice = {"delta": {}, "finish_reason": openai_fr, "index": 0}
-                                    # After sending this, we'll send [DONE]
-                                elif event_type == "stream-start": # Cohere sends this
-                                    logger.debug(f"Cohere stream: 'stream-start' event. Gen ID: {cohere_event.get('generation_id')}")
-                                elif event_type: # Log other known event types if curious
-                                     logger.debug(f"Cohere stream event type: {event_type}, data: {cohere_event}")
+                        json_data_str = decoded_line[len("data:"):].strip()
+                        if not json_data_str: continue
+                        try:
+                            cohere_event = json.loads(json_data_str)
+                        except json.JSONDecodeError:
+                            logger.warning(f"Cohere Stream: JSON decode error for data: '{json_data_str}'")
+                            continue
 
-                                if sse_payload_for_choice:
-                                    sse_chunk = {"id": completion_id, "object": "chat.completion.chunk",
-                                                 "created": created_ts, "model": final_model,
-                                                 "choices": [sse_payload_for_choice]}
-                                    yield f"data: {json.dumps(sse_chunk)}\n\n"
-                                    if event_type == "stream-end": # After sending final choice, send DONE
-                                        yield "data: [DONE]\n\n"
-                                        return # End generator
+                        event_type = cohere_event.get("type")
+                        delta = cohere_event.get("delta") or {}
+                        message_delta = delta.get("message") or {}
+                        sse_delta: Dict[str, Any] = {}
+                        finish_reason = None
 
-                            except json.JSONDecodeError:
-                                logger.warning(f"Cohere Stream: JSON decode error for data: '{json_data_str}' from line: '{decoded_line}'")
-                        elif decoded_line.startswith("event:"):
-                            # This line just declares the event type, data line follows.
-                            # logger.trace(f"Cohere stream saw event line: {decoded_line}")
-                            pass # Handled by the data line's event_type
-                        else:
-                            logger.warning(f"Cohere Stream: Unexpected line format: '{decoded_line}'")
+                        if event_type == "content-delta":
+                            text_chunk = (message_delta.get("content") or {}).get("text")
+                            if text_chunk:
+                                accumulated_text_for_log.append(text_chunk)
+                                sse_delta["content"] = text_chunk
+                        elif event_type == "message-end":
+                            stream_properly_closed = True
+                            raw_finish_reason = delta.get("finish_reason") or cohere_event.get("finish_reason")
+                            finish_reason = fr_map.get(
+                                raw_finish_reason,
+                                raw_finish_reason.lower() if raw_finish_reason else "stop")
+                            logger.info(
+                                f"Cohere stream: 'message-end' event. Finish: {raw_finish_reason} "
+                                f"(Mapped: {finish_reason}). Fragments: {len(accumulated_text_for_log)}")
+                        elif event_type in ("message-start", "content-start", "content-end"):
+                            logger.debug(f"Cohere stream: '{event_type}' event.")
+                        elif event_type: # tool-plan-delta / tool-call-* -- Task 4
+                            logger.debug(f"Cohere stream event type: {event_type}, data: {cohere_event}")
+
+                        if sse_delta or finish_reason:
+                            sse_choice_payload: Dict[str, Any] = {"index": 0, "delta": sse_delta}
+                            if finish_reason:
+                                sse_choice_payload["finish_reason"] = finish_reason
+                            sse_chunk = {"id": completion_id, "object": "chat.completion.chunk",
+                                         "created": created_ts, "model": final_model,
+                                         "choices": [sse_choice_payload]}
+                            yield f"data: {json.dumps(sse_chunk)}\n\n"
+                            if event_type == "message-end": # After sending final choice, send DONE
+                                yield "data: [DONE]\n\n"
+                                return # End generator
 
                 except requests.exceptions.ChunkedEncodingError as e:
                     logger.warning(f"Cohere stream: ChunkedEncodingError: {e}. Stream may have been interrupted.")
@@ -1396,7 +1392,7 @@ def chat_with_cohere(
                     logger.opt(exception=True).error(f"Cohere stream: Error during streaming: {e_stream}")
                 finally:  # Ensure [DONE] is sent if loop terminates unexpectedly
                     if not stream_properly_closed:
-                        logger.warning("Cohere stream generator loop finished without explicit 'stream-end'.")
+                        logger.warning("Cohere stream generator loop finished without explicit 'message-end'.")
                     yield "data: [DONE]\n\n"
                     logger.debug(
                         f"Cohere SSE stream_generator for {final_model} finished. Total text: {''.join(accumulated_text_for_log)[:100]}...")
@@ -1410,52 +1406,38 @@ def chat_with_cohere(
             response_data = response.json()
             logger.debug(f"Cohere non-streaming response data: {json.dumps(response_data, indent=2)}")
 
-            # ---- Standard OpenAI-like Response Mapping ----
-            # Based on Cohere /v1/chat non-streaming response structure:
-            # { "text": "...", "generation_id": "...", "citations": [...], "documents": [...],
-            #   "is_search_required": bool, "search_queries": [...], "search_results": [...],
-            #   "finish_reason": "...", "tool_calls": [...], "chat_history": [...], (returned chat history)
-            #   "meta": { "api_version": {...}, "billed_units": {"input_tokens": X, "output_tokens": Y}}}
-
-            chat_id = response_data.get("generation_id", f"chatcmpl-cohere-{time.time_ns()}")
+            # ---- v2 response shape ----
+            # { "id": "...", "message": {"role":"assistant",
+            #     "content":[{"type":"text","text":...}], "tool_calls":[...]?,
+            #     "tool_plan":...?},
+            #   "finish_reason": "COMPLETE"|"TOOL_CALL"|"MAX_TOKENS"|"STOP_SEQUENCE"|...,
+            #   "usage": {...} }
+            chat_id = response_data.get("id", f"chatcmpl-cohere-{time.time_ns()}")
             created_timestamp = int(time.time())
-            choices_payload = []
-            finish_reason = response_data.get("finish_reason", "stop") # Default, Cohere provides this
+            message = response_data.get("message") or {}
+            content_parts = message.get("content") or []
+            text = "".join(part.get("text", "") for part in content_parts
+                           if isinstance(part, dict) and part.get("type") == "text")
+            if not message:
+                logger.warning(f"Cohere non-streaming response missing 'message': {response_data}")
 
-            if response_data.get("text"): # Standard text response
-                choices_payload.append({
-                    "message": {"role": "assistant", "content": response_data["text"]},
-                    "finish_reason": finish_reason, "index": 0
-                })
-            elif response_data.get("tool_calls"): # Tool usage
-                openai_like_tool_calls = []
-                for tc in response_data.get("tool_calls", []):
-                    openai_like_tool_calls.append({
-                        "id": f"call_{tc.get('name', 'tool')}_{time.time_ns()}",
-                        "type": "function", # Assuming Cohere tools map to functions
-                        "function": {
-                            "name": tc.get("name"),
-                            "arguments": json.dumps(tc.get("parameters", {}))
-                        }
-                    })
-                choices_payload.append({
-                    "message": {"role": "assistant", "content": None, "tool_calls": openai_like_tool_calls},
-                    "finish_reason": "tool_calls", "index": 0
-                })
-            else: # Fallback for unexpected empty response
-                logger.warning(f"Cohere non-streaming response missing 'text' or 'tool_calls': {response_data}")
-                choices_payload.append({
-                    "message": {"role": "assistant", "content": ""},
-                    "finish_reason": finish_reason, "index": 0
-                })
+            raw_finish_reason = response_data.get("finish_reason")
+            fr_map = {"COMPLETE": "stop", "MAX_TOKENS": "length",
+                      "STOP_SEQUENCE": "stop", "TOOL_CALL": "tool_calls"}
+            finish_reason = fr_map.get(raw_finish_reason,
+                                       raw_finish_reason.lower() if raw_finish_reason else "stop")
+
+            # NOTE (task-267 Task 1 scope): message.tool_calls / tool_plan are
+            # not yet normalized here -- Task 3 adds that.
+            message_payload: Dict[str, Any] = {"role": "assistant", "content": text}
+            choices_payload = [{"index": 0, "message": message_payload, "finish_reason": finish_reason}]
 
             usage_data = None
-            meta = response_data.get("meta")
-            if meta and meta.get("billed_units"):
-                billed_units = meta["billed_units"]
-                prompt_tokens = billed_units.get("input_tokens")
-                completion_tokens = billed_units.get("output_tokens")
-                # search_units = billed_units.get("search_units") # if you track this
+            usage = response_data.get("usage")
+            if isinstance(usage, dict):
+                billed = usage.get("billed_units") or usage.get("tokens") or {}
+                prompt_tokens = billed.get("input_tokens")
+                completion_tokens = billed.get("output_tokens")
                 if prompt_tokens is not None and completion_tokens is not None:
                     usage_data = {
                         "prompt_tokens": prompt_tokens,
