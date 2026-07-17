@@ -45,7 +45,9 @@ from typing import Union, AnyStr, Tuple, List, Optional, Protocol, cast
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 #
 # 3rd-Party Imports
-import chardet
+# Note: chardet is imported lazily inside safe_read_file() and
+# FileProcessor.detect_encoding() -- its only two callers -- since it pulls
+# in ~40 submodules (~21ms) that most imports of this module never need.
 import unicodedata
 from loguru import logger
 
@@ -269,7 +271,8 @@ def safe_read_file(file_path):
         logging.warning(f"File is empty: {file_path}")
         return ""
 
-    # Use chardet to detect the encoding
+    # Use chardet to detect the encoding (imported lazily -- rarely-used path)
+    import chardet
     detected = chardet.detect(raw_data)
     if detected['encoding'] is not None:
         encodings.insert(0, detected['encoding'])
@@ -486,6 +489,7 @@ class FileProcessor:
     @staticmethod
     def detect_encoding(file_path: str) -> str:
         """Detect the file encoding using chardet"""
+        import chardet
         with open(file_path, 'rb') as file:
             raw_data = file.read()
             result = chardet.detect(raw_data)
