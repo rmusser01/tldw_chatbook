@@ -1,5 +1,5 @@
 ---
-id: TASK-256
+id: TASK-297
 title: >-
   Align hybrid retrieval fusion with the tldw_server design (RRF plus alpha
   weighting)
@@ -9,7 +9,7 @@ created_date: '2026-07-12 14:12'
 labels:
   - rag
 dependencies:
-  - TASK-247
+  - TASK-288
 priority: medium
 ---
 

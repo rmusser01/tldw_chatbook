@@ -1,5 +1,5 @@
 ---
-id: TASK-252
+id: TASK-293
 title: >-
   Delete dead RAG_Search modules (late chunking, context assembler, query
   expansion)

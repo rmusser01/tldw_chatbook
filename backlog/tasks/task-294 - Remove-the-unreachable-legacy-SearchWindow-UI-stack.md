@@ -1,5 +1,5 @@
 ---
-id: TASK-253
+id: TASK-294
 title: Remove the unreachable legacy SearchWindow UI stack
 status: To Do
 assignee: []

@@ -1,5 +1,5 @@
 ---
-id: TASK-249
+id: TASK-290
 title: Make Library RAG-answer mode functional end-to-end
 status: To Do
 assignee: []
@@ -8,7 +8,7 @@ labels:
   - rag
   - library
 dependencies:
-  - TASK-247
+  - TASK-288
 priority: high
 ---
 

@@ -1,5 +1,5 @@
 ---
-id: TASK-251
+id: TASK-292
 title: Wire or remove the dead Start Indexing controls in SearchRAGWindow
 status: To Do
 assignee: []
@@ -8,7 +8,7 @@ labels:
   - rag
   - ux
 dependencies:
-  - TASK-247
+  - TASK-288
 priority: low
 ---
 

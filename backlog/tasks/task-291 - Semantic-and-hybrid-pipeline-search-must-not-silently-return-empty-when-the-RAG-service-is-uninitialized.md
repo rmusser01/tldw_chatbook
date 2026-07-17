@@ -1,5 +1,5 @@
 ---
-id: TASK-250
+id: TASK-291
 title: >-
   Semantic and hybrid pipeline search must not silently return empty when the
   RAG service is uninitialized

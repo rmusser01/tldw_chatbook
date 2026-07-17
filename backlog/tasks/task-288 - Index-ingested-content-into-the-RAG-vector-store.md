@@ -1,5 +1,5 @@
 ---
-id: TASK-247
+id: TASK-288
 title: Index ingested content into the RAG vector store
 status: To Do
 assignee: []
@@ -9,7 +9,7 @@ labels:
   - embeddings
   - ingest
 dependencies:
-  - TASK-246
+  - TASK-287
 priority: high
 ---
 

@@ -1,5 +1,5 @@
 ---
-id: TASK-248
+id: TASK-289
 title: >-
   Unify the two disconnected vector-store stacks so RAG search reads what the
   embeddings stack writes
@@ -10,7 +10,7 @@ labels:
   - rag
   - embeddings
 dependencies:
-  - TASK-246
+  - TASK-287
 priority: medium
 ---
 
