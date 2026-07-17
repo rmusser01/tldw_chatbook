@@ -133,6 +133,26 @@ async def test_refresh_active_work_cache_stays_inline_for_memory_backed_store():
 
 
 @pytest.mark.asyncio
+async def test_refresh_active_work_cache_stays_inline_for_unrecognized_shape():
+    """A service that doesn't expose ``.store.is_memory_db`` must not be threaded.
+
+    Don't-thread is the safe fallback: threading is allowed only on
+    positive confirmation that every sqlite seam is file-backed, so an
+    unrecognized service shape (like this store-less double) computes
+    inline (PR #683 review).
+    """
+    service = _CountingNotificationService()
+    del service.store  # unrecognized shape: no .store at all
+    adapter = _adapter(service)
+    caller_thread = threading.get_ident()
+
+    await adapter.refresh_active_work_cache_async()
+
+    assert service.calls == 1
+    assert service.thread_idents[0] == caller_thread
+
+
+@pytest.mark.asyncio
 async def test_refresh_active_work_cache_warms_cache_for_sync_reads():
     service = _CountingNotificationService()
     adapter = _adapter(service)

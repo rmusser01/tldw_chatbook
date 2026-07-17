@@ -712,7 +712,12 @@ def _compute_ccp_conversation_search_results(
 
 
 async def perform_ccp_conversation_search(app: 'TldwCli') -> None:
-    """Performs conversation search for the CCP tab with enhanced capabilities."""
+    """Performs conversation search for the CCP tab with enhanced capabilities.
+
+    Args:
+        app: The running TldwCli app instance whose CCP widgets are queried
+            and populated.
+    """
     logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.debug("Performing CCP conversation search...")
     # task-283 (B4): staleness generation -- the DB work below now runs via

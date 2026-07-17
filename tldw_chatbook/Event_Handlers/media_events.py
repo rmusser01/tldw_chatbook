@@ -517,7 +517,14 @@ async def handle_media_page_change_button_pressed(app: 'TldwCli', event: Button.
 
 
 async def perform_media_search_and_display(app: 'TldwCli', type_slug: str, search_term: str = "", keyword_filter: str = "") -> None:
-    """Performs search in media DB and populates the ListView with rich, informative items."""
+    """Performs search in media DB and populates the ListView with rich, informative items.
+
+    Args:
+        app: The running TldwCli app instance.
+        type_slug: Media-type slug identifying which media view to populate.
+        search_term: Title/content search text; empty lists recent items.
+        keyword_filter: Comma-separated keyword filter; empty applies none.
+    """
     logger = app.loguru_logger
 
     # Skip search for special windows that don't have standard media views

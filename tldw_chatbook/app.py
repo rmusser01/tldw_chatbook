@@ -2343,7 +2343,10 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     # debounced media search starts; the DB call now runs via asyncio.to_thread,
     # which an exclusive worker/timer cannot cancel mid-flight, so this guards
     # against an older, slower search overwriting a newer one's results.
-    _media_search_generation: Dict[str, int] = {}
+    # Annotation only -- the dict is created per-instance in __init__ because a
+    # class-level {} would be mutated in place and shared across TldwCli
+    # instances in one process (PR #683 review).
+    _media_search_generation: Dict[str, int]
 
     # Add media_types_for_ui to store fetched types
     media_types_for_ui: List[str] = []
@@ -2422,6 +2425,9 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         
         # Tab switching optimization
         self._initialized_tabs = set()  # Track which tabs have been initialized
+
+        # task-283 (B4): per-instance -- see the class-level annotation.
+        self._media_search_generation = {}
         
         # Reduce logging in production
         if not os.environ.get("TLDW_DEBUG"):

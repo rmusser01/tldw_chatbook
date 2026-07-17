@@ -537,8 +537,8 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
             self._active_work_cache = None
             self._active_work_cache_at = 0.0
 
-    def _active_work_seams_are_memory_backed(self) -> bool:
-        """True when a seam behind this cache is a per-connection ``:memory:`` store.
+    def _active_work_seams_confirmed_file_backed(self) -> bool:
+        """True only when every present sqlite seam is positively file-backed.
 
         ``ClientNotificationsDB`` (the ``notification_service``'s backing
         store, also reused as ``server_event_service.local_service`` in
@@ -546,18 +546,24 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         ``:memory:`` paths rather than opening thread-local ones like
         ChaChaNotes does -- sqlite defaults to ``check_same_thread=True``,
         so calling it from a background thread would raise, not silently
-        read an empty DB. Threading is safe for real (file-backed) stores;
-        this degrades to False (don't-thread is the safe default) when the
-        service shape is unrecognized (e.g. test doubles).
+        read an empty DB. Threading is therefore allowed only when each
+        seam that exists exposes ``store.is_memory_db`` as False; a
+        missing store/attribute (an unrecognized service shape, e.g. a
+        test double) counts as unconfirmed and keeps the compute inline,
+        so don't-thread really is the fallback for unknown shapes
+        (PR #683 review).
         """
-        notification_store = getattr(self.notification_service, "store", None)
-        if bool(getattr(notification_store, "is_memory_db", False)):
-            return True
+        seams = []
+        if self.notification_service is not None:
+            seams.append(getattr(self.notification_service, "store", None))
         server_event_local = getattr(self.server_event_service, "local_service", None)
-        server_event_store = getattr(server_event_local, "store", None)
-        if bool(getattr(server_event_store, "is_memory_db", False)):
-            return True
-        return False
+        if server_event_local is not None:
+            seams.append(getattr(server_event_local, "store", None))
+        for store in seams:
+            is_memory = getattr(store, "is_memory_db", None)
+            if is_memory is None or bool(is_memory):
+                return False
+        return True
 
     async def refresh_active_work_cache_async(self) -> bool:
         """Warm/refresh the active-work cache off the event loop.
@@ -566,8 +572,10 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         async worker started on mount, mirroring
         ``HomeScreen._home_content_seam_call``'s ``asyncio.to_thread``
         pattern). Degrades to an inline (still off the caller's awaiting
-        coroutine, but not off *this* thread) computation when any backing
-        seam is a per-connection ``:memory:`` store.
+        coroutine, but not off *this* thread) computation unless every
+        backing seam is positively confirmed file-backed -- a
+        per-connection ``:memory:`` store or an unrecognized service
+        shape both stay inline.
 
         No-ops when the cache is already fresh: Home's compose path
         cold-computes (and stores) the fields moments before the on-mount
@@ -590,10 +598,10 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
             )
         if fresh:
             return False
-        if self._active_work_seams_are_memory_backed():
-            fields = self._compute_active_work_fields()
-        else:
+        if self._active_work_seams_confirmed_file_backed():
             fields = await asyncio.to_thread(self._compute_active_work_fields)
+        else:
+            fields = self._compute_active_work_fields()
         self._store_active_work_cache(fields)
         return True
 

@@ -12041,6 +12041,10 @@ class LibraryScreen(BaseAppScreen):
         query mismatch guard once it lands. `_start_library_rag_query`
         (Submit/Run) does its own full reset immediately before it
         replaces the results/history widgets.
+
+        Args:
+            event: The Input.Changed event carrying the query field's
+                current text.
         """
         event.stop()
         if event.value == self._library_rag_query:
