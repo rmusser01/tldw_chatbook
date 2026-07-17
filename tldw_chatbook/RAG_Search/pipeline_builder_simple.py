@@ -19,6 +19,14 @@ from .pipeline_types import SearchResult, StepType, PipelineContext
 from .pipeline_functions_simple import (
     RETRIEVAL_FUNCTIONS, PROCESSING_FUNCTIONS, FORMATTING_FUNCTIONS
 )
+from .fusion import (
+    reciprocal_rank_fusion, interleave_rankings, resolve_hybrid_alpha,
+    resolve_rrf_k,
+)
+
+# Retrieval functions whose results form the vector (semantic) leg of hybrid
+# fusion; every other retrieval function is treated as an FTS/keyword leg.
+VECTOR_RETRIEVAL_FUNCTIONS = {'search_semantic'}
 
 
 async def execute_pipeline(
@@ -139,12 +147,13 @@ async def _execute_parallel_step(
         return []
     
     tasks = []
+    task_func_names = []
     for func_config in functions:
         func_name = func_config.get('function')
         if func_name and func_name in RETRIEVAL_FUNCTIONS:
             func = RETRIEVAL_FUNCTIONS[func_name]
             config = {**context['params'], **func_config.get('config', {})}
-            
+
             # Create appropriate task based on function
             if func_name.endswith('_fts5'):
                 # Only search_media_fts5 accepts keyword_filter
@@ -162,6 +171,24 @@ async def _execute_parallel_step(
                         context['query'],
                         config.get('top_k', 10)
                     )
+            elif func_name == 'search_semantic':
+                # Vector leg: forward only kwargs the RAG service accepts.
+                # Splatting the full pipeline params (top_k alongside
+                # search_semantic's own limit->top_k, chunk_*, ...) raises
+                # TypeError inside search_semantic, which gather() swallows
+                # and the vector leg comes back silently empty.
+                semantic_kwargs = {
+                    key: config[key]
+                    for key in ('score_threshold', 'filter_metadata')
+                    if key in config
+                }
+                task = func(
+                    context['app'],
+                    context['query'],
+                    context['sources'],
+                    limit=config.get('top_k', 10),
+                    **semantic_kwargs
+                )
             else:
                 task = func(
                     context['app'],
@@ -170,10 +197,11 @@ async def _execute_parallel_step(
                     **config
                 )
             tasks.append(task)
-    
+            task_func_names.append(func_name)
+
     # Execute in parallel
     results_lists = await asyncio.gather(*tasks, return_exceptions=True)
-    
+
     # Combine results
     all_results = []
     for results in results_lists:
@@ -181,17 +209,106 @@ async def _execute_parallel_step(
             logger.error(f"Parallel search failed: {results}")
             continue
         all_results.extend(results)
-    
+
     # Apply merge if specified
     merge_func = step_config.get('merge')
+    if merge_func == 'rrf_merge':
+        return _rrf_merge_parallel_results(
+            task_func_names, results_lists,
+            step_config.get('config', {}) or {},
+            context,
+        )
     if merge_func == 'weighted_merge' and 'weights' in step_config.get('config', {}):
         # Split results back into lists for weighted merge
         weights = step_config['config']['weights']
         if len(results_lists) == len(weights):
             valid_results = [r for r in results_lists if not isinstance(r, Exception)]
             return PROCESSING_FUNCTIONS['weighted_merge'](valid_results, weights)
-    
+
     return all_results
+
+
+def _rrf_merge_parallel_results(
+    func_names: List[str],
+    results_lists: List[Any],
+    merge_config: Dict[str, Any],
+    context: PipelineContext
+) -> List[SearchResult]:
+    """Fuse parallel retrieval legs via RRF + alpha (tldw_server parity).
+
+    The FTS5 source lists (media, conversations, notes) are interleaved
+    rank-fairly into a single FTS leg; ``search_semantic`` results form the
+    vector leg. The two legs are fused with Reciprocal Rank Fusion (k=60 by
+    default) and an alpha-weighted blend where alpha weights the vector leg
+    (0 = FTS only, 1 = vector only).
+
+    Alpha precedence: step ``config.alpha`` -> ``hybrid_alpha`` runtime
+    param -> ``[AppRAGSearchConfig.rag.retriever] hybrid_alpha`` -> 0.7.
+
+    Args:
+        func_names: Retrieval function name per results list, same order.
+        results_lists: Per-function results (exceptions already logged).
+        merge_config: The parallel step's merge config.
+        context: Pipeline execution context.
+
+    Returns:
+        Fused results sorted by fused score descending.
+    """
+    fts_lists: List[List[SearchResult]] = []
+    vector_lists: List[List[SearchResult]] = []
+    for func_name, results in zip(func_names, results_lists):
+        if isinstance(results, Exception):
+            continue
+        if func_name in VECTOR_RETRIEVAL_FUNCTIONS:
+            vector_lists.append(results)
+        else:
+            fts_lists.append(results)
+
+    def result_key(result: SearchResult):
+        return (result.source, result.id)
+
+    fts_leg = interleave_rankings(fts_lists, key=result_key)
+    vector_leg = interleave_rankings(vector_lists, key=result_key)
+
+    alpha = resolve_hybrid_alpha(
+        merge_config.get('alpha', context['params'].get('hybrid_alpha'))
+    )
+    rrf_k = resolve_rrf_k(merge_config.get('rrf_k'))
+
+    fused_entries = reciprocal_rank_fusion(
+        fts_leg, vector_leg, key=result_key, alpha=alpha, rrf_k=rrf_k
+    )
+
+    fused_results = []
+    for entry in fused_entries:
+        result = entry.item
+        result.score = entry.score
+        merged_metadata = dict(result.metadata or {})
+        # When a doc surfaced in both legs the FTS item is primary; carry the
+        # other leg's citation metadata (search_semantic stashes citations as
+        # _has_citations/_citations) so citations survive fusion and reach
+        # _results_to_dicts.
+        if entry.fts_item is not None and entry.vector_item is not None:
+            other = entry.vector_item if result is entry.fts_item else entry.fts_item
+            other_metadata = other.metadata or {}
+            if other_metadata.get('_has_citations'):
+                combined_citations = (
+                    list(merged_metadata.get('_citations') or [])
+                    + list(other_metadata.get('_citations') or [])
+                )
+                merged_metadata['_citations'] = combined_citations
+                merged_metadata['_has_citations'] = True
+        result.metadata = {
+            **merged_metadata,
+            'hybrid_fusion': {**entry.provenance(), 'alpha': alpha, 'rrf_k': rrf_k},
+        }
+        fused_results.append(result)
+
+    logger.debug(
+        f"RRF fusion merged {len(fused_results)} results "
+        f"(fts_leg={len(fts_leg)}, vector_leg={len(vector_leg)}, alpha={alpha}, k={rrf_k})"
+    )
+    return fused_results
 
 
 def _execute_process_step(
@@ -300,8 +417,12 @@ BUILTIN_PIPELINES = {
                     {'function': 'search_notes_fts5', 'config': {'top_k': 20}},
                     {'function': 'search_semantic', 'config': {'top_k': 20}}
                 ],
-                'merge': 'weighted_merge',
-                'config': {'weights': [0.25, 0.25, 0.25, 0.25]}  # Equal weights
+                # Server-parity fusion: RRF (k=60) + alpha blend, alpha
+                # weights the vector leg (0 = FTS only, 1 = vector only).
+                # Alpha resolves from [AppRAGSearchConfig.rag.retriever]
+                # hybrid_alpha (default 0.7) unless overridden here.
+                'merge': 'rrf_merge',
+                'config': {}
             },
             {'type': 'process', 'function': 'deduplicate_results'},
             {'type': 'process', 'function': 'rerank_results'},
@@ -391,6 +512,18 @@ def load_pipelines_from_toml():
                             'merge': step.get('merge', 'concat'),
                             'config': step.get('config', {})
                         })
+                    elif step["type"] == "merge":
+                        # Fold a standalone merge step into the preceding
+                        # parallel step: execute_pipeline has no 'merge' step
+                        # type, so these were silently skipped before.
+                        if steps and steps[-1].get('type') == 'parallel':
+                            steps[-1]['merge'] = step.get('function', 'concat')
+                            steps[-1]['config'] = step.get('config', {})
+                        else:
+                            logger.warning(
+                                f"Pipeline '{pipeline_id}': merge step without a "
+                                f"preceding parallel step is ignored"
+                            )
                     else:
                         # Regular step - map function names
                         func_name = step.get('function')

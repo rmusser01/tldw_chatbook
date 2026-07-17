@@ -34,7 +34,7 @@ class SettingsLibraryRagDefaults:
     default_top_k: int = 10
     fts_top_k: int = 10
     vector_top_k: int = 10
-    hybrid_alpha: float = 0.5
+    hybrid_alpha: float = 0.7
     score_threshold: float = 0.0
     include_citations: bool = True
     citation_style: str = DEFAULT_CITATION_STYLE

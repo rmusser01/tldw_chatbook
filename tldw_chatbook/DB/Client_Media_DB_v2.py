@@ -150,7 +150,11 @@ class MediaDatabase:
     Requires client_id on initialization. Includes schema versioning.
     """
     _CURRENT_SCHEMA_VERSION = 4  # Define the version this code supports
-    
+    # task-261: idle window within which the per-call `SELECT 1` liveness
+    # ping is skipped for a recently-used thread-local connection (see
+    # `_get_thread_connection`).
+    _LIVENESS_PING_IDLE_SECONDS = 30.0
+
     # Migration registry - maps from_version to migration details
     _MIGRATIONS = {
         0: {
@@ -589,22 +593,39 @@ class MediaDatabase:
                 # Logging here provides context that the __init__ block finished, albeit with failure.
                 logging.error(f"Database initialization block finished for {self.db_path_str}, but failed.")
 
-    # --- Connection Management (Unchanged) ---
+    # --- Connection Management ---
     def _get_thread_connection(self) -> sqlite3.Connection:
+        """Retrieve or create the current thread's SQLite connection.
+
+        task-261: the ``SELECT 1`` liveness ping is gated behind an idle
+        threshold (``_LIVENESS_PING_IDLE_SECONDS``) instead of running on
+        every call — connections are thread-local and long-lived, and
+        ``close_connection()`` always clears the thread-local reference, so
+        a recently-used connection is known-good without a ping. A
+        connection idle past the threshold still gets the ping +
+        transparent-reopen treatment.
+
+        Returns:
+            sqlite3.Connection: The thread-local database connection.
+
+        Raises:
+            DatabaseError: If connecting to the database fails.
+        """
         conn = getattr(self._local, 'conn', None)
-        is_closed = True
+        is_closed = conn is None
         if conn:
-            try:
-                conn.execute("SELECT 1")  # Simple check
-                is_closed = False
-            except (sqlite3.ProgrammingError, sqlite3.OperationalError):
-                logging.warning(f"Thread-local connection to {self.db_path_str} was closed. Reopening.")
-                is_closed = True
+            last_used = getattr(self._local, 'conn_last_used', None)
+            if last_used is None or (time.monotonic() - last_used) >= self._LIVENESS_PING_IDLE_SECONDS:
                 try:
-                    conn.close()
-                except Exception:
-                    pass
-                self._local.conn = None
+                    conn.execute("SELECT 1")  # Simple check
+                except (sqlite3.ProgrammingError, sqlite3.OperationalError):
+                    logging.warning(f"Thread-local connection to {self.db_path_str} was closed. Reopening.")
+                    is_closed = True
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                    self._local.conn = None
 
         if is_closed:
             try:
@@ -624,6 +645,7 @@ class MediaDatabase:
                 logging.error(f"Failed to connect to database at {self.db_path_str}: {e}", exc_info=True)
                 self._local.conn = None
                 raise DatabaseError(f"Failed to connect to database '{self.db_path_str}': {e}") from e
+        self._local.conn_last_used = time.monotonic()
         return self._local.conn
 
     def get_connection(self) -> sqlite3.Connection:

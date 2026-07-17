@@ -50,8 +50,9 @@ reranker_model = "flashrank"
 chunk_size = 400
 chunk_overlap = 100
 chunk_type = "words"
-bm25_weight = 0.5
-vector_weight = 0.5
+# Fusion alpha defaults to [AppRAGSearchConfig.rag.retriever] hybrid_alpha
+# (0.7, tldw_server parity). Uncomment to pin per-pipeline:
+# hybrid_alpha = 0.7  # 0 = FTS only, 1 = vector only
 
 # Profile-based Pipeline Configurations
 [pipelines.fast_search]
@@ -138,8 +139,7 @@ chunk_size = 512
 chunk_type = "structural"
 preserve_tables = true
 clean_artifacts = true
-bm25_weight = 0.6
-vector_weight = 0.4
+hybrid_alpha = 0.4  # Vector-leg weight (0 = FTS only, 1 = vector only); favors exact term matching
 
 [pipelines.technical_docs.middleware]
 before = ["code_syntax_enhancer", "technical_term_detector"]
@@ -342,10 +342,14 @@ config = { top_k = 20 }
 function = "retrieve_semantic"
 config = { top_k = 20, score_threshold = 0.0 }
 
+# Server-parity fusion: Reciprocal Rank Fusion (k=60) + alpha-weighted blend.
+# alpha weights the vector leg (0 = FTS only, 1 = vector only); it defaults to
+# [AppRAGSearchConfig.rag.retriever] hybrid_alpha (0.7). Override per-pipeline
+# with e.g. config = { alpha = 0.5 }.
 [[pipelines.hybrid_v2.steps]]
 type = "merge"
-function = "weighted_merge"
-config = { weights = [0.5, 0.5] }
+function = "rrf_merge"
+config = {}
 
 [[pipelines.hybrid_v2.steps]]
 type = "process"

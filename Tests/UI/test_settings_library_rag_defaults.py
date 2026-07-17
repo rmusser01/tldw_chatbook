@@ -69,7 +69,7 @@ def test_load_library_rag_defaults_uses_safe_defaults():
     assert defaults.default_top_k == 10
     assert defaults.fts_top_k == 10
     assert defaults.vector_top_k == 10
-    assert defaults.hybrid_alpha == 0.5
+    assert defaults.hybrid_alpha == 0.7  # server-parity RRF default (task-256)
     assert defaults.score_threshold == 0.0
     assert defaults.include_citations is True
     assert defaults.citation_style == "inline"

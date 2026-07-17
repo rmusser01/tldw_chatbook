@@ -148,6 +148,11 @@ class CharactersRAGDB:
     _ALLOWED_PERSONA_MEMORY_MODES = ("read_only", "read_write")
     _ALLOWED_CONVERSATION_CHARACTER_SCOPES = ("all", "character", "generic")
     _ALLOWED_SCOPE_TYPES = ("global", "workspace")
+    # task-261: how long a thread-local connection may sit unused before the
+    # next `get_connection()` re-verifies it with a `SELECT 1` liveness ping.
+    # Within this window the ping is skipped (it used to run on every call,
+    # ~doubling raw statement counts on query-heavy paths).
+    _LIVENESS_PING_IDLE_SECONDS = 30.0
 
     _FULL_SCHEMA_SQL_V4 = """
 /*───────────────────────────────────────────────────────────────
@@ -2474,6 +2479,15 @@ UPDATE db_schema_version
         Enables WAL mode for file-based databases and sets PRAGMA foreign_keys=ON.
         Sets a timeout for database operations.
 
+        task-261: the ``SELECT 1`` liveness ping used to run on EVERY call,
+        roughly doubling the raw statement count for query-heavy paths. It is
+        now gated behind an idle threshold (``_LIVENESS_PING_IDLE_SECONDS``):
+        connections here are thread-local and long-lived, and
+        ``close_connection()`` always clears the thread-local reference, so a
+        recently-used connection is known-good without a ping. A connection
+        idle past the threshold still gets the full ping + transparent-reopen
+        treatment.
+
         Returns:
             A thread-local sqlite3.Connection object.
 
@@ -2482,17 +2496,19 @@ UPDATE db_schema_version
         """
         conn = getattr(self._local, 'conn', None)
         if conn:
-            try:
-                conn.execute("SELECT 1")  # Check if connection is still alive
-            except (sqlite3.ProgrammingError, sqlite3.OperationalError):
-                logger.warning(
-                    f"Thread-local connection for {self.db_path_str} was closed or became unusable. Reopening.")
+            last_used = getattr(self._local, 'conn_last_used', None)
+            if last_used is None or (time.monotonic() - last_used) >= self._LIVENESS_PING_IDLE_SECONDS:
                 try:
-                    conn.close()
-                except sqlite3.Error:
-                    # Ignore connection close errors - connection may already be closed
-                    pass
-                conn = None
+                    conn.execute("SELECT 1")  # Check if connection is still alive
+                except (sqlite3.ProgrammingError, sqlite3.OperationalError):
+                    logger.warning(
+                        f"Thread-local connection for {self.db_path_str} was closed or became unusable. Reopening.")
+                    try:
+                        conn.close()
+                    except sqlite3.Error:
+                        # Ignore connection close errors - connection may already be closed
+                        pass
+                    conn = None
 
         if not conn:
             try:
@@ -2514,6 +2530,7 @@ UPDATE db_schema_version
                 logger.opt(exception=True).error(f"Failed to connect to database {self.db_path_str}: {e}")
                 self._local.conn = None
                 raise CharactersRAGDBError(f"Failed to connect to database '{self.db_path_str}': {e}") from e
+        self._local.conn_last_used = time.monotonic()
         return self._local.conn
 
     def get_connection(self) -> sqlite3.Connection:
@@ -5975,20 +5992,40 @@ UPDATE db_schema_version
         return result
 
     def get_messages_for_conversation(self, conversation_id: str, limit: int = 100, offset: int = 0,
-                                      order_by_timestamp: str = "ASC") -> List[Dict[str, Any]]:
-        """
-        Lists messages for a specific conversation.
-        Returns non-deleted messages, ordered by `timestamp` according to `order_by_timestamp`.
-        Crucially, it also ensures the parent conversation is not soft-deleted.
+                                      order_by_timestamp: str = "ASC",
+                                      include_image_data: bool = True) -> List[Dict[str, Any]]:
+        """Lists non-deleted messages for a non-deleted conversation.
+
+        Ordered by ``timestamp`` according to ``order_by_timestamp``. The
+        JOIN also ensures the parent conversation is not soft-deleted.
+
+        Args:
+            conversation_id: Conversation UUID to fetch messages for.
+            limit: Maximum number of messages to return.
+            offset: Number of messages to skip (pagination).
+            order_by_timestamp: "ASC" or "DESC".
+            include_image_data: When False, the ``image_data`` BLOB column is
+                returned as None (key still present) so text-only callers --
+                snippet builders, mindmaps -- skip the BLOB I/O (task-260).
+                ``image_mime_type`` is always returned, so callers can still
+                tell an image exists.
+
+        Returns:
+            A list of message dicts in the requested order.
+
+        Raises:
+            InputError: If ``order_by_timestamp`` is not "ASC"/"DESC".
+            CharactersRAGDBError: For database errors.
         """
         if order_by_timestamp.upper() not in ["ASC", "DESC"]:
             raise InputError("order_by_timestamp must be 'ASC' or 'DESC'.")
 
-        # The new query joins with conversations to check its 'deleted' status.
+        image_col = "m.image_data" if include_image_data else "NULL AS image_data"
+        # The query joins with conversations to check its 'deleted' status.
         # Now includes variant fields for message variant support
         query = f"""
             SELECT m.id, m.conversation_id, m.parent_message_id, m.sender, m.content, 
-                   m.image_data, m.image_mime_type, m.timestamp, m.ranking, 
+                   {image_col}, m.image_mime_type, m.timestamp, m.ranking, 
                    m.last_modified, m.version, m.client_id, m.deleted, m.feedback, m.role,
                    m.variant_of, m.variant_number, m.is_selected_variant, m.total_variants
             FROM messages m
@@ -6007,7 +6044,8 @@ UPDATE db_schema_version
             raise
 
     def get_messages_for_conversations_batch(self, conversation_ids: List[str], limit_per_conversation: int = 100,
-                                           order_by_timestamp: str = "ASC") -> Dict[str, List[Dict[str, Any]]]:
+                                           order_by_timestamp: str = "ASC",
+                                           include_image_data: bool = True) -> Dict[str, List[Dict[str, Any]]]:
         """
         Batch fetch messages for multiple conversations to avoid N+1 queries.
         
@@ -6015,9 +6053,17 @@ UPDATE db_schema_version
             conversation_ids: List of conversation IDs to fetch messages for
             limit_per_conversation: Maximum messages per conversation
             order_by_timestamp: Order by timestamp ASC or DESC
+            include_image_data: When False, the ``image_data`` BLOB column is
+                returned as None (key still present) so text-only callers skip
+                the BLOB I/O (task-260). ``image_mime_type`` is always
+                returned.
             
         Returns:
             Dictionary mapping conversation_id to list of messages
+            
+        Raises:
+            InputError: If ``order_by_timestamp`` is not "ASC"/"DESC".
+            CharactersRAGDBError: For database errors.
         """
         if not conversation_ids:
             return {}
@@ -6025,12 +6071,13 @@ UPDATE db_schema_version
         if order_by_timestamp.upper() not in ["ASC", "DESC"]:
             raise InputError("order_by_timestamp must be 'ASC' or 'DESC'.")
         
+        image_col = "m.image_data" if include_image_data else "NULL AS image_data"
         # Use ROW_NUMBER() window function to limit messages per conversation
         placeholders = ','.join('?' * len(conversation_ids))
         query = f"""
             WITH ranked_messages AS (
                 SELECT m.id, m.conversation_id, m.parent_message_id, m.sender, m.content, 
-                       m.image_data, m.image_mime_type, m.timestamp, m.ranking, 
+                       {image_col}, m.image_mime_type, m.timestamp, m.ranking, 
                        m.last_modified, m.version, m.client_id, m.deleted, m.feedback, m.role,
                        ROW_NUMBER() OVER (PARTITION BY m.conversation_id ORDER BY m.timestamp {order_by_timestamp}) as row_num
                 FROM messages m

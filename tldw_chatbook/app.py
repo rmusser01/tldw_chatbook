@@ -2649,25 +2649,15 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             policy_enforcer=self.service_policy_enforcer,
             sync_scope_service=getattr(self, "sync_scope_service", None),
         )
-        try:
-            self.server_rag_admin_service = ServerRAGAdminService.from_config(
-                self.app_config,
-                policy_enforcer=self.service_policy_enforcer,
-            )
-        except ValueError:
-            self.server_rag_admin_service = ServerRAGAdminService(
-                client=None,
-                policy_enforcer=self.service_policy_enforcer,
-            )
-        self.local_rag_admin_service = LocalRAGAdminService(
-            self.media_db,
-            media_service=self.local_media_reading_service,
-        )
-        self.rag_admin_scope_service = RAGAdminScopeService(
-            local_service=self.local_rag_admin_service,
-            server_service=self.server_rag_admin_service,
-            policy_enforcer=self.service_policy_enforcer,
-        )
+        # RAG admin trio (server/local/scope) is built lazily on first access
+        # (task-254): its legacy UI consumers were deleted and nothing reads
+        # these services at startup, so eager construction only added launch
+        # cost. See the server_rag_admin_service / local_rag_admin_service /
+        # rag_admin_scope_service properties.
+        self._server_rag_admin_service: Optional[ServerRAGAdminService] = None
+        self._local_rag_admin_service: Optional[LocalRAGAdminService] = None
+        self._rag_admin_scope_service: Optional[RAGAdminScopeService] = None
+        self._rag_admin_services_lock = threading.Lock()
         self._wire_evaluation_services()
         self._wire_study_services()
         self._wire_writing_services()
@@ -2699,6 +2689,78 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         
         # Final memory check
         log_resource_usage()
+
+    def _build_rag_admin_services(self) -> None:
+        """Construct the RAG admin service trio on first access (task-254).
+
+        Constructor semantics are identical to the eager wiring this replaced:
+        a config-driven ``ServerRAGAdminService.from_config`` with a
+        ``client=None`` fallback when config resolution raises ``ValueError``,
+        a ``LocalRAGAdminService`` over the media DB and local media reading
+        service, and the scope service routing between them with the policy
+        enforcer. Built under a lock so a racing first access from a worker
+        thread cannot produce a mixed trio; idempotent once built.
+        """
+        with self._rag_admin_services_lock:
+            if self._rag_admin_scope_service is not None:
+                return
+            try:
+                server_service = ServerRAGAdminService.from_config(
+                    self.app_config,
+                    policy_enforcer=self.service_policy_enforcer,
+                )
+            except ValueError:
+                server_service = ServerRAGAdminService(
+                    client=None,
+                    policy_enforcer=self.service_policy_enforcer,
+                )
+            local_service = LocalRAGAdminService(
+                self.media_db,
+                media_service=self.local_media_reading_service,
+            )
+            self._server_rag_admin_service = server_service
+            self._local_rag_admin_service = local_service
+            self._rag_admin_scope_service = RAGAdminScopeService(
+                local_service=local_service,
+                server_service=server_service,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+
+    @property
+    def server_rag_admin_service(self) -> "ServerRAGAdminService":
+        """Server-backed RAG admin service, built lazily and cached (task-254).
+
+        Returns:
+            ServerRAGAdminService: The cached service, constructed together
+            with the local and scope services on first access.
+        """
+        if self._server_rag_admin_service is None:
+            self._build_rag_admin_services()
+        return self._server_rag_admin_service
+
+    @property
+    def local_rag_admin_service(self) -> "LocalRAGAdminService":
+        """Local RAG admin service, built lazily and cached (task-254).
+
+        Returns:
+            LocalRAGAdminService: The cached service, constructed together
+            with the server and scope services on first access.
+        """
+        if self._local_rag_admin_service is None:
+            self._build_rag_admin_services()
+        return self._local_rag_admin_service
+
+    @property
+    def rag_admin_scope_service(self) -> "RAGAdminScopeService":
+        """Local/server RAG admin scope router, built lazily and cached (task-254).
+
+        Returns:
+            RAGAdminScopeService: The cached scope router wired to the cached
+            local and server services, constructed on first access.
+        """
+        if self._rag_admin_scope_service is None:
+            self._build_rag_admin_services()
+        return self._rag_admin_scope_service
 
     def _wire_server_context_provider(self) -> None:
         self.unified_mcp_target_store = ConfiguredServerTargetStore(

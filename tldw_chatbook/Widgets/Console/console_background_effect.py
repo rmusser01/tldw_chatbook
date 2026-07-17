@@ -60,6 +60,15 @@ class ConsoleBackgroundEffect(Widget):
         self._random = random.Random(seed)
         self._particles: list[_Particle] = []
         self._timer: Timer | None = None
+        # task-261: `render_line` used to call `frame_text()` (a full W×H
+        # grid build) once PER LINE, making each repaint O(W·H²). The frame
+        # is instead computed once per (frame serial, width, height) and the
+        # split lines reused for every `render_line` call of that repaint.
+        # The serial bumps on every particle step (`_advance_frame`) and on
+        # `update_settings`; width/height live in the key, so a resize
+        # invalidates naturally. The cache lives on the widget instance.
+        self._frame_serial: int = 0
+        self._frame_cache: tuple[int, int, int, list[str]] | None = None
 
     @property
     def is_effect_active(self) -> bool:
@@ -83,9 +92,14 @@ class ConsoleBackgroundEffect(Widget):
         self._stop_timer()
 
     def update_settings(self, settings: ConsoleBackgroundEffectSettings) -> None:
-        """Apply new settings, reset particles, and refresh the renderer."""
+        """Apply new settings, reset particles, and refresh the renderer.
+
+        Args:
+            settings: The new background-effect settings to render with.
+        """
         self.settings = settings
         self._particles.clear()
+        self._invalidate_frame_cache()
         self._sync_timer()
         self.refresh(layout=False)
 
@@ -105,15 +119,51 @@ class ConsoleBackgroundEffect(Widget):
         return "\n".join("".join(row) for row in grid)
 
     def render_line(self, y: int) -> Strip:
-        """Render a single background frame line."""
+        """Render a single background frame line.
+
+        Args:
+            y: Zero-based line index within the widget to render.
+
+        Returns:
+            The rendered strip for line ``y`` of the current frame.
+        """
         width = self.size.width
         height = self.size.height
         if width <= 0 or height <= 0:
             return Strip.blank(max(0, width))
-        lines = self.frame_text(width, height).splitlines()
+        lines = self._frame_lines(width, height)
         text = lines[y] if 0 <= y < len(lines) else " " * width
         style = _EFFECT_STYLES.get(self.settings.effect, Style(dim=True))
         return Strip([Segment(text, style)], width)
+
+    def _frame_lines(self, width: int, height: int) -> list[str]:
+        """Return the current frame's lines, computing them at most once per frame.
+
+        The full-grid ``frame_text()`` build runs only when the cached frame's
+        (serial, width, height) key no longer matches — i.e. after a particle
+        step, a settings change, or a resize — so a repaint's H ``render_line``
+        calls share one grid computation instead of building H grids.
+
+        Args:
+            width: Frame width in cells.
+            height: Frame height in cells.
+
+        Returns:
+            The frame's rows, one string of length ``width`` per row.
+        """
+        cached = self._frame_cache
+        if cached is not None:
+            serial, cached_width, cached_height, lines = cached
+            if serial == self._frame_serial and cached_width == width and cached_height == height:
+                return lines
+        lines = self.frame_text(width, height).splitlines()
+        self._frame_cache = (self._frame_serial, width, height, lines)
+        return lines
+
+    def _invalidate_frame_cache(self) -> None:
+        """Drop the cached frame so the next render recomputes the grid."""
+        self._frame_serial += 1
+        self._frame_cache = None
 
     def _sync_timer(self) -> None:
         self._stop_timer()
@@ -134,6 +184,7 @@ class ConsoleBackgroundEffect(Widget):
             self.refresh(layout=False)
             return
         self._step_particles(width, height)
+        self._invalidate_frame_cache()
         self.refresh(layout=False)
 
     def _target_particle_count(self, width: int, height: int) -> int:
