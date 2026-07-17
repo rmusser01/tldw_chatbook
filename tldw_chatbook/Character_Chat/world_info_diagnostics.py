@@ -24,6 +24,11 @@ class WorldBookEntryDiagnostic:
     depth_level: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
+        """Return the entry diagnostic as a plain dict for the Try-it renderer.
+
+        Returns:
+            A JSON-friendly dict with every field of this record.
+        """
         return {
             "entry_id": self.entry_id,
             "source_book_id": self.source_book_id,
@@ -51,6 +56,12 @@ class WorldBookScanDiagnostics:
     books_scanned: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
+        """Return the scan diagnostics as a plain dict for the Try-it renderer.
+
+        Returns:
+            A JSON-friendly dict with the summary counters and a nested
+            ``entries`` list of per-entry diagnostic dicts.
+        """
         return {
             "entries": [record.to_dict() for record in self.entries],
             "matched": self.matched,

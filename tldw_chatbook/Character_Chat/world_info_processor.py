@@ -217,10 +217,27 @@ class WorldInfoProcessor:
     def process_messages_with_diagnostics(self, current_message: str, conversation_history: List[Dict[str, str]],
                                           scan_depth: Optional[int] = None, apply_token_budget: bool = True
                                           ) -> Tuple[Dict[str, Any], "WorldBookScanDiagnostics"]:
-        """Instrumented sibling of process_messages. Returns (result, diagnostics)
-        where `result` is byte-identical to process_messages (the fired-set pin)
-        and `diagnostics` classifies every candidate as fired / skipped:disabled /
-        skipped:secondary / skipped:budget. Never raises on a bad entry."""
+        """Instrumented sibling of ``process_messages`` for the Try-it panel.
+
+        ``result`` is byte-identical to ``process_messages`` (it IS the plain
+        path's return value — the fired-set pin), and ``diagnostics`` classifies
+        every candidate as fired / skipped:disabled / skipped:secondary /
+        skipped:budget. Never raises on a bad entry.
+
+        Args:
+            current_message: The message being previewed/sent.
+            conversation_history: Prior turns (oldest-first) scanned up to
+                ``scan_depth``.
+            scan_depth: Override for the effective scan depth; ``None`` uses the
+                processor's own ``scan_depth``.
+            apply_token_budget: Whether the plain path enforces the token budget.
+
+        Returns:
+            A ``(result, diagnostics)`` tuple where ``result`` is the plain
+            ``process_messages`` dict (``injections`` / ``matched_entries`` /
+            ``tokens_used``) and ``diagnostics`` is a ``WorldBookScanDiagnostics``
+            whose ``fired`` set equals ``result["matched_entries"]``.
+        """
         from .world_info_diagnostics import WorldBookScanDiagnostics, WorldBookEntryDiagnostic
 
         # Authoritative result — literally the plain path (guarantees agreement).
@@ -235,19 +252,20 @@ class WorldInfoProcessor:
         # Identify entries by insertion_order + content + position (the stable
         # non-meta fields shared between self.entries/matched_entries and
         # self._candidate_entries — matched_entries carry no _entry_id).
-        # NOTE: two distinct entries that happen to share an identical
-        # (insertion_order, content, position) triple collide on this
-        # signature — a degenerate authoring case; each fired slot still
-        # resolves to at most one (arbitrary) candidate.
+        # Two distinct entries that share an identical (insertion_order,
+        # content, position) triple collide on this signature (a degenerate
+        # authoring case). Keep ALL candidates per signature in a list and
+        # consume one per fired occurrence, so multiplicity and per-occurrence
+        # attribution (entry_id / source book) are preserved and any leftover
+        # candidates fall through to the near-miss pass.
         def sig(e):
             return (e.get("insertion_order", 0), e.get("content", ""), e.get("position", "before_char"))
 
-        candidates_by_sig: Dict[Any, Dict[str, Any]] = {}
+        candidates_by_sig: Dict[Any, list] = {}
         for cand in self._candidate_entries:
-            candidates_by_sig.setdefault(sig(cand), cand)
+            candidates_by_sig.setdefault(sig(cand), []).append(cand)
 
         records = []
-        fired_sigs = set()
 
         # Fired records are derived from the AUTHORITATIVE send result
         # (result["matched_entries"]), never from re-matching the original
@@ -257,9 +275,8 @@ class WorldInfoProcessor:
         # original text (as before) silently dropped those entries from the
         # diagnostics, under-reporting `fired` vs. the real send.
         for order, entry in enumerate(fired_list):
-            key = sig(entry)
-            cand = candidates_by_sig.get(key, entry)
-            fired_sigs.add(key)
+            bucket = candidates_by_sig.get(sig(entry))
+            cand = bucket.pop(0) if bucket else entry
             try:
                 primary_hit, pk, sec_req, sec_hit, sk = self._classify_entry_match(
                     cand, scan_text, scan_text_lower)
@@ -285,12 +302,10 @@ class WorldInfoProcessor:
                 content_preview=(cand.get("content", "") or "")[:80], depth_level=depth_level,
             ))
 
-        # Near-misses: every candidate that did NOT fire this send, classified
-        # against the original scan text.
-        for cand in self._candidate_entries:
-            key = sig(cand)
-            if key in fired_sigs:
-                continue
+        # Near-misses: every candidate NOT consumed by the fired loop above
+        # (whatever remains in the per-signature buckets), classified against
+        # the original scan text.
+        for cand in [c for bucket in candidates_by_sig.values() for c in bucket]:
             try:
                 primary_hit, pk, sec_req, sec_hit, sk = self._classify_entry_match(
                     cand, scan_text, scan_text_lower)

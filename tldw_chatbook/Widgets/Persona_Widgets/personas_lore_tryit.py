@@ -73,8 +73,15 @@ class PersonasLoreTryItWidget(Vertical):
         yield Static("Try it — injection preview", markup=False)
         yield TextArea(id="personas-lore-tryit-sample")
         with Horizontal(id="personas-lore-tryit-pull-history-row"):
-            yield Switch(id="personas-lore-tryit-pull-history")
-            yield Static("Include recent turns", markup=False)
+            # Disabled in P2a: the Personas screen has no conversation-history
+            # source yet, so this preview scans the sample text only. Recent-turn
+            # scanning arrives with the later Lore send-integration cycle.
+            yield Switch(
+                id="personas-lore-tryit-pull-history",
+                disabled=True,
+                tooltip="Scanning recent conversation turns arrives in a later Lore cycle.",
+            )
+            yield Static("Include recent turns (soon)", markup=False)
         yield Button(
             "Run preview",
             id="personas-lore-tryit-run",

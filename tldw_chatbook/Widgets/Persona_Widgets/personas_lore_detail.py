@@ -252,6 +252,20 @@ class PersonasLoreDetailWidget(Vertical):
     def entry_ids_in_order(self) -> list[str]:
         return [str(e.get("id")) for e in self._entries]
 
+    def _next_insertion_order(self) -> int:
+        """Insertion order for a NEW entry: after the current maximum.
+
+        Existing ``insertion_order`` values may be non-contiguous (e.g. imported
+        books), so ``len(self._entries)`` is wrong — it could sort a new entry
+        ahead of existing ones.
+
+        Returns:
+            int: ``max(existing insertion_order) + 1`` (0 when there are none).
+        """
+        return max(
+            (int(e.get("insertion_order") or 0) for e in self._entries), default=-1
+        ) + 1
+
     def entry_form_payload(self) -> dict | None:
         """API-named entry payload from the form; None if keys or content is empty.
 
@@ -268,11 +282,16 @@ class PersonasLoreDetailWidget(Vertical):
         position = str(self.query_one("#personas-lore-entry-position", Select).value)
         enabled = bool(self.query_one("#personas-lore-entry-enabled", Switch).value)
         selected_id = self.selected_entry_id
-        if selected_id is not None:
-            entry = next((e for e in self._entries if str(e.get("id")) == selected_id), None)
-            insertion_order = int(entry.get("insertion_order") or 0) if entry else len(self._entries)
+        entry = (
+            next((e for e in self._entries if str(e.get("id")) == selected_id), None)
+            if selected_id is not None
+            else None
+        )
+        if entry is not None:
+            # Editing an existing entry keeps its own order.
+            insertion_order = int(entry.get("insertion_order") or 0)
         else:
-            insertion_order = len(self._entries)
+            insertion_order = self._next_insertion_order()
         return {
             "keys": keys,
             "content": content,
@@ -341,6 +360,9 @@ class PersonasLoreDetailWidget(Vertical):
         event.stop()
         payload = self.entry_form_payload()
         if payload is not None:
+            # A NEW entry always appends after the current maximum
+            # insertion_order, regardless of which row is selected in the form.
+            payload["insertion_order"] = self._next_insertion_order()
             self.post_message(LoreEntryAddRequested(payload))
 
     @on(Button.Pressed, "#personas-lore-entry-update")
