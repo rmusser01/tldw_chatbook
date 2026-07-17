@@ -188,3 +188,26 @@ async def test_scope_service_character_attach_roundtrip(tmp_path):
     await scope.detach_from_character(char_id, "Slang", mode="local")
     listing = await scope.list_character_dictionaries(char_id, mode="local")
     assert listing["dictionaries"] == []
+
+
+@pytest.mark.asyncio
+async def test_scope_service_summarize_active_dictionaries(tmp_path):
+    import json as _json
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.Character_Chat.local_chat_dictionary_service import LocalChatDictionaryService
+    from tldw_chatbook.Character_Chat.chat_dictionary_scope_service import ChatDictionaryScopeService
+
+    db = CharactersRAGDB(tmp_path / "sum.db", "test-client")
+    local = LocalChatDictionaryService(db)
+    scope = ChatDictionaryScopeService(local_service=local, server_service=None)
+    conv_id = db.add_conversation({"title": "c"})
+    did = local.create_dictionary({"name": "Conv", "entries": [{"pattern": "x", "replacement": "y"}]})["id"]
+    conv = db.get_conversation_by_id(conv_id)
+    meta = _json.loads(conv.get("metadata") or "{}"); meta["active_dictionaries"] = [did]
+    db.update_conversation(conv_id, {"metadata": _json.dumps(meta)}, expected_version=conv["version"])
+    char_id = db.add_character_card({"name": "N"})
+    local.attach_to_character(local.create_dictionary({"name": "Char"})["id"], char_id)
+
+    out = await scope.summarize_active_dictionaries(conv_id, char_id, mode="local")
+    names = {(d["name"], d["source"]) for d in out["dictionaries"]}
+    assert ("Conv", "conversation") in names and ("Char", "character") in names

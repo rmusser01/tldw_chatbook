@@ -1143,6 +1143,68 @@ def load_character_dictionaries(char_data: Optional[Dict[str, Any]]) -> List[Dic
     return result
 
 
+def _resolve_active_dictionaries(
+    db: "CharactersRAGDB",
+    conversation_id: Optional[str],
+    char_data: Optional[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Resolve the dict-level union for the current chat (never raises).
+
+    Returns one row per dictionary in conversation-then-character order:
+    ``{"name", "source": "conversation"|"character", "enabled", "entries":
+    [ChatDictionary], "shadowed"}``. ``shadowed`` marks a character dictionary
+    whose name collides with an ENABLED conversation dictionary (present but not
+    applied); a disabled conversation dict does not claim its name, so a
+    same-named character dict is not shadowed. This is the single source of truth
+    for both :func:`collect_active_chatdict_entries` (send path) and
+    :func:`summarize_active_dictionaries` (read model).
+    """
+    rows: List[Dict[str, Any]] = []
+    enabled_conversation_names: set = set()
+    if conversation_id and db is not None:
+        try:
+            conv_details = db.get_conversation_by_id(conversation_id)
+        except Exception:
+            conv_details = None
+        if conv_details:
+            try:
+                metadata = json.loads(conv_details.get('metadata') or '{}')
+            except (TypeError, ValueError):
+                metadata = {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            active = metadata.get('active_dictionaries')
+            if not isinstance(active, list):
+                active = []
+            for dict_id in active:
+                try:
+                    dict_data = load_chat_dictionary(db, dict_id)
+                except Exception:
+                    continue
+                if not dict_data:
+                    continue
+                enabled = bool(dict_data.get('enabled', True))
+                name = dict_data.get('name')
+                if enabled and name is not None:
+                    enabled_conversation_names.add(name)
+                rows.append({
+                    "name": name,
+                    "source": "conversation",
+                    "enabled": enabled,
+                    "entries": dict_data.get('entries') or [],
+                    "shadowed": False,  # a conversation dict is never shadowed
+                })
+    for block in load_character_dictionaries(char_data):
+        rows.append({
+            "name": block.get('name'),
+            "source": "character",
+            "enabled": bool(block.get('enabled', True)),
+            "entries": block.get('entries') or [],
+            "shadowed": block.get('name') in enabled_conversation_names,
+        })
+    return rows
+
+
 def collect_active_chatdict_entries(
     db: "CharactersRAGDB",
     conversation_id: Optional[str],
@@ -1172,41 +1234,83 @@ def collect_active_chatdict_entries(
         non-name-colliding sources, in conversation-then-character order.
     """
     entries: List[ChatDictionary] = []
-    conversation_dict_names: set = set()
-    if conversation_id and db is not None:
-        try:
-            conv_details = db.get_conversation_by_id(conversation_id)
-        except Exception:
-            conv_details = None
-        if conv_details:
-            try:
-                metadata = json.loads(conv_details.get('metadata') or '{}')
-            except (TypeError, ValueError):
-                metadata = {}
-            if not isinstance(metadata, dict):
-                metadata = {}
-            active = metadata.get('active_dictionaries')
-            if not isinstance(active, list):
-                active = []
-            for dict_id in active:
-                try:
-                    dict_data = load_chat_dictionary(db, dict_id)
-                except Exception:
-                    continue
-                if dict_data and dict_data.get('enabled', True):
-                    conversation_dict_names.add(dict_data.get('name'))
-                    entries.extend(dict_data.get('entries') or [])
-    for block in load_character_dictionaries(char_data):
-        if not block.get('enabled', True):
+    for row in _resolve_active_dictionaries(db, conversation_id, char_data):
+        if not row["enabled"] or row["shadowed"]:
             continue
-        if block.get('name') in conversation_dict_names:
-            continue
-        entries.extend(block.get('entries') or [])
+        entries.extend(row["entries"])
     return entries
 
 
+def summarize_active_dictionaries(
+    db: "CharactersRAGDB",
+    conversation_id: Optional[str],
+    char_data: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Dict-level "what's in play" summary for the current chat (never raises)."""
+    dictionaries = [
+        {
+            "name": row["name"],
+            "source": row["source"],
+            "enabled": row["enabled"],
+            "entry_count": len(row["entries"]),
+            "shadowed": row["shadowed"],
+        }
+        for row in _resolve_active_dictionaries(db, conversation_id, char_data)
+    ]
+    return {"dictionaries": dictionaries, "source": "local"}
+
+
+def conversation_dictionary_ids(db: "CharactersRAGDB", conversation_id: Optional[str]) -> List[int]:
+    """Return the int dictionary ids attached to a conversation (never raises).
+
+    Reusable helper for Console attach/detach picker-list building
+    (Roleplay P1g Task 5). Mirrors the exact ``metadata.active_dictionaries``
+    parse already inlined in :func:`_resolve_active_dictionaries` --
+    deliberately duplicated rather than refactored out of that function,
+    since ``_resolve_active_dictionaries`` feeds
+    :func:`collect_active_chatdict_entries`'s byte-for-byte regression pin.
+
+    Args:
+        db: Database handle. May be ``None`` (returns ``[]``).
+        conversation_id: The conversation's id, or ``None``/empty.
+
+    Returns:
+        The attached dictionary ids as ``int``s, in stored order, deduped
+        (first occurrence wins). Non-coercible entries are skipped.
+    """
+    ids: List[int] = []
+    if not conversation_id or db is None:
+        return ids
+    try:
+        conv_details = db.get_conversation_by_id(str(conversation_id))
+    except Exception:
+        return ids
+    if not conv_details:
+        return ids
+    try:
+        metadata = json.loads(conv_details.get('metadata') or '{}')
+    except (TypeError, ValueError):
+        metadata = {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    active = metadata.get('active_dictionaries')
+    if not isinstance(active, list):
+        active = []
+    seen: set = set()
+    for raw_id in active:
+        try:
+            dict_id = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        if dict_id in seen:
+            continue
+        seen.add(dict_id)
+        ids.append(dict_id)
+    return ids
+
+
 def list_chat_dictionaries(
-    db: CharactersRAGDB, 
+    db: CharactersRAGDB,
     limit: int = 100,
     offset: int = 0,
     include_disabled: bool = False

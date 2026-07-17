@@ -1,5 +1,5 @@
 ---
-id: TASK-247
+id: TASK-276
 title: Remove duplicate Console save_state on screen suspend
 status: Done
 assignee: []

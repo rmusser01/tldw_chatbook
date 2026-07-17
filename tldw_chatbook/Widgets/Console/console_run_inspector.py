@@ -236,3 +236,21 @@ class ConsoleRunInspector(Vertical):
             if action.widget_id in rendered_action_ids:
                 continue
             yield from self._compose_action(action)
+
+        dict_rows = getattr(self.state, "dictionary_rows", ())
+        dict_actions = getattr(self.state, "dictionary_actions", ())
+        if dict_rows or dict_actions:
+            yield Static(
+                "Chat Dictionaries",
+                id="console-inspector-dictionaries-heading",
+                classes="console-inspector-group-heading destination-section",
+            )
+            for index, row in enumerate(dict_rows):
+                yield Static(
+                    row.text,
+                    id=f"console-inspector-dictionaries-row-{index}",
+                    classes=f"console-inspector-row console-inspector-row-{row.status}",
+                    markup=False,
+                )
+            for action in dict_actions:
+                yield from self._compose_action(action)

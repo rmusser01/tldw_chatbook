@@ -50,6 +50,9 @@ WORKBENCH_ROUTE_OWNERS: dict[str, str] = {
     "stts": "settings",
     "study": "library",
     "writing": "artifacts_writing",
+    # The orphan "research" screen registration is removed (Task 255): the
+    # route id survives only as TAB_RESEARCH plus a screen_registry alias
+    # that resolves to Library, matching this owner mapping.
     "research": "library",
     "chatbooks": "artifacts",
     "subscriptions": "watchlists_collections",

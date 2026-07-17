@@ -351,6 +351,8 @@ class ConsoleInspectorState:
     actions: tuple[ConsoleInspectorAction, ...] = ()
     has_pending_approval: bool = False
     can_save_chatbook: bool = False
+    dictionary_rows: tuple[ConsoleDisplayRow, ...] = ()
+    dictionary_actions: tuple[ConsoleInspectorAction, ...] = ()
 
     @classmethod
     def from_values(

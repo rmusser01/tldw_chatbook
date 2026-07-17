@@ -487,13 +487,41 @@ def ensure_svg_rendering() -> bool:
         _svg_rendering_available = False
     return _svg_rendering_available
 
+# Modules that must be installed for the 'embeddings_rag' feature group.
+# Shared by the deep import check below and the cheap installed-probe.
+EMBEDDINGS_RAG_REQUIRED_MODULES = ('torch', 'transformers', 'numpy', 'chromadb', 'sentence_transformers')
+
+
+def embeddings_rag_deps_installed() -> bool:
+    """Cheap probe: are the embeddings_rag dependencies installed?
+
+    Uses `importlib.util.find_spec` only — no module imports, no side
+    effects, and no mutation of the DEPENDENCIES_AVAILABLE registry — so it
+    is safe to call from configuration/default-resolution code paths.
+    For a deep check that actually imports the modules (and updates the
+    registry), use `check_embeddings_rag_deps()`.
+
+    Returns:
+        True when every module in EMBEDDINGS_RAG_REQUIRED_MODULES resolves
+        to an installed distribution.
+    """
+    for dep in EMBEDDINGS_RAG_REQUIRED_MODULES:
+        try:
+            if importlib.util.find_spec(dep) is None:
+                return False
+        except Exception as e:
+            logger.debug(f"find_spec probe failed for {dep}: {e}")
+            return False
+    return True
+
+
 def check_embeddings_rag_deps() -> bool:
     """Check all dependencies needed for embeddings and RAG functionality."""
     # Always recheck dependencies - don't return cached False value
     # This ensures we actually check if dependencies are installed
-    
+
     # Check each dependency more thoroughly
-    required_deps = ['torch', 'transformers', 'numpy', 'chromadb', 'sentence_transformers']
+    required_deps = list(EMBEDDINGS_RAG_REQUIRED_MODULES)
     all_available = True
     missing_deps = []
     

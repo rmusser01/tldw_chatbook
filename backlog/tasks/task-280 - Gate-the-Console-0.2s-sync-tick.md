@@ -1,5 +1,5 @@
 ---
-id: TASK-251
+id: TASK-280
 title: Gate the Console 0.2s sync tick (stop per-tick DB queries and unconditional recomposes)
 status: To Do
 assignee: []
