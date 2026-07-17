@@ -314,11 +314,15 @@ class HomeScreen(BaseAppScreen):
         if not inspect.iscoroutinefunction(refresh):
             return
         try:
-            await refresh()
+            refreshed = await refresh()
         except Exception as exc:
             logger.debug(f"Home active-work cache refresh failed: {exc}")
             return
-        if self.is_mounted:
+        # Only re-sync when the adapter actually recomputed -- a fresh
+        # cache (the common on-mount case: compose just cold-computed and
+        # stored it) means nothing changed, and re-syncing would just burn
+        # a redundant triage rebuild during mount settling.
+        if refreshed and self.is_mounted:
             self._sync_home_triage()
 
     async def _build_home_content_snapshot(self) -> HomeContentSnapshot:

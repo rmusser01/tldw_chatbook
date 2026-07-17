@@ -559,7 +559,7 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
             return True
         return False
 
-    async def refresh_active_work_cache_async(self) -> None:
+    async def refresh_active_work_cache_async(self) -> bool:
         """Warm/refresh the active-work cache off the event loop.
 
         Called from ``HomeScreen._refresh_home_active_work_cache`` (an
@@ -568,12 +568,34 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         pattern). Degrades to an inline (still off the caller's awaiting
         coroutine, but not off *this* thread) computation when any backing
         seam is a per-connection ``:memory:`` store.
+
+        No-ops when the cache is already fresh: Home's compose path
+        cold-computes (and stores) the fields moments before the on-mount
+        worker runs, so recomputing here would double the mount-time cost
+        -- and in the memory-backed case that recompute runs on the event
+        loop, where it measurably delayed Home's initial child mount
+        (caught by the core-usability smoke gate during task-282
+        verification).
+
+        Returns:
+            True when the cache was actually refreshed (caller should
+            re-sync the triage surface), False when it was already fresh
+            and nothing changed.
         """
+        with self._active_work_cache_lock:
+            fresh = (
+                self._active_work_cache is not None
+                and (time.monotonic() - self._active_work_cache_at)
+                < _ACTIVE_WORK_CACHE_TTL_SECONDS
+            )
+        if fresh:
+            return False
         if self._active_work_seams_are_memory_backed():
             fields = self._compute_active_work_fields()
         else:
             fields = await asyncio.to_thread(self._compute_active_work_fields)
         self._store_active_work_cache(fields)
+        return True
 
     def _watchlist_run_snapshot(self) -> list[Any]:
         """Fetch the watchlist run snapshot once per dashboard build."""

@@ -137,13 +137,37 @@ async def test_refresh_active_work_cache_warms_cache_for_sync_reads():
     service = _CountingNotificationService()
     adapter = _adapter(service)
 
-    await adapter.refresh_active_work_cache_async()
+    assert await adapter.refresh_active_work_cache_async() is True
     assert service.calls == 1
 
     # A subsequent synchronous build_dashboard_input (the compose-path
     # call, which cannot await) should hit the warmed cache.
     adapter.build_dashboard_input(providers_models={}, has_recent_work=False)
     assert service.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_refresh_active_work_cache_noops_when_cache_is_fresh():
+    """Regression (task-282 verification): Home's compose path cold-computes
+    and stores the fields moments before the on-mount worker runs -- the
+    async refresh must NOT recompute over a fresh cache, or mount pays the
+    seam-query cost twice (and, for memory-backed stores, pays the second
+    one on the event loop, which measurably delayed Home's initial child
+    mount in the core-usability smoke gate)."""
+    service = _CountingNotificationService()
+    adapter = _adapter(service)
+
+    # Simulate the compose path warming the cache synchronously first.
+    adapter.build_dashboard_input(providers_models={}, has_recent_work=False)
+    assert service.calls == 1
+
+    assert await adapter.refresh_active_work_cache_async() is False
+    assert service.calls == 1  # fresh cache -- no recompute
+
+    # Once stale, the async refresh computes again.
+    adapter._active_work_cache_at -= 10.0
+    assert await adapter.refresh_active_work_cache_async() is True
+    assert service.calls == 2
 
 
 # ---------------------------------------------------------------------------
