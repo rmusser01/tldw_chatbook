@@ -75,3 +75,21 @@ def test_parse_native_tool_calls_malformed_and_junk():
     assert parse_native_tool_calls({}) == ()
     assert parse_native_tool_calls({"tool_calls": None}) == ()
     assert parse_native_tool_calls(None) == ()
+
+
+def test_ensure_tool_call_ids_synthesizes_missing_ids_only():
+    from tldw_chatbook.Agents.native_tools import ensure_tool_call_ids
+
+    raw = [
+        {"type": "function", "function": {"name": "calculator", "arguments": "{}"}},
+        {"id": "keep-me", "type": "function",
+         "function": {"name": "ping", "arguments": "{}"}},
+        "junk",
+    ]
+    normalized = ensure_tool_call_ids(raw)
+    assert normalized[0]["id"] == "call_0"
+    assert normalized[1]["id"] == "keep-me"
+    assert normalized[2] == "junk"
+    assert raw[0].get("id") is None      # input entries never mutated
+    assert ensure_tool_call_ids(None) == []
+    assert ensure_tool_call_ids([]) == []

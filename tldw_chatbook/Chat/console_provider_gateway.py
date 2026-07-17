@@ -252,7 +252,6 @@ class _ToolCallAccumulator:
 
     def __init__(self) -> None:
         self._by_index: dict[int, dict] = {}
-        self._order: list[int] = []
 
     def feed_payload(self, payload: Any) -> None:
         if not isinstance(payload, Mapping):
@@ -282,7 +281,6 @@ class _ToolCallAccumulator:
         if index not in self._by_index:
             self._by_index[index] = {"id": "", "type": "function",
                                      "function": {"name": "", "arguments": ""}}
-            self._order.append(index)
         entry = self._by_index[index]
         if fragment.get("id"):
             entry["id"] = str(fragment["id"])
@@ -299,7 +297,10 @@ class _ToolCallAccumulator:
                 entry["function"]["arguments"] = json.dumps(arguments)
 
     def calls(self) -> tuple[dict, ...]:
-        return tuple(self._by_index[i] for i in self._order
+        # Numeric index order, not first-seen order: the provider's index
+        # field defines the batch's array position, and fragments may arrive
+        # interleaved/out of order (PR #648 review).
+        return tuple(self._by_index[i] for i in sorted(self._by_index)
                      if self._by_index[i]["function"]["name"])
 
 
@@ -863,7 +864,7 @@ class ConsoleProviderGateway:
         resolution: ConsoleProviderResolution,
         messages: list[Mapping[str, Any]],
         tools: list | None = None,
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[str | ProviderToolCalls]:
         """Dispatch streaming for a resolved Console provider.
 
         Args:
@@ -919,7 +920,7 @@ class ConsoleProviderGateway:
         resolution: ConsoleProviderResolution,
         messages: list[Mapping[str, Any]],
         tools: list | None = None,
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[str | ProviderToolCalls]:
         """Bridge synchronous chat_api_call responses into async Console chunks."""
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[_QueueItem] = asyncio.Queue()

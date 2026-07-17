@@ -28,8 +28,6 @@ NATIVE_TOOLS_PROVIDERS = frozenset({
     "custom-openai-api", "custom-openai-api-2",
 })
 
-_EMPTY_PARAMETERS = {"type": "object", "properties": {}}
-
 
 def provider_supports_native_tools(api_endpoint: str | None) -> bool:
     """Return whether ``api_endpoint`` supports native tool-calls end-to-end.
@@ -64,10 +62,40 @@ def schemas_to_openai_tools(schemas: list[ToolSchema]) -> list[dict]:
             "function": {
                 "name": schema.name,
                 "description": schema.description,
-                "parameters": schema.parameters or dict(_EMPTY_PARAMETERS),
+                # A fresh literal per schema: a shared module-level default
+                # would leak downstream mutations across conversions through
+                # its nested "properties" dict (PR #648 review).
+                "parameters": schema.parameters or {"type": "object",
+                                                    "properties": {}},
             },
         })
     return tools
+
+
+def ensure_tool_call_ids(raw_calls: list | None) -> list:
+    """Return tool-call entries with every dict entry carrying an id.
+
+    Some OpenAI-compatible servers omit tool-call ids. An id-less call would
+    split the history convention — the assistant echo carries the id-less
+    entry while its result falls back to a fence-style user-role line —
+    which strict providers reject on the next request (PR #648 review).
+    Missing ids get a synthesized ``call_<position>`` so the echo and its
+    ``role="tool"`` reply always pair; the caller must use the SAME
+    normalized list for both the echo and parsing.
+
+    Args:
+        raw_calls: The raw ``message.tool_calls`` list (or None).
+
+    Returns:
+        A new list where every dict entry has a non-empty ``id``; entries
+        with ids and non-dict junk pass through untouched.
+    """
+    normalized = []
+    for position, raw in enumerate(raw_calls or []):
+        if isinstance(raw, dict) and not raw.get("id"):
+            raw = {**raw, "id": f"call_{position}"}
+        normalized.append(raw)
+    return normalized
 
 
 def parse_native_tool_calls(message: dict | None) -> tuple[ToolCall, ...]:

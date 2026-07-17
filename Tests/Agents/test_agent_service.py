@@ -461,3 +461,27 @@ def test_find_and_load_tools_respect_allowed_tools(db):
     assert "t1" not in find_result["result"]
     assert load_result["result"] == "loaded: t0"
     assert "Tool not permitted: t1" in t1_result["result"]
+
+
+def test_idless_native_call_gets_synthesized_id_pairing_echo_and_result(db):
+    """PR #648 review: some OpenAI-compatible servers omit tool-call ids. A
+    synthesized id must appear identically in the assistant echo and the
+    role='tool' reply, so history pairing never splits conventions."""
+    idless = {"type": "function",
+              "function": {"name": "calculator",
+                           "arguments": json.dumps({"expression": "2+2"})}}
+    service, chat = make_service(db, [
+        {"content": None, "tool_calls": [idless]},
+        "4."])
+    _run_id, outcome = service.run_turn(
+        conversation_id="c", messages=[{"role": "user", "content": "2+2?"}],
+        config=CFG, api_endpoint="groq", should_cancel=lambda: False)
+    assert outcome.status == RUN_DONE and outcome.final_text == "4."
+    second_payload = chat.calls[1]["messages_payload"]
+    assistant = [m for m in second_payload if m["role"] == "assistant"][0]
+    tool_msg = [m for m in second_payload if m.get("role") == "tool"][0]
+    assert assistant["tool_calls"][0]["id"] == "call_0"
+    assert tool_msg["tool_call_id"] == "call_0"
+    assert not any(m.get("role") == "user" and
+                   str(m.get("content", "")).startswith("Tool result for")
+                   for m in second_payload[1:])

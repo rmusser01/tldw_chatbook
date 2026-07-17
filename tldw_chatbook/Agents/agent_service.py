@@ -21,8 +21,8 @@ from .agent_models import (
 )
 from .agent_runtime import LoopDeps, render_tool_protocol, run_agent_loop
 from .native_tools import (
-    parse_native_tool_calls, provider_supports_native_tools,
-    schemas_to_openai_tools,
+    ensure_tool_call_ids, parse_native_tool_calls,
+    provider_supports_native_tools, schemas_to_openai_tools,
 )
 from .tool_catalog import (
     FIND_TOOLS_SCHEMA, LOAD_TOOLS_SCHEMA, SPAWN_TOOL_SCHEMA,
@@ -144,12 +144,19 @@ class AgentService:
             if not native:
                 return ModelTurn(text=text)
             message = _response_message(resp)
+            # Id-less entries get synthesized ids BEFORE parsing, and the
+            # SAME normalized list feeds the assistant echo — the echo and
+            # its role="tool" replies must always pair by id (PR #648
+            # review: a split convention 400s on strict providers).
+            raw_calls = ensure_tool_call_ids(message.get("tool_calls"))
+            if raw_calls:
+                message = {**message, "tool_calls": raw_calls}
             tool_calls = parse_native_tool_calls(message)
             assistant_message = None
             if tool_calls:
                 assistant_message = {
                     "role": "assistant", "content": text,
-                    "tool_calls": message.get("tool_calls")}
+                    "tool_calls": raw_calls}
             return ModelTurn(text=text, tool_calls=tool_calls,
                              assistant_message=assistant_message)
         return call_model

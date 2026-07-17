@@ -1795,3 +1795,37 @@ async def test_tools_run_with_real_content_and_no_calls_stays_a_normal_answer() 
     items = await _collect(gateway, resolution, tools=TOOLS)
 
     assert items == ["Just an answer."]
+
+
+@pytest.mark.asyncio
+async def test_tool_call_fragments_out_of_index_order_emit_in_index_order() -> None:
+    """PR #648 review: the provider's index field defines batch order; when
+    index-1 fragments arrive before index-0, the merged ProviderToolCalls
+    must still be ordered [0, 1]."""
+    script = iter(
+        [
+            _sse(_delta_fragment(1, call_id="c1", name="get_current_datetime")),
+            _sse(_delta_fragment(1, arguments="{}")),
+            _sse(_delta_fragment(0, call_id="c0", name="calculator")),
+            _sse(_delta_fragment(0, arguments='{"expression": "2+2"}')),
+            "data: [DONE]",
+        ]
+    )
+
+    def fake_chat_api_call(**_kwargs):
+        return script
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"groq": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="groq", explicit_model="llama3-groq", streaming=True)
+    )
+
+    items = await _collect(gateway, resolution, tools=TOOLS)
+
+    (ptc,) = [i for i in items if isinstance(i, ProviderToolCalls)]
+    assert [c["id"] for c in ptc.tool_calls] == ["c0", "c1"]
+    assert [c["function"]["name"] for c in ptc.tool_calls] == [
+        "calculator", "get_current_datetime"]
