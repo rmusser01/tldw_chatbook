@@ -1,7 +1,7 @@
 ---
 id: TASK-282
 title: Home: thread + cache dashboard seam queries; targeted rail/canvas updates
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-16 14:30'
 labels: [performance, home]

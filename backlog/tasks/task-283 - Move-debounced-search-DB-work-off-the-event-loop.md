@@ -1,7 +1,7 @@
 ---
 id: TASK-283
 title: Move debounced search DB work off the event loop
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-16 14:30'
 labels: [performance, chat]
