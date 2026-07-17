@@ -673,3 +673,24 @@ def test_protocol_rerenders_when_load_tools_admits_new_schema(db, monkeypatch):
     post_load_system = chat.calls[1]["messages_payload"][0]["content"]
     assert "calculator" not in pre_load_system
     assert "calculator" in post_load_system
+
+
+def test_native_endpoint_anthropic_sends_tools_and_suppresses_fence(db):
+    """task-263: anthropic is native-capable — the service passes tools= and
+    suppresses the fence protocol exactly as for the OpenAI-compatible set
+    (the handler converts shapes internally; live-gated 2026-07-17)."""
+    service, chat = make_service(db, [
+        {"content": None,
+         "tool_calls": [native_call("calculator", {"expression": "2+2"},
+                                    "toolu_1")]},
+        "4."])
+    _run_id, outcome = service.run_turn(
+        conversation_id="c", messages=[{"role": "user", "content": "2+2?"}],
+        config=CFG, api_endpoint="anthropic", should_cancel=lambda: False)
+    assert outcome.status == RUN_DONE and outcome.final_text == "4."
+    first = chat.calls[0]
+    assert "tools" in first
+    assert "tool_call" not in first["messages_payload"][0]["content"]
+    tool_msg = [m for m in chat.calls[1]["messages_payload"]
+                if m.get("role") == "tool"][0]
+    assert tool_msg["tool_call_id"] == "toolu_1"

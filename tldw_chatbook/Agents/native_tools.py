@@ -8,11 +8,12 @@ vertical-slice spec and the task-231 tool-call flow review (opportunity 1).
 A provider earns a place in ``NATIVE_TOOLS_PROVIDERS`` only when ALL of:
 
 1. ``PROVIDER_PARAM_MAP`` forwards ``tools`` (and the handler accepts it),
-2. the handler returns the RAW OpenAI-compatible response dict, so
-   ``choices[0].message.tool_calls`` survives verbatim (the anthropic /
-   google / cohere handlers normalize and currently DROP tool-use blocks —
-   they stay fence-only until their normalizers build
-   ``message.tool_calls``; follow-up filed as task-263), and
+2. the handler returns (or normalizes to) the OpenAI-compatible response
+   dict with ``choices[0].message.tool_calls`` intact — raw passthrough for
+   the OpenAI-compatible providers; full block conversion for anthropic
+   (task-263). The google / cohere handlers still normalize and DROP
+   tool-use blocks — they stay fence-only until converted (follow-ups
+   filed), and
 3. the provider accepts OpenAI-shape ``role: "tool"`` history messages.
 
 Pure module: no I/O, no provider imports.
@@ -26,6 +27,11 @@ from .agent_models import ToolCall, ToolSchema
 NATIVE_TOOLS_PROVIDERS = frozenset({
     "openai", "groq", "openrouter", "mistral", "deepseek", "moonshot",
     "custom-openai-api", "custom-openai-api-2",
+    # task-263: chat_with_anthropic converts OpenAI tools/tool-history to
+    # Anthropic blocks and normalizes tool_use (non-streaming + streaming)
+    # back to OpenAI shape — live-gated against the real API 2026-07-17
+    # (Docs/superpowers/qa/anthropic-native-2026-07/).
+    "anthropic",
 })
 
 

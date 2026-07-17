@@ -678,6 +678,67 @@ def chat_with_openai(
         raise ChatProviderError(provider="openai", message=f"Unexpected error: {e}")
 
 
+def _anthropic_block_index(event: dict) -> int | None:
+    """Best-effort parse of an SSE event's content-block ``index``.
+
+    Anthropic always sends an int, but a malformed event must not abort an
+    otherwise-valid stream (PR #659 review): non-int-castable values yield
+    None and the caller skips the event.
+
+    Args:
+        event: A decoded Anthropic SSE event payload.
+
+    Returns:
+        The block index, or None when absent/unparseable.
+    """
+    raw = event.get("index", 0)
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, str) and raw.strip().isdigit():
+        return int(raw.strip())
+    return None
+
+
+def _anthropic_tools_payload(tools: list) -> list:
+    """Convert OpenAI function-format tool entries to Anthropic's format.
+
+    Entries already in Anthropic shape (carrying ``input_schema``) pass
+    through untouched — the handler's historical contract. Non-dict junk is
+    dropped.
+
+    Args:
+        tools: The ``tools`` list as received (OpenAI or Anthropic shaped).
+
+    Returns:
+        Anthropic-format entries: ``{"name", "description", "input_schema"}``.
+    """
+    converted = []
+    for entry in tools or []:
+        if not isinstance(entry, dict):
+            continue
+        function = entry.get("function")
+        if entry.get("type") == "function" and isinstance(function, dict):
+            name = str(function.get("name") or "").strip()
+            if not name:
+                # Anthropic rejects empty tool names — dropping the entry
+                # keeps the failure local instead of a provider 400
+                # (PR #659 review).
+                continue
+            parameters = function.get("parameters")
+            if not isinstance(parameters, dict) or not parameters:
+                parameters = {"type": "object", "properties": {}}
+            converted.append({
+                "name": name,
+                "description": str(function.get("description") or ""),
+                "input_schema": parameters,
+            })
+        else:
+            converted.append(entry)
+    return converted
+
+
 def chat_with_anthropic(
         input_data: List[Dict[str, Any]], # Mapped from 'messages_payload'
         model: Optional[str] = None,
@@ -729,6 +790,76 @@ def chat_with_anthropic(
     for msg in input_data:
         role = msg.get("role")
         content = msg.get("content")
+        if role == "tool":
+            # OpenAI tool-result convention -> Anthropic tool_result block.
+            # Consecutive tool results coalesce into ONE user turn: they all
+            # answer the same assistant tool_use turn, and Anthropic requires
+            # alternating roles (task-263 AC#2).
+            block = {"type": "tool_result",
+                     "tool_use_id": str(msg.get("tool_call_id") or ""),
+                     "content": str(content or "")}
+            last = anthropic_messages[-1] if anthropic_messages else None
+            if (last is not None and last.get("role") == "user"
+                    and isinstance(last.get("content"), list)
+                    and any(isinstance(b, dict) and b.get("type") == "tool_result"
+                            for b in last["content"])):
+                last["content"].append(block)
+            else:
+                anthropic_messages.append({"role": "user", "content": [block]})
+            continue
+        if role == "assistant" and msg.get("tool_calls"):
+            # OpenAI assistant tool_calls echo -> Anthropic tool_use blocks
+            # (text block first when the turn also carried visible content).
+            # Guards mirror native_tools.parse_native_tool_calls: the live
+            # Anthropic API rejects both an empty "content": [] array and a
+            # tool_use block with an empty "name", so a call only converts
+            # when it has a dict `function` with a non-empty stripped
+            # `name` (task-263 review). Build the candidate blocks first —
+            # if every call is junk, fall through to the plain content
+            # handling below instead of sending a blocks-only message.
+            tool_use_blocks = []
+            for call in msg.get("tool_calls") or []:
+                if not isinstance(call, dict):
+                    continue
+                function = call.get("function")
+                if not isinstance(function, dict):
+                    continue
+                name = str(function.get("name") or "").strip()
+                if not name:
+                    continue
+                raw_args = function.get("arguments")
+                tool_input = raw_args if isinstance(raw_args, dict) else {}
+                if isinstance(raw_args, str) and raw_args.strip():
+                    try:
+                        parsed = json.loads(raw_args)
+                    except json.JSONDecodeError:
+                        parsed = None
+                    if isinstance(parsed, dict):
+                        tool_input = parsed
+                tool_use_blocks.append({"type": "tool_use",
+                                        "id": str(call.get("id") or ""),
+                                        "name": name,
+                                        "input": tool_input})
+            if tool_use_blocks:
+                blocks = []
+                if isinstance(content, str) and content.strip():
+                    blocks.append({"type": "text", "text": content})
+                elif isinstance(content, list):
+                    # List-form (multimodal) content: keep its text parts —
+                    # dropping them would silently lose visible text that
+                    # accompanied the tool calls (PR #659 review).
+                    for part in content:
+                        if (isinstance(part, dict)
+                                and part.get("type") == "text"
+                                and isinstance(part.get("text"), str)
+                                and part["text"].strip()):
+                            blocks.append({"type": "text",
+                                           "text": part["text"]})
+                blocks.extend(tool_use_blocks)
+                anthropic_messages.append({"role": "assistant", "content": blocks})
+                continue
+            # else: no valid tool_use blocks survived the guards above —
+            # fall through to the plain user/assistant content handling.
         if role not in ["user", "assistant"]:
             logger.warning(f"Anthropic: Skipping message with unsupported role: {role}")
             continue
@@ -787,7 +918,7 @@ def chat_with_anthropic(
             "Anthropic: omitting temperature/top_p/top_k because thinking is enabled."
         )
     if stop_sequences is not None: data["stop_sequences"] = stop_sequences
-    if tools is not None: data["tools"] = tools # Assuming 'tools' is already in Anthropic's required format
+    if tools is not None: data["tools"] = _anthropic_tools_payload(tools)
     if thinking_config is not None: data["thinking"] = thinking_config
 
     api_url = anthropic_config.get('api_base_url', 'https://api.anthropic.com/v1').rstrip('/') + '/messages'
@@ -817,6 +948,13 @@ def chat_with_anthropic(
                 # Note: Anthropic event types: message_start, content_block_start, content_block_delta, content_block_stop, message_delta, message_stop
                 # We primarily care about content_block_delta for text and message_delta/message_stop for finish_reason.
 
+                # task-263: map Anthropic tool_use content-block indexes to
+                # 0-based OpenAI tool_calls positions (Anthropic's index also
+                # counts text blocks; OpenAI consumers key fragments by
+                # tool-call position — see the gateway's _ToolCallAccumulator).
+                tool_call_positions = {}
+                next_tool_position = 0
+
                 try:
                     for line_bytes in response.iter_lines():  # iter_lines gives bytes
                         line = line_bytes.decode('utf-8').strip()
@@ -835,10 +973,35 @@ def chat_with_anthropic(
                                 finish_reason = None
                                 tool_calls_delta = None  # For future tool streaming
 
-                                if anthropic_event.get("type") == "content_block_delta":
+                                if anthropic_event.get("type") == "content_block_start":
+                                    block = anthropic_event.get("content_block") or {}
+                                    if block.get("type") == "tool_use":
+                                        index = _anthropic_block_index(anthropic_event)
+                                        if index is None:
+                                            continue
+                                        position = next_tool_position
+                                        next_tool_position += 1
+                                        tool_call_positions[index] = position
+                                        tool_calls_delta = [{
+                                            "index": position,
+                                            "id": str(block.get("id") or ""),
+                                            "type": "function",
+                                            "function": {
+                                                "name": str(block.get("name") or ""),
+                                                "arguments": ""},
+                                        }]
+                                elif anthropic_event.get("type") == "content_block_delta":
                                     delta = anthropic_event.get("delta", {})
                                     if delta.get("type") == "text_delta":
                                         delta_content = delta.get("text")
+                                    elif delta.get("type") == "input_json_delta":
+                                        index = _anthropic_block_index(anthropic_event)
+                                        if index in tool_call_positions:
+                                            tool_calls_delta = [{
+                                                "index": tool_call_positions[index],
+                                                "function": {"arguments":
+                                                             delta.get("partial_json", "")},
+                                            }]
                                 elif anthropic_event.get("type") == "message_delta":
                                     finish_reason_anth = anthropic_event.get("delta", {}).get("stop_reason")
                                     # usage_anth = anthropic_event.get("usage") # Can capture usage here
@@ -893,14 +1056,34 @@ def chat_with_anthropic(
                     if part.get("type") == "text":
                         assistant_content_parts.append(part.get("text", ""))
             full_assistant_content = "\n".join(assistant_content_parts).strip()
+            tool_call_entries = []
+            for part in response_data.get("content") or []:
+                if isinstance(part, dict) and part.get("type") == "tool_use":
+                    tool_call_entries.append({
+                        "id": str(part.get("id") or ""),
+                        "type": "function",
+                        "function": {
+                            "name": str(part.get("name") or ""),
+                            "arguments": json.dumps(part.get("input") or {}),
+                        },
+                    })
             finish_reason_map = {"end_turn": "stop", "max_tokens": "length", "stop_sequence": "stop", "tool_use": "tool_calls"} # Added tool_use
             openai_finish_reason = finish_reason_map.get(response_data.get("stop_reason"), response_data.get("stop_reason"))
+            if openai_finish_reason == "tool_calls" and not tool_call_entries:
+                # stop_reason claimed tool_use but the body carried no
+                # tool_use blocks — never emit the self-contradictory
+                # finish_reason="tool_calls" with no message.tool_calls
+                # (PR #659 review).
+                openai_finish_reason = "stop"
+            message_payload = {"role": "assistant", "content": full_assistant_content}
+            if tool_call_entries:
+                message_payload["tool_calls"] = tool_call_entries
             normalized_response = {
                 "id": response_data.get("id", f"anthropic-{time.time_ns()}"),
                 "object": "chat.completion",
                 "created": int(time.time()),
                 "model": response_data.get("model", current_model),
-                "choices": [{"index": 0, "message": {"role": "assistant", "content": full_assistant_content},
+                "choices": [{"index": 0, "message": message_payload,
                              "finish_reason": openai_finish_reason}],
                 "usage": response_data.get("usage")
             }
