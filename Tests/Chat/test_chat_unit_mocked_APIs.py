@@ -374,7 +374,17 @@ class TestTemperatureForwarding:
     is 'temp'), so temperature was silently dropped for those providers.
     Pin that temp now reaches each handler as its 'temp' parameter."""
 
-    @pytest.mark.parametrize("endpoint", ["groq", "deepseek", "mistral", "google"])
+    @pytest.mark.parametrize("endpoint", [
+        "groq", "deepseek", "mistral", "google",
+        # task-286 audit: the six remaining dead-'temperature' entries,
+        # each handler signature-verified to take 'temp'.
+        "cohere", "openrouter", "huggingface", "koboldcpp",
+        "local_llamacpp", "local_llamafile",
+        # review Minor 1: these two had lost their temperature keys entirely
+        # in the first pass (comment-bearing dict-open lines confused the
+        # rewrite script); both handlers take temp.
+        "llama_cpp", "oobabooga",
+    ])
     def test_temp_reaches_handler(self, endpoint):
         handler = Mock(return_value={"choices": [{"message": {"content": "ok"}}]})
         handler.__name__ = f"chat_with_{endpoint}"
@@ -392,3 +402,66 @@ class TestTemperatureForwarding:
         finally:
             API_CALL_HANDLERS[endpoint] = original
         assert handler.call_args.kwargs.get("temp") == 0.42
+
+
+def test_provider_param_map_has_no_dead_generic_keys() -> None:
+    """Pin the generic side of PROVIDER_PARAM_MAP to the dispatcher's truth.
+
+    task-286 invariant: every generic-side key must be a real dispatcher
+    parameter — a key the dispatcher can never match is silently dropped
+    config (the 'temperature'/'prompt' bug class this audit retired). The
+    dispatcher's ``available_generic_params`` is itself DERIVED from the
+    signature (PR #668 review), so signature == dispatcher key set and this
+    assertion is exact, not an approximation.
+    """
+    import inspect
+    from tldw_chatbook.Chat.Chat_Functions import (
+        _CHAT_API_GENERIC_PARAMS, PROVIDER_PARAM_MAP, chat_api_call,
+    )
+
+    generic_params = set(inspect.signature(chat_api_call).parameters) - {"api_endpoint"}
+    # The derivation constant and the signature must agree exactly — this is
+    # what makes the invariant below equivalent to the dispatcher's own gate.
+    assert generic_params == set(_CHAT_API_GENERIC_PARAMS)
+    dead = {
+        (provider, key)
+        for provider, mapping in PROVIDER_PARAM_MAP.items()
+        for key in mapping
+        if key not in generic_params
+    }
+    assert not dead, f"dead PROVIDER_PARAM_MAP keys (never matched by the dispatcher): {sorted(dead)}"
+
+
+def test_provider_param_map_targets_exist_on_handlers() -> None:
+    """Pin the provider side of PROVIDER_PARAM_MAP to handler signatures.
+
+    task-286 invariant #2: every mapped TARGET must be a keyword-passable
+    parameter of that provider's handler (or the handler must accept
+    ``**kwargs``) — a wrong or keyword-incompatible target name TypeErrors
+    the call the moment the generic param is supplied (the tabbyapi /
+    local-llm 'temperature' and five ``user_identifier``->'user' bugs this
+    audit retired; keyword-compatibility per PR #668 review, since the
+    dispatcher calls handlers with ``**call_kwargs``).
+    """
+    import inspect
+    from tldw_chatbook.Chat.Chat_Functions import API_CALL_HANDLERS, PROVIDER_PARAM_MAP
+
+    problems = []
+    for provider, mapping in PROVIDER_PARAM_MAP.items():
+        handler = API_CALL_HANDLERS.get(provider)
+        if handler is None:
+            problems.append((provider, "<no handler>", ""))
+            continue
+        sig = inspect.signature(handler)
+        if any(p.kind == inspect.Parameter.VAR_KEYWORD
+               for p in sig.parameters.values()):
+            continue
+        for generic, target in mapping.items():
+            if target not in sig.parameters:
+                problems.append((provider, generic, target))
+            elif sig.parameters[target].kind in (
+                    inspect.Parameter.POSITIONAL_ONLY,
+                    inspect.Parameter.VAR_POSITIONAL):
+                problems.append((provider, generic,
+                                 f"{target} (not keyword-passable)"))
+    assert not problems, f"map targets missing on handlers: {sorted(problems)}"
