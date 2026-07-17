@@ -121,6 +121,15 @@ class PersonasLoreDetailWidget(Vertical):
                         )
                         yield Input(placeholder="Priority", id="personas-lore-entry-priority", value="0")
                         yield Switch(value=True, id="personas-lore-entry-enabled", tooltip="Entry enabled")
+                    with Horizontal(classes="personas-lore-form-row"):
+                        yield Static("Case-sensitive", markup=False)
+                        yield Switch(value=False, id="personas-lore-entry-case-sensitive")
+                        yield Static("Selective", markup=False)
+                        yield Switch(value=False, id="personas-lore-entry-selective")
+                    yield Input(
+                        placeholder="Secondary keys (comma-separated)",
+                        id="personas-lore-entry-secondary-keys",
+                    )
                     yield TextArea(id="personas-lore-entry-content")
                     with Horizontal(classes="personas-lore-form-row"):
                         yield Button("Add", id="personas-lore-entry-add", classes="console-action-secondary")
@@ -150,6 +159,19 @@ class PersonasLoreDetailWidget(Vertical):
         """
         table = self.query_one("#personas-lore-entries-table", DataTable)
         table.add_columns("keys", "content", "position", "priority", "enabled")
+        self._sync_secondary_keys_disabled()
+
+    def _sync_secondary_keys_disabled(self) -> None:
+        """Grey the secondary-keys input when Selective is off (pure visual hint;
+        the stored value is preserved either way).
+
+        Called from on_mount, from _fill_form_from_entry (Textual does NOT fire
+        Switch.Changed when a switch is set to the value it already holds — the
+        same hazard _set_enabled_switch guards against), and from the Selective
+        switch's Changed handler.
+        """
+        selective = self.query_one("#personas-lore-entry-selective", Switch).value
+        self.query_one("#personas-lore-entry-secondary-keys", Input).disabled = not selective
 
     # ----- public API -----
 
@@ -274,8 +296,8 @@ class PersonasLoreDetailWidget(Vertical):
         Returns:
             dict | None: The entry payload keyed by API field names
             (``keys``, ``content``, ``position``, ``enabled``,
-            ``insertion_order``, ``priority``), or ``None`` if keys or content
-            are empty.
+            ``insertion_order``, ``priority``, ``case_sensitive``, ``selective``,
+            ``secondary_keys``), or ``None`` if keys or content are empty.
         """
         raw_keys = self.query_one("#personas-lore-entry-keys", Input).value
         keys = [k.strip() for k in raw_keys.split(",") if k.strip()]
@@ -289,6 +311,10 @@ class PersonasLoreDetailWidget(Vertical):
         except ValueError:
             priority = 0
         enabled = bool(self.query_one("#personas-lore-entry-enabled", Switch).value)
+        case_sensitive = bool(self.query_one("#personas-lore-entry-case-sensitive", Switch).value)
+        selective = bool(self.query_one("#personas-lore-entry-selective", Switch).value)
+        raw_secondary = self.query_one("#personas-lore-entry-secondary-keys", Input).value
+        secondary_keys = [k.strip() for k in raw_secondary.split(",") if k.strip()]
         selected_id = self.selected_entry_id
         entry = (
             next((e for e in self._entries if str(e.get("id")) == selected_id), None)
@@ -307,6 +333,9 @@ class PersonasLoreDetailWidget(Vertical):
             "priority": priority,
             "enabled": enabled,
             "insertion_order": insertion_order,
+            "case_sensitive": case_sensitive,
+            "selective": selective,
+            "secondary_keys": secondary_keys,
         }
 
     def settings_payload(self) -> dict:
@@ -348,6 +377,12 @@ class PersonasLoreDetailWidget(Vertical):
             self.query_one("#personas-lore-entry-position", Select).value = position
         self.query_one("#personas-lore-entry-priority", Input).value = str(entry.get("priority") or 0)
         self.query_one("#personas-lore-entry-enabled", Switch).value = bool(entry.get("enabled", True))
+        self.query_one("#personas-lore-entry-case-sensitive", Switch).value = bool(entry.get("case_sensitive", False))
+        self.query_one("#personas-lore-entry-selective", Switch).value = bool(entry.get("selective", False))
+        self.query_one("#personas-lore-entry-secondary-keys", Input).value = ", ".join(
+            str(k) for k in (entry.get("secondary_keys") or [])
+        )
+        self._sync_secondary_keys_disabled()
 
     @on(DataTable.RowSelected, "#personas-lore-entries-table")
     def _row_selected(self, event: DataTable.RowSelected) -> None:
@@ -432,6 +467,11 @@ class PersonasLoreDetailWidget(Vertical):
             self._suppress_enabled_toggle = False
             return
         self.post_message(LoreBookEnableToggled(bool(event.value)))
+
+    @on(Switch.Changed, "#personas-lore-entry-selective")
+    def _selective_changed(self, event: Switch.Changed) -> None:
+        event.stop()
+        self._sync_secondary_keys_disabled()
 
 
 __all__ = [
