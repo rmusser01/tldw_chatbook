@@ -354,7 +354,9 @@ def test_skills_route_resolves_to_library_screen():
 
 
 def test_research_route_resolves_to_library_screen():
-    """The orphan "research" screen registration is removed (Task 255): no
+    """Verify the retired "research" route id resolves to ``LibraryScreen``.
+
+    The orphan "research" screen registration is removed (Task 255): no
     shell destination or navigation call ever targeted it, and the Workbench
     route inventory already mapped research -> library. The legacy "research"
     route id (still a command-palette direct command via ``TAB_RESEARCH`` and
