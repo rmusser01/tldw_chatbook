@@ -266,8 +266,8 @@ class TestRAGFunctionality:
             # deps are installed; redirect persistence to keep the test hermetic.
             config = RAGConfig()
             config.vector_store.persist_directory = tmp_path / "chromadb"
-            service = RAGService(config)
-            assert service is not None
+            with RAGService(config) as service:
+                assert service is not None
 
         except ImportError:
             pytest.skip("RAG dependencies not installed")

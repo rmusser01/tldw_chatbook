@@ -63,10 +63,10 @@ Implemented as planned — all changes live in `RAG_Search/simplified/config.py`
 
 - `VectorStoreConfig.type` now defaults to an `"auto"` sentinel resolved in
   `__post_init__` via `default_vector_store_type()`: `RAG_VECTOR_STORE` env var >
-  explicit `[AppRAGSearchConfig.rag.vector_store].type` > `"chroma"` when
-  `optional_deps.check_embeddings_rag_deps()` (feature key 'embeddings_rag') passes >
-  `"memory"`. A `None` persist_directory is auto-filled for chroma stores via
-  `default_chroma_persist_directory()` (`RAG_PERSIST_DIR` > explicit config >
+  explicit `[AppRAGSearchConfig.rag.vector_store].type` > `"chroma"` when the
+  embeddings_rag deps are installed > `"memory"`. A `None` persist_directory is
+  auto-filled for chroma stores via `default_chroma_persist_directory()`
+  (`RAG_PERSIST_DIR` > explicit config > legacy `[rag.chroma].persist_directory` >
   `get_user_data_dir()/"chromadb"`, matching the app DB path convention). The deps
   probe is memoized (`_EMBEDDINGS_RAG_AVAILABLE`) and fails closed to memory.
 - Resolving in the dataclass constructor (rather than in profiles or the factory) means
@@ -74,20 +74,33 @@ Implemented as planned — all changes live in `RAG_Search/simplified/config.py`
   `from_settings()`, `from_dict()` — inherits the persistent default, while explicitly
   passed values always win, so an explicit `type = "memory"` in user config now wins on
   the profile path too (it previously wasn't consulted there at all).
-- Side benefit: the deps probe populates the lazy `DEPENDENCIES_AVAILABLE` registry, so
-  `Tests/test_smoke.py::test_rag_service_initialization` now genuinely initializes the
-  service instead of skipping on a false "dependencies not installed" ImportError
-  (registry was never populated in a bare process). That smoke test got a tmp_path
-  persist dir to stay hermetic under the new default.
-- New tests: `Tests/RAG/simplified/test_vector_store_selection.py` (19 tests) — with-deps
+- PR #656 review revisions: the availability probe is `find_spec`-based
+  (`optional_deps.embeddings_rag_deps_installed()`, ~0.19s vs ~4.6s for the import-based
+  deep check in a fresh process, no env-var mutation); explicit type values are
+  normalized (strip/lower; blank or "auto" falls through to detection) and the
+  now-redundant raw type chain in `from_settings` was removed so normalization is
+  consistent across paths; whitespace-only persist-dir values are treated as unset; the
+  legacy `[AppRAGSearchConfig.rag.chroma].persist_directory` key joined the persist-dir
+  priority chain so profile-built configs resolve the same directory as
+  `from_settings()`; magic strings became `VECTOR_STORE_TYPE_*` constants. Known
+  pre-existing issue (unchanged, exists on origin/dev): in a bare process nothing
+  populates `DEPENDENCIES_AVAILABLE`, so `EmbeddingFactory` refuses with ImportError
+  until some flow runs `check_embeddings_rag_deps()`; the RAG smoke test therefore
+  skips in isolation. The smoke test uses a tmp_path persist dir and a `with` block for
+  hermetic cleanup.
+- New tests: `Tests/RAG/simplified/test_vector_store_selection.py` (32 tests) — with-deps
   default (chroma under user data dir, valid config), without-deps default (memory, probe
-  failure fails closed), explicit overrides (TOML, env var, constructor, from_dict,
-  profile path), persist-dir overrides, and an importorskip-gated chroma persistence
-  round-trip proving documents survive store recreation.
+  failure fails closed, find_spec probe fails closed), explicit overrides (TOML, env var,
+  constructor, from_dict, profile path), normalization ("auto"/case/whitespace),
+  persist-dir overrides + legacy chroma section parity with from_settings, and an
+  importorskip-gated chroma persistence round-trip proving documents survive store
+  recreation.
 - Verified: `Tests/RAG/ Tests/RAG_Search/ Tests/UI/test_settings_library_rag_defaults.py
-  Tests/test_smoke.py` → 329 passed / 19 skipped (baseline 310 passed / 20 skipped, delta
-  = 19 new tests + smoke skip→pass). Runtime check: `create_rag_service("hybrid_basic")`
+  Tests/test_smoke.py` → 342 passed / 19 skipped (baseline 310 passed / 20 skipped;
+  delta = 32 new tests, smoke skip→pass only when the registry is populated by earlier
+  tests in the same session). Runtime check: `create_rag_service("hybrid_basic")`
   now yields `ChromaVectorStore` (persistent) by default and `InMemoryVectorStore` with
   `RAG_VECTOR_STORE=memory`.
 - Files: `tldw_chatbook/RAG_Search/simplified/config.py`,
+  `tldw_chatbook/Utils/optional_deps.py` (cheap probe + shared module list),
   `Tests/RAG/simplified/test_vector_store_selection.py` (new), `Tests/test_smoke.py`.

@@ -137,16 +137,26 @@ class TestDefaultWithoutEmbeddingsDeps:
         _patch_environment(monkeypatch)
         monkeypatch.setattr(rag_config_module, "_EMBEDDINGS_RAG_AVAILABLE", None)
 
-        def broken_check():
+        def broken_probe():
             raise RuntimeError("dependency probe exploded")
 
         import tldw_chatbook.Utils.optional_deps as optional_deps
-        monkeypatch.setattr(optional_deps, "check_embeddings_rag_deps", broken_check)
+        monkeypatch.setattr(optional_deps, "embeddings_rag_deps_installed", broken_probe)
 
         config = VectorStoreConfig()
 
         assert config.type == "memory"
         assert config.persist_directory is None
+
+    def test_installed_probe_is_find_spec_based_and_fails_closed(self, monkeypatch):
+        """The installed-probe must answer without imports and fail closed."""
+        import importlib.util
+        from tldw_chatbook.Utils.optional_deps import embeddings_rag_deps_installed
+
+        assert isinstance(embeddings_rag_deps_installed(), bool)
+
+        monkeypatch.setattr(importlib.util, "find_spec", lambda name: None)
+        assert embeddings_rag_deps_installed() is False
 
 
 # === Explicit overrides (AC #3) ===
@@ -241,6 +251,144 @@ class TestExplicitOverrides:
         config = VectorStoreConfig(type="chroma")
 
         assert config.persist_directory == Path("/tmp/tldw-rag-user-dir") / "chromadb"
+
+
+# === Normalization of explicit values (PR #656 review) ===
+
+@pytest.mark.unit
+class TestExplicitValueNormalization:
+    """Explicit env/config values are normalized; 'auto'/blank run detection."""
+
+    def test_explicit_auto_env_var_runs_detection(self, monkeypatch):
+        _patch_environment(monkeypatch)
+        _patch_deps(monkeypatch, True)
+        monkeypatch.setenv("RAG_VECTOR_STORE", "auto")
+
+        config = VectorStoreConfig()
+
+        assert config.type == "chroma"
+        assert config.persist_directory is not None
+
+    def test_explicit_auto_in_user_config_runs_detection(self, monkeypatch):
+        _patch_environment(monkeypatch, rag_settings={"vector_store": {"type": "auto"}})
+        _patch_deps(monkeypatch, False)
+
+        config = VectorStoreConfig()
+
+        assert config.type == "memory"
+
+    def test_auto_env_var_falls_through_to_explicit_config(self, monkeypatch):
+        """env 'auto' means automatic behavior, which still honors user config."""
+        _patch_environment(monkeypatch, rag_settings={"vector_store": {"type": "memory"}})
+        _patch_deps(monkeypatch, True)
+        monkeypatch.setenv("RAG_VECTOR_STORE", "auto")
+
+        config = VectorStoreConfig()
+
+        assert config.type == "memory"
+
+    def test_mixed_case_and_whitespace_type_is_canonicalized(self, monkeypatch):
+        _patch_environment(monkeypatch)
+        _patch_deps(monkeypatch, False)
+        monkeypatch.setenv("RAG_VECTOR_STORE", "  Chroma ")
+
+        config = VectorStoreConfig()
+
+        assert config.type == "chroma"
+        assert config.persist_directory is not None
+        assert RAGConfig(vector_store=config).validate() == []
+
+    def test_uppercase_memory_in_user_config_is_canonicalized(self, monkeypatch):
+        _patch_environment(monkeypatch, rag_settings={"vector_store": {"type": "MEMORY"}})
+        _patch_deps(monkeypatch, True)
+
+        config = VectorStoreConfig()
+
+        assert config.type == "memory"
+
+    def test_blank_type_env_var_runs_detection(self, monkeypatch):
+        _patch_environment(monkeypatch)
+        _patch_deps(monkeypatch, True)
+        monkeypatch.setenv("RAG_VECTOR_STORE", "   ")
+
+        config = VectorStoreConfig()
+
+        assert config.type == "chroma"
+
+    def test_whitespace_only_persist_dir_env_var_is_ignored(self, monkeypatch):
+        _patch_environment(monkeypatch, user_data_dir="/tmp/tldw-rag-user-dir")
+        _patch_deps(monkeypatch, True)
+        monkeypatch.setenv("RAG_PERSIST_DIR", "   ")
+
+        config = VectorStoreConfig()
+
+        assert config.persist_directory == Path("/tmp/tldw-rag-user-dir") / "chromadb"
+
+    def test_whitespace_only_persist_dir_in_config_is_ignored(self, monkeypatch):
+        _patch_environment(
+            monkeypatch,
+            rag_settings={"vector_store": {"persist_directory": "  "}},
+            user_data_dir="/tmp/tldw-rag-user-dir",
+        )
+        _patch_deps(monkeypatch, True)
+
+        config = VectorStoreConfig()
+
+        assert config.persist_directory == Path("/tmp/tldw-rag-user-dir") / "chromadb"
+
+    def test_persist_dir_values_are_stripped(self, monkeypatch):
+        _patch_environment(monkeypatch)
+        _patch_deps(monkeypatch, True)
+        monkeypatch.setenv("RAG_PERSIST_DIR", "  /tmp/padded-chroma-dir  ")
+
+        config = VectorStoreConfig()
+
+        assert config.persist_directory == Path("/tmp/padded-chroma-dir")
+
+
+# === Legacy [AppRAGSearchConfig.rag.chroma] compatibility (PR #656 review) ===
+
+@pytest.mark.unit
+class TestLegacyChromaSection:
+    """Profile-built configs must honor the legacy chroma persist location."""
+
+    def test_legacy_chroma_persist_directory_is_honored(self, monkeypatch):
+        _patch_environment(
+            monkeypatch,
+            rag_settings={"chroma": {"persist_directory": "/tmp/legacy-chroma-home"}},
+        )
+        _patch_deps(monkeypatch, True)
+
+        config = VectorStoreConfig()
+
+        assert config.persist_directory == Path("/tmp/legacy-chroma-home")
+
+    def test_legacy_key_matches_from_settings_resolution(self, monkeypatch):
+        """Plain RAGConfig() and from_settings() must persist to the same place."""
+        _patch_environment(
+            monkeypatch,
+            rag_settings={"chroma": {"persist_directory": "/tmp/legacy-chroma-home"}},
+        )
+        _patch_deps(monkeypatch, True)
+
+        plain = RAGConfig()
+        loaded = RAGConfig.from_settings()
+
+        assert plain.vector_store.persist_directory == loaded.vector_store.persist_directory
+
+    def test_explicit_vector_store_key_beats_legacy_key(self, monkeypatch):
+        _patch_environment(
+            monkeypatch,
+            rag_settings={
+                "vector_store": {"persist_directory": "/tmp/new-style-dir"},
+                "chroma": {"persist_directory": "/tmp/legacy-chroma-home"},
+            },
+        )
+        _patch_deps(monkeypatch, True)
+
+        config = VectorStoreConfig()
+
+        assert config.persist_directory == Path("/tmp/new-style-dir")
 
 
 # === Persistence round-trip (AC #1 evidence; requires real chromadb) ===
