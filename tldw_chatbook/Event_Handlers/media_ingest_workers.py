@@ -3,6 +3,8 @@
 # Worker event handlers for media ingestion
 #
 # Imports
+from __future__ import annotations
+
 from typing import TYPE_CHECKING, List
 
 # 3rd-party Libraries
@@ -12,17 +14,16 @@ from textual.css.query import QueryError
 from textual.worker import Worker
 
 # Local Imports
-from ..tldw_api import (
-    APIConnectionError, APIResponseError, 
-    MediaItemProcessResult, ProcessedMediaWikiPage, BatchMediaProcessResponse,
-    BatchProcessXMLResponse
-)
 
 if TYPE_CHECKING:
     from ..app import TldwCli
+    from ..tldw_api import MediaItemProcessResult
 
 async def handle_tldw_api_worker_failure(app: 'TldwCli', event: 'Worker.StateChanged'):
     """Handles the failure of a TLDW API worker and updates the UI."""
+    # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+    from ..tldw_api import APIConnectionError, APIResponseError
+
     worker_name = event.worker.name or ""
     media_type = worker_name.replace("tldw_api_processing_", "")
     error = event.worker.error
@@ -68,6 +69,14 @@ async def handle_tldw_api_worker_failure(app: 'TldwCli', event: 'Worker.StateCha
 
 async def handle_tldw_api_worker_success(app: 'TldwCli', event: 'Worker.StateChanged'):
     """Handles the success of a TLDW API worker and ingests the results."""
+    # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+    from ..tldw_api import (
+        BatchMediaProcessResponse,
+        BatchProcessXMLResponse,
+        MediaItemProcessResult,
+        ProcessedMediaWikiPage,
+    )
+
     worker_name = event.worker.name or ""
     media_type = worker_name.replace("tldw_api_processing_", "")
     response_data = event.worker.result
