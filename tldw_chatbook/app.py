@@ -160,7 +160,7 @@ from .Event_Handlers import (
     notes_events as notes_handlers,
     worker_events, ingest_events,
     llm_nav_events, media_events, notes_events, app_lifecycle, tab_events,
-    search_events, subscription_events,
+    subscription_events,
 )
 from .Event_Handlers.Chat_Events import chat_events as chat_handlers, chat_events_sidebar, chat_events_worldbooks
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events
@@ -4161,7 +4161,6 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                                                            reactive_attr="search_active_sub_tab"),
             SEARCH_NAV_EMBEDDINGS_MANAGE: functools.partial(_handle_nav, prefix="search",
                                                            reactive_attr="search_active_sub_tab"),
-            **search_events.SEARCH_BUTTON_HANDLERS,
         }
 
         # --- Ingest Handlers ---
@@ -7533,32 +7532,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         elif event.__class__.__name__ == 'BatchAnalysisStartEvent':
             from .Event_Handlers import multi_item_review_events
             await multi_item_review_events.handle_batch_analysis_start(self, event)
-        elif event.__class__.__name__ == 'TemplateDeleteConfirmationEvent':
-            from .Widgets.confirmation_dialog import ConfirmationDialog
-            from .Event_Handlers.template_events import TemplateDeleteConfirmationEvent
-            
-            if isinstance(event, TemplateDeleteConfirmationEvent):
-                # Show confirmation dialog
-                async def confirm_delete():
-                    # Find the widget and call delete
-                    try:
-                        from .Widgets.chunking_templates_widget import ChunkingTemplatesWidget
-                        # Find the templates widget in the current view
-                        for widget in self.query(ChunkingTemplatesWidget):
-                            widget.delete_template(event.template_id)
-                    except Exception as e:
-                        logger.error(f"Error deleting template: {e}")
-                        self.notify(f"Error deleting template: {str(e)}", severity="error")
-                
-                dialog = ConfirmationDialog(
-                    title="Delete Template",
-                    message=f"Are you sure you want to delete the template '{event.template_name}'?\n\nThis action cannot be undone.",
-                    confirm_label="Delete",
-                    cancel_label="Cancel",
-                    confirm_callback=confirm_delete
-                )
-                self.push_screen(dialog)
-    
+
     @on(SplashScreen.Closed)
     async def on_splash_screen_closed(self, event: SplashScreen.Closed) -> None:
         """Handle splash screen closing."""

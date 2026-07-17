@@ -34,7 +34,7 @@ class EventDispatcher:
         # Import here to avoid circular imports
         from tldw_chatbook.Event_Handlers import (
             tab_events, chat_events, conv_char_events, notes_events,
-            media_events, search_events, llm_nav_events, ingest_events,
+            media_events, llm_nav_events, ingest_events,
             embeddings_events, subscription_events, template_events
         )
         from tldw_chatbook.Event_Handlers.Chat_Events import (
@@ -76,9 +76,6 @@ class EventDispatcher:
             
             # Media
             **media_events.MEDIA_BUTTON_HANDLERS,
-            
-            # Search
-            **search_events.SEARCH_BUTTON_HANDLERS,
             
             # Ingest
             **ingest_events.INGEST_BUTTON_HANDLERS,

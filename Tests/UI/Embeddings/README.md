@@ -7,13 +7,8 @@ This directory contains comprehensive UI tests for the embeddings functionality 
 ### Component Tests
 - `test_toast_notifications.py` - Tests for toast notification system
 - `test_detailed_progress.py` - Tests for multi-stage progress tracking
-- `test_model_preferences.py` - Tests for model preferences and batch operations
 - `test_embedding_templates.py` - Tests for embedding configuration templates
 - `test_activity_log.py` - Tests for activity logging functionality
-- `test_performance_metrics.py` - Tests for CPU/memory monitoring and metrics
-
-### Integration Tests
-- `test_integration.py` - End-to-end workflow tests
 
 ### Utilities
 - `test_base.py` - Base classes and common fixtures
@@ -34,11 +29,6 @@ pytest Tests/UI/Embeddings/test_toast_notifications.py
 ### Run with coverage:
 ```bash
 pytest Tests/UI/Embeddings/ --cov=tldw_chatbook.UI --cov=tldw_chatbook.Widgets
-```
-
-### Run specific test:
-```bash
-pytest Tests/UI/Embeddings/test_integration.py::TestFullEmbeddingsWorkflow::test_create_embeddings_with_template
 ```
 
 ### Run with verbose output:
@@ -65,7 +55,6 @@ Tests are organized by functionality:
 ### From `test_base.py`:
 - `mock_embedding_factory` - Mocked embedding factory
 - `mock_chroma_manager` - Mocked ChromaDB manager
-- `mock_model_preferences` - Mocked preferences manager
 - `mock_app_instance` - Mocked app instance with required attributes
 
 ### Test Utilities:
