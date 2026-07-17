@@ -1967,7 +1967,13 @@ def chat_with_google(
                                             if 'text' in part:
                                                 chunk_text += part.get('text', '')
                                             if isinstance(part, dict) and 'functionCall' in part:
-                                                fc = part.get('functionCall') or {}
+                                                fc = part.get('functionCall')
+                                                if not isinstance(fc, dict):
+                                                    # Malformed part: skip it —
+                                                    # never abort an otherwise-
+                                                    # valid stream (task-263
+                                                    # sibling bug class).
+                                                    continue
                                                 name = str(fc.get('name') or '').strip()
                                                 if not name:
                                                     continue
@@ -1977,7 +1983,8 @@ def chat_with_google(
                                                     "type": "function",
                                                     "function": {
                                                         "name": name,
-                                                        "arguments": json.dumps(fc.get('args') or {}),
+                                                        "arguments": json.dumps(
+                                                            fc['args'] if isinstance(fc.get('args'), dict) else {}),
                                                     },
                                                 })
                                                 next_tool_position += 1

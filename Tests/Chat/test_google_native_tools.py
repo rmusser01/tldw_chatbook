@@ -435,3 +435,50 @@ def test_streaming_fragments_reassemble_via_gateway_accumulator(mock_post):
     assert accumulator.calls()[0]["function"]["name"] == "calculator"
     assert accumulator.calls()[0]["function"]["arguments"] == json.dumps({"expression": "2+2"})
     assert len(accumulator.calls()) == 1
+
+
+@patch("requests.Session.post")
+def test_streaming_malformed_function_call_is_skipped_not_fatal(mock_post):
+    """T2 review Important: a non-dict functionCall part must be skipped
+    without aborting the stream — later text still flows (task-263 sibling
+    regression class)."""
+    chunks = [
+        {"candidates": [{"content": {"parts": [
+            {"functionCall": "not-a-dict"}], "role": "model"}, "index": 0}]},
+        {"candidates": [{"content": {"parts": [
+            {"text": "still alive"}], "role": "model"}, "index": 0}]},
+        {"candidates": [{"content": {"parts": []}, "role": "model",
+                         "finishReason": "STOP", "index": 0}]},
+    ]
+    raw = _call_google_stream(mock_post, _gemini_stream_lines(chunks),
+                              [{"role": "user", "content": "go"}])
+    parsed = _decode_sse_chunks(raw)
+    texts = [c["choices"][0].get("delta", {}).get("content") for c in parsed]
+    assert "still alive" in texts
+    assert not any("error" in c for c in parsed)
+
+
+@patch("requests.Session.post")
+def test_streaming_index_continues_across_chunks_and_blank_names_skip(mock_post):
+    """T2 review Minors: the tool position runs across the WHOLE stream
+    (chunk 2's call gets index 1), and a blank-name part neither emits nor
+    consumes a position."""
+    chunks = [
+        {"candidates": [{"content": {"parts": [
+            {"functionCall": {"name": "calculator",
+                              "args": {"expression": "2+2"}}}],
+            "role": "model"}, "index": 0}]},
+        {"candidates": [{"content": {"parts": [
+            {"functionCall": {"name": "  ", "args": {}}},
+            {"functionCall": {"name": "get_current_datetime", "args": {}}}],
+            "role": "model"}, "index": 0}]},
+        {"candidates": [{"content": {"parts": []}, "role": "model",
+                         "finishReason": "STOP", "index": 0}]},
+    ]
+    raw = _call_google_stream(mock_post, _gemini_stream_lines(chunks),
+                              [{"role": "user", "content": "go"}])
+    parsed = _decode_sse_chunks(raw)
+    fragments = [f for c in parsed
+                 for f in c["choices"][0].get("delta", {}).get("tool_calls", [])]
+    assert [(f["index"], f["function"]["name"]) for f in fragments] == [
+        (0, "calculator"), (1, "get_current_datetime")]
