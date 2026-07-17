@@ -677,6 +677,38 @@ class ConsoleChatController:
 
     # -- MCP provider registration (task-6) ----------------------------------
 
+    def _publish_mcp_inspector_counts(
+        self, tool_count: int | None, not_connected_count: int | None,
+    ) -> None:
+        """Publish this run's MCP catalog counts for the inspector's "MCP" row.
+
+        ``setattr`` onto ``self.app`` -- the exact same object
+        ``ChatScreen._console_mcp_tool_count``/``_console_mcp_not_connected_
+        count`` ``getattr`` from (wired onto this controller as ``self.app``
+        by ``ChatScreen._ensure_console_chat_controller``). Every
+        ``_compose_mcp_provider`` return path calls this: ``(None, None)``
+        is the row's documented "absent" contract (see
+        ``console_display_state._mcp_inspector_row``) for the no-service /
+        kill-switch-on / compose-failed / empty-catalog paths; the eligible
+        path publishes the real counts.
+
+        No separate UI refresh is triggered here by design -- piggybacking
+        on machinery the screen already runs, not a new mechanism:
+        ``_compose_mcp_provider`` always executes on the main loop while
+        this run's state is already STREAMING (set moments earlier by
+        ``_run_agent_reply``), so the screen's own active-run poll timer
+        (``ChatScreen._start_console_transcript_sync_timer``, already
+        ticking every 0.2s by the time this runs -- started before
+        ``submit_draft`` is even awaited) and the guaranteed post-
+        ``submit_draft`` sync (``ChatScreen._submit_console_native_draft``)
+        both already re-derive inspector state from these attributes on
+        their own next pass.
+        """
+        if self.app is None:
+            return
+        self.app.console_mcp_tool_count = tool_count
+        self.app.console_mcp_not_connected_count = not_connected_count
+
     async def _compose_mcp_provider(
         self,
     ) -> tuple[MCPToolProvider | None, Callable[[list["ToolCall"]], dict[str, str]] | None]:
@@ -696,7 +728,11 @@ class ConsoleChatController:
         composed catalog is empty (nothing to register, and -- since
         ``not_connected_count`` is only ever non-zero for servers that
         already contributed at least one eligible tool -- nothing an
-        empty catalog could usefully report either).
+        empty catalog could usefully report either). Every return path
+        also publishes this run's inspector counts via
+        ``_publish_mcp_inspector_counts`` -- see that method's docstring;
+        this is the only production writer of ``console_mcp_tool_count``/
+        ``console_mcp_not_connected_count``.
 
         Returns:
             ``(provider, review_tool_calls)`` when eligible -- a composed
@@ -706,14 +742,17 @@ class ConsoleChatController:
         """
         service = getattr(self.app, "unified_mcp_service", None)
         if service is None:
+            self._publish_mcp_inspector_counts(None, None)
             return None, None
         try:
             kill_switch = service.get_kill_switch()
         except Exception:  # noqa: BLE001 -- fail closed to "no MCP this run"
             logger.opt(exception=True).warning(
                 "ConsoleChatController: get_kill_switch failed; skipping MCP this run")
+            self._publish_mcp_inspector_counts(None, None)
             return None, None
         if kill_switch:
+            self._publish_mcp_inspector_counts(None, None)
             return None, None
         provider = MCPToolProvider(
             service=service,
@@ -725,9 +764,13 @@ class ConsoleChatController:
         except Exception:  # noqa: BLE001 -- a composition failure must not abort the send
             logger.opt(exception=True).warning(
                 "ConsoleChatController: MCP compose_catalog failed; skipping MCP this run")
+            self._publish_mcp_inspector_counts(None, None)
             return None, None
-        if not provider.list_catalog():
+        catalog = provider.list_catalog()
+        if not catalog:
+            self._publish_mcp_inspector_counts(None, None)
             return None, None
+        self._publish_mcp_inspector_counts(len(catalog), provider.not_connected_count)
         return provider, build_mcp_review_hook(provider, self.request_mcp_approvals)
 
     def resolve_pending_approval(self, decisions: dict[str, str]) -> None:

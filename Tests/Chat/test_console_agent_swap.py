@@ -13,7 +13,8 @@ from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 from tldw_chatbook.Agents.agent_models import (
-    AgentStep, RunOutcome, RUN_DONE, RUN_ERROR, RUN_STUCK, STEP_ERROR,
+    AgentStep, RunOutcome, RUN_DONE, RUN_ERROR, RUN_STUCK, SPAWN_TOOL_NAME,
+    STEP_ERROR, STEP_TOOL_RESULT,
 )
 from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
@@ -901,3 +902,171 @@ async def test_mcp_tool_call_ask_state_times_out_denies(tmp_path):
         "user did not approve within the time limit" in row.content for row in tool_rows
     )
     assert service.execute_calls == []  # never invoked -- refused before dispatch
+
+
+# -- P5 review fix: `_compose_mcp_provider` must publish the inspector's
+# "MCP" row counts -- previously composed but never written anywhere the
+# `ChatScreen._console_mcp_tool_count`/`_console_mcp_not_connected_count`
+# accessors could read, so the row was permanently dead scaffolding. --
+
+
+@pytest.mark.asyncio
+async def test_compose_mcp_provider_publishes_none_counts_when_no_service(tmp_path):
+    controller, _store, _db = _controller(tmp_path, [["ok."]])
+    controller.app = _fake_app()  # no unified_mcp_service attribute at all
+
+    provider, hook = await controller._compose_mcp_provider()
+
+    assert provider is None and hook is None
+    assert controller.app.console_mcp_tool_count is None
+    assert controller.app.console_mcp_not_connected_count is None
+
+
+@pytest.mark.asyncio
+async def test_compose_mcp_provider_publishes_none_counts_when_kill_switch_on(tmp_path):
+    controller, _store, _db = _controller(tmp_path, [["ok."]])
+    service = FakeMCPService(
+        kill_switch=True,
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])],
+    )
+    controller.app = _fake_app(service)
+
+    provider, hook = await controller._compose_mcp_provider()
+
+    assert provider is None and hook is None
+    assert controller.app.console_mcp_tool_count is None
+    assert controller.app.console_mcp_not_connected_count is None
+
+
+@pytest.mark.asyncio
+async def test_compose_mcp_provider_publishes_none_counts_when_catalog_empty(tmp_path):
+    controller, _store, _db = _controller(tmp_path, [["ok."]])
+    service = FakeMCPService()  # no catalog records, no builtin inventory
+    controller.app = _fake_app(service)
+
+    provider, hook = await controller._compose_mcp_provider()
+
+    assert provider is None and hook is None
+    assert controller.app.console_mcp_tool_count is None
+    assert controller.app.console_mcp_not_connected_count is None
+
+
+@pytest.mark.asyncio
+async def test_compose_mcp_provider_publishes_none_counts_when_get_kill_switch_raises(tmp_path):
+    controller, _store, _db = _controller(tmp_path, [["ok."]])
+
+    class _RaisingService:
+        def get_kill_switch(self):
+            raise RuntimeError("boom")
+
+    controller.app = _fake_app()
+    controller.app.unified_mcp_service = _RaisingService()
+
+    provider, hook = await controller._compose_mcp_provider()
+
+    assert provider is None and hook is None
+    assert controller.app.console_mcp_tool_count is None
+    assert controller.app.console_mcp_not_connected_count is None
+
+
+@pytest.mark.asyncio
+async def test_compose_mcp_provider_publishes_counts_when_eligible(tmp_path):
+    """Both counts flow through simultaneously: server "a" is stale but
+    still contributes an eligible tool (mirrors `Tests.Agents.
+    test_mcp_tool_provider.test_not_connected_count_counts_distinct_
+    eligible_stale_servers`), so `not_connected_count == 1` alongside a
+    real `tool_count >= 1` -- the composed provider's own catalog and
+    `not_connected_count` land on the app object verbatim, not just a
+    truthy/falsy summary."""
+    controller, _store, _db = _controller(tmp_path, [["ok."]])
+    service = FakeMCPService(
+        catalog_records=[
+            _catalog_record("a", [_tool_dict("t1")], is_connected=False),
+            _catalog_record("c", [_tool_dict("t3")], is_connected=True),
+        ],
+    )
+    controller.app = _fake_app(service)
+
+    provider, hook = await controller._compose_mcp_provider()
+
+    assert provider is not None
+    assert callable(hook)
+    assert controller.app.console_mcp_tool_count == len(provider.list_catalog())
+    assert controller.app.console_mcp_tool_count == 2
+    assert controller.app.console_mcp_not_connected_count == provider.not_connected_count
+    assert controller.app.console_mcp_not_connected_count == 1
+
+
+# -- P5 review fix: the property that a sub-agent's MCP tool calls flow
+# through the SAME review closure + invoke() gate as the primary's holds
+# via shared `_run_one` + `AgentService`'s ctor-level `review_tool_calls`
+# hook (see `agent_service.py`'s docstring), but nothing pinned it with a
+# test -- easy to regress silently outside this diff. --
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_call_gates_subagent_call_same_as_primary(tmp_path):
+    """A spawned child's own MCP tool call is gated exactly like the
+    primary's: an undecided "ask"-state approval times out and denies --
+    the call is refused before dispatch (`execute_calls == []`) -- because
+    `AgentService._run_one`'s `spawn` closure threads the SAME ctor-level
+    `review_tool_calls` hook (and the same `self.registry`) into the
+    child's own `LoopDeps`/`invoke_tool`, not a bespoke unwired path."""
+    scripts = [
+        [_fence(SPAWN_TOOL_NAME, {"task": "please run it"})],  # primary: spawn a child
+        [_fence("mcp__srv__run", {"x": 1})],                    # child: call the MCP tool
+        ["child refused."],                                      # child: final answer
+        ["primary done."],                                        # primary: final answer
+    ]
+    controller, store, db = _controller(tmp_path, scripts)
+    service = FakeMCPService(catalog_records=[_catalog_record("srv", [_tool_dict("run")])])
+    controller.app = _fake_app(service)
+    controller.mcp_approval_timeout_seconds = lambda: 0.05
+
+    result = await controller.submit_draft("please delegate it")
+
+    assert result.accepted is True
+    assert service.execute_calls == []  # never invoked -- refused before dispatch
+
+    subagent_runs = [r for r in _all_runs(db) if r["agent_kind"] == "subagent"]
+    assert len(subagent_runs) == 1
+    child_steps = json.loads(subagent_runs[0]["steps"])
+    tool_result_steps = [s for s in child_steps if s["kind"] == STEP_TOOL_RESULT]
+    assert tool_result_steps, "the child never attempted the gated MCP tool call"
+    assert "user did not approve within the time limit" in tool_result_steps[0]["result"]
+
+    messages = store.messages_for_session(store.active_session_id)
+    assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
+    assert assistant.content == "primary done."
+
+
+@pytest.mark.asyncio
+async def test_mcp_review_hook_raise_fails_open_but_invoke_gate_still_refuses(tmp_path):
+    """`request_mcp_approvals` raising inside the T4/T6 review closure must
+    never abort the run: `run_agent_loop`'s own call to `review_tool_calls`
+    fails OPEN (an empty verdicts map, so every call in the batch defaults
+    to "proceed" -- the runtime's own documented fail-open policy for this
+    hook). The call still never executes, though: `invoke()` re-resolves
+    the SAME "ask" gate itself on dispatch and its own `self.
+    _approval_callback` fallback is the identical monkeypatched-raising
+    method, so it refuses there instead -- `execute_calls` stays empty."""
+    scripts = [
+        [_fence("mcp__srv__run", {"x": 1})],
+        ["it was refused too."],
+    ]
+    controller, store, _db = _controller(tmp_path, scripts)
+    service = FakeMCPService(catalog_records=[_catalog_record("srv", [_tool_dict("run")])])
+    controller.app = _fake_app(service)
+
+    def _raise(_pending):
+        raise RuntimeError("approval channel unavailable")
+
+    controller.request_mcp_approvals = _raise
+
+    result = await controller.submit_draft("please run it")
+
+    assert result.accepted is True
+    messages = store.messages_for_session(store.active_session_id)
+    assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
+    assert assistant.content == "it was refused too."
+    assert service.execute_calls == []  # never invoked -- refused by invoke()'s own gate

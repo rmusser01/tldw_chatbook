@@ -18,6 +18,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
     _visible_text,
 )
+from Tests.Agents.test_mcp_tool_provider import FakeMCPService, _catalog_record, _tool_dict
 from tldw_chatbook.Chat.chat_models import ChatSessionData
 from tldw_chatbook.Chat.console_display_state import (
     ConsoleInspectorState,
@@ -3387,6 +3388,42 @@ async def test_console_run_inspector_omits_mcp_row_by_default():
         await _wait_for_selector(console, pilot, "#console-inspector-tools")
 
         assert not list(console.query("#console-inspector-mcp"))
+
+
+@pytest.mark.asyncio
+async def test_console_run_inspector_mcp_row_reflects_real_compose_mcp_provider():
+    """P5 review fix: the three tests above only prove the render logic
+    given a hand-set `console_mcp_tool_count`/`console_mcp_not_connected_
+    count` -- they never prove anything in production actually SETS those
+    attributes. This drives the real `ConsoleChatController._compose_mcp_
+    provider` (the only production writer) against a real mounted
+    ChatScreen and confirms its output reaches the rendered row, closing
+    the "dead scaffolding, no production writer" gap."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        controller = console._ensure_console_chat_controller()
+        app.unified_mcp_service = FakeMCPService(
+            catalog_records=[_catalog_record("srv", [_tool_dict("run")])],
+        )
+
+        provider, review_hook = await controller._compose_mcp_provider()
+        assert provider is not None
+        assert callable(review_hook)
+        assert app.console_mcp_tool_count == 1
+        assert app.console_mcp_not_connected_count == 0
+
+        console._sync_console_control_bar()
+        await _open_console_inspector(console, pilot)
+        await _wait_for_selector(console, pilot, "#console-inspector-mcp")
+
+        assert "MCP: 1 tools ready" in str(
+            console.query_one("#console-inspector-mcp", Static).renderable
+        )
 
 
 @pytest.mark.asyncio
