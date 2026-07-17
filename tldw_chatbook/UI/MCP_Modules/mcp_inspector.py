@@ -16,6 +16,7 @@ from textual.widgets import Button, Collapsible, Label, Select, Static, TextArea
 
 from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.MCP.readiness import (
     REASON_LABELS,
     STATE_CSS_CLASSES,
@@ -84,6 +85,61 @@ _SERVER_MANAGED_TOOLTIP = "Managed on the server — use Advanced."
 # Disabled-button tooltip for every other still-unwired action.
 _LATER_PHASE_TOOLTIP = "Available in a later phase — use Advanced below."
 
+# Task 5: the Test Tool Run button's tooltip in its normal (unarmed) state,
+# and once `require_confirm()` has armed it into a one-shot "Confirm run"
+# control -- `MCPWorkbench` resolves deny/ask/allow via `gate_tool_test()`
+# and arms this pane for "ask", but the button copy/mechanics live here.
+_TEST_RUN_TOOLTIP = "Send these arguments to the tool and show the result."
+_TEST_RUN_CONFIRM_TOOLTIP = "Ask is set for this tool — press again to run once."
+# UX batch item 6: always shown while the Run button is armed (mounted
+# above Run/Close, `#mcp-inspector-test-armed-hint`) -- distinct from the
+# SPECIFIC `notice` `require_confirm()` also accepts (config_changed /
+# unverifiable, `#mcp-inspector-test-arm-notice`, mounted below the
+# buttons, unchanged position/contract): this one explains the Ask
+# mechanic itself, present on every arm regardless of whether a specific
+# reason is also shown.
+_TEST_RUN_ARMED_HINT = "This tool is set to Ask — press again to run; anything else cancels."
+
+# Task 7: permission-explanation copy (spec-verbatim, binding) -- rendered
+# into `#mcp-inspector-permission` by `_render_permission_container()`,
+# shared by `show_tool()`'s `effective` keyword (Tools-mode selections
+# append the block below the tool detail) and the standalone
+# `show_permission()` (Permissions-mode matrix tool-row selections).
+_ORIGIN_SENTENCES: dict[str, str] = {
+    "tool_override": "From this tool's override.",
+    "server_default": "Inherited from the server default.",
+    "global_default": "Inherited from the global default.",
+}
+# Minor 6: fallback for an origin this dict doesn't recognize (e.g.
+# "gate_error", `_resolve_test_gate()`'s synthetic fail-closed origin) --
+# `.get(effective.origin, "")` used to render a blank line here instead of
+# ANY explanation, which reads as a broken UI rather than "we don't know
+# why, but don't trust it".
+_UNKNOWN_ORIGIN_SENTENCE = "Permission state could not be resolved."
+_CONFIG_CHANGED_NOTICE = "Definition changed since you allowed it."
+_RISK_FLOORED_NOTICE = "High-risk tool — asks even though the inherited default is Allow."
+_REALLOW_TOOLTIP = "Store the new definition hash and allow again."
+
+
+def _format_duration_ms(duration_ms: int) -> str:
+    """Format a Test Tool run's duration for the result status line.
+
+    Mirrors `library_ingest_state._format_elapsed()`'s granularity at the
+    minute tier (integer minutes/seconds, "{m}m {s}s") but adds a finer,
+    millisecond-aware tier below it -- a Test Tool run is typically
+    sub-second, where a bare "0s" would say nothing useful:
+      - under 1000ms: "{n}ms"
+      - under 60s: "{s:.1f}s" (one decimal)
+      - 60s or more: "{m}m {s}s" (integer minutes/seconds)
+    """
+    if duration_ms < 1000:
+        return f"{duration_ms}ms"
+    total_seconds = duration_ms / 1000
+    if total_seconds < 60:
+        return f"{total_seconds:.1f}s"
+    minutes, seconds = divmod(int(round(total_seconds)), 60)
+    return f"{minutes}m {seconds}s"
+
 
 def _is_blank(value: Any) -> bool:
     """Whether a Select value means "nothing selected".
@@ -123,6 +179,17 @@ class MCPInspector(Vertical):
     show_tool()'s own display toggle is what reveals it, so a fresh mount
     (or a selection cleared back to None) never shows an empty box. */
     #mcp-inspector-tool {
+        height: auto;
+        min-height: 0;
+        display: none;
+    }
+    /* T7: the permission-explanation container, shared by `show_tool()`'s
+    `effective` keyword (mounted below `#mcp-inspector-tool`, Tools-mode
+    selections) and the standalone `show_permission()` (Permissions-mode
+    matrix tool-row selections). Same hidden-by-default discipline as
+    `#mcp-inspector-tool` above -- `_render_permission_container()`'s own
+    display toggle is what reveals it. */
+    #mcp-inspector-permission {
         height: auto;
         min-height: 0;
         display: none;
@@ -213,12 +280,32 @@ class MCPInspector(Vertical):
         """Posted when the user presses Run in the Test Tool panel with a
         validly-collected argument dict (`MCPSchemaForm.collect_arguments()`
         raised nothing). `MCPWorkbench` owns the actual `test_hub_tool()`
-        call and reports the outcome back via `show_tool_result()`."""
+        call and reports the outcome back via `show_tool_result()`.
 
-        def __init__(self, tool_id: str, arguments: dict[str, Any]) -> None:
+        Carries `server_key`/`tool_name` as separate fields (not a packed
+        `"server_key::tool_name"` id) -- task-233: nothing downstream of
+        this message parses a `"::"`-joined string anymore."""
+
+        def __init__(self, server_key: str, tool_name: str, arguments: dict[str, Any]) -> None:
             super().__init__()
-            self.tool_id = tool_id
+            self.server_key = server_key
+            self.tool_name = tool_name
             self.arguments = arguments
+
+    class ReallowRequested(Message, namespace="mcp_inspector"):
+        """Posted when the user presses Re-allow on a `config_changed`-
+        downgraded tool's permission block (`#mcp-inspector-reallow`, only
+        ever mounted for that downgrade -- see
+        `_render_permission_container()`). `MCPWorkbench` resolves the
+        live `HubTool` and calls `set_tool_state(..., "allow", tool=tool)`
+        (T4), which stores the tool's CURRENT definition hash and clears
+        the rug-pull downgrade -- then resyncs the Permissions matrix (its
+        ⚠ marker clears)."""
+
+        def __init__(self, server_key: str, tool_name: str) -> None:
+            super().__init__()
+            self.server_key = server_key
+            self.tool_name = tool_name
 
     def __init__(self, **kwargs: Any) -> None:
         classes = kwargs.pop("classes", "")
@@ -252,6 +339,21 @@ class MCPInspector(Vertical):
         # know which tool a Run press is testing without re-querying the
         # workbench.
         self._current_tool: HubTool | None = None
+        # Task 7: the `HubTool` `#mcp-inspector-permission` currently
+        # describes, or `None` when hidden -- set by
+        # `_render_permission_container()`, the single writer for that
+        # container. Read by the Re-allow button's press handler (below) to
+        # know which tool's `(server_key, tool_name)` to post in
+        # `ReallowRequested` without re-querying the workbench.
+        self._current_permission_tool: HubTool | None = None
+        # Task 5: True once `require_confirm()` has armed the Test Tool Run
+        # button into a one-shot "Confirm run" control (the tool's gate
+        # resolved to "ask" -- `MCPWorkbench` decides that, this pane only
+        # renders it). Mirrors `MCPServersMode._delete_armed`: reset to
+        # False by every "other interaction" per the arm-then-confirm
+        # contract -- a new/cleared tool selection (`show_tool()`) and the
+        # test panel's own Close button (`_close_test_tool_panel()`).
+        self._test_run_armed: bool = False
 
     def _advanced_object_label(self) -> str:
         """Compute the "Showing: <object>" text for `#mcp-adv-object`.
@@ -268,7 +370,7 @@ class MCPInspector(Vertical):
 
     def compose(self) -> ComposeResult:
         yield Static("Inspector", classes="destination-section")
-        yield Static("Select a server to see its readiness.", id="mcp-inspector-state",
+        yield Static("Select an item to inspect.", id="mcp-inspector-state",
                      classes="ds-status-badge", markup=False)
         yield Static("", id="mcp-inspector-message", classes="ds-field-row", markup=False)
         yield Vertical(id="mcp-inspector-actions")
@@ -276,6 +378,11 @@ class MCPInspector(Vertical):
         # (display: none, see DEFAULT_CSS) until a Tools-mode row is
         # selected.
         yield Vertical(id="mcp-inspector-tool")
+        # T7: permission-explanation container, populated by
+        # `_render_permission_container()` (via `show_tool()`'s `effective`
+        # keyword or the standalone `show_permission()`) -- hidden (display:
+        # none, see DEFAULT_CSS) until a permission context is supplied.
+        yield Vertical(id="mcp-inspector-permission")
         # T12: default collapsed unless the user has previously opened it --
         # per-user GLOBAL preference (Console rail section-preference
         # precedent), NOT per-server. `get_cli_setting` reads the real user
@@ -394,7 +501,7 @@ class MCPInspector(Vertical):
             for css_class in STATE_CSS_CLASSES.values():
                 state.remove_class(css_class)
             if snapshot is None:
-                state.update("Select a server to see its readiness.")
+                state.update("Select an item to inspect.")
                 message.update("")
                 return
             state.add_class(STATE_CSS_CLASSES[snapshot.state])
@@ -455,7 +562,9 @@ class MCPInspector(Vertical):
 
     # -- T6: tool detail view + Test Tool runner ------------------------------
 
-    async def show_tool(self, tool: HubTool | None) -> None:
+    async def show_tool(
+        self, tool: HubTool | None, *, effective: EffectiveToolState | None = None
+    ) -> None:
         """Rebuild `#mcp-inspector-tool` for the given tool, or hide it.
 
         Awaited end to end (remove, then mount) within a single call, under
@@ -467,13 +576,31 @@ class MCPInspector(Vertical):
         its own docstring). Any previously-open Test Tool panel is
         implicitly discarded by `remove_children()` below -- selecting a
         different tool (or clearing the selection) always starts fresh.
+
+        Task 7: `effective`, when given (Tools-mode's own call site --
+        `MCPWorkbench.on_mcp_tools_mode_tool_selected()`), appends the
+        permission-explanation block below the tool detail via
+        `_render_permission_container()`, folded into this SAME locked
+        pass rather than re-entering `_refresh_lock` a second time (it is
+        not reentrant). `None` (every pre-Task-7 call site, and a cleared
+        selection) hides `#mcp-inspector-permission` instead of leaving a
+        previous tool's permission facts on screen.
         """
         async with self._refresh_lock:
             self._current_tool = tool
+            # Task 5: a tool-selection change (a different tool, or clearing
+            # the selection entirely -- e.g. a mode switch, see
+            # MCPWorkbench._clear_tool_view()) is an "other interaction" per
+            # the arm-then-confirm contract, so it disarms a pending Test
+            # Tool confirm. The panel `remove_children()` below discards the
+            # armed Run button regardless; this just keeps the flag from
+            # lying about a button that no longer exists.
+            self._test_run_armed = False
             container = self.query_one("#mcp-inspector-tool", Vertical)
             await container.remove_children()
             if tool is None:
                 container.display = False
+                await self._render_permission_container(None, None)
                 return
             container.display = True
             widgets: list[Any] = [
@@ -513,12 +640,98 @@ class MCPInspector(Vertical):
             else:
                 widgets.append(
                     Static(
-                        "Testing server-source tools arrives in Phase 4.",
+                        "Testing server-source tools isn't available yet.",
                         id="mcp-inspector-tool-phase-note",
                         classes="ds-field-row", markup=False,
                     )
                 )
             await container.mount_all(widgets)
+            await self._render_permission_container(tool, effective)
+
+    async def _render_permission_container(
+        self, tool: HubTool | None, effective: EffectiveToolState | None
+    ) -> None:
+        """Rebuild `#mcp-inspector-permission` for one tool's resolved
+        permission state, or hide it.
+
+        LOCK-FREE by design: both callers (`show_tool()`, `show_permission()`
+        below) already hold `_refresh_lock` when they call this -- folding
+        the permission-block update into their SAME locked pass instead of
+        re-entering the (non-reentrant) `asyncio.Lock` a second time.
+
+        `tool is None or effective is None` means "nothing to explain" --
+        covers an outright cleared selection (`show_tool(None)`) and a tool
+        selected with no permission context supplied (`show_tool(tool)`,
+        the plain T6 call shape every pre-Task-7 call site still uses).
+        """
+        container = self.query_one("#mcp-inspector-permission", Vertical)
+        await container.remove_children()
+        if tool is None or effective is None:
+            container.display = False
+            self._current_permission_tool = None
+            return
+        container.display = True
+        self._current_permission_tool = tool
+        widgets: list[Any] = [
+            # UX batch item 8: identity line first, mirroring
+            # `show_tool()`'s own `#mcp-inspector-tool-name` -- this block
+            # is ALSO the standalone entry point (Permissions-mode matrix
+            # row selection, `show_permission()` below), which never mounts
+            # `#mcp-inspector-tool` at all, so without this the permission
+            # explanation would render with no indication of WHICH tool it
+            # describes.
+            Static(
+                f"{tool.name} — {tool.server_label}",
+                id="mcp-inspector-permission-tool", classes="ds-field-row", markup=False,
+            ),
+            Static(
+                f"Permission: {effective.ui_label}",
+                id="mcp-inspector-permission-state", classes="ds-field-row", markup=False,
+            ),
+            Static(
+                _ORIGIN_SENTENCES.get(effective.origin, _UNKNOWN_ORIGIN_SENTENCE),
+                id="mcp-inspector-permission-origin", classes="ds-field-row", markup=False,
+            ),
+        ]
+        if effective.config_changed:
+            widgets.append(
+                Static(
+                    _CONFIG_CHANGED_NOTICE,
+                    id="mcp-inspector-permission-notice", classes="ds-field-row", markup=False,
+                )
+            )
+            widgets.append(
+                Button(
+                    "Re-allow", id="mcp-inspector-reallow",
+                    classes="console-action-primary", compact=True,
+                    tooltip=_REALLOW_TOOLTIP,
+                )
+            )
+        elif effective.risk_floored:
+            widgets.append(
+                Static(
+                    _RISK_FLOORED_NOTICE,
+                    id="mcp-inspector-permission-notice", classes="ds-field-row", markup=False,
+                )
+            )
+        await container.mount_all(widgets)
+
+    async def show_permission(self, tool: HubTool, effective: EffectiveToolState) -> None:
+        """Render `#mcp-inspector-permission` standalone -- Permissions-mode's
+        matrix tool-row selection entry point
+        (`MCPWorkbench.on_mcp_permissions_mode_row_selected()`).
+
+        Unlike `show_tool()`'s `effective` keyword, this never touches
+        `#mcp-inspector-tool` -- the full tool-detail-plus-Test-Tool block
+        is Tools-mode's own selection surface; a Permissions-mode row
+        selection only explains the permission rule. Same `_refresh_lock`
+        discipline as `show_tool()` -- two selections back to back must not
+        interleave their remove/mount cycles into `DuplicateIds` (mandatory
+        regression, mirrors
+        `test_second_show_tool_back_to_back_does_not_duplicate_ids`).
+        """
+        async with self._refresh_lock:
+            await self._render_permission_container(tool, effective)
 
     async def _mount_test_tool_panel(self) -> None:
         """Mount the schema-driven form + Run/Close/result panel, once.
@@ -539,16 +752,26 @@ class MCPInspector(Vertical):
             pass
         panel = Vertical(
             MCPSchemaForm(schema=tool.input_schema, id="mcp-inspector-test-form"),
+            # UX batch item 6: blank until `require_confirm()` fills it in
+            # (every arm, unconditionally) -- mounted ABOVE Run/Close so the
+            # armed-explainer reads before the button whose behavior it's
+            # explaining, unlike the specific `#mcp-inspector-test-arm-
+            # notice` below, which keeps its pre-existing position.
+            Static("", id="mcp-inspector-test-armed-hint", classes="ds-field-row", markup=False),
             Button(
                 "Run", id="mcp-inspector-test-run",
                 classes="console-action-primary", compact=True,
-                tooltip="Send these arguments to the tool and show the result.",
+                tooltip=_TEST_RUN_TOOLTIP,
             ),
             Button(
                 "Close", id="mcp-inspector-test-close",
                 classes="console-action-secondary", compact=True,
                 tooltip="Close this test form without running the tool.",
             ),
+            # Task 5: blank until `require_confirm()` fills it in for a
+            # config_changed/unverifiable downgrade -- see that method's
+            # docstring.
+            Static("", id="mcp-inspector-test-arm-notice", classes="ds-field-row", markup=False),
             Static("", id="mcp-inspector-test-result", classes="ds-field-row", markup=False),
             id="mcp-inspector-test-panel",
         )
@@ -597,6 +820,11 @@ class MCPInspector(Vertical):
         return "opened"
 
     async def _close_test_tool_panel(self) -> None:
+        # Task 5: Close is an "other interaction" per the arm-then-confirm
+        # contract -- disarm before tearing the panel down (the panel itself
+        # discards the armed Run button regardless, this just keeps the
+        # flag from lying about a button that's about to be gone).
+        self._test_run_armed = False
         try:
             panel = self.query_one("#mcp-inspector-test-panel", Vertical)
         except NoMatches:
@@ -607,6 +835,102 @@ class MCPInspector(Vertical):
             self.query_one("#mcp-inspector-test-tool", Button).disabled = False
         except NoMatches:
             pass
+
+    @property
+    def test_run_armed(self) -> bool:
+        """Whether the Test Tool Run button is currently armed into its
+        one-shot "Confirm run" state (see `require_confirm()`)."""
+        return self._test_run_armed
+
+    @property
+    def current_permission_tool(self) -> HubTool | None:
+        """The tool `#mcp-inspector-permission` is currently explaining, or
+        `None` when nothing is shown there.
+
+        Minor 3: lets `MCPWorkbench` check, after a Space-cycle resyncs the
+        Permissions-mode matrix, whether the already-open permission block
+        belongs to the SAME tool that was just cycled -- so it can refresh
+        that block too (`_render_permission_container()` is otherwise only
+        re-entered by a fresh selection or the re-allow handler)."""
+        return self._current_permission_tool
+
+    def require_confirm(self, notice: str | None) -> None:
+        """Arm the Test Tool Run button into a one-shot "Confirm run" control.
+
+        Called by `MCPWorkbench` when `gate_tool_test()` resolves a tool to
+        "ask": the press that triggered this did NOT run the tool -- the
+        SAME Run button (relabeled/re-tooltipped in place, not replaced)
+        becomes the confirm control instead. `notice`, when given (Task 5:
+        a `config_changed` downgrade, or UX batch item 15's unverifiable-
+        by-key variant), is rendered as an extra, SPECIFIC line explaining
+        why a confirm is required this time (`#mcp-inspector-test-arm-
+        notice`); `None` clears it. UX batch item 6: independent of
+        `notice`, `#mcp-inspector-test-armed-hint` always gets the generic
+        armed-explainer text on every arm -- the two can render together
+        (specific reason below, generic mechanic above it, see
+        `_mount_test_tool_panel()`'s widget order).
+
+        No-op (beyond the label/variant/tooltip writes) if the panel isn't
+        actually mounted -- tolerant of a race where the panel closed
+        between the Run press and this call.
+        """
+        self._test_run_armed = True
+        try:
+            run_button = self.query_one("#mcp-inspector-test-run", Button)
+        except NoMatches:
+            pass
+        else:
+            run_button.label = "Confirm run"
+            run_button.variant = "primary"
+            run_button.tooltip = _TEST_RUN_CONFIRM_TOOLTIP
+            run_button.disabled = False
+        try:
+            hint_widget = self.query_one("#mcp-inspector-test-armed-hint", Static)
+        except NoMatches:
+            pass
+        else:
+            hint_widget.update(_TEST_RUN_ARMED_HINT)
+        try:
+            notice_widget = self.query_one("#mcp-inspector-test-arm-notice", Static)
+        except NoMatches:
+            pass
+        else:
+            notice_widget.update(notice or "")
+
+    def disarm_test_run(self) -> None:
+        """Revert the Run button to its normal, unarmed state (no-op if
+        already unarmed).
+
+        The arm-then-confirm contract is "any other interaction disarms" --
+        `show_tool()` and `_close_test_tool_panel()` cover tool switch/mode
+        switch/Close (mirrors `MCPServersMode.disarm_delete()`); `MCPWorkbench`
+        also calls this directly when it consumes a confirming press (the
+        run is about to dispatch, so the button should read "Run" again by
+        the time it re-enables).
+        """
+        if not self._test_run_armed:
+            return
+        self._test_run_armed = False
+        try:
+            run_button = self.query_one("#mcp-inspector-test-run", Button)
+        except NoMatches:
+            pass
+        else:
+            run_button.label = "Run"
+            run_button.variant = "default"
+            run_button.tooltip = _TEST_RUN_TOOLTIP
+        try:
+            hint_widget = self.query_one("#mcp-inspector-test-armed-hint", Static)
+        except NoMatches:
+            pass
+        else:
+            hint_widget.update("")
+        try:
+            notice_widget = self.query_one("#mcp-inspector-test-arm-notice", Static)
+        except NoMatches:
+            pass
+        else:
+            notice_widget.update("")
 
     def _handle_test_run(self) -> None:
         tool = self._current_tool
@@ -624,9 +948,12 @@ class MCPInspector(Vertical):
             result_widget.update(str(exc))
             return
         run_button.disabled = True
-        self.post_message(self.ToolTestRequested(tool.tool_id, arguments))
+        self.post_message(self.ToolTestRequested(tool.server_key, tool.name, arguments))
 
-    def show_tool_result(self, *, tool_id: str, ok: bool, text: str, duration_ms: int) -> None:
+    def show_tool_result(
+        self, *, server_key: str, tool_name: str, ok: bool, text: str, duration_ms: int,
+        blocked: bool = False,
+    ) -> None:
         """Render one Test Tool run's outcome, and re-enable Run.
 
         Tolerant of the panel having been closed (or a different tool
@@ -634,26 +961,42 @@ class MCPInspector(Vertical):
         purely as "here's what happened", with no guarantee the panel this
         result belongs to is still on screen.
 
-        I1: `tool_id` must match `self._current_tool.tool_id` -- a slow
-        tool A's result arriving after the user has already switched the
-        inspector to tool B's panel must never render under B (and must
-        never re-enable B's Run button, which has nothing to do with A's
-        completion). A mismatched result is dropped silently (debug-logged
-        only); it belongs to a panel that is no longer showing.
+        I1: `(server_key, tool_name)` must match `self._current_tool`'s own
+        fields -- a slow tool A's result arriving after the user has already
+        switched the inspector to tool B's panel must never render under B
+        (and must never re-enable B's Run button, which has nothing to do
+        with A's completion). A mismatched result is dropped silently
+        (debug-logged only); it belongs to a panel that is no longer
+        showing.
+
+        `blocked` (Task 5, UX batch item 5): True for the permissions
+        deny-gate's synthetic result -- the call never reached the tool at
+        all, so the status line reads "Blocked · not run" instead of
+        routing through the ok/duration_ms failure template ("Failed ·
+        0ms"), which would misleadingly imply an attempted, timed run.
+        `ok`/`duration_ms` are still accepted (the deny-gate call site
+        passes its usual `ok=False, duration_ms=0`) but ignored for the
+        status line when `blocked` is True.
         """
         current = self._current_tool
-        if current is None or current.tool_id != tool_id:
+        if current is None or current.server_key != server_key or current.name != tool_name:
             logger.debug(
-                f"MCPInspector: dropping stale tool result for {tool_id!r} "
-                f"(current tool is {current.tool_id if current else None!r})"
+                f"MCPInspector: dropping stale tool result for "
+                f"server_key={server_key!r} tool_name={tool_name!r} "
+                f"(current tool is "
+                f"{(current.server_key, current.name) if current else None!r})"
             )
             return
         try:
             result_widget = self.query_one("#mcp-inspector-test-result", Static)
         except NoMatches:
             return
-        status = "OK" if ok else "Failed"
-        result_widget.update(f"{status} · {duration_ms}ms\n{text}")
+        if blocked:
+            status_line = "Blocked · not run"
+        else:
+            status = "OK" if ok else "Failed"
+            status_line = f"{status} · {_format_duration_ms(duration_ms)}"
+        result_widget.update(f"{status_line}\n{text}")
         try:
             self.query_one("#mcp-inspector-test-run", Button).disabled = False
         except NoMatches:
@@ -829,6 +1172,12 @@ class MCPInspector(Vertical):
             self.run_worker(
                 self._close_test_tool_panel(), group="mcp-inspector-test-panel", exclusive=True
             )
+            return
+        if button_id == "mcp-inspector-reallow":
+            event.stop()
+            tool = self._current_permission_tool
+            if tool is not None:
+                self.post_message(self.ReallowRequested(tool.server_key, tool.name))
             return
 
     async def _run_advanced_action(self) -> None:

@@ -16,6 +16,14 @@ from tldw_chatbook.config import coerce_bool_setting, get_cli_setting
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
 from .execution_log import MCPExecutionLog, RESULT_EXCERPT_LIMIT, build_record
+from .hub_tool_catalog import HubTool
+from .permission_store import (
+    EffectiveToolState,
+    MCPPermissionStore,
+    definition_hash,
+    resolve_effective_state,
+    resolve_effective_state_by_key,
+)
 from .redaction import redact_mapping
 from .server_target_store import ConfiguredServerTargetStore
 from .unified_context_store import UnifiedMCPContextStore
@@ -39,6 +47,7 @@ class UnifiedMCPControlPlaneService:
         self.server_service = server_service
         self.context = self.context_store.load() if self.context_store is not None else UnifiedMCPContext()
         self._execution_log: MCPExecutionLog | None = None
+        self._permission_store: MCPPermissionStore | None = None
 
     @property
     def selected_source(self) -> str:
@@ -2012,3 +2021,199 @@ class UnifiedMCPControlPlaneService:
             error=None, arguments=normalized_arguments, result=result,
         )
         return result
+
+    # ---- Typed permission methods (Phase 4) ----------------------------
+    # Backs the Hub's Permissions mode: effective-state resolution (with
+    # the rug-pull downgrade audit), the state setters, and the Test Tool
+    # gate. Keep this UI-free -- the Phase 5 chat bridge / agent-runtime
+    # MCPToolProvider will call `gate_tool_test`-shaped resolution too.
+
+    @property
+    def permission_store(self) -> MCPPermissionStore | None:
+        if self._permission_store is not None:
+            return self._permission_store
+        store = getattr(self.local_service, "store", None)
+        if store is None:
+            return None
+        permissions_path = Path(store.path).with_name("mcp_permissions.json")
+        self._permission_store = MCPPermissionStore(permissions_path)
+        return self._permission_store
+
+    def effective_tool_states(self, tools: list[HubTool]) -> dict[tuple[str, str], EffectiveToolState]:
+        """Resolve the effective allow/ask/deny state for every tool in ``tools``.
+
+        Loads the permission-store payload once and resolves every tool
+        against it (Task 2's `resolve_effective_state`). Any tool whose
+        resolution flags a hash mismatch against an explicit tool-level
+        ``allow`` (`EffectiveToolState.config_changed`) has that mismatch
+        persisted via `store.mark_config_changed()`; the *first* time that
+        transition happens for a given tool, exactly one
+        ``decision="downgraded"`` audit record is appended to the
+        execution log, best-effort, mirroring `_record_tool_execution`'s
+        never-raise contract -- a logging failure must never prevent the
+        resolved states from being returned. Later calls see the marker
+        already set (`mark_config_changed` returns False) and skip the
+        audit.
+
+        `config_changed` is only ever True when the tool carries an
+        *explicit* tool-level ``allow`` entry (see
+        `resolve_effective_state`): a tool that inherits its state from a
+        server or global default has nothing to compare hashes against,
+        so it can never trigger a marker or an audit here.
+
+        No store configured -> every tool resolves to
+        `EffectiveToolState(state="ask", origin="global_default")` (fail
+        closed).
+        """
+        store = self.permission_store
+        if store is None:
+            return {
+                (tool.server_key, tool.name): EffectiveToolState(state="ask", origin="global_default")
+                for tool in tools
+            }
+
+        payload = store.load()
+        results: dict[tuple[str, str], EffectiveToolState] = {}
+        for tool in tools:
+            effective = resolve_effective_state(payload, tool)
+            results[(tool.server_key, tool.name)] = effective
+            if effective.config_changed:
+                self._audit_downgrade_if_fresh(store, tool)
+        return results
+
+    def _audit_downgrade_if_fresh(self, store: MCPPermissionStore, tool: HubTool) -> None:
+        # Best-effort, same never-raise contract as `_record_tool_execution`:
+        # a persistence/logging failure here must never propagate out of
+        # `effective_tool_states()` and mask the resolved states it already
+        # computed.
+        try:
+            newly_marked = store.mark_config_changed(tool.server_key, tool.name)
+            if not newly_marked:
+                return
+            log = self.execution_log
+            if log is None:
+                return
+            record = build_record(
+                server_key=tool.server_key,
+                tool_name=tool.name,
+                initiator="system",
+                decision="downgraded",
+                ok=False,
+                duration_ms=0,
+                error=f"{tool.name} definition changed since you allowed it — review and re-allow",
+            )
+            log.append(record)
+        except Exception as exc:
+            logger.warning(
+                f"MCP permission downgrade audit failed for {tool.server_key}/{tool.name}: {exc}"
+            )
+
+    def set_tool_state(
+        self,
+        server_key: str,
+        tool_name: str,
+        ui_state: str | None,
+        *,
+        tool: HubTool | None = None,
+    ) -> None:
+        """Set (or clear, when ``ui_state`` is None) a tool-level override.
+
+        Args:
+            server_key: Owning server's stable key.
+            tool_name: Tool name within that server.
+            ui_state: One of ``None`` (inherit), ``"allow"``, ``"ask"``,
+                ``"deny"``.
+            tool: Required when ``ui_state`` is ``"allow"`` -- its
+                description/input_schema are fingerprinted into the stored
+                ``definition_hash`` the rug-pull guard compares against
+                later.
+
+        Raises:
+            ValueError: ``ui_state`` is ``"allow"`` but ``tool`` is None.
+        """
+        store = self.permission_store
+        if store is None:
+            return
+        hash_value: str | None = None
+        if ui_state == "allow":
+            if tool is None:
+                raise ValueError("tool is required to set state 'allow' (need its description/input_schema)")
+            hash_value = definition_hash(tool.description, tool.input_schema)
+        store.set_tool_state(server_key, tool_name, ui_state, definition_hash=hash_value)
+
+    def set_server_default(self, server_key: str, state: str | None) -> None:
+        store = self.permission_store
+        if store is None:
+            return
+        store.set_server_default(server_key, state)
+
+    def set_global_default(self, state: str) -> None:
+        store = self.permission_store
+        if store is None:
+            return
+        store.set_global_default(state)
+
+    def get_kill_switch(self) -> bool:
+        store = self.permission_store
+        if store is None:
+            return False
+        return store.get_kill_switch()
+
+    def set_kill_switch(self, value: bool) -> None:
+        store = self.permission_store
+        if store is None:
+            return
+        store.set_kill_switch(value)
+
+    def gate_tool_test(self, tool: HubTool) -> EffectiveToolState:
+        """Resolve one tool's effective state for the Hub's Test Tool gate.
+
+        A single fresh `load()` + resolve -- no batching, no audit
+        emission (the `effective_tool_states()` sync/render pass owns the
+        rug-pull downgrade audit; calling both for the same mismatch would
+        double-count it).
+
+        Deliberately ignores the kill switch: the switch gates chat
+        send-time tool-call assembly for the Phase 5 chat bridge /
+        agent-runtime MCPToolProvider, not this operator-initiated Hub
+        diagnostic -- an operator explicitly running Test Tool from the
+        Hub UI should see the tool's real allow/ask/deny state regardless
+        of whether the kill switch happens to be on.
+
+        No store configured -> `EffectiveToolState(state="ask",
+        origin="global_default")` (fail closed).
+        """
+        store = self.permission_store
+        if store is None:
+            return EffectiveToolState(state="ask", origin="global_default")
+        payload = store.load()
+        return resolve_effective_state(payload, tool)
+
+    def gate_tool_test_by_key(self, server_key: str, tool_name: str) -> EffectiveToolState:
+        """Resolve one tool's Test Tool gate from the store alone, with no
+        live ``HubTool`` to fingerprint.
+
+        I1: the counterpart `gate_tool_test()` needs a `HubTool` to
+        hash-compare an explicit ``allow`` against its stored
+        ``definition_hash`` (the rug-pull guard) -- this is the seam for
+        when the workbench can't produce one anymore (`_tool_for()` came
+        back empty: the tool dropped out of `_last_hub_tools` since the
+        Test panel opened, e.g. a resync racing a rug-pull refresh).
+        Without this, `MCPWorkbench._resolve_test_gate()` had nothing to
+        gate a vanished-but-still-denied tool against and fell through to
+        an ungated dispatch.
+
+        Deny/ask verdicts resolve at full fidelity (no hash check is
+        needed to trust those); an "allow" verdict -- explicit or
+        inherited -- can't be trusted without the live definition, so it
+        resolves to "ask" instead (see `resolve_effective_state_by_key`).
+
+        No store configured -> `EffectiveToolState(state="ask",
+        origin="global_default")` (fail closed), matching
+        `gate_tool_test()`.
+        """
+        store = self.permission_store
+        if store is None:
+            return EffectiveToolState(state="ask", origin="global_default")
+        payload = store.load()
+        return resolve_effective_state_by_key(payload, server_key, tool_name)

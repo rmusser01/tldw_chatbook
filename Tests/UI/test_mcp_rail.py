@@ -411,6 +411,79 @@ async def test_adaptive_pad_width_measures_escaped_text_not_raw_label():
 
 
 @pytest.mark.asyncio
+async def test_source_select_stale_mount_echo_is_dropped_after_source_moves_on():
+    """T9 (P4) regression: the source select's mount echo (Textual 8.2.7
+    posts a `Select.Changed` for a Select's own constructor value as part of
+    mounting it) can be PROCESSED after `rail.source` has already moved on
+    -- e.g. a restored view state switched the workbench to "server" while
+    the "local"-constructed select's echo was still queued. The old
+    `event.value != self.source` guard then saw a difference and forwarded
+    the stale echo as a genuine change, silently reverting the restored
+    source (caught end-to-end by
+    `test_mcp_destination_restores_unified_mcp_view_state_after_mount` in
+    test_destination_shells.py). The per-instance one-shot guard
+    (`_mcp_mount_echo_value`, mcp_rail.py) must drop that first
+    constructor-valued Changed regardless of what `self.source` says by
+    then."""
+    app = RailApp()
+    async with app.run_test() as pilot:
+        rail = app.query_one(MCPRail)
+        select = app.query_one("#mcp-rail-source", Select)
+        # Handler-contract reproduction (the full pump-interleaving race
+        # needs the workbench's multi-await restore path around it -- that
+        # end-to-end shape is what the destination-shells test above pins;
+        # this one pins the guard itself): model a select whose
+        # constructor echo has NOT yet been consumed (as compose() leaves
+        # it) while the tracked source has already moved on, then deliver
+        # the echo. Without the per-instance guard this is exactly the
+        # forwarded stale event that reverted the restored source.
+        select._mcp_mount_echo_value = "local"  # unconsumed, as compose() set it
+        rail.source = "server"
+        rail.on_select_changed(Select.Changed(select, "local"))
+        await pilot.pause()
+        changed = [e for e in app.events if isinstance(e, MCPRail.SourceChanged)]
+        assert changed == []  # stale echo dropped, source not reverted
+
+
+@pytest.mark.asyncio
+async def test_source_a_b_a_round_trip_still_dispatches_after_echo_consumed():
+    """T9 (P4): the per-instance echo guard is one-shot -- after each
+    generation's echo is consumed, a genuine user round trip back to
+    "local" must still dispatch, mirroring
+    `test_scope_a_b_a_dispatches_three_changes_and_mount_echo_zero` below.
+    The rail is resynced between changes exactly as the workbench does
+    after a real source switch (`_switch_source()` -> `_sync_children()`
+    -> `sync_state()`), so the second-line `event.value != self.source`
+    dedup compares against the POST-switch source."""
+    app = RailApp()
+    async with app.run_test() as pilot:
+        rail = app.query_one(MCPRail)
+        select = app.query_one("#mcp-rail-source", Select)
+        # The initial mount echo has already been consumed during startup
+        # (RailApp composes the rail with source="local").
+        select.value = "server"  # A -> B: genuine change, must dispatch
+        await pilot.pause()
+        # The workbench's response to a real switch: resync the rail with
+        # the new source (recompose -> fresh "server"-valued select whose
+        # own echo must also be dropped).
+        rail.sync_state(
+            source="server",
+            snapshots=[_snap("server:main", "Main Server")],
+            selected_server_key=None,
+            scope_options=[("Personal", "personal")],
+            scope_value="personal",
+            scope_ref_options=[],
+            scope_ref_value=None,
+        )
+        await pilot.pause()
+        select = app.query_one("#mcp-rail-source", Select)
+        select.value = "local"  # B -> A: must NOT be swallowed as an echo
+        await pilot.pause()
+        changed = [e.source for e in app.events if isinstance(e, MCPRail.SourceChanged)]
+        assert changed == ["server", "local"]
+
+
+@pytest.mark.asyncio
 async def test_scope_a_b_a_dispatches_three_changes_and_mount_echo_zero():
     app = RailApp()
     async with app.run_test() as pilot:

@@ -4414,6 +4414,28 @@ Button.mcp-callout {
     max-height: 70%;
 }
 
+/* T9 (P4): kept in lockstep with the baseline copy in
+   MCPPermissionsMode.DEFAULT_CSS (mcp_permissions_mode.py) -- same fix,
+   same rationale, as #mcp-servers-table/#mcp-tools-table above: the matrix
+   hugs its own row count instead of ballooning to fill the canvas, leaving
+   room for the policy-preview strip below it. */
+#mcp-perm-table {
+    height: auto;
+    max-height: 70%;
+}
+
+/* T9 (P4): kept in lockstep with the baseline copy in
+   MCPPermissionsMode.DEFAULT_CSS -- the policy-preview strip below the
+   matrix is a single Static (a sentence or two at most); without this,
+   Vertical's own default sizing could let it compete with the matrix table
+   above for the canvas's remaining space instead of hugging its own
+   content, same bug class as #mcp-detail-builtin-toggles/#mcp-import-list
+   below. */
+#mcp-perm-preview {
+    height: auto;
+    min-height: 0;
+}
+
 /* Defect 1 fix (QA round mcp-hub-phase3-2026-07): kept in lockstep with the
    baseline copy in MCPToolsMode.DEFAULT_CSS (mcp_tools_mode.py), but here
    it's load-bearing, not just defensive. Textual's cascade always treats

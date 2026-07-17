@@ -27,6 +27,7 @@ from tldw_chatbook.MCP.hub_tool_catalog import (
     server_tools_from_inventory,
 )
 from tldw_chatbook.MCP.mcp_import import ImportCandidate
+from tldw_chatbook.MCP.permission_store import DEFAULT_GLOBAL, STORE_STATES, EffectiveToolState
 from tldw_chatbook.MCP.readiness import (
     HubAction,
     ReadinessSnapshot,
@@ -39,6 +40,11 @@ from tldw_chatbook.MCP.readiness import (
 )
 from tldw_chatbook.MCP.redaction import redact_args, redact_mapping
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
+from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
+    MCPPermissionsMode,
+    PermRow,
+    format_tool_state_label,
+)
 from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel, MCPProfileForm
 from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCPRail
 from tldw_chatbook.UI.MCP_Modules.mcp_server_mutations import MCPServerMutationsPanel
@@ -123,14 +129,11 @@ MCP_HUB_MODES: dict[str, dict[str, str]] = {
     # -- "placeholder" is unused for it, same as "servers" above, kept "" for
     # shape parity with the other MCP_HUB_MODES entries.
     "tools": {"label": "Tools", "button_id": "mcp-mode-tools", "placeholder": ""},
-    "permissions": {
-        "label": "Permissions",
-        "button_id": "mcp-mode-permissions",
-        "placeholder": (
-            "Permissions mode arrives in a later phase. MCP tools are not yet callable "
-            "from chat, so there is nothing to permit yet."
-        ),
-    },
+    # T6: Permissions mode now hosts the real `MCPPermissionsMode` canvas
+    # (see compose()) -- "placeholder" is unused for it, same as
+    # "servers"/"tools" above, kept "" for shape parity with the remaining
+    # MCP_HUB_MODES entries.
+    "permissions": {"label": "Permissions", "button_id": "mcp-mode-permissions", "placeholder": ""},
     "audit": {
         "label": "Audit",
         "button_id": "mcp-mode-audit",
@@ -190,6 +193,30 @@ _SERVER_MUTATION_MESSAGES: dict[str, str] = {
     "external_server.slot.secret.clear": "Secret cleared.",
     "external_server.slot.delete": "Credential slot deleted.",
 }
+
+# Task 5: Test Tool result copy for a tool the permissions gate resolved to
+# "deny" -- shown via `MCPInspector.show_tool_result()` exactly like any
+# other failed run, but with no service call ever made.
+_TOOL_TEST_BLOCKED_TEXT = "Blocked — this tool is set to Off in Permissions."
+# Arm notice shown under the Run button (Task 5) when an "ask" resolution
+# carries `config_changed` -- an explicit tool-level allow that the rug-pull
+# guard downgraded because the tool's live definition no longer matches what
+# was allowed.
+_TOOL_TEST_CONFIG_CHANGED_NOTICE = (
+    "Definition changed since you allowed it — review in Permissions."
+)
+# UX batch item 15: origin-neutral counterpart for the BY-KEY/unverifiable
+# case only -- `_resolve_test_gate()` routes a catalog-vanished tool through
+# `gate_tool_test_by_key()` (T4's hashless, store-only resolution), which
+# reuses `config_changed=True` to mean "can't verify this without a live
+# definition to hash against", NOT "you explicitly allowed this and it
+# changed" (`resolve_effective_state_by_key()`'s own docstring). The genuine
+# `_TOOL_TEST_CONFIG_CHANGED_NOTICE` above stays reserved for resolutions
+# with a live `HubTool`; this fires whenever `tool is None` at the call site
+# instead (see `on_mcp_inspector_tool_test_requested()`).
+_TOOL_TEST_UNVERIFIABLE_NOTICE = (
+    "This tool's definition can't be verified against the catalog — review in Permissions."
+)
 
 
 def _import_summary(succeeded: list[str], failed: list[tuple[str, str]]) -> str:
@@ -452,12 +479,34 @@ class MCPWorkbench(Container):
         # cache when `MCPToolsMode.ToolSelected` arrives, rather than
         # re-deriving the whole catalog on every selection.
         self._last_hub_tools: list[HubTool] = []
-        # T6: in-flight Test Tool runs, keyed by `HubTool.tool_id`. Mirrors
+        # T6: in-flight Test Tool runs, keyed by `(server_key, tool_name)`
+        # (task-233: a tuple, not a packed `HubTool.tool_id` string). Mirrors
         # `_profile_save_in_flight`/`_server_mutation_in_flight`: a second
         # ToolTestRequested for the SAME tool arriving before the first
         # `test_hub_tool()` call resolves is swallowed with a warning toast
         # instead of dispatching a second overlapping call.
-        self._tool_test_in_flight: set[str] = set()
+        self._tool_test_in_flight: set[tuple[str, str]] = set()
+        # T7: the batch `EffectiveToolState` resolution `_sync_permissions_
+        # mode()` most recently computed (via `service.effective_tool_
+        # states()`), keyed the same as that method's own return value --
+        # `_effective_for_display()` prefers this cache over a second,
+        # redundant per-tool resolution when explaining a tool's permission
+        # rule (Tools-mode's `show_tool(tool, effective=...)` and
+        # Permissions-mode's own `show_permission()`).
+        self._last_effective_states: dict[tuple[str, str], EffectiveToolState] = {}
+        # T11: this pass's server-source governance-listing fetch
+        # (`_load_server_governance_profiles()`), cached by `(source,
+        # target)` identity -- that data is STATIC server-side profile
+        # config, unaffected by anything a permission-matrix interaction
+        # (Space-press cycle, kill-switch toggle, re-allow) can do, so a
+        # standalone `_sync_permissions_mode()` resync from any of those
+        # must reuse this instead of re-awaiting `load_section
+        # ("governance")` on every keypress. `_UNSET` seeds the key so the
+        # very first fetch (whatever source/target that turns out to be)
+        # always "changes" it and fetches once; see `_server_governance_
+        # profiles()` for the full cache/refresh contract.
+        self._governance_profiles_cache: list[dict[str, Any]] | None = None
+        self._governance_profiles_cache_key: tuple[str, str | None] | Any = _UNSET
 
     @property
     def active_mode(self) -> str:
@@ -495,8 +544,9 @@ class MCPWorkbench(Container):
             ):
                 yield MCPServersMode(id="mcp-mode-canvas-servers")
                 yield MCPToolsMode(id="mcp-mode-canvas-tools")
+                yield MCPPermissionsMode(id="mcp-mode-canvas-permissions")
                 for mode, spec in MCP_HUB_MODES.items():
-                    if mode in ("servers", "tools"):
+                    if mode in ("servers", "tools", "permissions"):
                         continue
                     with Vertical(id=f"mcp-mode-canvas-{mode}"):
                         yield Static(
@@ -813,6 +863,20 @@ class MCPWorkbench(Container):
         serializes those too, so two overlapping calls' remove+mount cycles
         (now real suspension points, since `MCPServersMode.show_detail()`
         rebuilds the detail toolbar) can't interleave on the same widgets.
+
+        T10: `_collect_hub_tools()` and `_resolve_effective_states()` are
+        each called EXACTLY ONCE per pass, right here, and threaded into
+        both `_sync_tools_mode()` (the State column) and
+        `_sync_permissions_mode()` (the matrix rows) -- both modes render
+        the SAME tool list against the SAME effective-state resolution for
+        one pass, so there is no reason to pay for a second full store
+        load (plus any mark/audit side effects `effective_tool_states()`
+        performs) back-to-back. The three STANDALONE callers of
+        `_sync_permissions_mode()` (Space-press cycle, kill-switch toggle,
+        re-allow) deliberately do NOT go through this path -- they call it
+        with no `effective` argument, so it resolves fresh (see that
+        method's docstring for why that's correct there: each of those
+        handlers just mutated the store itself).
         """
         async with self._sync_children_lock:
             display_snapshots = [self._display_snapshot(snap) for snap in self._snapshots]
@@ -836,9 +900,15 @@ class MCPWorkbench(Container):
             selected = self._snapshot_for_display(self._selected_server_key)
             await self._show_selected_detail(canvas, selected)
             await self.query_one(MCPInspector).update_readiness(selected)
-            await self._sync_tools_mode()
+            tools = self._collect_hub_tools()
+            self._last_hub_tools = tools
+            effective = self._resolve_effective_states(tools)
+            await self._sync_tools_mode(tools, effective)
+            await self._sync_permissions_mode(effective, refresh_governance=True)
 
-    async def _sync_tools_mode(self) -> None:
+    async def _sync_tools_mode(
+        self, tools: list[HubTool], states: dict[tuple[str, str], EffectiveToolState]
+    ) -> None:
         """Push the current cross-server tool catalog into `MCPToolsMode`.
 
         T5: runs on every `_sync_children()` pass (mirrors `MCPServersMode`'s
@@ -846,15 +916,21 @@ class MCPWorkbench(Container):
         the active canvas -- the ContentSwitcher hides the inactive canvas
         via CSS but never unmounts it, so keeping its data current the whole
         time means switching TO Tools mode never shows stale rows from
-        before the last background resync. Computed entirely from
-        `self._catalog_records`/`self._snapshots` (both already loaded by
-        `_collect_snapshots()` this same pass) plus one guarded, synchronous
-        `local_service.get_inventory()` call -- no new I/O.
+        before the last background resync.
+
+        T10: `tools` (from `_collect_hub_tools()`) and `states` (from
+        `_resolve_effective_states()`) are now both resolved ONCE by the
+        caller (`_sync_children()`) and passed in, rather than this method
+        deriving them itself -- `_sync_permissions_mode()` needs the exact
+        same two values this same pass, and resolving them twice meant two
+        full store loads (plus any mark/audit side effects
+        `effective_tool_states()` performs) back-to-back for identical
+        input.
         """
-        tools = self._collect_hub_tools()
-        self._last_hub_tools = tools
         diagnosis = None if tools else self._empty_tools_diagnosis()
-        await self.query_one(MCPToolsMode).update_tools(tools, empty_diagnosis=diagnosis)
+        await self.query_one(MCPToolsMode).update_tools(
+            tools, empty_diagnosis=diagnosis, states=states
+        )
 
     def _collect_hub_tools(self) -> list[HubTool]:
         """Derive the current source's cross-server `HubTool` catalog.
@@ -921,6 +997,474 @@ class MCPWorkbench(Container):
         if all(snap.state is ReadinessState.NEEDS_SETUP for snap in relevant):
             return ("No tools discovered yet — connect or refresh a server.", "connect")
         return ("No tools found — try refreshing a server's discovery.", "refresh")
+
+    # -- T6: Permissions mode (matrix, kill switch, policy preview) -----------
+
+    def _resolve_effective_states(
+        self, tools: list[HubTool]
+    ) -> dict[tuple[str, str], EffectiveToolState]:
+        """One batched `effective_tool_states()` call for `tools`.
+
+        Read via the same `getattr(..., None)` + `callable()` +
+        try/except fail-soft pattern as every other T4 seam here
+        (`_resolve_test_gate()`, this method's own former inline body) --
+        a service without the Phase 4 permission methods yet (older
+        fakes, a still-initializing service) resolves to an empty dict
+        rather than raising.
+
+        T8: shared by `_sync_tools_mode()` (State column) and
+        `_sync_permissions_mode()` (matrix rows).
+
+        T10: a full `_sync_children()` pass now calls this itself exactly
+        ONCE and threads the one result into both `_sync_tools_mode()` and
+        `_sync_permissions_mode()` (see `_sync_children()`'s docstring) --
+        this method itself is unchanged, and the three STANDALONE callers
+        of `_sync_permissions_mode()` (kill-switch toggle, Space-press
+        state cycle, re-allow) still call THIS directly with no
+        preceding `_sync_tools_mode()` pass in the same call, and must
+        always resolve fresh so a just-applied permission change is
+        reflected immediately rather than waiting for the next full
+        `_sync_children()` pass.
+        """
+        service = self._service()
+        loader = getattr(service, "effective_tool_states", None)
+        if not callable(loader):
+            return {}
+        try:
+            return loader(tools)
+        except Exception as exc:
+            logger.warning(f"MCP effective tool state resolution failed: {exc}")
+            return {}
+
+    async def _sync_permissions_mode(
+        self,
+        effective: dict[tuple[str, str], EffectiveToolState] | None = None,
+        *,
+        refresh_governance: bool = False,
+    ) -> None:
+        """Push the current permission matrix into `MCPPermissionsMode`.
+
+        Mirrors `_sync_tools_mode()`: runs on every `_sync_children()` pass
+        (the ContentSwitcher never unmounts the inactive canvas, only hides
+        it) so switching INTO Permissions mode never shows a stale matrix
+        from before the last background resync. Computed from
+        `self._last_hub_tools` (already derived this same pass by
+        `_sync_children()`, immediately before it calls this) plus one
+        `permission_store.load()` read -- no extra service I/O beyond that
+        (T8's server-source governance fetch, below, is the one exception,
+        and T11 now caches it -- see `_server_governance_profiles()`).
+
+        T10: `effective` is the SAME batch `EffectiveToolState` resolution
+        `_sync_children()` already computed once this pass (via
+        `_resolve_effective_states()`) for `_sync_tools_mode()`'s State
+        column -- passed in rather than resolved again here, so one full
+        `_sync_children()` pass no longer means two back-to-back
+        `effective_tool_states()` calls (each a full store load, plus any
+        mark/audit side effects that method performs) for identical input.
+        `None` (the default) means resolve fresh instead: every STANDALONE
+        caller (kill-switch toggle, Space-press state cycle, re-allow) just
+        mutated the permission store itself and must see that change
+        reflected immediately, not the previous pass's now-stale snapshot.
+
+        T11: `refresh_governance` gates whether `_server_governance_
+        profiles()` may actually fetch this pass -- only `_sync_children()`'s
+        own full pass sets it True; every standalone caller leaves it False
+        (the default) so a Space-press/kill-switch/re-allow resync reuses
+        whatever governance listing was last cached rather than re-awaiting
+        `load_section("governance")` for data that interaction can't have
+        changed.
+
+        Every T4 seam is read via `getattr(..., None)` + `callable()` --
+        the same "seams absent -> permissive/fail-soft by design" precedent
+        as `_resolve_test_gate()` -- so a service that hasn't been upgraded
+        with the Phase 4 permission methods (older fakes, a
+        still-initializing service) renders an all-"Ask", switch-off matrix
+        instead of raising out of every `_sync_children()` call.
+        """
+        service = self._service()
+        tools = self._last_hub_tools
+
+        kill_switch = False
+        get_kill_switch = getattr(service, "get_kill_switch", None)
+        if callable(get_kill_switch):
+            try:
+                kill_switch = bool(get_kill_switch())
+            except Exception as exc:
+                logger.warning(f"MCP kill switch read failed: {exc}")
+
+        standalone_resync = effective is None
+        if effective is None:
+            effective = self._resolve_effective_states(tools)
+        # T7: cache this batch resolution for `_effective_for_display()` --
+        # both Tools-mode's tool-detail permission block and Permissions-
+        # mode's own matrix-row selection reuse it instead of a second,
+        # redundant per-tool resolution.
+        self._last_effective_states = effective
+
+        if standalone_resync:
+            # Defect 1 fix (MCP Hub Phase 4 live QA, 2026-07-16): a
+            # STANDALONE caller (Space-cycle, kill-switch toggle, Re-allow)
+            # just resolved this batch fresh for ITS OWN matrix resync,
+            # above -- hand that same dict to `MCPToolsMode` too, so its
+            # State column reflects the mutation immediately instead of
+            # waiting for the next full `_sync_children()` pass. No extra
+            # `effective_tool_states()` call, no governance fetch, no
+            # `_sync_tools_mode()`/tool-list rebuild -- just this one
+            # widget's own narrow row re-render (`update_states()`).
+            self.query_one(MCPToolsMode).update_states(effective)
+
+        payload: dict[str, Any] = {}
+        store = getattr(service, "permission_store", None)
+        if store is not None:
+            try:
+                payload = store.load()
+            except Exception as exc:
+                logger.warning(f"MCP permission store read failed: {exc}")
+                payload = {}
+
+        profile = (payload.get("profiles") or {}).get("default") or {}
+        global_state = profile.get("global_default")
+        if global_state not in STORE_STATES:
+            global_state = DEFAULT_GLOBAL
+        servers_payload = profile.get("servers") or {}
+        if not isinstance(servers_payload, Mapping):
+            servers_payload = {}
+
+        rows, preview = self._build_permission_rows(
+            tools, effective=effective, servers_payload=servers_payload, global_state=global_state,
+        )
+        await self.query_one(MCPPermissionsMode).update_matrix(
+            rows, kill_switch=kill_switch, preview=preview
+        )
+        await self.query_one(MCPPermissionsMode).update_server_profiles(
+            await self._server_governance_profiles(service, refresh=refresh_governance)
+        )
+
+    async def _server_governance_profiles(
+        self, service: Any, *, refresh: bool
+    ) -> list[dict[str, Any]] | None:
+        """T11: this pass's server-source governance listing, fetched at
+        most once per `(source, target)` identity.
+
+        `_load_server_governance_profiles()` reads STATIC server-side
+        profile data -- nothing a permission-matrix interaction (Space-press
+        cycle, kill-switch toggle, re-allow) can change -- so this is the
+        single point deciding whether the current pass actually needs to hit
+        `load_section("governance")` again:
+
+        - `refresh=True` (only `_sync_children()`'s own full pass): fetch
+          when `(self._source, self._active_service_target_id())` differs
+          from the key of the last fetch, or nothing has ever been fetched
+          yet (`_governance_profiles_cache_key` still the module's `_UNSET`
+          sentinel); otherwise reuse the cached value with no I/O at all.
+        - `refresh=False` (every standalone resync): NEVER fetches --
+          returns whatever is cached for the CURRENT key. A key mismatch
+          here (returns `None`, section renders absent rather than a
+          stale different identity's profiles) is defensive only: every
+          source/target switch (`_switch_source()`, `_select_server_key()`)
+          runs its own full `_sync_children()` pass -- which refreshes the
+          cache for the new key -- before any standalone resync can run
+          against it, so this branch should not normally trigger.
+
+        No separate cache-invalidation call is needed at the rail's
+        source/scope-switch handlers: the key is recomputed from live state
+        on every call, so any actual identity change is caught by the
+        comparison above rather than requiring every switch site to
+        remember to clear a cache by hand.
+        """
+        key = (self._source, self._active_service_target_id())
+        if key != self._governance_profiles_cache_key:
+            if not refresh:
+                return None
+            self._governance_profiles_cache = await self._load_server_governance_profiles(service)
+            self._governance_profiles_cache_key = key
+        return self._governance_profiles_cache
+
+    async def _load_server_governance_profiles(self, service: Any) -> list[dict[str, Any]] | None:
+        """T8: the server-source read-only governance listing's data.
+
+        Only ever fetched under the server source -- local/builtin never
+        call `load_section("governance")` at all, so the section stays
+        entirely absent there (not merely empty) without needing its own
+        source check downstream. Guarded the same fail-soft way as every
+        other seam in `_sync_permissions_mode()`: any exception (no active
+        target, a backend error, a service too old to expose the section)
+        -> `None` -> `MCPPermissionsMode.update_server_profiles()` renders
+        no section at all, same as local/builtin.
+
+        A malformed-but-present response (not a Mapping, or a
+        `permission_profiles` key that isn't a list) still counts as a
+        successful fetch -- returns `[]` so the section renders with its
+        pointer text and zero rows, rather than disappearing outright the
+        way an actual fetch failure does.
+        """
+        if self._source != "server" or service is None:
+            return None
+        loader = getattr(service, "load_section", None)
+        if not callable(loader):
+            return None
+        try:
+            governance_payload = await loader("governance")
+        except Exception as exc:
+            logger.warning(f"MCP governance section fetch failed: {exc}")
+            return None
+        if not isinstance(governance_payload, Mapping):
+            # Malformed-but-present, per this method's own docstring above --
+            # the fetch itself succeeded, it just didn't hand back the shape
+            # expected. `[]` (not `None`), same as a bad `permission_profiles`
+            # value below.
+            return []
+        raw_profiles = governance_payload.get("permission_profiles")
+        return raw_profiles if isinstance(raw_profiles, list) else []
+
+    @staticmethod
+    def _tool_state_label(effective: EffectiveToolState) -> str:
+        """T8: thin delegation to the shared, module-level rendering
+        helper (`mcp_permissions_mode.format_tool_state_label()`) -- kept
+        as a staticmethod here too since `_build_permission_rows()` below
+        already calls `self._tool_state_label(...)`, and
+        `test_tool_state_label_marker_precedence` pins this exact call
+        shape (`MCPWorkbench._tool_state_label`).
+        """
+        return format_tool_state_label(effective)
+
+    @staticmethod
+    def _raw_tool_state(
+        servers_payload: Mapping[str, Any], server_key: str, tool_name: str
+    ) -> str | None:
+        """The raw STORE value for one tool entry (`cycle_ui_state()`'s
+        input), or `None` when nothing is set at the tool level -- distinct
+        from the tool's *resolved* effective state, which may inherit from
+        the server or global default."""
+        server_entry = servers_payload.get(server_key)
+        if not isinstance(server_entry, Mapping):
+            return None
+        tools_entry = server_entry.get("tools")
+        if not isinstance(tools_entry, Mapping):
+            return None
+        tool_entry = tools_entry.get(tool_name)
+        if not isinstance(tool_entry, Mapping):
+            return None
+        state = tool_entry.get("state")
+        return state if state in STORE_STATES else None
+
+    def _build_permission_rows(
+        self,
+        tools: list[HubTool],
+        *,
+        effective: dict[tuple[str, str], EffectiveToolState],
+        servers_payload: Mapping[str, Any],
+        global_state: str,
+    ) -> tuple[list[PermRow], str]:
+        """Derive the pinned global -> server-default -> tool `PermRow`
+        list (grouped by server, both servers and their tools sorted by
+        label/name) plus the rail-scoped policy preview sentence.
+        """
+        global_label = EffectiveToolState(state=global_state, origin="global_default").ui_label
+        rows: list[PermRow] = [
+            PermRow(
+                kind="global", server_key="", server_label="", tool_name=None,
+                state_label=global_label, tags_label="—", cycle_current=global_state,
+            )
+        ]
+
+        tools_by_server: dict[str, list[HubTool]] = {}
+        labels_by_key: dict[str, str] = {}
+        for tool in tools:
+            tools_by_server.setdefault(tool.server_key, []).append(tool)
+            labels_by_key.setdefault(tool.server_key, tool.server_label)
+
+        for server_key in sorted(tools_by_server, key=lambda key: (labels_by_key[key], key)):
+            server_label = labels_by_key[server_key]
+            server_entry = servers_payload.get(server_key)
+            raw_default = (
+                server_entry.get("default")
+                if isinstance(server_entry, Mapping)
+                else None
+            )
+            if raw_default in STORE_STATES:
+                server_state_label = (
+                    f"{EffectiveToolState(state=raw_default, origin='server_default').ui_label} •"
+                )
+                server_cycle_current: str | None = raw_default
+            else:
+                # Inherit: nothing explicit at the server level -- shown as
+                # the resolved (global) value, plain (no override marker).
+                server_state_label = global_label
+                server_cycle_current = None
+            rows.append(
+                PermRow(
+                    kind="server", server_key=server_key, server_label=server_label,
+                    tool_name=None, state_label=server_state_label, tags_label="—",
+                    cycle_current=server_cycle_current,
+                )
+            )
+            for tool in sorted(tools_by_server[server_key], key=lambda t: t.name):
+                tool_effective = effective.get((tool.server_key, tool.name)) or EffectiveToolState(
+                    state="ask", origin="global_default"
+                )
+                rows.append(
+                    PermRow(
+                        kind="tool", server_key=tool.server_key, server_label=server_label,
+                        tool_name=tool.name,
+                        state_label=self._tool_state_label(tool_effective),
+                        tags_label=", ".join(tool.tags) if tool.tags else "—",
+                        cycle_current=self._raw_tool_state(
+                            servers_payload, tool.server_key, tool.name
+                        ),
+                    )
+                )
+
+        preview = self._build_permission_preview(
+            rows, tools_by_server, labels_by_key, effective, global_label
+        )
+        return rows, preview
+
+    def _build_permission_preview(
+        self,
+        rows: list[PermRow],
+        tools_by_server: dict[str, list[HubTool]],
+        labels_by_key: dict[str, str],
+        effective: dict[tuple[str, str], EffectiveToolState],
+        global_label: str,
+    ) -> str:
+        """One plain-language sentence -- UX batch item 9: Library counts-
+        line vocabulary (lowercase state words, no noun, " · " separators,
+        no trailing period -- `library_ingest_state._queue_counts_line()`'s
+        own precedent), scoped to the rail's currently selected server when
+        that server has any discovered tools:
+        `"<label>: N allow · M ask · K off — global default: <word>"`.
+
+        With no selection (or the selected server has no discovered
+        tools): `"global default: <word>"`, plus a
+        `" · N overrides across M servers"` suffix when at least one
+        explicit server- or tool-level override exists anywhere in `rows`
+        (omitted entirely when there are none, rather than a "0 overrides"
+        segment nobody needs).
+        """
+        global_word = global_label.lower()
+        server_key = self._selected_server_key
+        tools = tools_by_server.get(server_key) if server_key else None
+        if tools:
+            counts = {"allow": 0, "ask": 0, "deny": 0}
+            for tool in tools:
+                tool_effective = effective.get((tool.server_key, tool.name))
+                state = tool_effective.state if tool_effective is not None else "ask"
+                counts[state] = counts.get(state, 0) + 1
+            label = labels_by_key.get(server_key, server_key)
+            return (
+                f"{label}: {counts['allow']} allow · {counts['ask']} ask · "
+                f"{counts['deny']} off — global default: {global_word}"
+            )
+        override_rows = [
+            row for row in rows if row.kind in ("server", "tool") and row.cycle_current is not None
+        ]
+        if not override_rows:
+            return f"global default: {global_word}"
+        override_servers = {row.server_key for row in override_rows}
+        override_word = "override" if len(override_rows) == 1 else "overrides"
+        server_word = "server" if len(override_servers) == 1 else "servers"
+        return (
+            f"global default: {global_word} · {len(override_rows)} {override_word} "
+            f"across {len(override_servers)} {server_word}"
+        )
+
+    async def on_mcp_permissions_mode_state_cycle_requested(
+        self, event: MCPPermissionsMode.StateCycleRequested
+    ) -> None:
+        """Apply one Space-cycled permission change (T6) via the T4 typed
+        methods, then resync the matrix -- the single-writer contract:
+        `MCPPermissionsMode` never touches the store itself, only posts
+        the row it means and the state T2's cycle helpers already resolved.
+
+        `event.new_state` is validated against `STORE_STATES` (trust
+        boundary: this event crosses from the render-only child widget,
+        and `MCPPermissionStore.set_*` would otherwise raise on a bad
+        value AFTER partially reasoning about the write) before any setter
+        runs -- `None` is legal (Inherit, for a `"server"`/`"tool"` row
+        only) but anything else that isn't `"allow"`/`"ask"`/`"deny"` is
+        rejected outright, no setter call at all.
+
+        Minor 5: a `"tool"` row whose tool has dropped out of the catalog
+        (`_tool_for()` returns `None`) cycled to `"allow"` is caught HERE,
+        before the setter -- `set_tool_state(..., "allow", tool=None)`
+        raises a `ValueError` whose message is an internal implementation
+        detail ("tool is required to set state 'allow' ..."), which the
+        generic `except` below would otherwise toast verbatim. Every other
+        state (`"ask"`/`"deny"`/`None`) works fine with `tool=None` -- only
+        `"allow"` needs the live tool to fingerprint.
+        """
+        event.stop()
+        service = self._service()
+        if service is None:
+            return
+        if event.new_state is not None and event.new_state not in STORE_STATES:
+            logger.warning(f"MCP permission cycle rejected invalid state: {event.new_state!r}")
+            self.app.notify(
+                _toast(f"Ignored invalid permission state {event.new_state!r}."),
+                severity="warning",
+            )
+            return
+        cycled_tool: HubTool | None = None
+        try:
+            if event.row_kind == "global":
+                if event.new_state is not None:
+                    service.set_global_default(event.new_state)
+            elif event.row_kind == "server":
+                service.set_server_default(event.server_key, event.new_state)
+            elif event.row_kind == "tool":
+                cycled_tool = self._tool_for(event.server_key, event.tool_name or "")
+                if cycled_tool is None and event.new_state == "allow":
+                    self.app.notify(
+                        _toast("Tool is no longer in the catalog — refresh and try again."),
+                        severity="warning",
+                    )
+                    return
+                service.set_tool_state(
+                    event.server_key, event.tool_name or "", event.new_state, tool=cycled_tool
+                )
+        except Exception as exc:
+            logger.warning(f"MCP permission cycle failed: {exc}")
+            self.app.notify(_toast(f"Permission update failed: {exc}"), severity="error")
+            return
+        async with self._sync_children_lock:
+            await self._sync_permissions_mode()
+
+        # Minor 3: `_sync_permissions_mode()` above rebuilds the matrix's
+        # OWN rows, but an already-open `#mcp-inspector-permission` block
+        # for this same tool is a separate render (`show_permission()`,
+        # driven by `MCPPermissionsMode.RowSelected`, not the matrix
+        # resync) that keeps showing the pre-cycle rule until something
+        # re-renders it -- today only the re-allow handler does. Refresh it
+        # here too when it's explaining the tool that was just cycled.
+        if event.row_kind == "tool" and cycled_tool is not None:
+            inspector = self.query_one(MCPInspector)
+            current_tool = inspector.current_permission_tool
+            if (
+                current_tool is not None
+                and current_tool.server_key == cycled_tool.server_key
+                and current_tool.name == cycled_tool.name
+            ):
+                await inspector.show_permission(
+                    cycled_tool, self._effective_for_display(cycled_tool)
+                )
+
+    async def on_mcp_permissions_mode_kill_switch_toggled(
+        self, event: MCPPermissionsMode.KillSwitchToggled
+    ) -> None:
+        event.stop()
+        service = self._service()
+        set_kill_switch = getattr(service, "set_kill_switch", None)
+        if not callable(set_kill_switch):
+            return
+        try:
+            set_kill_switch(event.value)
+        except Exception as exc:
+            logger.warning(f"MCP kill switch save failed: {exc}")
+            self.app.notify(_toast(f"Failed to save MCP tools in chat: {exc}"), severity="error")
+            return
+        async with self._sync_children_lock:
+            await self._sync_permissions_mode()
 
     async def _show_selected_detail(
         self, canvas: MCPServersMode, selected: ReadinessSnapshot | None
@@ -1222,23 +1766,149 @@ class MCPWorkbench(Container):
             self.set_mode("servers")
             self.app.notify("Select a server below to connect or refresh its tools.")
 
-    def _tool_for(self, tool_id: str) -> HubTool | None:
+    def _tool_for_row_key(self, tool_id: str) -> HubTool | None:
+        """Resolve a Tools-mode DataTable row key (`HubTool.tool_id`, a
+        packed `"server_key::name"` display/dedup string -- see
+        `mcp_tools_mode.py`) against `_last_hub_tools`.
+
+        task-233: packed ids remain legal AS ROW KEYS (mcp_tools_mode.py is
+        unchanged), but this is the only place in this module that still
+        compares against one -- everything downstream of a selection (Test
+        Tool execution) carries `(server_key, tool_name)` as separate
+        fields instead. See `_tool_for()` for that field-based lookup.
+        """
         for tool in self._last_hub_tools:
             if tool.tool_id == tool_id:
                 return tool
         return None
 
+    def _tool_for(self, server_key: str, tool_name: str) -> HubTool | None:
+        """Resolve a `(server_key, tool_name)` pair against `_last_hub_tools`.
+
+        task-233: the field-based counterpart to `_tool_for_row_key()` --
+        compares `HubTool.server_key`/`HubTool.name` directly rather than
+        parsing (or matching) a packed id string.
+        """
+        for tool in self._last_hub_tools:
+            if tool.server_key == server_key and tool.name == tool_name:
+                return tool
+        return None
+
     async def on_mcp_tools_mode_tool_selected(self, event: MCPToolsMode.ToolSelected) -> None:
         """T6: route a Tools-mode row selection to the inspector's tool
-        detail view. `_tool_for()` resolves the row's `tool_id` against
-        `_last_hub_tools` (populated by the same `_sync_tools_mode()` pass
-        that fed the DataTable this selection came from) -- a stale
-        selection whose tool has since dropped out of the catalog
-        (disconnect, refresh) resolves to `None`, which `show_tool()`
-        renders as "nothing selected" rather than crashing.
+        detail view. `_tool_for_row_key()` resolves the row's packed
+        `tool_id` against `_last_hub_tools` (populated by the same
+        `_sync_tools_mode()` pass that fed the DataTable this selection came
+        from) -- a stale selection whose tool has since dropped out of the
+        catalog (disconnect, refresh) resolves to `None`, which
+        `show_tool()` renders as "nothing selected" rather than crashing.
+
+        T7: a resolved tool also gets its permission rule explained --
+        `_effective_for_display()` appends the block below the tool detail
+        via `show_tool()`'s `effective` keyword.
         """
         event.stop()
-        await self.query_one(MCPInspector).show_tool(self._tool_for(event.tool_id))
+        tool = self._tool_for_row_key(event.tool_id)
+        effective = self._effective_for_display(tool) if tool is not None else None
+        await self.query_one(MCPInspector).show_tool(tool, effective=effective)
+
+    def _effective_for_display(self, tool: HubTool) -> EffectiveToolState:
+        """Resolve one tool's `EffectiveToolState` for the inspector's
+        permission explanation -- Tools-mode's tool-detail-plus-permission
+        block (`show_tool(tool, effective=...)`) and Permissions-mode's own
+        matrix-row selection (`show_permission()`) both go through here.
+
+        Prefers `self._last_effective_states` -- the batch resolution
+        `_sync_permissions_mode()` already computed this same
+        `_sync_children()` pass via `effective_tool_states()` -- over a
+        second, redundant lookup. Falls back to one fresh single-tool
+        `service.gate_tool_test()` call (T4) when the tool isn't in that
+        cache (e.g. a service that exposes `gate_tool_test()` but not the
+        batch `effective_tool_states()`); a raising gate fails CLOSED
+        (deny), mirroring `_resolve_test_gate()`. No seam at all -> the
+        same `EffectiveToolState(state="ask", origin="global_default")`
+        fallback `_build_permission_rows()` already uses for a tool missing
+        from the batch dict.
+        """
+        cached = self._last_effective_states.get((tool.server_key, tool.name))
+        if cached is not None:
+            return cached
+        service = self._service()
+        gate_check = getattr(service, "gate_tool_test", None)
+        if callable(gate_check):
+            try:
+                return gate_check(tool)
+            except Exception as exc:
+                logger.warning(
+                    f"MCP permission resolution failed for {tool.server_key}::{tool.name}; "
+                    f"failing closed: {exc}"
+                )
+                return EffectiveToolState(state="deny", origin="gate_error")
+        return EffectiveToolState(state="ask", origin="global_default")
+
+    async def on_mcp_permissions_mode_row_selected(
+        self, event: MCPPermissionsMode.RowSelected
+    ) -> None:
+        """T7: route a Permissions-mode matrix row selection to the
+        inspector. A `"tool"` row resolves its `HubTool` (`_tool_for()`)
+        and shows the permission explanation standalone
+        (`MCPInspector.show_permission()`) -- NOT the full tool-detail
+        block (`#mcp-inspector-tool`, Test Tool button and all), which is
+        Tools-mode's own selection surface. A pinned `"global"`/`"server"`
+        row -- or a `"tool"` row whose tool has since dropped out of the
+        catalog -- just clears whatever tool/permission view the inspector
+        was last showing (`show_tool(None)`, which also hides
+        `#mcp-inspector-permission`; see that method).
+        """
+        event.stop()
+        inspector = self.query_one(MCPInspector)
+        tool = (
+            self._tool_for(event.server_key, event.tool_name or "")
+            if event.row_kind == "tool"
+            else None
+        )
+        if tool is None:
+            await inspector.show_tool(None)
+            return
+        await inspector.show_permission(tool, self._effective_for_display(tool))
+
+    async def on_mcp_inspector_reallow_requested(
+        self, event: MCPInspector.ReallowRequested
+    ) -> None:
+        """T7: re-allow a rug-pull-downgraded tool override -- store the
+        tool's CURRENT definition hash and set its state back to "allow"
+        via T4's `set_tool_state()`, then resync the matrix so its ⚠
+        marker clears. Also refreshes the inspector's own (already-open)
+        permission block, since the matrix resync above doesn't touch it.
+
+        Guard: an unresolvable tool (dropped out of the catalog since the
+        permission block was rendered) is a warning toast, never a store
+        call -- `set_tool_state(..., "allow", ...)` requires a live
+        `HubTool` to fingerprint (see that method's own `tool` docstring).
+        """
+        event.stop()
+        tool = self._tool_for(event.server_key, event.tool_name)
+        if tool is None:
+            self.app.notify(
+                _toast(f"{event.server_key}::{event.tool_name}: tool no longer available."),
+                severity="warning",
+            )
+            return
+        service = self._service()
+        set_tool_state = getattr(service, "set_tool_state", None)
+        if not callable(set_tool_state):
+            return
+        try:
+            set_tool_state(event.server_key, event.tool_name, "allow", tool=tool)
+        except Exception as exc:
+            logger.warning(
+                f"MCP re-allow failed for {event.server_key}::{event.tool_name}: {exc}"
+            )
+            self.app.notify(_toast(f"Re-allow failed: {exc}"), severity="error")
+            return
+        async with self._sync_children_lock:
+            await self._sync_permissions_mode()
+        await self.query_one(MCPInspector).show_permission(tool, self._effective_for_display(tool))
 
     async def open_test_for_selected_tool(self) -> None:
         """T8: entry point for the `t` keybinding (mcp_screen.py's
@@ -1252,8 +1922,8 @@ class MCPWorkbench(Container):
         to press -- this notifies instead of silently no-opping. The two
         cases get distinct copy (`MCPInspector.open_test_panel()`'s three-
         way status tells them apart): "Select a tool first." for no
-        selection, and the same "Testing server-source tools arrives in
-        Phase 4." copy the inline detail view already shows
+        selection, and the same "Testing server-source tools isn't
+        available yet." copy the inline detail view already shows
         (`mcp_inspector.py`'s `#mcp-inspector-tool-phase-note` `Static`)
         when a tool IS selected but isn't executable yet -- "select a
         tool" would be actively wrong there.
@@ -1270,14 +1940,68 @@ class MCPWorkbench(Container):
             self.app.notify("Select a tool first.", severity="warning")
         elif status == "not_executable":
             self.app.notify(
-                "Testing server-source tools arrives in Phase 4.",
+                "Testing server-source tools isn't available yet.",
                 severity="information",
             )
+
+    def _resolve_test_gate(
+        self, tool: HubTool | None, server_key: str, tool_name: str
+    ) -> EffectiveToolState | None:
+        """Resolve one tool's Test Tool gate, or `None` when no gate applies.
+
+        `None` means "run immediately, exactly like Phase 3" -- covers a
+        service with no gate seam at all yet (getattr-tolerant, mirroring
+        `MCPInspector._action_allowed()`'s "seams absent -> permissive by
+        design" precedent -- a service that hasn't been upgraded to gate
+        Test Tool must not silently start blocking everything).
+
+        I1: `tool is None` (`_tool_for()` came back empty -- e.g. a stale
+        selection, or a resync racing a rug-pull refresh that dropped this
+        tool from `_last_hub_tools` while the Test panel was still open)
+        used to mean the same "run immediately" -- but `test_hub_tool()`
+        doesn't need a `HubTool` to execute (`execute_external_tool()`
+        dispatches by `server_key`/`tool_name` alone), so that let a DENIED
+        tool run just because it briefly vanished from the snapshot. A
+        service with the `gate_tool_test_by_key()` seam (T4's hashless,
+        store-only resolution -- see that method's own docstring) is
+        gated through it instead; only a service that predates that seam
+        entirely (compat fakes in older tests) still falls through to
+        `None` here.
+
+        A callable gate check that RAISES is the other half of that same
+        precedent: fail CLOSED (a synthetic "deny"), never swallow and
+        allow -- a runtime error here must not silently expose a tool
+        permissions might forbid.
+        """
+        service = self._service()
+        if tool is None:
+            gate_by_key = getattr(service, "gate_tool_test_by_key", None)
+            if not callable(gate_by_key):
+                return None
+            try:
+                return gate_by_key(server_key, tool_name)
+            except Exception as exc:
+                logger.warning(
+                    f"MCP tool test gate-by-key check failed for {server_key}::{tool_name}; "
+                    f"failing closed: {exc}"
+                )
+                return EffectiveToolState(state="deny", origin="gate_error")
+        gate_check = getattr(service, "gate_tool_test", None)
+        if not callable(gate_check):
+            return None
+        try:
+            return gate_check(tool)
+        except Exception as exc:
+            logger.warning(
+                f"MCP tool test gate check failed for {tool.server_key}::{tool.name}; "
+                f"failing closed: {exc}"
+            )
+            return EffectiveToolState(state="deny", origin="gate_error")
 
     def on_mcp_inspector_tool_test_requested(
         self, event: MCPInspector.ToolTestRequested
     ) -> None:
-        """Dispatch one `test_hub_tool()` call in the background.
+        """Gate, then dispatch one `test_hub_tool()` call in the background.
 
         Synchronous (not `async def`), mirroring
         `on_mcp_profile_form_submit_requested()`: `_tool_test_in_flight` is
@@ -1286,30 +2010,95 @@ class MCPWorkbench(Container):
         window (two Run presses queued before the first handler could
         disable the button) is reliably swallowed with a warning toast
         instead of racing a second `test_hub_tool()` call.
+
+        Task 5: BEFORE that in-flight check, this now resolves the tool's
+        permissions gate (`_resolve_test_gate()`, T4's `gate_tool_test()`)
+        and routes on it -- re-resolved on EVERY press (never cached from an
+        earlier arm), so a permission revoked to "deny" while a confirm is
+        pending still blocks on the confirming press:
+          - "deny": no worker, no in-flight bookkeeping -- straight to a
+            blocked `show_tool_result()`.
+          - "ask": the inspector's Run button arms into a one-shot "Confirm
+            run" control (`MCPInspector.require_confirm()`) instead of
+            running, UNLESS the inspector is already armed (this press IS
+            the confirm -- `MCPInspector.test_run_armed`), in which case it
+            consumes the arm (`disarm_test_run()`) and falls through to run.
+            UX batch item 15: `gate.config_changed` alone is ambiguous
+            between two distinct causes -- a genuine rug-pull downgrade
+            (`tool is not None`, a live definition hash mismatched) and the
+            BY-KEY/unverifiable fallback (`tool is None`, no live
+            definition to hash-compare at all,
+            `resolve_effective_state_by_key()`'s "any allow downgrades to
+            ask" rule) -- so the notice copy branches on `tool`, not just
+            the flag.
+          - "allow" (or no gate applies -- `_resolve_test_gate()` returned
+            `None`): falls through to the existing dispatch, unchanged from
+            Phase 3. `disarm_test_run()` here is a no-op unless the
+            inspector happened to still be armed from an earlier "ask" that
+            has since resolved to "allow" (e.g. permission granted while the
+            panel was open) -- clears that stale arm on its way through.
+
+        task-233: keyed by the `(server_key, tool_name)` tuple `event`
+        carries directly -- no packed id to parse or reconstruct.
         """
         event.stop()
-        tool_id = event.tool_id
-        if tool_id in self._tool_test_in_flight:
-            self.app.notify(_toast(f"{tool_id}: test already running."), severity="warning")
+        server_key = event.server_key
+        tool_name = event.tool_name
+        inspector = self.query_one(MCPInspector)
+        tool = self._tool_for(server_key, tool_name)
+        gate = self._resolve_test_gate(tool, server_key, tool_name)
+
+        if gate is not None and gate.state == "deny":
+            inspector.disarm_test_run()
+            inspector.show_tool_result(
+                server_key=server_key, tool_name=tool_name,
+                ok=False, text=_TOOL_TEST_BLOCKED_TEXT, duration_ms=0,
+                blocked=True,
+            )
             return
-        self._tool_test_in_flight.add(tool_id)
+        if gate is not None and gate.state == "ask" and not inspector.test_run_armed:
+            notice = None
+            if gate.config_changed:
+                notice = (
+                    _TOOL_TEST_UNVERIFIABLE_NOTICE if tool is None
+                    else _TOOL_TEST_CONFIG_CHANGED_NOTICE
+                )
+            inspector.require_confirm(notice)
+            return
+        inspector.disarm_test_run()
+
+        key = (server_key, tool_name)
+        if key in self._tool_test_in_flight:
+            # UX batch item 12: verb-first, parenthetical context (Console/
+            # Library data-summary shape) -- `tool.server_label` when the
+            # tool is still resolvable, else the raw `server_key` (mirrors
+            # every other fallback-to-key precedent in this module).
+            server_label = tool.server_label if tool is not None else server_key
+            self.app.notify(
+                _toast(f"Test already running for {tool_name} ({server_label})."),
+                severity="warning",
+            )
+            return
+        self._tool_test_in_flight.add(key)
         self.run_worker(
-            self._run_tool_test(tool_id, dict(event.arguments)),
+            self._run_tool_test(server_key, tool_name, dict(event.arguments)),
             group="mcp-tool-test",
             exclusive=False,
         )
 
-    async def _run_tool_test(self, tool_id: str, arguments: dict[str, Any]) -> None:
+    async def _run_tool_test(
+        self, server_key: str, tool_name: str, arguments: dict[str, Any]
+    ) -> None:
         """Run one `test_hub_tool()` call and report the outcome.
 
         The WHOLE body is wrapped in `try/except Exception` (not just the
         service call) -- Textual 8.2.7's `run_worker()` defaults to
-        `exit_on_error=True`, so ANY uncaught exception here (a malformed
-        `tool_id`, a missing service, a `json.dumps` surprise) would panic
-        the whole app rather than just failing this one tool test. T3's
-        `test_hub_tool()` itself already records the attempt to the
-        execution log -- nothing here duplicates that, this only renders
-        the outcome and measures wall-clock duration for display.
+        `exit_on_error=True`, so ANY uncaught exception here (a missing
+        service, a `json.dumps` surprise) would panic the whole app rather
+        than just failing this one tool test. T3's `test_hub_tool()` itself
+        already records the attempt to the execution log -- nothing here
+        duplicates that, this only renders the outcome and measures
+        wall-clock duration for display.
 
         The success-path result-formatting step (`redact_mapping()` then
         `json.dumps(..., default=str)` or `str(result)`) gets its own
@@ -1327,15 +2116,12 @@ class MCPWorkbench(Container):
                 service = self._service()
                 if service is None:
                     raise RuntimeError("MCP control-plane service is unavailable.")
-                server_key, _, tool_name = tool_id.partition("::")
-                if not server_key or not tool_name:
-                    raise RuntimeError(f"Malformed tool id: {tool_id!r}")
                 result = await service.test_hub_tool(server_key, tool_name, arguments)
             except Exception as exc:
                 duration_ms = int((time.monotonic() - started) * 1000)
                 self._show_tool_test_result(
-                    tool_id=tool_id, ok=False, text=_safe_exception_text(exc),
-                    duration_ms=duration_ms,
+                    server_key=server_key, tool_name=tool_name, ok=False,
+                    text=_safe_exception_text(exc), duration_ms=duration_ms,
                 )
                 return
             duration_ms = int((time.monotonic() - started) * 1000)
@@ -1346,22 +2132,24 @@ class MCPWorkbench(Container):
                     excerpt = str(result)[:500]
             except Exception as exc:
                 self._show_tool_test_result(
-                    tool_id=tool_id, ok=False, text=_safe_exception_text(exc),
-                    duration_ms=duration_ms,
+                    server_key=server_key, tool_name=tool_name, ok=False,
+                    text=_safe_exception_text(exc), duration_ms=duration_ms,
                 )
                 return
             self._show_tool_test_result(
-                tool_id=tool_id, ok=True, text=excerpt, duration_ms=duration_ms
+                server_key=server_key, tool_name=tool_name, ok=True,
+                text=excerpt, duration_ms=duration_ms,
             )
         finally:
-            self._tool_test_in_flight.discard(tool_id)
+            self._tool_test_in_flight.discard((server_key, tool_name))
 
     def _show_tool_test_result(
-        self, *, tool_id: str, ok: bool, text: str, duration_ms: int
+        self, *, server_key: str, tool_name: str, ok: bool, text: str, duration_ms: int
     ) -> None:
         try:
             self.query_one(MCPInspector).show_tool_result(
-                tool_id=tool_id, ok=ok, text=text, duration_ms=duration_ms
+                server_key=server_key, tool_name=tool_name, ok=ok, text=text,
+                duration_ms=duration_ms,
             )
         except Exception as exc:
             logger.warning(f"MCP tool test result render failed: {exc}")

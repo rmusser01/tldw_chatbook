@@ -12,6 +12,7 @@ from textual.widgets import Button, Collapsible, Input, Select, Static, TextArea
 import tldw_chatbook
 import tldw_chatbook.UI.MCP_Modules.mcp_inspector as mcp_inspector_module
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.MCP.readiness import (
     REASON_LABELS,
     STATE_CSS_CLASSES,
@@ -84,6 +85,9 @@ class InspectorApp(App):
         self.events.append(event)
 
     def on_mcp_inspector_tool_test_requested(self, event) -> None:
+        self.events.append(event)
+
+    def on_mcp_inspector_reallow_requested(self, event) -> None:
         self.events.append(event)
 
 
@@ -931,7 +935,7 @@ async def test_show_tool_non_executable_shows_phase4_note_not_test_button():
         )
         await pilot.pause()
         note = app.query_one("#mcp-inspector-tool-phase-note", Static)
-        assert str(note.renderable) == "Testing server-source tools arrives in Phase 4."
+        assert str(note.renderable) == "Testing server-source tools isn't available yet."
         assert not list(app.query("#mcp-inspector-test-tool"))
 
 
@@ -998,7 +1002,8 @@ async def test_test_run_posts_tool_test_requested_with_collected_arguments():
         await pilot.pause()
         events = [e for e in app.events if isinstance(e, MCPInspector.ToolTestRequested)]
         assert len(events) == 1
-        assert events[0].tool_id == tool.tool_id
+        assert events[0].server_key == tool.server_key
+        assert events[0].tool_name == tool.name
         assert events[0].arguments == {"query": "hello"}
         assert app.query_one("#mcp-inspector-test-run", Button).disabled is True
 
@@ -1054,7 +1059,8 @@ async def test_show_tool_result_ok_renders_status_line_and_reenables_run():
         await pilot.click("#mcp-inspector-test-run")
         await pilot.pause()
         inspector.show_tool_result(
-            tool_id=tool.tool_id, ok=True, text='{"ok": true}', duration_ms=123
+            server_key=tool.server_key, tool_name=tool.name, ok=True,
+            text='{"ok": true}', duration_ms=123,
         )
         await pilot.pause()
         result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
@@ -1073,7 +1079,10 @@ async def test_show_tool_result_failed_renders_status_line():
         await pilot.pause()
         await pilot.click("#mcp-inspector-test-tool")
         await pilot.pause()
-        inspector.show_tool_result(tool_id=tool.tool_id, ok=False, text="boom", duration_ms=45)
+        inspector.show_tool_result(
+            server_key=tool.server_key, tool_name=tool.name, ok=False,
+            text="boom", duration_ms=45,
+        )
         await pilot.pause()
         result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
         assert result.startswith("Failed · 45ms")
@@ -1098,9 +1107,10 @@ async def test_show_tool_result_for_a_different_tool_is_dropped():
         await pilot.pause()
         assert run_button.disabled is True
 
-        # Tool A's late result arrives under B's tool_id mismatch.
+        # Tool A's late result arrives under B's server_key/tool_name mismatch.
         inspector.show_tool_result(
-            tool_id="local:docs::search", ok=True, text="A's payload", duration_ms=10
+            server_key="local:docs", tool_name="search", ok=True,
+            text="A's payload", duration_ms=10,
         )
         await pilot.pause()
 
@@ -1108,6 +1118,57 @@ async def test_show_tool_result_for_a_different_tool_is_dropped():
         assert "A's payload" not in result
         assert result == ""
         assert run_button.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_same_name_different_server_is_dropped():
+    """I1 (both fields): a result whose `tool_name` matches the currently
+    selected tool but whose `server_key` does NOT must still be dropped --
+    the stale-drop compare is a (server_key, tool_name) pair, not just the
+    name."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool(name="search", server_key="local:docs")
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+
+        inspector.show_tool_result(
+            server_key="local:notes", tool_name="search", ok=True,
+            text="wrong server's payload", duration_ms=5,
+        )
+        await pilot.pause()
+
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert "wrong server's payload" not in result
+        assert result == ""
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_same_tool_is_not_dropped():
+    """A result that matches BOTH the current tool's server_key and
+    tool_name (e.g. a same-tool re-run) must still render -- the stale-drop
+    guard must not become a false-positive drop for the tool it's actually
+    for."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool(name="search", server_key="local:docs")
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+
+        inspector.show_tool_result(
+            server_key="local:docs", tool_name="search", ok=True,
+            text="matching payload", duration_ms=7,
+        )
+        await pilot.pause()
+
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert "matching payload" in result
 
 
 @pytest.mark.asyncio
@@ -1124,3 +1185,572 @@ async def test_close_button_removes_test_panel_and_reenables_test_tool_button():
         assert not list(app.query("#mcp-inspector-test-run"))
         assert not list(app.query("#mcp-inspector-test-result"))
         assert app.query_one("#mcp-inspector-test-tool", Button).disabled is False
+
+
+# -- Task 5: gate-aware Test Tool -- arm-then-confirm mechanics --------------
+#
+# `require_confirm()`/`disarm_test_run()`/`test_run_armed` are the inspector-
+# owned half of the arm-then-confirm contract (mirrors mcp_servers_mode.py's
+# `_delete_armed`/`disarm_delete()`) -- the WORKBENCH decides deny/ask/allow
+# via `gate_tool_test()` (Tests/UI/test_mcp_workbench.py covers that
+# end-to-end), but the button relabel/tooltip/notice mechanics and every
+# disarm trigger belong to the inspector alone and are unit-tested directly
+# here, with no service/workbench involved.
+
+
+@pytest.mark.asyncio
+async def test_require_confirm_arms_button_with_confirm_label_and_tooltip():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+
+        inspector.require_confirm(None)
+        await pilot.pause()
+
+        run_button = app.query_one("#mcp-inspector-test-run", Button)
+        assert str(run_button.label) == "Confirm run"
+        assert run_button.variant == "primary"
+        assert run_button.tooltip == "Ask is set for this tool — press again to run once."
+        assert run_button.disabled is False
+        assert inspector.test_run_armed is True
+        # UX batch item 6: the generic armed explainer is ALWAYS shown once
+        # armed, independent of any specific `notice`.
+        hint = app.query_one("#mcp-inspector-test-armed-hint", Static)
+        assert (
+            str(hint.renderable)
+            == "This tool is set to Ask — press again to run; anything else cancels."
+        )
+
+
+@pytest.mark.asyncio
+async def test_require_confirm_with_notice_shows_arm_notice_text():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+
+        inspector.require_confirm(
+            "Definition changed since you allowed it — review in Permissions."
+        )
+        await pilot.pause()
+
+        notice = app.query_one("#mcp-inspector-test-arm-notice", Static)
+        assert (
+            str(notice.renderable)
+            == "Definition changed since you allowed it — review in Permissions."
+        )
+        # UX batch item 6: both the specific notice AND the generic
+        # explainer render together.
+        hint = app.query_one("#mcp-inspector-test-armed-hint", Static)
+        assert (
+            str(hint.renderable)
+            == "This tool is set to Ask — press again to run; anything else cancels."
+        )
+
+
+@pytest.mark.asyncio
+async def test_require_confirm_without_notice_leaves_arm_notice_blank():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+
+        inspector.require_confirm(None)
+        await pilot.pause()
+
+        notice = app.query_one("#mcp-inspector-test-arm-notice", Static)
+        assert str(notice.renderable) == ""
+
+
+@pytest.mark.asyncio
+async def test_disarm_test_run_reverts_button_and_clears_notice():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.require_confirm("Definition changed since you allowed it — review in Permissions.")
+        await pilot.pause()
+
+        inspector.disarm_test_run()
+        await pilot.pause()
+
+        run_button = app.query_one("#mcp-inspector-test-run", Button)
+        assert str(run_button.label) == "Run"
+        assert run_button.variant == "default"
+        assert run_button.tooltip == "Send these arguments to the tool and show the result."
+        assert inspector.test_run_armed is False
+        notice = app.query_one("#mcp-inspector-test-arm-notice", Static)
+        assert str(notice.renderable) == ""
+        hint = app.query_one("#mcp-inspector-test-armed-hint", Static)
+        assert str(hint.renderable) == ""
+
+
+@pytest.mark.asyncio
+async def test_disarm_test_run_is_a_no_op_when_unarmed():
+    """A stray disarm call (e.g. the workbench's allow-branch fallthrough)
+    must not raise or otherwise disturb an already-unarmed panel."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+
+        inspector.disarm_test_run()  # never armed
+        await pilot.pause()
+
+        run_button = app.query_one("#mcp-inspector-test-run", Button)
+        assert str(run_button.label) == "Run"
+        assert inspector.test_run_armed is False
+
+
+@pytest.mark.asyncio
+async def test_switching_tool_disarms_pending_confirm():
+    """Tool switch is an "other interaction" per the arm-then-confirm
+    contract -- mirrors `_delete_armed`'s reset in `show_detail()`."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool(name="search"))
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.require_confirm(None)
+        await pilot.pause()
+        assert inspector.test_run_armed is True
+
+        await inspector.show_tool(_tool(name="fetch", input_schema=None))
+        await pilot.pause()
+
+        assert inspector.test_run_armed is False
+
+
+@pytest.mark.asyncio
+async def test_clearing_tool_selection_disarms_pending_confirm():
+    """Mode switch routes through `show_tool(None)` (see
+    `MCPWorkbench._clear_tool_view()`) -- covered here at the inspector
+    level without needing the workbench."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.require_confirm(None)
+        await pilot.pause()
+        assert inspector.test_run_armed is True
+
+        await inspector.show_tool(None)
+        await pilot.pause()
+
+        assert inspector.test_run_armed is False
+
+
+@pytest.mark.asyncio
+async def test_close_button_disarms_pending_confirm():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.require_confirm(None)
+        await pilot.pause()
+        assert inspector.test_run_armed is True
+
+        await pilot.click("#mcp-inspector-test-close")
+        await pilot.pause()
+
+        assert inspector.test_run_armed is False
+
+
+@pytest.mark.asyncio
+async def test_confirming_press_reposts_tool_test_requested():
+    """The confirming press is a plain second Run/Confirm-run click -- the
+    inspector doesn't special-case posting based on armed state, it always
+    re-collects arguments and posts `ToolTestRequested` (the workbench is
+    what decides whether a given press is the confirm)."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        app.query_one("#mcp-schema-field-0", Input).value = "hello"
+        inspector.require_confirm(None)
+        await pilot.pause()
+
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+
+        events = [e for e in app.events if isinstance(e, MCPInspector.ToolTestRequested)]
+        assert len(events) == 1
+        assert events[0].server_key == tool.server_key
+        assert events[0].tool_name == tool.name
+        assert events[0].arguments == {"query": "hello"}
+
+
+# -- Task 7: permission explanation + re-allow -------------------------------
+
+
+@pytest.mark.asyncio
+async def test_show_tool_with_effective_appends_permission_block():
+    """`show_tool(tool, effective=...)` (Tools-mode's own call site) appends
+    the permission explanation below the existing tool detail -- exact-copy
+    origin sentence for a plain server-default inheritance, no notice, no
+    Re-allow button."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(
+            _tool(), effective=EffectiveToolState(state="ask", origin="server_default")
+        )
+        await pilot.pause()
+        container = app.query_one("#mcp-inspector-permission")
+        assert container.display is True
+        origin = str(app.query_one("#mcp-inspector-permission-origin", Static).renderable)
+        assert origin == "Inherited from the server default."
+        assert not list(app.query("#mcp-inspector-reallow"))
+        assert not list(app.query("#mcp-inspector-permission-notice"))
+
+
+@pytest.mark.asyncio
+async def test_show_tool_without_effective_hides_permission_block():
+    """The plain T6 call shape (no `effective` keyword) must not show a
+    stale/empty permission block -- backward compatible with every
+    pre-Task-7 `show_tool()` call site."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())
+        await pilot.pause()
+        container = app.query_one("#mcp-inspector-permission")
+        assert container.display is False
+
+
+@pytest.mark.asyncio
+async def test_show_tool_none_hides_permission_block_too():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(
+            _tool(), effective=EffectiveToolState(state="allow", origin="tool_override")
+        )
+        await pilot.pause()
+        await inspector.show_tool(None)
+        await pilot.pause()
+        container = app.query_one("#mcp-inspector-permission")
+        assert container.display is False
+        assert not list(app.query("#mcp-inspector-permission-origin"))
+
+
+@pytest.mark.asyncio
+async def test_show_permission_origin_sentence_tool_override():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_permission(
+            _tool(), EffectiveToolState(state="allow", origin="tool_override")
+        )
+        await pilot.pause()
+        origin = str(app.query_one("#mcp-inspector-permission-origin", Static).renderable)
+        assert origin == "From this tool's override."
+
+
+@pytest.mark.asyncio
+async def test_show_permission_origin_sentence_server_default():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_permission(
+            _tool(), EffectiveToolState(state="ask", origin="server_default")
+        )
+        await pilot.pause()
+        origin = str(app.query_one("#mcp-inspector-permission-origin", Static).renderable)
+        assert origin == "Inherited from the server default."
+
+
+@pytest.mark.asyncio
+async def test_show_permission_origin_sentence_global_default():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_permission(
+            _tool(), EffectiveToolState(state="ask", origin="global_default")
+        )
+        await pilot.pause()
+        origin = str(app.query_one("#mcp-inspector-permission-origin", Static).renderable)
+        assert origin == "Inherited from the global default."
+
+
+@pytest.mark.asyncio
+async def test_show_permission_origin_sentence_falls_back_for_unrecognized_origin():
+    """Minor 6: an origin `_ORIGIN_SENTENCES` doesn't recognize (e.g.
+    "gate_error" -- `_resolve_test_gate()`'s synthetic fail-closed origin
+    when a gate check raises) used to render a blank line via
+    `.get(effective.origin, "")` -- a broken-looking UI, not an honest
+    "we don't know why" -- instead of a real fallback sentence."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_permission(
+            _tool(), EffectiveToolState(state="deny", origin="gate_error")
+        )
+        await pilot.pause()
+        origin = str(app.query_one("#mcp-inspector-permission-origin", Static).renderable)
+        assert origin == "Permission state could not be resolved."
+
+
+@pytest.mark.asyncio
+async def test_show_permission_config_changed_shows_notice_and_reallow_button():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_permission(
+            _tool(),
+            EffectiveToolState(
+                state="ask", origin="tool_override", config_changed=True
+            ),
+        )
+        await pilot.pause()
+        notice = str(app.query_one("#mcp-inspector-permission-notice", Static).renderable)
+        assert notice == "Definition changed since you allowed it."
+        reallow = app.query_one("#mcp-inspector-reallow", Button)
+        assert reallow.tooltip == "Store the new definition hash and allow again."
+
+
+@pytest.mark.asyncio
+async def test_show_permission_risk_floored_shows_notice_without_reallow_button():
+    """Re-allow only ever appears for a `config_changed` downgrade -- a
+    risk-floored inherited "allow" has nothing to re-allow (there's no
+    tool-level override to refresh the hash on)."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_permission(
+            _tool(),
+            EffectiveToolState(
+                state="ask", origin="server_default", risk_floored=True
+            ),
+        )
+        await pilot.pause()
+        notice = str(app.query_one("#mcp-inspector-permission-notice", Static).renderable)
+        assert notice == "High-risk tool — asks even though the inherited default is Allow."
+        assert not list(app.query("#mcp-inspector-reallow"))
+
+
+@pytest.mark.asyncio
+async def test_show_permission_plain_state_shows_neither_notice_nor_button():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_permission(
+            _tool(), EffectiveToolState(state="allow", origin="tool_override")
+        )
+        await pilot.pause()
+        assert not list(app.query("#mcp-inspector-permission-notice"))
+        assert not list(app.query("#mcp-inspector-reallow"))
+
+
+@pytest.mark.asyncio
+async def test_reallow_button_press_posts_reallow_requested_with_server_key_and_tool_name():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool(server_key="local:docs", name="search")
+        await inspector.show_permission(
+            tool, EffectiveToolState(state="ask", origin="tool_override", config_changed=True)
+        )
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-reallow")
+        await pilot.pause()
+        events = [e for e in app.events if isinstance(e, MCPInspector.ReallowRequested)]
+        assert len(events) == 1
+        assert events[0].server_key == "local:docs"
+        assert events[0].tool_name == "search"
+
+
+@pytest.mark.asyncio
+async def test_second_show_permission_back_to_back_does_not_duplicate_ids():
+    """Mandatory regression: selecting two matrix tool rows in a row must
+    not raise DuplicateIds -- mirrors
+    `test_second_show_tool_back_to_back_does_not_duplicate_ids`."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_permission(
+            _tool(name="search"), EffectiveToolState(state="allow", origin="tool_override")
+        )
+        # No pilot.pause() here on purpose.
+        await inspector.show_permission(
+            _tool(name="fetch"), EffectiveToolState(state="ask", origin="global_default")
+        )
+        await pilot.pause()
+        origins = list(app.query("#mcp-inspector-permission-origin"))
+        assert len(origins) == 1
+        assert str(origins[0].renderable) == "Inherited from the global default."
+
+
+# -- Phase 4 UX batch item 7: neutral "nothing selected" header --------------
+
+
+@pytest.mark.asyncio
+async def test_no_selection_header_reads_select_an_item_to_inspect():
+    """Item 7: the header used to say "Select a server to see its
+    readiness." even for a Tools/Permissions-mode selection -- neutral
+    copy that matches the "No {noun} selected."/"Select {noun} to {verb}."
+    convention used elsewhere on this screen."""
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        inspector = app.query_one(MCPInspector)
+        badge = str(app.query_one("#mcp-inspector-state", Static).renderable)
+        assert badge == "Select an item to inspect."
+
+        await inspector.update_readiness(_stale_snap())
+        await pilot.pause()
+        await inspector.update_readiness(None)
+        await pilot.pause()
+        badge = str(app.query_one("#mcp-inspector-state", Static).renderable)
+        assert badge == "Select an item to inspect."
+
+
+# -- Phase 4 UX batch item 8: tool identity above the permission block -------
+
+
+@pytest.mark.asyncio
+async def test_show_permission_standalone_renders_tool_identity_first():
+    """Item 8: the standalone permission block (Permissions-mode matrix row
+    selection) never mounts `#mcp-inspector-tool` at all -- without its own
+    identity line, the explanation below it had no indication of WHICH tool
+    it describes."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_permission(
+            _tool(name="search", server_label="docs"),
+            EffectiveToolState(state="allow", origin="tool_override"),
+        )
+        await pilot.pause()
+        identity = str(app.query_one("#mcp-inspector-permission-tool", Static).renderable)
+        assert identity == "search — docs"
+
+
+@pytest.mark.asyncio
+async def test_show_tool_with_effective_also_renders_tool_identity():
+    """Item 8 applies uniformly to `_render_permission_container()` --
+    Tools-mode's own combined call (`show_tool(tool, effective=...)`) gets
+    the same identity line even though `#mcp-inspector-tool` already shows
+    one above it."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(
+            _tool(name="fetch", server_label="docs"),
+            effective=EffectiveToolState(state="ask", origin="server_default"),
+        )
+        await pilot.pause()
+        identity = str(app.query_one("#mcp-inspector-permission-tool", Static).renderable)
+        assert identity == "fetch — docs"
+
+
+# -- Phase 4 UX batch items 5 & 13: blocked status + duration formatting -----
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_sub_second_uses_ms_granularity():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.show_tool_result(
+            server_key=tool.server_key, tool_name=tool.name, ok=True,
+            text="{}", duration_ms=999,
+        )
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert result.startswith("OK · 999ms")
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_seconds_tier_uses_one_decimal():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.show_tool_result(
+            server_key=tool.server_key, tool_name=tool.name, ok=False,
+            text="boom", duration_ms=45_300,
+        )
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert result.startswith("Failed · 45.3s")
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_minute_tier_uses_minutes_and_seconds():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.show_tool_result(
+            server_key=tool.server_key, tool_name=tool.name, ok=True,
+            text="{}", duration_ms=125_000,
+        )
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert result.startswith("OK · 2m 5s")
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_blocked_renders_not_run_status_line():
+    """Item 5: the deny-gate's synthetic result must read "Blocked · not
+    run", not "Failed · 0ms" -- the call never reached the tool at all, so
+    the ok/duration_ms failure template would misleadingly imply an
+    attempted, timed run."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.show_tool_result(
+            server_key=tool.server_key, tool_name=tool.name, ok=False,
+            text="Blocked — this tool is set to Off in Permissions.", duration_ms=0,
+            blocked=True,
+        )
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert result.startswith("Blocked · not run")
+        assert "Failed" not in result.split("\n", 1)[0]

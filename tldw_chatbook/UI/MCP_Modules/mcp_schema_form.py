@@ -190,8 +190,10 @@ class MCPSchemaForm(Vertical):
         Raises:
             ValueError: Raw mode -- invalid JSON, or valid JSON that isn't
                 a JSON object. Form mode -- a required field with no value
-                (`"<field>: required."`), or a number/integer field whose
-                text can't be coerced (`"<field>: must be a number."`).
+                (`"<field>: required."`), a number field whose text can't
+                be coerced (`"<field>: must be a number."`), or an integer
+                field whose text can't be coerced
+                (`"<field>: must be a whole number."`).
         """
         if self.is_raw_mode:
             return self._collect_raw()
@@ -227,7 +229,7 @@ class MCPSchemaForm(Vertical):
                 try:
                     result[schema_field.name] = int(text_value)
                 except ValueError:
-                    raise ValueError(f"{schema_field.name}: must be a number.")
+                    raise ValueError(f"{schema_field.name}: must be a whole number.")
             else:
                 result[schema_field.name] = raw_value
         return result
