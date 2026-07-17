@@ -5457,6 +5457,7 @@ class AuditFindingsHubService(AuditHubService):
             selected_source="server", selected_active_server_id="main"
         )
         self.advanced_fetch_calls = 0
+        self.governance_fetch_calls = 0
         self._findings_items = (
             [
                 {
@@ -5479,6 +5480,12 @@ class AuditFindingsHubService(AuditHubService):
             return {
                 "server_id": "main",
                 "governance_audit_findings": {"items": list(self._findings_items)},
+            }
+        elif effective_section == "governance":
+            self.governance_fetch_calls += 1
+            return {
+                "server_id": "main",
+                "permission_profiles": [],
             }
         return await super().load_section(section)
 
@@ -5745,9 +5752,10 @@ async def test_finding_open_credentials_action_selects_server_and_notifies_hones
 async def test_finding_refresh_discovery_action_invalidates_caches_resyncs_and_toasts():
     """REFRESH_DISCOVERY on a `server:` key invalidates BOTH the findings
     (T8) and governance-profiles (T11) `(source, target)` caches and runs a
-    full resync -- `service.advanced_fetch_calls` (the findings fetch) goes
-    from 1 (the mount-time sync) to 2 (this resync), proving the cache
-    key was actually reset rather than reused."""
+    full resync -- `service.advanced_fetch_calls` (the findings fetch) and
+    `service.governance_fetch_calls` (the governance fetch) both go from 1
+    (the mount-time sync) to 2 (this resync), proving both cache keys were
+    actually reset rather than reused."""
     app = AuditFindingsApp(
         findings_items=[
             {
@@ -5762,6 +5770,7 @@ async def test_finding_refresh_discovery_action_invalidates_caches_resyncs_and_t
         workbench = app.query_one(MCPWorkbench)
         service = app.unified_mcp_service
         assert service.advanced_fetch_calls == 1
+        assert service.governance_fetch_calls == 1
         workbench.set_mode("audit")
         await pilot.pause()
         await pilot.click("#mcp-audit-subview-findings")
@@ -5772,6 +5781,7 @@ async def test_finding_refresh_discovery_action_invalidates_caches_resyncs_and_t
         await pilot.click("#mcp-finding-action-refresh_discovery")
         await pilot.pause()
         assert service.advanced_fetch_calls == 2
+        assert service.governance_fetch_calls == 2
         assert notifications and notifications[-1] == (
             "Server discovery refreshed.",
             "information",

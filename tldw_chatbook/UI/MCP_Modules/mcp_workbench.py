@@ -1840,8 +1840,10 @@ class MCPWorkbench(Container):
         self._selected_server_key = None
         # T6: switching source invalidates any Tools-mode selection the
         # inspector was showing (the tool belonged to the OTHER source's
-        # catalog).
-        await self.query_one(MCPInspector).show_tool(None)
+        # catalog), and also clears the finding detail pane (same reasoning).
+        inspector = self.query_one(MCPInspector)
+        await inspector.show_tool(None)
+        await inspector.show_finding(None)
         self._snapshots = await self._collect_snapshots()
         await self._sync_children()
         self._rebind_inspector_advanced_context(service)
@@ -1980,12 +1982,14 @@ class MCPWorkbench(Container):
             event.action is HubAction.REFRESH_DISCOVERY
             and event.server_key
             and event.server_key.startswith("server:")
+            and self._source == "server"
         ):
             await self._refresh_server_discovery()
         elif (
             event.action is HubAction.OPEN_CREDENTIALS
             and event.server_key
             and event.server_key.startswith("server:")
+            and self._source == "server"
         ):
             self._selected_server_key = event.server_key
             self.set_mode("servers")
