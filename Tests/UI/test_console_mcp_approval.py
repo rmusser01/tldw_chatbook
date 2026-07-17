@@ -111,6 +111,49 @@ def _sample_calls() -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# _summarize_arguments -- redaction parity (Minor 4)
+# ---------------------------------------------------------------------------
+
+
+def test_summarize_arguments_redacts_secret_looking_values():
+    """Minor 4: the approval card must apply the same `redact_mapping`
+    boundary as every other MCP display/log surface -- pre-fix, a raw
+    `api_key` argument value rendered verbatim on the card."""
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import _summarize_arguments
+
+    text = _summarize_arguments({"api_key": "sk-super-secret-value", "q": "hello"})
+
+    assert "sk-super-secret-value" not in text
+    assert "***" in text
+    assert '"q":"hello"' in text
+
+
+@pytest.mark.asyncio
+async def test_set_batch_redacts_secret_arguments_in_rendered_row():
+    """End-to-end through the real widget row, not just the helper."""
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        calls = [
+            {
+                "llm_name": "mcp__srv__auth",
+                "server_key": "local:srv",
+                "tool_name": "auth",
+                "server_label": "Srv",
+                "arguments": {"api_key": "sk-super-secret-value"},
+                "reason": "ask",
+            }
+        ]
+        card.set_batch(calls, timeout_seconds=45.0)
+        await pilot.pause()
+
+        row = app.query_one(".approval-row-args", Static)
+        rendered = _text(row)
+        assert "sk-super-secret-value" not in rendered
+        assert "***" in rendered
+
+
+# ---------------------------------------------------------------------------
 # ChatApprovalCard.set_batch / ApprovalDecided
 # ---------------------------------------------------------------------------
 

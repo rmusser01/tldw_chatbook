@@ -29,6 +29,8 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import Button, Select, Static
 
+from tldw_chatbook.MCP.redaction import redact_mapping
+
 #: Per-row decision options, in display order. Values are the exact
 #: decision strings `MCPToolProvider._apply_verdict` consumes.
 _DECISION_OPTIONS: list[tuple[str, str]] = [
@@ -83,9 +85,18 @@ def _format_row_header(entry: Mapping[str, Any]) -> str:
 
 
 def _summarize_arguments(arguments: Mapping[str, Any] | None) -> str:
-    """Return a compact, ``markup=False``-safe argument summary, capped at 80 chars."""
+    """Return a compact, ``markup=False``-safe argument summary, capped at 80 chars.
+
+    Secret-looking values (``api_key``, ``token``, ``password``, ...) are
+    redacted before rendering -- redaction parity with every other MCP
+    display/log boundary (see ``tldw_chatbook.MCP.redaction``'s module
+    docstring); the approval card is the one place a raw secret argument
+    was still reaching the screen unredacted.
+    """
     try:
-        text = json.dumps(dict(arguments or {}), default=str, separators=(",", ":"))
+        text = json.dumps(
+            redact_mapping(dict(arguments or {})), default=str, separators=(",", ":"),
+        )
     except Exception:  # noqa: BLE001 -- a non-serializable arg must never crash rendering
         text = str(arguments or {})
     if len(text) > _ARGS_SUMMARY_LIMIT:
