@@ -252,6 +252,24 @@ class MCPAuditMode(Vertical):
             super().__init__()
             self.index = index
 
+    class SubViewChanged(Message, namespace="mcp_audit_mode"):
+        """Posted when the sub-view toggle switches between Executions and
+        Findings (Critical fix, MCP Hub Phase 5 T8 review). Flipping
+        `self._sub_view` and re-rendering via `_apply_subview_display()`
+        alone never told the workbench anything changed -- a still-mounted
+        `#mcp-inspector-audit` detail (WITH its own live "Open tool"/
+        "Adjust permission" drill buttons, from a prior Executions-row
+        selection) survived a toggle to Findings, and selecting a finding
+        there then left BOTH `#mcp-inspector-audit` and `#mcp-inspector-
+        finding` visible at once (and the same in reverse). `sub_view` is
+        the NEW value ("executions" or "findings") -- the one now visible
+        -- so the workbench's handler knows which of the two inspector
+        panels is now stale and must be cleared."""
+
+        def __init__(self, sub_view: str) -> None:
+            super().__init__()
+            self.sub_view = sub_view
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._entries: list[dict[str, Any]] = []
@@ -524,10 +542,12 @@ class MCPAuditMode(Vertical):
             event.stop()
             self._sub_view = "executions"
             self._apply_subview_display()
+            self.post_message(self.SubViewChanged(self._sub_view))
         elif event.button.id == "mcp-audit-subview-findings":
             event.stop()
             self._sub_view = "findings"
             self._apply_subview_display()
+            self.post_message(self.SubViewChanged(self._sub_view))
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id != "mcp-audit-filter-text":

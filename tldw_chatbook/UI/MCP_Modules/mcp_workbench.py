@@ -2039,6 +2039,36 @@ class MCPWorkbench(Container):
         )
         await self.query_one(MCPInspector).show_finding(finding)
 
+    async def on_mcp_audit_mode_sub_view_changed(
+        self, event: MCPAuditMode.SubViewChanged
+    ) -> None:
+        """Clear the now-inactive Audit sub-view pane's inspector detail
+        (Critical fix, MCP Hub Phase 5 T8 review). `MCPAuditMode` itself
+        only flips which of its two panes is visible on a toggle press --
+        it never touches `MCPInspector` at all, so a prior Executions-row
+        selection's `#mcp-inspector-audit` (or a prior Findings-row
+        selection's `#mcp-inspector-finding`) stayed mounted and visible
+        after switching sub-view, and selecting a row in the newly-visible
+        pane then left BOTH detail panels stacked on screen at once.
+        `event.sub_view` is the pane now visible, so this clears the OTHER
+        one.
+
+        Sequential awaits directly in this handler, not a worker dispatch
+        (T7 lesson, see `_open_audit_tool()`/`_open_audit_permission()`
+        above): those two methods must share the "mcp-tool-clear" exclusive
+        worker group with `set_mode()`'s own clear, so they re-do the clear
+        themselves rather than trust a same-group predecessor to have run
+        it. There is no such predecessor here -- this handler's own awaits
+        are the only write to the inspector this pass, so a plain
+        sequential await is enough for the clear to actually execute.
+        """
+        event.stop()
+        inspector = self.query_one(MCPInspector)
+        if event.sub_view == "findings":
+            await inspector.show_audit_entry(None)
+        else:
+            await inspector.show_finding(None)
+
     async def on_mcp_inspector_audit_open_tool_requested(
         self, event: MCPInspector.AuditOpenToolRequested
     ) -> None:

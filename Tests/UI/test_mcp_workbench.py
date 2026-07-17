@@ -5492,3 +5492,110 @@ async def test_audit_adjust_permission_missing_tool_notifies_instead_of_crashing
         message, severity = notifications[-1]
         assert message == "local:docs::long_gone: tool no longer available."
         assert severity == "warning"
+
+
+# -- Critical fix (T8 review): sub-view toggle must clear the OTHER pane's --
+# inspector detail. `MCPAuditMode.on_button_pressed()` used to only flip
+# `self._sub_view` and re-render via `_apply_subview_display()` -- no
+# message ever reached the workbench, so a still-mounted `#mcp-inspector-
+# audit` (Executions selection, WITH its own live "Open tool"/"Adjust
+# permission" drill buttons) or `#mcp-inspector-finding` (Findings
+# selection) survived a toggle to the other sub-view. Selecting a row in
+# the newly-visible pane then left BOTH detail panels mounted and visible
+# at once. `MCPAuditMode.SubViewChanged` + `MCPWorkbench.on_mcp_audit_
+# mode_sub_view_changed()` close that gap.
+
+
+@pytest.mark.asyncio
+async def test_toggling_to_findings_subview_clears_stale_audit_entry_detail():
+    app = AuditFindingsApp([_audit_record(server_key="local:docs", tool_name="search")])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await _select_audit_mode_row(app, pilot, 0)
+        assert app.query_one("#mcp-inspector-audit").display is True
+
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert app.query_one("#mcp-inspector-audit").display is False
+        # The stale detail's own live drill buttons must not linger either
+        # -- same hazard `show_audit_entry(None)` already fixes for the
+        # Open-tool/Adjust-permission drill-through paths.
+        assert not list(app.query("#mcp-audit-open-tool"))
+        assert not list(app.query("#mcp-audit-adjust-permission"))
+
+
+@pytest.mark.asyncio
+async def test_toggling_to_executions_subview_clears_stale_finding_detail():
+    app = AuditFindingsApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+        await _select_findings_row(app, pilot, 0)
+        assert app.query_one("#mcp-inspector-finding").display is True
+
+        await pilot.click("#mcp-audit-subview-executions")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert app.query_one("#mcp-inspector-finding").display is False
+
+
+@pytest.mark.asyncio
+async def test_both_sub_view_selections_do_not_stack_visible_detail_panels():
+    """Reproduces the exact repro in the review finding: select an
+    execution row, toggle to Findings, select a finding row -- both
+    `#mcp-inspector-audit` and `#mcp-inspector-finding` must never be
+    visible at the same time."""
+    app = AuditFindingsApp([_audit_record(server_key="local:docs", tool_name="search")])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await _select_audit_mode_row(app, pilot, 0)
+        assert app.query_one("#mcp-inspector-audit").display is True
+
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        await _select_findings_row(app, pilot, 0)
+
+        assert app.query_one("#mcp-inspector-finding").display is True
+        assert app.query_one("#mcp-inspector-audit").display is False
+
+
+@pytest.mark.asyncio
+async def test_subview_selection_persists_across_reload_resync():
+    """Minor (cheap regression guard): `_sync_audit_mode()` re-pushes
+    `update_entries()`/`update_findings()` into `MCPAuditMode` on EVERY
+    `_sync_children()` pass (mirrors `_sync_tools_mode()`/`_sync_
+    permissions_mode()`), but neither of those touches `self._sub_view` --
+    a background `reload()` resync must not silently snap the visible
+    sub-view back to Executions."""
+    app = AuditFindingsApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+
+        await workbench.reload()
+        await pilot.pause()
+
+        assert app.query_one("#mcp-audit-findings-view", Vertical).display is True
+        assert app.query_one("#mcp-audit-executions-view", Vertical).display is False
+        assert app.query_one("#mcp-audit-subview-findings", Button).has_class("is-active")
