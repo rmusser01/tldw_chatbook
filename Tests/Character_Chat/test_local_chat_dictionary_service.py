@@ -501,3 +501,124 @@ def test_attach_conflict_on_stale_version(dictionary_db, monkeypatch):
     monkeypatch.setattr(dictionary_db, "update_conversation", _stale)
     with pytest.raises(ConflictError):
         service.attach_to_conversation(d["id"], conv)
+
+
+def _make_dict_with_entries(service, name):
+    created = service.create_dictionary(
+        {"name": name, "entries": [{"pattern": "BP", "replacement": "blood pressure"}]}
+    )
+    return created["id"]
+
+
+def test_attach_to_character_embeds_content_snapshot(dictionary_db):
+    service = LocalChatDictionaryService(dictionary_db)
+    dict_id = _make_dict_with_entries(service, "Slang")
+    char_id = dictionary_db.add_character_card({"name": "Noir"})
+
+    result = service.attach_to_character(dict_id, char_id)
+
+    assert result["dictionary_name"] == "Slang"
+    assert result["character_dictionaries"] == ["Slang"]
+    # The full content snapshot (not just an id) is embedded in extensions.
+    record = dictionary_db.get_character_card_by_id(char_id)
+    blocks = record["extensions"]["chat_dictionaries"]
+    assert len(blocks) == 1
+    assert blocks[0]["name"] == "Slang"
+    assert blocks[0]["entries"], "entries content must be embedded"
+    # Version bumped by the optimistic-locked write.
+    assert record["version"] == 2
+
+
+def test_attach_to_character_is_idempotent_by_name(dictionary_db):
+    service = LocalChatDictionaryService(dictionary_db)
+    dict_id = _make_dict_with_entries(service, "Slang")
+    char_id = dictionary_db.add_character_card({"name": "Noir"})
+
+    service.attach_to_character(dict_id, char_id)
+    result = service.attach_to_character(dict_id, char_id)  # second attach = no-op
+
+    assert result["character_dictionaries"] == ["Slang"]
+    record = dictionary_db.get_character_card_by_id(char_id)
+    assert len(record["extensions"]["chat_dictionaries"]) == 1
+    assert record["version"] == 2  # no extra write on the idempotent re-attach
+
+
+def test_detach_from_character_removes_by_name(dictionary_db):
+    service = LocalChatDictionaryService(dictionary_db)
+    dict_id = _make_dict_with_entries(service, "Slang")
+    char_id = dictionary_db.add_character_card({"name": "Noir"})
+    service.attach_to_character(dict_id, char_id)
+
+    result = service.detach_from_character(char_id, "Slang")
+
+    assert result["character_dictionaries"] == []
+    record = dictionary_db.get_character_card_by_id(char_id)
+    assert record["extensions"].get("chat_dictionaries") == []
+
+
+def test_list_character_dictionaries_summarizes_embedded(dictionary_db):
+    service = LocalChatDictionaryService(dictionary_db)
+    dict_id = _make_dict_with_entries(service, "Slang")
+    char_id = dictionary_db.add_character_card({"name": "Noir"})
+    service.attach_to_character(dict_id, char_id)
+
+    listing = service.list_character_dictionaries(char_id)
+
+    assert listing["dictionaries"] == [{"name": "Slang", "entry_count": 1, "enabled": True}]
+
+
+def test_attach_to_missing_character_raises_value_error(dictionary_db):
+    service = LocalChatDictionaryService(dictionary_db)
+    dict_id = _make_dict_with_entries(service, "Slang")
+    with pytest.raises(ValueError):
+        service.attach_to_character(dict_id, 999999)
+
+
+def test_attach_to_character_raises_conflict_on_stale_version(dictionary_db):
+    service = LocalChatDictionaryService(dictionary_db)
+    dict_id = _make_dict_with_entries(service, "Slang")
+    char_id = dictionary_db.add_character_card({"name": "Noir"})
+    # Bump the character version out from under a captured-stale record.
+    stale = dictionary_db.get_character_card_by_id(char_id)
+    dictionary_db.update_character_card(char_id, {"name": "Noir2"}, expected_version=stale["version"])
+    # Monkeypatch the load to return the stale record so the write uses version 1.
+    service._load_character_or_raise = lambda cid: stale  # type: ignore[assignment]
+    with pytest.raises(ConflictError):
+        service.attach_to_character(dict_id, char_id)
+
+
+def test_detach_and_list_normalize_non_str_embedded_names(dictionary_db):
+    """A hostile/imported card can have extensions.chat_dictionaries[].name as
+    a non-str (e.g. int 123). detach-by-name (UI passes a str) and the list
+    summary must still match/return it as a str -- consistent with the
+    runtime parser (Chat_Dictionary_Lib.load_character_dictionaries, which
+    already does str(name))."""
+    service = LocalChatDictionaryService(dictionary_db)
+    char_id = dictionary_db.add_character_card({"name": "Noir"})
+    record = dictionary_db.get_character_card_by_id(char_id)
+    ext = record["extensions"] if isinstance(record["extensions"], dict) else {}
+    ext["chat_dictionaries"] = [{"name": 123, "entries": []}]
+    dictionary_db.update_character_card(char_id, {"extensions": ext}, expected_version=record["version"])
+
+    listing = service.list_character_dictionaries(char_id)
+    assert listing["dictionaries"][0]["name"] == "123"
+    assert isinstance(listing["dictionaries"][0]["name"], str)
+
+    result = service.detach_from_character(char_id, "123")
+    assert result["character_dictionaries"] == []
+    record = dictionary_db.get_character_card_by_id(char_id)
+    assert record["extensions"].get("chat_dictionaries") == []
+
+
+def test_list_character_dictionaries_entry_count_tolerates_non_list_entries(dictionary_db):
+    """entries can be a malformed non-list (e.g. int) in an imported block;
+    entry_count must degrade to 0 instead of raising TypeError."""
+    service = LocalChatDictionaryService(dictionary_db)
+    char_id = dictionary_db.add_character_card({"name": "Noir"})
+    record = dictionary_db.get_character_card_by_id(char_id)
+    ext = record["extensions"] if isinstance(record["extensions"], dict) else {}
+    ext["chat_dictionaries"] = [{"name": "X", "entries": 5}]
+    dictionary_db.update_character_card(char_id, {"extensions": ext}, expected_version=record["version"])
+
+    listing = service.list_character_dictionaries(char_id)
+    assert listing["dictionaries"] == [{"name": "X", "entry_count": 0, "enabled": True}]

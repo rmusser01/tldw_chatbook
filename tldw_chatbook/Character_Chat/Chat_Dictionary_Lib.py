@@ -1074,6 +1074,137 @@ def load_chat_dictionary(db: CharactersRAGDB, dict_id: int) -> Optional[Dict[str
         return None
 
 
+def load_character_dictionaries(char_data: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Parse a character card's embedded chat dictionaries into runtime blocks.
+
+    Reads ``extensions['chat_dictionaries']`` (a list of ``export_json`` ``data``
+    blocks) and returns one ``{"name", "enabled", "entries": [ChatDictionary...]}``
+    per well-formed block. Malformed blocks/entries are skipped. This runs on the
+    chat send path over untrusted (imported) card content, so it MUST NOT raise.
+
+    Args:
+        char_data: The character record dict (as returned by the DB), whose
+            ``extensions`` field may hold a JSON string or dict with a
+            ``chat_dictionaries`` list of embedded dictionary snapshots.
+
+    Returns:
+        A list of ``{"name": str, "enabled": bool, "entries": [ChatDictionary]}``
+        blocks, one per well-formed, uniquely-named embedded dictionary.
+        Blocks with a missing/empty name, or malformed (non-dict/non-list)
+        shapes, are skipped; duplicate names keep the first occurrence.
+        ``enabled`` is honestly coerced (a quoted ``"false"`` is False, not
+        Python's truthy-string ``bool()``).
+    """
+    result: List[Dict[str, Any]] = []
+    if not isinstance(char_data, dict):
+        return result
+    ext = char_data.get('extensions')
+    if isinstance(ext, str):
+        try:
+            ext = json.loads(ext or "{}")
+        except (TypeError, ValueError):
+            ext = {}
+    if not isinstance(ext, dict):
+        return result
+    raw = ext.get('chat_dictionaries') or []
+    if not isinstance(raw, list):
+        return result
+    seen_names: set = set()
+    for block in raw:
+        if not isinstance(block, dict):
+            continue
+        name = block.get('name')
+        if not name:
+            continue
+        # A hostile/crafted card can embed two blocks with the same name
+        # (``attach_to_character`` dedups by name so it never creates this,
+        # but a crafted import can). Without this guard,
+        # ``collect_active_chatdict_entries`` would extend a dup-named
+        # block's entries twice, and callers keyed by name (e.g. the
+        # character-dictionaries panel) could crash on the duplicate. First
+        # occurrence wins.
+        if str(name) in seen_names:
+            continue
+        seen_names.add(str(name))
+        entries: List[ChatDictionary] = []
+        entries_raw = block.get('entries')
+        if not isinstance(entries_raw, list):
+            entries_raw = []
+        for entry in entries_raw:
+            try:
+                entries.append(ChatDictionary.from_dict(entry))
+            except Exception:
+                continue
+        result.append({
+            "name": str(name),
+            "enabled": _coerce_bool(block.get('enabled'), True),
+            "entries": entries,
+        })
+    return result
+
+
+def collect_active_chatdict_entries(
+    db: "CharactersRAGDB",
+    conversation_id: Optional[str],
+    char_data: Optional[Dict[str, Any]],
+) -> List[ChatDictionary]:
+    """Collect the ChatDictionary entries that apply to the current send.
+
+    Additive union of the conversation's attached dictionaries (by id, from
+    ``metadata.active_dictionaries``) and the active character's embedded
+    dictionaries (snapshots in ``extensions.chat_dictionaries``), deduped at the
+    dictionary level by name — the conversation's dictionary WINS a name
+    collision. Only enabled dictionaries contribute. Never raises: any bad row is
+    skipped so a chat send is never broken by dictionary loading.
+
+    Args:
+        db: Database handle used to resolve the conversation's attached
+            dictionary ids. May be ``None`` (conversation dictionaries are
+            skipped in that case).
+        conversation_id: The active conversation's id, or ``None`` if there
+            is no conversation context (conversation dictionaries are
+            skipped).
+        char_data: The active character record dict, whose embedded
+            dictionaries are parsed via :func:`load_character_dictionaries`.
+
+    Returns:
+        A flat list of ``ChatDictionary`` entries from all enabled,
+        non-name-colliding sources, in conversation-then-character order.
+    """
+    entries: List[ChatDictionary] = []
+    conversation_dict_names: set = set()
+    if conversation_id and db is not None:
+        try:
+            conv_details = db.get_conversation_by_id(conversation_id)
+        except Exception:
+            conv_details = None
+        if conv_details:
+            try:
+                metadata = json.loads(conv_details.get('metadata') or '{}')
+            except (TypeError, ValueError):
+                metadata = {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            active = metadata.get('active_dictionaries')
+            if not isinstance(active, list):
+                active = []
+            for dict_id in active:
+                try:
+                    dict_data = load_chat_dictionary(db, dict_id)
+                except Exception:
+                    continue
+                if dict_data and dict_data.get('enabled', True):
+                    conversation_dict_names.add(dict_data.get('name'))
+                    entries.extend(dict_data.get('entries') or [])
+    for block in load_character_dictionaries(char_data):
+        if not block.get('enabled', True):
+            continue
+        if block.get('name') in conversation_dict_names:
+            continue
+        entries.extend(block.get('entries') or [])
+    return entries
+
+
 def list_chat_dictionaries(
     db: CharactersRAGDB, 
     limit: int = 100,
