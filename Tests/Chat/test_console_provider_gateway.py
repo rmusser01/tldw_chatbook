@@ -17,10 +17,13 @@ from tldw_chatbook.Chat.Chat_Deps import (
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_provider_gateway import (
     GENERATION_READ_TIMEOUT_SECONDS,
+    NO_PROVIDER_CONTENT_COPY,
     PROBE_TIMEOUT_SECONDS,
+    UNSUPPORTED_PROVIDER_RESPONSE_COPY,
     ConsoleProviderGateway,
     ConsoleProviderResolution,
     LlamaCppProviderConfig,
+    ProviderToolCalls,
     build_llamacpp_chat_payload,
     safe_provider_error_copy,
 )
@@ -1533,3 +1536,296 @@ def test_active_http_client_concurrent_swap_never_leaves_client_bound_to_wrong_l
         thread.join(timeout=2)
 
     assert errors == []
+
+
+def _sse(payload):
+    return "data: " + json.dumps(payload)
+
+
+def _delta_fragment(index, call_id=None, name=None, arguments=None):
+    frag = {"index": index, "function": {}}
+    if call_id is not None:
+        frag["id"] = call_id
+        frag["type"] = "function"
+    if name is not None:
+        frag["function"]["name"] = name
+    if arguments is not None:
+        frag["function"]["arguments"] = arguments
+    return {"choices": [{"delta": {"tool_calls": [frag]}}]}
+
+
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "calculator",
+            "description": "d",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
+]
+
+
+async def _collect(gateway, resolution, tools=None):
+    items = []
+    async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "q"}], tools=tools):
+        items.append(chunk)
+    return items
+
+
+@pytest.mark.asyncio
+async def test_stream_accumulates_sse_tool_call_fragments() -> None:
+    """OpenAI streaming: id/name on the first fragment, arguments split
+    across fragments -> ONE merged ProviderToolCalls yielded last."""
+    script = iter(
+        [
+            _sse(_delta_fragment(0, call_id="c9", name="calculator")),
+            _sse(_delta_fragment(0, arguments='{"expres')),
+            _sse(_delta_fragment(0, arguments='sion": "2+2"}')),
+            "data: [DONE]",
+        ]
+    )
+
+    def fake_chat_api_call(**_kwargs):
+        return script
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"groq": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="groq", explicit_model="llama3-groq", streaming=True)
+    )
+
+    items = await _collect(gateway, resolution, tools=TOOLS)
+
+    calls = [i for i in items if isinstance(i, ProviderToolCalls)]
+    assert len(calls) == 1 and items[-1] is calls[0]
+    (call,) = calls[0].tool_calls
+    assert call == {
+        "id": "c9",
+        "type": "function",
+        "function": {"name": "calculator", "arguments": '{"expression": "2+2"}'},
+    }
+    assert not any(isinstance(i, str) and i.strip() for i in items[:-1])  # no copy leaked
+
+
+@pytest.mark.asyncio
+async def test_non_streaming_message_tool_calls_surface() -> None:
+    """resolution.streaming False: chat_api_call returns the full dict;
+    message.tool_calls surfaces as ProviderToolCalls, content as text."""
+    response = {
+        "choices": [
+            {
+                "message": {
+                    "content": "Checking.",
+                    "tool_calls": [
+                        {"id": "n1", "type": "function", "function": {"name": "calculator", "arguments": "{}"}}
+                    ],
+                }
+            }
+        ]
+    }
+
+    def fake_chat_api_call(**_kwargs):
+        return response
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"groq": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="groq", explicit_model="llama3-groq", streaming=False)
+    )
+
+    items = await _collect(gateway, resolution, tools=TOOLS)
+
+    assert "Checking." in [i for i in items if isinstance(i, str)]
+    (ptc,) = [i for i in items if isinstance(i, ProviderToolCalls)]
+    assert ptc.tool_calls[0]["id"] == "n1"
+
+
+@pytest.mark.asyncio
+async def test_no_tools_requested_is_byte_identical() -> None:
+    """Same fragment script WITHOUT tools=: no ProviderToolCalls, no new
+    strings -- the delta-only chunks stay silently dropped as today."""
+    script = iter(
+        [
+            _sse(_delta_fragment(0, call_id="c9", name="calculator")),
+            _sse(_delta_fragment(0, arguments='{"expres')),
+            _sse(_delta_fragment(0, arguments='sion": "2+2"}')),
+            "data: [DONE]",
+        ]
+    )
+
+    def fake_chat_api_call(**_kwargs):
+        return script
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"groq": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="groq", explicit_model="llama3-groq", streaming=True)
+    )
+
+    items = await _collect(gateway, resolution, tools=None)
+
+    assert all(isinstance(i, str) for i in items)
+    assert UNSUPPORTED_PROVIDER_RESPONSE_COPY not in items
+
+
+@pytest.mark.asyncio
+async def test_tools_none_raw_dict_tool_call_chunk_keeps_baseline_copy() -> None:
+    """Regression (task-243 review): a raw DICT streaming chunk (not an SSE
+    string, unlike ``test_no_tools_requested_is_byte_identical`` above) that
+    carries only ``delta.tool_calls`` with no content, and with ``tools``
+    NOT passed, must stay byte-identical to the pre-native-tools baseline --
+    ``_content_from_provider_mapping`` has no tool-call awareness in that
+    codepath, so the chunk falls through to ``_UNSUPPORTED_RESPONSE`` like
+    any other unrecognized dict shape, and ``normalize_provider_response``
+    surfaces it as ``UNSUPPORTED_PROVIDER_RESPONSE_COPY`` in the stream.
+    Mapping-level ``tool_calls`` guards previously short-circuited this to a
+    silent drop instead, which changed ``tools=None`` output."""
+    def fake_chat_api_call(**_kwargs):
+        yield "hel"
+        yield {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "c1",
+                                "type": "function",
+                                "function": {"name": "calculator", "arguments": "{}"},
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+        yield {"choices": [{"delta": {"content": "lo"}}]}
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1"))
+
+    chunks = [chunk async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "hi"}])]
+
+    assert chunks == ["hel", UNSUPPORTED_PROVIDER_RESPONSE_COPY, "lo"]
+
+
+@pytest.mark.asyncio
+async def test_tool_call_only_stream_yields_no_fallback_copy() -> None:
+    """A tools= run whose stream carries ONLY tool-call fragments must not
+    inject NO_PROVIDER_CONTENT_COPY / UNSUPPORTED copy into the text
+    stream (that copy would be echoed into agent history)."""
+    script = iter(
+        [
+            _sse(_delta_fragment(0, call_id="c9", name="calculator")),
+            _sse(_delta_fragment(0, arguments='{"expres')),
+            _sse(_delta_fragment(0, arguments='sion": "2+2"}')),
+            "data: [DONE]",
+        ]
+    )
+
+    def fake_chat_api_call(**_kwargs):
+        return script
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"groq": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="groq", explicit_model="llama3-groq", streaming=True)
+    )
+
+    items = await _collect(gateway, resolution, tools=TOOLS)
+
+    texts = [i for i in items if isinstance(i, str)]
+    assert NO_PROVIDER_CONTENT_COPY not in texts
+    assert UNSUPPORTED_PROVIDER_RESPONSE_COPY not in texts
+
+
+@pytest.mark.asyncio
+async def test_tools_run_with_neither_content_nor_calls_raises_instead_of_silent_empty() -> None:
+    """PR #648 review Minor 1: a tools= turn whose provider response carries
+    NEITHER visible content NOR tool-calls must surface as a provider error,
+    not complete as a silent empty turn. On the fence path the same junk
+    response surfaces diagnostic copy as the answer; in tools mode that copy
+    is filtered from agent history, so without this guard a misbehaving
+    provider's junk 200-body becomes an indistinguishable empty RUN_DONE."""
+    response = {"choices": [{"message": {}}]}  # junk: no content, no tool_calls
+
+    def fake_chat_api_call(**_kwargs):
+        return response
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"groq": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="groq", explicit_model="llama3-groq", streaming=False)
+    )
+
+    with pytest.raises(ChatProviderError):
+        await _collect(gateway, resolution, tools=TOOLS)
+
+
+@pytest.mark.asyncio
+async def test_tools_run_with_real_content_and_no_calls_stays_a_normal_answer() -> None:
+    """Guard scope check: a tools= turn that answers with plain text (no tool
+    calls) is a perfectly normal final answer and must NOT raise."""
+    response = {"choices": [{"message": {"content": "Just an answer."}}]}
+
+    def fake_chat_api_call(**_kwargs):
+        return response
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"groq": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="groq", explicit_model="llama3-groq", streaming=False)
+    )
+
+    items = await _collect(gateway, resolution, tools=TOOLS)
+
+    assert items == ["Just an answer."]
+
+
+@pytest.mark.asyncio
+async def test_tool_call_fragments_out_of_index_order_emit_in_index_order() -> None:
+    """PR #648 review: the provider's index field defines batch order; when
+    index-1 fragments arrive before index-0, the merged ProviderToolCalls
+    must still be ordered [0, 1]."""
+    script = iter(
+        [
+            _sse(_delta_fragment(1, call_id="c1", name="get_current_datetime")),
+            _sse(_delta_fragment(1, arguments="{}")),
+            _sse(_delta_fragment(0, call_id="c0", name="calculator")),
+            _sse(_delta_fragment(0, arguments='{"expression": "2+2"}')),
+            "data: [DONE]",
+        ]
+    )
+
+    def fake_chat_api_call(**_kwargs):
+        return script
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"groq": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="groq", explicit_model="llama3-groq", streaming=True)
+    )
+
+    items = await _collect(gateway, resolution, tools=TOOLS)
+
+    (ptc,) = [i for i in items if isinstance(i, ProviderToolCalls)]
+    assert [c["id"] for c in ptc.tool_calls] == ["c0", "c1"]
+    assert [c["function"]["name"] for c in ptc.tool_calls] == [
+        "calculator", "get_current_datetime"]

@@ -27,6 +27,7 @@ from tldw_chatbook.Agents.tool_catalog import (
     intersect_skill_tools,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
+from tldw_chatbook.Chat.console_provider_gateway import ProviderToolCalls
 from tldw_chatbook.Chat.console_skill_resolver import SKILL_UNTRUSTED_REFUSE
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
@@ -295,14 +296,33 @@ class _StreamingModelAdapter:
         self._loop = loop
 
     def chat_call(self, *, messages_payload, model=None, api_endpoint=None,
-                  streaming=False, **_ignored) -> dict:
+                  streaming=False, tools=None, **_ignored) -> dict:
         is_subagent = self._is_subagent(messages_payload)
         gate = StreamGate()
         any_streamed = False
+        native_calls: list[dict] = []
 
         async def _consume() -> None:
             nonlocal any_streamed
-            async for chunk in self._gateway.stream_chat(self._resolution, messages_payload):
+            # Forwarding `tools=` only when it is non-None (rather than
+            # always passing the keyword, even as None) keeps every
+            # pre-Task-5 gateway fake elsewhere in the test suite — whose
+            # `stream_chat(resolution, messages)` signature predates this
+            # parameter and has no matching call-site to update under this
+            # task's own touched-files constraint — working unchanged for
+            # the (still overwhelmingly common) fence path, where `tools`
+            # is always None. The real gateway and any fake built against
+            # this task's own `tools=None` contract see identical behavior
+            # either way, since the callee-side default is also None.
+            stream_kwargs = {"tools": tools} if tools is not None else {}
+            async for chunk in self._gateway.stream_chat(
+                    self._resolution, messages_payload, **stream_kwargs):
+                if isinstance(chunk, ProviderToolCalls):
+                    # Plan-B contract: structured deltas never hit the
+                    # transcript — captured here, surfaced only through the
+                    # returned message dict's `tool_calls`.
+                    native_calls.extend(chunk.tool_calls)
+                    continue
                 visible = gate.feed(chunk)
                 if visible and not is_subagent:
                     self._store.append_stream_chunk(self._assistant_message_id, visible)
@@ -327,11 +347,16 @@ class _StreamingModelAdapter:
             # never fires for the common case). Now that the full buffer is
             # in and the authoritative parse is available, discard that
             # leaked prose so it doesn't survive to garble the next turn's
-            # chunks on the same message.
+            # chunks on the same message. Extended for native tool-calls
+            # (Task 5): a native turn that streamed leaked prose before its
+            # ProviderToolCalls sentinel arrived must be reset the same way.
             _visible, tool_call = gate.result()
-            if tool_call is not None:
+            if tool_call is not None or native_calls:
                 self._store.reset_stream_content(self._assistant_message_id)
-        return {"choices": [{"message": {"content": gate.full_text}}]}
+        message: dict = {"content": gate.full_text}
+        if native_calls:
+            message["tool_calls"] = native_calls
+        return {"choices": [{"message": message}]}
 
     @staticmethod
     def _is_subagent(messages_payload) -> bool:
@@ -514,12 +539,14 @@ class ConsoleAgentBridge:
     def __init__(self, *, agent_runs_db: AgentRunsDB, store,
                  provider_gateway, registry: ToolCatalogRegistry | None = None,
                  clock: Callable[[], float] = time.monotonic,
-                 skills_service: Any | None = None) -> None:
+                 skills_service: Any | None = None,
+                 native_tools_enabled: Callable[[], bool] | None = None) -> None:
         self._db = agent_runs_db
         self._store = store
         self._gateway = provider_gateway
         self._clock = clock
         self._skills_service = skills_service
+        self._native_tools_enabled = native_tools_enabled
         if registry is None:
             registry = ToolCatalogRegistry()
             registry.register_provider(BuiltinToolProvider())
@@ -557,11 +584,19 @@ class ConsoleAgentBridge:
             skill_runner = _BridgeSkillRunner(
                 skills_service=self._skills_service, skill_names=skill_names,
                 builtin_names=builtin_names)
+        # [console] native_tool_calls kill-switch (Task 5): a caller-supplied
+        # predicate (chat_screen.py's _console_native_tool_calls_enabled)
+        # gates whether this run may use native provider tool-calls at all;
+        # no predicate (fakes/tests that never pass one) defaults to
+        # always-on, matching the pre-kill-switch behavior.
+        native_tools = (True if self._native_tools_enabled is None
+                        else bool(self._native_tools_enabled()))
         config = AgentConfig(
             model=model,
             system_prompt=compose_agent_system_prompt(session_system_prompt),
             allowed_tools=allowed_tools,
-            budget=CONSOLE_RUN_BUDGET)
+            budget=CONSOLE_RUN_BUDGET,
+            native_tools=native_tools)
         # One event loop for the whole run (PR #629 Fix 1(c)): every turn
         # this run makes -- primary tool-call turns, any sub-agent turns,
         # and the final-answer turn -- bridges through this same loop via
@@ -613,7 +648,17 @@ class ConsoleAgentBridge:
         try:
             _run_id, outcome = service.run_turn(
                 conversation_id=conversation_id, messages=agent_messages, config=config,
-                api_endpoint=str(getattr(resolution, "provider", "") or "agent"),
+                # execution_key-first (Task 5): the service's capability
+                # check keys off api_endpoint, and execution_key is by
+                # definition "Provider key passed to chat_api_call" — the
+                # PROVIDER_PARAM_MAP key space provider_supports_native_tools
+                # matches against. `provider` (the display key) and then
+                # "agent" remain fallbacks for fakes lacking either
+                # attribute (e.g. resolution=object() in existing tests),
+                # which keeps them on the fence path unchanged.
+                api_endpoint=str(
+                    getattr(resolution, "execution_key", "")
+                    or getattr(resolution, "provider", "") or "agent"),
                 should_cancel=should_cancel, supersede_run_id=supersede_run_id)
         finally:
             run_loop.close()

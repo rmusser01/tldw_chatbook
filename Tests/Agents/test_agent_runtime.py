@@ -305,3 +305,74 @@ def test_spawn_not_in_allowed_tools_is_refused_before_dispatch():
     assert [s for s in out.steps if s.kind == STEP_SPAWN] == []
     result_steps = [s for s in out.steps if s.kind == STEP_TOOL_RESULT]
     assert "Tool not permitted: spawn_subagent" in result_steps[0].result
+
+
+# --- task-243 Task 2: native history convention (assistant echo + role=tool
+# results), gated on call_id so the fence path stays byte-identical. ---
+
+def _native_turn(calls, text=""):
+    raw = [{"id": c.call_id, "type": "function",
+           "function": {"name": c.name, "arguments": json.dumps(c.args)}}
+          for c in calls]
+    return ModelTurn(text=text, tool_calls=tuple(calls),
+                     assistant_message={"role": "assistant", "content": text,
+                                        "tool_calls": raw})
+
+
+def test_native_multi_call_batch_dispatches_both_in_one_turn():
+    """AC #3: two native calls in one reply -> two tool invocations before
+    the next model turn, results paired to call ids as role='tool'."""
+    calls = [ToolCall(name="echo", args={"v": "1"}, call_id="idA"),
+             ToolCall(name="echo", args={"v": "2"}, call_id="idB")]
+    seen_messages = []
+    turns = iter([_native_turn(calls), ModelTurn(text="done")])
+
+    def call_model(messages, active_schemas):
+        seen_messages.append([dict(m) for m in messages])
+        return next(turns)
+
+    invoked = []
+
+    def invoke_tool(call):
+        invoked.append(call)
+        return ToolResult(ok=True, content=f"ok:{call.args['v']}")
+
+    deps = make_deps([], invoke=invoke_tool)
+    deps.call_model = call_model
+    out = run_agent_loop(CFG, [{"role": "user", "content": "go"}], [CALC],
+                         deps)
+    assert out.status == RUN_DONE and out.final_text == "done"
+    assert [c.call_id for c in invoked] == ["idA", "idB"]  # one turn, both dispatched
+    second_turn_history = seen_messages[1]
+    assistant = second_turn_history[1]
+    assert assistant["tool_calls"][0]["id"] == "idA"      # provider echo verbatim
+    tool_msgs = [m for m in second_turn_history if m.get("role") == "tool"]
+    assert [(m["tool_call_id"], m["content"]) for m in tool_msgs] == [
+        ("idA", "ok:1"), ("idB", "ok:2")]
+    assert not any(m.get("role") == "user" and
+                  str(m.get("content", "")).startswith("Tool result for")
+                  for m in second_turn_history[1:])
+
+
+def test_fence_history_convention_unchanged():
+    """A fence-parsed call (call_id='') keeps the plain-text convention:
+    assistant text verbatim, user-role 'Tool result for ...' line, and NO
+    new keys leak into fence-mode history messages."""
+    seen = []
+    fence_text = fence("calculator", {"expression": "6*7"})
+
+    def call_model(messages, active_schemas):
+        seen.append([dict(m) for m in messages])
+        return (ModelTurn(text=fence_text) if len(seen) == 1
+                else ModelTurn(text="It is 42."))
+
+    deps = make_deps([])
+    deps.call_model = call_model
+    out = run_agent_loop(CFG, [{"role": "user", "content": "hi"}], [CALC],
+                         deps)
+    assert out.status == RUN_DONE and out.final_text == "It is 42."
+    history = seen[1]
+    assert history[1] == {"role": "assistant", "content": fence_text}
+    assert set(history[1].keys()) == {"role", "content"}
+    assert history[2]["role"] == "user"
+    assert history[2]["content"].startswith("Tool result for")

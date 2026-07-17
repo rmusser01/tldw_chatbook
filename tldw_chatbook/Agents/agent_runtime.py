@@ -199,9 +199,12 @@ def run_agent_loop(config: AgentConfig, initial_messages: list[dict],
                    active_schemas: list, deps: LoopDeps) -> RunOutcome:
     """Drive think → (tool) → observe until done / stuck / cancelled.
 
-    Message convention (transport-independent): assistant turns append
-    verbatim; tool results append as user-role
-    ``Tool result for {name}: {content}`` lines.
+    Message convention (transport-independent): fence-protocol turns append
+    the assistant text verbatim and tool results append as user-role
+    ``Tool result for {name}: {content}`` lines; native tool-call turns
+    (``call.call_id`` set) instead append the provider-shaped
+    ``turn.assistant_message`` echo and pair each tool result to its call
+    as a ``role="tool"`` message keyed on ``tool_call_id``.
 
     Args:
         config: The agent's model, system prompt, allow-list, and budget.
@@ -271,7 +274,14 @@ def run_agent_loop(config: AgentConfig, initial_messages: list[dict],
                 return RunOutcome(RUN_DONE, steps, final_text=turn.text,
                                   subagents_spawned=spawned)
             calls = [fenced]
-        messages.append({"role": "assistant", "content": turn.text})
+        # getattr, not turn.assistant_message: some existing test doubles
+        # construct ad hoc ModelTurn-like objects (e.g.
+        # Tests/Agents/test_agent_loop_load_dedupe.py's `type("M", (), {...})`
+        # stand-ins) that predate this field and only define `text` /
+        # `tool_calls`; treat a missing attribute the same as an explicit
+        # None so those fence-only doubles keep working unchanged.
+        messages.append(getattr(turn, "assistant_message", None)
+                        or {"role": "assistant", "content": turn.text})
 
         for call in calls:
             if deps.should_cancel():
@@ -379,6 +389,14 @@ def run_agent_loop(config: AgentConfig, initial_messages: list[dict],
             content = result.content if result.ok else f"ERROR: {result.error}"
             add(STEP_TOOL_RESULT, tool_name=call.name,
                 result=content[:2000])
-            messages.append({
-                "role": "user",
-                "content": f"Tool result for {call.name}: {content}"})
+            if call.call_id:
+                # Native protocol: providers require each tool_call_id to be
+                # answered by a role="tool" message paired to the assistant
+                # turn's tool_calls entry.
+                messages.append({
+                    "role": "tool", "tool_call_id": call.call_id,
+                    "content": content})
+            else:
+                messages.append({
+                    "role": "user",
+                    "content": f"Tool result for {call.name}: {content}"})

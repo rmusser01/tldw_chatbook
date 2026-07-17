@@ -1,0 +1,26 @@
+evidence db dir: /private/tmp/claude-501/-Users-macbook-dev-Documents-GitHub-tldw-chatbook/0c177be4-8a91-43dd-9244-5945679ee3ae/scratchpad/gate-evidence
+
+===== B-native-multi (395.2s) =====
+status: error
+final answer: ""
+provider calls:
+  turn 0: tools=['spawn_subagent', 'calculator', 'get_current_datetime'] fence_in_system=False
+run steps:
+  [error]  :: Provider error from custom: unexpected provider error.
+TOOL markers in transcript: 0
+B tool calls made: 0 | status: error
+
+===== C-fence-llamacpp (0.0s) =====
+status: error
+final answer: ""
+provider calls:
+  turn 0: tools=None fence_in_system=True
+run steps:
+  [error]  :: All connection attempts failed
+TOOL markers in transcript: 0
+C fence path (no tools=, protocol present): True
+C tool round-trip done: False
+
+===== VERDICTS =====
+results: {'B': False, 'C': False}
+GATE: FAIL

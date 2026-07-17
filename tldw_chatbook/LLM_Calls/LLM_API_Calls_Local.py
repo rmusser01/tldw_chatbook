@@ -425,7 +425,8 @@ def chat_with_local_llm(
         logprobs=current_logprobs,
         top_logprobs=current_top_logprobs,
         user_identifier=current_user_identifier,
-        provider_name=cfg.capitalize(),
+        # Same pre-existing dict-.capitalize() crash as chat_with_custom_openai.
+        provider_name="Local-LLM",
         timeout=timeout,
         api_retries=api_retries,
         api_retry_delay=api_retry_delay
@@ -1389,7 +1390,10 @@ def chat_with_custom_openai(
         logprobs=current_logprobs,
         top_logprobs=current_top_logprobs,
         user_identifier=current_user_identifier,
-        provider_name=cfg.capitalize(),
+        # `cfg` is the settings dict — calling .capitalize() on it raised
+        # AttributeError on EVERY call, making this provider unusable
+        # (pre-existing; surfaced by the task-243 native-tools live gate).
+        provider_name="Custom OpenAI",
         timeout=timeout,
         api_retries=api_retries,
         api_retry_delay=api_retry_delay

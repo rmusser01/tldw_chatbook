@@ -2182,12 +2182,18 @@ class ChatScreen(BaseAppScreen):
             store=self._ensure_console_chat_store(),
             provider_gateway=self._ensure_console_provider_gateway(),
             skills_service=getattr(self.app_instance, "skills_scope_service", None),
+            native_tools_enabled=self._console_native_tool_calls_enabled,
         )
         return self._console_agent_bridge
 
     def _console_agent_runtime_enabled(self) -> bool:
         """Return whether ``[console] agent_runtime`` gates in the agent loop (default on)."""
         value = self._console_config().get("agent_runtime", True)
+        return bool(value) if isinstance(value, (bool, int)) else True
+
+    def _console_native_tool_calls_enabled(self) -> bool:
+        """Return whether ``[console] native_tool_calls`` allows native provider tool-calls (default on)."""
+        value = self._console_config().get("native_tool_calls", True)
         return bool(value) if isinstance(value, (bool, int)) else True
 
     def _ensure_console_image_view(self) -> tuple[ConsoleImageViewState, ConsoleImageRenderCache]:

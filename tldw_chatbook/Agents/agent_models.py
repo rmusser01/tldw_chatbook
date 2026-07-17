@@ -71,10 +71,18 @@ class ToolResult:
 
 @dataclass(frozen=True)
 class ModelTurn:
-    """One provider response: raw text plus any native tool calls."""
+    """One provider response: raw text plus any native tool calls.
+
+    ``assistant_message`` carries the provider-shaped assistant message for
+    native tool-call turns (content plus the raw ``tool_calls`` array,
+    echoed verbatim into history so the follow-up ``role="tool"`` results
+    pair with their calls by id). ``None`` for fence-protocol turns, whose
+    history keeps the plain-text convention.
+    """
 
     text: str = ""
     tool_calls: tuple[ToolCall, ...] = ()
+    assistant_message: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -103,6 +111,7 @@ class AgentConfig:
     system_prompt: str
     allowed_tools: tuple[str, ...] = ()
     budget: RunBudget = field(default_factory=RunBudget)
+    native_tools: bool = True
 
 
 @dataclass

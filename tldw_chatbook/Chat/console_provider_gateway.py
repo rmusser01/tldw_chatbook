@@ -217,6 +217,7 @@ class ConsoleProviderResolution:
 class _QueueItem:
     kind: str
     text: str = ""
+    payload: Any = None
 
     @classmethod
     def content(cls, text: str) -> "_QueueItem":
@@ -229,6 +230,119 @@ class _QueueItem:
     @classmethod
     def done(cls) -> "_QueueItem":
         return cls("done")
+
+    @classmethod
+    def native_tool_calls(cls, calls: tuple) -> "_QueueItem":
+        return cls("tool_calls", payload=calls)
+
+
+@dataclass(frozen=True)
+class ProviderToolCalls:
+    """Accumulated native tool-calls, yielded as ``stream_chat``'s FINAL
+    item -- and only when the caller passed ``tools=``. Plain Console sends
+    never receive one. ``tool_calls`` entries are OpenAI-shape dicts with
+    streaming fragments already merged."""
+
+    tool_calls: tuple[dict, ...]
+
+
+class _ToolCallAccumulator:
+    """Merges OpenAI streaming ``delta.tool_calls`` fragments (and
+    non-streaming ``message.tool_calls`` entries) into complete calls."""
+
+    def __init__(self) -> None:
+        self._by_index: dict[int, dict] = {}
+
+    def feed_payload(self, payload: Any) -> None:
+        if not isinstance(payload, Mapping):
+            return
+        choices = payload.get("choices")
+        if not isinstance(choices, list) or not choices:
+            return
+        first = choices[0]
+        if not isinstance(first, Mapping):
+            return
+        message = first.get("message")
+        if isinstance(message, Mapping):
+            for i, raw in enumerate(message.get("tool_calls") or []):
+                if isinstance(raw, Mapping):
+                    self._merge(i, raw)
+        delta = first.get("delta")
+        if isinstance(delta, Mapping):
+            for raw in delta.get("tool_calls") or []:
+                if isinstance(raw, Mapping):
+                    try:
+                        index = int(raw.get("index", 0))
+                    except (TypeError, ValueError):
+                        index = 0
+                    self._merge(index, raw)
+
+    def _merge(self, index: int, fragment: Mapping[str, Any]) -> None:
+        if index not in self._by_index:
+            self._by_index[index] = {"id": "", "type": "function",
+                                     "function": {"name": "", "arguments": ""}}
+        entry = self._by_index[index]
+        if fragment.get("id"):
+            entry["id"] = str(fragment["id"])
+        if fragment.get("type"):
+            entry["type"] = str(fragment["type"])
+        function = fragment.get("function")
+        if isinstance(function, Mapping):
+            if function.get("name"):
+                entry["function"]["name"] = str(function["name"])
+            arguments = function.get("arguments")
+            if isinstance(arguments, str):
+                entry["function"]["arguments"] += arguments
+            elif isinstance(arguments, Mapping):
+                entry["function"]["arguments"] = json.dumps(arguments)
+
+    def calls(self) -> tuple[dict, ...]:
+        # Numeric index order, not first-seen order: the provider's index
+        # field defines the batch's array position, and fragments may arrive
+        # interleaved/out of order (PR #648 review).
+        return tuple(self._by_index[i] for i in sorted(self._by_index)
+                     if self._by_index[i]["function"]["name"])
+
+
+def _decode_stream_item(item: Any) -> Any:
+    """Best-effort payload decode for accumulator teeing: mappings pass
+    through; SSE ``data: {...}`` strings/bytes are JSON-decoded; anything
+    else (comments, [DONE], junk) yields None."""
+    if isinstance(item, Mapping):
+        return item
+    if isinstance(item, bytes):
+        try:
+            item = item.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+    if not isinstance(item, str):
+        return None
+    data = item.strip()
+    if data.startswith("data:"):
+        data = data.removeprefix("data:").strip()
+    if not data or data == "[DONE]":
+        return None
+    try:
+        return json.loads(data)
+    except json.JSONDecodeError:
+        return None
+
+
+def _tee_tool_calls(response: Any, accumulator: _ToolCallAccumulator) -> Any:
+    """Feed every provider item through ``accumulator``, unchanged, for the
+    three shapes ``chat_api_call`` returns: a full mapping (non-streaming),
+    an iterator of mappings, or an iterator of SSE strings."""
+    if isinstance(response, Mapping):
+        accumulator.feed_payload(response)
+        return response
+    if not _is_iterable_response(response):
+        return response
+
+    def generator():
+        for item in response:
+            accumulator.feed_payload(_decode_stream_item(item))
+            yield item
+    return generator()
 
 
 def build_llamacpp_chat_payload(
@@ -749,15 +863,23 @@ class ConsoleProviderGateway:
         self,
         resolution: ConsoleProviderResolution,
         messages: list[Mapping[str, Any]],
-    ) -> AsyncIterator[str]:
+        tools: list | None = None,
+    ) -> AsyncIterator[str | ProviderToolCalls]:
         """Dispatch streaming for a resolved Console provider.
 
         Args:
             resolution: Provider resolution produced by ``resolve_for_send``.
             messages: OpenAI-compatible chat messages.
+            tools: Optional OpenAI-shape tool definitions. When omitted,
+                behavior is byte-identical to a plain Console send. When
+                provided, yields str chunks as before; if the provider
+                returned native tool-calls, the final item is a
+                ``ProviderToolCalls`` instead of a str.
 
         Yields:
-            Assistant-visible content chunks.
+            Assistant-visible content chunks, and -- only when ``tools`` was
+            passed and the provider returned native tool-calls -- a final
+            ``ProviderToolCalls``.
         """
         if not resolution.ready or not resolution.model:
             return
@@ -789,7 +911,7 @@ class ConsoleProviderGateway:
                 yield chunk
             return
         if resolution.execution_key:
-            async for chunk in self._stream_generic_chat(resolution, messages):
+            async for chunk in self._stream_generic_chat(resolution, messages, tools=tools):
                 yield chunk
             return
 
@@ -797,7 +919,8 @@ class ConsoleProviderGateway:
         self,
         resolution: ConsoleProviderResolution,
         messages: list[Mapping[str, Any]],
-    ) -> AsyncIterator[str]:
+        tools: list | None = None,
+    ) -> AsyncIterator[str | ProviderToolCalls]:
         """Bridge synchronous chat_api_call responses into async Console chunks."""
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[_QueueItem] = asyncio.Queue()
@@ -811,12 +934,45 @@ class ConsoleProviderGateway:
 
         def worker() -> None:
             try:
-                kwargs = self._chat_api_kwargs(resolution, messages)
+                kwargs = self._chat_api_kwargs(resolution, messages, tools=tools)
                 response = self._chat_api_call(**kwargs)
+                accumulator = _ToolCallAccumulator() if tools else None
+                if accumulator is not None:
+                    response = _tee_tool_calls(response, accumulator)
+                suppressed_fallback_copy = False
+                emitted_content = False
                 for text in self.normalize_provider_response(response):
                     if stop_event.is_set():
                         break
+                    if accumulator is not None and text in (
+                            NO_PROVIDER_CONTENT_COPY,
+                            UNSUPPORTED_PROVIDER_RESPONSE_COPY):
+                        # tools= runs: fallback UI copy must never leak into
+                        # agent history -- a tool-call-only turn legitimately
+                        # has no visible content.
+                        suppressed_fallback_copy = True
+                        continue
+                    if text:
+                        emitted_content = True
                     enqueue(_QueueItem.content(text))
+                if accumulator is not None:
+                    calls = accumulator.calls()
+                    if calls:
+                        enqueue(_QueueItem.native_tool_calls(calls))
+                    elif suppressed_fallback_copy and not emitted_content:
+                        # PR #648 review Minor 1: the turn produced NEITHER
+                        # visible content NOR tool-calls -- only filtered
+                        # fallback copy. On the fence path that copy surfaces
+                        # as the (diagnostic) answer; silently completing here
+                        # would make a misbehaving provider's junk 200-body
+                        # indistinguishable from a legitimate empty answer.
+                        # Surface it as a provider error instead, feeding the
+                        # run's existing honest RUN_ERROR outcome path.
+                        enqueue(_QueueItem.error(self._safe_error_copy(
+                            resolution.provider,
+                            ChatProviderError(
+                                "Provider returned no content and no tool calls.",
+                                provider=resolution.provider))))
             except BaseException as exc:
                 enqueue(_QueueItem.error(self._safe_error_copy(resolution.provider, exc)))
             finally:
@@ -833,6 +989,9 @@ class ConsoleProviderGateway:
                         item.text or safe_provider_error_copy(resolution.provider, ChatProviderError()),
                         provider=resolution.provider,
                     )
+                if item.kind == "tool_calls":
+                    yield ProviderToolCalls(tuple(item.payload))
+                    continue
                 if item.text:
                     yield item.text
         finally:
@@ -888,6 +1047,7 @@ class ConsoleProviderGateway:
     def _chat_api_kwargs(
         resolution: ConsoleProviderResolution,
         messages: list[Mapping[str, Any]],
+        tools: list | None = None,
     ) -> dict[str, Any]:
         kwargs = {
             "api_endpoint": resolution.execution_key,
@@ -909,6 +1069,7 @@ class ConsoleProviderGateway:
             "verbosity": resolution.verbosity,
             "thinking_effort": resolution.thinking_effort,
             "thinking_budget_tokens": resolution.thinking_budget_tokens,
+            "tools": tools,
         }
         return {key: value for key, value in kwargs.items() if value is not None}
 
