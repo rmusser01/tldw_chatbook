@@ -12,7 +12,7 @@ A provider earns a place in ``NATIVE_TOOLS_PROVIDERS`` only when ALL of:
    ``choices[0].message.tool_calls`` survives verbatim (the anthropic /
    google / cohere handlers normalize and currently DROP tool-use blocks —
    they stay fence-only until their normalizers build
-   ``message.tool_calls``; follow-up filed as task-246), and
+   ``message.tool_calls``; follow-up filed as task-263), and
 3. the provider accepts OpenAI-shape ``role: "tool"`` history messages.
 
 Pure module: no I/O, no provider imports.

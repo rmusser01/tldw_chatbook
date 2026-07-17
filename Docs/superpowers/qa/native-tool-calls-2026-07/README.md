@@ -37,4 +37,4 @@ Before the connection failed, the recorder captured the half that this branch ch
 ## Residuals
 
 - Re-run `native_gate.py B C` once the llama.cpp server is back (or `A` against a real cloud key for the literal AC #2 wording).
-- task-246 filed: Anthropic/Google/Cohere handlers normalize away tool-use blocks; they stay fence-only until their normalizers build `message.tool_calls`.
+- task-263 filed: Anthropic/Google/Cohere handlers normalize away tool-use blocks; they stay fence-only until their normalizers build `message.tool_calls`.
