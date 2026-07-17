@@ -313,6 +313,7 @@ async def test_tryit_bracket_tag_content_not_backslash_escaped():
 # PersonasScreen against it.
 
 from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
+from tldw_chatbook.Character_Chat.world_info_processor import WorldInfoProcessor
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
@@ -691,3 +692,39 @@ async def test_update_entry_persists_matching_fields_through_real_screen_handler
         assert warden["case_sensitive"] is True
         assert warden["selective"] is True
         assert warden["secondary_keys"] == ["prison"]
+
+
+@pytest.mark.asyncio
+async def test_selective_entry_created_via_editor_gates_matching(
+    mock_app_instance, stub_characters_lore, lore_db, seeded_lore_book
+):
+    """A selective entry created through the real editor/add-handler path gates
+    matching in WorldInfoProcessor: it fires only when a secondary key is present
+    in the scan text. Proves editor config → DB → matcher end to end."""
+    mock_app_instance.chachanotes_db = lore_db
+    app = LorePersonasTestApp(mock_app_instance)
+    async with app.run_test(size=(200, 60)) as pilot:
+        screen = await _enter_lore(pilot)
+        await _select_first_lore(pilot, screen)
+        screen.query_one("#personas-lore-entry-keys", Input).value = "hero"
+        screen.query_one("#personas-lore-entry-content", TextArea).text = "the brave hero"
+        screen.query_one("#personas-lore-entry-selective", Switch).value = True
+        screen.query_one("#personas-lore-entry-secondary-keys", Input).value = "sword"
+        await pilot.pause()
+        await pilot.click("#personas-lore-entry-add")
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+    manager = WorldBookManager(lore_db)
+    book = manager.get_world_book(seeded_lore_book["book_id"])
+    entries = manager.get_world_book_entries(seeded_lore_book["book_id"])
+    world_book = {**book, "entries": entries}
+    proc = WorldInfoProcessor(world_books=[world_book])
+
+    # primary key "hero" present but secondary "sword" absent → selective entry does NOT fire
+    r1 = proc.process_messages("the hero walks alone", [])
+    assert all("brave hero" not in c for c in r1["injections"]["before_char"])
+    # primary + secondary present → fires
+    r2 = proc.process_messages("the hero draws a sword", [])
+    assert any("brave hero" in c for c in r2["injections"]["before_char"])
