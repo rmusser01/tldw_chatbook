@@ -482,3 +482,52 @@ def test_streaming_index_continues_across_chunks_and_blank_names_skip(mock_post)
                  for f in c["choices"][0].get("delta", {}).get("tool_calls", [])]
     assert [(f["index"], f["function"]["name"]) for f in fragments] == [
         (0, "calculator"), (1, "get_current_datetime")]
+
+
+@patch("requests.Session.post")
+def test_thought_signature_round_trips_response_to_request(mock_post):
+    """task-266 live gate: Gemini 3 models 400 unless the response part's
+    thoughtSignature is echoed back verbatim on the follow-up request's
+    functionCall part. Non-streaming response carries it opaquely on the
+    OpenAI entry; the request converter re-attaches it."""
+    response = {"candidates": [{"content": {"parts": [
+        {"functionCall": {"name": "calculator",
+                          "args": {"expression": "2+2"}},
+         "thoughtSignature": "sig-abc"}], "role": "model"},
+        "finishReason": "STOP", "index": 0}],
+        "usageMetadata": {}}
+    result = _call_google_get_result(
+        mock_post, response, [{"role": "user", "content": "2+2?"}])
+    (entry,) = result["choices"][0]["message"]["tool_calls"]
+    assert entry["google_thought_signature"] == "sig-abc"
+
+    # Echo the entry back as history: the functionCall part must carry it.
+    messages = [
+        {"role": "user", "content": "2+2?"},
+        {"role": "assistant", "content": "", "tool_calls": [entry]},
+        {"role": "tool", "tool_call_id": entry["id"], "content": "4"},
+    ]
+    sent = _call_google(mock_post, messages)
+    model_part = sent["contents"][1]["parts"][0]
+    assert model_part["thoughtSignature"] == "sig-abc"
+    assert model_part["functionCall"]["name"] == "calculator"
+
+
+@patch("requests.Session.post")
+def test_streaming_fragment_carries_thought_signature(mock_post):
+    """Streaming parity: a streamed functionCall part's thoughtSignature
+    rides on the emitted OpenAI fragment."""
+    chunks = [
+        {"candidates": [{"content": {"parts": [
+            {"functionCall": {"name": "calculator",
+                              "args": {"expression": "2+2"}},
+             "thoughtSignature": "sig-str"}], "role": "model"}, "index": 0}]},
+        {"candidates": [{"content": {"parts": []}, "role": "model",
+                         "finishReason": "STOP", "index": 0}]},
+    ]
+    raw = _call_google_stream(mock_post, _gemini_stream_lines(chunks),
+                              [{"role": "user", "content": "go"}])
+    parsed = _decode_sse_chunks(raw)
+    fragments = [f for c in parsed
+                 for f in c["choices"][0].get("delta", {}).get("tool_calls", [])]
+    assert fragments[0]["google_thought_signature"] == "sig-str"

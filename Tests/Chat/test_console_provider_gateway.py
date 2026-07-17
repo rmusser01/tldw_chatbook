@@ -1829,3 +1829,18 @@ async def test_tool_call_fragments_out_of_index_order_emit_in_index_order() -> N
     assert [c["id"] for c in ptc.tool_calls] == ["c0", "c1"]
     assert [c["function"]["name"] for c in ptc.tool_calls] == [
         "calculator", "get_current_datetime"]
+
+
+def test_tool_call_accumulator_preserves_extra_fragment_keys() -> None:
+    """task-266: provider-specific extra keys on tool-call fragments (e.g.
+    Gemini 3 google_thought_signature) must survive the merge — the request
+    converter has to echo them back verbatim."""
+    from tldw_chatbook.Chat.console_provider_gateway import _ToolCallAccumulator
+    acc = _ToolCallAccumulator()
+    acc.feed_payload({"choices": [{"delta": {"tool_calls": [
+        {"index": 0, "id": "c1", "type": "function",
+         "function": {"name": "calculator", "arguments": "{}"},
+         "google_thought_signature": "sig-x"}]}}]})
+    (call,) = acc.calls()
+    assert call["google_thought_signature"] == "sig-x"
+    assert call["function"]["name"] == "calculator"

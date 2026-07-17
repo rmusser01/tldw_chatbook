@@ -1872,7 +1872,14 @@ def chat_with_google(
                         args = parsed
                 tool_call_names[str(call.get("id") or "")] = name
                 call_names.append(name)
-                parts.append({"functionCall": {"name": name, "args": args}})
+                part = {"functionCall": {"name": name, "args": args}}
+                signature = (call.get("google_thought_signature")
+                             or call.get("thoughtSignature"))
+                if signature:
+                    # Echo Gemini 3 thought signatures back verbatim —
+                    # required for tools on current models (live-gate 400).
+                    part["thoughtSignature"] = str(signature)
+                parts.append(part)
             if call_names:
                 last_function_call_names = call_names
                 gemini_contents.append({"role": "model", "parts": parts})
@@ -1977,7 +1984,7 @@ def chat_with_google(
                                                 name = str(fc.get('name') or '').strip()
                                                 if not name:
                                                     continue
-                                                chunk_tool_calls.append({
+                                                fragment = {
                                                     "index": next_tool_position,
                                                     "id": f"call_gemini_{time.time_ns()}_{next_tool_position}",
                                                     "type": "function",
@@ -1986,7 +1993,15 @@ def chat_with_google(
                                                         "arguments": json.dumps(
                                                             fc['args'] if isinstance(fc.get('args'), dict) else {}),
                                                     },
-                                                })
+                                                }
+                                                # Gemini 3 thought signature:
+                                                # must round-trip (see the
+                                                # non-streaming parser note).
+                                                signature = (part.get('thoughtSignature')
+                                                             or part.get('thought_signature'))
+                                                if signature:
+                                                    fragment["google_thought_signature"] = str(signature)
+                                                chunk_tool_calls.append(fragment)
                                                 next_tool_position += 1
                                     raw_finish_reason = candidate.get("finishReason")
                                     openai_finish_reason = None
@@ -2040,14 +2055,24 @@ def chat_with_google(
                             assistant_content += part.get("text", "")
                         if "functionCall" in part:
                             if tool_calls is None: tool_calls = []
-                            tool_calls.append({
+                            entry = {
                                 "id": f"call_gemini_{time.time_ns()}_{len(tool_calls)}",
                                 "type": "function",
                                 "function": {
                                     "name": part["functionCall"].get("name"),
                                     "arguments": json.dumps(part["functionCall"].get("args", {}))
                                 }
-                            })
+                            }
+                            # Gemini 3-family models REQUIRE the part's
+                            # thoughtSignature to be echoed back verbatim on
+                            # the follow-up request (live-gate 400 without
+                            # it). Carry it opaquely on the OpenAI-shape
+                            # entry; the request converter re-attaches it.
+                            signature = (part.get("thoughtSignature")
+                                         or part.get("thought_signature"))
+                            if signature:
+                                entry["google_thought_signature"] = str(signature)
+                            tool_calls.append(entry)
                 raw_finish_reason = candidate.get("finishReason")
                 if raw_finish_reason:
                     fr_map = {"MAX_TOKENS": "length", "STOP": "stop", "SAFETY": "content_filter",

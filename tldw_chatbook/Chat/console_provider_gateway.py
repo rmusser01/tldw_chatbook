@@ -295,6 +295,14 @@ class _ToolCallAccumulator:
                 entry["function"]["arguments"] += arguments
             elif isinstance(arguments, Mapping):
                 entry["function"]["arguments"] = json.dumps(arguments)
+        # Preserve provider-specific extra keys (last-wins) — e.g. Gemini 3
+        # thought signatures carried as google_thought_signature, which the
+        # request converter must echo back verbatim (task-266 live gate).
+        for key, value in fragment.items():
+            if key in ("index", "id", "type", "function"):
+                continue
+            if value:
+                entry[key] = value
 
     def calls(self) -> tuple[dict, ...]:
         # Numeric index order, not first-seen order: the provider's index
