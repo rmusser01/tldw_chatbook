@@ -1,0 +1,33 @@
+evidence db dir: /private/tmp/claude-501/-Users-macbook-dev-Documents-GitHub-tldw-chatbook/0c177be4-8a91-43dd-9244-5945679ee3ae/scratchpad/google-gate-evidence | model: gemini-flash-latest
+
+===== A-google-single (1.8s) =====
+status: done
+final answer: "18018"
+provider calls:
+  turn 0: tools=['spawn_subagent', 'calculator', 'get_current_datetime'] fence_in_system=False
+  turn 1: tools=['spawn_subagent', 'calculator', 'get_current_datetime'] fence_in_system=False
+run steps:
+  [model]  :: 
+  [tool_call] calculator :: 
+  [tool_result] calculator :: {"expression": "234 * 77", "result": 18018, "result_type": "int"}
+  [model]  :: 18018
+A native + no fence: True | round-trip done: True | functionResponse turn accepted: True
+
+===== B-google-multi (2.4s) =====
+status: done
+final answer: "The current date is Friday, July 17, 2026, and the calculation of 91 * 7 is 637."
+provider calls:
+  turn 0: tools=['spawn_subagent', 'calculator', 'get_current_datetime'] fence_in_system=False
+  turn 1: tools=['spawn_subagent', 'calculator', 'get_current_datetime'] fence_in_system=False
+run steps:
+  [model]  :: 
+  [tool_call] get_current_datetime :: 
+  [tool_result] get_current_datetime :: {"datetime": "2026-07-17T04:30:31.763284+00:00", "timezone": "UTC", "date": "2026-07-17", "time": "04:30:31.763284", "we
+  [tool_call] calculator :: 
+  [tool_result] calculator :: {"expression": "91 * 7", "result": 637, "result_type": "int"}
+  [model]  :: The current date is Friday, July 17, 2026, and the calculation of 91 * 7 is 637.
+B tool calls: 2 | model turns: 2 | status: done
+
+===== VERDICTS =====
+results: {'A': True, 'B': True}
+GATE: PASS

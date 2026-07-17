@@ -11,9 +11,9 @@ A provider earns a place in ``NATIVE_TOOLS_PROVIDERS`` only when ALL of:
 2. the handler returns (or normalizes to) the OpenAI-compatible response
    dict with ``choices[0].message.tool_calls`` intact — raw passthrough for
    the OpenAI-compatible providers; full block conversion for anthropic
-   (task-263). The google / cohere handlers still normalize and DROP
-   tool-use blocks — they stay fence-only until converted (follow-ups
-   filed), and
+   (task-263) and google (task-266). The cohere handler still normalizes
+   and DROPS tool-call data — it stays fence-only until converted
+   (task-267), and
 3. the provider accepts OpenAI-shape ``role: "tool"`` history messages.
 
 Pure module: no I/O, no provider imports.
@@ -32,6 +32,12 @@ NATIVE_TOOLS_PROVIDERS = frozenset({
     # back to OpenAI shape — live-gated against the real API 2026-07-17
     # (Docs/superpowers/qa/anthropic-native-2026-07/).
     "anthropic",
+    # task-266: chat_with_google wraps functionDeclarations, converts
+    # functionCall/functionResponse history (incl. Gemini 3 thought-
+    # signature round-trip), and emits streamed functionCall parts as
+    # OpenAI fragments — live-gated 2026-07-17
+    # (Docs/superpowers/qa/google-native-2026-07/).
+    "google",
 })
 
 
