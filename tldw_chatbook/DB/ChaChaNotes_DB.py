@@ -54,7 +54,8 @@ from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 # Third-Party Libraries
 #
 # Local Imports
-from .sql_validation import validate_table_name, validate_column_name  
+from .sql_validation import validate_table_name, validate_column_name
+from .sql_logging import preview_params
 #
 ########################################################################################################################
 #
@@ -2632,8 +2633,16 @@ UPDATE db_schema_version
         conn = self.get_connection()
         try:
             cursor = conn.cursor()
-            #if logger.isEnabledFor(logging.DEBUG):  # Avoid formatting query/params if not debugging
-            logger.debug(f"Executing SQL (script={script}): {query[:300]}... Params: {str(params)[:200]}...")
+            # Lazy + BLOB-safe: loguru has no isEnabledFor(), so the guard
+            # against formatting query/params when not debugging is
+            # `opt(lazy=True)` with callables instead of an eager f-string --
+            # the lambda (and preview_params' truncation) only runs if a sink
+            # actually admits DEBUG. See DB/sql_logging.py.
+            logger.opt(lazy=True).debug(
+                "Executing SQL (script={}): {}",
+                lambda: script,
+                lambda: f"{query[:300]}... Params: {preview_params(params)}",
+            )
 
             if script:
                 cursor.executescript(query)
@@ -4358,6 +4367,34 @@ UPDATE db_schema_version
             return stripped if stripped else None
         return str(value)
 
+    @staticmethod
+    def _fts_prefix_match_expression(term: str) -> str:
+        """Build a quoted FTS5 prefix-match expression from a raw user query.
+
+        FTS5 ``MATCH`` treats its argument as its own mini query language --
+        bare ``"``, ``*``, ``-``, and bareword operators like ``AND``/``OR``
+        are all syntactically meaningful. A user-typed search string is not
+        meant to be interpreted as an FTS5 query expression, just searched
+        for as literal text (token/prefix matched), so it is wrapped as an
+        FTS5 double-quoted string literal -- embedded ``"`` doubled per FTS5
+        string-literal escaping -- with a trailing ``*`` for prefix
+        matching, e.g. ``foo"bar`` -> ``"foo""bar"*``.
+
+        Unlike ``LIKE '%term%'`` (arbitrary substring, including mid-word),
+        this matches whole tokens or a prefix of the last token -- e.g.
+        "testing" is found by "test" but not by "esting". Callers relying on
+        mid-word substring matches should not assume FTS parity with LIKE.
+
+        Args:
+            term: Raw user-typed search text (already normalized/stripped).
+
+        Returns:
+            An FTS5 MATCH expression string: the term as a double-quoted
+            FTS5 string literal with a trailing ``*`` for prefix matching.
+        """
+        escaped = term.replace('"', '""')
+        return f'"{escaped}"*'
+
     def _normalize_conversation_state(self, state: Optional[str]) -> str:
         if state is None:
             return self._DEFAULT_CONVERSATION_STATE
@@ -4923,17 +4960,31 @@ UPDATE db_schema_version
 
         normalized_query = self._normalize_nullable_text(query)
         if normalized_query is not None:
+            # Message-content matching goes through messages_fts (kept in
+            # sync by triggers -- see schema ~line 326) instead of a
+            # correlated leading-wildcard substring scan against the raw
+            # messages.content column: that was index-hostile, re-scanning
+            # every candidate conversation's messages per call (task-249 /
+            # performance audit finding A4). Title and id= matching are
+            # unchanged.
             clauses.append(
                 "("
                 "title LIKE ? OR id = ? OR EXISTS ("
-                "SELECT 1 FROM messages m "
+                "SELECT 1 FROM messages_fts fts "
+                "JOIN messages m ON fts.rowid = m.rowid "
                 "WHERE m.conversation_id = conversations.id "
                 "AND m.deleted = 0 "
-                "AND m.content LIKE ?"
+                # NOTE: the hidden-column form (`fts.messages_fts MATCH`) is
+                # deliberate — the bare-alias form (`fts MATCH ?`) fails with
+                # "no such column: fts" inside this correlated EXISTS+JOIN
+                # (verified against the test suite); both forms are
+                # documented FTS5.
+                "AND fts.messages_fts MATCH ?"
                 "))"
             )
             like_query = f"%{normalized_query}%"
-            params.extend([like_query, normalized_query, like_query])
+            fts_query = self._fts_prefix_match_expression(normalized_query)
+            params.extend([like_query, normalized_query, fts_query])
 
         where_clause = " AND ".join(clauses) if clauses else "1 = 1"
         count_query = f"SELECT COUNT(*) as total FROM conversations WHERE {where_clause}"

@@ -364,43 +364,73 @@ class ChatbookImporter:
                     'character_id': character_id,
                     'root_id': f"imported_{conv_data.get('id', 'unknown')}"
                 }
-                new_conv_id = db.add_conversation(conv_dict)
-                logger.info(f"ChatbookImporter._import_conversations: Created conversation with ID {new_conv_id}")
+                # Stage all filesystem work FIRST (attachment byte loads),
+                # so the transaction below holds the write lock only for
+                # pure DB writes — no disk I/O inside the transaction.
+                staged_messages = []
+                for msg in conv_data.get('messages', []):
+                    image_kwargs, attachment_rows = self._load_message_attachments(
+                        extract_dir, msg, status
+                    )
+                    staged_messages.append((msg, image_kwargs, attachment_rows))
+
+                # One outer transaction per conversation — per conversation,
+                # not per chatbook, to preserve error-isolation semantics
+                # (one bad conversation fails alone; others still import).
+                # TransactionContextManager is depth-tracked/reentrant, so
+                # add_conversation/add_message/set_message_attachments'
+                # own `with self.transaction():` calls become nested and
+                # only this outer block commits, once, per conversation
+                # (task-250 / performance audit finding A5). A failure
+                # partway through the message loop rolls back the whole
+                # conversation (an isolation improvement — the except below
+                # already counted that case as failed). Success accounting
+                # happens AFTER the block so a failed COMMIT can never be
+                # double-counted as both success and failure. Citation
+                # context (a JSON side-store, not this DB) also persists
+                # after commit, so it neither extends the transaction nor
+                # records context for rows that get rolled back.
+                imported_message_context: list[tuple[str, str, dict]] = []
+                new_conv_id = None
+                with db.transaction():
+                    new_conv_id = db.add_conversation(conv_dict)
+                    logger.info(f"ChatbookImporter._import_conversations: Created conversation with ID {new_conv_id}")
+
+                    if new_conv_id:
+                        logger.info(f"ChatbookImporter._import_conversations: Importing {len(staged_messages)} messages")
+                        for msg, image_kwargs, attachment_rows in staged_messages:
+                            msg_dict = {
+                                'conversation_id': new_conv_id,
+                                'sender': msg['role'],
+                                'content': msg['content'],
+                                'timestamp': msg.get('timestamp', datetime.now().isoformat())
+                            }
+                            msg_dict.update(image_kwargs)
+                            new_message_id = db.add_message(msg_dict)
+                            if new_message_id:
+                                if attachment_rows:
+                                    db.set_message_attachments(
+                                        str(new_message_id), attachment_rows
+                                    )
+                                imported_message_context.append(
+                                    (str(new_conv_id), str(new_message_id), msg)
+                                )
 
                 if new_conv_id:
-                    # Import messages
-                    logger.info(f"ChatbookImporter._import_conversations: Importing {len(conv_data.get('messages', []))} messages")
-                    for msg in conv_data.get('messages', []):
-                        image_kwargs, attachment_rows = self._load_message_attachments(
-                            extract_dir, msg, status
+                    for context_conv_id, context_message_id, msg in imported_message_context:
+                        self._persist_imported_message_citation_context(
+                            conversation_service,
+                            context_conv_id,
+                            context_message_id,
+                            msg,
                         )
-                        msg_dict = {
-                            'conversation_id': new_conv_id,
-                            'sender': msg['role'],
-                            'content': msg['content'],
-                            'timestamp': msg.get('timestamp', datetime.now().isoformat())
-                        }
-                        msg_dict.update(image_kwargs)
-                        new_message_id = db.add_message(msg_dict)
-                        if new_message_id:
-                            if attachment_rows:
-                                db.set_message_attachments(
-                                    str(new_message_id), attachment_rows
-                                )
-                            self._persist_imported_message_citation_context(
-                                conversation_service,
-                                str(new_conv_id),
-                                str(new_message_id),
-                                msg,
-                            )
-                    
                     status.successful_items += 1
                     logger.info(f"ChatbookImporter._import_conversations: Successfully imported conversation: {conv_name}")
                 else:
                     status.failed_items += 1
                     status.add_error(f"Failed to create conversation: {conv_name}")
                     logger.error(f"ChatbookImporter._import_conversations: Failed to create conversation: {conv_name}")
-                    
+
             except Exception as e:
                 status.failed_items += 1
                 status.add_error(f"Error importing conversation {conv_id}: {str(e)}")
