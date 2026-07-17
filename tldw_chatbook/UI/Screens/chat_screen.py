@@ -10653,13 +10653,17 @@ class ChatScreen(BaseAppScreen):
                 
         except Exception as e:
             logger.error(f"Error in _extract_and_save_messages: {e}")
-    
-    def on_screen_suspend(self) -> None:
-        """Called when navigating away from this screen."""
-        logger.debug("Chat screen suspending - saving state")
-        self.save_state()
-        # Note: BaseAppScreen doesn't have on_screen_suspend, so no super() call
-    
+
+    # NOTE (task-247, perf): there used to be an on_screen_suspend() override
+    # here that called self.save_state() again and discarded the result.
+    # app.py already calls save_state() explicitly before switching screens
+    # away from Console (see the pre-navigation save in switch_screen /
+    # _screen_states bookkeeping) and stores that return value -- the second
+    # call here was pure waste (a full O(sessions x messages) native-console
+    # serialization) on every tab switch away from Console. Removed rather
+    # than left as a no-op so it doesn't shadow a future base-class
+    # implementation.
+
     def on_screen_resume(self) -> None:
         """Called when returning to this screen."""
         logger.debug("Chat screen resuming")
