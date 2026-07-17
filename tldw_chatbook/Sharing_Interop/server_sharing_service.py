@@ -6,14 +6,6 @@ from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    CloneWorkspaceRequest,
-    CreateTokenRequest,
-    ShareWorkspaceRequest,
-    SharedChatRequest,
-    UpdateShareRequest,
-    VerifyPasswordRequest,
-)
 if TYPE_CHECKING:
     from ..tldw_api import TLDWAPIClient
 
@@ -105,6 +97,9 @@ class ServerSharingService:
         max_uses: int | None = None,
         expires_at: str | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import CreateTokenRequest
+
         self._enforce("sharing.links.create.server")
         request = CreateTokenRequest(
             resource_type=resource_type,  # type: ignore[arg-type]
@@ -130,6 +125,9 @@ class ServerSharingService:
         return self._dump(await self._require_client().preview_public_share(token))
 
     async def verify_public_link_password(self, token: str, *, password: str) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import VerifyPasswordRequest
+
         self._enforce("sharing.links.launch.server")
         request = VerifyPasswordRequest(password=password)
         return self._dump(await self._require_client().verify_public_share_password(token, request))
@@ -167,6 +165,9 @@ class ServerSharingService:
         access_level: str = "view_chat",
         allow_clone: bool = True,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ShareWorkspaceRequest
+
         self._enforce("sharing.permissions.configure.server")
         request = ShareWorkspaceRequest(
             share_scope_type=share_scope_type,  # type: ignore[arg-type]
@@ -197,6 +198,9 @@ class ServerSharingService:
         access_level: str | None = None,
         allow_clone: bool | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import UpdateShareRequest
+
         self._enforce("sharing.permissions.configure.server")
         request = UpdateShareRequest(
             access_level=access_level,  # type: ignore[arg-type]
@@ -217,6 +221,9 @@ class ServerSharingService:
         return self._dump(await self._require_client().get_shared_workspace(share_id))
 
     async def clone_shared_workspace(self, share_id: int, *, new_name: str | None = None) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import CloneWorkspaceRequest
+
         self._enforce("sharing.links.launch.server")
         request = CloneWorkspaceRequest(new_name=new_name)
         return self._dump(await self._require_client().clone_shared_workspace(share_id, request))
@@ -238,6 +245,9 @@ class ServerSharingService:
         api_name: str | None = None,
         system_message: str | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SharedChatRequest
+
         self._enforce("sharing.links.launch.server")
         request = SharedChatRequest(
             query=query,

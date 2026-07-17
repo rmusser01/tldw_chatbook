@@ -6,26 +6,26 @@ from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    APIKeyCreateRequest,
-    APIKeyRotateRequest,
-    BulkDeleteRequest,
-    BulkMoveRequest,
-    GeneratedFileUpdate,
-    OpenAICredentialSourceSwitchRequest,
-    OpenAIOAuthAuthorizeRequest,
-    PasswordChangeRequest,
-    PasswordResetConfirm,
-    PasswordResetRequest,
-    ProviderKeyTestRequest,
-    RefreshTokenRequest,
-    RegisterRequest,
-    UserProfileUpdateRequest,
-    UserProviderKeyUpsertRequest,
-    VirtualAPIKeyCreateRequest,
-)
 if TYPE_CHECKING:
-    from ..tldw_api import TLDWAPIClient
+    from ..tldw_api import (
+        APIKeyCreateRequest,
+        APIKeyRotateRequest,
+        BulkDeleteRequest,
+        BulkMoveRequest,
+        GeneratedFileUpdate,
+        OpenAICredentialSourceSwitchRequest,
+        OpenAIOAuthAuthorizeRequest,
+        PasswordChangeRequest,
+        PasswordResetConfirm,
+        PasswordResetRequest,
+        ProviderKeyTestRequest,
+        RefreshTokenRequest,
+        RegisterRequest,
+        TLDWAPIClient,
+        UserProfileUpdateRequest,
+        UserProviderKeyUpsertRequest,
+        VirtualAPIKeyCreateRequest,
+    )
 
 
 class ServerAuthAccountService:

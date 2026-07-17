@@ -6,16 +6,16 @@ from typing import TYPE_CHECKING, Any, AsyncGenerator, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    MeetingArtifactCreate,
-    MeetingFinalizeRequest,
-    MeetingSessionCreate,
-    MeetingSessionStatusUpdate,
-    MeetingShareRequest,
-    MeetingTemplateCreate,
-)
 if TYPE_CHECKING:
-    from ..tldw_api import TLDWAPIClient
+    from ..tldw_api import (
+        MeetingArtifactCreate,
+        MeetingFinalizeRequest,
+        MeetingSessionCreate,
+        MeetingSessionStatusUpdate,
+        MeetingShareRequest,
+        MeetingTemplateCreate,
+        TLDWAPIClient,
+    )
 
 
 class ServerMeetingsService:
@@ -146,6 +146,9 @@ class ServerMeetingsService:
         return self._normalize_response(await self._require_client().get_meetings_health(), kind="meeting_health")
 
     async def create_meeting_session(self, request_data: MeetingSessionCreate | dict[str, Any]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MeetingSessionCreate
+
         self._enforce("meetings.sessions.create.server")
         request = self._model(request_data, MeetingSessionCreate)
         return self._normalize_response(
@@ -172,6 +175,9 @@ class ServerMeetingsService:
         session_id: str,
         request_data: MeetingSessionStatusUpdate | dict[str, Any],
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MeetingSessionStatusUpdate
+
         self._enforce("meetings.sessions.update.server")
         request = self._model(request_data, MeetingSessionStatusUpdate)
         return self._normalize_response(
@@ -180,6 +186,9 @@ class ServerMeetingsService:
         )
 
     async def create_meeting_template(self, request_data: MeetingTemplateCreate | dict[str, Any]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MeetingTemplateCreate
+
         self._enforce("meetings.templates.create.server")
         request = self._model(request_data, MeetingTemplateCreate)
         return self._normalize_response(
@@ -206,6 +215,9 @@ class ServerMeetingsService:
         session_id: str,
         request_data: MeetingArtifactCreate | dict[str, Any],
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MeetingArtifactCreate
+
         self._enforce("meetings.artifacts.create.server")
         request = self._model(request_data, MeetingArtifactCreate)
         return self._normalize_response(
@@ -225,6 +237,9 @@ class ServerMeetingsService:
         session_id: str,
         request_data: MeetingFinalizeRequest | dict[str, Any],
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MeetingFinalizeRequest
+
         self._enforce("meetings.sessions.launch.server")
         request = self._model(request_data, MeetingFinalizeRequest)
         return self._normalize_response(await self._require_client().finalize_meeting_session(session_id, request))
@@ -234,6 +249,9 @@ class ServerMeetingsService:
         session_id: str,
         request_data: MeetingShareRequest | dict[str, Any],
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MeetingShareRequest
+
         self._enforce("meetings.share.launch.server")
         request = self._model(request_data, MeetingShareRequest)
         return self._normalize_response(
@@ -246,6 +264,9 @@ class ServerMeetingsService:
         session_id: str,
         request_data: MeetingShareRequest | dict[str, Any],
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MeetingShareRequest
+
         self._enforce("meetings.share.launch.server")
         request = self._model(request_data, MeetingShareRequest)
         return self._normalize_response(

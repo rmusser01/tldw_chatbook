@@ -6,10 +6,6 @@ from typing import TYPE_CHECKING, Any, AsyncGenerator, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    ResearchCheckpointPatchApproveRequest,
-    ResearchRunCreateRequest,
-)
 if TYPE_CHECKING:
     from ..tldw_api import TLDWAPIClient
 from .research_normalizers import ResearchRecord, ResearchRecordList
@@ -121,6 +117,9 @@ class ServerResearchService:
         chat_handoff: dict[str, Any] | None = None,
         follow_up: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ResearchRunCreateRequest
+
         self._enforce("research.runs.launch.server")
         request = ResearchRunCreateRequest(
             query=query,
@@ -208,6 +207,9 @@ class ServerResearchService:
         *,
         patch_payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ResearchCheckpointPatchApproveRequest
+
         self._enforce("research.runs.update.server")
         request = ResearchCheckpointPatchApproveRequest(patch_payload=patch_payload)
         return self._dump(

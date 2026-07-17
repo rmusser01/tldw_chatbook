@@ -8,24 +8,24 @@ from pydantic import BaseModel
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    MCPApprovalDecisionCreate,
-    MCPApprovalPolicyCreate,
-    MCPApprovalPolicyUpdate,
-    MCPCapabilityMappingCreate,
-    MCPCapabilityMappingUpdate,
-    MCPCatalogCreate,
-    MCPCatalogEntryCreate,
-    MCPExternalServerCreate,
-    MCPExternalServerUpdate,
-    MCPPermissionProfileCreate,
-    MCPPermissionProfileUpdate,
-    MCPPolicyAssignmentCreate,
-    MCPPolicyAssignmentUpdate,
-    MCPSecretSetRequest,
-)
 if TYPE_CHECKING:
-    from ..tldw_api import TLDWAPIClient
+    from ..tldw_api import (
+        MCPApprovalDecisionCreate,
+        MCPApprovalPolicyCreate,
+        MCPApprovalPolicyUpdate,
+        MCPCapabilityMappingCreate,
+        MCPCapabilityMappingUpdate,
+        MCPCatalogCreate,
+        MCPCatalogEntryCreate,
+        MCPExternalServerCreate,
+        MCPExternalServerUpdate,
+        MCPPermissionProfileCreate,
+        MCPPermissionProfileUpdate,
+        MCPPolicyAssignmentCreate,
+        MCPPolicyAssignmentUpdate,
+        MCPSecretSetRequest,
+        TLDWAPIClient,
+    )
 
 TModel = TypeVar("TModel", bound=BaseModel)
 
@@ -139,11 +139,17 @@ class ServerMCPGovernanceService:
         )
 
     async def preview_capability_mapping(self, request_data: MCPCapabilityMappingCreate | dict[str, Any]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MCPCapabilityMappingCreate
+
         self._enforce("mcp.governance.capability_mappings.preview.server")
         request = self._model(request_data, MCPCapabilityMappingCreate)
         return self._dump(await self._require_client().preview_mcp_capability_mapping(request))
 
     async def create_capability_mapping(self, request_data: MCPCapabilityMappingCreate | dict[str, Any]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MCPCapabilityMappingCreate
+
         self._enforce("mcp.governance.capability_mappings.create.server")
         request = self._model(request_data, MCPCapabilityMappingCreate)
         return self._dump(await self._require_client().create_mcp_capability_mapping(request))
@@ -153,6 +159,9 @@ class ServerMCPGovernanceService:
         capability_adapter_mapping_id: int,
         request_data: MCPCapabilityMappingUpdate | dict[str, Any],
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MCPCapabilityMappingUpdate
+
         self._enforce("mcp.governance.capability_mappings.update.server")
         request = self._model(request_data, MCPCapabilityMappingUpdate)
         return self._dump(await self._require_client().update_mcp_capability_mapping(capability_adapter_mapping_id, request))
@@ -176,6 +185,9 @@ class ServerMCPGovernanceService:
         )
 
     async def create_external_server(self, request_data: MCPExternalServerCreate | dict[str, Any]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MCPExternalServerCreate
+
         self._enforce("mcp.governance.external_servers.create.server")
         request = self._model(request_data, MCPExternalServerCreate)
         return self._dump(await self._require_client().create_mcp_external_server(request))
@@ -189,6 +201,9 @@ class ServerMCPGovernanceService:
         server_id: str,
         request_data: MCPExternalServerUpdate | dict[str, Any],
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MCPExternalServerUpdate
+
         self._enforce("mcp.governance.external_servers.update.server")
         request = self._model(request_data, MCPExternalServerUpdate)
         return self._dump(await self._require_client().update_mcp_external_server(server_id, request))
@@ -198,6 +213,9 @@ class ServerMCPGovernanceService:
         return self._dump(await self._require_client().delete_mcp_external_server(server_id))
 
     async def set_external_server_secret(self, server_id: str, request_data: MCPSecretSetRequest | dict[str, Any]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MCPSecretSetRequest
+
         self._enforce("mcp.governance.external_servers.secrets.update.server")
         request = self._model(request_data, MCPSecretSetRequest)
         return self._dump(await self._require_client().set_mcp_external_server_secret(server_id, request))
@@ -217,6 +235,9 @@ class ServerMCPGovernanceService:
         )
 
     async def create_permission_profile(self, request_data: MCPPermissionProfileCreate | dict[str, Any]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MCPPermissionProfileCreate
+
         self._enforce("mcp.governance.permission_profiles.create.server")
         request = self._model(request_data, MCPPermissionProfileCreate)
         return self._dump(await self._require_client().create_mcp_permission_profile(request))
@@ -226,6 +247,9 @@ class ServerMCPGovernanceService:
         profile_id: int,
         request_data: MCPPermissionProfileUpdate | dict[str, Any],
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MCPPermissionProfileUpdate
+
         self._enforce("mcp.governance.permission_profiles.update.server")
         request = self._model(request_data, MCPPermissionProfileUpdate)
         return self._dump(await self._require_client().update_mcp_permission_profile(profile_id, request))
@@ -239,6 +263,9 @@ class ServerMCPGovernanceService:
         return self._dump(await self._require_client().list_mcp_policy_assignments(**kwargs))
 
     async def create_policy_assignment(self, request_data: MCPPolicyAssignmentCreate | dict[str, Any]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MCPPolicyAssignmentCreate
+
         self._enforce("mcp.governance.policy_assignments.create.server")
         request = self._model(request_data, MCPPolicyAssignmentCreate)
         return self._dump(await self._require_client().create_mcp_policy_assignment(request))
@@ -248,6 +275,9 @@ class ServerMCPGovernanceService:
         assignment_id: int,
         request_data: MCPPolicyAssignmentUpdate | dict[str, Any],
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MCPPolicyAssignmentUpdate
+
         self._enforce("mcp.governance.policy_assignments.update.server")
         request = self._model(request_data, MCPPolicyAssignmentUpdate)
         return self._dump(await self._require_client().update_mcp_policy_assignment(assignment_id, request))
@@ -271,6 +301,9 @@ class ServerMCPGovernanceService:
         )
 
     async def create_approval_policy(self, request_data: MCPApprovalPolicyCreate | dict[str, Any]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MCPApprovalPolicyCreate
+
         self._enforce("mcp.governance.approval_policies.create.server")
         request = self._model(request_data, MCPApprovalPolicyCreate)
         return self._dump(await self._require_client().create_mcp_approval_policy(request))
@@ -280,6 +313,9 @@ class ServerMCPGovernanceService:
         approval_policy_id: int,
         request_data: MCPApprovalPolicyUpdate | dict[str, Any],
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MCPApprovalPolicyUpdate
+
         self._enforce("mcp.governance.approval_policies.update.server")
         request = self._model(request_data, MCPApprovalPolicyUpdate)
         return self._dump(await self._require_client().update_mcp_approval_policy(approval_policy_id, request))
@@ -289,6 +325,9 @@ class ServerMCPGovernanceService:
         return self._dump(await self._require_client().delete_mcp_approval_policy(approval_policy_id))
 
     async def create_approval_decision(self, request_data: MCPApprovalDecisionCreate | dict[str, Any]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MCPApprovalDecisionCreate
+
         self._enforce("mcp.governance.approval_decisions.approve.server")
         request = self._model(request_data, MCPApprovalDecisionCreate)
         return self._dump(await self._require_client().create_mcp_approval_decision(request))
@@ -338,6 +377,9 @@ class ServerMCPGovernanceService:
         return self._dump(await self._require_client().list_mcp_org_tool_catalogs(org_id))
 
     async def create_org_tool_catalog(self, *, org_id: int, request_data: MCPCatalogCreate | dict[str, Any]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MCPCatalogCreate
+
         self._enforce("mcp.governance.catalogs.create.server")
         request = self._model(request_data, MCPCatalogCreate)
         return self._dump(await self._require_client().create_mcp_org_tool_catalog(org_id, request))
@@ -353,6 +395,9 @@ class ServerMCPGovernanceService:
         catalog_id: int,
         request_data: MCPCatalogEntryCreate | dict[str, Any],
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MCPCatalogEntryCreate
+
         self._enforce("mcp.governance.catalog_entries.create.server")
         request = self._model(request_data, MCPCatalogEntryCreate)
         return self._dump(await self._require_client().add_mcp_org_catalog_entry(org_id, catalog_id, request))
@@ -366,6 +411,9 @@ class ServerMCPGovernanceService:
         return self._dump(await self._require_client().list_mcp_team_tool_catalogs(team_id))
 
     async def create_team_tool_catalog(self, *, team_id: int, request_data: MCPCatalogCreate | dict[str, Any]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MCPCatalogCreate
+
         self._enforce("mcp.governance.catalogs.create.server")
         request = self._model(request_data, MCPCatalogCreate)
         return self._dump(await self._require_client().create_mcp_team_tool_catalog(team_id, request))
@@ -381,6 +429,9 @@ class ServerMCPGovernanceService:
         catalog_id: int,
         request_data: MCPCatalogEntryCreate | dict[str, Any],
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MCPCatalogEntryCreate
+
         self._enforce("mcp.governance.catalog_entries.create.server")
         request = self._model(request_data, MCPCatalogEntryCreate)
         return self._dump(await self._require_client().add_mcp_team_catalog_entry(team_id, catalog_id, request))

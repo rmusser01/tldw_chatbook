@@ -20,7 +20,6 @@ from .media_reading_normalizers import (
     normalize_reading_summary,
     normalize_server_reading_item,
 )
-from ..tldw_api import ProcessWebScrapingRequest
 
 ALLOWED_SERVER_CREATE_SOURCE_TYPES = ("local_directory", "archive_snapshot", "git_repository")
 
@@ -1805,6 +1804,9 @@ class MediaReadingScopeService:
         request_data: Any | None = None,
         **kwargs: Any,
     ) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ProcessWebScrapingRequest
+
         normalized_mode = self._normalize_mode(mode)
         service = self._service_for_mode(normalized_mode)
         self._enforce_policy(self._processing_action_id("web_scraping", "process", normalized_mode))

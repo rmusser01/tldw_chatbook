@@ -6,16 +6,16 @@ from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    CompanionActivityCreate,
-    CompanionCheckInCreate,
-    CompanionGoalCreate,
-    CompanionGoalUpdate,
-    CompanionPurgeRequest,
-    CompanionRebuildRequest,
-)
 if TYPE_CHECKING:
-    from ..tldw_api import TLDWAPIClient
+    from ..tldw_api import (
+        CompanionActivityCreate,
+        CompanionCheckInCreate,
+        CompanionGoalCreate,
+        CompanionGoalUpdate,
+        CompanionPurgeRequest,
+        CompanionRebuildRequest,
+        TLDWAPIClient,
+    )
 
 
 class ServerCompanionService:
@@ -97,36 +97,54 @@ class ServerCompanionService:
 
     @staticmethod
     def _activity_request(request_data: Any) -> CompanionActivityCreate:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import CompanionActivityCreate
+
         if isinstance(request_data, CompanionActivityCreate):
             return request_data
         return CompanionActivityCreate(**dict(request_data or {}))
 
     @staticmethod
     def _check_in_request(request_data: Any) -> CompanionCheckInCreate:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import CompanionCheckInCreate
+
         if isinstance(request_data, CompanionCheckInCreate):
             return request_data
         return CompanionCheckInCreate(**dict(request_data or {}))
 
     @staticmethod
     def _goal_create_request(request_data: Any) -> CompanionGoalCreate:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import CompanionGoalCreate
+
         if isinstance(request_data, CompanionGoalCreate):
             return request_data
         return CompanionGoalCreate(**dict(request_data or {}))
 
     @staticmethod
     def _goal_update_request(request_data: Any) -> CompanionGoalUpdate:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import CompanionGoalUpdate
+
         if isinstance(request_data, CompanionGoalUpdate):
             return request_data
         return CompanionGoalUpdate(**dict(request_data or {}))
 
     @staticmethod
     def _purge_request(request_data: Any) -> CompanionPurgeRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import CompanionPurgeRequest
+
         if isinstance(request_data, CompanionPurgeRequest):
             return request_data
         return CompanionPurgeRequest(**dict(request_data or {}))
 
     @staticmethod
     def _rebuild_request(request_data: Any) -> CompanionRebuildRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import CompanionRebuildRequest
+
         if isinstance(request_data, CompanionRebuildRequest):
             return request_data
         return CompanionRebuildRequest(**dict(request_data or {}))

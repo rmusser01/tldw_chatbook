@@ -6,13 +6,6 @@ from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    OutputCreateRequest,
-    OutputTemplateCreate,
-    OutputTemplateUpdate,
-    OutputUpdateRequest,
-    TemplatePreviewRequest,
-)
 if TYPE_CHECKING:
     from ..tldw_api import TLDWAPIClient
 
@@ -114,6 +107,9 @@ class ServerOutputsService:
         is_default: bool = False,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import OutputTemplateCreate
+
         self._enforce("outputs.templates.create.server")
         request = OutputTemplateCreate(
             name=name,
@@ -127,6 +123,9 @@ class ServerOutputsService:
         return self._dump(await self._require_client().create_output_template(request))
 
     async def update_template(self, template_id: int, **payload: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import OutputTemplateUpdate
+
         self._enforce("outputs.templates.update.server")
         request = OutputTemplateUpdate(**{key: value for key, value in payload.items() if value is not None})
         return self._dump(await self._require_client().update_output_template(template_id, request))
@@ -144,6 +143,9 @@ class ServerOutputsService:
         limit: int = 50,
         data: dict[str, object] | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import TemplatePreviewRequest
+
         self._enforce("outputs.render_jobs.launch.server")
         request = TemplatePreviewRequest(
             template_id=template_id,
@@ -204,6 +206,9 @@ class ServerOutputsService:
         tts_voice: str | None = None,
         tts_speed: float | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import OutputCreateRequest
+
         self._enforce("outputs.artifacts.create.server")
         request = OutputCreateRequest(
             template_id=template_id,
@@ -224,6 +229,9 @@ class ServerOutputsService:
         return self._dump(await self._require_client().create_output(request))
 
     async def update_artifact(self, output_id: int, **payload: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import OutputUpdateRequest
+
         self._enforce("outputs.artifacts.update.server")
         request = OutputUpdateRequest(**{key: value for key, value in payload.items() if value is not None})
         return self._dump(await self._require_client().update_output(output_id, request))

@@ -6,11 +6,6 @@ from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    CollectionsFeedCreateRequest,
-    CollectionsFeedUpdateRequest,
-    CollectionsWebSubSubscribeRequest,
-)
 if TYPE_CHECKING:
     from ..tldw_api import TLDWAPIClient
 
@@ -101,6 +96,9 @@ class ServerCollectionsFeedsService:
         active: bool = True,
         settings: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import CollectionsFeedCreateRequest
+
         self._enforce("collections.feeds.create.server")
         request = CollectionsFeedCreateRequest(
             url=url,  # type: ignore[arg-type]
@@ -139,6 +137,9 @@ class ServerCollectionsFeedsService:
         active: bool | None = None,
         settings: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import CollectionsFeedUpdateRequest
+
         self._enforce("collections.feeds.update.server")
         request = CollectionsFeedUpdateRequest(
             name=name,
@@ -156,6 +157,9 @@ class ServerCollectionsFeedsService:
         return bool(await self._require_client().delete_collections_feed(int(feed_id)))
 
     async def subscribe_feed_websub(self, feed_id: int, *, lease_seconds: int | None = None) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import CollectionsWebSubSubscribeRequest
+
         self._enforce("collections.feeds.websub.launch.server")
         request = CollectionsWebSubSubscribeRequest(lease_seconds=lease_seconds)
         return self._dump(await self._require_client().subscribe_collections_feed_websub(int(feed_id), request))

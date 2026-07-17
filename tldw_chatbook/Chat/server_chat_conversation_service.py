@@ -6,16 +6,15 @@ from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from tldw_chatbook.runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from tldw_chatbook.runtime_policy.types import PolicyDeniedError
-from tldw_chatbook.tldw_api import (
-    ChatKnowledgeSaveRequest,
-    ChatLoopApprovalDecisionRequest,
-    ChatLoopStartRequest,
-    CharacterChatSessionCreate,
-    ConversationShareLinkCreateRequest,
-    ConversationUpdateRequest,
-)
 if TYPE_CHECKING:
-    from tldw_chatbook.tldw_api import TLDWAPIClient
+    from tldw_chatbook.tldw_api import (
+        CharacterChatSessionCreate,
+        ChatKnowledgeSaveRequest,
+        ChatLoopStartRequest,
+        ConversationShareLinkCreateRequest,
+        ConversationUpdateRequest,
+        TLDWAPIClient,
+    )
 
 
 class ServerChatConversationService:
@@ -85,24 +84,36 @@ class ServerChatConversationService:
 
     @staticmethod
     def _update_request(update_data: ConversationUpdateRequest | Mapping[str, Any]) -> ConversationUpdateRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api import ConversationUpdateRequest
+
         if isinstance(update_data, ConversationUpdateRequest):
             return update_data
         return ConversationUpdateRequest(**dict(update_data))
 
     @staticmethod
     def _loop_start_request(messages: list[dict[str, Any]], extras: Mapping[str, Any]) -> ChatLoopStartRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api import ChatLoopStartRequest
+
         payload = dict(extras)
         payload["messages"] = messages
         return ChatLoopStartRequest(**payload)
 
     @staticmethod
     def _knowledge_save_request(payload: Mapping[str, Any]) -> ChatKnowledgeSaveRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api import ChatKnowledgeSaveRequest
+
         return ChatKnowledgeSaveRequest(**dict(payload))
 
     @staticmethod
     def _share_link_create_request(
         payload: ConversationShareLinkCreateRequest | Mapping[str, Any],
     ) -> ConversationShareLinkCreateRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api import ConversationShareLinkCreateRequest
+
         if isinstance(payload, ConversationShareLinkCreateRequest):
             return payload
         return ConversationShareLinkCreateRequest(**dict(payload))
@@ -111,6 +122,9 @@ class ServerChatConversationService:
     def _chat_session_create_request(
         payload: CharacterChatSessionCreate | Mapping[str, Any],
     ) -> CharacterChatSessionCreate:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api import CharacterChatSessionCreate
+
         if isinstance(payload, CharacterChatSessionCreate):
             return payload
         request_payload = dict(payload)
@@ -208,6 +222,9 @@ class ServerChatConversationService:
         return await self._require_client().list_chat_loop_events(run_id, after_seq=after_seq)
 
     async def approve_loop_call(self, run_id: str, *, approval_id: str) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api import ChatLoopApprovalDecisionRequest
+
         self._enforce("chat.loop.approve.server")
         return await self._require_client().approve_chat_loop_call(
             run_id,
@@ -215,6 +232,9 @@ class ServerChatConversationService:
         )
 
     async def reject_loop_call(self, run_id: str, *, approval_id: str) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api import ChatLoopApprovalDecisionRequest
+
         self._enforce("chat.loop.approve.server")
         return await self._require_client().reject_chat_loop_call(
             run_id,
@@ -226,6 +246,9 @@ class ServerChatConversationService:
         return await self._require_client().cancel_chat_loop_run(run_id)
 
     async def create_conversation(self, **kwargs: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api import CharacterChatSessionCreate
+
         self._enforce(self._action_id("create"))
         payload = dict(kwargs)
         seed_first_message = bool(payload.pop("seed_first_message", False))

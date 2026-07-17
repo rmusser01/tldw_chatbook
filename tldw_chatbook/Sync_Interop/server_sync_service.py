@@ -14,17 +14,8 @@ from tldw_chatbook.Sync_Interop.validation import (
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    ClientChangesPayload,
-    SyncV2ConflictResolveRequest,
-    SyncV2DatasetEnrollRequest,
-    SyncV2DeviceRegisterRequest,
-    SyncV2Envelope,
-    SyncV2KeyRecoveryBundleRequest,
-    SyncV2PushRequest,
-)
 if TYPE_CHECKING:
-    from ..tldw_api import TLDWAPIClient
+    from ..tldw_api import ClientChangesPayload, SyncV2Envelope, TLDWAPIClient
 
 
 class ServerSyncService:
@@ -129,6 +120,9 @@ class ServerSyncService:
 
     @staticmethod
     def _coerce_payload(request_data: ClientChangesPayload | Mapping[str, Any]) -> ClientChangesPayload:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ClientChangesPayload
+
         if isinstance(request_data, ClientChangesPayload):
             return request_data
         return ClientChangesPayload.model_validate(request_data)
@@ -189,6 +183,14 @@ class ServerSyncService:
                 the server does not support any requested domains.
             PolicyDeniedError: If runtime policy blocks server Sync v2 dry-run access.
         """
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import (
+            SyncV2DatasetEnrollRequest,
+            SyncV2DeviceRegisterRequest,
+            SyncV2Envelope,
+            SyncV2PushRequest,
+        )
+
 
         if self.state_repository is None:
             raise ValueError("Sync state repository is required for Sync v2 dry-run.")
@@ -345,6 +347,9 @@ class ServerSyncService:
         rotation_of_key_record_id: str | None = None,
     ) -> dict[str, Any]:
         """Store opaque Sync v2 key recovery material on the server."""
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SyncV2KeyRecoveryBundleRequest
+
 
         self._enforce("sync.v2.keys.store.server")
         request = SyncV2KeyRecoveryBundleRequest(
@@ -419,6 +424,9 @@ class ServerSyncService:
             ValueError: If outgoing envelopes or the server response violate Sync v2 scope.
             PolicyDeniedError: If runtime policy blocks server Sync v2 push access.
         """
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SyncV2Envelope, SyncV2PushRequest
+
 
         self._enforce("sync.v2.push.server")
         coerced_envelopes = [
@@ -485,6 +493,9 @@ class ServerSyncService:
             ValueError: If pulled envelopes or pagination state violate Sync v2 scope.
             PolicyDeniedError: If runtime policy blocks server Sync v2 pull access.
         """
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SyncV2Envelope
+
 
         self._enforce("sync.v2.restore.pull.server")
         response = self._dump(
@@ -541,6 +552,9 @@ class ServerSyncService:
         notes: str | None = None,
     ) -> dict[str, Any]:
         """Resolve a Sync v2 conflict via the server conflict API."""
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SyncV2ConflictResolveRequest
+
 
         self._enforce("sync.v2.conflicts.resolve.server")
         request = SyncV2ConflictResolveRequest(
