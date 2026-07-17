@@ -310,7 +310,9 @@ class WorldInfoProcessor:
             records.append(WorldBookEntryDiagnostic(
                 entry_id=cand.get("_entry_id"), source_book_id=cand.get("_book_id"),
                 source_book_name=str(cand.get("_book_name") or ""),
-                keys=list(cand.get("keys") or []), activation_reason=reason, status="fired",
+                keys=list(cand.get("keys") or []),
+                priority=int(cand.get('priority', 0) or 0),
+                activation_reason=reason, status="fired",
                 token_cost=self._estimate_entry_tokens(cand), injection_order=order,
                 position=cand.get("position", "before_char"),
                 content_preview=(cand.get("content", "") or "")[:80], depth_level=depth_level,
@@ -340,7 +342,9 @@ class WorldInfoProcessor:
             records.append(WorldBookEntryDiagnostic(
                 entry_id=cand.get("_entry_id"), source_book_id=cand.get("_book_id"),
                 source_book_name=str(cand.get("_book_name") or ""),
-                keys=list(cand.get("keys") or []), activation_reason=reason, status=status,
+                keys=list(cand.get("keys") or []),
+                priority=int(cand.get('priority', 0) or 0),
+                activation_reason=reason, status=status,
                 token_cost=self._estimate_entry_tokens(cand), injection_order=None,
                 position=cand.get("position", "before_char"),
                 content_preview=(cand.get("content", "") or "")[:80], depth_level=0,

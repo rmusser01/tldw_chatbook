@@ -15,8 +15,9 @@ class WorldBookEntryDiagnostic:
     source_book_id: Optional[int]
     source_book_name: str
     keys: List[str]
-    activation_reason: str
-    status: str  # "fired" | "skipped:disabled" | "skipped:secondary" | "skipped:budget"
+    priority: int = 0
+    activation_reason: str = ""
+    status: str = ""  # "fired" | "skipped:disabled" | "skipped:secondary" | "skipped:budget"
     token_cost: int = 0
     injection_order: Optional[int] = None
     position: str = "before_char"
@@ -34,6 +35,7 @@ class WorldBookEntryDiagnostic:
             "source_book_id": self.source_book_id,
             "source_book_name": self.source_book_name,
             "keys": list(self.keys),
+            "priority": self.priority,
             "activation_reason": self.activation_reason,
             "status": self.status,
             "token_cost": self.token_cost,

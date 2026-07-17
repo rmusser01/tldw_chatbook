@@ -16,7 +16,7 @@ def test_entry_diagnostic_to_dict_round_trips_fields():
     )
     assert rec.to_dict() == {
         "entry_id": 7, "source_book_id": 3, "source_book_name": "Blackreach",
-        "keys": ["Warden"], "activation_reason": "matched key 'Warden'", "status": "fired",
+        "keys": ["Warden"], "priority": 0, "activation_reason": "matched key 'Warden'", "status": "fired",
         "token_cost": 12, "injection_order": 0, "position": "before_char",
         "content_preview": "The grim jailer…", "depth_level": 0,
     }
@@ -265,3 +265,12 @@ def test_diagnostics_duplicate_signature_entries_keep_distinct_ids():
     fired = [e for e in diag.entries if e.status == "fired"]
     assert len(fired) == 2
     assert {e.entry_id for e in fired} == {1, 2}
+
+
+def test_diagnostic_record_carries_priority():
+    book = _book(1, "B", [_entry(1, ["Warden"], "grim jailer", priority=42)])
+    proc = WorldInfoProcessor(world_books=[book])
+    _result, diag = proc.process_messages_with_diagnostics("The Warden.", [])
+    fired = next(e for e in diag.entries if e.status == "fired")
+    assert fired.priority == 42
+    assert fired.to_dict()["priority"] == 42
