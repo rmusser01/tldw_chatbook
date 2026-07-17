@@ -24,7 +24,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.message import Message
-from textual.widgets import Button, DataTable, Static
+from textual.widgets import Button, DataTable, Input, Static
 
 from tldw_chatbook.MCP.permission_store import (
     DEFAULT_GLOBAL,
@@ -299,6 +299,28 @@ class MCPPermissionsMode(Vertical):
         height: 100%;
         min-height: 0;
     }
+    /* Task 4 (MCP Hub Phase 6): the free-text filter Input sits directly
+    above the matrix table -- this canvas has exactly one filter control
+    (unlike MCPToolsMode's paired text+server-Select bar), so no wrapping
+    toolbar/Horizontal is needed; Textual's own Input defaults (width:
+    100%, height: 3, bordered) already give it sane geometry as a lone
+    child of this Vertical -- verified empirically (both with and without
+    an explicit `height: auto` override, the Input's OUTER geometry
+    resolves to the same 3-row bordered box either way). Pinned here
+    anyway as the single source of truth for its intended (auto-hugging,
+    single-line) shape, mirroring every other geometry rule in this
+    block. T6 note: any BUNDLE-layer override (mirrors this file's own
+    `#mcp-perm-table`/`#mcp-perm-preview` rules in `_agentic_terminal.tcss`,
+    T9) is that task's own dual-layer CSS pass -- added only if the real
+    bundled stylesheet is later found to collapse this Input's geometry,
+    same "verify against the bundled-CSS harness before landing a bundle
+    fix" discipline `mcp_audit_mode.py`'s own filter-Input comment
+    documents for its sibling Selects. No bundle edit lands with this
+    task. */
+    #mcp-perm-filter-text {
+        height: auto;
+        min-height: 0;
+    }
     /* Mirrors MCPToolsMode/MCPServersMode's own #mcp-tools-table /
     #mcp-servers-table rule (T7, P3 UX batch): height: auto + max-height so
     the table hugs its own row count instead of ballooning to fill the
@@ -398,8 +420,35 @@ class MCPPermissionsMode(Vertical):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._rows: list[PermRow] = []
+        # Task 4 (MCP Hub Phase 6): `self._all_rows` is the full, deduped
+        # `PermRow` list from the last `update_matrix()` call (was
+        # `self._rows` pre-filter, when the table always rendered every
+        # row it was given) -- the filter's own source of truth to
+        # re-narrow from on every Input.Changed, mirroring
+        # `MCPToolsMode._tools`/`_apply_filter()`'s cached-full-list
+        # shape. `self._rows_by_key` is still keyed from ALL rows (not
+        # just the currently visible ones) -- a Space press or row
+        # selection only ever needs to resolve a row key the table
+        # actually rendered, which is always a subset of this map, so it
+        # never needs to be filter-aware itself. `self._visible_rows` is
+        # the currently RENDERED (post-filter) subset, in table order --
+        # `select_tool_row()`'s own cursor-index math needs the table's
+        # actual order, not the full unfiltered one.
+        self._all_rows: list[PermRow] = []
         self._rows_by_key: dict[str, PermRow] = {}
+        self._visible_rows: list[PermRow] = []
+        # UX batch item 11: whether ANY row in the current (unfiltered)
+        # matrix carries a real tag -- cached once per `update_matrix()`
+        # call and reused by every `_apply_filter()` re-render so the Tags
+        # column doesn't flicker in/out as a filter narrows the visible
+        # rows to an all-tagless subset. Mirrors `MCPToolsMode._has_tags`'s
+        # own identical rationale.
+        self._has_tags: bool = False
+        # The filter Input's own current text -- persisted across
+        # `update_matrix()` resyncs (a background resync must not silently
+        # clear whatever the user was mid-typing), same contract as
+        # `MCPToolsMode._filter_text`.
+        self._filter_text: str = ""
         # UX batch items 2+3: the kill switch's current state, tracked here
         # (a Button carries no `.value` of its own the way a Checkbox did)
         # -- `update_matrix()` is the single writer; a press posts
@@ -417,6 +466,12 @@ class MCPPermissionsMode(Vertical):
                 "the chat bridge. Does not affect Hub tool tests."
             ),
         )
+        # Task 4 (MCP Hub Phase 6): free-text matrix filter -- no
+        # constructor `value=`, so mounting this Input never fires a
+        # spurious `Input.Changed` echo (see `on_input_changed()`'s own
+        # docstring below for why no mount-echo guard is needed here,
+        # unlike the filter Select in `mcp_tools_mode.py`).
+        yield Input(placeholder="filter tools", id="mcp-perm-filter-text")
         table = DataTable(id="mcp-perm-table")
         table.cursor_type = "row"
         yield table
@@ -463,12 +518,20 @@ class MCPPermissionsMode(Vertical):
 
         Minor 7 (DuplicateKey guard parity): two `PermRow`s sharing the
         same `_row_key()` identity would raise Textual's `DuplicateKey`
-        out of `table.add_row()` below and crash every future resync of
-        this canvas -- the same persistent-crash-loop class
-        `MCPToolsMode._apply_filter()`'s own `seen_keys` guard exists for.
-        Deduped ONCE, first occurrence wins, before anything (`self._rows`,
-        `self._rows_by_key`, the table itself) is built from it, so all
-        three stay consistent with each other.
+        out of `table.add_row()` (in `_render_rows()`, below) and crash
+        every future resync of this canvas -- the same persistent-crash-
+        loop class `MCPToolsMode._apply_filter()`'s own `seen_keys` guard
+        exists for. Deduped ONCE, first occurrence wins, before anything
+        (`self._all_rows`, `self._rows_by_key`, the table itself) is built
+        from it, so all three stay consistent with each other.
+
+        Task 4 (MCP Hub Phase 6): the preview Static set at the end of
+        this method ALWAYS summarizes the full, UNFILTERED matrix (`rows`/
+        `echo` as given) -- it is never touched by `_apply_filter()`, so
+        typing into `#mcp-perm-filter-text` narrows only the table below,
+        never this sentence, and a previously rendered echo simply
+        survives any later re-filter untouched (no re-render of this
+        Static happens at all until the NEXT `update_matrix()` call).
         """
         deduped: list[PermRow] = []
         seen_keys: set[str] = set()
@@ -480,8 +543,11 @@ class MCPPermissionsMode(Vertical):
             deduped.append(row)
         rows = deduped
 
-        self._rows = rows
+        self._all_rows = rows
         self._rows_by_key = {_row_key(row): row for row in rows}
+        # UX batch item 11: computed ONCE from the full (unfiltered) batch
+        # -- see `self._has_tags`'s own docstring in `__init__`.
+        self._has_tags = any(row.tags_label not in ("—", "") for row in rows)
 
         # UX batch items 2+3: a Button has no `.value` echo to guard against
         # (unlike the old Checkbox's `prevent(Checkbox.Changed)` -- setting
@@ -492,18 +558,76 @@ class MCPPermissionsMode(Vertical):
             kill_switch
         )
 
+        self._apply_filter()
+
+        self.query_one("#mcp-perm-preview", Static).update(f"{echo}{preview}" if echo else preview)
+
+    def _apply_filter(self) -> None:
+        """Re-render the matrix table from `self._all_rows` under the
+        current text filter (Task 4, MCP Hub Phase 6) -- mirrors
+        `MCPToolsMode._apply_filter()`'s own client-side, cached-full-list
+        approach: narrowing the matrix never round-trips through the
+        workbench, it just re-derives the visible subset from the SAME
+        `PermRow` batch `update_matrix()` last cached.
+
+        Filters TOOL rows only, by `tool_name`/`server_label` (a plain
+        case-insensitive substring test, mirroring
+        `hub_tool_catalog.filter_tools()`'s own text-filter shape). Pinned
+        rows: the global row is ALWAYS shown; a server-default row is
+        shown iff its server has >=1 visible tool row under the current
+        filter, OR the filter is blank (a blank filter shows every row,
+        including a server with zero tools of its own). Order is always
+        `self._all_rows`'s own order (global -> per-server default ->
+        that server's tools), just with non-matching rows dropped -- no
+        re-sorting here, mirrors the widget's render-only contract.
+        """
+        needle = self._filter_text.strip().lower()
+        if not needle:
+            visible = list(self._all_rows)
+        else:
+            visible_tool_keys: set[str] = set()
+            matched_server_keys: set[str] = set()
+            for row in self._all_rows:
+                if row.kind != "tool":
+                    continue
+                name = (row.tool_name or "").lower()
+                label = row.server_label.lower()
+                if needle in name or needle in label:
+                    visible_tool_keys.add(_row_key(row))
+                    matched_server_keys.add(row.server_key)
+            visible = []
+            for row in self._all_rows:
+                if row.kind == "global":
+                    visible.append(row)
+                elif row.kind == "server":
+                    if row.server_key in matched_server_keys:
+                        visible.append(row)
+                elif _row_key(row) in visible_tool_keys:
+                    visible.append(row)
+
+        self._visible_rows = visible
+        self._render_rows(visible)
+
+    def _render_rows(self, rows: list[PermRow]) -> None:
+        """Rebuild `#mcp-perm-table` from an already-resolved (possibly
+        filtered) `PermRow` list -- the single place the table itself is
+        ever cleared/repopulated, shared by `update_matrix()` (via
+        `_apply_filter()`) and every later `_apply_filter()` re-render a
+        filter keystroke triggers.
+
+        Preserves the cursor's ROW KEY (not its numeric position) across
+        the rebuild below -- `DataTable.clear()` unconditionally resets
+        `cursor_coordinate` to (0, 0), and this canvas resyncs after EVERY
+        Space press AND every filter keystroke, so an unguarded rebuild
+        would silently redirect the NEXT press onto row 0 (Global default)
+        even though the user is still looking at their tool row. Mirrors
+        `mcp_servers_mode.py`'s `_restore_overview_cursor()` -- same bug
+        class, same fix shape: a key lookup survives a row reorder/
+        insertion/removal (here, a filter narrowing or widening the set);
+        a bare saved index would not.
+        """
         table = self.query_one("#mcp-perm-table", DataTable)
 
-        # Preserve the cursor's ROW KEY (not its numeric position) across
-        # the rebuild below -- `DataTable.clear()` unconditionally resets
-        # `cursor_coordinate` to (0, 0), and this canvas resyncs after
-        # EVERY Space press (`mcp_workbench.py`'s
-        # `on_mcp_permissions_mode_state_cycle_requested`), so an unguarded
-        # rebuild would silently redirect a SECOND press onto row 0 (Global
-        # default) even though the user is still looking at their tool
-        # row. Mirrors `mcp_servers_mode.py`'s `_restore_overview_cursor()`
-        # -- same bug class, same fix shape: a key lookup survives a row
-        # reorder/insertion/removal; a bare saved index would not.
         cursor_key: str | None = None
         if table.row_count > 0 and table.cursor_row >= 0:
             try:
@@ -517,11 +641,14 @@ class MCPPermissionsMode(Vertical):
                 cursor_key = str(row_key.value)
 
         # UX batch item 11: the Tags column is omitted entirely when no row
-        # in this batch carries a real tag -- columns are rebuilt from
-        # scratch every call (`clear(columns=True)`), mirroring
-        # `mcp_servers_mode.py`'s own per-source Scope-column precedent
-        # (Task 11 there).
-        show_tags = any(row.tags_label not in ("—", "") for row in rows)
+        # in the FULL (unfiltered) matrix carries a real tag -- see
+        # `self._has_tags`'s own docstring; never recomputed against the
+        # filtered `rows` passed in here, so the column doesn't flicker
+        # in/out as a filter narrows the visible rows to an all-tagless
+        # subset. Columns are still rebuilt from scratch every call
+        # (`clear(columns=True)`), mirroring `mcp_servers_mode.py`'s own
+        # per-source Scope-column precedent (Task 11 there).
+        show_tags = self._has_tags
         table.clear(columns=True)
         table.add_columns(*(_TABLE_COLUMNS if show_tags else _TABLE_COLUMNS_NO_TAGS))
         for row in rows:
@@ -545,11 +672,9 @@ class MCPPermissionsMode(Vertical):
                     table.move_cursor(row=index)
                     break
             # A key that no longer has a row (e.g. its tool/server vanished
-            # from this resync) leaves the cursor at `clear()`'s own
-            # default -- row 0 -- the same graceful fallback
-            # `_restore_overview_cursor()` uses.
-
-        self.query_one("#mcp-perm-preview", Static).update(f"{echo}{preview}" if echo else preview)
+            # from this resync, or a filter now hides it) leaves the
+            # cursor at `clear()`'s own default -- row 0 -- the same
+            # graceful fallback `_restore_overview_cursor()` uses.
 
     async def update_server_profiles(
         self, profiles: list[Mapping[str, Any]] | None
@@ -606,6 +731,23 @@ class MCPPermissionsMode(Vertical):
         event.stop()
         self.post_message(self.KillSwitchToggled(not self._kill_switch))
 
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Task 4 (MCP Hub Phase 6): re-filter the matrix client-side on
+        every keystroke -- mirrors `MCPToolsMode.on_input_changed()`'s own
+        bare re-filter shape. No mount-echo guard needed here (unlike the
+        filter Select in `mcp_tools_mode.py`'s `on_select_changed()`):
+        this Input's `compose()` constructor carries no `value=`, and
+        Textual only fires a `Changed` echo for a freshly mounted
+        control's own constructor value -- the same discipline
+        `MCPToolsMode`'s and `MCPAuditMode`'s own unguarded filter Inputs
+        already rely on (see `mcp_tools_mode.py`'s `_ECHO_CONSUMED`
+        docstring for why that guard is Select-specific)."""
+        if event.input.id != "mcp-perm-filter-text":
+            return
+        event.stop()
+        self._filter_text = event.value
+        self._apply_filter()
+
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """T7: resolve the selected row back to the `PermRow` it renders
         (via the row-key map `update_matrix()` last built) and post
@@ -630,16 +772,30 @@ class MCPPermissionsMode(Vertical):
         Returns whether the tool has a row in the CURRENT matrix at all
         (`self._rows_by_key`, from the last `update_matrix()` call) --
         `False` means the caller should fall back to a "tool no longer
-        available" toast rather than assume the cursor moved. No filter to
-        clear here (unlike `MCPToolsMode.select_tool_row()`): this matrix
-        has none.
+        available" toast rather than assume the cursor moved.
+
+        Task 4 (MCP Hub Phase 6): an active text filter can now hide the
+        drilled-to tool's row (and/or its pinned server-default row) --
+        mirrors `MCPToolsMode.select_tool_row()`'s own "an external drill's
+        target row must never be silently swallowed by an active filter"
+        discipline: clear the filter (re-rendering the full, unfiltered
+        table) before resolving the cursor's row index, whenever the
+        target isn't part of the currently VISIBLE (post-filter) rows.
         """
         key = f"{server_key}::{tool_name}"
         row = self._rows_by_key.get(key)
         if row is None:
             return False
         table = self.query_one("#mcp-perm-table", DataTable)
-        for index, candidate in enumerate(self._rows):
+        if self._filter_text and not any(
+            _row_key(candidate) == key for candidate in self._visible_rows
+        ):
+            self._filter_text = ""
+            filter_input = self.query_one("#mcp-perm-filter-text", Input)
+            with filter_input.prevent(Input.Changed):
+                filter_input.value = ""
+            self._apply_filter()
+        for index, candidate in enumerate(self._visible_rows):
             if _row_key(candidate) == key:
                 table.move_cursor(row=index)
                 return True
