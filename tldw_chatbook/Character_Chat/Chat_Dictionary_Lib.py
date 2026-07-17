@@ -1241,6 +1241,37 @@ def collect_active_chatdict_entries(
     return entries
 
 
+def apply_active_chatdicts_to_text(
+    db: "CharactersRAGDB",
+    conversation_id: Optional[str],
+    char_data: Optional[Dict[str, Any]],
+    text: str,
+    *,
+    max_tokens: int = 500,
+    strategy: str = "sorted_evenly",
+) -> str:
+    """Apply the active chat dictionaries to ``text`` for a send (never raises).
+
+    Collects the dictionary union that applies to ``conversation_id`` (+
+    ``char_data``, always ``None`` for the native Console today) and runs the
+    standard ``process_user_input`` substitution. Returns ``text`` unchanged
+    when it is not a string, no dictionaries apply, or anything fails -- a
+    dictionary problem must never break a chat send.
+    """
+    if not isinstance(text, str):
+        return text
+    try:
+        entries = collect_active_chatdict_entries(db, conversation_id, char_data)
+        if not entries:
+            return text
+        return process_user_input(text, entries, max_tokens=max_tokens, strategy=strategy)
+    except Exception:
+        logger.opt(exception=True).warning(
+            "apply_active_chatdicts_to_text failed; returning text unmodified."
+        )
+        return text
+
+
 def summarize_active_dictionaries(
     db: "CharactersRAGDB",
     conversation_id: Optional[str],
