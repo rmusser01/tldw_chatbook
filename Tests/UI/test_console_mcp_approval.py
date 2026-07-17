@@ -241,7 +241,14 @@ async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_
     header and args Statics laid out before it in the row's Horizontal --
     verified empirically before landing the fix. Asserts all three
     per-row widgets render with real size AND stay within the row's own
-    bounds in left-to-right order, under the real bundled stylesheet."""
+    bounds in left-to-right order, under the real bundled stylesheet.
+
+    T9 (MCP Hub Phase 5): also asserts HEIGHT bounds: each `.approval-row`
+    stays compact (height <= 3, should be ~1-2 lines), the `#approval-batch-rows`
+    container doesn't balloon (height <= rows*3 + slack), and the
+    `#approval-batch-actions` bar sits close after the rows (region.y within
+    a few rows of the last row's bottom), matching the audit-mode geometry
+    tests' discipline so all Horizontals/Verticals in the bundle stay compact."""
     app = _CardHarnessAppWithBundledCSS()
     async with app.run_test(size=(120, 40)) as pilot:
         card = app.query_one(ChatApprovalCard)
@@ -281,6 +288,39 @@ async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_
             assert args.region.x >= header.region.right
             assert select.region.x >= args.region.right
             assert select.region.right <= row.region.right
+
+            # T9: height bounds -- each row must stay compact (height: auto;
+            # min-height: 1) instead of ballooning to 1fr (which would balloon
+            # to fill the card height and push the actions bar far down).
+            # Empirically measured before this fix: rows ballooning to height 9-10.
+            assert row.size.height <= 4, (
+                f"approval row ballooned to height {row.size.height} under "
+                "bundled CSS -- height: auto; min-height: 1; is not winning"
+            )
+
+        # T9: container height bound -- the Vertical wrapping all rows must
+        # also stay compact (height: auto; min-height: 0) instead of balloning
+        # to 1fr and claiming the full card height, which would push the
+        # #approval-batch-actions bar far down. Empirically measured before
+        # this fix: container ballooning to height 19, actions pushed to y=20.
+        batch_rows = app.query_one("#approval-batch-rows")
+        assert batch_rows.size.height <= len(rows) * 3 + 2, (
+            f"approval-batch-rows container ballooned to height "
+            f"{batch_rows.size.height} (with {len(rows)} rows) under bundled CSS "
+            "-- height: auto; min-height: 0; is not winning"
+        )
+
+        # T9: action bar positioning -- must sit close after the rows,
+        # not far below due to container ballooning. Within a few rows'
+        # worth of lines from the last row's bottom edge.
+        batch_actions = app.query_one("#approval-batch-actions")
+        last_row = rows[-1]
+        max_y_gap = 3  # generous slack: a few rows worth of lines
+        assert batch_actions.region.y <= last_row.region.bottom + max_y_gap, (
+            f"approval-batch-actions bar at y={batch_actions.region.y} is too far "
+            f"below last row's bottom ({last_row.region.bottom}) -- should be "
+            f"within {max_y_gap} lines"
+        )
 
 
 def test_approval_row_decision_select_width_rule_pinned_in_bundle_source_and_bundle() -> None:

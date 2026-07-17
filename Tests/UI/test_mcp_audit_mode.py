@@ -46,6 +46,36 @@ def _assert_rule_pinned_in_bundle_source_and_bundle(
             )
 
 
+def _assert_rule_pinned_in_default_css_bundle_source_and_bundle(
+    selector: str, expected_declarations: tuple[str, ...]
+) -> None:
+    """T9 (MCP Hub Phase 5): Extended assertion that checks ``selector``'s
+    block carries every one of ``expected_declarations`` in THREE places:
+    the MCPAuditMode.DEFAULT_CSS source, the bundle-source component file
+    (_agentic_terminal.tcss), and the generated bundle (tldw_cli_modular.tcss).
+    This prevents the three layers from silently drifting -- if DEFAULT_CSS
+    is ever changed, both bundle layers must also change to match."""
+    from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import MCPAuditMode
+
+    default_css = MCPAuditMode.DEFAULT_CSS
+    agentic_terminal = _AGENTIC_TERMINAL_TCSS.read_text(encoding="utf-8")
+    bundled_stylesheet = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+
+    for text, label in (
+        (default_css, "MCPAuditMode.DEFAULT_CSS"),
+        (agentic_terminal, "_agentic_terminal.tcss"),
+        (bundled_stylesheet, "tldw_cli_modular.tcss"),
+    ):
+        start = text.find(selector)
+        assert start != -1, f"{label} is missing {selector!r}"
+        end = text.find("}", start)
+        block = text[start:end]
+        for declaration in expected_declarations:
+            assert declaration in block, (
+                f"{label}'s {selector!r} block is missing {declaration!r}"
+            )
+
+
 def _entry(
     *,
     ts: str = "2026-07-16T21:22:00+00:00",
@@ -574,15 +604,17 @@ def test_filter_decision_select_width_rule_pinned_in_bundle_source_and_bundle() 
     source order) applies to `#mcp-audit-filter-decision` too -- an
     id-scoped bundle rule directly on the Select's own id, matching its
     slot's width (24), pins it defensively even if the slot wrapper were
-    ever removed or the Select mounted outside it."""
-    _assert_rule_pinned_in_bundle_source_and_bundle(
+    ever removed or the Select mounted outside it. Checks DEFAULT_CSS,
+    bundle-source, and bundle to prevent silent drift between layers."""
+    _assert_rule_pinned_in_default_css_bundle_source_and_bundle(
         "#mcp-audit-filter-decision {", ("width: 24;",)
     )
 
 
 def test_filter_initiator_select_width_rule_pinned_in_bundle_source_and_bundle() -> None:
-    """T9: same fix, same rationale, as the decision Select above."""
-    _assert_rule_pinned_in_bundle_source_and_bundle(
+    """T9: same fix, same rationale, as the decision Select above.
+    Checks DEFAULT_CSS, bundle-source, and bundle to prevent silent drift."""
+    _assert_rule_pinned_in_default_css_bundle_source_and_bundle(
         "#mcp-audit-filter-initiator {", ("width: 20;",)
     )
 
