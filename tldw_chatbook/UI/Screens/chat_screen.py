@@ -106,6 +106,7 @@ from ...Chat.console_display_state import (
     CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,
     ConsoleControlState,
     ConsoleDisplayRow,
+    ConsoleInspectorAction,
     ConsoleInspectorState,
     ConsoleStagedContextState,
     build_console_evidence_display_state,
@@ -476,6 +477,26 @@ def _has_selected_text(value: Any) -> bool:
         non-whitespace text.
     """
     return not _is_empty_select_value(value) and bool(str(value).strip())
+
+
+def _run_dictionary_summary_off_thread(
+    service: Any,
+    conversation_id: Any,
+    character_id: Any,
+) -> Any:
+    """Drive the async scope-service ``summarize_active_dictionaries`` call
+    to completion on a *private* event loop.
+
+    Called via ``asyncio.to_thread`` from
+    ``ChatScreen.refresh_active_dictionaries_summary`` -- this function body
+    runs in a worker thread, so ``asyncio.run`` here spins up a fresh loop on
+    that thread rather than reentering the UI's event loop. That keeps the
+    underlying (synchronous) DB read the local chat-dictionary service
+    performs entirely off the UI thread.
+    """
+    return asyncio.run(
+        service.summarize_active_dictionaries(conversation_id, character_id, mode="local")
+    )
 
 
 class ChatScreen(BaseAppScreen):
@@ -1285,6 +1306,14 @@ class ChatScreen(BaseAppScreen):
         self._console_first_send_completed_cached: bool | None = None
         self._console_detected_local_server: DiscoveredLocalServer | None = None
         self._console_local_discovery_started = False
+        # P1g: cached "what's in play" chat-dictionary summary for the
+        # current conversation/character, recomputed only by
+        # `refresh_active_dictionaries_summary()` (on conversation/character
+        # change -- see `app.py`'s `watch_current_chat_conversation_id`/
+        # `watch_current_chat_active_character_data`). `_build_console_
+        # inspector_state` and the inspector compose path read ONLY this
+        # cache -- never a DB query on recompose.
+        self._active_dictionaries_summary: dict | None = None
         self.ui_state = UIState()
         self._load_sidebar_state()
 
@@ -5008,7 +5037,112 @@ class ChatScreen(BaseAppScreen):
                 inspector_state,
                 rows=inspector_state.rows + selected_rows,
             )
+        # P1g: project the cached "what's in play" dictionary summary --
+        # NO DB I/O here, only `self._active_dictionaries_summary` (kept
+        # current by `refresh_active_dictionaries_summary()`).
+        inspector_state = replace(
+            inspector_state,
+            dictionary_rows=self._console_dictionary_inspector_rows(),
+            dictionary_actions=self._console_dictionary_inspector_actions(),
+        )
         return inspector_state
+
+    def _dictionary_scope_service(self) -> Any:
+        """The app-level chat-dictionary scope service, or None when absent."""
+        return getattr(self.app_instance, "chat_dictionary_scope_service", None)
+
+    async def refresh_active_dictionaries_summary(self) -> None:
+        """Recompute and cache the "what's in play" chat-dictionary summary
+        for the current conversation/character, then refresh the Console
+        inspector.
+
+        This is the ONLY place that performs the (DB-backed) dictionary
+        summarize call -- `_build_console_inspector_state` (and therefore
+        every Console recompose/refresh) reads only the cache set here. The
+        scope-service call is marshalled onto a worker thread via
+        `asyncio.to_thread` so this never performs a synchronous DB read on
+        the UI event loop.
+        """
+        conversation_id = getattr(self.app_instance, "current_chat_conversation_id", None)
+        character_data = getattr(self.app_instance, "current_chat_active_character_data", None)
+        character_id = character_data.get("id") if isinstance(character_data, dict) else None
+        service = self._dictionary_scope_service()
+        if service is None or (conversation_id is None and character_id is None):
+            self._active_dictionaries_summary = {"dictionaries": []}
+        else:
+            try:
+                summary = await asyncio.to_thread(
+                    _run_dictionary_summary_off_thread,
+                    service,
+                    conversation_id,
+                    character_id,
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not summarize active chat dictionaries for the Console inspector."
+                )
+                summary = {"dictionaries": []}
+            self._active_dictionaries_summary = (
+                summary if isinstance(summary, dict) else {"dictionaries": []}
+            )
+        self._sync_console_control_bar()
+
+    def _console_dictionary_inspector_rows(self) -> tuple[ConsoleDisplayRow, ...]:
+        """Project the cached dictionary summary into inspector rows.
+
+        Reads ONLY `self._active_dictionaries_summary` (and the current
+        conversation/character ids, to distinguish "no active chat" from "no
+        dictionaries attached yet") -- never touches the DB.
+        """
+        conversation_id = getattr(self.app_instance, "current_chat_conversation_id", None)
+        character_data = getattr(self.app_instance, "current_chat_active_character_data", None)
+        character_id = character_data.get("id") if isinstance(character_data, dict) else None
+        if conversation_id is None and character_id is None:
+            return (ConsoleDisplayRow("No active chat", ""),)
+
+        summary = self._active_dictionaries_summary or {}
+        dictionaries = summary.get("dictionaries") or []
+        if not dictionaries:
+            return (ConsoleDisplayRow("No dictionaries in play", ""),)
+
+        rows = []
+        for entry in dictionaries:
+            if not isinstance(entry, dict):
+                continue
+            name = str(entry.get("name") or "Unnamed")
+            value = "from conversation" if entry.get("source") == "conversation" else "from character"
+            if entry.get("shadowed"):
+                value += " (shadowed)"
+            if not entry.get("enabled", True):
+                value += " (disabled)"
+            rows.append(ConsoleDisplayRow(name, value))
+        return tuple(rows)
+
+    def _console_dictionary_inspector_actions(self) -> tuple[ConsoleInspectorAction, ...]:
+        """Attach/Detach actions for the Console dictionary inspector block.
+
+        Reads ONLY the cache + current conversation id -- never the DB.
+        """
+        conversation_id = getattr(self.app_instance, "current_chat_conversation_id", None)
+        summary = self._active_dictionaries_summary or {}
+        dictionaries = summary.get("dictionaries") or []
+        has_conversation_dictionary = any(
+            isinstance(entry, dict) and entry.get("source") == "conversation"
+            for entry in dictionaries
+        )
+        return (
+            ConsoleInspectorAction(
+                "console-inspector-dictionaries-attach",
+                "Attach dictionary…",
+                enabled=bool(conversation_id),
+                disabled_reason="Start or load a conversation first",
+            ),
+            ConsoleInspectorAction(
+                "console-inspector-dictionaries-detach",
+                "Detach dictionary…",
+                enabled=has_conversation_dictionary,
+            ),
+        )
 
     def _selected_console_conversation_inspector_rows(self) -> tuple[ConsoleDisplayRow, ...]:
         """Return inspector rows for the active Console conversation/session."""
