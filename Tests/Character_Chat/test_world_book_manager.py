@@ -485,7 +485,69 @@ class TestWorldInfoProcessorIntegration:
             "Tell me about the character trait in this world",
             []
         )
-        
+
         assert len(result['matched_entries']) == 2
         assert 'before_char' in result['injections']
         assert 'at_start' in result['injections']
+
+
+def test_entry_priority_round_trips(wb_manager):
+    book_id = wb_manager.create_world_book("B")
+    eid = wb_manager.create_world_book_entry(book_id, ["Warden"], "grim jailer", priority=75)
+    assert wb_manager.get_world_book_entries(book_id)[0]["priority"] == 75
+    wb_manager.update_world_book_entry(eid, priority=20)
+    assert wb_manager.get_world_book_entries(book_id)[0]["priority"] == 20
+
+
+def test_entry_priority_default_zero(wb_manager):
+    book_id = wb_manager.create_world_book("B")
+    wb_manager.create_world_book_entry(book_id, ["k"], "c")
+    assert wb_manager.get_world_book_entries(book_id)[0]["priority"] == 0
+
+
+def test_export_import_preserves_priority(wb_manager):
+    book_id = wb_manager.create_world_book("B")
+    wb_manager.create_world_book_entry(book_id, ["Warden"], "grim jailer", priority=90)
+    data = wb_manager.export_world_book(book_id)
+    assert data["entries"][0]["priority"] == 90
+    new_id = wb_manager.import_world_book(data, name_override="B copy")
+    assert wb_manager.get_world_book_entries(new_id)[0]["priority"] == 90
+
+def test_create_entry_null_priority_defaults_zero(wb_manager):
+    """A null priority (e.g. from a hand-edited import file) must not crash —
+    int(None or 0) == 0 (P2c whole-branch-review Minor)."""
+    book_id = wb_manager.create_world_book("B")
+    wb_manager.create_world_book_entry(book_id, ["k"], "c", priority=None)
+    assert wb_manager.get_world_book_entries(book_id)[0]["priority"] == 0
+
+
+def test_create_entry_non_numeric_priority_defaults_zero(wb_manager):
+    """A non-numeric priority (e.g. "high" from a hand-edited import) must coerce
+    to 0 rather than raising ValueError (Qodo #682)."""
+    book_id = wb_manager.create_world_book("B")
+    wb_manager.create_world_book_entry(book_id, ["k"], "c", priority="high")
+    assert wb_manager.get_world_book_entries(book_id)[0]["priority"] == 0
+
+
+def test_update_entry_non_numeric_priority_defaults_zero(wb_manager):
+    """update_world_book_entry coerces a malformed priority to 0, never raises."""
+    book_id = wb_manager.create_world_book("B")
+    eid = wb_manager.create_world_book_entry(book_id, ["k"], "c", priority=50)
+    wb_manager.update_world_book_entry(eid, priority="bogus")
+    assert wb_manager.get_world_book_entries(book_id)[0]["priority"] == 0
+
+
+def test_import_book_malformed_priority_and_null_order_coerced(wb_manager):
+    """A hand-edited import whose entry has a non-numeric priority and a null
+    insertion_order must not crash; both coerce to 0 so later processing (which
+    sorts on insertion_order) is safe (Qodo #682)."""
+    data = {
+        "name": "Imported",
+        "entries": [
+            {"keys": ["k"], "content": "c", "priority": "high", "insertion_order": None},
+        ],
+    }
+    new_id = wb_manager.import_world_book(data, name_override="Imported copy")
+    row = wb_manager.get_world_book_entries(new_id)[0]
+    assert row["priority"] == 0
+    assert row["insertion_order"] == 0

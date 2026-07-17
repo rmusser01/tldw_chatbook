@@ -171,6 +171,7 @@ class PersonasLoreTryItWidget(Vertical):
                 keys_str = ", ".join(str(k) for k in (record.get("keys") or []))
                 fired_text.append(
                     f"{keys_str} → {record.get('content_preview')}"
+                    f" · pri {int(record.get('priority', 0) or 0)}"
                     f" · {int(record.get('token_cost') or 0)} tok\n"
                 )
             fired_area.update(fired_text)

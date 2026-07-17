@@ -652,6 +652,11 @@ class LibraryScreen(BaseAppScreen):
         ("u", "library_rag_use_in_console", "Use Library context in Console"),
     ]
 
+    #: Footer hint set — mirrors the show=True bindings the retired Textual
+    #: Footer used to render (task-264 review: per-screen AppFooterStatus
+    #: renders registered contexts, not bindings).
+    LIBRARY_SHORTCUTS = (("u", "use Library context in Console"),)
+
     # Baseline workbench geometry so the screen renders correctly even without
     # the app stylesheet (e.g. harness tests). The agentic-terminal TCSS uses
     # equal-specificity selectors and takes precedence when loaded.
@@ -1024,6 +1029,17 @@ class LibraryScreen(BaseAppScreen):
         # land in Task 5.
         self._library_export_cancel_event: threading.Event | None = None
 
+    def _register_footer_shortcuts(self) -> None:
+        """Register Library shortcuts via BaseAppScreen's persisting API.
+
+        Persistence matters here: the destination-switch failsafes call
+        ``screen.refresh(recompose=True)``, which replaces the footer widget;
+        the registration must survive that.
+        """
+        self.register_footer_shortcuts(
+            source="library", shortcuts=self.LIBRARY_SHORTCUTS
+        )
+
     def on_mount(self) -> None:
         """Populate the Library on entry, rendering instantly from cache.
 
@@ -1037,6 +1053,7 @@ class LibraryScreen(BaseAppScreen):
         loads (collections / note editor / media viewer) that
         ``apply_navigation_context`` could not run before mount.
         """
+        self._register_footer_shortcuts()
         super().on_mount()
         self.set_timer(
             LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS,

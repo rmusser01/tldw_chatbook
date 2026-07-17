@@ -16,7 +16,7 @@ def test_entry_diagnostic_to_dict_round_trips_fields():
     )
     assert rec.to_dict() == {
         "entry_id": 7, "source_book_id": 3, "source_book_name": "Blackreach",
-        "keys": ["Warden"], "activation_reason": "matched key 'Warden'", "status": "fired",
+        "keys": ["Warden"], "priority": 0, "activation_reason": "matched key 'Warden'", "status": "fired",
         "token_cost": 12, "injection_order": 0, "position": "before_char",
         "content_preview": "The grim jailer…", "depth_level": 0,
     }
@@ -201,6 +201,57 @@ def test_classify_entry_match_tolerates_null_keys():
     assert p is True and pk == "Warden" and sr is False
 
 
+def test_high_priority_entry_survives_budget_over_low_priority():
+    """Priority (not FIFO) decides budget survival: the high-priority entry
+    fires even though a low-priority one comes first by insertion_order."""
+    book = _book(1, "B", [
+        _entry(1, ["low"], "AAAA " * 200, insertion_order=0, priority=0),    # ~250 tok, first by order
+        _entry(2, ["high"], "BBBB " * 200, insertion_order=1, priority=90),  # ~250 tok, high priority
+    ], token_budget=300)   # fits exactly one entry, not two
+    proc = WorldInfoProcessor(world_books=[book])
+    result = proc.process_messages("low high", [])
+    fired = result["injections"]["before_char"]
+    assert any("BBBB" in c for c in fired)   # high-priority survives
+    assert all("AAAA" not in c for c in fired)  # low-priority dropped
+
+
+def test_low_book_token_budget_is_honored():
+    """A book token_budget below the old 500 default is honored (floor fix)."""
+    book = _book(1, "B", [
+        _entry(1, ["a"], "AAAA " * 30, insertion_order=0),   # ~30 tok
+        _entry(2, ["b"], "BBBB " * 30, insertion_order=1),   # ~30 tok, over a 40-token budget
+    ], token_budget=40)
+    proc = WorldInfoProcessor(world_books=[book])
+    result = proc.process_messages("a b", [])
+    fired = result["injections"]["before_char"]
+    assert any("AAAA" in c for c in fired) and all("BBBB" not in c for c in fired)
+
+
+def test_injection_order_reflects_priority():
+    book = _book(1, "B", [
+        _entry(1, ["a"], "content-a", insertion_order=0, priority=1),
+        _entry(2, ["b"], "content-b", insertion_order=1, priority=99),
+    ])
+    proc = WorldInfoProcessor(world_books=[book])
+    result = proc.process_messages("a b", [])
+    injected = result["injections"]["before_char"]
+    assert injected == ["content-b", "content-a"]   # priority 99 before priority 1
+
+
+def test_recursive_entry_reorders_by_insertion_order():
+    """Recursive-scan normalization: an entry that fires via recursion but has
+    a LOWER insertion_order than a direct match now orders ahead of it."""
+    book = _book(1, "B", [
+        _entry(1, ["castle"], "the castle guards a dragon", insertion_order=5),
+        _entry(2, ["dragon"], "a fearsome dragon", insertion_order=0),
+    ], recursive_scanning=True)
+    proc = WorldInfoProcessor(world_books=[book])
+    result = proc.process_messages("the castle", [])
+    injected = result["injections"]["before_char"]
+    # entry 2 (insertion_order 0, fired via recursion) now precedes entry 1 (order 5).
+    assert injected.index("a fearsome dragon") < injected.index("the castle guards a dragon")
+
+
 def test_diagnostics_duplicate_signature_entries_keep_distinct_ids():
     """Two entries sharing an identical (insertion_order, content, position)
     signature that BOTH fire must each be attributed to their own entry_id, not
@@ -214,3 +265,28 @@ def test_diagnostics_duplicate_signature_entries_keep_distinct_ids():
     fired = [e for e in diag.entries if e.status == "fired"]
     assert len(fired) == 2
     assert {e.entry_id for e in fired} == {1, 2}
+
+
+def test_diagnostic_record_carries_priority():
+    book = _book(1, "B", [_entry(1, ["Warden"], "grim jailer", priority=42)])
+    proc = WorldInfoProcessor(world_books=[book])
+    _result, diag = proc.process_messages_with_diagnostics("The Warden.", [])
+    fired = next(e for e in diag.entries if e.status == "fired")
+    assert fired.priority == 42
+    assert fired.to_dict()["priority"] == 42
+
+
+def test_null_insertion_order_does_not_crash_sort():
+    """An imported/hand-edited entry with insertion_order=None (or a non-numeric
+    priority) must not raise a TypeError. Equal priorities force the sort to
+    compare the insertion_order key element; None must be coerced first (Qodo
+    #682). The processor also sorts self.entries at construction, so a bad value
+    would otherwise crash before process_messages() even runs."""
+    book = _book(1, "B", [
+        _entry(1, ["a"], "content-a", insertion_order=None, priority="bad"),
+        _entry(2, ["b"], "content-b", insertion_order=1, priority=0),
+    ])
+    proc = WorldInfoProcessor(world_books=[book])   # must not raise
+    result = proc.process_messages("a b", [])       # must not raise
+    injected = result["injections"]["before_char"]
+    assert "content-a" in injected and "content-b" in injected

@@ -8,6 +8,26 @@ from typing import Dict, List, Any, Optional, Tuple
 from loguru import logger
 
 
+def _coerce_int(value: Any, default: int = 0) -> int:
+    """Best-effort int coercion for loosely-typed entry fields.
+
+    Imported/hand-edited world books may carry ``None`` or non-numeric values
+    for numeric fields (``priority``, ``insertion_order``); those must never
+    crash the sort/budget path on a live send.
+
+    Args:
+        value: Raw value from a processed entry or persisted/imported JSON.
+        default: Fallback when the value is missing or malformed.
+
+    Returns:
+        The coerced int, or ``default`` on None/non-numeric input.
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 class WorldInfoProcessor:
     """Process and inject world info/lorebook entries into chat conversations."""
     
@@ -21,8 +41,8 @@ class WorldInfoProcessor:
             world_books: List of standalone world books with their entries
         """
         self.entries = []
-        self.scan_depth = 3  # Default scan depth
-        self.token_budget = 500  # Default token budget
+        self.scan_depth = 0  # Seed; raised by book/character-book scan_depth (never floors a lower value)
+        self.token_budget = 0  # Seed; raised by book/character-book token_budget (never floors a lower value)
         self.recursive_scanning = False
 
         # Parallel diagnostics candidate list: ALL entries (incl. disabled), each
@@ -151,9 +171,10 @@ class WorldInfoProcessor:
             'content': entry.get('content', ''),
             'selective': entry.get('selective', False),
             'position': entry.get('position', 'before_char'),
-            'insertion_order': entry.get('insertion_order', 0),
+            'insertion_order': _coerce_int(entry.get('insertion_order'), 0),
             'case_sensitive': entry.get('case_sensitive', False),
-            'extensions': entry.get('extensions', {})
+            'extensions': entry.get('extensions', {}),
+            'priority': _coerce_int(entry.get('priority'), 0),
         }
 
     def _make_candidate(self, entry: Dict[str, Any], book_id: Optional[Any], book_name: str,
@@ -197,7 +218,15 @@ class WorldInfoProcessor:
         
         # Find matching entries
         matched_entries = self._find_matching_entries(scan_text)
-        
+
+        # Order by priority (descending) then insertion order (ascending), so
+        # priority drives both budget survival (_apply_token_budget) and
+        # injection order (_organize_by_position).
+        matched_entries = sorted(
+            matched_entries,
+            key=lambda e: (-_coerce_int(e.get('priority'), 0), _coerce_int(e.get('insertion_order'), 0)),
+        )
+
         # Apply token budget if enabled
         if apply_token_budget and self.token_budget > 0:
             matched_entries = self._apply_token_budget(matched_entries)
@@ -296,7 +325,9 @@ class WorldInfoProcessor:
             records.append(WorldBookEntryDiagnostic(
                 entry_id=cand.get("_entry_id"), source_book_id=cand.get("_book_id"),
                 source_book_name=str(cand.get("_book_name") or ""),
-                keys=list(cand.get("keys") or []), activation_reason=reason, status="fired",
+                keys=list(cand.get("keys") or []),
+                priority=int(cand.get('priority', 0) or 0),
+                activation_reason=reason, status="fired",
                 token_cost=self._estimate_entry_tokens(cand), injection_order=order,
                 position=cand.get("position", "before_char"),
                 content_preview=(cand.get("content", "") or "")[:80], depth_level=depth_level,
@@ -326,7 +357,9 @@ class WorldInfoProcessor:
             records.append(WorldBookEntryDiagnostic(
                 entry_id=cand.get("_entry_id"), source_book_id=cand.get("_book_id"),
                 source_book_name=str(cand.get("_book_name") or ""),
-                keys=list(cand.get("keys") or []), activation_reason=reason, status=status,
+                keys=list(cand.get("keys") or []),
+                priority=int(cand.get('priority', 0) or 0),
+                activation_reason=reason, status=status,
                 token_cost=self._estimate_entry_tokens(cand), injection_order=None,
                 position=cand.get("position", "before_char"),
                 content_preview=(cand.get("content", "") or "")[:80], depth_level=0,
@@ -488,7 +521,9 @@ class WorldInfoProcessor:
         if not matched_entries or self.token_budget <= 0:
             return matched_entries
         
-        # Sort by insertion order (already done in initialization)
+        # Entries arrive pre-sorted by (priority desc, insertion_order asc)
+        # from process_messages, so walking in order and stopping at the
+        # budget break honors priority for survival.
         # Estimate tokens for each entry
         selected_entries = []
         total_tokens = 0

@@ -628,6 +628,14 @@ class SettingsScreen(BaseAppScreen):
         ("t", "settings_test_category", "Test Settings category"),
     ]
 
+    #: Footer hint set — mirrors the show=True bindings the retired Textual
+    #: Footer used to render (task-264 review).
+    SETTINGS_SHORTCUTS = (
+        ("s", "save category"),
+        ("r", "revert category"),
+        ("t", "test category"),
+    )
+
     active_category = reactive(SettingsCategoryId.OVERVIEW.value, recompose=True)
     category_search_query = reactive("")
     server_sync_workspace_handoff_rows = reactive((), recompose=True)
@@ -736,8 +744,20 @@ class SettingsScreen(BaseAppScreen):
             except Exception:
                 logger.debug("Ignoring malformed Settings draft state", exc_info=True)
 
+    def _register_footer_shortcuts(self) -> None:
+        """Register Settings shortcuts via BaseAppScreen's persisting API.
+
+        Persistence matters here: this screen's `recompose=True` reactives
+        (`active_category`, the sync-row tuples) replace the footer widget on
+        every category switch; the registration must survive that.
+        """
+        self.register_footer_shortcuts(
+            source="settings", shortcuts=self.SETTINGS_SHORTCUTS
+        )
+
     def on_mount(self) -> None:
         super().on_mount()
+        self._register_footer_shortcuts()
         self._queue_server_sync_workspace_handoff_refresh()
         self._queue_manual_sync_refresh()
 

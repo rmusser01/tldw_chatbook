@@ -1975,6 +1975,7 @@ class PersonasScreen(BaseAppScreen):
                 enabled=payload.get("enabled", True),
                 position=payload.get("position", "before_char"),
                 insertion_order=payload.get("insertion_order", 0),
+                priority=payload.get("priority", 0),
             ),
             "Could not add the entry",
         )
@@ -3990,7 +3991,7 @@ class PersonasScreen(BaseAppScreen):
         self._update_title()
         self._sync_inspector_console_actions()
         try:
-            footer = self.app.query_one("AppFooterStatus")
+            footer = self.query_one("AppFooterStatus")
         except QueryError:
             return
         set_ctx = getattr(footer, "set_shortcut_context", None)
@@ -3999,7 +4000,7 @@ class PersonasScreen(BaseAppScreen):
 
     def _clear_footer_shortcuts(self) -> None:
         try:
-            footer = self.app.query_one("AppFooterStatus")
+            footer = self.query_one("AppFooterStatus")
         except QueryError:
             return
         clear_ctx = getattr(footer, "clear_shortcut_context", None)

@@ -7,7 +7,6 @@ from textual.app import ComposeResult
 from textual.geometry import Region
 from textual.screen import Screen
 from textual.containers import Container
-from textual.widgets import Footer
 
 from .main_navigation import MainNavigationBar
 
@@ -39,6 +38,8 @@ class BaseAppScreen(Screen):
         self.app_instance = app_instance
         self.screen_name = screen_name
         self.state_data: Dict[str, Any] = {}
+        #: (source, shortcuts) persisted so footer hints survive recompose.
+        self._footer_shortcut_registration: Optional[tuple] = None
 
         logger.debug(f"Initializing {self.__class__.__name__} screen: {screen_name}")
 
@@ -86,23 +87,97 @@ class BaseAppScreen(Screen):
 
     def compose(self) -> ComposeResult:
         """Compose the screen with navigation bar and content."""
+        # Imported locally (not at module level): `AppFooterStatus` imports
+        # `UI.Navigation.shortcut_context`, and `UI/Navigation/__init__.py`
+        # eagerly imports THIS module -- a module-level import here would be
+        # a circular import (base_app_screen -> AppFooterStatus ->
+        # UI.Navigation package init -> base_app_screen, partially
+        # initialized).
+        from ...Widgets.AppFooterStatus import AppFooterStatus
+
         # Navigation bar at the top
         yield MainNavigationBar(active=self.screen_name, active_route=self.screen_name)
-        
+
         # Content area below navigation
         with Container(id="screen-content"):
             yield from self.compose_content()
 
-        # The app-level Ctrl+P "Palette Menu" binding is show=True, so it
-        # already renders in the footer's binding list; the Footer's built-in
-        # right-corner command-palette pill would duplicate it (UAT 2026-07:
-        # "^p Palette Menu" shown twice).
-        yield Footer(show_command_palette=False)
+        # Per-screen footer status bar (task-264): the App only ever mounts
+        # ONE Footer-equivalent widget on its DEFAULT screen (app.py's own
+        # compose()), which is occluded the moment any BaseAppScreen is
+        # pushed on top -- `App.query_one`/`query` always resolve against
+        # `App.default_screen` by design (see `App._get_dom_base`), so a
+        # caller doing `self.app.query_one(AppFooterStatus)` from within a
+        # pushed screen silently updates an invisible widget. Composing an
+        # `AppFooterStatus` here gives every screen its OWN instance that
+        # `self.query_one(AppFooterStatus)` (queried against the screen
+        # itself) correctly resolves.
+        footer = AppFooterStatus(id="screen-footer-status")
+        # Screen-level recompose (settings' recompose=True reactives,
+        # library/chat `refresh(recompose=True)` calls) re-runs THIS method
+        # and replaces the footer with a fresh instance -- re-seed the
+        # persisted registration so hints survive recompose. Safe pre-mount:
+        # `set_workbench_shortcuts` updates child Statics the footer holds
+        # as instance attributes.
+        registration = getattr(self, "_footer_shortcut_registration", None)
+        if registration is not None:
+            footer.set_workbench_shortcuts(
+                source=registration[0], shortcuts=registration[1]
+            )
+        yield footer
     
     def compose_content(self) -> ComposeResult:
         """Override in subclasses to provide screen-specific content."""
         yield Container()  # Default empty container
-    
+
+    def register_footer_shortcuts(
+        self, *, source: str, shortcuts: tuple
+    ) -> None:
+        """Register a workbench shortcut set with this screen's footer.
+
+        The registration is persisted on the screen so it survives a
+        screen-level recompose (which replaces the footer widget -- see
+        ``compose()``). Screens with a STATIC hint set should use this
+        instead of talking to the footer directly; a screen whose context is
+        dynamic and re-registered on every state transition (personas) may
+        still drive ``set_shortcut_context`` itself.
+
+        Args:
+            source: Context owner tag (e.g. "console"); scopes clears.
+            shortcuts: ``((key, label), ...)`` pairs to render.
+        """
+        registration = (source, tuple(shortcuts))
+        self._footer_shortcut_registration = registration
+        footer = self._footer_status()
+        if footer is not None:
+            footer.set_workbench_shortcuts(
+                source=registration[0], shortcuts=registration[1]
+            )
+
+    def clear_footer_shortcuts(self, *, source: str) -> None:
+        """Clear this screen's footer hints if ``source`` still owns them.
+
+        Mirrors ``AppFooterStatus.clear_shortcut_context``'s source guard for
+        the persisted copy, so a stale suspend cannot drop a newer owner's
+        registration.
+        """
+        registration = getattr(self, "_footer_shortcut_registration", None)
+        if registration is not None and registration[0] == source:
+            self._footer_shortcut_registration = None
+        footer = self._footer_status()
+        if footer is not None:
+            footer.clear_shortcut_context(source=source)
+
+    def _footer_status(self):
+        """This screen's own AppFooterStatus, or None before compose."""
+        from ...Widgets.AppFooterStatus import AppFooterStatus  # noqa: PLC0415 -- circular (see compose)
+        from textual.css.query import QueryError
+
+        try:
+            return self.query_one(AppFooterStatus)
+        except QueryError:
+            return None
+
     def save_state(self) -> Dict[str, Any]:
         """Save the current state of the screen."""
         # Override in subclasses to save specific state

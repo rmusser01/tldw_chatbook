@@ -119,6 +119,7 @@ class PersonasLoreDetailWidget(Vertical):
                             value="before_char",
                             allow_blank=False,
                         )
+                        yield Input(placeholder="Priority", id="personas-lore-entry-priority", value="0")
                         yield Switch(value=True, id="personas-lore-entry-enabled", tooltip="Entry enabled")
                     yield TextArea(id="personas-lore-entry-content")
                     with Horizontal(classes="personas-lore-form-row"):
@@ -148,7 +149,7 @@ class PersonasLoreDetailWidget(Vertical):
             None.
         """
         table = self.query_one("#personas-lore-entries-table", DataTable)
-        table.add_columns("keys", "content", "position", "enabled")
+        table.add_columns("keys", "content", "position", "priority", "enabled")
 
     # ----- public API -----
 
@@ -196,6 +197,7 @@ class PersonasLoreDetailWidget(Vertical):
                 Text(keys, style=style),
                 Text(preview, style=style),
                 Text(str(entry.get("position") or "before_char"), style=style),
+                Text(str(entry.get("priority") or 0), style=style),
                 Text("yes" if enabled else "no", style=style),
                 key=str(entry.get("id")),
             )
@@ -272,7 +274,8 @@ class PersonasLoreDetailWidget(Vertical):
         Returns:
             dict | None: The entry payload keyed by API field names
             (``keys``, ``content``, ``position``, ``enabled``,
-            ``insertion_order``), or ``None`` if keys or content are empty.
+            ``insertion_order``, ``priority``), or ``None`` if keys or content
+            are empty.
         """
         raw_keys = self.query_one("#personas-lore-entry-keys", Input).value
         keys = [k.strip() for k in raw_keys.split(",") if k.strip()]
@@ -280,6 +283,11 @@ class PersonasLoreDetailWidget(Vertical):
         if not keys or not content.strip():
             return None
         position = str(self.query_one("#personas-lore-entry-position", Select).value)
+        raw_pri = self.query_one("#personas-lore-entry-priority", Input).value.strip() or "0"
+        try:
+            priority = max(0, min(100, int(raw_pri)))
+        except ValueError:
+            priority = 0
         enabled = bool(self.query_one("#personas-lore-entry-enabled", Switch).value)
         selected_id = self.selected_entry_id
         entry = (
@@ -296,6 +304,7 @@ class PersonasLoreDetailWidget(Vertical):
             "keys": keys,
             "content": content,
             "position": position,
+            "priority": priority,
             "enabled": enabled,
             "insertion_order": insertion_order,
         }
@@ -337,6 +346,7 @@ class PersonasLoreDetailWidget(Vertical):
         position = str(entry.get("position") or "before_char")
         if position in {p[0] for p in POSITIONS}:
             self.query_one("#personas-lore-entry-position", Select).value = position
+        self.query_one("#personas-lore-entry-priority", Input).value = str(entry.get("priority") or 0)
         self.query_one("#personas-lore-entry-enabled", Switch).value = bool(entry.get("enabled", True))
 
     @on(DataTable.RowSelected, "#personas-lore-entries-table")
