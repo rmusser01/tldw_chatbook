@@ -15,7 +15,7 @@ log_performance_metrics = false
 # Retriever configuration
 fts_top_k = 10  # Number of results from full-text search
 vector_top_k = 10  # Number of results from vector search
-hybrid_alpha = 0.5  # Balance between FTS and vector (0=FTS only, 1=vector only)
+hybrid_alpha = 0.7  # Hybrid RRF fusion: vector-leg weight (0=FTS only, 1=vector only); 0.7 = tldw_server default
 
 # Collection names in ChromaDB
 media_collection = "media_embeddings"

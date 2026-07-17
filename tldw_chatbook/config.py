@@ -83,7 +83,9 @@ DEFAULT_RAG_SEARCH_CONFIG = {
     "retriever": {
         "fts_top_k": 10,
         "vector_top_k": 10,
-        "hybrid_alpha": 0.5,
+        # Hybrid fusion alpha (RRF blend): 0 = FTS only, 1 = vector only.
+        # 0.7 matches the tldw_server default (vector-weighted).
+        "hybrid_alpha": 0.7,
         "chunk_size": 512,
         "chunk_overlap": 128,
         "media_collection": "media_embeddings",
@@ -2238,7 +2240,7 @@ cache_size_limit_gb = 10.0
     [rag.retriever]
     fts_top_k = 10              # Number of results from full-text search
     vector_top_k = 10           # Number of results from vector search
-    hybrid_alpha = 0.5          # Weight for hybrid search (0=FTS only, 1=vector only)
+    hybrid_alpha = 0.7          # Hybrid RRF fusion: vector-leg weight (0=FTS only, 1=vector only); 0.7 = tldw_server default
     chunk_size = 512            # Size of text chunks for indexing
     chunk_overlap = 128         # Overlap between chunks
     
