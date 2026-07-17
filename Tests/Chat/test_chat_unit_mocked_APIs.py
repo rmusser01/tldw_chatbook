@@ -380,6 +380,10 @@ class TestTemperatureForwarding:
         # each handler signature-verified to take 'temp'.
         "cohere", "openrouter", "huggingface", "koboldcpp",
         "local_llamacpp", "local_llamafile",
+        # review Minor 1: these two had lost their temperature keys entirely
+        # in the first pass (comment-bearing dict-open lines confused the
+        # rewrite script); both handlers take temp.
+        "llama_cpp", "oobabooga",
     ])
     def test_temp_reaches_handler(self, endpoint):
         handler = Mock(return_value={"choices": [{"message": {"content": "ok"}}]})

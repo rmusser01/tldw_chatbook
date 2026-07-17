@@ -294,6 +294,7 @@ PROVIDER_PARAM_MAP = {
     },
     'llama_cpp': { # Has api_url as a positional argument which needs special handling if not None
         'api_key': 'api_key',
+        'temp': 'temp',  # audit task-286: was a dead 'temperature' key (temp silently dropped); handler takes temp
         'messages_payload': 'input_data',
         'system_message': 'system_prompt',
         'streaming': 'streaming',
@@ -331,6 +332,7 @@ PROVIDER_PARAM_MAP = {
     },
     'oobabooga': { # api_url also a consideration like llama.cpp
         'api_key': 'api_key',
+        'temp': 'temp',  # audit task-286: was a dead 'temperature' key (temp silently dropped); handler takes temp
         'messages_payload': 'input_data',
         'system_message': 'system_prompt', # often part of messages or specific param
         'streaming': 'streaming',
@@ -783,8 +785,6 @@ def chat_api_call(
     for generic_param_name, provider_param_name in params_map.items():
         if generic_param_name in available_generic_params and available_generic_params[generic_param_name] is not None:
             call_kwargs[provider_param_name] = available_generic_params[generic_param_name]
-        if generic_param_name == 'prompt' and endpoint_lower == 'cohere':
-             pass # Specific handling for Cohere's prompt is assumed to be within chat_with_cohere
 
     if call_kwargs.get(params_map.get('api_key', 'api_key')):
          logger.info("Debug - Chat API Call - API key provided.")
