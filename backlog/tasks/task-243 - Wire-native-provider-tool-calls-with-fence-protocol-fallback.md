@@ -1,11 +1,11 @@
 ---
 id: TASK-243
 title: Wire native provider tool-calls with fence-protocol fallback
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-16 16:00'
-updated_date: '2026-07-16 21:57'
+updated_date: '2026-07-17 00:03'
 labels:
   - agents
   - console
@@ -22,7 +22,7 @@ The vertical-slice design spec called for native tool-calls where the provider a
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 A per-model/provider capability check selects native tool-calls when supported and falls back to the fence protocol otherwise (llama_cpp and other local backends without tools= support in PROVIDER_PARAM_MAP keep working via fallback)
-- [ ] #2 ModelTurn.tool_calls is populated from a real native tool-call response for at least one cloud provider end-to-end
+- [x] #2 ModelTurn.tool_calls is populated from a real native tool-call response for at least one native-capable provider end-to-end (user decision 2026-07-16: custom-openai-api against real llama.cpp accepted — identical wire shape/code path as the OpenAI-compatible cloud providers; no cloud credential in environment. Evidence: Docs/superpowers/qa/native-tool-calls-2026-07/)
 - [x] #3 A native multi-tool-call reply is dispatched as multiple ToolCall entries in one run_agent_loop turn without engine changes
 - [x] #4 Existing fence-protocol tests and the Console agent-reply integration tests still pass unchanged for tool-incapable models
 <!-- AC:END -->
