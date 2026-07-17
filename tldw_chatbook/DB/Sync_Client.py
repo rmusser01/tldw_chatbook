@@ -15,6 +15,7 @@ from loguru import logger
 #
 # Local Imports
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase as Database, ConflictError, DatabaseError, InputError, DateTimeEncoder
+from tldw_chatbook.DB.sql_logging import preview_params
 #
 #######################################################################################################################
 #
@@ -664,14 +665,23 @@ class ClientSyncEngine:
             # Use INSERT OR IGNORE for idempotency. If the link already exists, it does nothing.
             sql = "INSERT OR IGNORE INTO MediaKeywords (media_id, keyword_id) VALUES (?, ?)"
             params_tuple = (media_id_local, keyword_id_local)
-            logger.debug(f"Executing SQL: {sql} | Params: {params_tuple}")
+            # Lazy: see DB/sql_logging.py -- avoids building the debug string
+            # unless a sink actually admits DEBUG (matters for the identical
+            # pattern elsewhere in this module against much larger params).
+            logger.opt(lazy=True).debug(
+                "Executing SQL: {}",
+                lambda: f"{sql} | Params: {preview_params(params_tuple)}",
+            )
             cursor.execute(sql, params_tuple)
 
         elif operation == 'unlink':
             # DELETE is naturally idempotent. If the link doesn't exist, it does nothing.
             sql = "DELETE FROM MediaKeywords WHERE media_id = ? AND keyword_id = ?"
             params_tuple = (media_id_local, keyword_id_local)
-            logger.debug(f"Executing SQL: {sql} | Params: {params_tuple}")
+            logger.opt(lazy=True).debug(
+                "Executing SQL: {}",
+                lambda: f"{sql} | Params: {preview_params(params_tuple)}",
+            )
             cursor.execute(sql, params_tuple)
 
         else:

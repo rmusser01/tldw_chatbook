@@ -54,7 +54,8 @@ from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 # Third-Party Libraries
 #
 # Local Imports
-from .sql_validation import validate_table_name, validate_column_name  
+from .sql_validation import validate_table_name, validate_column_name
+from .sql_logging import preview_params
 #
 ########################################################################################################################
 #
@@ -2632,8 +2633,16 @@ UPDATE db_schema_version
         conn = self.get_connection()
         try:
             cursor = conn.cursor()
-            #if logger.isEnabledFor(logging.DEBUG):  # Avoid formatting query/params if not debugging
-            logger.debug(f"Executing SQL (script={script}): {query[:300]}... Params: {str(params)[:200]}...")
+            # Lazy + BLOB-safe: loguru has no isEnabledFor(), so the guard
+            # against formatting query/params when not debugging is
+            # `opt(lazy=True)` with callables instead of an eager f-string --
+            # the lambda (and preview_params' truncation) only runs if a sink
+            # actually admits DEBUG. See DB/sql_logging.py.
+            logger.opt(lazy=True).debug(
+                "Executing SQL (script={}): {}",
+                lambda: script,
+                lambda: f"{query[:300]}... Params: {preview_params(params)}",
+            )
 
             if script:
                 cursor.executescript(query)
