@@ -419,6 +419,120 @@ def test_resolve_by_key_invalid_global_default_falls_back_to_ask():
     assert result.origin == "global_default"
 
 
+# -- hand-edited store: null/malformed intermediates never crash --------------
+#
+# A hand-edited `mcp_permissions.json` can pass `load()`'s top-level dict +
+# schema_version check yet still carry `null` (or other non-mapping junk)
+# for `profiles`, the default profile, `servers`, a server entry's `tools`,
+# or an individual tool entry. Both resolvers take a raw payload directly
+# (bypassing `load()`'s own normalization) and must never `AttributeError`
+# out of a hand-edited file -- they degrade to the same "nothing configured
+# here" result as an absent key.
+
+
+def test_resolve_effective_state_null_profiles_does_not_raise():
+    tool = _tool()
+    payload = {"schema_version": 1, "kill_switch": False, "profiles": None}
+
+    result = resolve_effective_state(payload, tool)
+
+    assert result.state == "ask"
+    assert result.origin == "global_default"
+
+
+def test_resolve_effective_state_null_profile_does_not_raise():
+    tool = _tool()
+    payload = {"schema_version": 1, "kill_switch": False, "profiles": {"default": None}}
+
+    result = resolve_effective_state(payload, tool)
+
+    assert result.state == "ask"
+    assert result.origin == "global_default"
+
+
+def test_resolve_effective_state_null_servers_does_not_raise():
+    tool = _tool()
+    payload = {
+        "schema_version": 1,
+        "kill_switch": False,
+        "profiles": {"default": {"global_default": "ask", "servers": None}},
+    }
+
+    result = resolve_effective_state(payload, tool)
+
+    assert result.state == "ask"
+    assert result.origin == "global_default"
+
+
+def test_resolve_effective_state_null_tools_falls_back_to_server_default():
+    tool = _tool()
+    payload = _payload(servers={tool.server_key: {"default": "deny", "tools": None}})
+
+    result = resolve_effective_state(payload, tool)
+
+    assert result.state == "deny"
+    assert result.origin == "server_default"
+
+
+def test_resolve_effective_state_non_mapping_tool_entry_does_not_raise():
+    tool = _tool()
+    payload = _payload(servers={tool.server_key: {"tools": {tool.name: "not-a-mapping"}}})
+
+    result = resolve_effective_state(payload, tool)
+
+    assert result.state == "ask"
+    assert result.origin == "global_default"
+
+
+def test_resolve_by_key_null_profiles_does_not_raise():
+    payload = {"schema_version": 1, "kill_switch": False, "profiles": None}
+
+    result = resolve_effective_state_by_key(payload, "local:demo", "search")
+
+    assert result.state == "ask"
+    assert result.origin == "global_default"
+
+
+def test_resolve_by_key_null_profile_does_not_raise():
+    payload = {"schema_version": 1, "kill_switch": False, "profiles": {"default": None}}
+
+    result = resolve_effective_state_by_key(payload, "local:demo", "search")
+
+    assert result.state == "ask"
+    assert result.origin == "global_default"
+
+
+def test_resolve_by_key_null_servers_does_not_raise():
+    payload = {
+        "schema_version": 1,
+        "kill_switch": False,
+        "profiles": {"default": {"global_default": "ask", "servers": None}},
+    }
+
+    result = resolve_effective_state_by_key(payload, "local:demo", "search")
+
+    assert result.state == "ask"
+    assert result.origin == "global_default"
+
+
+def test_resolve_by_key_null_tools_falls_back_to_server_default():
+    payload = _payload(servers={"local:demo": {"default": "deny", "tools": None}})
+
+    result = resolve_effective_state_by_key(payload, "local:demo", "search")
+
+    assert result.state == "deny"
+    assert result.origin == "server_default"
+
+
+def test_resolve_by_key_non_mapping_tool_entry_does_not_raise():
+    payload = _payload(servers={"local:demo": {"tools": {"search": "not-a-mapping"}}})
+
+    result = resolve_effective_state_by_key(payload, "local:demo", "search")
+
+    assert result.state == "ask"
+    assert result.origin == "global_default"
+
+
 # -- cycle helpers --------------------------------------------------------------
 
 

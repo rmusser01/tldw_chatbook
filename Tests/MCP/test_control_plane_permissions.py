@@ -101,14 +101,11 @@ def test_effective_tool_states_no_store_returns_ask_global_default_for_every_too
 
     result = service.effective_tool_states(tools)
 
-    assert result == {
-        ("local:demo", "search"): result[("local:demo", "search")],
-        ("local:other", "write"): result[("local:other", "write")],
-    }
-    for effective in result.values():
-        assert effective.state == "ask"
-        assert effective.origin == "global_default"
-        assert effective.config_changed is False
+    assert set(result.keys()) == {("local:demo", "search"), ("local:other", "write")}
+    for key, effective in result.items():
+        assert effective.state == "ask", key
+        assert effective.origin == "global_default", key
+        assert effective.config_changed is False, key
 
 
 # -- effective_tool_states: precedence resolution ----------------------------

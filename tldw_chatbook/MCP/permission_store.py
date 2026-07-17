@@ -56,7 +56,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from loguru import logger
 
@@ -96,6 +96,53 @@ def _entry_is_empty(entry: dict[str, Any]) -> bool:
     return not entry.get("default") and not entry.get("tools")
 
 
+def _as_mapping(value: Any) -> dict[str, Any]:
+    """Coerce a payload value to a dict, tolerating hand-edited junk.
+
+    Args:
+        value: Any value pulled from a permission-store payload -- expected
+            to be a dict, but a hand-edited ``mcp_permissions.json`` can
+            carry ``null`` or some other JSON type at any nesting level
+            instead.
+
+    Returns:
+        ``value`` unchanged when it is already a ``Mapping``; an empty
+        dict otherwise. Applied at every traversal step in
+        ``resolve_effective_state()``/``resolve_effective_state_by_key()``
+        (and in ``MCPPermissionStore.load()``'s own normalization) so a
+        malformed intermediate degrades to "nothing configured here"
+        instead of raising ``AttributeError``.
+    """
+    return value if isinstance(value, Mapping) else {}
+
+
+def _normalize_payload_shape(payload: dict[str, Any]) -> dict[str, Any]:
+    """Coerce ``profiles`` / the default profile / its ``servers`` to dicts.
+
+    A payload can pass ``load()``'s dict + ``schema_version`` check yet
+    still carry ``null`` (or another non-mapping value) for one of these
+    nested containers -- e.g. a user hand-editing ``mcp_permissions.json``.
+    Every ``MCPPermissionStore`` method assumes they are dicts
+    (``_profile()`` in particular ``.setdefault()``s into them), so
+    normalizing once here means no store method has to guard against it
+    separately. Mutates ``payload`` in place.
+
+    Args:
+        payload: A payload dict that has already passed the dict +
+            ``schema_version`` check in ``load()``.
+
+    Returns:
+        ``payload``, with ``profiles``, the default profile, and that
+        profile's ``servers`` coerced to dicts in place.
+    """
+    profiles = _as_mapping(payload.get("profiles"))
+    payload["profiles"] = profiles
+    profile = _as_mapping(profiles.get(_DEFAULT_PROFILE_ID))
+    profiles[_DEFAULT_PROFILE_ID] = profile
+    profile["servers"] = _as_mapping(profile.get("servers"))
+    return payload
+
+
 class MCPPermissionStore:
     """Read-modify-write accessor over the on-disk permission-store JSON file.
 
@@ -116,7 +163,14 @@ class MCPPermissionStore:
         not decode to a dict, or a dict whose ``schema_version`` is not
         ``SCHEMA_VERSION`` -> the existing file is backed up to
         ``<name>.bak`` (replacing any prior backup), a warning is logged,
-        and a fresh default payload is returned. Never raises.
+        and a fresh default payload is returned. A schema-valid payload
+        with a non-mapping ``profiles`` / default profile / ``servers``
+        (e.g. hand-edited to ``null``) has those coerced to dicts in place
+        rather than being treated as corrupt.
+
+        Returns:
+            The payload dict, always shaped so ``profiles["default"]`` and
+            its ``servers`` key are dicts. Never raises.
         """
         if not self.path.exists():
             return _fresh_payload()
@@ -140,10 +194,15 @@ class MCPPermissionStore:
             self._backup_corrupt_file()
             return _fresh_payload()
 
-        return payload
+        return _normalize_payload_shape(payload)
 
     def save(self, payload: dict[str, Any]) -> None:
-        """Atomically write ``payload`` to disk, stamping ``updated_at``."""
+        """Atomically write ``payload`` to disk, stamping ``updated_at``.
+
+        Args:
+            payload: Full store payload to persist. Mutated in place to
+                add/overwrite ``updated_at`` before it is written.
+        """
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temp_path = self.path.with_suffix(f"{self.path.suffix}.tmp")
         payload["updated_at"] = _iso_utc_now()
@@ -173,9 +232,22 @@ class MCPPermissionStore:
     # -- kill switch -----------------------------------------------------
 
     def get_kill_switch(self) -> bool:
+        """Return whether the global kill switch is enabled.
+
+        Returns:
+            True when all tool execution should be blocked regardless of
+            any other setting; False otherwise (including when the store
+            file is missing).
+        """
         return bool(self.load().get("kill_switch", False))
 
     def set_kill_switch(self, value: bool) -> None:
+        """Persist the global kill switch.
+
+        Args:
+            value: True to block all tool execution; False to re-enable
+                normal precedence-based resolution.
+        """
         payload = self.load()
         payload["kill_switch"] = bool(value)
         self.save(payload)
@@ -183,9 +255,22 @@ class MCPPermissionStore:
     # -- global default -----------------------------------------------------
 
     def get_global_default(self) -> str:
+        """Return the profile's global default permission state.
+
+        Returns:
+            One of ``STORE_STATES``, or ``DEFAULT_GLOBAL`` when unset.
+        """
         return self._profile(self.load()).get("global_default", DEFAULT_GLOBAL)
 
     def set_global_default(self, state: str) -> None:
+        """Persist the profile's global default permission state.
+
+        Args:
+            state: One of ``STORE_STATES``.
+
+        Raises:
+            ValueError: If ``state`` is not one of ``STORE_STATES``.
+        """
         _validate_state(state)
         payload = self.load()
         profile = self._profile(payload)
@@ -195,10 +280,33 @@ class MCPPermissionStore:
     # -- server default -----------------------------------------------------
 
     def get_server_entry(self, server_key: str) -> dict[str, Any] | None:
+        """Return the raw stored entry for a server, if any.
+
+        Args:
+            server_key: Server's stable key (``<source>:<server_id>``).
+
+        Returns:
+            The server's entry dict (an optional ``"default"`` and/or
+            ``"tools"`` key), or None when the server has no entry at all
+            (fully "Inherit").
+        """
         servers = self._profile(self.load()).get("servers", {})
         return servers.get(server_key)
 
     def set_server_default(self, server_key: str, state: str | None) -> None:
+        """Set or clear a server-level default permission state.
+
+        Args:
+            server_key: Server's stable key (``<source>:<server_id>``).
+            state: One of ``STORE_STATES`` to set an explicit default, or
+                None to clear it (inherit from the global default). The
+                server's entry is pruned entirely once it has neither a
+                default nor any tool overrides left.
+
+        Raises:
+            ValueError: If ``state`` is not None and not one of
+                ``STORE_STATES``.
+        """
         if state is not None:
             _validate_state(state)
 
@@ -221,6 +329,17 @@ class MCPPermissionStore:
     # -- tool state -----------------------------------------------------
 
     def get_tool_entry(self, server_key: str, tool_name: str) -> dict[str, Any] | None:
+        """Return the raw stored entry for one tool, if any.
+
+        Args:
+            server_key: Owning server's stable key.
+            tool_name: Tool name within that server.
+
+        Returns:
+            The tool's entry dict (``"state"`` guaranteed; ``"definition_hash"``
+            and ``"config_changed"`` optional), or None when the tool has
+            no explicit entry (inherits from the server/global default).
+        """
         servers = self._profile(self.load()).get("servers", {})
         entry = servers.get(server_key, {})
         tools = entry.get("tools", {})
@@ -234,6 +353,25 @@ class MCPPermissionStore:
         *,
         definition_hash: str | None = None,
     ) -> None:
+        """Set or clear a tool-level permission override.
+
+        Args:
+            server_key: Owning server's stable key.
+            tool_name: Tool name within that server.
+            state: One of ``STORE_STATES`` to set an explicit override, or
+                None to clear it (inherit from the server/global default).
+                Setting replaces any existing entry wholesale, which is
+                what clears a persisted ``config_changed`` marker.
+            definition_hash: Required when ``state`` is ``"allow"`` -- the
+                tool's current fingerprint (see ``definition_hash()``),
+                stored alongside the allow for the rug-pull guard to
+                compare against later.
+
+        Raises:
+            ValueError: If ``state`` is not None and not one of
+                ``STORE_STATES``, or if ``state`` is ``"allow"`` without a
+                ``definition_hash``.
+        """
         if state is not None:
             _validate_state(state)
             if state == "allow" and not definition_hash:
@@ -267,20 +405,34 @@ class MCPPermissionStore:
     def mark_config_changed(self, server_key: str, tool_name: str) -> bool:
         """Set ``config_changed: true`` on a tool entry.
 
-        Returns True only on the not-already-set -> set transition (the
-        emit-once signal Task 4 uses to append a single audit entry).
+        Args:
+            server_key: Owning server's stable key.
+            tool_name: Tool name within that server.
+
+        Returns:
+            True only on the not-already-set -> set transition (the
+            emit-once signal Task 4 uses to append a single audit entry).
+            Returns False -- without writing to disk or creating any
+            entry -- when the marker is already set, so a resolution pass
+            over a tool that is already downgraded does not rewrite the
+            store file on every call.
         """
         payload = self.load()
         profile = self._profile(payload)
+        servers = profile.get("servers", {})
+        entry = servers.get(server_key, {})
+        tools = entry.get("tools", {})
+        tool_entry = tools.get(tool_name, {})
+        if bool(tool_entry.get("config_changed")):
+            return False
+
         servers = profile.setdefault("servers", {})
         entry = servers.setdefault(server_key, {})
         tools = entry.setdefault("tools", {})
         tool_entry = tools.setdefault(tool_name, {})
-
-        already_set = bool(tool_entry.get("config_changed"))
         tool_entry["config_changed"] = True
         self.save(payload)
-        return not already_set
+        return True
 
 
 # -- effective-state resolution (pure; no store I/O) -------------------------
@@ -297,6 +449,13 @@ def definition_hash(description: str | None, input_schema: dict | None) -> str:
     Mirrors ``LocalControlService._approval_fingerprint``'s canonicalization
     (``local_control_service.py``): sorted-key, compact-separator JSON,
     sha256 hex digest.
+
+    Args:
+        description: The tool's advertised description, if any.
+        input_schema: The tool's advertised JSON input schema, if any.
+
+    Returns:
+        A sha256 hex digest fingerprinting ``description``/``input_schema``.
     """
     canonical = json.dumps(
         {"description": description or "", "inputSchema": input_schema or {}},
@@ -367,12 +526,34 @@ def resolve_effective_state(payload: dict[str, Any], tool: HubTool) -> Effective
        (``risk_floored=True``) when the tool's tags intersect
        ``HIGH_RISK_TAGS``. Explicit tool-level ``allow`` is never floored --
        the operator opted in with full knowledge of the specific tool.
+
+    Every nested container this walks (``profiles``, the default profile,
+    ``servers``, a server entry, its ``tools``, a tool entry) is coerced
+    via ``_as_mapping()`` before being read, so a hand-edited
+    ``mcp_permissions.json`` with ``null`` (or other non-mapping junk) at
+    any of those levels resolves the same as an absent one instead of
+    raising ``AttributeError`` -- this function takes a raw payload and
+    must be safe standalone, independent of ``MCPPermissionStore.load()``'s
+    own normalization.
+
+    Args:
+        payload: A permission-store payload dict (the shape ``load()``
+            returns, or any raw dict -- this function does not assume it
+            has already been normalized).
+        tool: The live tool to resolve, used for its ``server_key``,
+            ``name``, ``description``/``input_schema`` (hash comparison),
+            and ``tags`` (high-risk floor).
+
+    Returns:
+        The resolved ``EffectiveToolState``.
     """
-    profile = payload.get("profiles", {}).get(_DEFAULT_PROFILE_ID, {})
-    servers = profile.get("servers", {})
-    server_entry = servers.get(tool.server_key) or {}
-    tools = server_entry.get("tools") or {}
+    profile = _as_mapping(_as_mapping(payload.get("profiles")).get(_DEFAULT_PROFILE_ID))
+    servers = _as_mapping(profile.get("servers"))
+    server_entry = _as_mapping(servers.get(tool.server_key))
+    tools = _as_mapping(server_entry.get("tools"))
     tool_entry = tools.get(tool.name)
+    if not isinstance(tool_entry, Mapping):
+        tool_entry = None
 
     config_changed = False
 
@@ -454,12 +635,30 @@ def resolve_effective_state_by_key(
     High-risk-tag flooring is skipped too (no ``HubTool.tags`` to check);
     that's covered by the "any allow downgrades to ask" rule above, which
     is strictly more conservative.
+
+    Like ``resolve_effective_state()``, every nested container this walks
+    is coerced via ``_as_mapping()`` before being read, so a hand-edited
+    ``mcp_permissions.json`` with ``null`` (or other non-mapping junk) at
+    any level resolves the same as an absent one instead of raising
+    ``AttributeError``.
+
+    Args:
+        payload: A permission-store payload dict (the shape ``load()``
+            returns, or any raw dict -- this function does not assume it
+            has already been normalized).
+        server_key: Owning server's stable key.
+        tool_name: Tool name within that server.
+
+    Returns:
+        The resolved ``EffectiveToolState``.
     """
-    profile = payload.get("profiles", {}).get(_DEFAULT_PROFILE_ID, {})
-    servers = profile.get("servers", {})
-    server_entry = servers.get(server_key) or {}
-    tools = server_entry.get("tools") or {}
+    profile = _as_mapping(_as_mapping(payload.get("profiles")).get(_DEFAULT_PROFILE_ID))
+    servers = _as_mapping(profile.get("servers"))
+    server_entry = _as_mapping(servers.get(server_key))
+    tools = _as_mapping(server_entry.get("tools"))
     tool_entry = tools.get(tool_name)
+    if not isinstance(tool_entry, Mapping):
+        tool_entry = None
 
     if tool_entry is not None and tool_entry.get("state") in STORE_STATES:
         origin = "tool_override"
@@ -495,10 +694,25 @@ _CYCLE_GLOBAL_STATES: dict[str, str] = {
 
 
 def cycle_ui_state(current: str | None) -> str | None:
-    """Advance a per-server/per-tool state one Space-press: Inherit->Allow->Ask->Off->Inherit."""
+    """Advance a per-server/per-tool state one Space-press.
+
+    Args:
+        current: The current stored state, or None for "Inherit".
+
+    Returns:
+        The next state in the cycle: Inherit -> Allow -> Ask -> Off ->
+        Inherit (None).
+    """
     return _CYCLE_UI_STATES[current]
 
 
 def cycle_global(current: str) -> str:
-    """Advance the global default one Space-press: Allow->Ask->Off->Allow (no Inherit)."""
+    """Advance the global default one Space-press (no Inherit option).
+
+    Args:
+        current: The current global default state, one of ``STORE_STATES``.
+
+    Returns:
+        The next state in the cycle: Allow -> Ask -> Off -> Allow.
+    """
     return _CYCLE_GLOBAL_STATES[current]

@@ -208,6 +208,26 @@ def test_mark_config_changed_returns_true_then_false(tmp_path):
     assert second is False
 
 
+def test_mark_config_changed_second_call_does_not_rewrite_file(tmp_path):
+    """Perf: the control plane calls `mark_config_changed()` on every
+    resolution pass for every tool that already carries the marker (any
+    ⚠ tool in the catalog) -- the second-and-later calls must be a no-op
+    read, not a load()+save() that rewrites the store file every time."""
+    path = tmp_path / "mcp_permissions.json"
+    store = MCPPermissionStore(path)
+    server_key = "local:demo-server"
+    store.set_tool_state(server_key, "search", "allow", definition_hash="abc123")
+
+    assert store.mark_config_changed(server_key, "search") is True
+    before_bytes = path.read_bytes()
+    before_mtime_ns = path.stat().st_mtime_ns
+
+    assert store.mark_config_changed(server_key, "search") is False
+
+    assert path.read_bytes() == before_bytes
+    assert path.stat().st_mtime_ns == before_mtime_ns
+
+
 def test_save_atomic_write_leaves_no_tmp_behind(tmp_path):
     path = tmp_path / "mcp_permissions.json"
     store = MCPPermissionStore(path)
