@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from rich.markup import escape
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
@@ -28,18 +27,6 @@ POSITIONS = (
     ("at_start", "At start"),
     ("at_end", "At end"),
 )
-
-
-class LoreBookCreateRequested(Message):
-    """Request to create a new lore book."""
-
-
-class LoreBookDuplicateRequested(Message):
-    """Request to duplicate the current lore book."""
-
-
-class LoreBookDeleteRequested(Message):
-    """Request to delete the current lore book."""
 
 
 class LoreBookEnableToggled(Message):
@@ -201,10 +188,14 @@ class PersonasLoreDetailWidget(Vertical):
             keys = ", ".join(str(k) for k in (entry.get("keys") or []))
             content = str(entry.get("content") or "")
             preview = content if len(content) <= 60 else content[:57] + "..."
+            # Cells are rich.text.Text objects (NOT markup) — DataTable renders
+            # them verbatim, so raw user text is already safe. Do NOT rich-escape
+            # here: escaping ahead of a plain Text() injects literal backslashes
+            # for bracket-tag-like text (e.g. "[note]" -> "\[note]").
             table.add_row(
-                Text(escape(keys), style=style),
-                Text(escape(preview), style=style),
-                Text(escape(str(entry.get("position") or "before_char")), style=style),
+                Text(keys, style=style),
+                Text(preview, style=style),
+                Text(str(entry.get("position") or "before_char"), style=style),
                 Text("yes" if enabled else "no", style=style),
                 key=str(entry.get("id")),
             )
@@ -412,9 +403,6 @@ class PersonasLoreDetailWidget(Vertical):
 
 
 __all__ = [
-    "LoreBookCreateRequested",
-    "LoreBookDeleteRequested",
-    "LoreBookDuplicateRequested",
     "LoreBookEnableToggled",
     "LoreBookSettingsSaveRequested",
     "LoreEntriesReorderRequested",
