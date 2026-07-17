@@ -80,6 +80,35 @@ async def search_media_fts5(
     return results[:limit]
 
 
+def _resolve_chacha_db(app: Any):
+    """Resolve the ChaChaNotes DB for pipeline searches.
+
+    Wiring decision (task-295): the app's LIVE instance
+    (``TldwCli.chachanotes_db``, thread-local connections already open,
+    schema already checked) is preferred; the ``db_config['chacha_db_path']``
+    seam stays as a construction fallback for tests and probes. Nothing in
+    production populates ``db_config``, and wiring it would add a second
+    source of truth for a path the app already resolves at startup.
+
+    Args:
+        app: App-like object; either ``chachanotes_db`` (live instance) or
+            ``db_config['chacha_db_path']`` (construction path) may be set.
+
+    Returns:
+        A CharactersRAGDB, or None when neither seam is available.
+    """
+    db = getattr(app, "chachanotes_db", None)
+    if db is not None:
+        return db
+    db_config = getattr(app, "db_config", None)
+    path = db_config.get("chacha_db_path") if isinstance(db_config, dict) else None
+    if not path:
+        return None
+    from ..DB.ChaChaNotes_DB import CharactersRAGDB
+
+    return CharactersRAGDB(path, client_id="rag_pipeline")
+
+
 async def search_conversations_fts5(
     app: Any,
     query: str,
@@ -96,19 +125,11 @@ async def search_conversations_fts5(
         SearchResult entries in content-relevance order, each carrying a
         snippet built from the conversation's first messages.
     """
-    if not hasattr(app, 'db_config') or not app.db_config.get('chacha_db_path'):
+    db = _resolve_chacha_db(app)
+    if db is None:
         return []
     
     logger.debug(f"Searching conversations for: {query}")
-    
-    # Two dots, not three: this module was flattened out of simplified/ and
-    # the old ...DB import resolved beyond the top-level package, raising
-    # ImportError at call time (task-260).
-    from ..DB.ChaChaNotes_DB import CharactersRAGDB
-    
-    # client_id is a required ctor arg (was missing here -- third latent
-    # defect in this never-exercised path, caught by the task-260 tests).
-    db = CharactersRAGDB(app.db_config['chacha_db_path'], client_id='rag_pipeline')
     conv_results = await asyncio.to_thread(
         db.search_conversations_by_content,
         search_query=query,
@@ -152,24 +173,29 @@ async def search_notes_fts5(
     query: str,
     limit: int = 10
 ) -> List[SearchResult]:
-    """Search notes using FTS5."""
-    if not hasattr(app, 'db_config') or not app.db_config.get('notes_db_path'):
+    """Search notes using FTS5.
+
+    task-295: this used to import a ``Notes_DB`` module that no longer
+    exists anywhere (and called a ``user_id`` API shape the real store
+    never had) -- notes live in ChaChaNotes, so it now routes through the
+    same resolved DB as the conversations search.
+
+    Args:
+        app: App-like object; see ``_resolve_chacha_db`` for the seams.
+        query: FTS search text (matched as a literal phrase).
+        limit: Maximum number of note results to return.
+
+    Returns:
+        SearchResult entries for matching notes.
+    """
+    db = _resolve_chacha_db(app)
+    if db is None:
         return []
     
     logger.debug(f"Searching notes for: {query}")
     
-    from ...Notes.DB.Notes_DB import NotesDB
-    
-    db = NotesDB(app.db_config['notes_db_path'])
-    
-    # Get user ID if available
-    user_id = getattr(app, 'notes_user_id', None)
-    if not user_id:
-        return []
-    
     note_results = await asyncio.to_thread(
         db.search_notes,
-        user_id=user_id,
         search_term=query,
         limit=limit
     )
@@ -183,8 +209,7 @@ async def search_notes_fts5(
             content=note.get('content', ''),
             metadata={
                 'created_at': note.get('created_at'),
-                'updated_at': note.get('updated_at'),
-                'tags': note.get('tags', [])
+                'last_modified': note.get('last_modified')
             }
         ))
     
