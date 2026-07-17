@@ -1,17 +1,20 @@
 """
-Tests for Anthropic native tool-calls request-side conversion (task-263 AC#2).
+Tests for Anthropic native tool-calls request-side conversion (task-263 AC#2)
+and non-streaming response-side normalization (task-263 AC#1a).
 
 `chat_with_anthropic` must convert OpenAI-shaped ``tools`` and OpenAI-shaped
 tool-call history (assistant ``tool_calls`` + ``role="tool"`` messages) into
 Anthropic's native ``tool_use`` / ``tool_result`` block format before sending
-the request.
+the request, and must normalize Anthropic ``tool_use`` content blocks in the
+response back into OpenAI-shaped ``message.tool_calls``.
 
 Mirrors the mocking pattern from
 `Tests/Chat/test_chat_mocked_apis.py::test_anthropic_chat_mocked`: patch
 `requests.Session.post`, drive the real dispatcher via `chat_api_call`, and
-inspect the JSON payload actually sent.
+inspect the JSON payload actually sent (or the normalized response returned).
 """
 
+import json
 from unittest.mock import Mock, patch
 
 from tldw_chatbook.Chat.Chat_Functions import chat_api_call
@@ -191,3 +194,59 @@ def test_junk_tool_call_skipped_among_valid_entries(mock_post):
     assert sent[1]["content"] == [
         {"type": "tool_use", "id": "toolu_1", "name": "calculator",
          "input": {"expression": "2+2"}}]
+
+
+def _anthropic_tool_use_response():
+    return {"id": "msg_2", "type": "message", "role": "assistant", "model": "claude-x",
+            "content": [
+                {"type": "text", "text": "Checking."},
+                {"type": "tool_use", "id": "toolu_X", "name": "calculator",
+                 "input": {"expression": "2+2"}}],
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 5, "output_tokens": 9}}
+
+
+def _call_anthropic_get_result(mock_post, response_json, messages, **extra):
+    """Like `_call_anthropic` but returns the normalized `chat_api_call`
+    result instead of the request JSON that was sent."""
+    mock_response = Mock()
+    mock_response.json.return_value = response_json
+    mock_response.status_code = 200
+    mock_response.raise_for_status = Mock()
+    mock_post.return_value = mock_response
+
+    return chat_api_call(
+        "anthropic",
+        messages_payload=messages,
+        api_key="test-key",
+        model="claude-3-opus-20240229",
+        streaming=False,
+        **extra,
+    )
+
+
+@patch("requests.Session.post")
+def test_tool_use_response_normalizes_to_openai_tool_calls(mock_post):
+    result = _call_anthropic_get_result(
+        mock_post, _anthropic_tool_use_response(),
+        [{"role": "user", "content": "2+2?"}],
+    )
+    message = result["choices"][0]["message"]
+
+    assert result["choices"][0]["finish_reason"] == "tool_calls"
+    assert message["content"] == "Checking."
+    assert message["tool_calls"] == [{
+        "id": "toolu_X", "type": "function",
+        "function": {"name": "calculator",
+                     "arguments": json.dumps({"expression": "2+2"})}}]
+
+
+@patch("requests.Session.post")
+def test_text_only_response_has_no_tool_calls_key(mock_post):
+    result = _call_anthropic_get_result(
+        mock_post, _anthropic_text_response(),
+        [{"role": "user", "content": "hi"}],
+    )
+    message = result["choices"][0]["message"]
+
+    assert "tool_calls" not in message

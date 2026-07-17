@@ -982,14 +982,28 @@ def chat_with_anthropic(
                     if part.get("type") == "text":
                         assistant_content_parts.append(part.get("text", ""))
             full_assistant_content = "\n".join(assistant_content_parts).strip()
+            tool_call_entries = []
+            for part in response_data.get("content") or []:
+                if isinstance(part, dict) and part.get("type") == "tool_use":
+                    tool_call_entries.append({
+                        "id": str(part.get("id") or ""),
+                        "type": "function",
+                        "function": {
+                            "name": str(part.get("name") or ""),
+                            "arguments": json.dumps(part.get("input") or {}),
+                        },
+                    })
             finish_reason_map = {"end_turn": "stop", "max_tokens": "length", "stop_sequence": "stop", "tool_use": "tool_calls"} # Added tool_use
             openai_finish_reason = finish_reason_map.get(response_data.get("stop_reason"), response_data.get("stop_reason"))
+            message_payload = {"role": "assistant", "content": full_assistant_content}
+            if tool_call_entries:
+                message_payload["tool_calls"] = tool_call_entries
             normalized_response = {
                 "id": response_data.get("id", f"anthropic-{time.time_ns()}"),
                 "object": "chat.completion",
                 "created": int(time.time()),
                 "model": response_data.get("model", current_model),
-                "choices": [{"index": 0, "message": {"role": "assistant", "content": full_assistant_content},
+                "choices": [{"index": 0, "message": message_payload,
                              "finish_reason": openai_finish_reason}],
                 "usage": response_data.get("usage")
             }
