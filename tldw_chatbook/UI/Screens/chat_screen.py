@@ -6378,26 +6378,45 @@ class ChatScreen(BaseAppScreen):
         Removes whichever of the pending-launch / source-readiness cards is
         mounted, then mounts the card for the CURRENT context (re-read after
         the awaits -- staging can happen again while a swap is in flight).
+        The scheduled flag stays set for the WHOLE swap, so a mid-swap
+        staging can never start a second, overlapping swap regardless of how
+        the caller reached the scheduler (PR #691 review); the tail re-check
+        below converges on the latest context instead.
         """
-        self._console_live_work_card_swap_scheduled = False
+        swapped_context = None
+        swap_completed = False
         try:
-            rail_body = self.query_one("#console-inspector-rail-body", VerticalScroll)
-            anchor = self.query_one("#console-run-inspector", Vertical)
-        except QueryError:
-            return
-        for selector in (f"#{PENDING_LAUNCH_CARD_ID}", f"#{SOURCE_READINESS_CARD_ID}"):
             try:
-                stale_card = self.query_one(selector)
+                rail_body = self.query_one(
+                    "#console-inspector-rail-body", VerticalScroll
+                )
+                anchor = self.query_one("#console-run-inspector", Vertical)
             except QueryError:
-                continue
-            await stale_card.remove()
-        launch = self._pending_console_launch_context
-        card = (
-            self._build_console_live_work_status_card(launch)
-            if launch is not None
-            else self._build_console_live_work_source_readiness_card()
-        )
-        await rail_body.mount(card, after=anchor)
+                return
+            for selector in (f"#{PENDING_LAUNCH_CARD_ID}", f"#{SOURCE_READINESS_CARD_ID}"):
+                try:
+                    stale_card = self.query_one(selector)
+                except QueryError:
+                    continue
+                await stale_card.remove()
+            launch = self._pending_console_launch_context
+            card = (
+                self._build_console_live_work_status_card(launch)
+                if launch is not None
+                else self._build_console_live_work_source_readiness_card()
+            )
+            await rail_body.mount(card, after=anchor)
+            swapped_context = launch
+            swap_completed = True
+        finally:
+            self._console_live_work_card_swap_scheduled = False
+        # Gate on completion: the rail-unmounted early return must NOT
+        # re-schedule, or a lingering context would loop this forever.
+        if swap_completed and self._pending_console_launch_context is not swapped_context:
+            # Staging changed the context after this swap's re-read; run one
+            # more swap so the mounted card converges on the latest context.
+            self._console_live_work_card_swap_scheduled = True
+            self.call_later(self._apply_console_live_work_card_swap)
 
     def _sync_console_staged_context_tray(self) -> None:
         """Refresh the mounted staged-context tray from the launch context."""
