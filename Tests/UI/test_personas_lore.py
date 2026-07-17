@@ -7,7 +7,7 @@ test_personas_dictionaries.py's PersonasTestApp harness)."""
 import pytest
 from textual.app import App, ComposeResult
 from textual.coordinate import Coordinate
-from textual.widgets import Button, DataTable, Input, ListView, Static, TextArea
+from textual.widgets import Button, DataTable, Input, ListView, Static, Switch, TextArea
 
 from tldw_chatbook.Widgets.Persona_Widgets.personas_lore_detail import (
     PersonasLoreDetailWidget,
@@ -121,6 +121,113 @@ async def test_entry_priority_round_trips_through_form():
         await pilot.click("#personas-lore-entry-add")
         await pilot.pause()
         assert app.posted[-1]["priority"] == 80
+
+
+@pytest.mark.asyncio
+async def test_matching_controls_round_trip_through_form():
+    app = _DetailHost()
+    async with app.run_test(size=(140, 40)) as pilot:
+        widget = app.query_one(PersonasLoreDetailWidget)
+        widget.load_book({"id": 1, "name": "B", "description": "", "scan_depth": 3,
+                          "token_budget": 500, "recursive_scanning": False, "enabled": True})
+        app.query_one("#personas-lore-entry-keys", Input).value = "Warden"
+        app.query_one("#personas-lore-entry-content", TextArea).text = "grim jailer"
+        app.query_one("#personas-lore-entry-case-sensitive", Switch).value = True
+        app.query_one("#personas-lore-entry-selective", Switch).value = True
+        app.query_one("#personas-lore-entry-secondary-keys", Input).value = " sword , shield ,"
+        await pilot.pause()
+        await pilot.click("#personas-lore-entry-add")
+        await pilot.pause()
+        payload = app.posted[-1]
+        assert payload["case_sensitive"] is True
+        assert payload["selective"] is True
+        assert payload["secondary_keys"] == ["sword", "shield"]  # trimmed, blank dropped
+
+
+@pytest.mark.asyncio
+async def test_blank_secondary_keys_is_empty_list():
+    """A blank secondary-keys field yields [] (never raises)."""
+    app = _DetailHost()
+    async with app.run_test(size=(140, 40)) as pilot:
+        widget = app.query_one(PersonasLoreDetailWidget)
+        widget.load_book({"id": 1, "name": "B", "description": "", "scan_depth": 3,
+                          "token_budget": 500, "recursive_scanning": False, "enabled": True})
+        app.query_one("#personas-lore-entry-keys", Input).value = "Warden"
+        app.query_one("#personas-lore-entry-content", TextArea).text = "grim jailer"
+        # secondary-keys left blank
+        await pilot.pause()
+        await pilot.click("#personas-lore-entry-add")
+        await pilot.pause()
+        assert app.posted[-1]["secondary_keys"] == []
+
+
+@pytest.mark.asyncio
+async def test_secondary_keys_stored_even_when_not_selective():
+    """Data fidelity: secondary keys are stored regardless of the Selective
+    switch, so toggling Selective off does not erase them."""
+    app = _DetailHost()
+    async with app.run_test(size=(140, 40)) as pilot:
+        widget = app.query_one(PersonasLoreDetailWidget)
+        widget.load_book({"id": 1, "name": "B", "description": "", "scan_depth": 3,
+                          "token_budget": 500, "recursive_scanning": False, "enabled": True})
+        app.query_one("#personas-lore-entry-keys", Input).value = "Warden"
+        app.query_one("#personas-lore-entry-content", TextArea).text = "grim jailer"
+        app.query_one("#personas-lore-entry-selective", Switch).value = False
+        app.query_one("#personas-lore-entry-secondary-keys", Input).value = "sword"
+        await pilot.pause()
+        await pilot.click("#personas-lore-entry-add")
+        await pilot.pause()
+        payload = app.posted[-1]
+        assert payload["selective"] is False
+        assert payload["secondary_keys"] == ["sword"]
+
+
+@pytest.mark.asyncio
+async def test_fill_form_populates_matching_controls():
+    """Selecting a row fills the three controls; an entry with selective=False
+    but stored secondary keys keeps its keys (fidelity) and shows them disabled."""
+    app = _DetailHost()
+    async with app.run_test(size=(140, 40)) as pilot:
+        widget = app.query_one(PersonasLoreDetailWidget)
+        widget.load_book({"id": 1, "name": "B", "description": "", "scan_depth": 3,
+                          "token_budget": 500, "recursive_scanning": False, "enabled": True})
+        widget.update_entries([
+            {"id": 7, "keys": ["Warden"], "content": "grim jailer",
+             "position": "before_char", "enabled": True, "insertion_order": 0,
+             "case_sensitive": True, "selective": False,
+             "secondary_keys": ["alpha", "beta"]},
+        ])
+        await pilot.pause()
+        table = app.query_one("#personas-lore-entries-table", DataTable)
+        table.move_cursor(row=0)
+        await pilot.pause()
+        assert app.query_one("#personas-lore-entry-case-sensitive", Switch).value is True
+        assert app.query_one("#personas-lore-entry-selective", Switch).value is False
+        sec = app.query_one("#personas-lore-entry-secondary-keys", Input)
+        assert sec.value == "alpha, beta"   # preserved even though selective is False
+        assert sec.disabled is True          # selective off → disabled hint
+
+
+@pytest.mark.asyncio
+async def test_secondary_keys_disabled_hint_tracks_selective():
+    app = _DetailHost()
+    async with app.run_test(size=(140, 40)) as pilot:
+        widget = app.query_one(PersonasLoreDetailWidget)
+        widget.load_book({"id": 1, "name": "B", "description": "", "scan_depth": 3,
+                          "token_budget": 500, "recursive_scanning": False, "enabled": True})
+        await pilot.pause()
+        sec = app.query_one("#personas-lore-entry-secondary-keys", Input)
+        sel = app.query_one("#personas-lore-entry-selective", Switch)
+        assert sec.disabled is True          # selective defaults off → disabled on mount
+        sec.value = "kept"
+        sel.value = True
+        await pilot.pause()
+        assert sec.disabled is False         # selective on → enabled
+        assert sec.value == "kept"
+        sel.value = False
+        await pilot.pause()
+        assert sec.disabled is True          # selective off → disabled again
+        assert sec.value == "kept"           # value survives the toggle (fidelity)
 
 
 class _TryItHost(App):
