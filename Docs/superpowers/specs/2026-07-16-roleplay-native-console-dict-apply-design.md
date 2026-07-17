@@ -1,6 +1,6 @@
 # Roleplay — Native Console send-path chat-dictionary application
 
-**Status:** Design approved (brainstorm), pending spec review.
+**Status:** Implemented.
 
 **Program:** Roleplay (Personas) redesign. Follow-up filed from P1g (#661).
 
