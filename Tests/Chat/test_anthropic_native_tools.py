@@ -406,3 +406,85 @@ def test_streaming_fragments_reassemble_via_gateway_accumulator(mock_post):
         "function": {"name": "calculator",
                      "arguments": '{"expression": "2+2"}'},
     },)
+
+
+@patch("requests.Session.post")
+def test_openai_tool_with_blank_name_is_not_forwarded(mock_post):
+    """PR #659 review: an OpenAI tool entry with a blank name must be
+    dropped locally — Anthropic 400s on empty tool names."""
+    bad_tools = [{"type": "function", "function": {"name": "  ", "parameters": {}}},
+                 OPENAI_TOOLS[0]]
+    sent = _call_anthropic(mock_post, [{"role": "user", "content": "hi"}],
+                           tools=bad_tools)
+    assert [t["name"] for t in sent["tools"]] == ["calculator"]
+    assert sent["tools"][0]["input_schema"] == OPENAI_TOOLS[0]["function"]["parameters"]
+
+
+@patch("requests.Session.post")
+def test_list_content_with_tool_calls_keeps_text_parts(mock_post):
+    """PR #659 review: list-form (multimodal) assistant content alongside
+    tool_calls must keep its text parts in the converted blocks."""
+    messages = [
+        {"role": "user", "content": "go"},
+        {"role": "assistant",
+         "content": [{"type": "text", "text": "Let me check."},
+                     {"type": "image_url", "image_url": {"url": "data:x"}}],
+         "tool_calls": [{"id": "toolu_L", "type": "function",
+                         "function": {"name": "calculator",
+                                      "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "toolu_L", "content": "4"},
+    ]
+    sent = _call_anthropic(mock_post, messages)
+    assistant = sent["messages"][1]
+    assert assistant["content"][0] == {"type": "text", "text": "Let me check."}
+    assert assistant["content"][-1]["type"] == "tool_use"
+
+
+@patch("requests.Session.post")
+def test_tool_use_stop_reason_without_blocks_downgrades_finish_reason(mock_post):
+    """PR #659 review: stop_reason tool_use with NO tool_use blocks must not
+    emit the self-contradictory finish_reason="tool_calls" without
+    message.tool_calls."""
+    response = {"id": "msg_6", "type": "message", "role": "assistant",
+                "model": "claude-x",
+                "content": [{"type": "text", "text": "hm"}],
+                "stop_reason": "tool_use",
+                "usage": {"input_tokens": 1, "output_tokens": 1}}
+    result = _call_anthropic_get_result(
+        mock_post, response, [{"role": "user", "content": "go"}])
+    choice = result["choices"][0]
+    assert choice["finish_reason"] == "stop"
+    assert "tool_calls" not in choice["message"]
+
+
+@patch("requests.Session.post")
+def test_streaming_junk_index_event_is_skipped_not_fatal(mock_post):
+    """PR #659 review: a malformed tool_use content_block_start (index None)
+    must be skipped without aborting the stream — later text still flows."""
+    events = [
+        {"type": "content_block_start", "index": None,
+         "content_block": {"type": "tool_use", "id": "x", "name": "y"}},
+        {"type": "content_block_start", "index": 0,
+         "content_block": {"type": "text", "text": ""}},
+        {"type": "content_block_delta", "index": 0,
+         "delta": {"type": "text_delta", "text": "still alive"}},
+        {"type": "message_delta", "delta": {"stop_reason": "end_turn"}},
+        {"type": "message_stop"},
+    ]
+    lines = [f"data: {json.dumps(e)}".encode() for e in events]
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.raise_for_status = Mock()
+    mock_response.iter_lines.return_value = iter(lines)
+    mock_post.return_value = mock_response
+    gen = chat_api_call("anthropic", messages_payload=[{"role": "user", "content": "go"}],
+                        api_key="test-key", model="claude-x", streaming=True)
+    chunks = []
+    for raw in gen:
+        payload = raw.removeprefix("data:").strip()
+        if not payload or payload == "[DONE]":
+            continue
+        chunks.append(json.loads(payload))
+    texts = [c["choices"][0].get("delta", {}).get("content") for c in chunks]
+    assert "still alive" in texts
+    assert not any("error" in c for c in chunks)

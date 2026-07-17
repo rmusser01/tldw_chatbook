@@ -58,14 +58,29 @@ class RecordingGateway:
             yield chunk
 
 
-def resolution():
+def resolution() -> "ConsoleProviderResolution":
+    """Build the ready Anthropic resolution the gate cases share.
+
+    Returns:
+        A streaming-on resolution routed at execution_key "anthropic".
+    """
     return ConsoleProviderResolution(
         provider="anthropic", base_url="", model=MODEL, ready=True,
         readiness_key="anthropic", execution_key="anthropic",
         api_key=KEY, streaming=True, max_tokens=1024)
 
 
-def run_case(label, question, dbdir):
+def run_case(label: str, question: str, dbdir: str) -> tuple:
+    """Run one gate case through the real Console reply engine.
+
+    Args:
+        label: Case label (used for the evidence DB filename and prints).
+        question: The user prompt to send.
+        dbdir: Directory for this case's AgentRunsDB evidence file.
+
+    Returns:
+        (RunOutcome, RecordingGateway, steps) for verdict computation.
+    """
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content=question)
@@ -95,7 +110,12 @@ def run_case(label, question, dbdir):
     return outcome, gw, steps
 
 
-def main():
+def main() -> int:
+    """Run cases A and B and print verdicts.
+
+    Returns:
+        Process exit code: 0 on GATE PASS, 1 otherwise.
+    """
     dbdir = os.environ.get("GATE_DBDIR") or tempfile.mkdtemp(prefix="anthropic-gate-")
     print("evidence db dir:", dbdir)
     results = {}
