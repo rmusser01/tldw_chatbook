@@ -579,35 +579,55 @@ class IngestionIndexer:
         return self._indexing_db
 
     def _run(self) -> None:
-        """Worker loop. Exceptions are contained per batch; the loop never exits on error."""
-        while True:
-            item = self._queue.get()
-            if item is _STOP:
-                return
-            batch: List[IndexEntry] = [item]
-            stop_after_batch = False
-            while len(batch) < self._batch_size:
+        """Worker loop. Exceptions are contained per batch; the loop never exits on error.
+
+        One event loop is created for the thread's lifetime and reused for
+        every batch (rather than asyncio.run per batch, which would also tear
+        down and respawn the loop's default executor -- used by
+        ``asyncio.to_thread`` in the embeddings path -- on every batch).
+        Nothing in the indexing path holds loop-affine state across batches:
+        the RAG service's executor is a plain ThreadPoolExecutor and the
+        embeddings circuit breaker synchronizes with a threading.Lock.
+        """
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            while True:
+                item = self._queue.get()
+                if item is _STOP:
+                    return
+                batch: List[IndexEntry] = [item]
+                stop_after_batch = False
+                while len(batch) < self._batch_size:
+                    try:
+                        nxt = self._queue.get_nowait()
+                    except queue.Empty:
+                        break
+                    if nxt is _STOP:
+                        stop_after_batch = True
+                        break
+                    batch.append(nxt)
+
                 try:
-                    nxt = self._queue.get_nowait()
-                except queue.Empty:
-                    break
-                if nxt is _STOP:
-                    stop_after_batch = True
-                    break
-                batch.append(nxt)
+                    loop.run_until_complete(self._process_batch(batch))
+                except Exception as e:
+                    # Last-resort guard: even loop/setup crashes must not kill the worker.
+                    self._record_batch_failure(batch, f"indexing batch crashed: {e}")
+                    logger.opt(exception=True).error(f"RAG ingestion indexing batch crashed: {e}")
+                finally:
+                    with self._state_lock:
+                        self._pending -= len(batch)
 
+                if stop_after_batch:
+                    return
+        finally:
             try:
-                asyncio.run(self._process_batch(batch))
+                loop.run_until_complete(loop.shutdown_asyncgens())
+                loop.run_until_complete(loop.shutdown_default_executor())
             except Exception as e:
-                # Last-resort guard: even loop/setup crashes must not kill the worker.
-                self._record_batch_failure(batch, f"indexing batch crashed: {e}")
-                logger.opt(exception=True).error(f"RAG ingestion indexing batch crashed: {e}")
-            finally:
-                with self._state_lock:
-                    self._pending -= len(batch)
-
-            if stop_after_batch:
-                return
+                logger.debug(f"Indexer loop shutdown cleanup failed: {e}")
+            asyncio.set_event_loop(None)
+            loop.close()
 
     async def _process_batch(self, batch: List[IndexEntry]) -> None:
         service = self._get_service()

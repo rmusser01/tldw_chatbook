@@ -102,6 +102,11 @@ class DateTimeEncoder(json.JSONEncoder):
 # (e.g. RAG indexing, see RAG_Search/ingestion_indexing.py).
 MediaPostIngestCallback = Callable[["MediaDatabase", int, Optional[str]], None]
 _MEDIA_POST_INGEST_CALLBACKS: List[MediaPostIngestCallback] = []
+# Registration can happen on init/UI threads while ingest worker threads
+# dispatch concurrently; the lock keeps the compound check-then-append /
+# remove operations atomic. Dispatch snapshots the list under the lock but
+# invokes callbacks outside it, so a slow callback never blocks registration.
+_MEDIA_POST_INGEST_CALLBACKS_LOCK = threading.Lock()
 
 
 def register_media_post_ingest_callback(callback: MediaPostIngestCallback) -> None:
@@ -113,21 +118,25 @@ def register_media_post_ingest_callback(callback: MediaPostIngestCallback) -> No
             ``add_media_with_keywords`` returns a non-None media_id (i.e. for
             creates and updates, not duplicate skips).
     """
-    if callback not in _MEDIA_POST_INGEST_CALLBACKS:
-        _MEDIA_POST_INGEST_CALLBACKS.append(callback)
+    with _MEDIA_POST_INGEST_CALLBACKS_LOCK:
+        if callback not in _MEDIA_POST_INGEST_CALLBACKS:
+            _MEDIA_POST_INGEST_CALLBACKS.append(callback)
 
 
 def unregister_media_post_ingest_callback(callback: MediaPostIngestCallback) -> None:
     """Remove a previously registered post-ingest callback (no-op if absent)."""
-    try:
-        _MEDIA_POST_INGEST_CALLBACKS.remove(callback)
-    except ValueError:
-        pass
+    with _MEDIA_POST_INGEST_CALLBACKS_LOCK:
+        try:
+            _MEDIA_POST_INGEST_CALLBACKS.remove(callback)
+        except ValueError:
+            pass
 
 
 def _dispatch_media_post_ingest(db: "MediaDatabase", media_id: int, media_uuid: Optional[str]) -> None:
     """Invoke all registered post-ingest callbacks, guarding each one."""
-    for callback in list(_MEDIA_POST_INGEST_CALLBACKS):
+    with _MEDIA_POST_INGEST_CALLBACKS_LOCK:
+        callbacks = list(_MEDIA_POST_INGEST_CALLBACKS)
+    for callback in callbacks:
         try:
             callback(db, media_id, media_uuid)
         except Exception as e:
@@ -2658,18 +2667,48 @@ class MediaDatabase:
             logger.opt(exception=True).error(f"Error getting deletion candidates: {e}")
             raise DatabaseError(f"Failed to get deletion candidates: {e}") from e
 
-    def add_media_with_keywords(self, **kwargs) -> Tuple[Optional[int], Optional[str], str]:
+    def add_media_with_keywords(
+            self,
+            *,
+            url: Optional[str] = None,
+            title: Optional[str] = None,
+            media_type: Optional[str] = None,
+            content: Optional[str] = None,
+            keywords: Optional[List[str]] = None,
+            prompt: Optional[str] = None,
+            analysis_content: Optional[str] = None,
+            transcription_model: Optional[str] = None,
+            author: Optional[str] = None,
+            ingestion_date: Optional[str] = None,
+            overwrite: bool = False,
+            chunk_options: Optional[Dict] = None,
+            chunks: Optional[List[Dict[str, Any]]] = None,
+    ) -> Tuple[Optional[int], Optional[str], str]:
         """Add or update a media record, handle keyword links, optional chunks and full-text sync.
 
         Thin wrapper around ``_add_media_with_keywords_impl`` (which holds the
-        transactional logic and the full keyword-only signature). After the
-        transaction has committed, registered post-ingest callbacks (see
-        ``register_media_post_ingest_callback``) are dispatched for any
+        transactional logic; both share the same keyword-only signature).
+        After the transaction has committed, registered post-ingest callbacks
+        (see ``register_media_post_ingest_callback``) are dispatched for any
         operation that returned a media_id -- creates and updates, but not
         duplicate skips. Callback failures are logged and never propagate.
         """
-        media_id, media_uuid, message = self._add_media_with_keywords_impl(**kwargs)
-        if media_id is not None and _MEDIA_POST_INGEST_CALLBACKS:
+        media_id, media_uuid, message = self._add_media_with_keywords_impl(
+            url=url,
+            title=title,
+            media_type=media_type,
+            content=content,
+            keywords=keywords,
+            prompt=prompt,
+            analysis_content=analysis_content,
+            transcription_model=transcription_model,
+            author=author,
+            ingestion_date=ingestion_date,
+            overwrite=overwrite,
+            chunk_options=chunk_options,
+            chunks=chunks,
+        )
+        if media_id is not None:
             _dispatch_media_post_ingest(self, media_id, media_uuid)
         return media_id, media_uuid, message
 
