@@ -8,6 +8,26 @@ from typing import Dict, List, Any, Optional, Tuple
 from loguru import logger
 
 
+def _coerce_int(value: Any, default: int = 0) -> int:
+    """Best-effort int coercion for loosely-typed entry fields.
+
+    Imported/hand-edited world books may carry ``None`` or non-numeric values
+    for numeric fields (``priority``, ``insertion_order``); those must never
+    crash the sort/budget path on a live send.
+
+    Args:
+        value: Raw value from a processed entry or persisted/imported JSON.
+        default: Fallback when the value is missing or malformed.
+
+    Returns:
+        The coerced int, or ``default`` on None/non-numeric input.
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 class WorldInfoProcessor:
     """Process and inject world info/lorebook entries into chat conversations."""
     
@@ -145,21 +165,16 @@ class WorldInfoProcessor:
                 secondary_keys = sec_keys
             secondary_keys = [k.strip() for k in secondary_keys if k and k.strip()]
         
-        try:
-            priority = int(entry.get('priority') or 0)
-        except (TypeError, ValueError):
-            priority = 0
-
         return {
             'keys': keys,
             'secondary_keys': secondary_keys,
             'content': entry.get('content', ''),
             'selective': entry.get('selective', False),
             'position': entry.get('position', 'before_char'),
-            'insertion_order': entry.get('insertion_order', 0),
+            'insertion_order': _coerce_int(entry.get('insertion_order'), 0),
             'case_sensitive': entry.get('case_sensitive', False),
             'extensions': entry.get('extensions', {}),
-            'priority': priority
+            'priority': _coerce_int(entry.get('priority'), 0),
         }
 
     def _make_candidate(self, entry: Dict[str, Any], book_id: Optional[Any], book_name: str,
@@ -209,7 +224,7 @@ class WorldInfoProcessor:
         # injection order (_organize_by_position).
         matched_entries = sorted(
             matched_entries,
-            key=lambda e: (-int(e.get('priority', 0) or 0), e.get('insertion_order', 0)),
+            key=lambda e: (-_coerce_int(e.get('priority'), 0), _coerce_int(e.get('insertion_order'), 0)),
         )
 
         # Apply token budget if enabled

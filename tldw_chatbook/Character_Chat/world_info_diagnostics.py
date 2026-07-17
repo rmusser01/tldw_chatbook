@@ -11,6 +11,27 @@ from typing import Any, Dict, List, Optional
 
 @dataclass
 class WorldBookEntryDiagnostic:
+    """One world-info (Lore) entry's activation record for the Try-it panel.
+
+    Captures why an entry did or did not fire on a scan — its keys, priority,
+    activation reason, status, token cost, and resolved injection order — so the
+    read model can explain budget survival and injection ordering.
+
+    Attributes:
+        entry_id: Source entry id, or None for character-embedded entries.
+        source_book_id: Owning world-book id, or None.
+        source_book_name: Owning world-book display name.
+        keys: Primary keys evaluated for this entry.
+        priority: Entry priority; higher wins under token-budget pressure.
+        activation_reason: Human-readable reason for the status.
+        status: "fired" | "skipped:disabled" | "skipped:secondary" | "skipped:budget".
+        token_cost: Estimated tokens the entry's content contributes.
+        injection_order: Resolved order among fired entries, or None if skipped.
+        position: Injection position (e.g. "before_char").
+        content_preview: Truncated content for display.
+        depth_level: Recursion depth at which the entry fired (0 = direct).
+    """
+
     entry_id: Optional[int]
     source_book_id: Optional[int]
     source_book_name: str

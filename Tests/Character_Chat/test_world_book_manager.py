@@ -519,3 +519,35 @@ def test_create_entry_null_priority_defaults_zero(wb_manager):
     book_id = wb_manager.create_world_book("B")
     wb_manager.create_world_book_entry(book_id, ["k"], "c", priority=None)
     assert wb_manager.get_world_book_entries(book_id)[0]["priority"] == 0
+
+
+def test_create_entry_non_numeric_priority_defaults_zero(wb_manager):
+    """A non-numeric priority (e.g. "high" from a hand-edited import) must coerce
+    to 0 rather than raising ValueError (Qodo #682)."""
+    book_id = wb_manager.create_world_book("B")
+    wb_manager.create_world_book_entry(book_id, ["k"], "c", priority="high")
+    assert wb_manager.get_world_book_entries(book_id)[0]["priority"] == 0
+
+
+def test_update_entry_non_numeric_priority_defaults_zero(wb_manager):
+    """update_world_book_entry coerces a malformed priority to 0, never raises."""
+    book_id = wb_manager.create_world_book("B")
+    eid = wb_manager.create_world_book_entry(book_id, ["k"], "c", priority=50)
+    wb_manager.update_world_book_entry(eid, priority="bogus")
+    assert wb_manager.get_world_book_entries(book_id)[0]["priority"] == 0
+
+
+def test_import_book_malformed_priority_and_null_order_coerced(wb_manager):
+    """A hand-edited import whose entry has a non-numeric priority and a null
+    insertion_order must not crash; both coerce to 0 so later processing (which
+    sorts on insertion_order) is safe (Qodo #682)."""
+    data = {
+        "name": "Imported",
+        "entries": [
+            {"keys": ["k"], "content": "c", "priority": "high", "insertion_order": None},
+        ],
+    }
+    new_id = wb_manager.import_world_book(data, name_override="Imported copy")
+    row = wb_manager.get_world_book_entries(new_id)[0]
+    assert row["priority"] == 0
+    assert row["insertion_order"] == 0
