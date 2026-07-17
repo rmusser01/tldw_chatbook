@@ -1260,8 +1260,57 @@ def summarize_active_dictionaries(
     return {"dictionaries": dictionaries, "source": "local"}
 
 
+def conversation_dictionary_ids(db: "CharactersRAGDB", conversation_id: Optional[str]) -> List[int]:
+    """Return the int dictionary ids attached to a conversation (never raises).
+
+    Reusable helper for Console attach/detach picker-list building
+    (Roleplay P1g Task 5). Mirrors the exact ``metadata.active_dictionaries``
+    parse already inlined in :func:`_resolve_active_dictionaries` --
+    deliberately duplicated rather than refactored out of that function,
+    since ``_resolve_active_dictionaries`` feeds
+    :func:`collect_active_chatdict_entries`'s byte-for-byte regression pin.
+
+    Args:
+        db: Database handle. May be ``None`` (returns ``[]``).
+        conversation_id: The conversation's id, or ``None``/empty.
+
+    Returns:
+        The attached dictionary ids as ``int``s, in stored order, deduped
+        (first occurrence wins). Non-coercible entries are skipped.
+    """
+    ids: List[int] = []
+    if not conversation_id or db is None:
+        return ids
+    try:
+        conv_details = db.get_conversation_by_id(str(conversation_id))
+    except Exception:
+        return ids
+    if not conv_details:
+        return ids
+    try:
+        metadata = json.loads(conv_details.get('metadata') or '{}')
+    except (TypeError, ValueError):
+        metadata = {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    active = metadata.get('active_dictionaries')
+    if not isinstance(active, list):
+        active = []
+    seen: set = set()
+    for raw_id in active:
+        try:
+            dict_id = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        if dict_id in seen:
+            continue
+        seen.add(dict_id)
+        ids.append(dict_id)
+    return ids
+
+
 def list_chat_dictionaries(
-    db: CharactersRAGDB, 
+    db: CharactersRAGDB,
     limit: int = 100,
     offset: int = 0,
     include_disabled: bool = False

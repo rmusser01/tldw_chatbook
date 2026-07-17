@@ -39,6 +39,12 @@ from .settings_config_models import SettingsCategoryId
 from ...Chat.chat_conversation_service import derive_conversation_title
 from ...Chat.chat_persistence_service import ChatPersistenceService
 from ...Chat.console_chat_controller import ConsoleChatController
+from ...Event_Handlers.Chat_Events.chat_events_console_dictionaries import (
+    console_attachable_dictionaries,
+    console_attached_dictionaries,
+    handle_console_dictionary_attach,
+    handle_console_dictionary_detach,
+)
 from ...Chat.console_command_grammar import (
     KIND_COMMAND,
     KIND_FALLBACK,
@@ -256,6 +262,7 @@ from ...Workspaces import (
     build_console_conversation_browser_state,
 )
 from ...Widgets.compact_model_bar import CompactModelBar
+from ...Widgets.Persona_Widgets.dictionary_picker import DictionaryPicker
 from ..Views.RAGSearch.search_handoff import build_library_rag_console_live_work_payload
 
 # Import the existing chat window to reuse its functionality
@@ -731,6 +738,24 @@ class ChatScreen(BaseAppScreen):
         """Open the Console inspector rail and persist the preference."""
         event.stop()
         self._set_console_rail_preference(right_open=True)
+
+    @on(Button.Pressed, "#console-inspector-dictionaries-attach")
+    def on_console_inspector_dictionaries_attach(self, event: Button.Pressed) -> None:
+        """Open the attach-dictionary picker for the active Console conversation."""
+        event.stop()
+        if self._console_dictionary_dialog_active:
+            return
+        self._console_dictionary_dialog_active = True
+        self.run_worker(self._console_dictionary_attach_worker(), group="console-io")
+
+    @on(Button.Pressed, "#console-inspector-dictionaries-detach")
+    def on_console_inspector_dictionaries_detach(self, event: Button.Pressed) -> None:
+        """Open the detach-dictionary picker for the active Console conversation."""
+        event.stop()
+        if self._console_dictionary_dialog_active:
+            return
+        self._console_dictionary_dialog_active = True
+        self.run_worker(self._console_dictionary_detach_worker(), group="console-io")
 
     async def _open_console_settings(self, *, focus_model: bool = False) -> None:
         """Open Console session settings for the active native session."""
@@ -1331,6 +1356,10 @@ class ChatScreen(BaseAppScreen):
         # keeps the recompute from hitting the DB (via the scope service)
         # several times a second instead of only on a real scope change.
         self._last_console_dictionary_scope_ids: tuple[str | None, int | None] | None = None
+        # P1g Task 5: guards the Console dictionary attach/detach picker
+        # flow against a double-open (mirrors P1f's `_io_dialog_active`),
+        # reset in a `finally` in both attach/detach workers.
+        self._console_dictionary_dialog_active = False
         self.ui_state = UIState()
         self._load_sidebar_state()
 
@@ -5200,6 +5229,83 @@ class ChatScreen(BaseAppScreen):
                 enabled=has_conversation_dictionary,
             ),
         )
+
+    async def _console_dictionary_attach_worker(self) -> None:
+        """Pick and attach a chat dictionary to the active Console conversation.
+
+        Mirrors P1f's ``_character_dictionary_attach_worker``
+        (``UI/Screens/personas_screen.py``) structurally: every await is
+        individually guarded so no exception escapes the worker boundary --
+        an uncaught worker exception kills the whole app under
+        ``run_worker(exit_on_error=True)``.
+        """
+        try:
+            conversation_id = self._current_console_rail_conversation_id()
+            if not conversation_id:
+                self.app_instance.notify("Start or load a conversation first.", severity="warning")
+                return
+            db = getattr(self.app_instance, "chachanotes_db", None)
+            try:
+                rows = await asyncio.to_thread(console_attachable_dictionaries, db, conversation_id)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not load dictionaries for the Console attach picker."
+                )
+                return
+            if not rows:
+                self.app_instance.notify("No more dictionaries to attach.", severity="information")
+                return
+            try:
+                picked = await self.app_instance.push_screen_wait(DictionaryPicker(rows))
+            except Exception:
+                logger.opt(exception=True).warning("Could not show the Console dictionary picker.")
+                return
+            if not picked:
+                return
+            ok = await handle_console_dictionary_attach(self.app_instance, conversation_id, picked)
+            if ok:
+                await self.refresh_active_dictionaries_summary()
+        finally:
+            self._console_dictionary_dialog_active = False
+
+    async def _console_dictionary_detach_worker(self) -> None:
+        """Pick and detach a chat dictionary from the active Console conversation.
+
+        Analogous to :meth:`_console_dictionary_attach_worker`, over
+        ``console_attached_dictionaries``/``handle_console_dictionary_detach``.
+        """
+        try:
+            conversation_id = self._current_console_rail_conversation_id()
+            if not conversation_id:
+                self.app_instance.notify("Start or load a conversation first.", severity="warning")
+                return
+            db = getattr(self.app_instance, "chachanotes_db", None)
+            try:
+                rows = await asyncio.to_thread(console_attached_dictionaries, db, conversation_id)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not load dictionaries for the Console detach picker."
+                )
+                return
+            if not rows:
+                self.app_instance.notify(
+                    "No dictionaries attached to this conversation.", severity="information"
+                )
+                return
+            try:
+                picked = await self.app_instance.push_screen_wait(
+                    DictionaryPicker(rows, title="Detach dictionary", confirm_label="Detach")
+                )
+            except Exception:
+                logger.opt(exception=True).warning("Could not show the Console dictionary picker.")
+                return
+            if not picked:
+                return
+            ok = await handle_console_dictionary_detach(self.app_instance, conversation_id, picked)
+            if ok:
+                await self.refresh_active_dictionaries_summary()
+        finally:
+            self._console_dictionary_dialog_active = False
 
     def _selected_console_conversation_inspector_rows(self) -> tuple[ConsoleDisplayRow, ...]:
         """Return inspector rows for the active Console conversation/session."""
