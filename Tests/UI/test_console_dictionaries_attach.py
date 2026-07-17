@@ -30,7 +30,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import Con
 from tldw_chatbook.Character_Chat import Chat_Dictionary_Lib as cdl
 from tldw_chatbook.Character_Chat.chat_dictionary_scope_service import ChatDictionaryScopeService
 from tldw_chatbook.Character_Chat.local_chat_dictionary_service import LocalChatDictionaryService
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 from tldw_chatbook.Event_Handlers.Chat_Events.chat_events_console_dictionaries import (
     console_attached_dictionaries,
 )
@@ -197,3 +197,58 @@ def test_console_attached_dictionaries_excludes_character_source_even_when_activ
 
     assert [r["name"] for r in rows] == ["Conversation Lore"]
     assert all(r["dictionary_id"] != char_dict_id for r in rows)
+
+
+# --- Spec AC5: ConflictError -> notify + refresh ----------------------------
+
+@pytest.mark.asyncio
+async def test_console_attach_conflict_notifies_and_refreshes(dictionary_db, monkeypatch):
+    """A ConflictError during attach must NOTIFY the user AND re-run the
+    summary refresh (re-read the current DB truth), not leave the cached
+    inspector summary stale until the next session switch (spec AC5)."""
+    app = _build_test_app()
+    local_service = LocalChatDictionaryService(dictionary_db)
+    scope_service = ChatDictionaryScopeService(local_service=local_service, server_service=None)
+    app.chachanotes_db = dictionary_db
+    app.chat_dictionary_scope_service = scope_service
+
+    conv_id = dictionary_db.add_conversation({"title": "Conflict flow"})
+    dict_id = cdl.save_chat_dictionary(dictionary_db, "Slang")
+    assert dict_id is not None
+
+    notes: list = []
+    monkeypatch.setattr(app, "notify", lambda *a, **k: notes.append((a, k)))
+
+    async def _raise_conflict(*a, **k):
+        raise ConflictError("stale version")
+
+    monkeypatch.setattr(scope_service, "attach_to_conversation", _raise_conflict, raising=False)
+
+    async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
+        screen = pilot.app.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, "#console-native-composer")
+        _active_native_session(screen).persisted_conversation_id = conv_id
+
+        async def _fake_push_screen_wait(picker):
+            return dict_id if isinstance(picker, DictionaryPicker) else None
+
+        monkeypatch.setattr(screen.app_instance, "push_screen_wait", _fake_push_screen_wait, raising=False)
+
+        refresh_calls: list = []
+        original_refresh = screen.refresh_active_dictionaries_summary
+
+        async def _spy_refresh():
+            refresh_calls.append(True)
+            await original_refresh()
+
+        monkeypatch.setattr(screen, "refresh_active_dictionaries_summary", _spy_refresh, raising=False)
+
+        await screen._console_dictionary_attach_worker()
+        await pilot.pause()
+
+        # Notified about the conflict AND refreshed despite the failed write.
+        assert any("changed" in str(a).lower() for a, _k in notes)
+        assert refresh_calls, "summary must refresh on the ConflictError path"
+        # The write never committed, so the DB is genuinely unchanged.
+        assert cdl.conversation_dictionary_ids(dictionary_db, conv_id) == []
+        assert screen._console_dictionary_dialog_active is False

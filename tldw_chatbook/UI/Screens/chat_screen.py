@@ -5262,9 +5262,12 @@ class ChatScreen(BaseAppScreen):
                 return
             if not picked:
                 return
-            ok = await handle_console_dictionary_attach(self.app_instance, conversation_id, picked)
-            if ok:
-                await self.refresh_active_dictionaries_summary()
+            await handle_console_dictionary_attach(self.app_instance, conversation_id, picked)
+            # Always resync after an attempted attach (spec AC5: ConflictError
+            # -> notify + refresh): on success the summary gains the dict; on a
+            # ConflictError the DB changed under us and the cache must re-read
+            # the current truth rather than stay stale until the next switch.
+            await self.refresh_active_dictionaries_summary()
         finally:
             self._console_dictionary_dialog_active = False
 
@@ -5301,9 +5304,10 @@ class ChatScreen(BaseAppScreen):
                 return
             if not picked:
                 return
-            ok = await handle_console_dictionary_detach(self.app_instance, conversation_id, picked)
-            if ok:
-                await self.refresh_active_dictionaries_summary()
+            await handle_console_dictionary_detach(self.app_instance, conversation_id, picked)
+            # Always resync after an attempted detach (spec AC5: ConflictError
+            # -> notify + refresh); see _console_dictionary_attach_worker.
+            await self.refresh_active_dictionaries_summary()
         finally:
             self._console_dictionary_dialog_active = False
 
