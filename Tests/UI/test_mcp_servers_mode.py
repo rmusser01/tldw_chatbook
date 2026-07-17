@@ -19,6 +19,7 @@ from tldw_chatbook.MCP.readiness import (
     builtin_readiness,
 )
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
+from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import state_text
 from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel
 from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
 
@@ -114,6 +115,50 @@ async def test_overview_renders_aggregate_table_and_callouts():
         assert len(callouts) == 1  # one problem row -> one callout
         assert "web" in str(callouts[0].label)
         assert "Missing environment variables" in str(callouts[0].label)
+
+
+@pytest.mark.asyncio
+async def test_status_column_cells_carry_semantic_color_by_readiness_state():
+    """Task 1 (MCP Hub Phase 6): the overview's Status cell now colors the
+    WHOLE `badge_text()` string (glyph + word together, one Rich `Text`) by
+    its readiness state's `state_text()` kind -- mirrors `mcp_rail.py`'s row
+    Buttons, which already color both the same way via `STATE_CSS_CLASSES`.
+    The kind is derived from that SAME `STATE_CSS_CLASSES` mapping (its
+    class names are already exactly `"mcp-status-{kind}"`), not a second,
+    parallel table."""
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.update_overview(
+            [
+                _snap("local:docs", "docs"),
+                _snap(
+                    "local:web", "web",
+                    state=ReadinessState.NEEDS_ATTENTION,
+                    reasons=(ReasonCode.AUTH_MISSING,),
+                    message="Timed out",
+                ),
+                _snap(
+                    "local:beta", "beta",
+                    state=ReadinessState.NEEDS_SETUP,
+                    reasons=(ReasonCode.AUTH_MISSING,),
+                    message="Missing environment variables: KEY.",
+                ),
+            ]
+        )
+        await pilot.pause()
+        table = app.query_one("#mcp-servers-table", DataTable)
+        assert table.get_cell_at((0, 2)).style == state_text(
+            "x", "ready"
+        ).style  # READY
+        assert table.get_cell_at((1, 2)).style == state_text(
+            "x", "error"
+        ).style  # NEEDS_ATTENTION
+        assert table.get_cell_at((2, 2)).style == state_text(
+            "x", "warning"
+        ).style  # NEEDS_SETUP
+        # Content itself is unchanged -- glyph + label, still one string.
+        assert str(table.get_cell_at((0, 2))) == f"{STATE_GLYPHS[ReadinessState.READY]} Ready"
 
 
 @pytest.mark.asyncio

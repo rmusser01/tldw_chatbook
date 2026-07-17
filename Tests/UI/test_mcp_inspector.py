@@ -1676,6 +1676,43 @@ async def test_show_permission_plain_state_shows_neither_notice_nor_button():
 
 
 @pytest.mark.asyncio
+async def test_permission_state_line_carries_semantic_status_class():
+    """Task 1 (MCP Hub Phase 6): `#mcp-inspector-permission-state` is a
+    non-cell Static -- unlike a DataTable cell, it CAN carry a CSS class, so
+    it uses the existing `.mcp-status-{ready|warning|error}` classes
+    (`css/tldw_cli_modular.tcss`), the same ones `mcp_rail.py`'s rows and
+    `#mcp-inspector-state`'s own readiness badge already use, rather than
+    `mcp_permissions_mode.state_text()`'s Rich-style mechanism (which exists
+    only because a DataTable cell can't take a class at all)."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+
+        await inspector.show_permission(
+            _tool(), EffectiveToolState(state="allow", origin="tool_override")
+        )
+        await pilot.pause()
+        state = app.query_one("#mcp-inspector-permission-state", Static)
+        assert "mcp-status-ready" in state.classes
+        assert "mcp-status-warning" not in state.classes
+        assert "mcp-status-error" not in state.classes
+
+        await inspector.show_permission(
+            _tool(), EffectiveToolState(state="ask", origin="global_default")
+        )
+        await pilot.pause()
+        state = app.query_one("#mcp-inspector-permission-state", Static)
+        assert "mcp-status-warning" in state.classes
+
+        await inspector.show_permission(
+            _tool(), EffectiveToolState(state="deny", origin="tool_override")
+        )
+        await pilot.pause()
+        state = app.query_one("#mcp-inspector-permission-state", Static)
+        assert "mcp-status-error" in state.classes
+
+
+@pytest.mark.asyncio
 async def test_reallow_button_press_posts_reallow_requested_with_server_key_and_tool_name():
     app = InspectorApp()
     async with app.run_test(size=(100, 60)) as pilot:

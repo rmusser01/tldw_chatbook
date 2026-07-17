@@ -313,6 +313,29 @@ async def test_rail_row_carries_state_css_class_and_swaps_on_resync():
         assert STATE_CSS_CLASSES[ReadinessState.NEEDS_SETUP] not in docs_row.classes
 
 
+# -- Task 1 (MCP Hub Phase 6): semantic state colors ------------------------
+
+
+@pytest.mark.asyncio
+async def test_rail_row_state_class_covers_the_ready_state_too():
+    """Task 1's brief for the rail ("state glyph+word") is already satisfied
+    by Task 11's `STATE_CSS_CLASSES` class on the row Button ITSELF -- a
+    Button is a real widget (unlike a DataTable cell), so it can carry a CSS
+    class that colors its whole rendered label (glyph AND word together),
+    same mechanism `mcp_inspector.py`'s readiness Static uses. This pins
+    down that READY (not just the two "problem" states the pre-existing
+    `test_rail_row_carries_state_css_class_and_swaps_on_resync` covers) also
+    gets its own class -- `STATE_CSS_CLASSES` maps every `ReadinessState`,
+    with no bare/unclassed case.
+    """
+    app = RailApp()
+    async with app.run_test() as pilot:
+        # First snapshot in RailApp's fixture (`builtin:tldw_chatbook`)
+        # defaults to READY -- row index 1 (row 0 is the "All servers" row).
+        ready_row = app.query_one(f"#{MCP_RAIL_ROW_PREFIX}1", Button)
+        assert STATE_CSS_CLASSES[ReadinessState.READY] in ready_row.classes
+
+
 class AdaptiveCountRailApp(App):
     """Two rows with very different label lengths -- used to prove A6's
     per-compose() adaptive pad width, not the old fixed 36-char budget."""

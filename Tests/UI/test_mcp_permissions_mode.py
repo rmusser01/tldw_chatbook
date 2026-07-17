@@ -8,10 +8,13 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button, DataTable, Static
 
 import tldw_chatbook
+from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
     MCPPermissionsMode,
     PermRow,
     format_tool_state_label,
+    state_text,
+    tool_state_kind,
 )
 
 _CSS_ROOT = Path(tldw_chatbook.__file__).parent / "css"
@@ -896,3 +899,84 @@ async def test_matrix_and_kill_switch_have_nonzero_geometry_with_bundled_css():
             "kill-switch button collapsed to zero height under bundled CSS after the "
             "server-profiles mount"
         )
+
+
+# -- Task 1 (MCP Hub Phase 6): semantic state colors ------------------------
+
+
+def test_state_text_styles_each_kind_and_falls_back_safely():
+    """`state_text()`'s own contract: a concrete, kind-specific Rich style,
+    verbatim label text (no markup parsing), and a safe fallback (no style
+    at all, not a crash) for an unrecognized kind."""
+    assert state_text("Allow", "ready").style == "green"
+    assert state_text("Ask", "warning").style == "yellow"
+    assert state_text("Off", "error").style == "red"
+    assert state_text("Checking", "info").style == "cyan"
+    assert state_text("—", "muted").style == "dim"
+    assert state_text("Allow", "not-a-real-kind").style == ""
+    # Markup-unsafe input must render literally, exactly like every other
+    # `Text(...)` cell in this canvas family (see
+    # `test_state_label_renders_verbatim_and_markup_safe` above) -- the
+    # style parameter does not change that discipline.
+    unsafe = state_text("[bold red]x[/bold red]", "ready")
+    assert unsafe.plain == "[bold red]x[/bold red]"
+
+
+def test_tool_state_kind_maps_allow_ask_deny_to_ready_warning_error():
+    """`tool_state_kind()` keys purely off `EffectiveToolState.state` --
+    `config_changed`/`risk_floored` both already resolve `state` to `"ask"`
+    themselves (see `permission_store.resolve_effective_state()`), so a
+    downgraded verdict still lands on `warning`, matching its `ui_label`
+    ("Ask ⚠"/"Ask ⚑")."""
+    assert tool_state_kind(EffectiveToolState(state="allow", origin="tool_override")) == "ready"
+    assert tool_state_kind(EffectiveToolState(state="ask", origin="global_default")) == "warning"
+    assert tool_state_kind(EffectiveToolState(state="deny", origin="tool_override")) == "error"
+    assert (
+        tool_state_kind(
+            EffectiveToolState(state="ask", origin="tool_override", config_changed=True)
+        )
+        == "warning"
+    )
+    assert (
+        tool_state_kind(
+            EffectiveToolState(state="ask", origin="server_default", risk_floored=True)
+        )
+        == "warning"
+    )
+
+
+@pytest.mark.asyncio
+async def test_state_column_cells_carry_semantic_color_by_resolved_word():
+    """The matrix's State cell is now colored by the resolved verdict its
+    own leading word names -- Allow -> ready/green, Ask -> warning/amber,
+    Off -> error/red -- regardless of row kind (global/server/tool) or
+    whatever origin marker (·/⚠/⚑) trails it. A DataTable cell can't carry a
+    CSS class, so `state_text()`'s Rich `Text.style` is the only per-cell
+    coloring mechanism available here (see that helper's own docstring)."""
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        rows = [
+            _global_row(state_label="Allow", cycle_current="allow"),
+            _server_row(server_key="local:docs", server_label="docs", state_label="Ask"),
+            _tool_row(
+                server_key="local:docs", server_label="docs", tool_name="search",
+                state_label="Off •",
+            ),
+            _tool_row(
+                server_key="local:docs", server_label="docs", tool_name="rug_pulled",
+                state_label="Ask ⚠",
+            ),
+        ]
+        await canvas.update_matrix(rows, kill_switch=False, preview="")
+        await pilot.pause()
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        assert table.get_cell_at((0, 1)).style == state_text("Allow", "ready").style
+        assert table.get_cell_at((1, 1)).style == state_text("Ask", "warning").style
+        assert table.get_cell_at((2, 1)).style == state_text("Off •", "error").style
+        assert table.get_cell_at((3, 1)).style == state_text("Ask ⚠", "warning").style
+        # The marker glyph is still part of the SAME plain text -- coloring
+        # never strips or re-derives it.
+        assert str(table.get_cell_at((2, 1))) == "Off •"
+        assert str(table.get_cell_at((3, 1))) == "Ask ⚠"

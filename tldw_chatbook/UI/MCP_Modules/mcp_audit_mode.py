@@ -23,6 +23,7 @@ from textual.message import Message
 from textual.widgets import Button, DataTable, Input, Select, Static
 
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import format_duration_ms
+from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import state_text
 
 _TABLE_COLUMNS = ("When", "Tool", "Initiator", "Decision", "Duration", "Outcome")
 
@@ -91,6 +92,59 @@ _INITIATOR_OPTIONS: list[tuple[str, str]] = [
 ]
 
 _BLOCKED_DECISIONS = {"denied", "denied-timeout"}
+
+# Task 1 (MCP Hub Phase 6): `state_text()` kind buckets for the Decision and
+# Outcome columns -- "allowed"/"approved" reached the tool (ready);
+# "denied"/"denied-timeout" never did (error); "downgraded" is a rug-pull
+# audit note, not a call outcome (warning, same tier a config_changed
+# permission downgrade gets elsewhere in this Hub). A missing/unrecognized
+# raw decision value (rendered "—" by `_apply_filter()` below) falls back to
+# `muted` via `.get()`'s default, same "no verdict to color" treatment
+# `mcp_tools_mode.py`'s own State-column absent case uses.
+_DECISION_KIND: dict[str, str] = {
+    "allowed": "ready",
+    "approved": "ready",
+    "denied": "error",
+    "denied-timeout": "error",
+    "downgraded": "warning",
+}
+
+
+def _decision_kind(decision: str) -> str:
+    return _DECISION_KIND.get(decision, "muted")
+
+
+# Outcome is `_outcome_text()`'s own OUTPUT vocabulary ("OK"/"Failed"/
+# "Blocked"/"Downgraded"), not the raw `decision` field -- a separate table
+# keyed on that text, mirroring `_decision_kind()`'s shape one level down
+# the rendering pipeline.
+_OUTCOME_KIND: dict[str, str] = {
+    "OK": "ready",
+    "Failed": "error",
+    "Blocked": "error",
+    "Downgraded": "warning",
+}
+
+
+def _outcome_kind(outcome: str) -> str:
+    return _OUTCOME_KIND.get(outcome, "muted")
+
+
+# Findings Severity column (T8, MCP Hub Phase 5's server-source-only Findings
+# sub-view): case-insensitive since the wire-derived `severity` field's
+# casing isn't pinned down by any schema in this codebase yet (mirrors
+# `_finding_field()`'s own defensive-read discipline for the same raw dict).
+_SEVERITY_KIND: dict[str, str] = {
+    "critical": "error",
+    "high": "error",
+    "medium": "warning",
+    "low": "info",
+    "info": "info",
+}
+
+
+def _severity_kind(severity: str) -> str:
+    return _SEVERITY_KIND.get(severity.strip().lower(), "muted")
 
 
 def _format_when(ts: Any) -> str:
@@ -433,13 +487,21 @@ class MCPAuditMode(Vertical):
             if not self._matches(entry):
                 continue
             key = str(index)
+            # Task 1 (MCP Hub Phase 6): Decision and Outcome are colored by
+            # their own semantic bucket -- separately, since a rug-pull
+            # "downgraded" decision (warning) and a hard "denied" one
+            # (error) both fall back to `_outcome_text()`'s own "Downgraded"/
+            # "Blocked" copy, which needs the identical color to stay
+            # visually consistent between the two columns for the same row.
+            decision_value = str(entry.get("decision") or "—")
+            outcome_value = _outcome_text(entry)
             table.add_row(
                 Text(_format_when(entry.get("ts"))),
                 Text(f"{entry.get('server_key', '')}::{entry.get('tool_name', '')}"),
                 Text(str(entry.get("initiator") or "—")),
-                Text(str(entry.get("decision") or "—")),
+                state_text(decision_value, _decision_kind(decision_value)),
                 Text(format_duration_ms(int(entry.get("duration_ms") or 0))),
-                Text(_outcome_text(entry)),
+                state_text(outcome_value, _outcome_kind(outcome_value)),
                 key=key,
             )
             if cursor_key is not None and key == cursor_key:
@@ -537,8 +599,9 @@ class MCPAuditMode(Vertical):
                 # wire-derived list.
                 continue
             key = str(index)
+            severity_value = _finding_field(finding, "severity")
             table.add_row(
-                Text(_finding_field(finding, "severity")),
+                state_text(severity_value, _severity_kind(severity_value)),
                 Text(_finding_field(finding, "finding_type")),
                 Text(_finding_field(finding, "message")),
                 key=key,

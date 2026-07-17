@@ -10,6 +10,7 @@ from textual.widgets import Button, DataTable, Input, Select
 
 import tldw_chatbook
 from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import MCPAuditMode
+from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import state_text
 
 _CSS_ROOT = Path(tldw_chatbook.__file__).parent / "css"
 _AGENTIC_TERMINAL_TCSS = _CSS_ROOT / "components" / "_agentic_terminal.tcss"
@@ -239,6 +240,54 @@ async def test_outcome_column_variants():
         assert outcomes["blocked_call"] == "Blocked"
         assert outcomes["timeout_call"] == "Blocked"
         assert outcomes["downgraded_call"] == "Downgraded"
+
+
+@pytest.mark.asyncio
+async def test_decision_and_outcome_columns_carry_semantic_color():
+    """Task 1 (MCP Hub Phase 6): Decision and Outcome are each colored by
+    their OWN `state_text()` kind -- allowed/approved -> ready, denied/
+    denied-timeout -> error, downgraded -> warning (Decision); OK -> ready,
+    Failed/Blocked -> error, Downgraded -> warning (Outcome, keyed on
+    `_outcome_text()`'s own rendered vocabulary, one step down the pipeline
+    from the raw `decision` field)."""
+    app = AuditModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPAuditMode)
+        await canvas.update_entries(
+            [
+                _entry(tool_name="ok_call", decision="allowed", ok=True),
+                _entry(tool_name="approved_call", decision="approved", ok=True),
+                _entry(tool_name="blocked_call", decision="denied", ok=False, duration_ms=0),
+                _entry(tool_name="downgraded_call", decision="downgraded", ok=False, duration_ms=0),
+            ]
+        )
+        await pilot.pause()
+        table = app.query_one("#mcp-audit-table", DataTable)
+        rows_by_tool = {
+            _row_texts(table, i)[1].split("::")[-1]: i for i in range(table.row_count)
+        }
+
+        # Decision column (index 3).
+        assert table.get_cell_at((rows_by_tool["ok_call"], 3)).style == state_text(
+            "allowed", "ready"
+        ).style
+        assert table.get_cell_at((rows_by_tool["blocked_call"], 3)).style == state_text(
+            "denied", "error"
+        ).style
+        assert table.get_cell_at((rows_by_tool["downgraded_call"], 3)).style == state_text(
+            "downgraded", "warning"
+        ).style
+
+        # Outcome column (index 5).
+        assert table.get_cell_at((rows_by_tool["ok_call"], 5)).style == state_text(
+            "OK", "ready"
+        ).style
+        assert table.get_cell_at((rows_by_tool["blocked_call"], 5)).style == state_text(
+            "Blocked", "error"
+        ).style
+        assert table.get_cell_at((rows_by_tool["downgraded_call"], 5)).style == state_text(
+            "Downgraded", "warning"
+        ).style
 
 
 @pytest.mark.asyncio
@@ -760,6 +809,34 @@ async def test_findings_render_from_a_fake_payload():
         assert _row_texts(table, 0) == ["high", "orphaned_path_scope", "Needs review"]
         assert _row_texts(table, 1) == ["low", "stale_binding", "Check binding"]
         assert app.query_one("#mcp-audit-findings-empty").display is False
+
+
+@pytest.mark.asyncio
+async def test_findings_severity_column_carries_semantic_color():
+    """Task 1 (MCP Hub Phase 6): critical/high -> error, medium -> warning,
+    low/info -> info -- case-insensitive (the wire-derived `severity`
+    field's casing isn't pinned down by any schema here yet)."""
+    app = AuditModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPAuditMode)
+        await canvas.update_findings(
+            [
+                _finding(severity="critical", message="a"),
+                _finding(severity="High", message="b"),
+                _finding(severity="medium", message="c"),
+                _finding(severity="low", message="d"),
+                _finding(severity="info", message="e"),
+            ],
+            source="server",
+        )
+        await pilot.pause()
+
+        table = app.query_one("#mcp-audit-findings-table", DataTable)
+        assert table.get_cell_at((0, 0)).style == state_text("critical", "error").style
+        assert table.get_cell_at((1, 0)).style == state_text("High", "error").style
+        assert table.get_cell_at((2, 0)).style == state_text("medium", "warning").style
+        assert table.get_cell_at((3, 0)).style == state_text("low", "info").style
+        assert table.get_cell_at((4, 0)).style == state_text("info", "info").style
 
 
 @pytest.mark.asyncio

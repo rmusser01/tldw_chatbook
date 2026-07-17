@@ -24,6 +24,7 @@ from tldw_chatbook.MCP.readiness import (
 )
 from tldw_chatbook.MCP.redaction import redact_args, redact_url
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
+from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import state_text
 from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel, MCPProfileForm
 from tldw_chatbook.UI.MCP_Modules.mcp_server_mutations import MCPServerMutationsPanel
 
@@ -48,6 +49,17 @@ _TABLE_COLUMNS_NO_SCOPE = _TABLE_COLUMNS[:-1]
 # table -- beyond that, a single "+N more" Static points back at the table
 # rather than growing the callout list without bound.
 _CALLOUT_CAP = 4
+
+# Task 1 (MCP Hub Phase 6): the overview Status cell's `state_text()` kind,
+# derived from `STATE_CSS_CLASSES` (readiness.py) rather than a second,
+# parallel `ReadinessState -> kind` table -- every class name in that dict is
+# already exactly `"mcp-status-{kind}"` (Task 3/11's own CSS-class
+# precedent, reused verbatim by `mcp_rail.py`'s rows and `mcp_inspector.py`'s
+# readiness Static), so stripping the shared prefix reuses that single
+# source of truth instead of duplicating it.
+def _readiness_kind(state: ReadinessState) -> str:
+    return STATE_CSS_CLASSES[state].removeprefix("mcp-status-")
+
 
 # Task 10: the built-in detail view's Checkbox ids -> the `[mcp]` config key
 # (and `BuiltinFlagChanged.key`) each one edits.
@@ -499,14 +511,17 @@ class MCPServersMode(Vertical):
             # profile ids, server-reported names) and DataTable parses
             # plain str cells as Rich markup -- wrap in Text so a value like
             # "[/bold]docs" can't crash the app (MarkupError) and
-            # "[red]x[/red]" can't inject styling. Status cells stay plain
-            # (theme-token colors aren't addressable per-cell in a
-            # DataTable -- Task 11 documented decision; the rail row and
-            # inspector badge carry the status color instead).
+            # "[red]x[/red]" can't inject styling. Status cells now carry
+            # the readiness state's color too (Task 1, MCP Hub Phase 6,
+            # supersedes the old Task 11 "stays plain" decision above this
+            # comment used to describe) -- `state_text()` colors the WHOLE
+            # cell (glyph + word together, one string), mirroring
+            # `mcp_rail.py`'s row Buttons, which already color both the
+            # same way via `STATE_CSS_CLASSES`.
             row_cells: list[Any] = [
                 Text(snap.label),
                 snap.transport,
-                snap.badge_text(),
+                state_text(snap.badge_text(), _readiness_kind(snap.state)),
                 "—" if snap.tool_count is None else str(snap.tool_count),
                 Text(snap.auth_display),
             ]

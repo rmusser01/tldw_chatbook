@@ -64,6 +64,76 @@ _SERVER_PROFILES_POINTER = (
 )
 
 
+# Task 1 (MCP Hub Phase 6): concrete Rich styles for `state_text()` -- the
+# semantic-state-word coloring shared by every DataTable cell across the Hub
+# (Servers/Tools/Permissions/Audit/Findings). A DataTable cell is plain Rich
+# renderable content, not a widget of its own, so it cannot carry a CSS class
+# the way `mcp_rail.py`'s rows (a Button, styled via `STATE_CSS_CLASSES`) or
+# `mcp_inspector.py`'s readiness/permission Statics can -- `rich.text.Text(...,
+# style=…)` needs a CONCRETE style, and Textual's `$ds-status-*`/`$success`/
+# `$warning`/`$error`/`$accent` design tokens (`css/core/_variables.tcss`)
+# only resolve inside a stylesheet, never inside a Python-constructed `Text`.
+# Every theme in `css/Themes/themes.py` (plus the two built-in Textual
+# themes) picks its own hex for those tokens, so there is no single "the"
+# resolved value to read at import time -- these are a deliberate,
+# theme-independent APPROXIMATION of the same four semantics (ready=success/
+# green, warning=warning/amber, error=error/red, info=accent/blue-ish), the
+# same concrete-named-color fallback `Widgets/status_widget.py`'s
+# `StatusMessage.format()` already uses for its own Rich `Text` styling.
+# `error` intentionally stays a plain (not `bright_`) red -- the Tools/
+# Permissions "Off" state this also colors is a deliberate, common user
+# choice, not necessarily a fault, so it should read as "blocked" rather
+# than "alarm". `muted` has no color at all (the `dim` attribute only) --
+# used for a "—" no-data placeholder, the same visual weight `$text-muted`
+# gets elsewhere in this module (see `#mcp-perm-legend`'s DEFAULT_CSS rule
+# above).
+_STATE_TEXT_STYLES: dict[str, str] = {
+    "ready": "green",
+    "warning": "yellow",
+    "error": "red",
+    "info": "cyan",
+    "muted": "dim",
+}
+
+
+def state_text(label: str, kind: str) -> Text:
+    """Style one already-formatted state-cell label with its semantic color.
+
+    Shared by every DataTable cell across the Hub that renders a state word
+    (Servers Status, Tools/Permissions State, Audit Decision/Outcome,
+    Findings Severity) -- the single place `kind -> style` is defined, so no
+    call site duplicates the color table. `label` is rendered VERBATIM
+    (already fully formatted -- e.g. `format_tool_state_label()`'s "Ask ⚠",
+    or a `ReadinessSnapshot.badge_text()` glyph+label pair) and markup is
+    never parsed (`Text()`'s plain constructor -- the same discipline every
+    other cell in these tables already uses, see e.g. `mcp_servers_mode.py`'s
+    own markup-injection comment) -- a user/remote-controlled label can't
+    inject styling this way.
+
+    Args:
+        label: The cell's already-formatted text, rendered as-is.
+        kind: One of `"ready"|"warning"|"error"|"info"|"muted"`. Anything
+            else falls back to no style at all (plain text) rather than
+            raising -- mirrors `EffectiveToolState.ui_label`'s own
+            defensive fallback for a state value this code hasn't seen.
+    """
+    return Text(label, style=_STATE_TEXT_STYLES.get(kind, ""))
+
+
+def tool_state_kind(effective: EffectiveToolState) -> str:
+    """Map one resolved tool verdict to `state_text()`'s kind bucket.
+
+    Allow is the "safe" ready state, ask is worth a second look (warning),
+    deny ("Off" in the UI) is blocked (error). `config_changed`/
+    `risk_floored` downgrades both resolve `effective.state` to `"ask"`
+    themselves (see `permission_store.resolve_effective_state()`) before
+    this ever runs, so the ⚠/⚑ marker `format_tool_state_label()` bakes into
+    the label is orthogonal to this color -- no extra branch needed for
+    either.
+    """
+    return {"allow": "ready", "ask": "warning", "deny": "error"}.get(effective.state, "muted")
+
+
 def format_tool_state_label(effective: EffectiveToolState) -> str:
     """Format a tool row's State cell: the UI label plus its origin marker.
 
@@ -168,6 +238,23 @@ class PermRow:
     state_label: str
     tags_label: str
     cycle_current: str | None
+
+
+# `PermRow.state_label` never carries the raw resolved state (`allow`/
+# `ask`/`deny`) itself -- only the already-formatted UI word
+# (`EffectiveToolState.ui_label`, always "Allow"/"Ask"/"Off") plus an
+# optional trailing marker glyph. The matrix's rows (global/server/tool, all
+# built by `mcp_workbench.py`'s `_build_permission_rows()`) don't carry an
+# `EffectiveToolState` object the way `mcp_tools_mode.py`'s `_apply_filter()`
+# does -- resolving `state_text()`'s kind from the label's own leading word
+# instead avoids threading a new field through `PermRow` (and every
+# `mcp_workbench.py` construction site) for a value fully determined by the
+# word already there.
+_STATE_LABEL_KIND: dict[str, str] = {"Allow": "ready", "Ask": "warning", "Off": "error"}
+
+
+def _perm_row_kind(state_label: str) -> str:
+    return _STATE_LABEL_KIND.get(state_label.split(" ", 1)[0], "muted")
 
 
 def _row_key(row: PermRow) -> str:
@@ -425,7 +512,16 @@ class MCPPermissionsMode(Vertical):
         table.clear(columns=True)
         table.add_columns(*(_TABLE_COLUMNS if show_tags else _TABLE_COLUMNS_NO_TAGS))
         for row in rows:
-            row_cells: list[Any] = [Text(_tool_column_text(row)), Text(row.state_label)]
+            # Task 1 (MCP Hub Phase 6): the State cell's word is now colored
+            # by the resolved verdict it names (`state_text()`) -- the
+            # marker glyph baked into `state_label` (·/⚠/⚑) is rendered as
+            # part of that SAME string, unchanged, so it still reads even
+            # without color (the colorblind-safe channel `state_text()`'s
+            # own docstring describes).
+            row_cells: list[Any] = [
+                Text(_tool_column_text(row)),
+                state_text(row.state_label, _perm_row_kind(row.state_label)),
+            ]
             if show_tags:
                 row_cells.append(Text(row.tags_label))
             table.add_row(*row_cells, key=_row_key(row))

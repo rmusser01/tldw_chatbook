@@ -10,6 +10,7 @@ from textual.widgets import Button, DataTable, Input, Select, Static
 import tldw_chatbook
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import state_text
 from tldw_chatbook.UI.MCP_Modules.mcp_tools_mode import MCPToolsMode
 
 _CSS_ROOT = Path(tldw_chatbook.__file__).parent / "css"
@@ -734,3 +735,50 @@ async def test_filter_server_select_has_nonzero_geometry_with_bundled_css():
             "is clobbering MCPToolsMode's own DEFAULT_CSS override again."
         )
         assert select.size.height > 0, "filter-server Select collapsed to zero height"
+
+
+# -- Task 1 (MCP Hub Phase 6): semantic state colors ------------------------
+
+
+@pytest.mark.asyncio
+async def test_state_column_cells_carry_semantic_color_by_effective_state():
+    """The State cell's `Text.style` is resolved from the tool's own
+    `EffectiveToolState.state` via `tool_state_kind()`/`state_text()` --
+    allow -> ready/green, ask -> warning/amber (including a rug-pull/
+    risk-floor downgrade, both of which already resolve to "ask" -- see
+    `tool_state_kind()`'s docstring), deny -> error/red. A tool absent from
+    `states` renders the "—" placeholder at the `muted` weight -- no verdict
+    to color."""
+    app = ToolsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPToolsMode)
+        tools = [
+            _tool(server_key="local:docs", server_label="docs", name="allowed"),
+            _tool(server_key="local:docs", server_label="docs", name="asked"),
+            _tool(server_key="local:docs", server_label="docs", name="denied"),
+            _tool(server_key="local:docs", server_label="docs", name="unresolved"),
+        ]
+        states = {
+            ("local:docs", "allowed"): EffectiveToolState(state="allow", origin="tool_override"),
+            ("local:docs", "asked"): EffectiveToolState(state="ask", origin="global_default"),
+            ("local:docs", "denied"): EffectiveToolState(state="deny", origin="tool_override"),
+        }
+        await canvas.update_tools(tools, empty_diagnosis=None, states=states)
+        await pilot.pause()
+
+        table = app.query_one("#mcp-tools-table", DataTable)
+        rows_by_tool = {
+            _row_texts(table, i)[0]: i for i in range(table.row_count)
+        }
+        assert table.get_cell_at((rows_by_tool["allowed"], 1)).style == state_text(
+            "Allow •", "ready"
+        ).style
+        assert table.get_cell_at((rows_by_tool["asked"], 1)).style == state_text(
+            "Ask", "warning"
+        ).style
+        assert table.get_cell_at((rows_by_tool["denied"], 1)).style == state_text(
+            "Off •", "error"
+        ).style
+        assert table.get_cell_at((rows_by_tool["unresolved"], 1)).style == state_text(
+            "—", "muted"
+        ).style

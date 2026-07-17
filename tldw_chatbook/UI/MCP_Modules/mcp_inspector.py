@@ -26,26 +26,19 @@ from tldw_chatbook.MCP.readiness import (
     ReadinessState,
 )
 from tldw_chatbook.MCP.redaction import redact_mapping
+from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import tool_state_kind
 from tldw_chatbook.UI.MCP_Modules.mcp_schema_form import MCPSchemaForm, parse_schema
 from tldw_chatbook.UI.MCP_Modules.unified_mcp_sections import render_unified_mcp_section
 
 # Actions that have first-class UI in every source. Everything else renders
 # disabled and points at the Advanced runner below (capability preserved).
-_BASE_WIRED_ACTIONS = {
-    HubAction.VIEW_DETAILS,
-    HubAction.OPEN_TOOL_CATALOG,
-    HubAction.OPEN_AUDIT,
-}
+_BASE_WIRED_ACTIONS = {HubAction.VIEW_DETAILS, HubAction.OPEN_TOOL_CATALOG, HubAction.OPEN_AUDIT}
 
 # Local-profile lifecycle actions (Task 5): wired only for local-source
 # snapshots, where MCPWorkbench._start_lifecycle() can actually run them
 # against the typed T2 control-plane methods. Server-source servers are
 # mutated on the server side (Advanced), not from this pane.
-_LIFECYCLE_ACTIONS = {
-    HubAction.CONNECT,
-    HubAction.VALIDATE,
-    HubAction.REFRESH_DISCOVERY,
-}
+_LIFECYCLE_ACTIONS = {HubAction.CONNECT, HubAction.VALIDATE, HubAction.REFRESH_DISCOVERY}
 
 # Task 6: editing a local profile's config (command/args/env) is now wired
 # for local-source snapshots -- MCPWorkbench opens the MCPProfileForm
@@ -107,9 +100,7 @@ _TEST_RUN_CONFIRM_TOOLTIP = "Ask is set for this tool — press again to run onc
 # buttons, unchanged position/contract): this one explains the Ask
 # mechanic itself, present on every arm regardless of whether a specific
 # reason is also shown.
-_TEST_RUN_ARMED_HINT = (
-    "This tool is set to Ask — press again to run; anything else cancels."
-)
+_TEST_RUN_ARMED_HINT = "This tool is set to Ask — press again to run; anything else cancels."
 
 # Task 7: permission-explanation copy (spec-verbatim, binding) -- rendered
 # into `#mcp-inspector-permission` by `_render_permission_container()`,
@@ -128,9 +119,7 @@ _ORIGIN_SENTENCES: dict[str, str] = {
 # why, but don't trust it".
 _UNKNOWN_ORIGIN_SENTENCE = "Permission state could not be resolved."
 _CONFIG_CHANGED_NOTICE = "Definition changed since you allowed it."
-_RISK_FLOORED_NOTICE = (
-    "High-risk tool — asks even though the inherited default is Allow."
-)
+_RISK_FLOORED_NOTICE = "High-risk tool — asks even though the inherited default is Allow."
 _REALLOW_TOOLTIP = "Store the new definition hash and allow again."
 
 
@@ -402,9 +391,7 @@ class MCPInspector(Vertical):
         `"server_key::tool_name"` id) -- task-233: nothing downstream of
         this message parses a `"::"`-joined string anymore."""
 
-        def __init__(
-            self, server_key: str, tool_name: str, arguments: dict[str, Any]
-        ) -> None:
+        def __init__(self, server_key: str, tool_name: str, arguments: dict[str, Any]) -> None:
             super().__init__()
             self.server_key = server_key
             self.tool_name = tool_name
@@ -526,15 +513,9 @@ class MCPInspector(Vertical):
 
     def compose(self) -> ComposeResult:
         yield Static("Inspector", classes="destination-section")
-        yield Static(
-            "Select an item to inspect.",
-            id="mcp-inspector-state",
-            classes="ds-status-badge",
-            markup=False,
-        )
-        yield Static(
-            "", id="mcp-inspector-message", classes="ds-field-row", markup=False
-        )
+        yield Static("Select an item to inspect.", id="mcp-inspector-state",
+                     classes="ds-status-badge", markup=False)
+        yield Static("", id="mcp-inspector-message", classes="ds-field-row", markup=False)
         yield Vertical(id="mcp-inspector-actions")
         # T6: tool-detail container, populated by show_tool() -- hidden
         # (display: none, see DEFAULT_CSS) until a Tools-mode row is
@@ -565,45 +546,26 @@ class MCPInspector(Vertical):
             collapsed=not persisted_open,
             id="mcp-adv-collapsible",
         ):
-            yield Static(
-                self._advanced_object_label(), id="mcp-adv-object", markup=False
-            )
+            yield Static(self._advanced_object_label(), id="mcp-adv-object", markup=False)
             with VerticalScroll(id="mcp-adv-scroll"):
                 yield Label("Section", classes="form-label")
-                yield Select(
-                    self._sections,
-                    id="mcp-adv-section-select",
-                    allow_blank=False,
-                    value="overview",
-                )
-                yield Static(
-                    "", id="mcp-adv-content", classes="ds-field-row", markup=False
-                )
+                yield Select(self._sections, id="mcp-adv-section-select", allow_blank=False,
+                             value="overview")
+                yield Static("", id="mcp-adv-content", classes="ds-field-row", markup=False)
                 yield Label("Action", classes="form-label")
-                yield Select(
-                    [("No actions available", Select.BLANK)],
-                    id="mcp-adv-action-select",
-                    value=Select.BLANK,
-                )
+                yield Select([("No actions available", Select.BLANK)], id="mcp-adv-action-select",
+                             value=Select.BLANK)
                 # Task 4: guidance shown only while the section above has zero
                 # runnable action descriptors (see `_refresh_advanced_actions`),
                 # so a user landing on e.g. Overview isn't left staring at a
                 # disabled "No actions available" select with no next step.
-                yield Static(
-                    "", id="mcp-adv-empty-hint", classes="ds-field-row", markup=False
-                )
+                yield Static("", id="mcp-adv-empty-hint", classes="ds-field-row", markup=False)
                 yield Label("Payload (JSON)", classes="form-label")
                 yield TextArea("{}", id="mcp-adv-payload")
-                yield Button(
-                    "Run Action",
-                    id="mcp-adv-run",
-                    classes="console-action-primary",
-                    compact=True,
-                    tooltip="Run the selected legacy control-plane action with this JSON payload.",
-                )
-                yield Static(
-                    "", id="mcp-adv-result", classes="ds-field-row", markup=False
-                )
+                yield Button("Run Action", id="mcp-adv-run", classes="console-action-primary",
+                             compact=True,
+                             tooltip="Run the selected legacy control-plane action with this JSON payload.")
+                yield Static("", id="mcp-adv-result", classes="ds-field-row", markup=False)
 
     # -- T12: Advanced disclosure open/collapsed persistence -----------------
 
@@ -739,17 +701,12 @@ class MCPInspector(Vertical):
                 )
                 if action not in wired:
                     button.disabled = True
-                    if (
-                        action in (_LIFECYCLE_ACTIONS | _CONFIG_ACTIONS)
-                        and snapshot.source != "local"
-                    ):
+                    if action in (_LIFECYCLE_ACTIONS | _CONFIG_ACTIONS) and snapshot.source != "local":
                         button.tooltip = _SERVER_MANAGED_TOOLTIP
                     else:
                         button.tooltip = _LATER_PHASE_TOOLTIP
                 else:
-                    button.tooltip = _WIRED_ACTION_TOOLTIPS.get(
-                        action, _ACTION_LABELS[action]
-                    )
+                    button.tooltip = _WIRED_ACTION_TOOLTIPS.get(action, _ACTION_LABELS[action])
                 buttons.append(button)
             if buttons:
                 await actions.mount_all(buttons)
@@ -800,47 +757,34 @@ class MCPInspector(Vertical):
             widgets: list[Any] = [
                 Static(
                     f"{tool.name} — {tool.server_label}",
-                    id="mcp-inspector-tool-name",
-                    classes="ds-field-row",
-                    markup=False,
+                    id="mcp-inspector-tool-name", classes="ds-field-row", markup=False,
                 ),
                 Static(
-                    tool.description,
-                    id="mcp-inspector-tool-description",
-                    classes="ds-field-row",
-                    markup=False,
+                    tool.description, id="mcp-inspector-tool-description",
+                    classes="ds-field-row", markup=False,
                 ),
                 Static(
                     f"Tags: {', '.join(tool.tags) if tool.tags else '—'}",
-                    id="mcp-inspector-tool-tags",
-                    classes="ds-field-row",
-                    markup=False,
+                    id="mcp-inspector-tool-tags", classes="ds-field-row", markup=False,
                 ),
                 Static(
-                    "Parameters: form"
-                    if parse_schema(tool.input_schema) is not None
+                    "Parameters: form" if parse_schema(tool.input_schema) is not None
                     else "Parameters: raw JSON",
-                    id="mcp-inspector-tool-schema",
-                    classes="ds-field-row",
-                    markup=False,
+                    id="mcp-inspector-tool-schema", classes="ds-field-row", markup=False,
                 ),
             ]
             if tool.stale:
                 widgets.append(
                     Static(
                         "Stale — not currently connected.",
-                        id="mcp-inspector-tool-stale",
-                        classes="ds-field-row",
-                        markup=False,
+                        id="mcp-inspector-tool-stale", classes="ds-field-row", markup=False,
                     )
                 )
             if tool.executable:
                 widgets.append(
                     Button(
-                        "Test Tool",
-                        id="mcp-inspector-test-tool",
-                        classes="console-action-primary",
-                        compact=True,
+                        "Test Tool", id="mcp-inspector-test-tool",
+                        classes="console-action-primary", compact=True,
                         tooltip="Run this tool with test arguments.",
                     )
                 )
@@ -849,8 +793,7 @@ class MCPInspector(Vertical):
                     Static(
                         "Testing server-source tools isn't available yet.",
                         id="mcp-inspector-tool-phase-note",
-                        classes="ds-field-row",
-                        markup=False,
+                        classes="ds-field-row", markup=False,
                     )
                 )
             await container.mount_all(widgets)
@@ -890,38 +833,39 @@ class MCPInspector(Vertical):
             # describes.
             Static(
                 f"{tool.name} — {tool.server_label}",
-                id="mcp-inspector-permission-tool",
-                classes="ds-field-row",
-                markup=False,
+                id="mcp-inspector-permission-tool", classes="ds-field-row", markup=False,
             ),
+            # Task 1 (MCP Hub Phase 6): a non-cell Static -- prefer the
+            # existing `.mcp-status-*` CSS classes (`css/tldw_cli_modular.
+            # tcss`) over `mcp_permissions_mode.state_text()`'s Rich-style
+            # mechanism, which exists only because a DataTable cell can't
+            # carry a CSS class at all. `tool_state_kind()` returns exactly
+            # `"ready"|"warning"|"error"` for a real `EffectiveToolState`
+            # (the `"muted"` fallback never fires here -- `state` is always
+            # one of `allow|ask|deny`), so `mcp-status-{kind}` always
+            # resolves to one of the three classes the bundle defines.
             Static(
                 f"Permission: {effective.ui_label}",
                 id="mcp-inspector-permission-state",
-                classes="ds-field-row",
+                classes=f"ds-field-row mcp-status-{tool_state_kind(effective)}",
                 markup=False,
             ),
             Static(
                 _ORIGIN_SENTENCES.get(effective.origin, _UNKNOWN_ORIGIN_SENTENCE),
-                id="mcp-inspector-permission-origin",
-                classes="ds-field-row",
-                markup=False,
+                id="mcp-inspector-permission-origin", classes="ds-field-row", markup=False,
             ),
         ]
         if effective.config_changed:
             widgets.append(
                 Static(
                     _CONFIG_CHANGED_NOTICE,
-                    id="mcp-inspector-permission-notice",
-                    classes="ds-field-row",
-                    markup=False,
+                    id="mcp-inspector-permission-notice", classes="ds-field-row", markup=False,
                 )
             )
             widgets.append(
                 Button(
-                    "Re-allow",
-                    id="mcp-inspector-reallow",
-                    classes="console-action-primary",
-                    compact=True,
+                    "Re-allow", id="mcp-inspector-reallow",
+                    classes="console-action-primary", compact=True,
                     tooltip=_REALLOW_TOOLTIP,
                 )
             )
@@ -929,16 +873,12 @@ class MCPInspector(Vertical):
             widgets.append(
                 Static(
                     _RISK_FLOORED_NOTICE,
-                    id="mcp-inspector-permission-notice",
-                    classes="ds-field-row",
-                    markup=False,
+                    id="mcp-inspector-permission-notice", classes="ds-field-row", markup=False,
                 )
             )
         await container.mount_all(widgets)
 
-    async def show_permission(
-        self, tool: HubTool, effective: EffectiveToolState
-    ) -> None:
+    async def show_permission(self, tool: HubTool, effective: EffectiveToolState) -> None:
         """Render `#mcp-inspector-permission` standalone -- Permissions-mode's
         matrix tool-row selection entry point
         (`MCPWorkbench.on_mcp_permissions_mode_row_selected()`).
@@ -1008,37 +948,27 @@ class MCPInspector(Vertical):
                 "ok": entry.get("ok"),
                 "duration": format_duration_ms(int(entry.get("duration_ms") or 0)),
                 "error": entry.get("error"),
-                "arguments": redact_mapping(arguments)
-                if isinstance(arguments, Mapping)
-                else arguments,
+                "arguments": redact_mapping(arguments) if isinstance(arguments, Mapping) else arguments,
                 "result_excerpt": _redacted_result_excerpt(entry.get("result_excerpt")),
             }
             detail_text = json.dumps(detail_payload, indent=2, default=str)
             widgets: list[Any] = [
                 Static(
-                    f"{tool_name} — {server_key}"
-                    if (tool_name or server_key)
-                    else "Execution detail",
-                    id="mcp-inspector-audit-name",
-                    classes="ds-field-row",
-                    markup=False,
+                    f"{tool_name} — {server_key}" if (tool_name or server_key) else "Execution detail",
+                    id="mcp-inspector-audit-name", classes="ds-field-row", markup=False,
                 ),
                 VerticalScroll(
                     Static(detail_text, id="mcp-inspector-audit-detail", markup=False),
                     id="mcp-inspector-audit-scroll",
                 ),
                 Button(
-                    "Open tool",
-                    id="mcp-audit-open-tool",
-                    classes="console-action-secondary",
-                    compact=True,
+                    "Open tool", id="mcp-audit-open-tool",
+                    classes="console-action-secondary", compact=True,
                     tooltip="Switch to Tools mode and select this tool.",
                 ),
                 Button(
-                    "Adjust permission",
-                    id="mcp-audit-adjust-permission",
-                    classes="console-action-secondary",
-                    compact=True,
+                    "Adjust permission", id="mcp-audit-adjust-permission",
+                    classes="console-action-secondary", compact=True,
                     tooltip="Switch to Permissions mode and select this tool's row.",
                 ),
             ]
@@ -1079,21 +1009,15 @@ class MCPInspector(Vertical):
             widgets: list[Any] = [
                 Static(
                     f"Finding — {severity}",
-                    id="mcp-inspector-finding-name",
-                    classes="ds-field-row",
-                    markup=False,
+                    id="mcp-inspector-finding-name", classes="ds-field-row", markup=False,
                 ),
                 Static(
                     f"Type: {finding_type}",
-                    id="mcp-inspector-finding-type",
-                    classes="ds-field-row",
-                    markup=False,
+                    id="mcp-inspector-finding-type", classes="ds-field-row", markup=False,
                 ),
                 Static(
                     message,
-                    id="mcp-inspector-finding-message",
-                    classes="ds-field-row",
-                    markup=False,
+                    id="mcp-inspector-finding-message", classes="ds-field-row", markup=False,
                 ),
             ]
             remediation = _finding_remediation(finding)
@@ -1102,8 +1026,7 @@ class MCPInspector(Vertical):
                     Static(
                         f"Suggested remediation: {remediation}",
                         id="mcp-inspector-finding-remediation",
-                        classes="ds-field-row",
-                        markup=False,
+                        classes="ds-field-row", markup=False,
                     )
                 )
             await container.mount_all(widgets)
@@ -1132,38 +1055,22 @@ class MCPInspector(Vertical):
             # armed-explainer reads before the button whose behavior it's
             # explaining, unlike the specific `#mcp-inspector-test-arm-
             # notice` below, which keeps its pre-existing position.
-            Static(
-                "",
-                id="mcp-inspector-test-armed-hint",
-                classes="ds-field-row",
-                markup=False,
-            ),
+            Static("", id="mcp-inspector-test-armed-hint", classes="ds-field-row", markup=False),
             Button(
-                "Run",
-                id="mcp-inspector-test-run",
-                classes="console-action-primary",
-                compact=True,
+                "Run", id="mcp-inspector-test-run",
+                classes="console-action-primary", compact=True,
                 tooltip=_TEST_RUN_TOOLTIP,
             ),
             Button(
-                "Close",
-                id="mcp-inspector-test-close",
-                classes="console-action-secondary",
-                compact=True,
+                "Close", id="mcp-inspector-test-close",
+                classes="console-action-secondary", compact=True,
                 tooltip="Close this test form without running the tool.",
             ),
             # Task 5: blank until `require_confirm()` fills it in for a
             # config_changed/unverifiable downgrade -- see that method's
             # docstring.
-            Static(
-                "",
-                id="mcp-inspector-test-arm-notice",
-                classes="ds-field-row",
-                markup=False,
-            ),
-            Static(
-                "", id="mcp-inspector-test-result", classes="ds-field-row", markup=False
-            ),
+            Static("", id="mcp-inspector-test-arm-notice", classes="ds-field-row", markup=False),
+            Static("", id="mcp-inspector-test-result", classes="ds-field-row", markup=False),
             id="mcp-inspector-test-panel",
         )
         await container.mount(panel)
@@ -1342,13 +1249,7 @@ class MCPInspector(Vertical):
         self.post_message(self.ToolTestRequested(tool.server_key, tool.name, arguments))
 
     def show_tool_result(
-        self,
-        *,
-        server_key: str,
-        tool_name: str,
-        ok: bool,
-        text: str,
-        duration_ms: int,
+        self, *, server_key: str, tool_name: str, ok: bool, text: str, duration_ms: int,
         blocked: bool = False,
     ) -> None:
         """Render one Test Tool run's outcome, and re-enable Run.
@@ -1376,11 +1277,7 @@ class MCPInspector(Vertical):
         status line when `blocked` is True.
         """
         current = self._current_tool
-        if (
-            current is None
-            or current.server_key != server_key
-            or current.name != tool_name
-        ):
+        if current is None or current.server_key != server_key or current.name != tool_name:
             logger.debug(
                 f"MCPInspector: dropping stale tool result for "
                 f"server_key={server_key!r} tool_name={tool_name!r} "
@@ -1434,11 +1331,8 @@ class MCPInspector(Vertical):
             section_select.set_options(self._sections)
             section_select.value = self._sections[0][1]
         self._refresh_advanced_actions()
-        self.run_worker(
-            self._load_advanced_section(self._sections[0][1]),
-            group="mcp-adv-section",
-            exclusive=True,
-        )
+        self.run_worker(self._load_advanced_section(self._sections[0][1]),
+                        group="mcp-adv-section", exclusive=True)
 
     def _refresh_advanced_actions(self) -> None:
         action_select = self.query_one("#mcp-adv-action-select", Select)
@@ -1475,9 +1369,7 @@ class MCPInspector(Vertical):
                 return
             options = [(str(d["label"]), str(d["name"])) for d in descriptors]
             option_values = [value for _, value in options]
-            selected = (
-                previous_value if previous_value in option_values else options[0][1]
-            )
+            selected = previous_value if previous_value in option_values else options[0][1]
             action_select.set_options(options)
             action_select.value = selected
             action_select.disabled = False
@@ -1530,25 +1422,20 @@ class MCPInspector(Vertical):
         select_id = event.select.id or ""
         if select_id == "mcp-adv-section-select":
             event.stop()
-            self.run_worker(
-                self._load_advanced_section(str(event.value)),
-                group="mcp-adv-section",
-                exclusive=True,
-            )
+            self.run_worker(self._load_advanced_section(str(event.value)),
+                            group="mcp-adv-section", exclusive=True)
         elif select_id == "mcp-adv-action-select":
             event.stop()
             if not _is_blank(event.value):
-                self.query_one(
-                    "#mcp-adv-payload", TextArea
-                ).text = self._action_templates.get(str(event.value), "{}")
+                self.query_one("#mcp-adv-payload", TextArea).text = (
+                    self._action_templates.get(str(event.value), "{}")
+                )
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""
         if button_id == "mcp-adv-run":
             event.stop()
-            self.run_worker(
-                self._run_advanced_action(), group="mcp-adv-run", exclusive=True
-            )
+            self.run_worker(self._run_advanced_action(), group="mcp-adv-run", exclusive=True)
             return
         if button_id == "mcp-inspector-cancel":
             event.stop()
@@ -1571,9 +1458,7 @@ class MCPInspector(Vertical):
             # line of defense for the window before this takes effect.
             event.button.disabled = True
             self.run_worker(
-                self._mount_test_tool_panel(),
-                group="mcp-inspector-test-panel",
-                exclusive=True,
+                self._mount_test_tool_panel(), group="mcp-inspector-test-panel", exclusive=True
             )
             return
         if button_id == "mcp-inspector-test-run":
@@ -1583,9 +1468,7 @@ class MCPInspector(Vertical):
         if button_id == "mcp-inspector-test-close":
             event.stop()
             self.run_worker(
-                self._close_test_tool_panel(),
-                group="mcp-inspector-test-panel",
-                exclusive=True,
+                self._close_test_tool_panel(), group="mcp-inspector-test-panel", exclusive=True
             )
             return
         if button_id == "mcp-inspector-reallow":
@@ -1600,8 +1483,7 @@ class MCPInspector(Vertical):
             if entry is not None:
                 self.post_message(
                     self.AuditOpenToolRequested(
-                        str(entry.get("server_key") or ""),
-                        str(entry.get("tool_name") or ""),
+                        str(entry.get("server_key") or ""), str(entry.get("tool_name") or "")
                     )
                 )
             return
@@ -1611,8 +1493,7 @@ class MCPInspector(Vertical):
             if entry is not None:
                 self.post_message(
                     self.AuditAdjustPermissionRequested(
-                        str(entry.get("server_key") or ""),
-                        str(entry.get("tool_name") or ""),
+                        str(entry.get("server_key") or ""), str(entry.get("tool_name") or "")
                     )
                 )
             return
