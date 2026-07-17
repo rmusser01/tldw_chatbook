@@ -2859,6 +2859,14 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 target_id=target_id,
                 target_route=target_route,
             )
+        # B3 (task-282): approve/reject/pause/resume/retry can change the
+        # watchlist-run/notification state the adapter's short-TTL cache
+        # holds -- invalidate so the next Home read is not stale for up to
+        # the TTL window. Defensive getattr: the honest-unavailable adapter
+        # and test doubles don't implement this hook.
+        invalidate_cache = getattr(adapter, "invalidate_active_work_cache", None)
+        if callable(invalidate_cache):
+            invalidate_cache()
         self.notify(result.message, severity=result.severity)
         return result
 

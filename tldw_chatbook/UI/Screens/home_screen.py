@@ -244,6 +244,7 @@ class HomeScreen(BaseAppScreen):
         super().on_mount()
         self._refresh_home_chatbook_artifact_snapshot()
         self._refresh_home_content_snapshot()
+        self._refresh_home_active_work_cache()
 
     @work(exclusive=True, thread=True)
     def _refresh_home_chatbook_artifact_snapshot(self) -> None:
@@ -290,6 +291,34 @@ class HomeScreen(BaseAppScreen):
         # an all-default snapshot (nothing ready, nothing counted) must not
         # trigger a redundant adapter rebuild/refresh cycle.
         if self.is_mounted and snapshot != (previous or HomeContentSnapshot()):
+            self._sync_home_triage()
+
+    @work(exclusive=True, group="home-active-work-cache")
+    async def _refresh_home_active_work_cache(self) -> None:
+        """Warm the active-work adapter's TTL cache off the event loop.
+
+        B3 (task-282): ``home_active_work_adapter.build_dashboard_input``
+        used to run its watchlist/notification/server-event seam queries
+        synchronously on the UI thread from every compose, triage sync,
+        and rail click. The adapter now caches those fields with a short
+        TTL (see ``LocalNotificationHomeActiveWorkAdapter``); this worker
+        just keeps that cache warm via ``asyncio.to_thread`` so callers on
+        the UI thread hit the cache instead of the DB/services. Runs in
+        its own worker group so it never cancels (or is cancelled by) the
+        content-snapshot/chatbook-artifact workers. Test doubles (e.g.
+        ``RecordingHomeActiveWorkAdapter``) don't implement the async
+        refresh hook and are silently skipped.
+        """
+        adapter = getattr(self.app_instance, "home_active_work_adapter", None)
+        refresh = getattr(adapter, "refresh_active_work_cache_async", None)
+        if not inspect.iscoroutinefunction(refresh):
+            return
+        try:
+            await refresh()
+        except Exception as exc:
+            logger.debug(f"Home active-work cache refresh failed: {exc}")
+            return
+        if self.is_mounted:
             self._sync_home_triage()
 
     async def _build_home_content_snapshot(self) -> HomeContentSnapshot:
