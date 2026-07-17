@@ -23,6 +23,9 @@ from .fusion import (
     reciprocal_rank_fusion, interleave_rankings, resolve_hybrid_alpha,
     resolve_rrf_k,
 )
+from .semantic_availability import (
+    record_semantic_unavailable, SEMANTIC_REASON_SEARCH_ERROR,
+)
 
 # Retrieval functions whose results form the vector (semantic) leg of hybrid
 # fusion; every other retrieval function is treated as an FTS/keyword leg.
@@ -34,33 +37,40 @@ async def execute_pipeline(
     app: Any,
     query: str,
     sources: Dict[str, bool],
+    diagnostics: Optional[Dict[str, Any]] = None,
     **params
 ) -> Tuple[List[Dict[str, Any]], str]:
     """
     Execute a pipeline based on configuration.
-    
+
     Args:
         config: Pipeline configuration from TOML
         app: TldwCli app instance
         query: Search query
         sources: Which sources to search
+        diagnostics: Optional dict that rides through the PipelineContext and
+            collects per-leg availability states (e.g. the semantic leg's
+            unavailable/empty-index reasons, task-250). Callers that pass a
+            dict can inspect it after the call; the (results, context) return
+            shape is unchanged.
         **params: Additional parameters
-        
+
     Returns:
         Tuple of (results list, formatted context)
     """
     pipeline_name = config.get('name', 'Unknown Pipeline')
     steps = config.get('steps', [])
-    
+
     logger.info(f"Executing pipeline: {pipeline_name}")
-    
+
     # Initialize context
     context: PipelineContext = {
         'app': app,
         'query': query,
         'sources': sources,
         'params': {**config.get('parameters', {}), **params},
-        'results': []
+        'results': [],
+        'diagnostics': diagnostics if diagnostics is not None else {}
     }
     
     # Execute each step
@@ -117,7 +127,8 @@ async def _execute_retrieve_step(
             context['app'],
             context['query'],
             context['sources'],
-            step_config.get('functions', [])
+            step_config.get('functions', []),
+            diagnostics=context.setdefault('diagnostics', {})
         )
     elif func_name.endswith('_fts5'):
         # FTS5 functions don't take sources parameter
@@ -127,8 +138,28 @@ async def _execute_retrieve_step(
             config.get('top_k', 10),
             config.get('keyword_filter')
         )
+    elif func_name == 'search_semantic':
+        # Vector leg: forward only kwargs the RAG service accepts. This is
+        # the retrieve-step cousin of the task-256 parallel-step fix below:
+        # splatting the full pipeline params (top_k alongside
+        # search_semantic's own limit->top_k, chunk_*, include_citations,
+        # ...) raised TypeError inside the RAG service call, so the pure
+        # 'semantic' pipeline could never return vector results (task-250).
+        semantic_kwargs = {
+            key: config[key]
+            for key in ('score_threshold', 'filter_metadata')
+            if key in config
+        }
+        return await func(
+            context['app'],
+            context['query'],
+            context['sources'],
+            limit=config.get('top_k', 10),
+            diagnostics=context.setdefault('diagnostics', {}),
+            **semantic_kwargs
+        )
     else:
-        # Semantic search takes sources
+        # Generic retrieval function takes sources
         return await func(
             context['app'],
             context['query'],
@@ -187,6 +218,7 @@ async def _execute_parallel_step(
                     context['query'],
                     context['sources'],
                     limit=config.get('top_k', 10),
+                    diagnostics=context.setdefault('diagnostics', {}),
                     **semantic_kwargs
                 )
             else:
@@ -204,9 +236,16 @@ async def _execute_parallel_step(
 
     # Combine results
     all_results = []
-    for results in results_lists:
+    for func_name, results in zip(task_func_names, results_lists):
         if isinstance(results, Exception):
-            logger.error(f"Parallel search failed: {results}")
+            logger.error(f"Parallel search failed ({func_name}): {results}")
+            if func_name in VECTOR_RETRIEVAL_FUNCTIONS:
+                # The vector leg died mid-search; record it so callers can
+                # honestly say the fused results are FTS-only (task-250).
+                record_semantic_unavailable(
+                    context.setdefault('diagnostics', {}),
+                    SEMANTIC_REASON_SEARCH_ERROR,
+                )
             continue
         all_results.extend(results)
 

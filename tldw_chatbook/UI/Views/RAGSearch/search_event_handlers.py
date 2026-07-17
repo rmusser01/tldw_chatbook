@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 
 from textual import on, work
-from textual.widgets import Button, Select, Checkbox, Input, ListView, ListItem, DataTable
+from textual.widgets import Button, Select, Checkbox, Input, ListView, ListItem, DataTable, Static
 from textual.css.query import NoMatches
 from rich.text import Text
 from loguru import logger
@@ -124,28 +124,52 @@ class SearchEventHandlersMixin:
             
             # Display results
             await self._display_results()
-            
+
             # Update UI
             self.query_one("#save-search-button").disabled = False
-            
+
             # Show results header
             results_header = self.query_one("#results-header-enhanced")
             results_header.remove_class("hidden")
-            
+
+            # Honest semantic-leg state (task-250): say when contextual /
+            # hybrid results are keyword-only or the semantic runtime/index
+            # made semantic retrieval impossible, instead of a bare "0
+            # results" that is indistinguishable from "no matches".
+            semantic_notice = self._semantic_leg_notice(search_mode)
+
             # Update results count and time
-            self.query_one("#results-count").update(
-                f"Found [bold cyan]{self.total_results}[/bold cyan] results"
-            )
+            count_markup = f"Found [bold cyan]{self.total_results}[/bold cyan] results"
+            if semantic_notice:
+                count_markup += f" — [yellow]{semantic_notice[0]}[/yellow]"
+            self.query_one("#results-count").update(count_markup)
             self.query_one("#search-time").update(
                 f"Search completed in [bold green]{self.last_search_time:.2f}s[/bold green]"
             )
-            
-            # Show success notification
-            self.app_instance.notify(
-                f"Search completed: {self.total_results} results found",
-                severity="information"
-            )
-            
+
+            if semantic_notice:
+                short_marker, full_message = semantic_notice
+                self.app_instance.notify(full_message, severity="warning")
+                if not self.search_results:
+                    # A semantic-only search with an unavailable runtime or
+                    # empty index: replace the generic no-results empty state
+                    # with the actual reason and recovery copy.
+                    results_list = self.query_one("#results-list-enhanced")
+                    await results_list.remove_children()
+                    await results_list.mount(
+                        Static(
+                            full_message,
+                            id="search-semantic-recovery",
+                            classes="search-empty-state search-recovery-state",
+                        )
+                    )
+            else:
+                # Show success notification
+                self.app_instance.notify(
+                    f"Search completed: {self.total_results} results found",
+                    severity="information"
+                )
+
             # Update history with results count
             self._update_last_search_results_count(self.total_results)
             

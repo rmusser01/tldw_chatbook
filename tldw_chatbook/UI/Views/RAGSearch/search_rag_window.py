@@ -45,6 +45,14 @@ from ....Chat.chat_handoff_messages import (
 )
 from ....Chat.chat_handoff_models import ChatHandoffPayload
 from ....Utils.optional_deps import DEPENDENCIES_AVAILABLE
+from ....RAG_Search.semantic_availability import (
+    SEMANTIC_DIAGNOSTICS_KEY,
+    SEMANTIC_EMPTY_INDEX_MESSAGE,
+    SEMANTIC_REASON_INIT_FAILED,
+    SEMANTIC_STATUS_EMPTY_INDEX,
+    SEMANTIC_STATUS_UNAVAILABLE,
+    SEMANTIC_UNAVAILABLE_MESSAGES,
+)
 from ....DB.search_history_db import SearchHistoryDB
 from ....Utils.input_validation import sanitize_string
 from ....Utils.paths import get_user_data_dir
@@ -186,6 +194,9 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
         self.rag_service: Optional[RAGService] = None
         self.available_collections: List[str] = []
         self.last_search_config: Optional[Dict[str, Any]] = None
+        # Semantic-leg availability diagnostics from the last pipeline run
+        # (task-250); read by _semantic_leg_notice to report honest states.
+        self.last_search_diagnostics: Dict[str, Any] = {}
         
         # Performance tracking
         self.last_search_time = 0.0
@@ -796,51 +807,102 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
             logger.error(f"Error refreshing index stats: {e}")
     
     # Search implementation methods
+    @staticmethod
+    def _sources_from_config(config: Dict[str, Any]) -> Dict[str, bool]:
+        """Map the filter checkboxes onto the pipeline sources contract."""
+        filters = config.get('filters') or {}
+        return {
+            'media': bool(filters.get('media', True)),
+            'conversations': bool(filters.get('conversations', True)),
+            'notes': bool(filters.get('notes', True)),
+        }
+
     async def _perform_plain_search(self, query: str, config: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Perform plain RAG search"""
         if not RAG_EVENTS_AVAILABLE:
             raise ImportError("RAG search not available")
-            
-        results = await perform_plain_rag_search(
-            query=query,
-            api_choice=self.app_instance.api_endpoint,
-            filters=config.get('filters', {}),
+
+        self.last_search_diagnostics = {}
+        results, _context = await perform_plain_rag_search(
+            self.app_instance,
+            query,
+            self._sources_from_config(config),
             top_k=config.get('top_k', DEFAULT_TOP_K),
-            collection_name=config.get('collection', 'all')
         )
-        
+
         return self._format_search_results(results, "plain")
-    
+
     async def _perform_contextual_search(self, query: str, config: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Perform contextual RAG search"""
+        """Perform contextual (semantic) RAG search"""
         if not RAG_EVENTS_AVAILABLE:
             raise ImportError("RAG pipeline not available")
-            
-        results = await perform_full_rag_pipeline(
-            query=query,
-            api_choice=self.app_instance.api_endpoint,
-            filters=config.get('filters', {}),
+
+        diagnostics: Dict[str, Any] = {}
+        results, _context = await perform_full_rag_pipeline(
+            self.app_instance,
+            query,
+            self._sources_from_config(config),
             top_k=config.get('top_k', DEFAULT_TOP_K),
-            temperature=config.get('temperature', DEFAULT_TEMPERATURE),
-            collection_name=config.get('collection', 'all')
+            diagnostics=diagnostics,
         )
-        
+        self.last_search_diagnostics = diagnostics
+
         return self._format_search_results(results, "contextual")
-    
+
     async def _perform_hybrid_search(self, query: str, config: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Perform hybrid RAG search"""
         if not RAG_EVENTS_AVAILABLE:
             raise ImportError("Hybrid search not available")
-            
-        results = await perform_hybrid_rag_search(
-            query=query,
-            api_choice=self.app_instance.api_endpoint,
-            filters=config.get('filters', {}),
+
+        diagnostics: Dict[str, Any] = {}
+        results, _context = await perform_hybrid_rag_search(
+            self.app_instance,
+            query,
+            self._sources_from_config(config),
             top_k=config.get('top_k', DEFAULT_TOP_K),
-            collection_name=config.get('collection', 'all')
+            diagnostics=diagnostics,
         )
-        
+        self.last_search_diagnostics = diagnostics
+
         return self._format_search_results(results, "hybrid")
+
+    def _semantic_leg_notice(self, search_mode: str) -> Optional[Tuple[str, str]]:
+        """(short marker, full message) when the semantic leg didn't contribute.
+
+        Reads the diagnostics recorded by the last pipeline run (task-250).
+        Returns None when the semantic leg ran fine or the mode has no
+        semantic leg (plain).
+
+        Args:
+            search_mode: The mode of the search the diagnostics belong to.
+
+        Returns:
+            Tuple of a short results-header marker and the full user-facing
+            reason message, or None when there is nothing to report.
+        """
+        semantic_state = (getattr(self, 'last_search_diagnostics', None) or {}).get(
+            SEMANTIC_DIAGNOSTICS_KEY
+        ) or {}
+        status = semantic_state.get('status')
+        if status == SEMANTIC_STATUS_UNAVAILABLE:
+            message = semantic_state.get('message') or SEMANTIC_UNAVAILABLE_MESSAGES[
+                SEMANTIC_REASON_INIT_FAILED
+            ]
+            if search_mode == "hybrid":
+                return (
+                    "keyword-only (semantic unavailable)",
+                    f"Hybrid results are keyword-only (FTS): {message}",
+                )
+            return ("semantic unavailable", message)
+        if status == SEMANTIC_STATUS_EMPTY_INDEX:
+            message = semantic_state.get('message') or SEMANTIC_EMPTY_INDEX_MESSAGE
+            if search_mode == "hybrid":
+                return (
+                    "keyword-only (semantic index empty)",
+                    f"Hybrid results are keyword-only (FTS): {message}",
+                )
+            return ("semantic index empty", message)
+        return None
     
     async def _perform_web_search(self, query: str) -> List[Dict[str, Any]]:
         """Perform web search"""
