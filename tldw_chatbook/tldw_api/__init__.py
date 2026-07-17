@@ -2291,6 +2291,6 @@ def __getattr__(name: str) -> Any:
     return value
 
 
-def __dir__():
+def __dir__() -> "list[str]":
     return sorted(set(__all__) | set(_SUBMODULE_BY_NAME) | set(globals()))
 

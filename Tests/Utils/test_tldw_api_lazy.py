@@ -87,11 +87,13 @@ def test_module_level_alias_preserves_identity():
 
 
 def test_unknown_attribute_raises_attribute_error_naming_the_package():
+    """Unknown attributes must raise AttributeError naming the package."""
     with pytest.raises(AttributeError, match="tldw_chatbook.tldw_api"):
         getattr(tldw_api, "NoSuchSchemaNameXYZ")
 
 
 def test_dir_includes_lazy_names():
+    """dir() on the package must include names not yet lazily imported."""
     d = dir(tldw_api)
     assert "NoteResponse" in d
     assert "TLDWAPIClient" in d
