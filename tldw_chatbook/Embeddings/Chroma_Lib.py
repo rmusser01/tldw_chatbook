@@ -35,9 +35,22 @@ from ..Utils.optional_deps import (
     DEPENDENCIES_AVAILABLE, create_unavailable_feature_handler
 )
 
-# Import optional dependencies safely
-numpy = get_safe_import('numpy')
-chromadb = get_safe_import('chromadb')
+# numpy/chromadb are heavy optional dependencies -- chromadb alone
+# transitively pulls in OTel/gRPC/protobuf (~150ms). They used to be
+# imported at module scope via get_safe_import(), which meant a plain
+# `import tldw_chatbook.app` paid the full cost (this module is reachable
+# via RAG_Admin/local_rag_admin_service.py, which app.py imports
+# unconditionally) even though no ChromaDBManager had been constructed.
+# They are now imported lazily on first real use via the _ensure_*()
+# helpers below (mirroring Embeddings_Lib.py's _ensure_torch()/
+# _ensure_numpy() pattern), called at the top of ChromaDBManager.__init__.
+# All other module-level code that dereferences np/chromadb/Settings/
+# ChromaError/InvalidDimensionException/Collection/QueryResult is inside
+# ChromaDBManager instance methods, which are only reachable after
+# __init__ has already run _ensure_chromadb(), so the module-level
+# fallback placeholders below only matter transiently before __init__.
+numpy = None
+chromadb = None
 
 
 def _current_dependencies_available() -> Dict[str, bool]:
@@ -48,29 +61,66 @@ def _current_dependencies_available() -> Dict[str, bool]:
         return current_registry
     return DEPENDENCIES_AVAILABLE
 
-# Create safe imports with fallbacks
-if numpy is not None:
-    np = numpy
-else:
-    # Create a basic np-like object for type annotations
-    class _NumpyPlaceholder:
-        @staticmethod
-        def asarray(*args, **kwargs):
-            raise ImportError("NumPy not available. Install with: pip install tldw_chatbook[embeddings_rag]")
-    np = _NumpyPlaceholder()
 
-if chromadb is not None:
-    from chromadb import Settings
-    from chromadb.errors import ChromaError, InvalidDimensionException
-    from chromadb.api.models import Collection
-    from chromadb.api.types import QueryResult
-else:
-    # Create placeholder classes
-    Settings = create_unavailable_feature_handler('chromadb', 'pip install tldw_chatbook[embeddings_rag]')
-    ChromaError = Exception
-    InvalidDimensionException = Exception
-    Collection = Any
-    QueryResult = Any
+# Create a basic np-like object for type annotations / pre-_ensure_numpy() access
+class _NumpyPlaceholder:
+    @staticmethod
+    def asarray(*args, **kwargs):
+        raise ImportError("NumPy not available. Install with: pip install tldw_chatbook[embeddings_rag]")
+np = _NumpyPlaceholder()
+
+# Placeholder classes -- overwritten by _ensure_chromadb() once chromadb is
+# actually imported (or re-set to these same fallbacks if it's unavailable).
+Settings = create_unavailable_feature_handler('chromadb', 'pip install tldw_chatbook[embeddings_rag]')
+ChromaError = Exception
+InvalidDimensionException = Exception
+Collection = Any
+QueryResult = Any
+
+
+def _ensure_numpy():
+    """Import numpy on first actual use. No-op on repeated calls."""
+    global numpy, np
+    if numpy is not None:
+        return numpy
+    _numpy = get_safe_import('numpy')
+    if _numpy is not None:
+        # Bind `np` BEFORE the gate global (`numpy`), so a racing thread that
+        # observes `numpy is not None` never finds `np` still the placeholder.
+        np = _numpy
+        numpy = _numpy
+    return numpy
+
+
+def _ensure_chromadb():
+    """Import chromadb (and the Settings/error/type names derived from it)
+    on first actual use. No-op on repeated calls.
+
+    Preserves the previous eager-import fallback semantics: when chromadb
+    isn't installed, Settings/ChromaError/InvalidDimensionException/
+    Collection/QueryResult stay bound to the module-level placeholders set
+    above.
+    """
+    global chromadb, Settings, ChromaError, InvalidDimensionException, Collection, QueryResult
+    if chromadb is not None:
+        return chromadb
+    _ensure_numpy()
+    _chromadb = get_safe_import('chromadb')
+    if _chromadb is not None:
+        from chromadb import Settings as _Settings
+        from chromadb.errors import ChromaError as _ChromaError, InvalidDimensionException as _InvalidDimensionException
+        from chromadb.api.models import Collection as _Collection
+        from chromadb.api.types import QueryResult as _QueryResult
+        # Bind the derived names BEFORE the gate global (`chromadb`), so a
+        # racing thread that observes `chromadb is not None` is guaranteed to
+        # also see Settings/ChromaError/etc. fully bound.
+        Settings = _Settings
+        ChromaError = _ChromaError
+        InvalidDimensionException = _InvalidDimensionException
+        Collection = _Collection
+        QueryResult = _QueryResult
+        chromadb = _chromadb
+    return chromadb
 
 # Configure logger with context
 logger = logger.bind(module="Chroma_Lib")
@@ -115,7 +165,12 @@ class ChromaDBManager:
                 "ChromaDBManager requires embeddings/RAG dependencies. "
                 "Install with: pip install tldw_chatbook[embeddings_rag]"
             )
-            
+
+        # Import numpy/chromadb (and Settings/ChromaError/etc.) now that we
+        # know this instance actually needs them -- see _ensure_chromadb()
+        # docstring at module scope for why this is deferred this far.
+        _ensure_chromadb()
+
         if not user_id:
             logger.error("Initialization failed: user_id cannot be empty for ChromaDBManager.")
             raise ValueError("user_id cannot be empty for ChromaDBManager.")
