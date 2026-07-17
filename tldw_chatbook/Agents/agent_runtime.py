@@ -207,7 +207,9 @@ def run_agent_loop(config: AgentConfig, initial_messages: list[dict],
     as a ``role="tool"`` message keyed on ``tool_call_id``.
 
     Args:
-        config: The agent's model, system prompt, allow-list, and budget.
+        config: The agent's model, system prompt, allow-list, and budget
+            (step count, wall-clock seconds, and — task-244 —
+            provider-call/model-turn count all independently cap the run).
         initial_messages: The starting conversation history (role/content
             dicts); not mutated in place — the loop works on a copy.
         active_schemas: Tool schemas already disclosed to the model at the
@@ -249,6 +251,9 @@ def run_agent_loop(config: AgentConfig, initial_messages: list[dict],
                               subagents_spawned=spawned)
         if len(steps) >= budget.max_steps:
             add(STEP_ERROR, summary="step budget exhausted")
+            return RunOutcome(RUN_STUCK, steps, subagents_spawned=spawned)
+        if sum(1 for s in steps if s.kind == STEP_MODEL) >= budget.max_model_turns:
+            add(STEP_ERROR, summary="model-turn budget exhausted")
             return RunOutcome(RUN_STUCK, steps, subagents_spawned=spawned)
         if deps.clock() - started > budget.max_wall_seconds:
             add(STEP_ERROR, summary="wall-clock budget exhausted")

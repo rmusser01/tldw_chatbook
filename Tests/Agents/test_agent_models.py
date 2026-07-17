@@ -33,6 +33,17 @@ def test_budget_defaults():
                 8, 240.0, 2, 8, 4000)
 
 
+def test_run_budget_default_model_turns_equal_steps_and_child_clamp_carries():
+    b = RunBudget()
+    # Unreachability invariant: each model turn appends >=1 step, so with
+    # max_model_turns == max_steps the step check always fires first (or
+    # ties) at defaults -> engine-default behavior byte-identical.
+    assert b.max_model_turns == b.max_steps == 8
+    child = clamp_child_budget(RunBudget(max_model_turns=3),
+                               parent_remaining_seconds=30.0)
+    assert child.max_model_turns == 3
+
+
 def test_clamp_child_budget_clamps_wall_clock_and_zeroes_spawn():
     child = clamp_child_budget(RunBudget(), parent_remaining_seconds=30.0)
     assert child.max_wall_seconds == 30.0      # min(240, 30)

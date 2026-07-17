@@ -87,11 +87,28 @@ class ModelTurn:
 
 @dataclass(frozen=True)
 class RunBudget:
+    """Caps bounding one agent run: steps, wall-clock, sub-agents, and
+    (task-244) model-turn count.
+
+    ``max_model_turns`` counts ``STEP_MODEL`` steps and is checked in
+    ``agent_runtime.run_agent_loop`` immediately after the step-budget
+    check. At the defaults below it equals ``max_steps``, which makes it
+    provably unreachable: every model turn appends at least one step (the
+    ``STEP_MODEL`` step itself), so the step-budget check always fires
+    first (or ties) before the model-turn check can — engine-default
+    behavior is therefore byte-identical to the pre-task-244 loop.
+    """
+
     max_steps: int = 8
     max_wall_seconds: float = 240.0
     max_subagents: int = 2
     max_active_tools: int = 8
     max_subagent_result_chars: int = 4000
+    # Primary provider-call limiter (task-244): counts STEP_MODEL turns.
+    # At defaults it equals max_steps, which makes it provably unreachable
+    # (every model turn appends >=1 step, so the step check fires first) —
+    # engine-default behavior is byte-identical to the pre-task-244 loop.
+    max_model_turns: int = 8
 
 
 @dataclass
@@ -138,4 +155,5 @@ def clamp_child_budget(
         max_subagents=0,
         max_active_tools=child.max_active_tools,
         max_subagent_result_chars=child.max_subagent_result_chars,
+        max_model_turns=child.max_model_turns,
     )
