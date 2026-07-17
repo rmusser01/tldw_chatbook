@@ -320,6 +320,10 @@ CONSOLE_SKILL_NEEDS_REVIEW_HINT_TEMPLATE = (
 CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL = "Set up provider"
 CONSOLE_PROVIDER_ACTION_ARROW = " ---------------------->"
 NATIVE_CONSOLE_STATE_VERSION = "1.0"
+# Roleplay P1h: bounds passed to `Chat_Dictionary_Lib.apply_active_chatdicts_to_text`
+# for the native Console send-path applier (`_console_chat_dictionary_applier`).
+_CHATDICT_MAX_TOKENS = 500
+_CHATDICT_STRATEGY = "sorted_evenly"
 # Statuses during which the 0.2s transcript poll is actively ticking
 # (see `_start_console_transcript_sync_timer`) -- also used by the
 # sub-agent badge-count cache (Finding A) to decide whether a live run
@@ -2391,6 +2395,7 @@ class ChatScreen(BaseAppScreen):
                 agent_bridge=self._ensure_console_agent_bridge(),
                 agent_runtime_enabled=self._console_agent_runtime_enabled(),
                 skills_service=getattr(self.app_instance, "skills_scope_service", None),
+                chat_dictionary_applier=self._console_chat_dictionary_applier,
             )
         self._console_chat_controller.on_submission_accepted = (
             self._on_console_submission_accepted
@@ -5102,6 +5107,27 @@ class ChatScreen(BaseAppScreen):
     def _dictionary_scope_service(self) -> Any:
         """The app-level chat-dictionary scope service, or None when absent."""
         return getattr(self.app_instance, "chat_dictionary_scope_service", None)
+
+    def _console_chat_dictionary_applier(self, conversation_id: str | None, text: str) -> str:
+        """Bound applier handed to the native Console controller: apply the
+        active CONVERSATION chat dictionaries to a send's text (never raises).
+
+        Resolves the db lazily (at call time), so a controller built before the
+        db is ready still works. Conversation-only: ``char_data`` is ``None``
+        (native sessions carry no character card yet).
+        """
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None or not conversation_id or not isinstance(text, str):
+            return text
+        from ...Character_Chat import Chat_Dictionary_Lib as cdl
+        return cdl.apply_active_chatdicts_to_text(
+            db,
+            conversation_id,
+            None,
+            text,
+            max_tokens=_CHATDICT_MAX_TOKENS,
+            strategy=_CHATDICT_STRATEGY,
+        )
 
     def _active_console_dictionary_scope_ids(self) -> tuple[str | None, int | None]:
         """Return (conversation_id, character_id) for the active native
