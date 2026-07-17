@@ -3991,7 +3991,7 @@ class PersonasScreen(BaseAppScreen):
         self._update_title()
         self._sync_inspector_console_actions()
         try:
-            footer = self.app.query_one("AppFooterStatus")
+            footer = self.query_one("AppFooterStatus")
         except QueryError:
             return
         set_ctx = getattr(footer, "set_shortcut_context", None)
@@ -4000,7 +4000,7 @@ class PersonasScreen(BaseAppScreen):
 
     def _clear_footer_shortcuts(self) -> None:
         try:
-            footer = self.app.query_one("AppFooterStatus")
+            footer = self.query_one("AppFooterStatus")
         except QueryError:
             return
         clear_ctx = getattr(footer, "clear_shortcut_context", None)

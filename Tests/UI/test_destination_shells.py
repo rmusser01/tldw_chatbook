@@ -2738,9 +2738,14 @@ async def test_mcp_destination_test_tool_binding_opens_panel_for_selected_tool_e
 
 class MCPFooterHarness(App):
     """Mirrors `test_console_workbench_contract.py`'s `ConsoleFooterHarness`
-    for the MCP destination: composes a real `AppFooterStatus` alongside the
-    pushed screen so `MCPScreen._register_footer_shortcuts()`'s
-    `self.app.query_one(AppFooterStatus)` resolves."""
+    for the MCP destination: composes an `AppFooterStatus` directly on the
+    App's own default screen, exactly like `TldwCli._create_main_ui_widgets`
+    does in the real app (id="app-footer-status"). Task-264: `MCPScreen`
+    (via `BaseAppScreen.compose()`) now mounts its OWN `AppFooterStatus`
+    too, and `MCPScreen._register_footer_shortcuts()` resolves that
+    screen-owned instance via `self.query_one(AppFooterStatus)` -- so this
+    harness's default-screen widget is only kept around to prove the
+    registration does NOT land there (see the assertions below)."""
 
     def __init__(self, app_instance):
         super().__init__()
@@ -2765,7 +2770,9 @@ async def test_mcp_destination_registers_footer_workbench_shortcuts():
     async with host.run_test(size=(120, 40)) as pilot:
         screen = host.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#mcp-shell")
-        footer = host.query_one(AppFooterStatus)
+        # task-264: the registration lands on the SCREEN's own footer, not
+        # the harness's default-screen stand-in.
+        footer = screen.query_one(AppFooterStatus)
 
         assert footer.shortcut_text == "1-4 mode | a add server | r refresh | t test tool | space cycle permission"
 
@@ -2784,7 +2791,9 @@ async def test_mcp_destination_footer_shortcuts_clear_and_restore_across_suspend
     async with host.run_test(size=(120, 40)) as pilot:
         screen = host.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#mcp-shell")
-        footer = host.query_one(AppFooterStatus)
+        # task-264: the registration lands on the SCREEN's own footer, not
+        # the harness's default-screen stand-in.
+        footer = screen.query_one(AppFooterStatus)
         assert footer.shortcut_text == "1-4 mode | a add server | r refresh | t test tool | space cycle permission"
 
         overlay = TextualScreen()

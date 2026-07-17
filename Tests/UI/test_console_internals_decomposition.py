@@ -6,7 +6,7 @@ from rich.console import Console
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.events import Paste
-from textual.widgets import Button, Footer, Input, Select, Static
+from textual.widgets import Button, Input, Select, Static
 
 from Tests.UI.test_destination_shells import (
     _build_test_app,
@@ -34,6 +34,7 @@ from tldw_chatbook.UI.Screens.chat_screen import (
     ChatScreen,
 )
 from tldw_chatbook.config import resolve_provider_name
+from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Console import (
     ConsoleComposerBar,
     ConsoleSetupModal,
@@ -2036,6 +2037,13 @@ async def test_console_empty_transcript_promotes_setup_card_over_banner():
         assert action_hints.styles.display == "none"
 
         text = _visible_text(console)
+        # task-264: the Console screen mounts its own AppFooterStatus, which
+        # legitimately renders the workbench shortcut hint ("... Enter send
+        # ..."). The redundancy pin below is about setup-guidance copy being
+        # duplicated in the CONTENT area (banner/transcript/hints), so scope
+        # it to #screen-content -- the footer is a distinct, always-on
+        # surface, not a duplicate of the setup card.
+        content_text = _visible_text(console.query_one("#screen-content"))
         for expected in (
             CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
             "Get started",
@@ -2057,7 +2065,7 @@ async def test_console_empty_transcript_promotes_setup_card_over_banner():
             "Provider setup needed",
             "Impact: Send is blocked until setup is finished.",
         ):
-            assert redundant_copy not in text
+            assert redundant_copy not in content_text
         assert "Provider: OpenAI is not ready" not in text
         assert "Provider setup is shown in the recovery strip above." not in text
         assert console.query_one("#console-inspector-rail-handle").display is True
@@ -2508,6 +2516,11 @@ async def test_console_gate15_does_not_mount_full_legacy_chat_window_chrome():
 
 @pytest.mark.asyncio
 async def test_console_app_footer_status_bar_remains_visible_below_console():
+    """task-264: the Console screen's own `AppFooterStatus` (mounted by
+    `BaseAppScreen.compose()`) is what a user actually sees below the
+    console -- the app's plain Textual `Footer` was retired in favor of a
+    per-screen `AppFooterStatus` so shortcut-hint registration is never
+    occluded (see `base_app_screen.py`)."""
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -2515,7 +2528,7 @@ async def test_console_app_footer_status_bar_remains_visible_below_console():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
 
-        footer = console.query_one(Footer)
+        footer = console.query_one(AppFooterStatus)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
         assert footer.region.height == 1
@@ -3629,10 +3642,16 @@ async def test_alt_m_opens_model_popover_and_apply_updates_session_settings():
 
 
 def test_console_keyboard_hints_visible_in_native_footer():
-    """Ctrl+K/Alt+M/Ctrl+T must surface via Textual's native Footer — the
-    only Console footer channel a user actually sees (the app-level
-    AppFooterStatus widget these bindings used to target sits on the
-    default screen and is occluded whenever the Console screen is pushed).
+    """Ctrl+K/Alt+M/Ctrl+T stay marked `show=True` on the binding list itself.
+
+    Historical note (pre task-264): these were once surfaced via Textual's
+    native `Footer` because the app-level `AppFooterStatus` these bindings
+    also target sat on the default screen and was occluded whenever the
+    Console screen was pushed. Task-264 gave every `BaseAppScreen` (Console
+    included) its own `AppFooterStatus` instance, so the shortcut hint now
+    also appears there (Ctrl+K is in `CONSOLE_WORKBENCH_SHORTCUTS`) -- but
+    the bindings themselves are unchanged, so `show=True` remains correct
+    and is pinned here regardless of which surface renders them.
     Escape and Alt+1..9 stay hidden: Escape shown at screen level would
     clash-confuse with the transcript's own "esc Clear selection" hint, and
     nine Alt-digit entries would flood the footer.

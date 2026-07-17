@@ -39,7 +39,7 @@ from PIL import Image
 from loguru import logger as loguru_logger, logger
 from rich.markup import escape as escape_markup
 from textual import on, work
-from textual.app import App, ComposeResult
+from textual.app import App, ComposeResult, ScreenStackError
 from textual.widgets import (
     Static, Button, Input, RichLog, TextArea, Select, ListView, Checkbox, Collapsible, ListItem, Label, Switch, Markdown
 )
@@ -5905,6 +5905,29 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         """Updates the token count in the footer when on Chat tab."""
         await self.db_status_manager.update_token_count_display()
 
+    def _active_footer_status(self) -> Optional[AppFooterStatus]:
+        """The visible screen's footer, falling back to the default-screen one.
+
+        Every ``BaseAppScreen`` mounts its own ``AppFooterStatus`` (task-264),
+        so per-tick updates (DB sizes, word/token counts) must resolve the
+        currently active screen's instance rather than the cached
+        ``_db_size_status_widget`` acquired once from the default screen at
+        startup -- that cached widget is occluded as soon as any screen is
+        pushed. The cache is kept as a fallback for the brief window before
+        the first screen is pushed (or if the active screen has no footer
+        for some reason).
+
+        ``ScreenStackError`` is caught alongside ``QueryError`` because this
+        runs from ``set_interval`` timers (DB-size/token ticks) that can fire
+        during app shutdown, after the screen stack has already been drained
+        -- ``App.screen`` raises then, and the fallback cache is the right
+        answer (its update methods are themselves teardown-safe no-ops).
+        """
+        try:
+            return self.screen.query_one(AppFooterStatus)
+        except (ScreenStackError, QueryError):
+            return self._db_size_status_widget
+
     def _create_deferred_startup_task(
         self,
         coroutine,
@@ -6483,8 +6506,10 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             loguru_logger.debug(f"Set display=True for window: {new_window.__class__.__name__} (id={new_tab}-window)")
             
             # Update word count and token count in footer based on tab
-            try:
-                footer = self.query_one("AppFooterStatus")
+            # (resolve the active screen's own footer -- see
+            # `_active_footer_status`, task-264).
+            footer = self._active_footer_status()
+            if footer is not None:
                 if new_tab == TAB_CHAT:
                     # Clear word count when on chat tab
                     footer.update_word_count(0)
@@ -6494,8 +6519,6 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                     # Clear both when on other tabs
                     footer.update_word_count(0)
                     footer.update_token_count("")
-            except QueryError:
-                pass
 
             # Focus input logic (as in original, adjust if needed)
             if new_tab not in [TAB_LOGS, TAB_STATS]: # Don't focus input on these tabs

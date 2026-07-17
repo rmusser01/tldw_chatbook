@@ -1609,6 +1609,10 @@ MetricsScreen Label.-info-message {
 /* ----------------------------- ************************* ----------------------------- */
 /* --- Window Footer Widget --- */
 
+/* NOTE: this css_content copy is DEAD -- production loads
+   css/tldw_cli_modular.tcss, built from css/components/_widgets.tcss,
+   which is the live source for these AppFooterStatus rules and carries
+   the KEEP-IN-SYNC contract with AppFooterStatus.DEFAULT_CSS (task-264). */
 AppFooterStatus {
     dock: bottom;
     height: 1;
