@@ -438,6 +438,76 @@ async def test_server_select_options_reflect_current_catalog_and_prune_stale_fil
         assert table.row_count == 1
 
 
+# -- T7 (MCP Hub Phase 5): select_tool_row() external-drill entry point -----
+
+
+@pytest.mark.asyncio
+async def test_select_tool_row_moves_cursor_to_matching_row():
+    app = ToolsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPToolsMode)
+        await canvas.update_tools(
+            [
+                _tool(server_key="local:docs", server_label="docs", name="bare"),
+                _tool(server_key="local:docs", server_label="docs", name="search"),
+            ],
+            empty_diagnosis=None,
+        )
+        await pilot.pause()
+        found = await canvas.select_tool_row("local:docs::search")
+        await pilot.pause()
+        assert found is True
+        table = app.query_one("#mcp-tools-table", DataTable)
+        row_key, _ = table.coordinate_to_cell_key((table.cursor_row, 0))
+        assert row_key.value == "local:docs::search"
+
+
+@pytest.mark.asyncio
+async def test_select_tool_row_returns_false_for_unknown_tool_id():
+    app = ToolsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPToolsMode)
+        await canvas.update_tools(
+            [_tool(server_key="local:docs", server_label="docs", name="search")],
+            empty_diagnosis=None,
+        )
+        await pilot.pause()
+        found = await canvas.select_tool_row("local:docs::gone")
+        assert found is False
+
+
+@pytest.mark.asyncio
+async def test_select_tool_row_clears_an_active_filter_hiding_the_target():
+    """An active text filter that currently hides the drill target must be
+    cleared (not leave the row unselectable) -- an external drill's target
+    row always wins over whatever the user was previously typing."""
+    app = ToolsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPToolsMode)
+        await canvas.update_tools(
+            [
+                _tool(server_key="local:docs", server_label="docs", name="bare"),
+                _tool(server_key="local:docs", server_label="docs", name="search"),
+            ],
+            empty_diagnosis=None,
+        )
+        await pilot.pause()
+        text_input = app.query_one("#mcp-tools-filter-text", Input)
+        text_input.value = "bare"
+        await pilot.pause()
+        table = app.query_one("#mcp-tools-table", DataTable)
+        assert table.row_count == 1  # "search" is currently filtered out
+
+        found = await canvas.select_tool_row("local:docs::search")
+        await pilot.pause()
+        assert found is True
+        assert canvas._filter_text == ""
+        assert text_input.value == ""
+        assert table.row_count == 2
+        row_key, _ = table.coordinate_to_cell_key((table.cursor_row, 0))
+        assert row_key.value == "local:docs::search"
+
+
 # -- UX batch item 11: adaptive Tags column ----------------------------------
 
 

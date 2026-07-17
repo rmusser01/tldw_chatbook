@@ -2445,7 +2445,9 @@ async def test_mcp_destination_permissions_and_tools_tooltips_are_current():
     """UX batch item 1: the Permissions/Tools mode chip tooltips used to say
     "(arrives in a later phase)" even after both modes shipped real canvases
     (`MCPPermissionsMode`/`MCPToolsMode`) -- stale copy that actively misled
-    the user about what pressing the chip would do."""
+    the user about what pressing the chip would do. T7 (MCP Hub Phase 5):
+    "audit" carried the same stale-copy defect until it shipped its own
+    real canvas (`MCPAuditMode`) -- same regression class, same fix."""
     app = _build_test_app()
     host = DestinationHarness(app, "mcp")
     async with host.run_test(size=(180, 50)) as pilot:
@@ -2453,10 +2455,15 @@ async def test_mcp_destination_permissions_and_tools_tooltips_are_current():
         screen = _active_destination_screen(host)
         tools_chip = screen.query_one("#mcp-mode-tools", Button)
         permissions_chip = screen.query_one("#mcp-mode-permissions", Button)
+        audit_chip = screen.query_one("#mcp-mode-audit", Button)
         assert tools_chip.tooltip == "Tools mode: browse and test scoped MCP tools."
         assert permissions_chip.tooltip == (
             "Permissions mode: set Allow / Ask / Off per tool. "
             "Space cycles the selected row."
+        )
+        assert "arrives in a later phase" not in str(audit_chip.tooltip).lower()
+        assert audit_chip.tooltip == (
+            "Audit mode: review MCP tool execution history and drill into a call's detail."
         )
 
 

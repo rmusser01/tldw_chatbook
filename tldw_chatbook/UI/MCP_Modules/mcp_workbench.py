@@ -14,9 +14,9 @@ from typing import Any
 from loguru import logger
 from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container, Horizontal
 from textual.message import Message
-from textual.widgets import ContentSwitcher, Static
+from textual.widgets import ContentSwitcher
 from textual.worker import Worker
 
 from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
@@ -39,6 +39,7 @@ from tldw_chatbook.MCP.readiness import (
     server_target_readiness,
 )
 from tldw_chatbook.MCP.redaction import redact_args, redact_mapping
+from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import MCPAuditMode
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
     MCPPermissionsMode,
@@ -134,14 +135,12 @@ MCP_HUB_MODES: dict[str, dict[str, str]] = {
     # "servers"/"tools" above, kept "" for shape parity with the remaining
     # MCP_HUB_MODES entries.
     "permissions": {"label": "Permissions", "button_id": "mcp-mode-permissions", "placeholder": ""},
-    "audit": {
-        "label": "Audit",
-        "button_id": "mcp-mode-audit",
-        "placeholder": (
-            "Audit mode arrives in a later phase. Action results appear inline in the "
-            "inspector's Advanced section for now."
-        ),
-    },
+    # T7 (MCP Hub Phase 5): Audit mode now hosts the real `MCPAuditMode`
+    # canvas (see compose()) -- "placeholder" is unused for it, same as
+    # "servers"/"tools"/"permissions" above, kept "" for shape parity. This
+    # was the last MCP_HUB_MODES entry still on the generic phase-placeholder
+    # path; compose()'s placeholder-rendering loop is gone along with it.
+    "audit": {"label": "Audit", "button_id": "mcp-mode-audit", "placeholder": ""},
 }
 
 _LEGACY_SECTIONS = [
@@ -494,6 +493,12 @@ class MCPWorkbench(Container):
         # rule (Tools-mode's `show_tool(tool, effective=...)` and
         # Permissions-mode's own `show_permission()`).
         self._last_effective_states: dict[tuple[str, str], EffectiveToolState] = {}
+        # T7 (MCP Hub Phase 5): the full (unfiltered) execution-log record
+        # list `_sync_audit_mode()` most recently pushed into `MCPAuditMode`
+        # -- `MCPAuditMode.EntrySelected.index` (a position in THAT SAME
+        # list) is looked up against this cache when the event arrives,
+        # rather than re-reading the log a second time.
+        self._last_audit_entries: list[dict[str, Any]] = []
         # T11: this pass's server-source governance-listing fetch
         # (`_load_server_governance_profiles()`), cached by `(source,
         # target)` identity -- that data is STATIC server-side profile
@@ -545,20 +550,13 @@ class MCPWorkbench(Container):
                 yield MCPServersMode(id="mcp-mode-canvas-servers")
                 yield MCPToolsMode(id="mcp-mode-canvas-tools")
                 yield MCPPermissionsMode(id="mcp-mode-canvas-permissions")
-                for mode, spec in MCP_HUB_MODES.items():
-                    if mode in ("servers", "tools", "permissions"):
-                        continue
-                    with Vertical(id=f"mcp-mode-canvas-{mode}"):
-                        yield Static(
-                            spec["placeholder"],
-                            # T12: phase placeholders are informational, not a
-                            # recovery/alarm condition -- the warning chrome
-                            # was semantic dilution of the single alarm color
-                            # (UX-inputs #4). T13 adds the `.ds-info-callout`
-                            # CSS rule itself; this is the class-name swap.
-                            classes="ds-info-callout",
-                            markup=False,
-                        )
+                # T7 (MCP Hub Phase 5): Audit mode now hosts the real
+                # `MCPAuditMode` canvas too -- every `MCP_HUB_MODES` entry is
+                # now a real canvas, so the generic phase-placeholder loop
+                # this used to fall through to (T12's `.ds-info-callout`
+                # Static) is gone; it would never have executed its body
+                # again anyway.
+                yield MCPAuditMode(id="mcp-mode-canvas-audit")
             yield MCPInspector(id="mcp-hub-inspector", classes="destination-workbench-pane")
 
     async def on_mount(self) -> None:
@@ -905,6 +903,44 @@ class MCPWorkbench(Container):
             effective = self._resolve_effective_states(tools)
             await self._sync_tools_mode(tools, effective)
             await self._sync_permissions_mode(effective, refresh_governance=True)
+            await self._sync_audit_mode()
+
+    async def _sync_audit_mode(self) -> None:
+        """Push the current execution-log window into `MCPAuditMode`.
+
+        Mirrors `_sync_tools_mode()`/`_sync_permissions_mode()`: runs on
+        every `_sync_children()` pass (the ContentSwitcher never unmounts
+        the inactive canvas, only hides it) so switching INTO Audit mode
+        never shows a stale window from before the last background resync.
+
+        `service.execution_log` is a PROPERTY on
+        `UnifiedMCPControlPlaneService` that can itself raise (see that
+        property's own N1 lesson, unified_control_plane_service.py) -- the
+        access is guarded by the SAME try/except as the `read_recent()`
+        call itself, not just a `getattr(..., None)` (which only catches an
+        `AttributeError`, not an arbitrary raise from inside a property
+        getter). No log configured (a service too old to expose the
+        property, a fake in older tests, or the property itself resolving
+        to `None` -- e.g. no local store yet) renders an empty window
+        rather than raising out of `_sync_children()`.
+        """
+        service = self._service()
+        entries: list[dict[str, Any]] = []
+        log = None
+        if service is not None:
+            try:
+                log = service.execution_log
+            except Exception as exc:
+                logger.warning(f"MCP execution log access failed: {exc}")
+                log = None
+        if log is not None:
+            try:
+                entries = log.read_recent(200)
+            except Exception as exc:
+                logger.warning(f"MCP execution log read failed: {exc}")
+                entries = []
+        self._last_audit_entries = entries
+        await self.query_one(MCPAuditMode).update_entries(entries)
 
     async def _sync_tools_mode(
         self, tools: list[HubTool], states: dict[tuple[str, str], EffectiveToolState]
@@ -1539,6 +1575,10 @@ class MCPWorkbench(Container):
 
     async def _clear_tool_view(self) -> None:
         await self.query_one(MCPInspector).show_tool(None)
+        # T7 (MCP Hub Phase 5): a mode change also invalidates whatever
+        # execution-log entry the inspector was showing -- same rationale
+        # as the `show_tool(None)` call above, one line up.
+        await self.query_one(MCPInspector).show_audit_entry(None)
 
     async def _disarm_canvas_delete(self) -> None:
         # Under `_sync_children_lock`: `disarm_delete()` rebuilds the detail
@@ -1871,6 +1911,89 @@ class MCPWorkbench(Container):
             await inspector.show_tool(None)
             return
         await inspector.show_permission(tool, self._effective_for_display(tool))
+
+    # -- T7 (MCP Hub Phase 5): Audit mode ------------------------------------
+
+    async def on_mcp_audit_mode_entry_selected(
+        self, event: MCPAuditMode.EntrySelected
+    ) -> None:
+        """Route an Audit-mode row selection to the inspector's audit-entry
+        detail view. `event.index` is looked up against `_last_audit_entries`
+        (the SAME list `_sync_audit_mode()` handed `MCPAuditMode` this pass)
+        -- an out-of-range index (a stale selection racing a background
+        resync that shrank the window) resolves to `None`, which
+        `show_audit_entry()` renders as "nothing selected" rather than
+        crashing.
+        """
+        event.stop()
+        entry = (
+            self._last_audit_entries[event.index]
+            if 0 <= event.index < len(self._last_audit_entries)
+            else None
+        )
+        await self.query_one(MCPInspector).show_audit_entry(entry)
+
+    async def on_mcp_inspector_audit_open_tool_requested(
+        self, event: MCPInspector.AuditOpenToolRequested
+    ) -> None:
+        """Route the audit-entry detail's "Open tool" button: resolve the
+        entry's `(server_key, tool_name)` against `_last_hub_tools`
+        (`_tool_for()`, same lookup `on_mcp_tools_mode_tool_selected()`
+        uses) and, when found, switch to Tools mode, select its row, and
+        show its full tool detail in the inspector -- a tool that has since
+        dropped out of the catalog is a warning toast, never a crash.
+
+        The populate work is dispatched into the SAME exclusive worker
+        group (`"mcp-tool-clear"`) `set_mode()` just used for its own
+        `_clear_tool_view()` call, added HERE synchronously (no `await`
+        between the two `run_worker()` calls) -- Textual cancels an
+        existing worker in an exclusive group at `add_worker()` time, not
+        at execution time (`WorkerManager.add_worker()`), so this
+        deterministically supersedes that clear rather than racing it for
+        which one finishes last.
+        """
+        event.stop()
+        tool = self._tool_for(event.server_key, event.tool_name)
+        if tool is None:
+            self.app.notify(
+                _toast(f"{event.server_key}::{event.tool_name}: tool no longer available."),
+                severity="warning",
+            )
+            return
+        self.set_mode("tools")
+        self.run_worker(
+            self._open_audit_tool(tool), group="mcp-tool-clear", exclusive=True
+        )
+
+    async def _open_audit_tool(self, tool: HubTool) -> None:
+        await self.query_one(MCPToolsMode).select_tool_row(tool.tool_id)
+        await self.query_one(MCPInspector).show_tool(tool, effective=self._effective_for_display(tool))
+
+    async def on_mcp_inspector_audit_adjust_permission_requested(
+        self, event: MCPInspector.AuditAdjustPermissionRequested
+    ) -> None:
+        """Route the audit-entry detail's "Adjust permission" button --
+        mirrors `on_mcp_inspector_audit_open_tool_requested()` above, but
+        switches to Permissions mode and moves the matrix cursor to the
+        tool's row instead of opening its full Tools-mode detail. Same
+        exclusive-group dispatch rationale (see that method's docstring).
+        """
+        event.stop()
+        tool = self._tool_for(event.server_key, event.tool_name)
+        if tool is None:
+            self.app.notify(
+                _toast(f"{event.server_key}::{event.tool_name}: tool no longer available."),
+                severity="warning",
+            )
+            return
+        self.set_mode("permissions")
+        self.run_worker(
+            self._open_audit_permission(tool), group="mcp-tool-clear", exclusive=True
+        )
+
+    async def _open_audit_permission(self, tool: HubTool) -> None:
+        self.query_one(MCPPermissionsMode).select_tool_row(tool.server_key, tool.name)
+        await self.query_one(MCPInspector).show_permission(tool, self._effective_for_display(tool))
 
     async def on_mcp_inspector_reallow_requested(
         self, event: MCPInspector.ReallowRequested
