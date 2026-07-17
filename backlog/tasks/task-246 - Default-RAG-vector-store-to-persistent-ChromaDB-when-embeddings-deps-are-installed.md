@@ -1,5 +1,5 @@
 ---
-id: TASK-196
+id: TASK-246
 title: >-
   Default RAG vector store to persistent ChromaDB when embeddings deps are
   installed

@@ -1,5 +1,5 @@
 ---
-id: TASK-206
+id: TASK-256
 title: >-
   Align hybrid retrieval fusion with the tldw_server design (RRF plus alpha
   weighting)
@@ -9,14 +9,14 @@ created_date: '2026-07-12 14:12'
 labels:
   - rag
 dependencies:
-  - TASK-197
+  - TASK-247
 priority: medium
 ---
 
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-tldw_server fuses hybrid results with Reciprocal Rank Fusion (k=60) followed by an alpha-weighted blend of the FTS and vector RRF scores, with alpha=0.7 weighting the vector side (tldw_server2 database_retrievers.py:2044-2092). The chatbook hybrid pipeline is an ad-hoc weighted merge whose vector leg has always been empty in practice. Once indexing makes the vector leg real (task-197), align the fusion math and defaults with the server so hybrid result quality and behavior match the reference design. Filed from the 2026-07-12 RAG module audit.
+tldw_server fuses hybrid results with Reciprocal Rank Fusion (k=60) followed by an alpha-weighted blend of the FTS and vector RRF scores, with alpha=0.7 weighting the vector side (tldw_server2 database_retrievers.py:2044-2092). The chatbook hybrid pipeline is an ad-hoc weighted merge whose vector leg has always been empty in practice. Once indexing makes the vector leg real (task-247), align the fusion math and defaults with the server so hybrid result quality and behavior match the reference design. Filed from the 2026-07-12 RAG module audit.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
