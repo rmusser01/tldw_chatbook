@@ -216,7 +216,10 @@ def _parse_css_blocks(css_text: str) -> dict[str, dict[str, str]]:
 
     Comments are stripped first; selectors and values are whitespace-
     normalized. Good enough for the simple declaration blocks under test --
-    NOT a general CSS parser.
+    NOT a general CSS parser. Known limit: a selector LIST (``#a, #b { }``)
+    is kept as one compound key, so regrouping rules across the two files
+    reports as "missing from footer section" (a loud false-fail, never a
+    silent pass) -- split the list back out if you hit that.
     """
     text = re.sub(r"/\*.*?\*/", "", css_text, flags=re.DOTALL)
     blocks: dict[str, dict[str, str]] = {}
@@ -306,37 +309,71 @@ def test_personas_screen_has_no_recompose_path_while_footer_hints_are_non_persis
     silently resets its hints (the task-264 fix-wave bug, solved for the
     static screens by BaseAppScreen's persisting registration).
 
-    Guard: fail if any BaseAppScreen subclass in personas_screen.py gains a
-    ``recompose=True`` call (a recompose reactive or refresh(recompose=True))
-    while the file still lacks the persisting ``register_footer_shortcuts``
-    API. Scoped to BaseAppScreen subclasses because recompose on a child
-    WIDGET only rebuilds that widget's children, never the screen's footer.
+    Guard, two rules (both literal-True only -- the house AST-guard style):
+    - any ``recompose=True`` call inside a BaseAppScreen subclass body
+      (recompose reactives, self.refresh(recompose=True)); non-screen child
+      widget classes are excluded because a child-widget recompose only
+      rebuilds that widget's children, never the screen's footer;
+    - any ``.refresh(recompose=True)`` call OUTSIDE class bodies -- the
+      library_screen.py precedent is module-level helpers that take the
+      screen and call ``screen.refresh(recompose=True)``, invisible to a
+      class-body-only walk (task-289 review).
+
+    Escape hatch: an ACTUAL ``.register_footer_shortcuts(...)`` call in the
+    file (the persisting API) disarms the guard -- checked as an AST call,
+    not a substring, so a comment mentioning the API cannot disarm it.
     """
     import tldw_chatbook.UI.Screens.personas_screen as personas_module
 
     source = Path(personas_module.__file__).read_text(encoding="utf-8")
     tree = ast.parse(source)
 
-    recompose_sites: list[int] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.ClassDef):
-            continue
-        base_names = {
-            base.id if isinstance(base, ast.Name) else getattr(base, "attr", "")
-            for base in node.bases
-        }
-        if "BaseAppScreen" not in base_names:
-            continue
-        for inner in ast.walk(node):
-            if isinstance(inner, ast.Call) and any(
-                keyword.arg == "recompose"
-                and isinstance(keyword.value, ast.Constant)
-                and keyword.value.value is True
-                for keyword in inner.keywords
-            ):
-                recompose_sites.append(inner.lineno)
+    def _has_literal_true_recompose(call: ast.Call) -> bool:
+        return any(
+            keyword.arg == "recompose"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is True
+            for keyword in call.keywords
+        )
 
-    uses_persisting_api = "register_footer_shortcuts" in source
+    recompose_sites: list[int] = []
+    uses_persisting_api = False
+    for top_level in tree.body:
+        if isinstance(top_level, ast.ClassDef):
+            base_names = {
+                base.id if isinstance(base, ast.Name) else getattr(base, "attr", "")
+                for base in top_level.bases
+            }
+            is_screen_class = "BaseAppScreen" in base_names
+            for inner in ast.walk(top_level):
+                if not isinstance(inner, ast.Call):
+                    continue
+                if (
+                    isinstance(inner.func, ast.Attribute)
+                    and inner.func.attr == "register_footer_shortcuts"
+                ):
+                    uses_persisting_api = True
+                if is_screen_class and _has_literal_true_recompose(inner):
+                    recompose_sites.append(inner.lineno)
+        else:
+            # Module-level statements/functions: only .refresh(recompose=True)
+            # counts here (a bare reactive() at module scope isn't a screen
+            # reactive), but the persisting-API call disarms from anywhere.
+            for inner in ast.walk(top_level):
+                if not isinstance(inner, ast.Call):
+                    continue
+                if (
+                    isinstance(inner.func, ast.Attribute)
+                    and inner.func.attr == "register_footer_shortcuts"
+                ):
+                    uses_persisting_api = True
+                if (
+                    isinstance(inner.func, ast.Attribute)
+                    and inner.func.attr == "refresh"
+                    and _has_literal_true_recompose(inner)
+                ):
+                    recompose_sites.append(inner.lineno)
+
     assert not (recompose_sites and not uses_persisting_api), (
         f"personas_screen.py gained recompose=True at line(s) {recompose_sites} "
         "while its footer hints still use the non-persisting "
