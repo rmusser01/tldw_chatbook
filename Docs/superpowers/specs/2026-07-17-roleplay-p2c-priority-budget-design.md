@@ -1,6 +1,6 @@
 # Roleplay P2c — entry priority + priority-aware token budget (Lore)
 
-**Status:** Design approved (brainstorm), pending spec review.
+**Status:** Implemented (P2c).
 
 **Program:** Roleplay (Personas) redesign — P2 (Lore mode), third sub-project. Mirrors P1c (dictionary entry priority). Follows P2a (Lore foundation + diagnostics, merged PR #673).
 
