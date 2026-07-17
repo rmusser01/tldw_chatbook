@@ -41,7 +41,7 @@ image-message insert** to build a debug string that is never emitted.
 
 ## P0 — Quick wins (trivial diffs, immediate effect)
 
-### A1. DB layer stringifies every query's params for a disabled debug log — task-246
+### A1. DB layer stringifies every query's params for a disabled debug log — task-263
 `DB/ChaChaNotes_DB.py:2635-2636`: the `isEnabledFor(logging.DEBUG)` guard is
 **commented out** (its comment still says "Avoid formatting query/params if
 not debugging") so the f-string — including `str(params)` over raw
@@ -52,7 +52,7 @@ every image message. Systemic: same pattern at `DB/Prompts_DB.py:433`,
 `DB/Sync_Client.py:667,674`. Fix: loguru has no isEnabledFor — use logger.opt(lazy=True) with callables (or a loguru min-level check);
 truncate params *before* stringifying. Risk: none (logging-only).
 
-### A2. Console `save_state()` runs twice per tab-switch-away — task-247
+### A2. Console `save_state()` runs twice per tab-switch-away — task-264
 `app.py:4611-4621` calls `save_state()` explicitly and stores the result;
 Textual's `ScreenSuspend` then fires `ChatScreen.on_screen_suspend`
 (`chat_screen.py:10651-10655`) which calls `save_state()` **again and
@@ -60,7 +60,7 @@ discards the result**. `save_state` walks O(sessions × messages) serializing
 every native Console message. Fix: delete the suspend-hook call. Risk: none
 (return value provably unused).
 
-### A3. 100 ms guaranteed event-loop freeze every 2 s on the Embeddings screen — task-248
+### A3. 100 ms guaranteed event-loop freeze every 2 s on the Embeddings screen — task-265
 `Widgets/performance_metrics.py:196` calls
 `psutil.Process.cpu_percent(interval=0.1)` inside a sync `set_interval(2.0)`
 callback — `interval=0.1` **sleeps 100 ms on the event loop** every tick while
@@ -69,7 +69,7 @@ correct non-blocking form (`interval=None`) is already used at
 `Metrics/metrics.py:200`. Latent copies (currently no UI callers):
 `metrics_logger.py:153`, `RAG_Search/simplified/health_check.py:277`.
 
-### A4. Conversation search uses a correlated `LIKE` scan; the FTS index already exists — task-249
+### A4. Conversation search uses a correlated `LIKE` scan; the FTS index already exists — task-266
 `DB/ChaChaNotes_DB.py:4924-4936` (`search_conversations_page`) matches
 message content with `EXISTS(SELECT 1 … m.content LIKE '%q%')` — per-candidate
 correlated scan, index-hostile leading wildcard — while the schema defines and
@@ -78,7 +78,7 @@ triggers `messages_fts` (line 326-356) and `search_messages_by_content`
 with a search string; multiplied by the P1-B1 tick this hits ~70 ms/tick.
 Fix: join `messages_fts MATCH`. Risk: low (in-schema template exists).
 
-### A5. Chatbook import commits ~1,500 transactions for a 50×30 import — task-250
+### A5. Chatbook import commits ~1,500 transactions for a 50×30 import — task-267
 `Chatbooks/chatbook_importer.py:314-388` never opens an outer transaction;
 `add_conversation`/`add_message` each commit individually.
 `TransactionContextManager` is depth-tracked/reentrant
@@ -88,7 +88,7 @@ Fix: join `messages_fts MATCH`. Risk: low (in-schema template exists).
 
 ## P1 — Interaction hot paths
 
-### B1. The Console 0.2 s sync tick — task-251 (umbrella)
+### B1. The Console 0.2 s sync tick — task-268 (umbrella)
 `chat_screen.py:7419-7431` arms `set_interval(0.2, _poll_transcript)` for the
 duration of any active run; the tick runs `_sync_native_console_chat_ui`
 (7356-7381) = **10 sub-syncs, most unconditional**:
@@ -123,7 +123,7 @@ its row reconciler is genuinely incremental (`_reconcile_rows`,
 console_transcript.py:695-738); streaming does **not** hit sqlite per chunk
 (persist = one INSERT at first content + one UPDATE at finalize) — keep both.
 
-### B2. Library: 124 whole-screen recomposes; targeted `sync_state()` has zero callers — task-252
+### B2. Library: 124 whole-screen recomposes; targeted `sync_state()` has zero callers — task-269
 `library_screen.py` calls `self.refresh(recompose=True)` (BaseAppScreen: full
 remove-and-remount of nav bar, footer, ~20-row rail, and 50–100-row canvas)
 from per-row checkbox/select handlers (5926-5956, 6020-6045, 10268-10312) and
@@ -134,7 +134,7 @@ invoked. This pattern already caused the app-wide mouse-capture bug that
 through the existing `sync_state` methods; patch single-row toggles directly.
 Risk: moderate (rail counts must stay in sync) — stage by interaction class.
 
-### B3. Home dashboard: 3 sync DB queries on the UI thread per visit/click — task-253
+### B3. Home dashboard: 3 sync DB queries on the UI thread per visit/click — task-270
 `home_screen.py:417-444` inline-executes watchlist snapshot, notification
 queue (limit 100), and server-event feed queries synchronously at every
 compose, triage sync, and rail click — while the sibling
@@ -143,7 +143,7 @@ correctly. Also `HomeRail`/`HomeCanvas.sync_state()` always recompose
 (home_rail.py:64, home_canvas.py:47). Fix: thread + cache the seam calls;
 targeted rail/canvas patches.
 
-### B4. Debounced searches run sync sqlite/FTS on the event loop — task-254
+### B4. Debounced searches run sync sqlite/FTS on the event loop — task-271
 `run_worker(coroutine)` is **not** a thread. Console browser search
 (chat_screen.py:661-671 → chat_conversation_scope_service.py:144-147 →
 `chat_conversation_service.list_conversations`, a plain `def`) blocks the loop
@@ -154,7 +154,7 @@ the local mode never yields. Fix: `asyncio.to_thread` at the service leaf.
 Risk: medium — thread-local connections are fine; note `exclusive=True`
 cancellation cannot interrupt an in-flight thread call.
 
-### B5. Library RAG panel rebuilds ~100+ widgets per keystroke — task-255
+### B5. Library RAG panel rebuilds ~100+ widgets per keystroke — task-272
 `library_screen.py:11821-11827`: `Input.Changed` on the RAG query box calls
 `_refresh_search_rag_panel_state_widgets` (12375-12425), which tears down and
 remounts the whole Evidence results list and Recent-searches history
@@ -166,7 +166,7 @@ line (already a separable function).
 
 ## P2 — Startup (~1.8–2.3 s to first paint; import time dominates, `TldwCli()` warm is only ~31 ms)
 
-### C1. `tldw_api` package: 1,313 eager Pydantic models, ~469 ms (31 % of import) — task-256
+### C1. `tldw_api` package: 1,313 eager Pydantic models, ~469 ms (31 % of import) — task-273
 `tldw_api/__init__.py` (1,681 lines) eagerly imports 54 schema files
 (16,376 lines). Forced by `app.py:353` and **69 other files**. Fix: PEP 562
 lazy `__getattr__` re-exports — the pattern already exists, documented, in
