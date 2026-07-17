@@ -206,3 +206,85 @@ async def test_console_workbench_scope_does_not_start_transcript_effect():
             ConsoleBackgroundEffect,
         )
         assert effect.is_effect_active is False
+
+
+# --- task-261: per-frame grid cache -----------------------------------------
+#
+# `render_line` used to rebuild the full W×H grid via `frame_text()` once PER
+# LINE (O(W·H²) per repaint). These tests prove the cache engages (one grid
+# build per frame regardless of line count) and that the rendered output is
+# byte-identical to the uncached `frame_text()` result.
+
+
+@pytest.mark.asyncio
+async def test_render_line_builds_the_frame_grid_once_per_repaint():
+    app = EffectHarness(
+        ConsoleBackgroundEffectSettings(enabled=True, effect="snow", fps=6)
+    )
+
+    async with app.run_test(size=(60, 18)) as pilot:
+        effect = app.query_one("#console-background-effect", ConsoleBackgroundEffect)
+        await pilot.pause(0.1)
+        # Drive frames manually so the interval timer can't advance the frame
+        # serial between render_line calls.
+        effect._stop_timer()
+
+        width, height = effect.size.width, effect.size.height
+        assert width > 0 and height > 0
+
+        real_frame_text = effect.frame_text
+        calls: list[tuple[int, int]] = []
+
+        def counting_frame_text(w: int, h: int) -> str:
+            calls.append((w, h))
+            return real_frame_text(w, h)
+
+        effect.frame_text = counting_frame_text
+        effect._invalidate_frame_cache()
+
+        strips = [effect.render_line(y) for y in range(height)]
+
+        assert calls == [(width, height)], (
+            "a full repaint must compute the frame grid exactly once"
+        )
+
+        # Behavior parity: every rendered line matches the uncached grid.
+        expected_lines = real_frame_text(width, height).splitlines()
+        rendered_lines = [strip.text for strip in strips]
+        assert rendered_lines == expected_lines
+
+
+@pytest.mark.asyncio
+async def test_frame_cache_invalidates_on_tick_settings_and_resize():
+    app = EffectHarness(
+        ConsoleBackgroundEffectSettings(enabled=True, effect="rain", fps=6)
+    )
+
+    async with app.run_test(size=(60, 18)) as pilot:
+        effect = app.query_one("#console-background-effect", ConsoleBackgroundEffect)
+        await pilot.pause(0.1)
+        effect._stop_timer()
+
+        width, height = effect.size.width, effect.size.height
+        first = effect._frame_lines(width, height)
+        assert effect._frame_lines(width, height) is first, (
+            "same frame + same size must reuse the cached lines"
+        )
+
+        # A frame tick must produce a fresh grid.
+        effect._advance_frame()
+        after_tick = effect._frame_lines(width, height)
+        assert after_tick is not first
+
+        # A resize (different requested dimensions) must produce a fresh grid.
+        smaller = effect._frame_lines(width - 5, height - 3)
+        assert smaller is not after_tick
+        assert len(smaller) == height - 3
+        assert all(len(line) == width - 5 for line in smaller)
+
+        # A settings change must produce a fresh grid.
+        effect.update_settings(
+            ConsoleBackgroundEffectSettings(enabled=True, effect="matrix", fps=6)
+        )
+        after_settings = effect._frame_lines(width - 5, height - 3)
+        assert after_settings is not smaller
