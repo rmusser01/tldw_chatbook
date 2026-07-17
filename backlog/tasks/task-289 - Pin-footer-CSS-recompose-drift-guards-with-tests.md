@@ -1,5 +1,5 @@
 ---
-id: TASK-287
+id: TASK-289
 title: Pin footer CSS/recompose drift guards with tests
 status: To Do
 assignee: []

@@ -211,3 +211,4 @@ FINAL WHOLE-BRANCH REVIEW (opus): APPROVE — 0 blocking. Signature flow verifie
 
 ---
 # task-264 [2026-07-17] — footer shortcut hints. Branch claude/footer-hints-264 off origin/dev 1bf8c0d3. Scout: AppFooterStatus mounted on App default screen = never composited under pushed BaseAppScreens (App.query_one resolves default screen BY DESIGN — registrations "succeed" invisibly); BaseAppScreen's own Footer renders nothing except chat_screen's 4 show=True bindings; CSS is type-selector (per-instance free); .ds-shortcut-bar defined-unconsumed. DECISION: per-screen AppFooterStatus (plan has full rationale). 8 caller sites to redirect + app.py cached-widget DB updater. Queue after this: de-flake pass, then backlog status drift.
+Task 1 (task-264 footer hints): complete (commits fa443e29..a237c108, review clean after fix wave — recompose persistence in BaseAppScreen, Library/Settings registered, KEEP-IN-SYNC anchored to _widgets.tcss)
