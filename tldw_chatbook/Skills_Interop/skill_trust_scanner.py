@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..tldw_api.skills_schemas import SUPPORTING_FILE_NAME_PATTERN
 from .skill_trust_crypto import sha256_hex
 from .skill_trust_models import SkillDirectorySnapshot, SkillFileFingerprint
 
@@ -14,6 +13,9 @@ _TEMP_SUFFIXES = (".tmp", ".swp", ".part")
 
 
 def _is_supported_filename(filename: str) -> bool:
+    # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+    from ..tldw_api.skills_schemas import SUPPORTING_FILE_NAME_PATTERN
+
     if filename == _SKILL_FILENAME:
         return True
     normalized_filename = filename.lower()

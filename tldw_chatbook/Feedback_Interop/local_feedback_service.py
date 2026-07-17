@@ -7,8 +7,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ..tldw_api.feedback_schemas import ExplicitFeedbackRequest
-
 
 class LocalFeedbackService:
     """Persist feedback for local/offline Chatbook conversations and RAG queries."""
@@ -116,6 +114,9 @@ class LocalFeedbackService:
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         self._enforce("feedback.create.local")
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.feedback_schemas import ExplicitFeedbackRequest
+
         request = ExplicitFeedbackRequest(
             conversation_id=conversation_id,
             message_id=message_id,

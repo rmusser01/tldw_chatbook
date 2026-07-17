@@ -8,7 +8,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from tldw_chatbook.tldw_api.prompt_chatbook_schemas import ChatbookImportRequest
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_json
 
 from .chatbook_creator import ChatbookCreator
@@ -283,6 +282,9 @@ class LocalChatbookService:
         }
 
     async def import_chatbook(self, chatbook_file_path: str | Path, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api.prompt_chatbook_schemas import ChatbookImportRequest
+
         payload = self._as_dict(request_data)
         conflict_value = payload.get("conflict_resolution", ChatbookImportRequest().conflict_resolution)
         conflict_resolution = ConflictResolution(str(conflict_value))

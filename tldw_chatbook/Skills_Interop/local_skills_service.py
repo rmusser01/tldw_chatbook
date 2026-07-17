@@ -15,18 +15,6 @@ from typing import Any
 import yaml
 
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    SkillContextPayload,
-    SkillCreate,
-    SkillExecuteRequest,
-    SkillExecutionResult,
-    SkillImportRequest,
-    SkillResponse,
-    SkillsListResponse,
-    SkillSummary,
-    SkillUpdate,
-)
-from ..tldw_api.skills_schemas import _normalize_skill_name
 from ..Utils.input_validation import sanitize_string, validate_text_input
 from ..Utils.path_validation import get_safe_relative_path, validate_path_simple
 from .skill_trust_models import SkillTrustBlockedError
@@ -144,6 +132,9 @@ class LocalSkillsService:
         temp_path.replace(self.index_path)
 
     def _skill_dir(self, skill_name: str) -> Path:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.skills_schemas import _normalize_skill_name
+
         return self.skills_dir / _normalize_skill_name(skill_name)
 
     @staticmethod
@@ -284,6 +275,12 @@ class LocalSkillsService:
         skill_dir: Path,
         existing: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.skills_schemas import _normalize_skill_name
+
+        from ..tldw_api import SkillSummary
+
         front_matter, _ = cls._parse_front_matter(content)
         now = cls._now_iso()
         base = {
@@ -406,6 +403,9 @@ class LocalSkillsService:
         return safe_path.read_bytes().decode("utf-8")
 
     def _response_for_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SkillResponse
+
         skill_name = str(record["name"])
         skill_dir = self._skill_dir(skill_name)
         content = self._read_text_preserving_newlines(
@@ -422,6 +422,9 @@ class LocalSkillsService:
         return payload
 
     def _summary_for_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SkillSummary
+
         summary = LocalSkillsService._dump(
             SkillSummary(
                 name=record["name"],
@@ -506,6 +509,9 @@ class LocalSkillsService:
         )
 
     def _require_record(self, skill_name: str, records: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.skills_schemas import _normalize_skill_name
+
         normalized_name = _normalize_skill_name(skill_name)
         record = records.get(normalized_name)
         if record is None:
@@ -531,6 +537,9 @@ class LocalSkillsService:
 
     @staticmethod
     def _derive_name_from_filename(filename: str) -> str:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.skills_schemas import _normalize_skill_name
+
         candidate = PurePosixPath(filename).name
         if candidate.lower().endswith(".zip"):
             candidate = candidate[:-4]
@@ -558,6 +567,9 @@ class LocalSkillsService:
         limit: int = 100,
         offset: int = 0,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SkillsListResponse
+
         self._enforce("skills.list.local")
         records = self._load_index()
         summaries = [self._summary_for_record(record) for _, record in sorted(records.items())]
@@ -565,6 +577,9 @@ class LocalSkillsService:
         return self._dump(SkillsListResponse(skills=page, count=len(page), total=len(summaries), limit=limit, offset=offset))
 
     async def get_context(self) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SkillContextPayload
+
         self._enforce("skills.context.list.local")
         records = self._load_index()
         available: list[dict[str, Any]] = []
@@ -618,6 +633,9 @@ class LocalSkillsService:
         supporting_files: dict[str, str] | None = None,
         trust_approved: bool = False,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SkillCreate
+
         self._enforce("skills.create.local")
         request = SkillCreate(name=name, content=content, supporting_files=supporting_files)
         async with self._lock:
@@ -647,6 +665,12 @@ class LocalSkillsService:
         expected_version: int | None = None,
         trust_approved: bool = False,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.skills_schemas import _normalize_skill_name
+
+        from ..tldw_api import SkillUpdate
+
         self._enforce("skills.update.local")
         request = SkillUpdate(content=content, supporting_files=supporting_files)
         async with self._lock:
@@ -675,6 +699,9 @@ class LocalSkillsService:
             return self._response_for_record(next_record)
 
     async def delete_skill(self, skill_name: str, *, expected_version: int | None = None) -> bool:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.skills_schemas import _normalize_skill_name
+
         self._enforce("skills.delete.local")
         async with self._lock:
             records = self._load_index()
@@ -695,6 +722,9 @@ class LocalSkillsService:
         overwrite: bool = False,
         trust_approved: bool = False,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SkillImportRequest
+
         self._enforce("skills.import.launch.local")
         request = SkillImportRequest(
             name=name,
@@ -783,6 +813,9 @@ class LocalSkillsService:
         }
 
     async def execute_skill(self, skill_name: str, *, args: str | None = None) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SkillExecuteRequest, SkillExecutionResult
+
         self._enforce("skills.execute.launch.local")
         self._require_trusted_skill(skill_name)
         request = SkillExecuteRequest(args=args)
