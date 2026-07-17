@@ -4384,6 +4384,13 @@ UPDATE db_schema_version
         this matches whole tokens or a prefix of the last token -- e.g.
         "testing" is found by "test" but not by "esting". Callers relying on
         mid-word substring matches should not assume FTS parity with LIKE.
+
+        Args:
+            term: Raw user-typed search text (already normalized/stripped).
+
+        Returns:
+            An FTS5 MATCH expression string: the term as a double-quoted
+            FTS5 string literal with a trailing ``*`` for prefix matching.
         """
         escaped = term.replace('"', '""')
         return f'"{escaped}"*'
@@ -4967,7 +4974,7 @@ UPDATE db_schema_version
                 "JOIN messages m ON fts.rowid = m.rowid "
                 "WHERE m.conversation_id = conversations.id "
                 "AND m.deleted = 0 "
-                "AND fts.messages_fts MATCH ?"
+                "AND fts MATCH ?"
                 "))"
             )
             like_query = f"%{normalized_query}%"

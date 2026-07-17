@@ -154,3 +154,19 @@ class TestPreviewParamsHelperShapes:
         # Must not raise -- a broken repr() on a param must never break the
         # query/logging path.
         preview_params((Explodes(),))
+
+    def test_generator_params_are_not_consumed(self):
+        """PR #651 review: iterating a generator in the preview would consume
+        it before cursor.execute — a heisenbug firing only with DEBUG on."""
+        def gen():
+            yield 1
+            yield 2
+
+        generator = gen()
+        preview_params(generator)  # must NOT iterate it
+        assert list(generator) == [1, 2], "preview consumed the generator"
+
+    def test_string_params_not_split_char_by_char(self):
+        preview = preview_params("abc")
+        assert preview == "abc"
+        assert "a, b, c" not in preview

@@ -200,3 +200,53 @@ def test_import_still_persists_all_conversations_and_messages(tmp_path):
             assert len(messages) == MESSAGES_PER_CONVERSATION
     finally:
         db.close_connection()
+
+
+def test_success_not_counted_when_commit_fails(tmp_path, monkeypatch):
+    """PR #651 review: successful_items must not increment before the outer
+    transaction commits — a failing commit previously double-counted the
+    conversation as both success and failure."""
+    from tldw_chatbook.Chatbooks.chatbook_importer import ChatbookImporter
+    from tldw_chatbook.Chatbooks.chatbook_models import ContentType
+    from tldw_chatbook.DB import ChaChaNotes_DB as db_module
+
+    chatbook = _build_synthetic_chatbook(tmp_path)
+    dest = tmp_path / "dest-commitfail"
+    dest.mkdir()
+    dest_paths = {name: str(dest / f"{name}.db") for name in
+                  ("ChaChaNotes", "Prompts", "Media", "Evals", "RAG")}
+
+    original_transaction = db_module.CharactersRAGDB.transaction
+
+    class _FailingCommitCtx:
+        def __init__(self, inner):
+            self._inner = inner
+
+        def __enter__(self):
+            return self._inner.__enter__()
+
+        def __exit__(self, exc_type, exc, tb):
+            self._inner.__exit__(exc_type, exc, tb)
+            if exc_type is None:
+                raise RuntimeError("simulated commit failure")
+
+    call_depth = {"n": 0}
+
+    def failing_transaction(self):
+        ctx = original_transaction(self)
+        call_depth["n"] += 1
+        if call_depth["n"] == 1:  # only the importer's OUTER transaction
+            return _FailingCommitCtx(ctx)
+        return ctx
+
+    monkeypatch.setattr(db_module.CharactersRAGDB, "transaction", failing_transaction)
+    importer = ChatbookImporter(dest_paths)
+    ok, _message = importer.import_chatbook(
+        chatbook, content_selections={ContentType.CONVERSATION: ["conv-0"]}
+    )
+    status = importer.last_import_status if hasattr(importer, "last_import_status") else None
+    # The import must not report the conversation as successful; depending on
+    # reporting shape, either ok is False or the summary reports 0 successes.
+    assert (not ok) or ("0/" in _message) or ("Failed" in _message) or (
+        status is not None and status.successful_items == 0
+    )

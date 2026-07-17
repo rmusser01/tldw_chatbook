@@ -83,9 +83,16 @@ def preview_params(params: Optional[Union[Tuple[Any, ...], Dict[str, Any]]]) -> 
         if isinstance(params, dict):
             items = ", ".join(f"{k}={_preview_value(v)}" for k, v in params.items())
             text = f"{{{items}}}"
-        else:
+        elif isinstance(params, (list, tuple)):
             items = ", ".join(_preview_value(v) for v in params)
             text = f"({items})"
+        else:
+            # NOT a general iterable branch on purpose: iterating an
+            # arbitrary iterable here would CONSUME a generator before the
+            # query executes (a heisenbug that only fires with DEBUG on)
+            # and would split a stray string param char-by-char. Anything
+            # that isn't a plain sequence/mapping previews as one value.
+            text = _preview_value(params)
     except Exception:
         # Debug-log preview building must never break the query path.
         return "<unrepr-able params>"
