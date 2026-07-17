@@ -113,7 +113,7 @@ class MainNavigationBar(Container):
 
     .nav-overflow-hint {
         width: auto;
-        padding: 0;
+        padding: 0 1;
         height: 3;
         content-align: center middle;
         color: $text-muted;

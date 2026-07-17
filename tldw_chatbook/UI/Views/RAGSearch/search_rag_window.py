@@ -740,16 +740,21 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
         """Apply loaded collection names to mounted Textual widgets."""
         self.available_collections = list(collections)
 
-        collections_list = self.query_one("#collections-list", ListView)
-        await collections_list.clear()
+        try:
+            collections_list = self.query_one("#collections-list", ListView)
+            await collections_list.clear()
 
-        for collection in self.available_collections:
-            await collections_list.append(ListItem(Static(collection)))
+            for collection in self.available_collections:
+                await collections_list.append(ListItem(Static(collection)))
 
-        collection_select = self.query_one("#collection-select", Select)
-        collection_select.set_options(
-            [("All Collections", "all")] + [(c, c) for c in self.available_collections]
-        )
+            collection_select = self.query_one("#collection-select", Select)
+            collection_select.set_options(
+                [("All Collections", "all")] + [(c, c) for c in self.available_collections]
+            )
+        except NoMatches:
+            # The window (or its Maintenance tab) went away while the
+            # collections loader thread was in flight; nothing to update.
+            return
     
     @work(thread=True)
     def _refresh_collections_list(self) -> None:

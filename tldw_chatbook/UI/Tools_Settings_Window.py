@@ -537,14 +537,6 @@ class ToolsSettingsWindow(Container):
                         placeholder="Your username",
                         tooltip="Used for personalization and conversation tracking"
                     )
-                    
-                    yield Label("Use Dropdown Navigation:", classes="settings-label")
-                    yield Switch(
-                        value=general_config.get("use_dropdown_navigation", False),
-                        id="general-use-dropdown-navigation",
-                        classes="settings-checkbox",
-                        tooltip="Use a compact dropdown menu instead of horizontal tabs"
-                    )
             
             # Add spacing before Appearance section
             yield Static("", classes="settings-section-spacer")
@@ -3127,18 +3119,6 @@ Thank you for using tldw-chatbook! 🎉
             if save_setting_to_cli_config("general", "users_name", self.query_one("#general-username", Input).value):
                 saved_count += 1
             
-            # Dropdown Navigation
-            use_dropdown = self.query_one("#general-use-dropdown-navigation", Switch).value
-            current_dropdown = self.config_data.get("general", {}).get("use_dropdown_navigation", False)
-            if use_dropdown != current_dropdown:
-                if save_setting_to_cli_config("general", "use_dropdown_navigation", use_dropdown):
-                    saved_count += 1
-                    self.app_instance.notify(
-                        "Navigation style changed. Please restart the app for this change to take effect.",
-                        severity="warning",
-                        timeout=8
-                    )
-            
             # Media Ingestion UI Style
             ingest_ui_style = self.query_one("#general-ingest-ui-style", Select).value
             old_ui_style = self.config_data.get("media_ingestion", {}).get("ui_style", "simplified")
@@ -3328,7 +3308,6 @@ Thank you for using tldw-chatbook! 🎉
             self.query_one("#general-default-tab", Select).value = "chat"
             self.query_one("#general-theme", Select).value = "textual-dark"
             self.query_one("#general-username", Input).value = "default_user"
-            self.query_one("#general-use-dropdown-navigation", Switch).value = False  # Default is horizontal tabs
             self.query_one("#general-log-level", Select).value = "INFO"
             self.query_one("#general-splash-enabled", Checkbox).value = True  # Default is enabled
             self.query_one("#general-splash-duration", Input).value = "1.5"  # Default duration

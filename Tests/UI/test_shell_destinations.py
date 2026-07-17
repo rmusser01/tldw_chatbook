@@ -17,7 +17,7 @@ def test_master_shell_destination_order_matches_spec():
         "Workflows",
         "MCP",
         "ACP",
-        "Skills",
+        "Lab",
         "Settings",
     ]
 
@@ -32,6 +32,9 @@ def test_legacy_routes_resolve_to_master_destinations():
         "search": ("library", "search"),
         "study": ("library", "study"),
         "prompts": ("library", "prompts"),
+        "skills": ("library", "skills"),
+        "writing": ("library", "writing"),
+        "research": ("library", "research"),
         "chatbooks": ("artifacts", "chatbooks"),
         "ccp": ("personas", "personas"),
         "conversation": ("library", "conversation"),
@@ -39,6 +42,15 @@ def test_legacy_routes_resolve_to_master_destinations():
         "subscriptions": ("watchlists_collections", "subscriptions"),
         "tools_settings": ("mcp", "tools_settings"),
         "settings": ("settings", "settings"),
+        "logs": ("settings", "logs"),
+        "stats": ("settings", "stats"),
+        "llm": ("lab", "llm"),
+        "llm_management": ("lab", "llm"),
+        "stts": ("lab", "stts"),
+        "evals": ("lab", "evals"),
+        # The retired Coding screen folds into Console: legacy "coding" links
+        # land on Console's primary route.
+        "coding": ("console", "chat"),
     }
 
     for route, expected in expectations.items():

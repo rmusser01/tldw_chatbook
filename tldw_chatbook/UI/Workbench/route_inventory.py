@@ -24,6 +24,7 @@ WORKBENCH_ROUTE_OWNERS: dict[str, str] = {
     "workflows": "workflows",
     "mcp": "mcp",
     "acp": "acp",
+    "lab": "lab",
     "settings": "settings",
     "ingest": "library",
     "coding": "console",

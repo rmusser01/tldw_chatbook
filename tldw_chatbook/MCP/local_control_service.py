@@ -113,15 +113,36 @@ class LocalMCPControlService:
         return inventory
 
     def get_external_servers(self) -> list[dict[str, Any]]:
+        """List external server profiles with their discovery snapshots.
+
+        task-236: reads the whole catalog from ONE store load via
+        ``get_external_catalog`` (was 1 + N loads: ``list_profiles`` plus a
+        ``get_discovery_snapshot`` per profile). Governance gating and the
+        returned shape are unchanged.
+
+        Returns:
+            One dict per profile: the profile fields plus
+            ``discovery_snapshot`` and ``is_connected``.
+        """
         self._require_allowed("mcp.external_profiles.list.local")
         servers: list[dict[str, Any]] = []
         client = self.client
         active_sessions = getattr(client, "sessions", {}) if client is not None else {}
-        for profile in self.store.list_profiles():
+        catalog_reader = getattr(self.store, "get_external_catalog", None)
+        if catalog_reader is not None:
+            catalog = catalog_reader()
+        else:
+            # Duck-typed store double without the joined reader (the store is
+            # a constructor-injected dependency): legacy per-item reads.
+            catalog = [
+                (profile, self.store.get_discovery_snapshot(profile.profile_id))
+                for profile in self.store.list_profiles()
+            ]
+        for profile, snapshot in catalog:
             servers.append(
                 {
                     **profile.to_dict(),
-                    "discovery_snapshot": self.store.get_discovery_snapshot(profile.profile_id),
+                    "discovery_snapshot": snapshot,
                     "is_connected": profile.profile_id in active_sessions,
                 }
             )

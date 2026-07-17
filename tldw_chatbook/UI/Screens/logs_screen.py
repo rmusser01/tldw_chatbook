@@ -8,6 +8,8 @@ from textual.widgets import Button
 
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Logs_Window import LogsWindow
+from ..Workbench.workbench_state import WorkbenchHeaderState
+from ..Workbench.workbench_widgets import DestinationHeader
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -23,8 +25,18 @@ class LogsScreen(BaseAppScreen):
         self.logs_window = None
     
     def compose_content(self) -> ComposeResult:
-        """Compose the logs window content."""
+        """Compose the logs window content with its destination header."""
+        yield DestinationHeader(
+            WorkbenchHeaderState(
+                title="Logs",
+                subtitle="Application logs and diagnostics.",
+                status="ready",
+            ),
+            id="logs-destination-header",
+        )
         self.logs_window = LogsWindow(self.app_instance, classes="window")
+        # Leave room for the destination header above the window.
+        self.logs_window.styles.height = "1fr"
         yield self.logs_window
     
     def on_mount(self) -> None:

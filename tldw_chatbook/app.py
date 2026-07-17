@@ -66,7 +66,6 @@ from .Event_Handlers.LLM_Management_Events import (llm_management_events, llm_ma
                                                    llm_management_events_vllm)
 from tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events import handle_streaming_chunk, handle_stream_done
 from tldw_chatbook.Event_Handlers.worker_events import StreamingChunk, StreamDone
-from .Widgets.AppFooterStatus import AppFooterStatus
 from .config import (
     get_cli_setting,
     get_library_collections_db_path,
@@ -85,7 +84,7 @@ from .Logging_Config import configure_application_logging
 from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_HOME, TAB_LOGS, TAB_STATS, TAB_TOOLS_SETTINGS, TAB_CUSTOMIZE, \
     TAB_INGEST, TAB_LLM, TAB_MEDIA, TAB_SEARCH, TAB_EVALS, TAB_LIBRARY, TAB_ARTIFACTS, TAB_PERSONAS, TAB_WATCHLISTS_COLLECTIONS, \
     TAB_SCHEDULES, TAB_WORKFLOWS, TAB_MCP, TAB_ACP, TAB_SKILLS, TAB_SETTINGS, LLAMA_CPP_SERVER_ARGS_HELP_TEXT, \
-    LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_WRITING, TAB_RESEARCH, TAB_SUBSCRIPTIONS, TAB_CHATBOOKS, \
+    LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_STTS, TAB_STUDY, TAB_WRITING, TAB_RESEARCH, TAB_SUBSCRIPTIONS, TAB_CHATBOOKS, \
     LIBRARY_NAV_CONTEXT_MODE, LIBRARY_NAV_CONTEXT_NOTE_ID, LIBRARY_NAV_CONTEXT_NOTES_CREATE, \
     LIBRARY_NAV_CONTEXT_INGEST, \
     get_tab_display_label
@@ -205,7 +204,7 @@ from .ACP_Interop.runtime_session import ACPRuntimeSessionState
 from .DB.ChaChaNotes_DB import CharactersRAGDBError, ConflictError
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
-from .Widgets.titlebar import TitleBar
+from .Widgets.AppFooterStatus import AppFooterStatus
 from .Widgets.splash_screen import SplashScreen
 from .LLM_Calls.LLM_API_Calls import (
         chat_with_openai, chat_with_anthropic, chat_with_cohere,
@@ -220,6 +219,7 @@ from .LLM_Calls.LLM_API_Calls_Local import (
 from tldw_chatbook.config import get_chachanotes_db_path, settings, get_chachanotes_db_lazy
 from .UI.Navigation.main_navigation import NavigateToScreen
 from .UI.Navigation.screen_registry import resolve_screen_target
+from .UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 from .UI.Screens.media_runtime_state import MediaRuntimeState
 from .UI.Screens.study_scope_models import StudyScopeContext
 # Ingest UI has been rebuilt to use an internal TabbedContent (local/remote)
@@ -231,9 +231,6 @@ INGEST_VIEW_IDS: list[str] = []
 from .UI.Tools_Settings_Window import ToolsSettingsWindow
 from .UI.LLM_Management_Window import LLMManagementWindow
 from .UI.Customize_Window import CustomizeWindow
-from .UI.Tab_Bar import TabBar
-from .UI.Tab_Links import TabLinks
-from .UI.Tab_Dropdown import TabDropdown
 from .UI.console_command_provider import ConsoleCommandProvider
 from tldw_chatbook.Chat_Grammars_Interop import (
     ChatGrammarsScopeService,
@@ -529,24 +526,12 @@ class TabNavigationProvider(Provider):
         TAB_CHATBOOKS: "Switch to portable Chatbook context packs",
         TAB_TOOLS_SETTINGS: "Open MCP for legacy tools and settings",
         TAB_LOGS: "Switch to application logs",
-        TAB_CODING: "Switch to coding assistant",
         TAB_STATS: "Switch to statistics view",
         TAB_CUSTOMIZE: "Switch to appearance customization",
     }
 
-    NAVIGATION_TABS = (
-        TAB_HOME,
-        TAB_CHAT,
-        TAB_LIBRARY,
-        TAB_ARTIFACTS,
-        TAB_PERSONAS,
-        TAB_WATCHLISTS_COLLECTIONS,
-        TAB_SCHEDULES,
-        TAB_WORKFLOWS,
-        TAB_MCP,
-        TAB_ACP,
-        TAB_SKILLS,
-        TAB_SETTINGS,
+    NAVIGATION_TABS = tuple(
+        destination.primary_route for destination in SHELL_DESTINATION_ORDER
     )
 
     POPULAR_TABS = (
@@ -557,7 +542,7 @@ class TabNavigationProvider(Provider):
         TAB_MCP,
         TAB_SETTINGS,
     )
-    
+
     def __init__(self, screen, *args, **kwargs):
         """Initialize the TabNavigationProvider with required screen parameter."""
         super().__init__(screen, *args, **kwargs)
@@ -568,7 +553,12 @@ class TabNavigationProvider(Provider):
 
     @classmethod
     def command_palette_tab_ids(cls) -> tuple[str, ...]:
-        return tuple(dict.fromkeys(cls.NAVIGATION_TABS + tuple(ALL_TABS)))
+        # One palette entry per shell destination. Legacy route ids (media,
+        # search, ccp, tools_settings, llm_management, stts, evals, coding,
+        # logs, stats, writing, research, ...) are no longer separate labeled
+        # commands; they are alias terms on their owning destination's single
+        # command (see search()).
+        return cls.NAVIGATION_TABS
 
     @staticmethod
     def route_for_tab(tab_id: str) -> str:
@@ -591,11 +581,19 @@ class TabNavigationProvider(Provider):
             return None
 
     @classmethod
-    def _shell_command_label(cls, tab_id: str, visible_label: str) -> str:
-        destination = cls._shell_destination_for_tab(tab_id)
-        if destination is None or destination.accessible_label == visible_label:
-            return visible_label
-        return f"{visible_label} ({destination.accessible_label})"
+    def _destination_alias_terms(cls, destination) -> tuple[str, ...]:
+        """Searchable legacy route names that resolve to ``destination``."""
+        terms = {
+            destination.destination_id,
+            destination.label,
+            destination.primary_route,
+        }
+        if destination.full_label:
+            terms.add(destination.full_label)
+        for legacy_route in destination.legacy_routes:
+            terms.add(legacy_route)
+            terms.add(get_tab_display_label(legacy_route))
+        return tuple(sorted(term for term in terms if term))
 
     @classmethod
     def _shell_help_text(cls, tab_id: str) -> str | None:
@@ -605,18 +603,32 @@ class TabNavigationProvider(Provider):
         return f"Open {destination.accessible_label} for {destination.purpose}"
 
     def _tab_command(self, tab_id: str) -> tuple[str, str, str]:
-        label = get_tab_display_label(tab_id)
-        command_label = self._shell_command_label(tab_id, label)
+        destination = self._shell_destination_for_tab(tab_id)
+        label = (
+            destination.accessible_label
+            if destination is not None
+            else get_tab_display_label(tab_id)
+        )
         help_text = self._shell_help_text(tab_id) or self.TAB_HELP_TEXT.get(tab_id, f"Switch to {label}")
-        return f"Tab Navigation: Switch to {command_label}", tab_id, help_text
-    
+        return f"Tab Navigation: Switch to {label}", tab_id, help_text
+
     async def search(self, query: str) -> Hits:
         matcher = self.matcher(query)
-        
+
         tab_commands = [self._tab_command(tab_id) for tab_id in self.command_palette_tab_ids()]
-        
+
         for command_text, tab_id, help_text in tab_commands:
-            score = max(matcher.match(command_text), matcher.match(help_text))
+            destination = self._shell_destination_for_tab(tab_id)
+            alias_terms = (
+                self._destination_alias_terms(destination)
+                if destination is not None
+                else ()
+            )
+            score = max(
+                matcher.match(command_text),
+                matcher.match(help_text),
+                *(matcher.match(term) for term in alias_terms),
+            )
             if score > 0:
                 yield Hit(
                     score,
@@ -624,10 +636,10 @@ class TabNavigationProvider(Provider):
                     partial(self.switch_tab, tab_id),
                     help=help_text
                 )
-    
+
     async def discover(self) -> Hits:
         popular_tabs = [self._tab_command(tab_id) for tab_id in self.POPULAR_TABS]
-        
+
         for command_text, tab_id, help_text in popular_tabs:
             yield Hit(
                 1.0,
@@ -635,13 +647,19 @@ class TabNavigationProvider(Provider):
                 partial(self.switch_tab, tab_id),
                 help=help_text
             )
-    
+
     def switch_tab(self, tab_id: str) -> None:
         """Switch to the specified tab."""
         try:
             route = self.route_for_tab(tab_id)
             self.app.post_message(NavigateToScreen(route))
-            self.app.notify(f"Switched to {get_tab_display_label(tab_id)}", severity="information")
+            destination = self._shell_destination_for_tab(tab_id)
+            label = (
+                destination.accessible_label
+                if destination is not None
+                else get_tab_display_label(tab_id)
+            )
+            self.app.notify(f"Switched to {label}", severity="information")
         except Exception as e:
             self.app.notify(f"Failed to switch tab: {e}", severity="error")
 
@@ -2176,8 +2194,8 @@ class LibraryIngestQueueMixin:
 # --- Main App ---
 class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for run() if needed, None is common
     """A Textual app for interacting with LLMs."""
-    # Keep legacy identifier for tests while retaining product name
-    TITLE = "tldw CLI • tldw chatbook"
+    # Product name shown in the terminal title (legacy "tldw CLI" retired).
+    TITLE = "tldw chatbook"
     # CSS file path
     CSS_PATH = str(Path(__file__).parent / "css/tldw_cli_modular.tcss")
     BINDINGS = [
@@ -2254,6 +2272,8 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     current_editing_character_id: reactive[Optional[str]] = reactive(None)
     current_editing_character_data: reactive[Optional[Dict[str, Any]]] = reactive(None)
 
+    # DB size/token status updates go to the per-screen shell status line;
+    # the DBStatusManager resolves the visible widget on the active screen.
     # DB Size checker - now using AppFooterStatus
     _db_size_status_widget: Optional[AppFooterStatus] = None
     # DB size update timer moved to DBStatusManager
@@ -4324,7 +4344,6 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             TAB_CUSTOMIZE: {},  # Customize handles its own events
             TAB_SEARCH: search_handlers,
             TAB_EVALS: evals_handlers,
-            TAB_CODING: {},  # Empty for now - coding handles its own events
             TAB_STTS: {}, # STTS handles its own events
             TAB_STUDY: {}, # Study handles its own events
             TAB_SUBSCRIPTIONS: {
@@ -4470,35 +4489,13 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         """Create the main UI widgets (called after splash screen or immediately if disabled)."""
         widgets = []
         self._start_ui_responsiveness_monitor()
-        
-        # ALWAYS use screen-based navigation now
-        logger.info("Using screen-based navigation - skipping widget creation")
-        # Note: _use_screen_navigation is already set to True in __init__
-        
-        # Add title bar and navigation for screen mode
-        widgets.append(TitleBar())
-        
-        # Add navigation bar that will emit NavigateToScreen messages
-        use_dropdown = get_cli_setting("general", "use_dropdown_navigation", False)
-        use_links = get_cli_setting("general", "use_link_navigation", True)
-        
-        if use_dropdown:
-            widgets.append(TabDropdown(tab_ids=ALL_TABS, initial_active_tab=self._initial_tab_value))
-            logger.info("Using dropdown navigation for screens")
-        elif use_links:
-            widgets.append(TabLinks(tab_ids=ALL_TABS, initial_active_tab=self._initial_tab_value))
-            logger.info("Using single-line link navigation for screens")
-        else:
-            widgets.append(TabBar(tab_ids=ALL_TABS, initial_active_tab=self._initial_tab_value))
-            logger.info("Using tab bar navigation for screens")
-        
-        # Add container for screens and footer
+
+        # Screen-based navigation is used exclusively: each BaseAppScreen
+        # mounts the visible shell chrome (MainNavigationBar, AppFooterStatus,
+        # Textual Footer) itself, so the default screen only needs the
+        # container screens are pushed over.
         widgets.append(Container(id="screen-container"))
-        widgets.append(AppFooterStatus(id="app-footer-status"))
-        
-        return widgets
-        
-        # Screen-based navigation is used exclusively - no tab-based UI components needed
+
         return widgets
 
     def _start_ui_responsiveness_monitor(self) -> None:
@@ -5761,7 +5758,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         try:
             from .config import DEFAULT_CONFIG_PATH
             self.notify(
-                f"Welcome to tldw CLI! Configuration file created at:\n{DEFAULT_CONFIG_PATH}",
+                f"Welcome to tldw chatbook! Configuration file created at:\n{DEFAULT_CONFIG_PATH}",
                 title="First Run",
                 severity="information",
                 timeout=10
@@ -5982,7 +5979,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
 
 
     async def update_db_sizes(self) -> None:
-        """Updates the database size information in the AppFooterStatus widget."""
+        """Updates the database size information in the shell status line."""
         await self.db_status_manager.update_db_sizes()
     
     async def update_token_count_display(self) -> None:
@@ -6052,7 +6049,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         self.schedule_media_cleanup()
 
     def _schedule_footer_status_updates(self) -> None:
-        """Wire footer DB/token status updates after UI readiness."""
+        """Wire status-line DB/token status updates after UI readiness."""
 
         def record_footer_timer(name: str) -> None:
             record_timer = getattr(self, "_record_footer_timer_created", None)
@@ -6076,7 +6073,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             )
             self.db_status_manager.start_periodic_updates(120)
             record_footer_timer("footer-db-size-periodic")
-            self.loguru_logger.info("DB size update timer started for AppFooterStatus (interval: 2 minutes).")
+            self.loguru_logger.info("DB size update timer started for the shell status line (interval: 2 minutes).")
 
             self.set_timer(0.5, self.update_token_count_display)
             record_footer_timer("footer-token-periodic")
@@ -6085,11 +6082,9 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 lambda: self.call_after_refresh(self.update_token_count_display),
             )
             self.loguru_logger.info("Token count update timer started (10s interval).")
-        except QueryError:
-            self.loguru_logger.error("Failed to find AppFooterStatus widget for DB size display.")
         except Exception as e_db_size:
             self.loguru_logger.opt(exception=True).error(
-                f"Error setting up DB size indicator with AppFooterStatus: {e_db_size}",
+                f"Error setting up DB size indicator for the shell status line: {e_db_size}",
             )
 
     def _start_deferred_audio_service_initialization(self) -> None:
@@ -6749,7 +6744,6 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             # EvalsLab is a unified dashboard - no need for view activation
             self.loguru_logger.debug(f"Switched to Evals tab")
 
-
     def _log_view_dimensions(self, view, parent):
         """Helper to log view dimensions after refresh."""
         self.loguru_logger.info(f"After refresh - View {view.id} dimensions: width={view.size.width}, height={view.size.height}")
@@ -7343,98 +7337,6 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         self.loguru_logger.debug(f"Button event '{button_id}' reached app level in screen navigation mode")
         return
 
-        # Legacy tab-based button handling below (never reached)
-        self.loguru_logger.info(f"Button pressed: ID='{button_id}' on Tab='{self.current_tab}'")
-
-        # 1. Handle global tab switching first
-        if button_id.startswith("tab-"):
-            await tab_events.handle_tab_button_pressed(self, event)
-            return
-
-        # 2. Try to delegate to the appropriate window component
-        try:
-            # Determine which window component should handle this button press based on current tab
-            window_id_map = {
-                TAB_CHAT: "chat-window",
-                TAB_CCP: "conversations_characters_prompts-window",
-                TAB_MEDIA: "media-window",
-                TAB_SEARCH: "search-window",
-                TAB_INGEST: "ingest-window",
-                TAB_TOOLS_SETTINGS: "tools_settings-window",
-                TAB_LLM: "llm_management-window",
-                TAB_CUSTOMIZE: "customize-window",
-                TAB_LOGS: "logs-window",
-                TAB_STATS: "stats-window",
-                TAB_EVALS: "evals-window",
-                TAB_CODING: "coding-window",
-                TAB_STTS: "stts-window",
-                TAB_STUDY: "study-window",
-                TAB_CHATBOOKS: "chatbooks-window"
-            }
-
-            window_id = window_id_map.get(self.current_tab)
-            self.loguru_logger.info(f"Window ID for tab '{self.current_tab}': {window_id}")
-            if window_id:
-                # Use super().query_one to access app-level widgets in tab mode
-                window = super().query_one(f"#{window_id}")
-                self.loguru_logger.info(f"Found window: {type(window).__name__}")
-                # Check if the window has an on_button_pressed method
-                has_method = hasattr(window, "on_button_pressed") and callable(window.on_button_pressed)
-                self.loguru_logger.info(f"Window has on_button_pressed: {has_method}")
-                if has_method:
-                    # Call the window's button handler - it might be async
-                    self.loguru_logger.info(f"Delegating to window's on_button_pressed")
-                    result = window.on_button_pressed(event)
-                    if inspect.isawaitable(result):
-                        await result
-                    # Check if event has been stopped (some event types don't have is_stopped)
-                    if hasattr(event, 'is_stopped') and event.is_stopped:
-                        self.loguru_logger.info(f"Event was stopped by window handler")
-                        return
-                    self.loguru_logger.info(f"Window handler completed, event not stopped")
-                    # Don't return here - let it fall through to the handler map!
-
-        except QueryError:
-            self.loguru_logger.error(f"Could not find window component for tab '{self.current_tab}'")
-        except Exception as e:
-            self.loguru_logger.opt(exception=True).error(f"Error delegating button press to window component: {e}")
-
-        # 3. Use the handler map for buttons not handled by window components
-        current_tab_handlers = self.button_handler_map.get(self.current_tab, {})
-        handler = current_tab_handlers.get(button_id)
-        
-        self.loguru_logger.info(f"Looking for handler for button '{button_id}' in tab '{self.current_tab}'")
-        self.loguru_logger.info(f"Available handlers for this tab: {list(current_tab_handlers.keys())}")
-        self.loguru_logger.info(f"Handler found: {handler is not None}")
-        
-        # Special debug logging for save chat button
-        if button_id == "chat-save-current-chat-button":
-            self.loguru_logger.info(f"Save Temp Chat button pressed - Handler found: {handler is not None}")
-            self.loguru_logger.info(f"Current tab: {self.current_tab}, Expected: {TAB_CHAT}")
-
-        if handler:
-            if callable(handler):
-                try:
-                    # Call the handler, which is expected to return a coroutine (an awaitable object).
-                    result = handler(self, event)
-
-                    # Check if the result is indeed awaitable before awaiting it.
-                    # This makes the code more robust and satisfies static type checkers.
-                    if inspect.isawaitable(result):
-                        await result
-                    else:
-                        self.loguru_logger.warning(
-                            f"Handler for button '{button_id}' did not return an awaitable object."
-                        )
-                except Exception as e:
-                    self.loguru_logger.opt(exception=True).error(f"Error executing handler for button '{button_id}': {e}")
-                    self.notify(f"Error handling button action: {str(e)[:100]}", severity="error")
-            else:
-                self.loguru_logger.error(f"Handler for button '{button_id}' is not callable: {handler}")
-            return  # The button press was handled (or an error occurred).
-
-        # 4. Fallback for unmapped buttons
-        self.loguru_logger.warning(f"Unhandled button press for ID '{button_id}' on tab '{self.current_tab}'.")
 
     async def on_text_area_changed(self, event: TextArea.Changed) -> None:
         """Handles text area changes, e.g., for live updates to character data."""

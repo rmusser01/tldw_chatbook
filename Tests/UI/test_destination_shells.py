@@ -982,7 +982,7 @@ def _custom_policy_recovery_state(exc, *, unavailable_what, stable_selector, pol
         # of the generic "source material" phrasing artifacts/personas use.
         ("library", "#library-header-line", "content type"),
         ("artifacts", "#artifacts-title", "generated"),
-        ("personas", "#personas-title", "who the ai plays"),
+        ("personas", "#personas-header", "who the ai plays"),
     ],
 )
 @pytest.mark.asyncio

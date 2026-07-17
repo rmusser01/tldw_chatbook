@@ -11,7 +11,6 @@ from textual.widgets import Input, Static
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
-from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.workbench_focus import (
     WorkbenchPaneTarget,
     focus_relative_workbench_pane,
@@ -31,9 +30,6 @@ class _PersonasHarness(App[None]):
     def __init__(self, app_instance) -> None:
         super().__init__()
         self.app_instance = app_instance
-
-    def compose(self):
-        yield AppFooterStatus(id="app-footer-status")
 
     async def on_mount(self) -> None:
         await self.push_screen(PersonasScreen(self.app_instance))

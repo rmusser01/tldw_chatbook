@@ -278,36 +278,43 @@ class TestTabNavigationProvider:
         assert any("Settings" in name for name in tab_names)
     
     @pytest.mark.asyncio
-    async def test_search_shows_shell_and_legacy_direct_commands(self, tab_provider):
-        """Test that search shows shell and legacy direct commands."""
+    async def test_search_shows_one_command_per_shell_destination(self, tab_provider):
+        """Palette search yields exactly one labeled command per destination."""
         hits = []
         async for hit in tab_provider.search("tab"):
             hits.append(hit)
-        
-        assert len(hits) == len(TabNavigationProvider.command_palette_tab_ids())
+
+        assert len(hits) == len(TabNavigationProvider.command_palette_tab_ids()) == 12
         tab_texts = [hit.text for hit in hits]
         assert any("Console" in text for text in tab_texts)
         assert any("Library" in text for text in tab_texts)
         assert any("Settings" in text for text in tab_texts)
-        assert any("Models" in text for text in tab_texts)
-        assert any("Speech" in text for text in tab_texts)
-        assert any("Coding" in text for text in tab_texts)
+        assert any("Lab" in text for text in tab_texts)
+        # Folded screens are aliases, not separate labeled commands.
+        assert not any("Models" in text for text in tab_texts)
+        assert not any("Speech" in text for text in tab_texts)
+        assert not any("Coding" in text for text in tab_texts)
+        # Skills is folded into Library; no standalone Skills command.
+        assert not any("Skills" in text for text in tab_texts)
 
     @pytest.mark.asyncio
-    async def test_search_uses_current_display_labels_for_renamed_tabs(self, tab_provider):
-        """Command palette labels should match top-level navigation labels."""
+    async def test_search_uses_destination_labels_without_duplicates(self, tab_provider):
+        """Command palette labels match shell destinations exactly once each."""
         hits = []
         async for hit in tab_provider.search("tab"):
             hits.append(hit)
 
-        by_text = {hit.text: hit for hit in hits}
+        texts = [hit.text for hit in hits]
 
-        for tab_id in (TAB_CHAT, TAB_CCP, TAB_LLM, TAB_STTS, TAB_MCP, TAB_SETTINGS):
-            expected_text = f"Tab Navigation: Switch to {get_tab_display_label(tab_id)}"
-            assert expected_text in by_text
+        for label in ("Console", "Library", "Artifacts", "Personas", "Watchlists",
+                      "Schedules", "Workflows", "MCP", "ACP", "Lab",
+                      "Settings", "Home"):
+            expected_text = f"Tab Navigation: Switch to {label}"
+            assert texts.count(expected_text) == 1, expected_text
 
-        joined_text = "\n".join(by_text)
-        assert "Tab Navigation: Switch to Chat" not in by_text
+        joined_text = "\n".join(texts)
+        assert "Tab Navigation: Switch to Chat" not in joined_text
+        assert "Tab Navigation: Switch to Skills" not in joined_text
         assert "Character Chat" not in joined_text
         assert "LLM Management" not in joined_text
         assert "Tools & Settings" not in joined_text
@@ -346,8 +353,8 @@ class TestTabNavigationProvider:
 
         cases = [
             ("Workspaces", "Library"),
-            ("flashcards", "Study"),
-            ("quizzes", "Study"),
+            ("flashcards", "Library"),
+            ("quizzes", "Library"),
         ]
 
         for query, expected_label in cases:
@@ -357,6 +364,38 @@ class TestTabNavigationProvider:
                 hits.append(hit)
 
             assert any(expected_label in hit.text for hit in hits), query
+
+    @pytest.mark.asyncio
+    async def test_search_resolves_legacy_alias_to_owning_destination(self, tab_provider):
+        class QueryMatcher:
+            def __init__(self, query: str):
+                self.query = query.lower()
+
+            def match(self, text: str) -> float:
+                return 1.0 if self.query in text.lower() else 0.0
+
+            def highlight(self, text: str) -> str:
+                return text
+
+        # Legacy route names are searchable and land on the destination.
+        cases = [
+            ("coding", "Tab Navigation: Switch to Console"),
+            ("evals", "Tab Navigation: Switch to Lab"),
+            ("stts", "Tab Navigation: Switch to Lab"),
+            ("models", "Tab Navigation: Switch to Lab"),
+            ("logs", "Tab Navigation: Switch to Settings"),
+            ("stats", "Tab Navigation: Switch to Settings"),
+            ("media", "Tab Navigation: Switch to Library"),
+            ("tools_settings", "Tab Navigation: Switch to MCP"),
+        ]
+
+        for query, expected_text in cases:
+            tab_provider.matcher = lambda query_text, _query=query: QueryMatcher(_query)
+            hits = []
+            async for hit in tab_provider.search(query):
+                hits.append(hit)
+
+            assert any(hit.text == expected_text for hit in hits), query
     
     def test_switch_tab_success(self, tab_provider):
         """Test successful tab switching."""

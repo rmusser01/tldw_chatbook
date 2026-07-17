@@ -111,6 +111,8 @@ from ..CCP_Modules.ccp_persona_handler import CCPPersonaHandler
 from .destination_recovery import DestinationRecoveryState
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.shortcut_context import ShortcutAction, ShortcutContext
+from ..Workbench.workbench_state import WorkbenchHeaderState
+from ..Workbench.workbench_widgets import DestinationHeader
 from ..Persona_Modules.personas_conversations_controller import (
     _CONVERSATION_VIEW_ID,
     PersonasConversationsController,
@@ -287,14 +289,17 @@ class PersonasScreen(BaseAppScreen):
 
     #personas-workbench {
         height: 1fr;
-        min-height: 20;
+        /* Keep below the worst-case available height (80x24 harness: ~13
+           lines after nav/header/status) so rows never spill under the
+           footer status bar; the ListView scrolls internally instead. */
+        min-height: 10;
         padding: 1;
     }
 
     #personas-workbench .destination-workbench-pane {
         min-width: 0;
         height: 100%;
-        min-height: 18;
+        min-height: 6;
         padding: 0 1;
     }
 
@@ -432,10 +437,13 @@ class PersonasScreen(BaseAppScreen):
             Textual compose result for the Personas content tree.
         """
         with Vertical(id="personas-shell"):
-            yield Static(
-                self._title_text(),
-                id="personas-title",
-                classes="ds-destination-header",
+            yield DestinationHeader(
+                WorkbenchHeaderState(
+                    title="Roleplay",
+                    subtitle=self._header_subtitle_text(),
+                    status="ready",
+                ),
+                id="personas-header",
             )
             yield Static(
                 self._mode_descriptor_text(self.state.active_mode),
@@ -548,12 +556,11 @@ class PersonasScreen(BaseAppScreen):
         self.query_one(PersonasLibraryPane).set_mode(self.state.active_mode)
         self._show_center(None)
         await self.character_handler.refresh_character_list()
-        self._register_footer_shortcuts()
+        self._sync_title_and_console_actions()
 
     async def on_unmount(self) -> None:
         super().on_unmount()
         self._cancel_search_debounce()
-        self._clear_footer_shortcuts()
         await self.preview.close_gateway()
 
     def on_resize(self, event: Any) -> None:
@@ -1104,23 +1111,24 @@ class PersonasScreen(BaseAppScreen):
             self.query_one("#personas-mode-placeholder", Static).update(self._mode_placeholder_text(mode))
             self._show_center("#personas-mode-placeholder")
 
-    def _title_text(self) -> str:
-        """Live header line: destination identity plus the editing state.
+    def _header_subtitle_text(self) -> str:
+        """Live header subtitle: destination purpose plus the editing state.
 
-        "Local" deliberately stays out of the title - the status row directly
+        "Local" deliberately stays out of the header - the status row directly
         below already says "Source: Local" (de-dup, P3-15).
         """
-        base = "Roleplay | Author the pieces that shape a chat"
         suffix = " - unsaved" if self.state.has_unsaved_changes else ""
         if self._edit_mode == "create":
             noun = "persona" if self.state.active_mode == "personas" else "character"
-            return f"{base} | New {noun}{suffix}"
+            return f"New {noun}{suffix}"
         if self._edit_mode == "edit":
             name = self.state.selected_entity_name or "item"
-            return f"{base} | Editing {name}{suffix}"
+            return f"Editing {name}{suffix}"
+        # Upstream improvement kept: surface the selected entity in view mode
+        # when it has unsaved changes, instead of the bare purpose line.
         if self.state.has_unsaved_changes and self.state.selected_entity_name:
-            return f"{base} | {self.state.selected_entity_name}{suffix}"
-        return f"{base} | Ready"
+            return f"{self.state.selected_entity_name}{suffix}"
+        return "Author the pieces that shape a chat"
 
     def _mode_descriptor_text(self, mode: str) -> str:
         """The visible one-line meaning of a mode (falls back for un-described modes)."""
@@ -1131,11 +1139,19 @@ class PersonasScreen(BaseAppScreen):
         return _MODE_PLACEHOLDER_BODY.get(mode, _PLACEHOLDER_FALLBACK)
 
     def _update_title(self) -> None:
-        """Refresh the header line; tolerate updates racing teardown."""
+        """Refresh the destination header; tolerate updates racing teardown."""
         try:
-            self.query_one("#personas-title", Static).update(self._title_text())
+            header = self.query_one("#personas-header", DestinationHeader)
         except Exception:
-            logger.opt(exception=True).debug("Could not update the personas title.")
+            logger.opt(exception=True).debug("Could not update the personas header.")
+            return
+        header.sync_state(
+            WorkbenchHeaderState(
+                title="Roleplay",
+                subtitle=self._header_subtitle_text(),
+                status="ready",
+            )
+        )
 
     def _status_row_text(self) -> str:
         mode = self.state.active_mode
@@ -1976,6 +1992,9 @@ class PersonasScreen(BaseAppScreen):
                 position=payload.get("position", "before_char"),
                 insertion_order=payload.get("insertion_order", 0),
                 priority=payload.get("priority", 0),
+                selective=payload.get("selective", False),
+                secondary_keys=payload.get("secondary_keys", []),
+                case_sensitive=payload.get("case_sensitive", False),
             ),
             "Could not add the entry",
         )
@@ -2171,7 +2190,7 @@ class PersonasScreen(BaseAppScreen):
     def _handle_conversation_back(self, event: Button.Pressed) -> None:
         event.stop()
         self._show_center("#ccp-character-card-view")
-        self._register_footer_shortcuts()
+        self._sync_title_and_console_actions()
         self._focus_conversations_list()
 
     @on(Button.Pressed, "#personas-conversation-open-library")
@@ -2659,7 +2678,7 @@ class PersonasScreen(BaseAppScreen):
         inspector = self.query_one(PersonasInspectorPane)
         inspector.set_unsaved(False)
         inspector.show_validation_editing()
-        self._register_footer_shortcuts()
+        self._sync_title_and_console_actions()
         self.call_after_refresh(self._focus_editor_name)
 
     @on(EditCharacterRequested)
@@ -2681,7 +2700,7 @@ class PersonasScreen(BaseAppScreen):
         inspector = self.query_one(PersonasInspectorPane)
         inspector.set_unsaved(False)
         inspector.show_validation_editing()
-        self._register_footer_shortcuts()
+        self._sync_title_and_console_actions()
         self.call_after_refresh(self._focus_editor_name)
 
     @on(EditorContentChanged)
@@ -2707,7 +2726,7 @@ class PersonasScreen(BaseAppScreen):
         self._set_active_row_unsaved(True)
         # Attach availability changed (unsaved edits block Console actions),
         # and the title gains the "- unsaved" segment.
-        self._register_footer_shortcuts()
+        self._sync_title_and_console_actions()
 
     def _set_active_row_unsaved(self, unsaved: bool) -> None:
         """Badge (or un-badge) the selected library row for the edit session."""
@@ -2941,7 +2960,7 @@ class PersonasScreen(BaseAppScreen):
         await self._select_character(imported_id, name)
         # The selection changed outside _run_guarded; refresh the footer hints
         # (attach is now available) and the header state.
-        self._register_footer_shortcuts()
+        self._sync_title_and_console_actions()
         if imported_id in pre_import_ids:
             self._notify("Character already existed; selected it.", "information")
         else:
@@ -3434,7 +3453,7 @@ class PersonasScreen(BaseAppScreen):
             await self.preview.reset("")
             await self.query_one(PersonasInspectorPane).clear_selection()
             self._show_center(None)
-            self._register_footer_shortcuts()
+            self._sync_title_and_console_actions()
         # Refresh the cached rows even when the user already left the screen
         # or switched modes (the render paths are mode-guarded downstream).
         if kind == "character":
@@ -3527,7 +3546,7 @@ class PersonasScreen(BaseAppScreen):
         if record is not None:
             await self.character_handler.load_character(saved_id)
         self._show_center("#ccp-character-card-view")
-        self._register_footer_shortcuts()
+        self._sync_title_and_console_actions()
         self.call_after_refresh(self._focus_library_list)
         self._notify("Character saved.", severity="information")
 
@@ -3633,7 +3652,7 @@ class PersonasScreen(BaseAppScreen):
         await self._render_profile_rows()
         self.query_one(PersonaProfileCardWidget).show_persona(saved)
         self._show_center("#ccp-persona-card-view")
-        self._register_footer_shortcuts()
+        self._sync_title_and_console_actions()
         self.call_after_refresh(self._focus_library_list)
         self._notify("Persona saved.", "information")
 
@@ -3734,7 +3753,7 @@ class PersonasScreen(BaseAppScreen):
             await continuation()
             # Guarded continuations are exactly the transitions that change
             # edit mode / selection, so the footer hints refresh here.
-            self._register_footer_shortcuts()
+            self._sync_title_and_console_actions()
             return
         if self._guard_active:
             return
@@ -3750,7 +3769,7 @@ class PersonasScreen(BaseAppScreen):
             # (the continuation may move the selection without a row rebuild).
             self._set_active_row_unsaved(False)
             await continuation()
-            self._register_footer_shortcuts()
+            self._sync_title_and_console_actions()
         finally:
             self._guard_active = False
 
@@ -3851,7 +3870,7 @@ class PersonasScreen(BaseAppScreen):
         if transcript is not None and transcript.display:
             # Same path as the "Back to card" button.
             self._show_center("#ccp-character-card-view")
-            self._register_footer_shortcuts()
+            self._sync_title_and_console_actions()
             self._focus_conversations_list()
             return
         focused = self.app.focused
@@ -3956,7 +3975,7 @@ class PersonasScreen(BaseAppScreen):
         except QueryError:
             pass
 
-    # ===== Footer shortcut context =====
+    # ===== Header/console-action sync and footer shortcut context =====
 
     def _shortcut_context(self) -> ShortcutContext:
         """Truthful footer hints built from the live workbench state.
@@ -3984,10 +4003,14 @@ class PersonasScreen(BaseAppScreen):
             ),
         )
 
-    def _register_footer_shortcuts(self) -> None:
-        # The footer re-registers on exactly the transitions that change the
-        # editing/selection state, which are also the transitions the live
-        # header reflects; refresh the title here so the two stay in lockstep.
+    def _sync_title_and_console_actions(self) -> None:
+        """Refresh the header title, inspector console actions, and footer hints.
+
+        Called on exactly the transitions that change the editing/selection
+        state, which are also the transitions the live header reflects. The
+        contextual shortcut hints render through the per-screen
+        ``AppFooterStatus`` (upstream task-264 channel, restored on rebase).
+        """
         self._update_title()
         self._sync_inspector_console_actions()
         try:

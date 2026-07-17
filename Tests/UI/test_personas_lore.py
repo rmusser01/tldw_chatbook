@@ -7,7 +7,7 @@ test_personas_dictionaries.py's PersonasTestApp harness)."""
 import pytest
 from textual.app import App, ComposeResult
 from textual.coordinate import Coordinate
-from textual.widgets import Button, DataTable, Input, ListView, Static, TextArea
+from textual.widgets import Button, DataTable, Input, ListView, Static, Switch, TextArea
 
 from tldw_chatbook.Widgets.Persona_Widgets.personas_lore_detail import (
     PersonasLoreDetailWidget,
@@ -123,6 +123,113 @@ async def test_entry_priority_round_trips_through_form():
         assert app.posted[-1]["priority"] == 80
 
 
+@pytest.mark.asyncio
+async def test_matching_controls_round_trip_through_form():
+    app = _DetailHost()
+    async with app.run_test(size=(140, 40)) as pilot:
+        widget = app.query_one(PersonasLoreDetailWidget)
+        widget.load_book({"id": 1, "name": "B", "description": "", "scan_depth": 3,
+                          "token_budget": 500, "recursive_scanning": False, "enabled": True})
+        app.query_one("#personas-lore-entry-keys", Input).value = "Warden"
+        app.query_one("#personas-lore-entry-content", TextArea).text = "grim jailer"
+        app.query_one("#personas-lore-entry-case-sensitive", Switch).value = True
+        app.query_one("#personas-lore-entry-selective", Switch).value = True
+        app.query_one("#personas-lore-entry-secondary-keys", Input).value = " sword , shield ,"
+        await pilot.pause()
+        await pilot.click("#personas-lore-entry-add")
+        await pilot.pause()
+        payload = app.posted[-1]
+        assert payload["case_sensitive"] is True
+        assert payload["selective"] is True
+        assert payload["secondary_keys"] == ["sword", "shield"]  # trimmed, blank dropped
+
+
+@pytest.mark.asyncio
+async def test_blank_secondary_keys_is_empty_list():
+    """A blank secondary-keys field yields [] (never raises)."""
+    app = _DetailHost()
+    async with app.run_test(size=(140, 40)) as pilot:
+        widget = app.query_one(PersonasLoreDetailWidget)
+        widget.load_book({"id": 1, "name": "B", "description": "", "scan_depth": 3,
+                          "token_budget": 500, "recursive_scanning": False, "enabled": True})
+        app.query_one("#personas-lore-entry-keys", Input).value = "Warden"
+        app.query_one("#personas-lore-entry-content", TextArea).text = "grim jailer"
+        # secondary-keys left blank
+        await pilot.pause()
+        await pilot.click("#personas-lore-entry-add")
+        await pilot.pause()
+        assert app.posted[-1]["secondary_keys"] == []
+
+
+@pytest.mark.asyncio
+async def test_secondary_keys_stored_even_when_not_selective():
+    """Data fidelity: secondary keys are stored regardless of the Selective
+    switch, so toggling Selective off does not erase them."""
+    app = _DetailHost()
+    async with app.run_test(size=(140, 40)) as pilot:
+        widget = app.query_one(PersonasLoreDetailWidget)
+        widget.load_book({"id": 1, "name": "B", "description": "", "scan_depth": 3,
+                          "token_budget": 500, "recursive_scanning": False, "enabled": True})
+        app.query_one("#personas-lore-entry-keys", Input).value = "Warden"
+        app.query_one("#personas-lore-entry-content", TextArea).text = "grim jailer"
+        app.query_one("#personas-lore-entry-selective", Switch).value = False
+        app.query_one("#personas-lore-entry-secondary-keys", Input).value = "sword"
+        await pilot.pause()
+        await pilot.click("#personas-lore-entry-add")
+        await pilot.pause()
+        payload = app.posted[-1]
+        assert payload["selective"] is False
+        assert payload["secondary_keys"] == ["sword"]
+
+
+@pytest.mark.asyncio
+async def test_fill_form_populates_matching_controls():
+    """Selecting a row fills the three controls; an entry with selective=False
+    but stored secondary keys keeps its keys (fidelity) and shows them disabled."""
+    app = _DetailHost()
+    async with app.run_test(size=(140, 40)) as pilot:
+        widget = app.query_one(PersonasLoreDetailWidget)
+        widget.load_book({"id": 1, "name": "B", "description": "", "scan_depth": 3,
+                          "token_budget": 500, "recursive_scanning": False, "enabled": True})
+        widget.update_entries([
+            {"id": 7, "keys": ["Warden"], "content": "grim jailer",
+             "position": "before_char", "enabled": True, "insertion_order": 0,
+             "case_sensitive": True, "selective": False,
+             "secondary_keys": ["alpha", "beta"]},
+        ])
+        await pilot.pause()
+        table = app.query_one("#personas-lore-entries-table", DataTable)
+        table.move_cursor(row=0)
+        await pilot.pause()
+        assert app.query_one("#personas-lore-entry-case-sensitive", Switch).value is True
+        assert app.query_one("#personas-lore-entry-selective", Switch).value is False
+        sec = app.query_one("#personas-lore-entry-secondary-keys", Input)
+        assert sec.value == "alpha, beta"   # preserved even though selective is False
+        assert sec.disabled is True          # selective off → disabled hint
+
+
+@pytest.mark.asyncio
+async def test_secondary_keys_disabled_hint_tracks_selective():
+    app = _DetailHost()
+    async with app.run_test(size=(140, 40)) as pilot:
+        widget = app.query_one(PersonasLoreDetailWidget)
+        widget.load_book({"id": 1, "name": "B", "description": "", "scan_depth": 3,
+                          "token_budget": 500, "recursive_scanning": False, "enabled": True})
+        await pilot.pause()
+        sec = app.query_one("#personas-lore-entry-secondary-keys", Input)
+        sel = app.query_one("#personas-lore-entry-selective", Switch)
+        assert sec.disabled is True          # selective defaults off → disabled on mount
+        sec.value = "kept"
+        sel.value = True
+        await pilot.pause()
+        assert sec.disabled is False         # selective on → enabled
+        assert sec.value == "kept"
+        sel.value = False
+        await pilot.pause()
+        assert sec.disabled is True          # selective off → disabled again
+        assert sec.value == "kept"           # value survives the toggle (fidelity)
+
+
 class _TryItHost(App):
     def compose(self) -> ComposeResult:
         yield PersonasLoreTryItWidget(id="personas-lore-tryit")
@@ -206,6 +313,7 @@ async def test_tryit_bracket_tag_content_not_backslash_escaped():
 # PersonasScreen against it.
 
 from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
+from tldw_chatbook.Character_Chat.world_info_processor import WorldInfoProcessor
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
@@ -527,3 +635,96 @@ async def test_add_entry_persists_priority_through_real_screen_handler(
         entries = WorldBookManager(lore_db).get_world_book_entries(seeded_lore_book["book_id"])
         ghost = next(e for e in entries if e["keys"] == ["Ghost"])
         assert ghost["priority"] == 80
+
+
+@pytest.mark.asyncio
+async def test_add_entry_persists_matching_fields_through_real_screen_handler(
+    mock_app_instance, stub_characters_lore, lore_db, seeded_lore_book
+):
+    """The real _handle_lore_entry_add must forward selective/secondary_keys/
+    case_sensitive to the DB — regression against the explicit-kwarg drop that
+    bit `priority` in P2c."""
+    mock_app_instance.chachanotes_db = lore_db
+    app = LorePersonasTestApp(mock_app_instance)
+    async with app.run_test(size=(200, 60)) as pilot:
+        screen = await _enter_lore(pilot)
+        await _select_first_lore(pilot, screen)
+        screen.query_one("#personas-lore-entry-keys", Input).value = "Ghost"
+        screen.query_one("#personas-lore-entry-content", TextArea).text = "a pale spirit"
+        screen.query_one("#personas-lore-entry-case-sensitive", Switch).value = True
+        screen.query_one("#personas-lore-entry-selective", Switch).value = True
+        screen.query_one("#personas-lore-entry-secondary-keys", Input).value = "sword"
+        await pilot.pause()
+        await pilot.click("#personas-lore-entry-add")
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        entries = WorldBookManager(lore_db).get_world_book_entries(seeded_lore_book["book_id"])
+        ghost = next(e for e in entries if e["keys"] == ["Ghost"])
+        assert ghost["case_sensitive"] is True
+        assert ghost["selective"] is True
+        assert ghost["secondary_keys"] == ["sword"]
+
+
+@pytest.mark.asyncio
+async def test_update_entry_persists_matching_fields_through_real_screen_handler(
+    mock_app_instance, stub_characters_lore, lore_db, seeded_lore_book
+):
+    """_handle_lore_entry_update forwards the three fields via **payload."""
+    mock_app_instance.chachanotes_db = lore_db
+    app = LorePersonasTestApp(mock_app_instance)
+    async with app.run_test(size=(200, 60)) as pilot:
+        screen = await _enter_lore(pilot)
+        await _select_first_lore(pilot, screen)
+        table = screen.query_one("#personas-lore-entries-table", DataTable)
+        table.move_cursor(row=0)          # select the seeded "Warden" entry → fills form
+        await pilot.pause()
+        screen.query_one("#personas-lore-entry-case-sensitive", Switch).value = True
+        screen.query_one("#personas-lore-entry-selective", Switch).value = True
+        screen.query_one("#personas-lore-entry-secondary-keys", Input).value = "prison"
+        await pilot.pause()
+        await pilot.click("#personas-lore-entry-update")
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        entries = WorldBookManager(lore_db).get_world_book_entries(seeded_lore_book["book_id"])
+        warden = next(e for e in entries if e["keys"] == ["Warden"])
+        assert warden["case_sensitive"] is True
+        assert warden["selective"] is True
+        assert warden["secondary_keys"] == ["prison"]
+
+
+@pytest.mark.asyncio
+async def test_selective_entry_created_via_editor_gates_matching(
+    mock_app_instance, stub_characters_lore, lore_db, seeded_lore_book
+):
+    """A selective entry created through the real editor/add-handler path gates
+    matching in WorldInfoProcessor: it fires only when a secondary key is present
+    in the scan text. Proves editor config → DB → matcher end to end."""
+    mock_app_instance.chachanotes_db = lore_db
+    app = LorePersonasTestApp(mock_app_instance)
+    async with app.run_test(size=(200, 60)) as pilot:
+        screen = await _enter_lore(pilot)
+        await _select_first_lore(pilot, screen)
+        screen.query_one("#personas-lore-entry-keys", Input).value = "hero"
+        screen.query_one("#personas-lore-entry-content", TextArea).text = "the brave hero"
+        screen.query_one("#personas-lore-entry-selective", Switch).value = True
+        screen.query_one("#personas-lore-entry-secondary-keys", Input).value = "sword"
+        await pilot.pause()
+        await pilot.click("#personas-lore-entry-add")
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+    manager = WorldBookManager(lore_db)
+    book = manager.get_world_book(seeded_lore_book["book_id"])
+    entries = manager.get_world_book_entries(seeded_lore_book["book_id"])
+    world_book = {**book, "entries": entries}
+    proc = WorldInfoProcessor(world_books=[world_book])
+
+    # primary key "hero" present but secondary "sword" absent → selective entry does NOT fire
+    r1 = proc.process_messages("the hero walks alone", [])
+    assert all("brave hero" not in c for c in r1["injections"]["before_char"])
+    # primary + secondary present → fires
+    r2 = proc.process_messages("the hero draws a sword", [])
+    assert any("brave hero" in c for c in r2["injections"]["before_char"])

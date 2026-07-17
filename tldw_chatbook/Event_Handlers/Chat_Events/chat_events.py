@@ -37,7 +37,6 @@ from tldw_chatbook.Utils.Utils import safe_float, safe_int
 from tldw_chatbook.Utils.input_validation import validate_text_input, validate_number_range, sanitize_string
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
-from tldw_chatbook.Widgets.titlebar import TitleBar
 from tldw_chatbook.Utils.Emoji_Handling import (
     get_char, EMOJI_THINKING, FALLBACK_THINKING, EMOJI_EDIT, FALLBACK_EDIT,
     EMOJI_SAVE_EDIT, FALLBACK_SAVE_EDIT, EMOJI_COPIED, FALLBACK_COPIED, EMOJI_COPY, FALLBACK_COPY,
@@ -70,6 +69,27 @@ MAX_CONSOLE_CHATBOOK_ARTIFACT_METADATA_LIST_ITEMS = 50
 MAX_CONSOLE_CHATBOOK_ARTIFACT_METADATA_DICT_ITEMS = 80
 MAX_CONSOLE_CHATBOOK_ARTIFACT_METADATA_DEPTH = 6
 _UNSAFE_STRUCTURED_METADATA = object()
+
+def _update_console_session_title(app: 'TldwCli', title: Optional[str]) -> None:
+    """Show the active conversation title in the Console transcript header.
+
+    Replaces the legacy TitleBar writes: the title now renders in the visible
+    Console session surface instead of the occluded app-level title bar.
+    Best-effort; a no-op when no Console session surface is mounted on the
+    active screen.
+
+    Args:
+        app: The application instance.
+        title: Conversation title to display, or None to reset to the default
+            section label.
+    """
+    try:
+        # Import here to avoid circular imports
+        from tldw_chatbook.Widgets.Console.console_session_surface import ConsoleSessionSurface
+        app.screen.query_one(ConsoleSessionSurface).set_session_title(title)
+    except Exception:
+        pass
+
 
 def safe_json_loads(json_str: str, max_size: int = 1024 * 1024) -> Optional[Union[dict, list]]:
     """
@@ -2320,7 +2340,7 @@ async def handle_chat_new_temp_chat_button_pressed(app: 'TldwCli', event: Button
         app.query_one("#chat-conversation-title-input", Input).value = ""
         app.query_one("#chat-conversation-keywords-input", TextArea).text = ""
         app.query_one("#chat-conversation-uuid-display", Input).value = "Ephemeral Chat"
-        app.query_one(TitleBar).reset_title()
+        _update_console_session_title(app, None)
         app.query_one("#chat-input", TextArea).focus()
     except QueryError:
         pass
@@ -2423,7 +2443,7 @@ async def handle_chat_new_conversation_button_pressed(app: 'TldwCli', event: But
             app.query_one("#chat-conversation-title-input", Input).value = default_title
             app.query_one("#chat-conversation-keywords-input", TextArea).text = ""
             app.query_one("#chat-conversation-uuid-display", Input).value = new_conversation_id
-            app.query_one(TitleBar).update_title(default_title)
+            _update_console_session_title(app, default_title)
             app.query_one("#chat-input", TextArea).focus()
         except QueryError:
             pass
@@ -2807,10 +2827,7 @@ async def handle_chat_save_details_button_pressed(app: 'TldwCli', event: Button.
             current_version += 1  # Version is now incremented for the conversation row
             title_changed = True
             loguru_logger.info(f"Title updated for conversation {conversation_id}. New version: {current_version}")
-            try:
-                app.query_one(TitleBar).update_title(f"Chat - {new_title}")
-            except QueryError:
-                loguru_logger.error("Failed to update TitleBar after title save.")
+            _update_console_session_title(app, new_title)
 
         # Keywords Update (from app.py, adapted)
         all_db_keywords_list = db.get_keywords_for_conversation(conversation_id)
@@ -3169,7 +3186,7 @@ async def display_conversation_in_chat_tab_ui(app: 'TldwCli', conversation_id: s
             app.query_one("#chat-conversation-title-input", Input).value = "Error: Not Found"
             app.query_one("#chat-conversation-keywords-input", TextArea).text = ""
             app.query_one("#chat-conversation-uuid-display", Input).value = conversation_id
-            app.query_one(TitleBar).update_title(f"Chat - Error Loading")
+            _update_console_session_title(app, "Error Loading")
             chat_log_err = app.query_one("#chat-log", VerticalScroll)
             await chat_log_err.remove_children()
             await chat_log_err.mount(ChatMessage(Text.from_markup("[bold red]Failed to load conversation details.[/]"), role="System", classes="-error"))
@@ -3230,7 +3247,7 @@ async def display_conversation_in_chat_tab_ui(app: 'TldwCli', conversation_id: s
         keywords_input_disp = app.query_one("#chat-conversation-keywords-input", TextArea)
         keywords_input_disp.text = conv_metadata.get('keywords_display', "")
 
-        app.query_one(TitleBar).update_title(f"Chat - {conv_metadata.get('title', 'Untitled Conversation')}")
+        _update_console_session_title(app, conv_metadata.get('title', 'Untitled Conversation'))
 
         chat_log_widget_disp = app.query_one("#chat-log", VerticalScroll)
         
