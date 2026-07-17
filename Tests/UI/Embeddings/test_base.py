@@ -54,15 +54,7 @@ class EmbeddingsTestBase:
             yield instance
     
     @pytest.fixture
-    def mock_chroma_manager(self):
-        """Mock ChromaDBManager for tests."""
-        with patch('tldw_chatbook.Embeddings.Chroma_Lib.ChromaDBManager') as mock_manager:
-            instance = MagicMock()
-            mock_manager.return_value = instance
-            yield instance
-    
-    @pytest.fixture
-    def mock_app_instance(self, mock_embedding_factory, mock_chroma_manager):
+    def mock_app_instance(self, mock_embedding_factory):
         """Mock app instance with required attributes."""
         app = MagicMock()
         app.chachanotes_db = MagicMock()

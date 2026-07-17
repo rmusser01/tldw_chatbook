@@ -20,6 +20,9 @@ torch/transformers are now imported lazily (see
 `Embeddings/Embeddings_Lib.py`'s `_ensure_torch()` / `_ensure_transformers()`
 / `_ensure_numpy()` helpers) and the `analyze`/`chunk_for_embedding`/pandas
 imports above were moved into the functions that actually use them.
+(`Embeddings/Chroma_Lib.py` itself was later removed entirely by task-248 —
+the RAG_Search vector store is the sole Chroma stack now — so the historical
+import chains above no longer exist at all.)
 
 nltk/scipy/sklearn/pandas were a second chain, pulled in via
 `app.py` -> `RAG_Admin/local_rag_admin_service.py:11

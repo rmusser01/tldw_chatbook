@@ -2661,7 +2661,6 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             )
         self.local_rag_admin_service = LocalRAGAdminService(
             self.media_db,
-            app_config=self.app_config,
             media_service=self.local_media_reading_service,
         )
         self.rag_admin_scope_service = RAGAdminScopeService(
