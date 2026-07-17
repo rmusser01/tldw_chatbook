@@ -112,14 +112,23 @@ class LibraryConversationsCanvas(Vertical):
                     marker = "☑" if row.checked else "☐"
                 else:
                     marker = "▸" if row.selected else " "
+                # task-281 (PR #665 review): the in-place toggle needs the
+                # marker-less RAW label to rebuild from -- reading it back
+                # off the mounted Button un-escapes user titles (both
+                # ``.plain`` and Textual 8's ``str(Content)`` return
+                # rendered text), so the raw remainder is stashed here at
+                # the single point of truth.
+                label_rest = (
+                    f" {_visible_row_title(row.title)}\n    {row.secondary}"
+                )
                 button = Button(
-                    f"{marker} {_visible_row_title(row.title)}"
-                    f"\n    {row.secondary}",
+                    f"{marker}{label_rest}",
                     id=f"library-conversation-row-{index}",
                     classes="library-conversation-row",
                     compact=True,
                 )
                 button.conversation_id = row.conversation_id
+                button._library_row_label_rest = label_rest
                 # Tooltips are rendered as markup too -- escape user titles.
                 button.tooltip = escape_markup(row.title)
                 button.set_class(row.selected, "library-conversation-row-selected")
