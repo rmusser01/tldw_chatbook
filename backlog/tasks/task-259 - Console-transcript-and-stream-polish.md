@@ -1,7 +1,7 @@
 ---
 id: TASK-259
 title: Console transcript/stream polish (signature cache, buffer collapse, targeted RAG-launch card, inspector rows)
-status: In Progress
+status: Done
 assignee: ['@claude']
 created_date: '2026-07-16 14:30'
 labels: [performance, console]
@@ -20,7 +20,7 @@ Four bounded improvements from the audit: _transcript_rows re-derives every row 
 - [x] #1 Transcript row derivation is O(changed messages) per tick with correctness preserved for delete/reorder/variant-switch
 - [x] #2 Library-RAG launch no longer recomposes the screen
 - [x] #3 Inspector updates changed rows only
-- [ ] #4 Streaming behavior verified live (rig)
+- [x] #4 Streaming behavior verified live (rig)
 <!-- AC:END -->
 
 ## Implementation Plan
