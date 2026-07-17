@@ -735,7 +735,10 @@ def _anthropic_tools_payload(tools: list) -> list:
                 "input_schema": parameters,
             })
         else:
-            converted.append(entry)
+            # v2's native tools shape IS the OpenAI shape -- anything that
+            # isn't a valid function entry is junk and would 400 the request
+            # (Qodo #690-6).
+            logger.warning("Cohere: dropping tools entry that is not a valid function tool.")
     return converted
 
 
@@ -1191,7 +1194,10 @@ def _cohere_tools_payload(tools: list) -> list:
                 },
             })
         else:
-            converted.append(entry)
+            # v2's native tools shape IS the OpenAI shape -- anything that
+            # isn't a valid function entry is junk and would 400 the request
+            # (Qodo #690-6).
+            logger.warning("Cohere: dropping tools entry that is not a valid function tool.")
     return converted
 
 
@@ -1243,7 +1249,14 @@ def _cohere_response_tool_calls(raw_tool_calls: list) -> list:
     for tc in raw_tool_calls or []:
         if not isinstance(tc, dict):
             continue
-        function = tc.get("function") or {}
+        function = tc.get("function")
+        if not isinstance(function, dict):
+            continue
+        if not str(function.get("name") or "").strip():
+            # Downstream parsing drops nameless entries anyway; skipping here
+            # avoids emitting a non-empty tool_calls list that cannot dispatch
+            # (Qodo #690-7).
+            continue
         raw_args = function.get("arguments")
         if isinstance(raw_args, str):
             arguments = raw_args
@@ -1392,6 +1405,16 @@ def chat_with_cohere(
             if entries:
                 assistant_msg: Dict[str, Any] = {"role": "assistant"}
                 tool_plan = msg.get('cohere_tool_plan')
+                if not tool_plan:
+                    # Streamed turns carry the plan INSIDE the accumulated
+                    # tool_calls entry (fragment extra -> accumulator), not at
+                    # message level -- read it back so streamed tool_plan
+                    # round-trips too (Qodo #690-4). `_cohere_request_tool_calls`
+                    # rebuilds entries, so the extra never leaks to the wire.
+                    for _tc in (msg.get('tool_calls') or []):
+                        if isinstance(_tc, dict) and _tc.get('cohere_tool_plan'):
+                            tool_plan = _tc['cohere_tool_plan']
+                            break
                 if tool_plan:
                     assistant_msg["tool_plan"] = str(tool_plan)
                 elif isinstance(content, str) and content.strip():
@@ -1610,7 +1633,10 @@ def chat_with_cohere(
                 finally:  # Ensure [DONE] is sent if loop terminates unexpectedly
                     if not stream_properly_closed:
                         logger.warning("Cohere stream generator loop finished without explicit 'message-end'.")
-                    yield "data: [DONE]\n\n"
+                        # The 'message-end' branch already emitted [DONE] on the
+                        # happy path; emitting here too doubled the terminator
+                        # (Qodo #690-3).
+                        yield "data: [DONE]\n\n"
                     logger.debug(
                         f"Cohere SSE stream_generator for {final_model} finished. Total text: {''.join(accumulated_text_for_log)[:100]}...")
                     if response: response.close()

@@ -718,3 +718,77 @@ def test_streaming_fragments_reassemble_via_gateway_accumulator(mock_post):
     assert calls[0]["function"]["name"] == "calculator"
     assert calls[0]["function"]["arguments"] == json.dumps({"expression": "2+2"})
     assert calls[0]["cohere_tool_plan"] == "I should use the calculator."
+
+
+# ---------------------------------------------------------------------------
+# PR #690 bot-review regressions (Qodo findings 3/4/6/7).
+# ---------------------------------------------------------------------------
+
+@patch("requests.Session.post")
+def test_streaming_emits_exactly_one_done_terminator(mock_post):
+    """Qodo #690-3: message-end yielded [DONE] and the generator's finally
+    yielded a second one — downstream SSE consumers saw a doubled
+    terminator on every successful stream."""
+    raw = _call_cohere_stream(mock_post, _cohere_stream_lines([
+        {"type": "content-delta",
+         "delta": {"message": {"content": {"text": "hi"}}}},
+        {"type": "message-end", "delta": {"finish_reason": "COMPLETE"}},
+    ]), [{"role": "user", "content": "hi"}])
+    assert raw.count("data: [DONE]\n\n") == 1
+
+
+@patch("requests.Session.post")
+def test_streamed_entry_level_tool_plan_round_trips_on_echo(mock_post):
+    """Qodo #690-4: streamed turns carry cohere_tool_plan INSIDE the
+    accumulated tool_calls entry (fragment extra -> gateway accumulator),
+    not at message level — the echo must read it from there. The rebuilt
+    wire entries must NOT leak the extra key."""
+    messages = [
+        {"role": "user", "content": "2+2?"},
+        {"role": "assistant", "content": "",
+         "tool_calls": [{"id": "call_A", "type": "function",
+                         "cohere_tool_plan": "I will use the calculator.",
+                         "function": {"name": "calculator",
+                                      "arguments": "{\"expression\": \"2+2\"}"}}]},
+        {"role": "tool", "tool_call_id": "call_A", "content": "4"},
+    ]
+    sent = _call_cohere(mock_post, messages)["messages"]
+    assert sent[1]["tool_plan"] == "I will use the calculator."
+    assert "cohere_tool_plan" not in sent[1]["tool_calls"][0]
+
+
+@patch("requests.Session.post")
+def test_non_function_tools_entry_dropped_not_forwarded(mock_post):
+    """Qodo #690-6: a dict tools entry that is not a valid function tool
+    must be dropped (would 400 the request), not forwarded unchanged."""
+    sent = _call_cohere(
+        mock_post, [{"role": "user", "content": "hi"}],
+        tools=[
+            {"garbage": True},
+            {"type": "function",
+             "function": {"name": "calculator",
+                          "parameters": {"type": "object", "properties": {}}}},
+        ])
+    names = [t["function"]["name"] for t in sent["tools"]]
+    assert names == ["calculator"]
+
+
+@patch("requests.Session.post")
+def test_response_tool_call_with_non_dict_function_or_blank_name_skipped(mock_post):
+    """Qodo #690-7: a malformed provider tool_call (non-dict function, or a
+    blank name) must be skipped — not crash, not emit an undispatchable
+    entry. All-junk lists fall through to plain content handling."""
+    result = _call_cohere_get_result(mock_post, {
+        "message": {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "partial"}],
+            "tool_calls": [
+                {"id": "bad1", "type": "function", "function": "not-a-dict"},
+                {"id": "bad2", "type": "function", "function": {"name": "  "}},
+            ],
+        },
+        "finish_reason": "TOOL_CALL",
+    }, [{"role": "user", "content": "hi"}])
+    message = result["choices"][0]["message"]
+    assert "tool_calls" not in message
+    assert message["content"] == "partial"
