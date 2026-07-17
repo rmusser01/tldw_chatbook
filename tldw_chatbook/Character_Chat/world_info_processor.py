@@ -279,7 +279,7 @@ class WorldInfoProcessor:
             records.append(WorldBookEntryDiagnostic(
                 entry_id=cand.get("_entry_id"), source_book_id=cand.get("_book_id"),
                 source_book_name=str(cand.get("_book_name") or ""),
-                keys=list(cand.get("keys", [])), activation_reason=reason, status="fired",
+                keys=list(cand.get("keys") or []), activation_reason=reason, status="fired",
                 token_cost=self._estimate_entry_tokens(cand), injection_order=order,
                 position=cand.get("position", "before_char"),
                 content_preview=(cand.get("content", "") or "")[:80], depth_level=depth_level,
@@ -311,7 +311,7 @@ class WorldInfoProcessor:
             records.append(WorldBookEntryDiagnostic(
                 entry_id=cand.get("_entry_id"), source_book_id=cand.get("_book_id"),
                 source_book_name=str(cand.get("_book_name") or ""),
-                keys=list(cand.get("keys", [])), activation_reason=reason, status=status,
+                keys=list(cand.get("keys") or []), activation_reason=reason, status=status,
                 token_cost=self._estimate_entry_tokens(cand), injection_order=None,
                 position=cand.get("position", "before_char"),
                 content_preview=(cand.get("content", "") or "")[:80], depth_level=0,
@@ -417,14 +417,14 @@ class WorldInfoProcessor:
             return (self._keyword_in_text(key, scan_text) if case
                     else self._keyword_in_text(key.lower(), scan_text_lower))
 
-        primary_key = next((k for k in entry.get('keys', []) if hit(k)), None)
+        primary_key = next((k for k in (entry.get('keys') or []) if hit(k)), None)
         primary_hit = primary_key is not None
         if not primary_hit:
             return (False, None, False, False, None)
         secondary_required = bool(entry.get('selective', False) and entry.get('secondary_keys'))
         if not secondary_required:
             return (True, primary_key, False, False, None)
-        secondary_key = next((k for k in entry.get('secondary_keys', []) if hit(k)), None)
+        secondary_key = next((k for k in (entry.get('secondary_keys') or []) if hit(k)), None)
         return (True, primary_key, True, secondary_key is not None, secondary_key)
 
     def _keyword_in_text(self, keyword: str, text: str) -> bool:

@@ -182,3 +182,20 @@ def test_diagnostics_reports_recursively_fired_entries():
     assert dragon.status == "fired"
     assert dragon.depth_level == 1
     assert "recursive" in dragon.activation_reason
+
+
+def test_classify_entry_match_tolerates_null_keys():
+    """A candidate/entry whose keys or secondary_keys are None (e.g. an explicit
+    null DB field) must not raise in the diagnostics classifier (Gemini #673 —
+    `.get('keys', [])` returns None, not [], when the key exists with value None)."""
+    proc = WorldInfoProcessor(world_books=[_book(1, "B", [_entry(1, ["Warden"], "x")])])
+    # keys=None -> no primary match, no TypeError
+    assert proc._classify_entry_match(
+        {"keys": None, "secondary_keys": None}, "The Warden.", "the warden."
+    ) == (False, None, False, False, None)
+    # selective with secondary_keys=None -> primary hit, secondary not required (falsy)
+    p, pk, sr, sh, sk = proc._classify_entry_match(
+        {"keys": ["Warden"], "selective": True, "secondary_keys": None},
+        "The Warden.", "the warden.",
+    )
+    assert p is True and pk == "Warden" and sr is False
