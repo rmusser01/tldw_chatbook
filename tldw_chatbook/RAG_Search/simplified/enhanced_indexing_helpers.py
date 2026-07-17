@@ -309,6 +309,7 @@ async def store_documents_with_parents(
                     **(doc.get('metadata', {})),
                     "doc_id": doc['id'],
                     "doc_title": doc.get('title', 'Untitled'),
+                    "chunk_id": chunk_id,
                     "chunk_index": j,
                     "chunk_start": chunk.get("start_char", 0) if isinstance(chunk, dict) else 0,
                     "chunk_end": chunk.get("end_char", len(chunk_text)) if isinstance(chunk, dict) else len(chunk_text),

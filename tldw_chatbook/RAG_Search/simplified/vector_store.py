@@ -78,7 +78,11 @@ class VectorStore(Protocol):
     def delete_collection(self, name: str) -> None:
         """Delete a collection by name."""
         ...
-    
+
+    def delete_document(self, doc_id: str) -> None:
+        """Delete all chunks whose metadata `doc_id` matches (no-op when absent)."""
+        ...
+
     def get_collection_stats(self) -> dict:
         """Get statistics about the collection."""
         ...
@@ -478,7 +482,20 @@ class ChromaVectorStore:
             logger.info(f"Deleted collection: {name}")
         except Exception as e:
             logger.error(f"Failed to delete collection: {e}")
-    
+
+    def delete_document(self, doc_id: str) -> None:
+        """Delete all chunks belonging to a document (no-op when absent).
+
+        Used before re-indexing an updated document: ChromaDB's ``add``
+        silently keeps existing IDs, so without this stale chunks from the
+        previous version would survive a re-index.
+
+        Args:
+            doc_id: The document id stored in each chunk's ``doc_id`` metadata.
+        """
+        self.collection.delete(where={"doc_id": doc_id})
+        logger.debug(f"Deleted chunks for document {doc_id} from collection {self.collection_name}")
+
     def clear(self) -> None:
         """Clear all data from the current collection."""
         try:
@@ -1023,9 +1040,36 @@ class InMemoryVectorStore:
         if name == self._current_collection or name == "default":
             self.clear()
             deleted = True
-        
+
         return deleted
-    
+
+    def delete_document(self, doc_id: str) -> None:
+        """Delete all chunks belonging to a document (no-op when absent).
+
+        Mirrors ``ChromaVectorStore.delete_document`` so re-indexing an
+        updated document never leaves stale chunks behind.
+
+        Args:
+            doc_id: The document id stored in each chunk's ``doc_id`` metadata.
+        """
+        keep_indices = [
+            i for i, meta in enumerate(self.metadata)
+            if not (isinstance(meta, dict) and meta.get("doc_id") == doc_id)
+        ]
+        if len(keep_indices) == len(self.ids):
+            return
+
+        keep_set = set(keep_indices)
+        removed_ids = {
+            self.ids[i] for i in range(len(self.ids)) if i not in keep_set
+        }
+        self.ids = [self.ids[i] for i in keep_indices]
+        self.embeddings = [self.embeddings[i] for i in keep_indices]
+        self.documents = [self.documents[i] for i in keep_indices]
+        self.metadata = [self.metadata[i] for i in keep_indices]
+        self._access_order = [id_val for id_val in self._access_order if id_val not in removed_ids]
+        logger.debug(f"Deleted {len(removed_ids)} chunks for document {doc_id} from in-memory store")
+
     def clear(self) -> None:
         """Clear all data."""
         self.ids.clear()
