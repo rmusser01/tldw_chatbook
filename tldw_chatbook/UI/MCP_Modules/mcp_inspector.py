@@ -79,6 +79,13 @@ _WIRED_ACTION_TOOLTIPS: dict[HubAction, str] = {
     HubAction.VALIDATE: "Test the connection without changing the cached catalog.",
     HubAction.REFRESH_DISCOVERY: "Reconnect and refresh the tool/resource/prompt catalog.",
     HubAction.EDIT_CONFIG: "Edit this profile's command, args, and env.",
+    # Task 2 (MCP Hub Phase 6): only ever rendered from a Findings-detail
+    # remediation button (`show_finding()` below) -- there is no wired
+    # OPEN_CREDENTIALS button in the readiness action list itself yet (see
+    # `_wired_actions()`), so this entry exists purely for that reuse.
+    HubAction.OPEN_CREDENTIALS: (
+        "Open this server in Servers mode -- credentials are managed in its config."
+    ),
 }
 
 # Disabled-button tooltip for a lifecycle action on a server-source snapshot
@@ -489,6 +496,15 @@ class MCPInspector(Vertical):
         # back (unlike `_current_audit_entry` above) -- the finding detail
         # is read-only this phase (no client-side fix actions).
         self._current_finding: dict[str, Any] | None = None
+        # Task 2 (MCP Hub Phase 6): the finding's owning server key, as
+        # resolved by the caller (`MCPWorkbench.on_mcp_audit_mode_finding_
+        # selected()`) and threaded through `show_finding()`'s `server_key`
+        # keyword -- read by the finding-detail action buttons' press
+        # handler below (`#mcp-finding-action-*`) to know what to post in
+        # `HubActionRequested`. `None` when the caller couldn't resolve one
+        # (nothing derivable from the finding, nothing selected in the
+        # rail).
+        self._current_finding_server_key: str | None = None
         # Task 5: True once `require_confirm()` has armed the Test Tool Run
         # button into a one-shot "Confirm run" control (the tool's gate
         # resolved to "ask" -- `MCPWorkbench` decides that, this pane only
@@ -974,7 +990,9 @@ class MCPInspector(Vertical):
             ]
             await container.mount_all(widgets)
 
-    async def show_finding(self, finding: dict[str, Any] | None) -> None:
+    async def show_finding(
+        self, finding: dict[str, Any] | None, *, server_key: str | None = None
+    ) -> None:
         """Render `#mcp-inspector-finding` for one Audit-mode Findings-table
         row, or hide it (T8, MCP Hub Phase 5).
 
@@ -987,22 +1005,38 @@ class MCPInspector(Vertical):
         _clear_tool_view()`) hides the container instead of leaving a
         previous finding's facts on screen.
 
-        Read-only: severity/type/message, plus a suggested-remediation
-        line only when the raw payload actually carries one -- no
-        client-side fix actions this phase (deferred; see task-8-brief.md),
-        so unlike `show_audit_entry()` this mounts no action buttons at
-        all. `markup=False` throughout -- finding fields are server-derived
-        free text that must never be interpreted as Rich markup.
+        Severity/type/message, plus a suggested-remediation line only when
+        the raw payload actually carries one, plus -- Task 2 (MCP Hub
+        Phase 6) -- one Button per `remediation_actions(finding)` HubAction
+        (ids `#mcp-finding-action-<action>`, reusing `_ACTION_LABELS`/
+        `_WIRED_ACTION_TOOLTIPS`, tooltipped). Each posts the EXISTING
+        `HubActionRequested` message with `server_key` -- the finding's
+        owning server as resolved by the CALLER (target-level when
+        derivable from the finding itself, else the selected rail server;
+        `None` when neither is available) -- read back by the button press
+        handler in `on_button_pressed()` below via `_current_finding_
+        server_key`. `markup=False` throughout -- finding fields are
+        server-derived free text that must never be interpreted as Rich
+        markup.
         """
+        # Task 2: local import -- `mcp_audit_mode.py` imports `format_
+        # duration_ms` from THIS module at its own top level, so importing
+        # `remediation_actions` back from it at module level here would be
+        # a circular import. Deferred to call time, by which point both
+        # modules have already finished loading.
+        from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import remediation_actions
+
         async with self._refresh_lock:
             container = self.query_one("#mcp-inspector-finding", Vertical)
             await container.remove_children()
             if finding is None:
                 container.display = False
                 self._current_finding = None
+                self._current_finding_server_key = None
                 return
             container.display = True
             self._current_finding = finding
+            self._current_finding_server_key = server_key
             severity = _finding_text(finding, "severity")
             finding_type = _finding_text(finding, "finding_type", "type")
             message = _finding_text(finding, "message")
@@ -1027,6 +1061,16 @@ class MCPInspector(Vertical):
                         f"Suggested remediation: {remediation}",
                         id="mcp-inspector-finding-remediation",
                         classes="ds-field-row", markup=False,
+                    )
+                )
+            for action in remediation_actions(finding):
+                widgets.append(
+                    Button(
+                        _ACTION_LABELS[action],
+                        id=f"mcp-finding-action-{action.value}",
+                        classes="console-action-secondary",
+                        compact=True,
+                        tooltip=_WIRED_ACTION_TOOLTIPS.get(action, _ACTION_LABELS[action]),
                     )
                 )
             await container.mount_all(widgets)
@@ -1496,6 +1540,13 @@ class MCPInspector(Vertical):
                         str(entry.get("server_key") or ""), str(entry.get("tool_name") or "")
                     )
                 )
+            return
+        if button_id.startswith("mcp-finding-action-"):
+            event.stop()
+            action = HubAction(button_id.removeprefix("mcp-finding-action-"))
+            self.post_message(
+                self.HubActionRequested(action, self._current_finding_server_key)
+            )
             return
 
     async def _run_advanced_action(self) -> None:

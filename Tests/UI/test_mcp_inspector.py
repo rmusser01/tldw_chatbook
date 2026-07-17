@@ -1917,3 +1917,96 @@ async def test_show_tool_result_blocked_renders_not_run_status_line():
         result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
         assert result.startswith("Blocked · not run")
         assert "Failed" not in result.split("\n", 1)[0]
+
+
+# -- Task 2 (MCP Hub Phase 6): finding-detail remediation buttons -----------
+
+
+def _finding(
+    *, finding_type: str = "orphaned_path_scope", message: str = "Needs review",
+    severity: str = "high",
+) -> dict[str, Any]:
+    return {"severity": severity, "finding_type": finding_type, "message": message}
+
+
+@pytest.mark.asyncio
+async def test_finding_detail_renders_mapped_action_buttons_with_tooltips():
+    """A finding whose text matches the discovery/stale/catalog bucket
+    renders exactly the two mapped buttons (REFRESH_DISCOVERY, VIEW_DETAILS),
+    ids `#mcp-finding-action-<action>`, each with a tooltip."""
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_finding(
+            _finding(finding_type="catalog_expired", message="Tool catalog is stale.")
+        )
+        await pilot.pause()
+        container = app.query_one("#mcp-inspector-finding")
+        assert container.display is True
+        buttons = {b.id: b for b in container.query(Button)}
+        assert set(buttons) == {
+            "mcp-finding-action-refresh_discovery",
+            "mcp-finding-action-view_details",
+        }
+        for button in buttons.values():
+            assert button.tooltip, f"{button.id} has no tooltip"
+
+
+@pytest.mark.asyncio
+async def test_finding_detail_default_mapping_renders_single_view_details_button():
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_finding(_finding())
+        await pilot.pause()
+        container = app.query_one("#mcp-inspector-finding")
+        buttons = list(container.query(Button))
+        assert [b.id for b in buttons] == ["mcp-finding-action-view_details"]
+
+
+@pytest.mark.asyncio
+async def test_finding_action_button_posts_hub_action_requested_with_given_server_key():
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_finding(_finding(), server_key="server:main")
+        await pilot.pause()
+        await pilot.click("#mcp-finding-action-view_details")
+        await pilot.pause()
+        assert app.events
+        assert app.events[-1].action is HubAction.VIEW_DETAILS
+        assert app.events[-1].server_key == "server:main"
+
+
+@pytest.mark.asyncio
+async def test_finding_action_button_posts_none_server_key_when_not_given():
+    """`server_key` defaults to `None` -- the caller (`MCPWorkbench`) could
+    not resolve one (neither the finding nor the rail selection carried an
+    owning server)."""
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_finding(_finding())
+        await pilot.pause()
+        await pilot.click("#mcp-finding-action-view_details")
+        await pilot.pause()
+        assert app.events
+        assert app.events[-1].server_key is None
+
+
+@pytest.mark.asyncio
+async def test_show_finding_none_clears_action_buttons_and_hides_container():
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_finding(_finding(), server_key="server:main")
+        await pilot.pause()
+        assert list(app.query_one("#mcp-inspector-finding").query(Button))
+
+        await inspector.show_finding(None)
+        await pilot.pause()
+        container = app.query_one("#mcp-inspector-finding")
+        assert container.display is False
+        assert not list(container.query(Button))
+        # A stray press after clearing must not resurrect a stale server_key.
+        assert inspector._current_finding_server_key is None

@@ -29,6 +29,7 @@ from tldw_chatbook.MCP.permission_store import (
     definition_hash,
     resolve_effective_state,
 )
+from tldw_chatbook.MCP.readiness import HubAction
 from tldw_chatbook.MCP.unified_control_models import UnifiedMCPContext
 from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import MCPAuditMode
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
@@ -5639,8 +5640,186 @@ async def test_finding_selection_shows_read_only_detail_with_remediation_in_insp
         assert "orphaned_path_scope" in detail_text
         assert "Needs review" in detail_text
         assert "Remove the unused path scope." in detail_text
-        # No client-side fix actions this phase -- read-only detail only.
-        assert not list(container.query(Button))
+        # Task 2 (MCP Hub Phase 6): "orphaned_path_scope" matches none of the
+        # remediation keyword buckets, so it renders the single default
+        # (VIEW_DETAILS) remediation button rather than none at all.
+        assert [b.id for b in container.query(Button)] == ["mcp-finding-action-view_details"]
+
+
+# -- Task 2 (MCP Hub Phase 6): finding remediation routing + per-source -----
+# -- HubAction routing for `server:` keys ------------------------------------
+#
+# `AuditFindingsHubService`'s context pre-selects the "main" target -- per
+# `MCPWorkbench.reload()`, that means `workbench._selected_server_key` is
+# already "server:main" right after mount (no rail click needed), which is
+# exactly "the selected rail server" fallback these tests exercise.
+
+
+@pytest.mark.asyncio
+async def test_finding_view_details_action_routes_to_servers_mode_using_rail_fallback():
+    """The finding carries no target-identifying field, so the routed
+    `server_key` falls back to the already-selected rail server
+    ("server:main", set at mount by `reload()`)."""
+    app = AuditFindingsApp(
+        findings_items=[{"severity": "low", "finding_type": "stale_binding", "message": "x"}]
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        assert workbench._selected_server_key == "server:main"
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+        await _select_findings_row(app, pilot, 0)
+
+        await pilot.click("#mcp-finding-action-view_details")
+        await pilot.pause()
+        assert workbench.active_mode == "servers"
+        assert workbench._selected_server_key == "server:main"
+
+
+@pytest.mark.asyncio
+async def test_finding_view_details_action_prefers_findings_own_target_id_over_rail_selection():
+    """A finding carrying its own `target_id` wins over the rail's own
+    selection -- proves the "target-level server:<target_id>" derivation
+    actually takes priority, not just falls through to the rail fallback."""
+    app = AuditFindingsApp(
+        findings_items=[
+            {
+                "severity": "low",
+                "finding_type": "orphaned_path_scope",
+                "message": "x",
+                "target_id": "other",
+            }
+        ]
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        assert workbench._selected_server_key == "server:main"
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+        await _select_findings_row(app, pilot, 0)
+
+        await pilot.click("#mcp-finding-action-view_details")
+        await pilot.pause()
+        assert workbench.active_mode == "servers"
+        assert workbench._selected_server_key == "server:other"
+
+
+@pytest.mark.asyncio
+async def test_finding_open_credentials_action_selects_server_and_notifies_honest_copy():
+    app = AuditFindingsApp(
+        findings_items=[
+            {
+                "severity": "high",
+                "finding_type": "credential_expired",
+                "message": "Server credential needs renewal.",
+            }
+        ]
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+        await _select_findings_row(app, pilot, 0)
+
+        notifications = _capture_notifications(app)
+        await pilot.click("#mcp-finding-action-open_credentials")
+        await pilot.pause()
+        assert workbench.active_mode == "servers"
+        assert workbench._selected_server_key == "server:main"
+        assert notifications and notifications[-1] == (
+            "Credentials are managed in the server's config.",
+            "information",
+        )
+
+
+@pytest.mark.asyncio
+async def test_finding_refresh_discovery_action_invalidates_caches_resyncs_and_toasts():
+    """REFRESH_DISCOVERY on a `server:` key invalidates BOTH the findings
+    (T8) and governance-profiles (T11) `(source, target)` caches and runs a
+    full resync -- `service.advanced_fetch_calls` (the findings fetch) goes
+    from 1 (the mount-time sync) to 2 (this resync), proving the cache
+    key was actually reset rather than reused."""
+    app = AuditFindingsApp(
+        findings_items=[
+            {
+                "severity": "medium",
+                "finding_type": "catalog_expired",
+                "message": "Tool catalog is stale.",
+            }
+        ]
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        service = app.unified_mcp_service
+        assert service.advanced_fetch_calls == 1
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+        await _select_findings_row(app, pilot, 0)
+
+        notifications = _capture_notifications(app)
+        await pilot.click("#mcp-finding-action-refresh_discovery")
+        await pilot.pause()
+        assert service.advanced_fetch_calls == 2
+        assert notifications and notifications[-1] == (
+            "Server discovery refreshed.",
+            "information",
+        )
+
+
+@pytest.mark.asyncio
+async def test_unrouted_action_for_server_key_shows_managed_on_server_toast_not_silent_drop():
+    """CONNECT/VALIDATE/EDIT_CONFIG (local-only lifecycle seams) posted with
+    a `server:` key must no longer be silently dropped."""
+    app = AuditFindingsApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        notifications = _capture_notifications(app)
+        for action in (HubAction.CONNECT, HubAction.VALIDATE, HubAction.EDIT_CONFIG):
+            workbench.post_message(MCPInspector.HubActionRequested(action, "server:main"))
+            await pilot.pause()
+        assert notifications == [("Managed on the server.", "information")] * 3
+
+
+@pytest.mark.asyncio
+async def test_server_source_empty_tools_diagnosis_uses_refresh_not_disabled_actions():
+    """UX item 10 (Task 2, MCP Hub Phase 6): server source's empty-tools
+    diagnosis must not point at connect/refresh actions that are disabled
+    for server-source snapshots -- and its own "refresh" button must invoke
+    the cache-invalidating resync, not just navigate to Servers mode."""
+    app = AuditFindingsApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        service = app.unified_mcp_service
+        assert service.advanced_fetch_calls == 1
+        workbench.set_mode("tools")
+        await pilot.pause()
+        canvas = app.query_one(MCPToolsMode)
+        message = str(canvas.query_one("#mcp-tools-empty-message", Static).renderable)
+        assert message == "No tools visible from this server — refresh or check the server."
+
+        notifications = _capture_notifications(app)
+        await pilot.click("#mcp-tools-empty-action")
+        await pilot.pause()
+        assert workbench.active_mode == "tools"  # unlike local source, no mode switch
+        assert service.advanced_fetch_calls == 2
+        assert notifications and notifications[-1] == (
+            "Server discovery refreshed.",
+            "information",
+        )
 
 
 @pytest.mark.asyncio

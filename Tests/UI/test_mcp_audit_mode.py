@@ -9,7 +9,8 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button, DataTable, Input, Select
 
 import tldw_chatbook
-from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import MCPAuditMode
+from tldw_chatbook.MCP.readiness import HubAction
+from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import MCPAuditMode, remediation_actions
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import state_text
 
 _CSS_ROOT = Path(tldw_chatbook.__file__).parent / "css"
@@ -867,6 +868,97 @@ async def test_findings_row_keys_are_stable_synthetic_index():
         second_key, _ = table.coordinate_to_cell_key((1, 0))
         assert first_key.value == "0"
         assert second_key.value == "1"
+
+
+# -- Task 2 (MCP Hub Phase 6): remediation_actions() heuristic mapping ------
+#
+# Findings carry no machine-actionable remediation code -- only free-text
+# `finding_type`/`message`. `remediation_actions()` is a pure function, so
+# these are plain unit tests against the dict shape, no App/pilot needed.
+
+
+@pytest.mark.parametrize(
+    "finding_type,message",
+    [
+        ("discovery_stale", ""),
+        ("", "Tool discovery has not run recently."),
+        ("catalog_expired", ""),
+        ("", "The tool catalog looks stale."),
+        ("STALE_BINDING", ""),  # case-insensitive
+    ],
+)
+def test_remediation_actions_maps_discovery_stale_catalog_keywords(finding_type, message):
+    finding = {"finding_type": finding_type, "message": message}
+    assert remediation_actions(finding) == (
+        HubAction.REFRESH_DISCOVERY,
+        HubAction.VIEW_DETAILS,
+    )
+
+
+@pytest.mark.parametrize(
+    "finding_type,message",
+    [
+        ("auth_expired", ""),
+        ("", "Missing authentication for this connection."),
+        ("credential_missing", ""),
+        ("", "The stored credential is invalid."),
+        ("", "Access token has expired."),
+    ],
+)
+def test_remediation_actions_maps_auth_credential_token_keywords(finding_type, message):
+    finding = {"finding_type": finding_type, "message": message}
+    assert remediation_actions(finding) == (
+        HubAction.OPEN_CREDENTIALS,
+        HubAction.VIEW_DETAILS,
+    )
+
+
+@pytest.mark.parametrize(
+    "finding_type,message",
+    [
+        ("permission_drift", ""),
+        ("", "This tool's permission no longer matches policy."),
+        ("policy_violation", ""),
+        ("", "Violates the workspace policy."),
+    ],
+)
+def test_remediation_actions_maps_permission_policy_keywords(finding_type, message):
+    finding = {"finding_type": finding_type, "message": message}
+    assert remediation_actions(finding) == (
+        HubAction.VIEW_DETAILS,
+        HubAction.OPEN_AUDIT,
+    )
+
+
+def test_remediation_actions_defaults_to_view_details_for_unrecognized_finding():
+    finding = _finding(finding_type="orphaned_path_scope", message="Needs review")
+    assert remediation_actions(finding) == (HubAction.VIEW_DETAILS,)
+
+
+def test_remediation_actions_defaults_for_finding_with_no_recognizable_fields():
+    """Defensive: missing finding_type/message entirely must not raise."""
+    assert remediation_actions({}) == (HubAction.VIEW_DETAILS,)
+
+
+def test_remediation_actions_first_matching_bucket_wins_on_overlap():
+    """A finding whose text matches more than one bucket resolves to the
+    EARLIER bucket in `_REMEDIATION_KEYWORDS`'s own order -- here both
+    "stale" (bucket 1) and "policy" (bucket 3) appear, so bucket 1 wins."""
+    finding = {"finding_type": "stale_binding", "message": "Also touches policy."}
+    assert remediation_actions(finding) == (
+        HubAction.REFRESH_DISCOVERY,
+        HubAction.VIEW_DETAILS,
+    )
+
+
+def test_remediation_actions_reads_type_alias_when_finding_type_absent():
+    """`_finding_field()`'s own `finding_type`/`type` alias precedent --
+    mirrored here since findings have no fixed wire schema."""
+    finding = {"type": "catalog_expired", "message": ""}
+    assert remediation_actions(finding) == (
+        HubAction.REFRESH_DISCOVERY,
+        HubAction.VIEW_DETAILS,
+    )
 
 
 @pytest.mark.asyncio

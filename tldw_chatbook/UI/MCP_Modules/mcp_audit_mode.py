@@ -22,6 +22,7 @@ from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import Button, DataTable, Input, Select, Static
 
+from tldw_chatbook.MCP.readiness import HubAction
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import format_duration_ms
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import state_text
 
@@ -145,6 +146,59 @@ _SEVERITY_KIND: dict[str, str] = {
 
 def _severity_kind(severity: str) -> str:
     return _SEVERITY_KIND.get(severity.strip().lower(), "muted")
+
+
+# Task 2 (MCP Hub Phase 6): findings carry NO machine-actionable remediation
+# code -- only the free-text `finding_type`/`message` fields every Findings-
+# table row already renders (see `_finding_field()` above). `remediation_
+# actions()` below is a pure, defensive heuristic over that text (spec-
+# verbatim keyword table, task-2-brief.md) that `MCPInspector.show_finding()`
+# uses to decide which `HubAction` buttons to render for one finding's
+# detail view. First matching bucket (in the order below) wins; an
+# unrecognized finding still gets ONE usable action (`VIEW_DETAILS`) rather
+# than none at all -- mirrors `_severity_kind()`'s own "always resolve to
+# something, never raise" contract for the same raw, wire-derived dict.
+_REMEDIATION_KEYWORDS: tuple[tuple[tuple[str, ...], tuple[HubAction, ...]], ...] = (
+    (
+        ("discovery", "stale", "catalog"),
+        (HubAction.REFRESH_DISCOVERY, HubAction.VIEW_DETAILS),
+    ),
+    (
+        ("auth", "credential", "token"),
+        (HubAction.OPEN_CREDENTIALS, HubAction.VIEW_DETAILS),
+    ),
+    (
+        ("permission", "policy"),
+        (HubAction.VIEW_DETAILS, HubAction.OPEN_AUDIT),
+    ),
+)
+_REMEDIATION_DEFAULT: tuple[HubAction, ...] = (HubAction.VIEW_DETAILS,)
+
+
+def remediation_actions(finding: Mapping[str, Any]) -> tuple[HubAction, ...]:
+    """Heuristic `HubAction` mapping for one Findings-table row.
+
+    Scans `finding_type` + `message` (lowercased, concatenated) for the
+    keyword buckets in `_REMEDIATION_KEYWORDS`, in order -- the FIRST bucket
+    with a matching keyword wins, so a finding whose text happens to match
+    more than one bucket (e.g. both "stale" and "policy") always resolves to
+    the earlier one's action set, not some combination of both. A finding
+    matching none of them falls back to `_REMEDIATION_DEFAULT`
+    (`(VIEW_DETAILS,)`).
+
+    Defensive like every other raw-dict Findings reader in this module
+    (`_finding_field()`, `_severity_kind()`): a missing/non-string
+    `finding_type` or `message` degrades to an empty contribution rather
+    than raising -- `finding` is a server-side product versioned
+    independently of this client, so every field is optional.
+    """
+    finding_type = finding.get("finding_type") or finding.get("type") or ""
+    message = finding.get("message") or ""
+    haystack = f"{finding_type} {message}".lower()
+    for keywords, actions in _REMEDIATION_KEYWORDS:
+        if any(keyword in haystack for keyword in keywords):
+            return actions
+    return _REMEDIATION_DEFAULT
 
 
 def _format_when(ts: Any) -> str:

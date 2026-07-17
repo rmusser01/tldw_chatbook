@@ -1135,14 +1135,31 @@ class MCPWorkbench(Container):
     def _empty_tools_diagnosis(self) -> tuple[str, str]:
         """Diagnose why the Tools mode catalog is currently empty.
 
-        Mirrors the design spec's three-bucket empty-state model: no
-        servers at all -> add one; servers exist but none have ever
-        connected/discovered (every relevant snapshot is still
+        Mirrors the design spec's three-bucket empty-state model for LOCAL
+        source: no servers at all -> add one; servers exist but none have
+        ever connected/discovered (every relevant snapshot is still
         `NEEDS_SETUP`) -> connect or refresh; otherwise (servers have
         connected/discovered but genuinely returned zero tools) -> refresh
         again. "Relevant" excludes the built-in server under local source
         (it's always present and isn't something the user "configured").
+
+        UX item 10 (Task 2, MCP Hub Phase 6): SERVER source instead gets
+        ONE fixed diagnosis regardless of which of those three reasons
+        actually applies. The local-source buckets above all end up
+        pointing at Servers mode's per-server CONNECT/REFRESH_DISCOVERY
+        lifecycle actions -- but those are disabled for server-source
+        snapshots in the inspector (`_wired_actions()` only wires them for
+        local source), so routing there would just point the user at more
+        disabled buttons. Its own "refresh" action instead routes to the
+        cache-invalidating resync (`_refresh_server_discovery()`, see
+        `on_mcp_tools_mode_empty_action_requested()`) rather than a bare
+        mode switch.
         """
+        if self._source == "server":
+            return (
+                "No tools visible from this server — refresh or check the server.",
+                "refresh",
+            )
         relevant = [snap for snap in self._snapshots if snap.source == self._source]
         if not relevant:
             return ("No servers configured — add one to see its tools.", "add_server")
@@ -1914,6 +1931,23 @@ class MCPWorkbench(Container):
     async def on_mcp_inspector_hub_action_requested(
         self, event: MCPInspector.HubActionRequested
     ) -> None:
+        """Route one `HubActionRequested` -- from either the readiness pane's
+        own action buttons or (Task 2, MCP Hub Phase 6) a Findings-detail
+        remediation button (`MCPInspector.show_finding()`'s mapped
+        `HubAction` buttons).
+
+        Task 2 adds the `server:`-key branches below: `REFRESH_DISCOVERY`
+        invalidates the (source, target)-cached governance/findings
+        listings and runs a full resync (`_refresh_server_discovery()`,
+        shared with the Tools-mode empty-state's own "refresh" action under
+        server source); `OPEN_CREDENTIALS` selects the server and switches
+        to Servers mode with an honest "managed on the server" notice (no
+        credentials editor exists for server source). Every other action
+        that reaches this handler with a `server:` key -- `CONNECT`/
+        `VALIDATE`/`EDIT_CONFIG` (lifecycle-only, local-source seams) or
+        anything else -- falls through to the final catch-all toast rather
+        than being silently dropped.
+        """
         event.stop()
         if event.action is HubAction.VIEW_DETAILS and event.server_key:
             self._selected_server_key = event.server_key
@@ -1942,6 +1976,58 @@ class MCPWorkbench(Container):
             profile_id = event.server_key.split(":", 1)[1]
             record = self._catalog_records.get(profile_id)
             await self.query_one(MCPServersMode).show_form(record)
+        elif (
+            event.action is HubAction.REFRESH_DISCOVERY
+            and event.server_key
+            and event.server_key.startswith("server:")
+        ):
+            await self._refresh_server_discovery()
+        elif (
+            event.action is HubAction.OPEN_CREDENTIALS
+            and event.server_key
+            and event.server_key.startswith("server:")
+        ):
+            self._selected_server_key = event.server_key
+            self.set_mode("servers")
+            await self._sync_children()
+            self.app.notify("Credentials are managed in the server's config.")
+        elif event.server_key and event.server_key.startswith("server:"):
+            # No more silent drops: CONNECT/VALIDATE/EDIT_CONFIG (local-only
+            # lifecycle seams) and any other unrecognized action posted with
+            # a server-source key land here instead of doing nothing.
+            self.app.notify("Managed on the server.")
+
+    async def _refresh_server_discovery(self) -> None:
+        """Cache-invalidating full resync for a server-source "refresh
+        discovery" request (Task 2, MCP Hub Phase 6).
+
+        Shared by two entry points that both need it instead of a per-server
+        lifecycle action that stays disabled for server-source snapshots in
+        the inspector (`_wired_actions()` only wires CONNECT/VALIDATE/
+        REFRESH_DISCOVERY for local source): the inspector's own
+        REFRESH_DISCOVERY routing above (a `server:` key -- e.g. a Findings-
+        detail remediation button), and the Tools-mode empty-state's
+        "refresh" button under server source (`on_mcp_tools_mode_empty_
+        action_requested()`, UX item 10's fix).
+
+        The findings (T8) and governance-profiles (T11) listings are each
+        cached by `(source, target)` identity and otherwise only refetched
+        on an actual identity change (`_server_findings()`/`_server_
+        governance_profiles()`) -- resetting both cache keys back to the
+        module's `_UNSET` sentinel forces the next full pass to treat the
+        identity as "changed" and refetch, exactly like a genuine
+        source/target switch would. `self._snapshots` is also re-collected
+        (mirrors `_select_server_key()`/`_switch_source()`) so the
+        readiness/tool catalog reflects a fresh discovery pass too, not
+        just the two Advanced-derived caches.
+        """
+        self._findings_cache = None
+        self._findings_cache_key = _UNSET
+        self._governance_profiles_cache = None
+        self._governance_profiles_cache_key = _UNSET
+        self._snapshots = await self._collect_snapshots()
+        await self._sync_children()
+        self.app.notify("Server discovery refreshed.")
 
     async def on_mcp_servers_mode_add_server_requested(
         self, event: MCPServersMode.AddServerRequested
@@ -1958,13 +2044,21 @@ class MCPWorkbench(Container):
         overview's own Add-server button, notifying if gated -- reachable
         here with no disabled-button affordance to lean on, same rationale
         as `open_add_server_form()`'s `a`-keybinding entry point). `"connect"`
-        and `"refresh"` both just point the user at Servers mode, where the
-        actual per-server lifecycle actions live (Task 5 scope; Tools mode
-        itself gains no lifecycle buttons).
+        (local source only, see `_empty_tools_diagnosis()`) just points the
+        user at Servers mode, where the actual per-server lifecycle actions
+        live (Task 5 scope; Tools mode itself gains no lifecycle buttons).
+
+        `"refresh"` under SERVER source (UX item 10, Task 2 MCP Hub Phase 6)
+        instead routes to the cache-invalidating full resync
+        (`_refresh_server_discovery()`) -- the plain "go look at Servers
+        mode" copy below would point at a disabled per-server action there.
+        `"refresh"` under local source keeps the original behavior.
         """
         event.stop()
         if event.action_key == "add_server":
             await self._open_add_server(notify_if_gated=True)
+        elif event.action_key == "refresh" and self._source == "server":
+            await self._refresh_server_discovery()
         elif event.action_key in ("connect", "refresh"):
             self.set_mode("servers")
             self.app.notify("Select a server below to connect or refresh its tools.")
@@ -2109,6 +2203,12 @@ class MCPWorkbench(Container):
         index (a stale selection racing a background resync that shrank
         the list) resolves to `None`, which `show_finding()` renders as
         "nothing selected" rather than crashing.
+
+        Task 2 (MCP Hub Phase 6): a resolved finding also gets its owning
+        server key resolved (`_finding_owning_server_key()`) and threaded
+        into `show_finding()`'s `server_key` keyword, so the detail view's
+        new remediation-action buttons know which server a routed
+        `HubActionRequested` belongs to.
         """
         event.stop()
         finding = (
@@ -2116,7 +2216,27 @@ class MCPWorkbench(Container):
             if 0 <= event.index < len(self._last_audit_findings)
             else None
         )
-        await self.query_one(MCPInspector).show_finding(finding)
+        server_key = self._finding_owning_server_key(finding) if finding is not None else None
+        await self.query_one(MCPInspector).show_finding(finding, server_key=server_key)
+
+    def _finding_owning_server_key(self, finding: Mapping[str, Any]) -> str | None:
+        """The finding's owning server key (Task 2, MCP Hub Phase 6).
+
+        Findings carry no fixed wire schema -- when one happens to carry a
+        target-level identity field (a handful of defensive key aliases,
+        mirroring `mcp_inspector._finding_text()`'s own multi-alias style),
+        that wins: `f"server:{value}"`. Otherwise falls back to the
+        currently selected rail server (`self._selected_server_key`) --
+        Findings only ever render under server source (`MCPAuditMode.
+        update_findings()`'s own `source` gate), so whatever is selected
+        there, if anything, is already a `"server:..."` key. `None` when
+        neither resolves (nothing rail-selected either).
+        """
+        for key in ("target_id", "server_target_id", "server_id"):
+            value = finding.get(key)
+            if value not in (None, ""):
+                return f"server:{value}"
+        return self._selected_server_key
 
     async def on_mcp_audit_mode_sub_view_changed(
         self, event: MCPAuditMode.SubViewChanged
