@@ -276,9 +276,7 @@ class LocalSkillsService:
         existing: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api.skills_schemas import _normalize_skill_name
-
         from ..tldw_api import SkillSummary
 
         front_matter, _ = cls._parse_front_matter(content)
@@ -666,9 +664,7 @@ class LocalSkillsService:
         trust_approved: bool = False,
     ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api.skills_schemas import _normalize_skill_name
-
         from ..tldw_api import SkillUpdate
 
         self._enforce("skills.update.local")

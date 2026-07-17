@@ -28,8 +28,10 @@ did when no client/client_provider is configured).
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -45,22 +47,42 @@ ALLOWED_SCHEMA_SUBMODULES = {
 }
 
 
-def test_app_import_schema_submodule_set_is_within_allowlist():
-    """Fresh-subprocess check: after `import tldw_chatbook.app`, every loaded
-    tldw_api.* submodule must be in ALLOWED_SCHEMA_SUBMODULES. This is the
-    headline regression net for phase 2 -- before phase 2, ~47 schema
-    submodules loaded this way; after, only the allowlisted one does."""
+def test_app_import_schema_submodule_set_is_within_allowlist(tmp_path):
+    """Fresh-subprocess check: the app import stays within the allowlist.
+
+    After ``import tldw_chatbook.app``, every loaded ``tldw_api.*`` submodule
+    must be in ``ALLOWED_SCHEMA_SUBMODULES`` -- the headline regression net
+    for phase 2 (before it, ~47 schema submodules loaded this way). The
+    subprocess is hermetic (PR #674 review): cwd pinned to the repo root so
+    the editable install resolves THIS tree, and HOME/XDG isolated to
+    ``tmp_path`` so the import surface can't vary with the runner's
+    environment or real user config.
+
+    Args:
+        tmp_path: pytest-provided scratch directory used as the isolated
+            HOME/XDG root for the subprocess.
+    """
     code = (
         "import tldw_chatbook.app\n"
         "import sys, json\n"
         "loaded = sorted(m for m in sys.modules if m.startswith('tldw_chatbook.tldw_api'))\n"
         "print('LOADED_JSON:' + json.dumps(loaded))\n"
     )
+    repo_root = Path(__file__).resolve().parents[2]
+    env = dict(os.environ)
+    env.update(
+        HOME=str(tmp_path),
+        XDG_CONFIG_HOME=str(tmp_path / ".config"),
+        XDG_DATA_HOME=str(tmp_path / ".local" / "share"),
+        PYTHONPATH=str(repo_root),
+    )
     result = subprocess.run(
         [sys.executable, "-c", code],
         capture_output=True,
         text=True,
         timeout=120,
+        cwd=repo_root,
+        env=env,
     )
     assert result.returncode == 0, (
         f"subprocess failed (rc={result.returncode})\n"
@@ -78,12 +100,14 @@ def test_app_import_schema_submodule_set_is_within_allowlist():
 
 
 def test_server_chat_grammars_service_defers_schema_import_then_fails_gracefully():
-    """A converted Server*Service constructed with client=None (the
-    from_config fallback shape) must still be able to build its request
-    schema (proving the function-local import resolves lazily and works),
-    and must fail exactly the way it always did -- a plain ValueError -- once
-    it discovers there's no client/client_provider to actually send the
-    request to."""
+    """Converted service still builds schemas lazily and fails as before.
+
+    A Server*Service constructed with ``client=None`` (the from_config
+    fallback shape) must still build its request schema — proving the
+    function-local import resolves lazily — and must fail exactly the way
+    it always did (a plain ValueError) once it discovers there is no
+    client/client_provider to send the request to.
+    """
     from tldw_chatbook.Chat_Grammars_Interop.server_chat_grammars_service import (
         ServerChatGrammarsService,
     )
@@ -100,9 +124,13 @@ def test_server_chat_grammars_service_defers_schema_import_then_fails_gracefully
 
 def test_local_chat_grammars_service_defers_schema_import_and_succeeds(tmp_path):
     """The fully-local counterpart needs no client at all -- constructing the
+
     deferred schema object and completing the whole operation must work
     end-to-end, proving the function-local import isn't just resolving but
-    is usable for real construction/validation."""
+    is usable for real construction/validation.
+    Args:
+        tmp_path: pytest-provided scratch directory for the store file.
+    """
     from tldw_chatbook.Chat_Grammars_Interop.local_chat_grammars_service import (
         LocalChatGrammarsService,
     )
@@ -120,6 +148,7 @@ def test_local_chat_grammars_service_defers_schema_import_and_succeeds(tmp_path)
 
 def test_server_kanban_service_allowlisted_module_still_works_end_to_end():
     """The one module left deliberately eager (module-scope operation-spec
+
     registry mapping action names to real schema classes) must still behave
     correctly: constructing with client=None and invoking an operation still
     builds the request object via the registry and fails the same
