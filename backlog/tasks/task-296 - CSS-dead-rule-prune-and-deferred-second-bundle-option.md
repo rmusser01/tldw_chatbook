@@ -1,7 +1,7 @@
 ---
 id: TASK-296
 title: CSS dead-rule prune (+ optional deferred second bundle) per task-262 findings
-status: In Progress
+status: Done
 assignee: ['@claude']
 created_date: '2026-07-17 23:40'
 labels: [performance, startup, css]
@@ -18,7 +18,7 @@ The task-262 investigation (Docs/Design/2026-07-17-css-split-investigation.md) r
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 Dead selectors removed from the css source modules; rebuilt monolith drops the corresponding rules; parse-time delta measured
-- [ ] #2 No visual regressions (spot QA on the screens whose modules were pruned)
+- [x] #2 No visual regressions (spot QA on the screens whose modules were pruned) — controller pixel A/B 2026-07-18: Console/Home/Library/Watchlists/Workflows/MCP/Settings captured on pruned vs base builds (fresh identical profile, textual-serve+playwright 2050x1240); 4 screens pixel-identical, 3 differ ONLY in dynamic content (composer caret blink 0.004%, footer memory counters 0.015%) — zero layout/style deltas
 - [x] #3 Dead Chat_Window_Enhanced CSS_PATH attribute removed
 - [x] #4 Two-phase-load decision recorded (implement only if startup budget still misses; otherwise explicitly declined in notes)
 <!-- AC:END -->
