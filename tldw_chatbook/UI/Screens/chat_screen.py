@@ -1307,13 +1307,30 @@ class ChatScreen(BaseAppScreen):
         self._console_detected_local_server: DiscoveredLocalServer | None = None
         self._console_local_discovery_started = False
         # P1g: cached "what's in play" chat-dictionary summary for the
-        # current conversation/character, recomputed only by
-        # `refresh_active_dictionaries_summary()` (on conversation/character
-        # change -- see `app.py`'s `watch_current_chat_conversation_id`/
-        # `watch_current_chat_active_character_data`). `_build_console_
-        # inspector_state` and the inspector compose path read ONLY this
-        # cache -- never a DB query on recompose.
+        # active native Console session's conversation/character scope,
+        # recomputed only by `refresh_active_dictionaries_summary()`.
+        # Fix-wave (Critical, Task 4 review): the original recompute
+        # trigger hooked the legacy `app.current_chat_conversation_id`/
+        # `current_chat_active_character_data` reactives -- those are
+        # written ONLY by the *legacy* sidebar chat flow
+        # (`Event_Handlers/Chat_Events/chat_events.py`). The native
+        # Console tracks its own session in `_console_chat_store` and
+        # never touches them, so the summary was permanently stuck at
+        # "No active chat" in the real app. `_sync_native_console_chat_ui()`
+        # now recomputes whenever the active native session's
+        # (conversation_id, character_id) scope changes -- see
+        # `_active_console_dictionary_scope_ids()` and
+        # `_refresh_active_dictionaries_summary_if_scope_changed()`.
+        # `_build_console_inspector_state` and the inspector compose path
+        # read ONLY this cache -- never a DB query on recompose.
         self._active_dictionaries_summary: dict | None = None
+        # Last (conversation_id, character_id) scope a refresh was run
+        # for. `_sync_native_console_chat_ui()` also runs on a 0.2s
+        # transcript-poll timer while a run is streaming
+        # (`_start_console_transcript_sync_timer`), so this guard is what
+        # keeps the recompute from hitting the DB (via the scope service)
+        # several times a second instead of only on a real scope change.
+        self._last_console_dictionary_scope_ids: tuple[str | None, int | None] | None = None
         self.ui_state = UIState()
         self._load_sidebar_state()
 
@@ -5051,10 +5068,28 @@ class ChatScreen(BaseAppScreen):
         """The app-level chat-dictionary scope service, or None when absent."""
         return getattr(self.app_instance, "chat_dictionary_scope_service", None)
 
+    def _active_console_dictionary_scope_ids(self) -> tuple[str | None, int | None]:
+        """Return (conversation_id, character_id) for the active native
+        Console session's chat-dictionary scope.
+
+        `conversation_id` comes from `_current_console_rail_conversation_id()`
+        -- the existing accessor that already resolves the active native
+        session's `persisted_conversation_id` (falling back to the legacy
+        tab-container conversation id when no native session exists, e.g. in
+        legacy-only test harnesses). `character_id` is always `None`: native
+        Console sessions do not yet track a numeric character id --
+        `ConsoleSessionSettings.character_label` is only a free-text display
+        string, never a DB id. Character-scoped dictionary attachment for the
+        native Console is net-new work (tracked separately as Roleplay P1e
+        Attachments); once it lands, this is the one place to source a real
+        character id from.
+        """
+        return self._current_console_rail_conversation_id(), None
+
     async def refresh_active_dictionaries_summary(self) -> None:
         """Recompute and cache the "what's in play" chat-dictionary summary
-        for the current conversation/character, then refresh the Console
-        inspector.
+        for the active native Console session's conversation/character, then
+        refresh the Console inspector.
 
         This is the ONLY place that performs the (DB-backed) dictionary
         summarize call -- `_build_console_inspector_state` (and therefore
@@ -5063,9 +5098,7 @@ class ChatScreen(BaseAppScreen):
         `asyncio.to_thread` so this never performs a synchronous DB read on
         the UI event loop.
         """
-        conversation_id = getattr(self.app_instance, "current_chat_conversation_id", None)
-        character_data = getattr(self.app_instance, "current_chat_active_character_data", None)
-        character_id = character_data.get("id") if isinstance(character_data, dict) else None
+        conversation_id, character_id = self._active_console_dictionary_scope_ids()
         service = self._dictionary_scope_service()
         if service is None or (conversation_id is None and character_id is None):
             self._active_dictionaries_summary = {"dictionaries": []}
@@ -5087,16 +5120,33 @@ class ChatScreen(BaseAppScreen):
             )
         self._sync_console_control_bar()
 
+    async def _refresh_active_dictionaries_summary_if_scope_changed(self) -> None:
+        """Recompute the "what's in play" summary only when the active
+        native Console session's dictionary scope actually changed.
+
+        Called from `_sync_native_console_chat_ui()`, the central Console
+        UI-sync entrypoint -- which also runs on a 0.2s transcript-poll timer
+        while a run is streaming (`_start_console_transcript_sync_timer`).
+        Without this guard, every one of those polls would re-run the
+        DB-backed summarize call. Mirrors the change-guard the previous
+        (legacy-reactive) wiring had on the app-level watchers, relocated to
+        the actual native-session change signal.
+        """
+        scope_ids = self._active_console_dictionary_scope_ids()
+        if scope_ids == self._last_console_dictionary_scope_ids:
+            return
+        self._last_console_dictionary_scope_ids = scope_ids
+        await self.refresh_active_dictionaries_summary()
+
     def _console_dictionary_inspector_rows(self) -> tuple[ConsoleDisplayRow, ...]:
         """Project the cached dictionary summary into inspector rows.
 
-        Reads ONLY `self._active_dictionaries_summary` (and the current
-        conversation/character ids, to distinguish "no active chat" from "no
-        dictionaries attached yet") -- never touches the DB.
+        Reads ONLY `self._active_dictionaries_summary` (and the active native
+        Console session's conversation/character ids, to distinguish "no
+        active chat" from "no dictionaries attached yet") -- never touches
+        the DB.
         """
-        conversation_id = getattr(self.app_instance, "current_chat_conversation_id", None)
-        character_data = getattr(self.app_instance, "current_chat_active_character_data", None)
-        character_id = character_data.get("id") if isinstance(character_data, dict) else None
+        conversation_id, character_id = self._active_console_dictionary_scope_ids()
         if conversation_id is None and character_id is None:
             return (ConsoleDisplayRow("No active chat", ""),)
 
@@ -5121,9 +5171,10 @@ class ChatScreen(BaseAppScreen):
     def _console_dictionary_inspector_actions(self) -> tuple[ConsoleInspectorAction, ...]:
         """Attach/Detach actions for the Console dictionary inspector block.
 
-        Reads ONLY the cache + current conversation id -- never the DB.
+        Reads ONLY the cache + the active native Console session's
+        conversation id -- never the DB.
         """
-        conversation_id = getattr(self.app_instance, "current_chat_conversation_id", None)
+        conversation_id, _character_id = self._active_console_dictionary_scope_ids()
         summary = self._active_dictionaries_summary or {}
         dictionaries = summary.get("dictionaries") or []
         has_conversation_dictionary = any(
@@ -7497,6 +7548,18 @@ class ChatScreen(BaseAppScreen):
         try:
             self._sync_console_chat_core_state()
             self._sync_console_session_draft()
+            # Fix-wave (Critical, Task 4 review): this is the trigger for the
+            # "what's in play" chat-dictionary summary now -- it replaces the
+            # removed app-level `watch_current_chat_conversation_id`/
+            # `watch_current_chat_active_character_data` watchers, which
+            # hooked reactives the native Console never writes. This runs on
+            # every native session switch/resume (`_activate_native_console_
+            # session`, `_resume_console_workspace_conversation`) because
+            # both call `_sync_native_console_chat_ui()`; placed before
+            # `_sync_console_control_bar()` below so that call's inspector
+            # build already sees the freshly recomputed cache instead of one
+            # stale frame behind.
+            await self._refresh_active_dictionaries_summary_if_scope_changed()
             self._sync_console_control_bar()
             self._sync_console_settings_summary()
             self._sync_console_mode_bar()

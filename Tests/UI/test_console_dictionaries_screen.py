@@ -1,5 +1,5 @@
 """P1g Task 4: `ChatScreen` caches the "what's in play" chat-dictionary
-summary on conversation/character change and feeds it into the Console
+summary on native Console session change and feeds it into the Console
 inspector build with ZERO DB I/O on recompose.
 
 `refresh_active_dictionaries_summary()` is the ONLY place that is allowed to
@@ -7,23 +7,42 @@ call the scope service's `summarize_active_dictionaries`; a bare
 `_build_console_inspector_state()` call (the same path every Console
 recompose/refresh goes through) must read only the cached
 `self._active_dictionaries_summary` set by the last refresh.
-"""
 
-import asyncio
-from types import SimpleNamespace
+Fix-wave (Critical, Task 4 review): the original wiring sourced the current
+conversation/character from the APP-LEVEL `current_chat_conversation_id`/
+`current_chat_active_character_data` reactives and recomputed via app.py
+watchers on those reactives. Those reactives are written ONLY by the
+*legacy* sidebar chat flow (`Event_Handlers/Chat_Events/chat_events.py`) --
+the native Console (`ChatScreen` + `ConsoleChatStore`) never touches them, so
+in the real app the watcher never fired and the summary stayed permanently
+`None` ("No active chat"), despite every test in the original version of
+this file passing (they poked the app reactive directly instead of driving a
+real native-session change).
+
+The fix rewires both the SOURCE (the active native Console session's
+`persisted_conversation_id`, via `_active_console_dictionary_scope_ids()` /
+`_current_console_rail_conversation_id()`) and the TRIGGER
+(`_sync_native_console_chat_ui()`, the central Console UI-sync entrypoint
+that runs on every native session switch/resume). The tests below drive a
+REAL native session switch (`_activate_native_console_session` via a session
+tab click, exactly as a user would) and assert the built inspector state
+tracks whichever session is actually active -- this is the scenario the
+original tests missed entirely.
+"""
 
 import pytest
 
-from Tests.UI.test_destination_shells import _build_test_app
+from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import ConsoleHarness
 from tldw_chatbook.Chat.console_display_state import ConsoleDisplayRow
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 
 class _FakeDictionaryScopeService:
-    """Records every `summarize_active_dictionaries` call; returns a canned
-    summary. Used to prove the DB-shaped summarize call happens ONLY on
-    `refresh_active_dictionaries_summary()`, never on an inspector build."""
+    """Records every `summarize_active_dictionaries` call; returns a single
+    canned summary regardless of arguments. Used to prove the DB-shaped
+    summarize call happens ONLY on `refresh_active_dictionaries_summary()`,
+    never on an inspector build."""
 
     def __init__(self, summary):
         self.summary = summary
@@ -32,6 +51,38 @@ class _FakeDictionaryScopeService:
     async def summarize_active_dictionaries(self, conversation_id, character_id, mode="local"):
         self.calls.append((conversation_id, character_id, mode))
         return self.summary
+
+
+class _PerConversationFakeDictionaryScopeService:
+    """Returns a distinct canned summary per conversation id (default: no
+    dictionaries for unknown ids); records every call. Lets a test prove the
+    summary genuinely tracks whichever native Console session is ACTIVE,
+    rather than a single global value."""
+
+    def __init__(self, summaries_by_conversation_id: dict):
+        self.summaries_by_conversation_id = summaries_by_conversation_id
+        self.calls: list[tuple] = []
+
+    async def summarize_active_dictionaries(self, conversation_id, character_id, mode="local"):
+        self.calls.append((conversation_id, character_id, mode))
+        return self.summaries_by_conversation_id.get(conversation_id, {"dictionaries": []})
+
+
+async def _wait_for_active_session_id(store, pilot, expected_session_id: str, *, attempts: int = 40) -> None:
+    """Wait for the Console store to report the expected active session."""
+    for _ in range(attempts):
+        if store.active_session_id == expected_session_id:
+            return
+        await pilot.pause(0.05)
+    raise AssertionError(
+        "Console active session did not match expected session. "
+        f"expected={expected_session_id!r}; active={store.active_session_id!r}"
+    )
+
+
+def _active_native_session(console: ChatScreen):
+    store = console._ensure_console_chat_store()
+    return next(s for s in store.sessions() if s.id == store.active_session_id)
 
 
 # --- Hard-rule tests (brief scenarios a + b) --------------------------------
@@ -44,7 +95,6 @@ class _FakeDictionaryScopeService:
 @pytest.mark.asyncio
 async def test_refresh_caches_summary_and_build_projects_dictionary_rows():
     app = _build_test_app()
-    app.current_chat_conversation_id = "conv-1"
     summary = {
         "dictionaries": [
             {
@@ -62,6 +112,8 @@ async def test_refresh_caches_summary_and_build_projects_dictionary_rows():
 
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, "#console-native-composer")
+        _active_native_session(screen).persisted_conversation_id = "conv-1"
 
         await screen.refresh_active_dictionaries_summary()
 
@@ -77,7 +129,6 @@ async def test_refresh_caches_summary_and_build_projects_dictionary_rows():
 @pytest.mark.asyncio
 async def test_build_console_inspector_state_never_re_queries_the_summarize_service():
     app = _build_test_app()
-    app.current_chat_conversation_id = "conv-1"
     summary = {
         "dictionaries": [
             {
@@ -95,6 +146,8 @@ async def test_build_console_inspector_state_never_re_queries_the_summarize_serv
 
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, "#console-native-composer")
+        _active_native_session(screen).persisted_conversation_id = "conv-1"
 
         await screen.refresh_active_dictionaries_summary()
         assert len(service.calls) == 1
@@ -114,11 +167,12 @@ async def test_build_console_inspector_state_never_re_queries_the_summarize_serv
 async def test_refresh_with_no_service_and_no_chat_caches_empty():
     app = _build_test_app()
     app.chat_dictionary_scope_service = None
-    assert app.current_chat_conversation_id is None
-    assert app.current_chat_active_character_data is None
 
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, "#console-native-composer")
+        # Fresh default native session has no persisted conversation yet.
+        assert _active_native_session(screen).persisted_conversation_id is None
 
         await screen.refresh_active_dictionaries_summary()
 
@@ -135,6 +189,8 @@ async def test_refresh_with_service_but_no_active_chat_caches_empty_without_call
 
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, "#console-native-composer")
+        assert _active_native_session(screen).persisted_conversation_id is None
 
         await screen.refresh_active_dictionaries_summary()
 
@@ -145,12 +201,13 @@ async def test_refresh_with_service_but_no_active_chat_caches_empty_without_call
 @pytest.mark.asyncio
 async def test_empty_dictionaries_summary_renders_empty_row():
     app = _build_test_app()
-    app.current_chat_conversation_id = "conv-1"
     service = _FakeDictionaryScopeService({"dictionaries": [], "source": "local"})
     app.chat_dictionary_scope_service = service
 
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, "#console-native-composer")
+        _active_native_session(screen).persisted_conversation_id = "conv-1"
 
         await screen.refresh_active_dictionaries_summary()
 
@@ -161,8 +218,6 @@ async def test_empty_dictionaries_summary_renders_empty_row():
 @pytest.mark.asyncio
 async def test_shadowed_and_disabled_suffixes_render_on_the_row_value():
     app = _build_test_app()
-    app.current_chat_conversation_id = "conv-1"
-    app.current_chat_active_character_data = {"id": 7, "name": "Nyx"}
     summary = {
         "dictionaries": [
             {"name": "Slang", "source": "conversation", "enabled": True, "entry_count": 2, "shadowed": False},
@@ -176,10 +231,18 @@ async def test_shadowed_and_disabled_suffixes_render_on_the_row_value():
 
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, "#console-native-composer")
+        _active_native_session(screen).persisted_conversation_id = "conv-1"
 
         await screen.refresh_active_dictionaries_summary()
 
-        assert service.calls == [("conv-1", 7, "local")]
+        # Native Console sessions do not yet track a numeric character id
+        # (Roleplay P1e Attachments is net-new work) -- character_id is
+        # always None on this call, even though the canned summary still
+        # contains character-sourced entries (the fake service returns them
+        # unconditionally; this proves row *rendering* of shadowed/disabled
+        # character entries is unaffected by that).
+        assert service.calls == [("conv-1", None, "local")]
         rows = screen._console_dictionary_inspector_rows()
         assert rows == (
             ConsoleDisplayRow("Slang", "from conversation"),
@@ -191,22 +254,17 @@ async def test_shadowed_and_disabled_suffixes_render_on_the_row_value():
 @pytest.mark.asyncio
 async def test_actions_reflect_conversation_and_attach_state():
     app = _build_test_app()
-    # No conversation, but a character is active: attach must be disabled
-    # (with the recovery copy) and detach has no conversation-source dict to
-    # detach either.
-    app.current_chat_active_character_data = {"id": 9}
-    summary = {
-        "dictionaries": [
-            {"name": "Lore", "source": "character", "enabled": True, "entry_count": 1, "shadowed": False},
-        ],
-        "source": "local",
-    }
-    service = _FakeDictionaryScopeService(summary)
+    service = _FakeDictionaryScopeService({"dictionaries": [], "source": "local"})
     app.chat_dictionary_scope_service = service
 
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, "#console-native-composer")
 
+        # No conversation on the active native session: attach must be
+        # disabled (with the recovery copy) and detach has no
+        # conversation-source dict to detach either.
+        assert _active_native_session(screen).persisted_conversation_id is None
         await screen.refresh_active_dictionaries_summary()
 
         actions = screen._console_dictionary_inspector_actions()
@@ -216,9 +274,9 @@ async def test_actions_reflect_conversation_and_attach_state():
         assert attach.disabled_reason == "Start or load a conversation first"
         assert detach.enabled is False
 
-        # Once a conversation exists and owns a dictionary, both actions
-        # light up.
-        app.current_chat_conversation_id = "conv-2"
+        # Once the active session's conversation exists and owns a
+        # dictionary, both actions light up.
+        _active_native_session(screen).persisted_conversation_id = "conv-2"
         service.summary = {
             "dictionaries": [
                 {"name": "Slang", "source": "conversation", "enabled": True, "entry_count": 1, "shadowed": False},
@@ -234,60 +292,134 @@ async def test_actions_reflect_conversation_and_attach_state():
         assert detach2.enabled is True
 
 
-# --- Reactive-watcher wiring (app.py owns the reactives) --------------------
+# --- Real native Console session-switch wiring (the fix under test) --------
 
-def test_conversation_and_character_change_schedule_a_refresh_worker(monkeypatch):
-    """`current_chat_conversation_id`/`current_chat_active_character_data`
-    live on the app (see `app.py:2296/2299`), so `ChatScreen` cannot define
-    its own `watch_*` for them. The app's watchers must dispatch to the
-    active Console screen's `refresh_active_dictionaries_summary()` --
-    mirroring the existing `isinstance(self.screen, ChatScreen)` pattern used
-    by `set_current_chat_is_streaming`.
+@pytest.mark.asyncio
+async def test_real_native_console_session_switch_drives_dictionary_summary_per_session():
+    """Drives an ACTUAL native Console session switch -- the scenario the
+    original (app-reactive) wiring never handled, because clicking a session
+    tab never touches `app.current_chat_conversation_id`.
 
-    Uses a `type(app).screen` monkeypatch rather than mounting: `TldwCli` is
-    the real running app in production (its own screen stack), but no test
-    harness in this suite ever actually runs `TldwCli` itself -- only a
-    lightweight wrapper `App` (`ConsoleHarness`) that pushes `ChatScreen`
-    onto ITS OWN stack. There is no existing precedent for driving this
-    app-level watcher through a live screen stack.
+    Creates two native sessions, each bound to a distinct
+    `persisted_conversation_id` (one with an attached dictionary, one
+    without), and activates each through the real production path: a click
+    on `#console-session-tab-{id}`, which `ChatScreen`'s button handler
+    routes to `_activate_native_console_session()` ->
+    `_sync_native_console_chat_ui()`. Asserts the built inspector state's
+    `dictionary_rows` track whichever session is ACTUALLY active, and that
+    the DB-backed summarize call fires exactly once per genuine scope
+    change (not once per sync pass -- `_sync_native_console_chat_ui` also
+    runs on the 0.2s transcript poll timer).
     """
     app = _build_test_app()
-    screen = ChatScreen(app)
-    monkeypatch.setattr(type(app), "screen", property(lambda self: screen))
+    service = _PerConversationFakeDictionaryScopeService(
+        {
+            "conv-with-dict": {
+                "dictionaries": [
+                    {
+                        "name": "Slang",
+                        "source": "conversation",
+                        "enabled": True,
+                        "entry_count": 3,
+                        "shadowed": False,
+                    },
+                ],
+                "source": "local",
+            },
+            "conv-without-dict": {"dictionaries": [], "source": "local"},
+        }
+    )
+    app.chat_dictionary_scope_service = service
 
-    scheduled = []
+    async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
+        console = pilot.app.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
 
-    def fake_run_worker(work, **kwargs):
-        scheduled.append(kwargs)
-        if asyncio.iscoroutine(work):
-            work.close()  # never actually awaited by this fake
-        return SimpleNamespace(cancel=lambda: None)
+        store = console._ensure_console_chat_store()
+        session_a_id = store.active_session_id
+        assert session_a_id is not None
+        _active_native_session(console).persisted_conversation_id = "conv-with-dict"
 
-    app.run_worker = fake_run_worker
+        # Create and activate a second native session through the real
+        # "new chat" action (mirrors how a user opens a second tab).
+        await pilot.click("#console-new-chat-tab")
+        session_b_id = await _wait_for_active_session_change(store, pilot, session_a_id)
+        assert session_b_id != session_a_id
+        session_b = next(s for s in store.sessions() if s.id == session_b_id)
+        session_b.persisted_conversation_id = "conv-without-dict"
 
-    app.current_chat_conversation_id = "conv-live"
-    assert len(scheduled) == 1
-    assert scheduled[0].get("group") == "console-dictionary-summary"
+        await _wait_for_selector(console, pilot, f"#console-session-tab-{session_a_id}")
+        await _wait_for_selector(console, pilot, f"#console-session-tab-{session_b_id}")
 
-    app.current_chat_active_character_data = {"id": 3, "name": "Nyx"}
-    assert len(scheduled) == 2
+        # --- Switch to session A (has an attached conversation dictionary) ---
+        calls_before = len(service.calls)
+        await pilot.click(f"#console-session-tab-{session_a_id}")
+        await _wait_for_active_session_id(store, pilot, session_a_id)
+
+        assert len(service.calls) == calls_before + 1
+        assert service.calls[-1] == ("conv-with-dict", None, "local")
+
+        inspector_state = console._build_console_inspector_state(None)
+        assert inspector_state.dictionary_rows == (
+            ConsoleDisplayRow("Slang", "from conversation"),
+        )
+
+        # No-DB-on-recompose still holds after the switch: repeated bare
+        # builds must not re-invoke the summarize service.
+        console._build_console_inspector_state(None)
+        console._build_console_inspector_state(None)
+        assert len(service.calls) == calls_before + 1
+
+        # --- Switch to session B (no dictionaries attached) ---
+        calls_before_b = len(service.calls)
+        await pilot.click(f"#console-session-tab-{session_b_id}")
+        await _wait_for_active_session_id(store, pilot, session_b_id)
+
+        assert len(service.calls) == calls_before_b + 1
+        assert service.calls[-1] == ("conv-without-dict", None, "local")
+
+        inspector_state_b = console._build_console_inspector_state(None)
+        assert inspector_state_b.dictionary_rows == (
+            ConsoleDisplayRow("No dictionaries in play", ""),
+        )
 
 
-def test_conversation_id_watcher_is_a_no_op_when_value_is_unchanged(monkeypatch):
-    """Textual's `reactive(...)` factory defaults `init=True`, so the very
-    first touch of `current_chat_conversation_id` on a fresh app instance
-    fires the watcher once with old==new==default (None) before any real
-    change. The watcher must not schedule a refresh for that no-op call."""
-    app = _build_test_app()
-    screen = ChatScreen(app)
-    monkeypatch.setattr(type(app), "screen", property(lambda self: screen))
-
-    scheduled = []
-    app.run_worker = lambda work, **kwargs: scheduled.append(kwargs) or (
-        work.close() if asyncio.iscoroutine(work) else None
+async def _wait_for_active_session_change(store, pilot, previous_session_id, *, attempts: int = 40) -> str:
+    """Wait for the Console store to activate a session other than
+    `previous_session_id` and return its id."""
+    for _ in range(attempts):
+        active_session_id = store.active_session_id
+        if active_session_id is not None and active_session_id != previous_session_id:
+            return active_session_id
+        await pilot.pause(0.05)
+    raise AssertionError(
+        "Console active session did not change. "
+        f"previous={previous_session_id!r}; active={store.active_session_id!r}"
     )
 
-    # First-ever touch: internally triggers the init-quirk call AND (since
-    # None != None is False here) no real-change call either.
-    assert app.current_chat_conversation_id is None
-    assert scheduled == []
+
+@pytest.mark.asyncio
+async def test_sync_native_console_chat_ui_does_not_resummarize_when_scope_is_unchanged():
+    """`_sync_native_console_chat_ui()` is also invoked by the 0.2s
+    transcript-poll timer while a run is streaming
+    (`_start_console_transcript_sync_timer`). Without a change-guard, every
+    poll would re-run the DB-backed summarize call. Repeated syncs against
+    the SAME active session's scope must not grow the call count past the
+    first one."""
+    app = _build_test_app()
+    service = _FakeDictionaryScopeService({"dictionaries": [], "source": "local"})
+    app.chat_dictionary_scope_service = service
+
+    async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
+        console = pilot.app.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        _active_native_session(console).persisted_conversation_id = "conv-steady"
+
+        await console._sync_native_console_chat_ui()
+        calls_after_first = len(service.calls)
+        assert calls_after_first >= 1
+
+        for _ in range(5):
+            await console._sync_native_console_chat_ui()
+
+        assert len(service.calls) == calls_after_first
