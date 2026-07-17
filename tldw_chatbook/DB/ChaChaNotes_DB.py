@@ -4974,7 +4974,12 @@ UPDATE db_schema_version
                 "JOIN messages m ON fts.rowid = m.rowid "
                 "WHERE m.conversation_id = conversations.id "
                 "AND m.deleted = 0 "
-                "AND fts MATCH ?"
+                # NOTE: the hidden-column form (`fts.messages_fts MATCH`) is
+                # deliberate — the bare-alias form (`fts MATCH ?`) fails with
+                # "no such column: fts" inside this correlated EXISTS+JOIN
+                # (verified against the test suite); both forms are
+                # documented FTS5.
+                "AND fts.messages_fts MATCH ?"
                 "))"
             )
             like_query = f"%{normalized_query}%"
