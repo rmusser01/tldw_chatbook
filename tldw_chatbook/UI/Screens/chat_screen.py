@@ -340,6 +340,13 @@ CONSOLE_ACTIVE_RUN_STATUSES = (
 # is actively streaming (e.g. a sub-agent finished in a *different*
 # Console session/tab).
 CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS = 2.0
+# TASK-251 (audit P1 B1): the persisted conversation-browser rows behind
+# `_sync_persisted_console_browser_rows` re-query the DB per scope (global +
+# every workspace) on every 0.2s poll tick -- measured 11-70ms/tick. Modeled
+# directly on the sub-agent badge-count TTL cache above (same staleness
+# bound, same "explicit invalidation is a nice-to-have, the TTL is the
+# correctness backstop" philosophy).
+CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS = 2.0
 CONSOLE_FOCUS_REGISTRY = WorkbenchFocusRegistry(
     (
         "console-left-rail",
@@ -659,6 +666,10 @@ class ChatScreen(BaseAppScreen):
         next_query = str(event.value or "")
         if next_query == self._console_conversation_browser_query:
             return
+        # TASK-251: invalidate before kicking the refresh -- a same-text
+        # re-search within the TTL window (e.g. clear then retype) must not
+        # be served a stale persisted-rows cache entry.
+        self._invalidate_console_persisted_rows_cache()
         self._console_conversation_browser_query = next_query
         self._console_workspace_conversation_query = self._console_conversation_browser_query
         self._console_conversation_browser_search_token += 1
@@ -1009,6 +1020,9 @@ class ChatScreen(BaseAppScreen):
             except KeyError:
                 self.app_instance.notify("Console tab is no longer available.", severity="error")
                 return
+            # TASK-251: a renamed session's persisted conversation title
+            # must appear in the browser on the very next sync.
+            self._invalidate_console_persisted_rows_cache()
             self.run_worker(self._sync_native_console_chat_ui(), exclusive=True, group="console-sync")
 
         self.app.push_screen(
@@ -1187,6 +1201,9 @@ class ChatScreen(BaseAppScreen):
                 or self._default_console_session_settings()
             ),
         )
+        # TASK-251: new-chat-tab handler -- invalidate so the browser's
+        # "selected" row indicator picks up the new active session promptly.
+        self._invalidate_console_persisted_rows_cache()
         await self._sync_native_console_chat_ui()
         self._focus_console_composer_if_needed(force=True)
 
@@ -3469,12 +3486,58 @@ class ChatScreen(BaseAppScreen):
                 return rows, total_count if saw_total else None, last_error
         return [], None, last_error
 
+    def _invalidate_console_persisted_rows_cache(self) -> None:
+        """Clear the TTL-cached persisted conversation-browser rows.
+
+        TASK-251: a dumb clear only -- callers that mutate the persisted
+        conversation set call this so the very next sync reflects the
+        change immediately, but nothing here tries to enumerate every
+        theoretical mutation site. ``CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS``
+        is the correctness backstop for whatever this misses (mirrors the
+        sub-agent badge-count cache's condition 3).
+        """
+        self._console_persisted_rows_cache = None
+        self._console_persisted_rows_cache_key = None
+        self._console_persisted_rows_cache_at = 0.0
+
     def _sync_persisted_console_browser_rows(
         self,
         query: str = "",
         current_conversation_id: str | None = None,
     ) -> tuple[list[ConsoleConversationBrowserInputRow], int | None, str]:
-        """Return persisted rows when the local listing seam is synchronous."""
+        """Return persisted rows when the local listing seam is synchronous.
+
+        TASK-251 (audit P1 B1): TTL-cached (see
+        ``CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS``) keyed on
+        ``(query, current_conversation_id)`` -- the 0.2s Console poll tick
+        used to re-issue this per-scope DB query chain unconditionally,
+        measured 11-70ms/tick. Explicit invalidation sites exist (see
+        ``_invalidate_console_persisted_rows_cache`` callers) but the TTL is
+        the correctness backstop, not those sites.
+        """
+        cache_key = (query, current_conversation_id)
+        if (
+            self._console_persisted_rows_cache is not None
+            and self._console_persisted_rows_cache_key == cache_key
+            and (time.monotonic() - self._console_persisted_rows_cache_at)
+            < CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS
+        ):
+            return self._console_persisted_rows_cache
+        result = self._compute_persisted_console_browser_rows(
+            query,
+            current_conversation_id,
+        )
+        self._console_persisted_rows_cache = result
+        self._console_persisted_rows_cache_key = cache_key
+        self._console_persisted_rows_cache_at = time.monotonic()
+        return result
+
+    def _compute_persisted_console_browser_rows(
+        self,
+        query: str = "",
+        current_conversation_id: str | None = None,
+    ) -> tuple[list[ConsoleConversationBrowserInputRow], int | None, str]:
+        """Uncached implementation behind ``_sync_persisted_console_browser_rows``."""
         services: list[tuple[Any, bool]] = []
         local_service = getattr(self.app_instance, "local_chat_conversation_service", None)
         scope_service = getattr(
@@ -7764,6 +7827,10 @@ class ChatScreen(BaseAppScreen):
             controller = self._console_chat_controller
             if (controller is None
                     or controller.run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES):
+                # TASK-251: the run just left an active status -- invalidate
+                # so the finalized conversation's title/timestamps appear in
+                # the browser promptly instead of waiting out the TTL.
+                self._invalidate_console_persisted_rows_cache()
                 self._stop_console_transcript_sync_timer()
 
         self._console_transcript_sync_timer = self.set_interval(0.2, _poll_transcript)
@@ -7782,6 +7849,10 @@ class ChatScreen(BaseAppScreen):
         controller = self._ensure_console_chat_controller()
         self._start_console_transcript_sync_timer()
         result = await controller.submit_draft(draft)
+        # TASK-251: a submit may have created/updated a persisted
+        # conversation (title, updated_at) -- invalidate so the browser
+        # reflects it on the very next sync instead of the TTL window.
+        self._invalidate_console_persisted_rows_cache()
         if not result.accepted:
             # A resolved skill run (`_run_resolved_console_skill`) stages its
             # TOOL marker name BEFORE this worker even runs. `submit_draft`
@@ -9177,6 +9248,10 @@ class ChatScreen(BaseAppScreen):
                 return True
             self._pending_console_delete_message_id = None
             store.delete_message(message_id)
+            # TASK-251: a deleted message can change what the browser row
+            # shows for this conversation (title/updated_at) -- invalidate
+            # so the next sync reflects it immediately.
+            self._invalidate_console_persisted_rows_cache()
             await self._sync_native_console_chat_ui()
             self.app_instance.notify(result.visible_copy, severity="information")
             return True
