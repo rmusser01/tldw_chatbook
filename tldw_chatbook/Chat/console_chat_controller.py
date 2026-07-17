@@ -95,6 +95,21 @@ def build_mcp_review_hook(
     into a later one and be misread as this turn's verdict for a
     repeated tool name.
 
+    I3 (probe-verified): that clear happens at hook ENTRY, before
+    `pending_gate_for` is even resolved and before the
+    `request_mcp_approvals` round trip -- not only after a successful one.
+    `request_mcp_approvals` can raise (e.g. the unguarded
+    `_marshal_pending_approval` call mid-shutdown); `run_agent_loop`'s own
+    hook-exception handling fails the WHOLE batch open (treats every call
+    in it as `"proceed"`) when that happens. If the clear only ran after a
+    successful round trip, a raise would leave THIS turn's stamp set
+    exactly as the PREVIOUS turn left it -- so the fail-open runtime would
+    hand `invoke()` a stale prior-turn stamp (e.g. a real `"approve_once"`)
+    for a call the user never decided on this turn. Clearing first means a
+    raised round trip always leaves `invoke()` with no stamp to peek,
+    falling through to its own fresh gate -- which fails closed for an
+    `"ask"` tool with no approval_callback wired.
+
     Design choice (binding, per the Phase-5 plan): this hook never
     returns a refusal string itself. Every MCP call it stamped is left to
     resolve through `invoke()`'s own gate on dispatch -- `invoke()`
@@ -127,17 +142,21 @@ def build_mcp_review_hook(
     """
 
     def review_tool_calls(calls: list["ToolCall"]) -> dict[str, str]:
+        # I3: clear THIS turn's stamps FIRST, before pending_gate_for/the
+        # approval round trip even run -- subsumes the `if not pending`
+        # branch's own clear below (every invocation of this hook clears,
+        # unconditionally). See this function's own docstring for why the
+        # clear must happen at entry, not only after a successful round
+        # trip: a raising `request_mcp_approvals` must never leave a stale
+        # prior-turn stamp live for the fail-open runtime to hand straight
+        # to `invoke()`.
+        provider.apply_batch_decisions({})
         pending: list["MCPPendingCall"] = []
         for call in calls:
             gate = provider.pending_gate_for(call.name, call.args)
             if gate is not None:
                 pending.append(gate)
         if not pending:
-            # Finding F1: still clear -- a stamp from an earlier turn must
-            # never survive into this one, even when nothing here needed
-            # asking (all non-MCP calls, or MCP calls already resolved
-            # without asking).
-            provider.apply_batch_decisions({})
             return {}
         decisions = request_mcp_approvals(pending)
         provider.apply_batch_decisions(decisions)

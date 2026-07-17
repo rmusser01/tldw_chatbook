@@ -1442,6 +1442,7 @@ class _FakeReviewProvider:
     def __init__(self, gated_names: set[str]) -> None:
         self._gated_names = gated_names
         self.apply_batch_decisions_calls: list[dict[str, str]] = []
+        self._stamped: dict[str, str] = {}
 
     def pending_gate_for(self, name: str, args: dict) -> MCPPendingCall | None:
         if name not in self._gated_names:
@@ -1453,6 +1454,12 @@ class _FakeReviewProvider:
 
     def apply_batch_decisions(self, decisions: dict[str, str]) -> None:
         self.apply_batch_decisions_calls.append(dict(decisions))
+        # Mirrors MCPToolProvider.apply_batch_decisions' REPLACE semantics
+        # (not merge) -- see that method's own docstring (Finding F1).
+        self._stamped = dict(decisions or {})
+
+    def stamped_decision(self, name: str) -> str | None:
+        return self._stamped.get(name)
 
 
 def test_build_mcp_review_hook_clears_stamps_even_when_nothing_needs_gating():
@@ -1487,7 +1494,10 @@ def test_build_mcp_review_hook_stamps_decisions_when_gating_needed():
     verdicts = hook(calls)
 
     assert verdicts == {"mcp__srv__run": "proceed"}
-    assert provider.apply_batch_decisions_calls == [{"mcp__srv__run": "approve_once"}]
+    # I3: the hook clears at ENTRY (unconditionally, before the round trip)
+    # and then stamps the real decisions -- two calls, not one, matching
+    # `provider.apply_batch_decisions`'s own REPLACE semantics either way.
+    assert provider.apply_batch_decisions_calls == [{}, {"mcp__srv__run": "approve_once"}]
     assert len(seen_pending) == 1
 
 
@@ -1514,4 +1524,36 @@ def test_build_mcp_review_hook_shares_one_verdict_for_same_name_calls_this_turn(
     assert verdicts == {"mcp__srv__run": "proceed"}
     assert len(round_trips) == 1  # ONE request_mcp_approvals round trip
     assert len(round_trips[0]) == 2  # ...covering both same-name calls
-    assert provider.apply_batch_decisions_calls == [{"mcp__srv__run": "approve_once"}]
+    # I3: the hook clears at ENTRY (unconditionally, before the round trip)
+    # and then stamps the real decisions.
+    assert provider.apply_batch_decisions_calls == [{}, {"mcp__srv__run": "approve_once"}]
+
+
+def test_build_mcp_review_hook_clears_stamp_at_entry_before_a_raising_round_trip():
+    """I3 (probe-verified): a raising `request_mcp_approvals` (e.g. the
+    unguarded `_marshal_pending_approval` call during shutdown) must not
+    leave the PREVIOUS turn's stamp live for `invoke()` to peek.
+    `run_agent_loop`'s own hook-exception handling fails the WHOLE batch
+    open (treats every call as "proceed"), so the clear must happen at hook
+    ENTRY -- before the round trip can raise -- not only after one
+    succeeds. Pre-fix, the clear only happened after a successful
+    `apply_batch_decisions(decisions)` call, so a raise left turn 1's
+    "approve_once" stamp live for the fail-open runtime to hand straight to
+    invoke()."""
+    provider = _FakeReviewProvider(gated_names={"mcp__srv__run"})
+
+    # Turn 1: a normal round trip that approves.
+    hook = build_mcp_review_hook(provider, lambda pending: {"mcp__srv__run": "approve_once"})
+    hook([ToolCall(name="mcp__srv__run", args={}, call_id="1")])
+    assert provider.stamped_decision("mcp__srv__run") == "approve_once"
+
+    # Turn 2: same tool, but request_mcp_approvals now raises mid-round-trip.
+    def _raise(pending):
+        raise RuntimeError("shutdown mid round-trip")
+
+    hook2 = build_mcp_review_hook(provider, _raise)
+    with pytest.raises(RuntimeError):
+        hook2([ToolCall(name="mcp__srv__run", args={}, call_id="2")])
+
+    # No stale stamp from turn 1 must survive the raise for invoke() to peek.
+    assert provider.stamped_decision("mcp__srv__run") is None
