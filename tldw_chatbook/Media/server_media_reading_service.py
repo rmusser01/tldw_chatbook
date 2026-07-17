@@ -6,58 +6,29 @@ from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    AddMediaRequest,
-    DocumentAnnotationCreate,
-    DocumentAnnotationSyncRequest,
-    DocumentAnnotationUpdate,
-    DocumentInsightsRequest,
-    FileArtifactsPurgeRequest,
-    FileCreateOptions,
-    FileCreateRequest,
-    IngestionSourceCreateRequest,
-    IngestionSourcePatchRequest,
-    IngestWebContentRequest,
-    IngestWebContentResponse,
-    ItemsBulkRequest,
-    MediaIngestJobSubmitRequest,
-    MediaIngestSubmitRequest,
-    MediaItemUpdateRequest,
-    MediaKeywordsUpdateRequest,
-    MediaSearchRequest,
-    MediaAdvancedVersionUpsertRequest,
-    MediaMetadataPatchRequest,
-    MediaVersionCreateRequest,
-    MediaVersionRollbackRequest,
-    BatchMediaProcessResponse,
-    ProcessAudioRequest,
-    ProcessCodeRequest,
-    ProcessDocumentRequest,
-    ProcessEbookRequest,
-    ProcessEmailsRequest,
-    ProcessMediaWikiRequest,
-    ProcessPDFRequest,
-    ProcessPlaintextRequest,
-    ProcessVideoRequest,
-    ProcessWebScrapingRequest,
-    ReadingArchiveCreateRequest,
-    ReadingDigestScheduleCreateRequest,
-    ReadingDigestScheduleUpdateRequest,
-    ReadingHighlightCreateRequest,
-    ReadingHighlightUpdateRequest,
-    ReadingNoteLinkCreateRequest,
-    ReadingProgressUpdate,
-    ReadingSaveRequest,
-    ReadingSavedSearchCreateRequest,
-    ReadingSavedSearchUpdateRequest,
-    ReadingSummarizeRequest,
-    ReadingTTSRequest,
-    ReadingUpdateRequest,
-    ReprocessMediaRequest,
-    WebScrapingRequest,
-)
 if TYPE_CHECKING:
-    from ..tldw_api import TLDWAPIClient
+    from ..tldw_api import (
+        AddMediaRequest,
+        BatchMediaProcessResponse,
+        FileArtifactsPurgeRequest,
+        FileCreateOptions,
+        FileCreateRequest,
+        IngestWebContentResponse,
+        ItemsBulkRequest,
+        MediaIngestSubmitRequest,
+        ProcessAudioRequest,
+        ProcessCodeRequest,
+        ProcessDocumentRequest,
+        ProcessEbookRequest,
+        ProcessMediaWikiRequest,
+        ProcessPDFRequest,
+        ProcessPlaintextRequest,
+        ProcessVideoRequest,
+        ProcessWebScrapingRequest,
+        ReadingSaveRequest,
+        TLDWAPIClient,
+        WebScrapingRequest,
+    )
 
 
 class ServerMediaReadingService:
@@ -228,6 +199,9 @@ class ServerMediaReadingService:
         file_paths: list[str] | None = None,
         **options: Any,
     ) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import AddMediaRequest
+
         self._enforce(self._media_add_action_id("create"))
         payload = {
             "media_type": media_type,
@@ -247,6 +221,9 @@ class ServerMediaReadingService:
         export: Mapping[str, Any] | None = None,
         options: Mapping[str, Any] | FileCreateOptions | None = None,
     ) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import FileCreateOptions, FileCreateRequest
+
         self._enforce(self._file_artifact_action_id("create"))
         if request_data is None:
             if not file_type:
@@ -288,6 +265,9 @@ class ServerMediaReadingService:
         soft_deleted_grace_days: int = 30,
         include_retention: bool = True,
     ) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import FileArtifactsPurgeRequest
+
         self._enforce(self._file_artifact_action_id("purge"))
         payload = request_data or FileArtifactsPurgeRequest(
             delete_files=delete_files,
@@ -335,6 +315,9 @@ class ServerMediaReadingService:
         )
 
     async def update_media_item(self, media_id: Any, **fields: Any) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MediaItemUpdateRequest
+
         self._enforce(self._media_item_action_id("update"))
         request_data = MediaItemUpdateRequest(**{key: value for key, value in fields.items() if value is not None})
         return await self._require_client().update_media_item(int(media_id), request_data)
@@ -370,6 +353,9 @@ class ServerMediaReadingService:
         keywords: list[str],
         mode: str = "add",
     ) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MediaKeywordsUpdateRequest
+
         self._enforce(self._media_item_subresource_action_id("keywords", "update"))
         request_data = MediaKeywordsUpdateRequest(keywords=keywords, mode=mode)
         return await self._require_client().update_media_keywords(int(media_id), request_data)
@@ -387,12 +373,18 @@ class ServerMediaReadingService:
         )
 
     async def process_mediawiki_dump(self, *, dump_file_path: str, **options: Any):
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ProcessMediaWikiRequest
+
         self._enforce(self._processing_action_id("mediawiki", "process"))
         request_data = ProcessMediaWikiRequest(**{key: value for key, value in options.items() if value is not None})
         async for item in self._require_client().process_mediawiki_dump(request_data, dump_file_path):
             yield item
 
     async def ingest_mediawiki_dump(self, *, dump_file_path: str, **options: Any):
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ProcessMediaWikiRequest
+
         self._enforce(self._processing_action_id("mediawiki", "import"))
         request_data = ProcessMediaWikiRequest(**{key: value for key, value in options.items() if value is not None})
         async for item in self._require_client().ingest_mediawiki_dump(request_data, dump_file_path):
@@ -450,6 +442,9 @@ class ServerMediaReadingService:
         results_per_page: int = 10,
         **filters: Any,
     ) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MediaSearchRequest
+
         self._enforce(self._media_item_action_id("list"))
         request_data = MediaSearchRequest(**{key: value for key, value in filters.items() if value is not None})
         return await self._require_client().search_media_items(
@@ -493,6 +488,9 @@ class ServerMediaReadingService:
         return await self._require_client().get_media_transcription_models()
 
     async def reprocess_media(self, media_id: Any, **options: Any) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ReprocessMediaRequest
+
         request_data = ReprocessMediaRequest(**{key: value for key, value in options.items() if value is not None})
         return await self._require_client().reprocess_media(int(media_id), request_data)
 
@@ -502,6 +500,9 @@ class ServerMediaReadingService:
         file_paths: list[str] | None = None,
         **options: Any,
     ) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import AddMediaRequest
+
         self._enforce(self._media_add_action_id("create"))
         if request_data is None:
             if "media_type" not in options:
@@ -558,6 +559,9 @@ class ServerMediaReadingService:
         dump_file_path: str | None = None,
         **options: Any,
     ) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ProcessMediaWikiRequest
+
         self._enforce(self._processing_action_id("mediawiki", "process"))
         if request_data is None:
             request_data = ProcessMediaWikiRequest(**options)
@@ -572,6 +576,9 @@ class ServerMediaReadingService:
         dump_file_path: str | None = None,
         **options: Any,
     ) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ProcessMediaWikiRequest
+
         self._enforce(self._processing_action_id("mediawiki", "import"))
         if request_data is None:
             request_data = ProcessMediaWikiRequest(**options)
@@ -585,6 +592,9 @@ class ServerMediaReadingService:
         return await self._require_client().get_reading_item(int(media_id))
 
     async def update_media_metadata(self, media_id: Any, **metadata: Any) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ReadingUpdateRequest
+
         self._enforce(self._reading_action_id("update"))
         unsupported = sorted(
             key for key, value in metadata.items()
@@ -608,6 +618,9 @@ class ServerMediaReadingService:
         tags: list[str] | None = None,
         hard: bool = False,
     ) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ItemsBulkRequest
+
         request_data = ItemsBulkRequest(
             item_ids=[int(item_id) for item_id in item_ids],
             action=action,
@@ -635,6 +648,9 @@ class ServerMediaReadingService:
         )
 
     async def update_media_item(self, media_id: Any, **changes: Any) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MediaItemUpdateRequest
+
         self._enforce(self._media_item_action_id("update"))
         if changes.get("keywords") is not None:
             raise ValueError("Use update_media_keywords for server media keyword changes.")
@@ -673,6 +689,9 @@ class ServerMediaReadingService:
         keywords: list[str],
         mode: str = "add",
     ) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MediaKeywordsUpdateRequest
+
         self._enforce(self._media_item_subresource_action_id("keywords", "update"))
         request_data = MediaKeywordsUpdateRequest(keywords=keywords, mode=mode)
         return await self._require_client().update_media_keywords(int(media_id), request_data)
@@ -737,6 +756,9 @@ class ServerMediaReadingService:
         notes: str | None = None,
         content: str | None = None,
     ) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ReadingSaveRequest
+
         self._enforce(self._reading_action_id("create"))
         if request_data is None:
             if url is None:
@@ -761,6 +783,9 @@ class ServerMediaReadingService:
         query: Mapping[str, Any] | None = None,
         sort: str | None = None,
     ) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ReadingSavedSearchCreateRequest
+
         self._enforce(self._saved_search_action_id("create"))
         request_data = ReadingSavedSearchCreateRequest(
             name=name,
@@ -781,6 +806,9 @@ class ServerMediaReadingService:
         query: Mapping[str, Any] | None = None,
         sort: str | None = None,
     ) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ReadingSavedSearchUpdateRequest
+
         self._enforce(self._saved_search_action_id("update"))
         request_data = ReadingSavedSearchUpdateRequest(
             name=name,
@@ -818,6 +846,9 @@ class ServerMediaReadingService:
         return await self._require_client().unlink_note_from_reading_item(int(item_id), note_id)
 
     async def link_reading_item_note(self, item_id: Any, *, note_id: str) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ReadingNoteLinkCreateRequest
+
         self._enforce(self._note_link_action_id("create"))
         client = self._require_client()
         link_method = getattr(client, "link_reading_item_note", None)
@@ -847,6 +878,9 @@ class ServerMediaReadingService:
         tags: list[str] | None = None,
         hard: bool = False,
     ) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ItemsBulkRequest
+
         self._enforce(self._reading_action_id("bulk_update"))
         request_data = ItemsBulkRequest(
             item_ids=item_ids,
@@ -868,6 +902,9 @@ class ServerMediaReadingService:
         retention_days: int | None = None,
         retention_until: str | None = None,
     ) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ReadingArchiveCreateRequest
+
         self._enforce(self._reading_action_id("archive"))
         request_data = ReadingArchiveCreateRequest(
             format=format,  # type: ignore[arg-type]
@@ -890,6 +927,9 @@ class ServerMediaReadingService:
         recursive: bool = False,
         chunked: bool = False,
     ) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ReadingSummarizeRequest
+
         self._enforce(self._reading_action_id("summarize"))
         request_data = ReadingSummarizeRequest(
             provider=provider,
@@ -914,6 +954,9 @@ class ServerMediaReadingService:
         max_chars: int | None = None,
         text_source: str | None = None,
     ) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ReadingTTSRequest
+
         self._enforce(self._reading_action_id("tts"))
         request_data = ReadingTTSRequest(
             model=model,
@@ -1002,6 +1045,9 @@ class ServerMediaReadingService:
         retention_days: int | None = None,
         filters: Mapping[str, Any] | None = None,
     ) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ReadingDigestScheduleCreateRequest
+
         self._enforce(self._reading_digest_schedule_action_id("create"))
         request_data = ReadingDigestScheduleCreateRequest(
             name=name,
@@ -1030,6 +1076,9 @@ class ServerMediaReadingService:
         schedule_id: str,
         **changes: Any,
     ) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ReadingDigestScheduleUpdateRequest
+
         self._enforce(self._reading_digest_schedule_action_id("update"))
         payload = dict(changes)
         if payload.get("filters") is not None:
@@ -1093,6 +1142,9 @@ class ServerMediaReadingService:
         include_external: bool | None = None,
         score_threshold: float | None = None,
     ) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import IngestWebContentRequest, IngestWebContentResponse
+
         self._enforce(self._web_content_ingest_action_id("launch"))
         request_data = IngestWebContentRequest(
             urls=urls,
@@ -1142,6 +1194,9 @@ class ServerMediaReadingService:
         request_data: Any,
         file_paths: list[str] | None = None,
     ) -> BatchMediaProcessResponse:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import BatchMediaProcessResponse
+
         self._enforce(self._processing_action_id(kind, "process"))
         client_method = getattr(self._require_client(), client_method_name)
         return BatchMediaProcessResponse.model_validate(
@@ -1156,6 +1211,9 @@ class ServerMediaReadingService:
         file_paths: list[str] | None = None,
         **options: Any,
     ) -> BatchMediaProcessResponse:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ProcessVideoRequest
+
         if request_data is None:
             request_data = ProcessVideoRequest(urls=urls, **options)
         return await self._process_no_db_media(
@@ -1173,6 +1231,9 @@ class ServerMediaReadingService:
         file_paths: list[str] | None = None,
         **options: Any,
     ) -> BatchMediaProcessResponse:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ProcessAudioRequest
+
         if request_data is None:
             request_data = ProcessAudioRequest(urls=urls, **options)
         return await self._process_no_db_media(
@@ -1190,6 +1251,9 @@ class ServerMediaReadingService:
         file_paths: list[str] | None = None,
         **options: Any,
     ) -> BatchMediaProcessResponse:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ProcessPDFRequest
+
         if request_data is None:
             request_data = ProcessPDFRequest(urls=urls, **options)
         return await self._process_no_db_media(
@@ -1207,6 +1271,9 @@ class ServerMediaReadingService:
         file_paths: list[str] | None = None,
         **options: Any,
     ) -> BatchMediaProcessResponse:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ProcessEbookRequest
+
         if request_data is None:
             request_data = ProcessEbookRequest(urls=urls, **options)
         return await self._process_no_db_media(
@@ -1224,6 +1291,9 @@ class ServerMediaReadingService:
         file_paths: list[str] | None = None,
         **options: Any,
     ) -> BatchMediaProcessResponse:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ProcessDocumentRequest
+
         if request_data is None:
             request_data = ProcessDocumentRequest(urls=urls, **options)
         return await self._process_no_db_media(
@@ -1241,6 +1311,9 @@ class ServerMediaReadingService:
         file_paths: list[str] | None = None,
         **options: Any,
     ) -> BatchMediaProcessResponse:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ProcessPlaintextRequest
+
         if request_data is None:
             request_data = ProcessPlaintextRequest(urls=urls, **options)
         return await self._process_no_db_media(
@@ -1261,6 +1334,9 @@ class ServerMediaReadingService:
         chunk_size: int = 4000,
         chunk_overlap: int = 200,
     ) -> BatchMediaProcessResponse:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import BatchMediaProcessResponse, ProcessCodeRequest
+
         self._enforce(self._processing_action_id("code", "process"))
         if request_data is None:
             request_data = ProcessCodeRequest(
@@ -1294,6 +1370,9 @@ class ServerMediaReadingService:
         accept_mbox: bool = False,
         accept_pst: bool = False,
     ) -> BatchMediaProcessResponse:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import BatchMediaProcessResponse, ProcessEmailsRequest
+
         self._enforce(self._processing_action_id("emails", "process"))
         request_data = ProcessEmailsRequest(
             title=title,
@@ -1340,6 +1419,9 @@ class ServerMediaReadingService:
         include_external: bool | None = None,
         score_threshold: float | None = None,
     ) -> IngestWebContentResponse:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import IngestWebContentResponse, ProcessWebScrapingRequest
+
         self._enforce(self._processing_action_id("web_scraping", "process"))
         if request_data is None:
             if scrape_method is None or url_input is None:
@@ -1378,6 +1460,9 @@ class ServerMediaReadingService:
         return await self._require_client().get_reading_progress(int(media_id))
 
     async def update_reading_progress(self, media_id: Any, progress_data: Mapping[str, Any]) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ReadingProgressUpdate
+
         self._enforce(self._reading_progress_action_id("update"))
         payload = dict(progress_data)
         if "percent_complete" in payload and "percentage" not in payload:
@@ -1403,6 +1488,9 @@ class ServerMediaReadingService:
         force_regenerate_embeddings: bool = False,
         **options: Any,
     ) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MediaIngestJobSubmitRequest
+
         self._enforce(self._ingestion_job_action_id("launch"))
         request_data = MediaIngestJobSubmitRequest(
             media_type=media_type,
@@ -1483,6 +1571,9 @@ class ServerMediaReadingService:
         force_regenerate_embeddings: bool = False,
         **options: Any,
     ) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ReprocessMediaRequest
+
         self._enforce(self._ingestion_job_action_id("launch"))
         request_data = ReprocessMediaRequest(
             perform_chunking=perform_chunking,
@@ -1505,6 +1596,9 @@ class ServerMediaReadingService:
         note: str | None = None,
         anchor_strategy: str = "fuzzy_quote",
     ) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ReadingHighlightCreateRequest
+
         self._enforce(self._reading_action_id("update"))
         normalized_item_id = int(item_id)
         request_data = ReadingHighlightCreateRequest(
@@ -1530,6 +1624,9 @@ class ServerMediaReadingService:
         note: str | None = None,
         state: str | None = None,
     ) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ReadingHighlightUpdateRequest
+
         self._enforce(self._reading_action_id("update"))
         request_data = ReadingHighlightUpdateRequest(
             color=color,
@@ -1570,6 +1667,9 @@ class ServerMediaReadingService:
         chapter_title: str | None = None,
         percentage: float | None = None,
     ) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import DocumentAnnotationCreate
+
         self._enforce(self._reading_action_id("update"))
         request_data = DocumentAnnotationCreate(
             location=location,
@@ -1591,6 +1691,9 @@ class ServerMediaReadingService:
         color: str | None = None,
         note: str | None = None,
     ) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import DocumentAnnotationUpdate
+
         self._enforce(self._reading_action_id("update"))
         request_data = DocumentAnnotationUpdate(
             text=text,
@@ -1610,6 +1713,9 @@ class ServerMediaReadingService:
         annotations: list[Mapping[str, Any]],
         client_ids: list[str] | None = None,
     ) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import DocumentAnnotationCreate, DocumentAnnotationSyncRequest
+
         self._enforce(self._reading_action_id("update"))
         request_data = DocumentAnnotationSyncRequest(
             annotations=[DocumentAnnotationCreate(**dict(annotation)) for annotation in annotations],
@@ -1692,6 +1798,9 @@ class ServerMediaReadingService:
         max_content_length: int | None = 5000,
         force: bool | None = False,
     ) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import DocumentInsightsRequest
+
         self._enforce(self._reading_action_id("detail"))
         request_data = DocumentInsightsRequest(
             categories=categories,  # type: ignore[arg-type]
@@ -1716,6 +1825,9 @@ class ServerMediaReadingService:
         schedule: Optional[Mapping[str, Any]] = None,
         config: Optional[Mapping[str, Any]] = None,
     ) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import IngestionSourceCreateRequest
+
         self._enforce(self._ingestion_source_action_id("create"))
         request_data = IngestionSourceCreateRequest(
             source_type=source_type,
@@ -1733,6 +1845,9 @@ class ServerMediaReadingService:
         return await self._require_client().get_ingestion_source(int(source_id))
 
     async def patch_ingestion_source(self, source_id: Any, **changes: Any) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import IngestionSourcePatchRequest
+
         self._enforce(self._ingestion_source_action_id("update"))
         request_data = IngestionSourcePatchRequest(**changes)
         return await self._require_client().patch_ingestion_source(int(source_id), request_data)
@@ -1802,6 +1917,9 @@ class ServerMediaReadingService:
         prompt: Optional[str] = None,
         safe_metadata: Optional[Mapping[str, Any]] = None,
     ) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MediaVersionCreateRequest
+
         self._enforce(self._reading_action_id("update"))
         request_data = MediaVersionCreateRequest(
             content=content,
@@ -1833,6 +1951,9 @@ class ServerMediaReadingService:
         return await self._require_client().delete_media_version(int(media_id), int(version_number))
 
     async def rollback_document_version(self, media_id: Any, *, version_number: Any) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MediaVersionRollbackRequest
+
         self._enforce(self._reading_action_id("update"))
         request_data = MediaVersionRollbackRequest(version_number=int(version_number))
         return await self._require_client().rollback_media_version(int(media_id), request_data)
@@ -1845,6 +1966,9 @@ class ServerMediaReadingService:
         merge: bool = True,
         new_version: bool = False,
     ) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MediaMetadataPatchRequest
+
         self._enforce(self._reading_action_id("update"))
         request_data = MediaMetadataPatchRequest(
             safe_metadata=dict(safe_metadata),
@@ -1861,6 +1985,9 @@ class ServerMediaReadingService:
         safe_metadata: Mapping[str, Any],
         merge: bool = True,
     ) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MediaMetadataPatchRequest
+
         self._enforce(self._reading_action_id("update"))
         request_data = MediaMetadataPatchRequest(
             safe_metadata=dict(safe_metadata),
@@ -1884,6 +2011,9 @@ class ServerMediaReadingService:
         merge: bool = True,
         new_version: bool = True,
     ) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MediaAdvancedVersionUpsertRequest
+
         self._enforce(self._reading_action_id("update"))
         request_data = MediaAdvancedVersionUpsertRequest(
             content=content,

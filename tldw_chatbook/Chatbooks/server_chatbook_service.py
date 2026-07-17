@@ -10,16 +10,16 @@ from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Mapping, Optional, 
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    ChatbookContinueExportRequest,
-    ChatbookExportRequest,
-    ChatbookImportRequest,
-    ReadingExportResponse,
-)
 from .chatbook_models import ChatbookManifest, ContentType
 
 if TYPE_CHECKING:
-    from ..tldw_api import TLDWAPIClient
+    from ..tldw_api import (
+        ChatbookContinueExportRequest,
+        ChatbookExportRequest,
+        ChatbookImportRequest,
+        ReadingExportResponse,
+        TLDWAPIClient,
+    )
 
 
 SelectionKey = Union[str, ContentType]
@@ -277,6 +277,9 @@ class ServerChatbookService:
         categories: Optional[List[str]] = None,
         async_mode: bool = False,
     ) -> ChatbookExportRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ChatbookExportRequest
+
         return ChatbookExportRequest(
             name=name,
             description=description,
@@ -300,6 +303,9 @@ class ServerChatbookService:
         import_embeddings: bool = False,
         async_mode: bool = False,
     ) -> ChatbookImportRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ChatbookImportRequest
+
         normalized_selections = self.normalize_content_selections(selections)
         unsupported = self.validate_server_import_selection(normalized_selections)
         if unsupported:
@@ -319,6 +325,9 @@ class ServerChatbookService:
         )
 
     def _coerce_export_request(self, request_data: ChatbookExportRequest | Mapping[str, Any]) -> ChatbookExportRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ChatbookExportRequest
+
         if isinstance(request_data, ChatbookExportRequest):
             return request_data
         payload = dict(request_data)
@@ -330,11 +339,17 @@ class ServerChatbookService:
         self,
         request_data: ChatbookContinueExportRequest | Mapping[str, Any],
     ) -> ChatbookContinueExportRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ChatbookContinueExportRequest
+
         if isinstance(request_data, ChatbookContinueExportRequest):
             return request_data
         return ChatbookContinueExportRequest(**dict(request_data))
 
     def _coerce_import_request(self, request_data: ChatbookImportRequest | Mapping[str, Any]) -> ChatbookImportRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ChatbookImportRequest
+
         if isinstance(request_data, ChatbookImportRequest):
             return request_data
         payload = dict(request_data)

@@ -6,16 +6,16 @@ from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    PersonalizationMemoryCreate,
-    PersonalizationMemoryImportRequest,
-    PersonalizationMemoryUpdate,
-    PersonalizationMemoryValidateRequest,
-    PersonalizationOptInRequest,
-    PersonalizationPreferencesUpdate,
-)
 if TYPE_CHECKING:
-    from ..tldw_api import TLDWAPIClient
+    from ..tldw_api import (
+        PersonalizationMemoryCreate,
+        PersonalizationMemoryImportRequest,
+        PersonalizationMemoryUpdate,
+        PersonalizationMemoryValidateRequest,
+        PersonalizationOptInRequest,
+        PersonalizationPreferencesUpdate,
+        TLDWAPIClient,
+    )
 
 
 class ServerPersonalizationService:
@@ -97,6 +97,9 @@ class ServerPersonalizationService:
 
     @staticmethod
     def _opt_in_request(request_data: Any) -> PersonalizationOptInRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import PersonalizationOptInRequest
+
         if isinstance(request_data, PersonalizationOptInRequest):
             return request_data
         if isinstance(request_data, bool):
@@ -105,30 +108,45 @@ class ServerPersonalizationService:
 
     @staticmethod
     def _preferences_update_request(request_data: Any) -> PersonalizationPreferencesUpdate:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import PersonalizationPreferencesUpdate
+
         if isinstance(request_data, PersonalizationPreferencesUpdate):
             return request_data
         return PersonalizationPreferencesUpdate(**dict(request_data or {}))
 
     @staticmethod
     def _memory_create_request(request_data: Any) -> PersonalizationMemoryCreate:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import PersonalizationMemoryCreate
+
         if isinstance(request_data, PersonalizationMemoryCreate):
             return request_data
         return PersonalizationMemoryCreate(**dict(request_data or {}))
 
     @staticmethod
     def _memory_update_request(request_data: Any) -> PersonalizationMemoryUpdate:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import PersonalizationMemoryUpdate
+
         if isinstance(request_data, PersonalizationMemoryUpdate):
             return request_data
         return PersonalizationMemoryUpdate(**dict(request_data or {}))
 
     @staticmethod
     def _memory_validate_request(request_data: Any) -> PersonalizationMemoryValidateRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import PersonalizationMemoryValidateRequest
+
         if isinstance(request_data, PersonalizationMemoryValidateRequest):
             return request_data
         return PersonalizationMemoryValidateRequest(**dict(request_data or {}))
 
     @staticmethod
     def _memory_import_request(request_data: Any) -> PersonalizationMemoryImportRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import PersonalizationMemoryImportRequest
+
         if isinstance(request_data, PersonalizationMemoryImportRequest):
             return request_data
         return PersonalizationMemoryImportRequest(**dict(request_data or {}))

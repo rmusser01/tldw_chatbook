@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 from html import escape as html_escape
-from typing import Any, Callable
+from typing import Any, Callable, TYPE_CHECKING
 
 from tldw_chatbook.Utils.input_validation import sanitize_string
-from tldw_chatbook.tldw_api import SyncV2Envelope
+if TYPE_CHECKING:
+    from tldw_chatbook.tldw_api import SyncV2Envelope
+
 
 
 class NotesM1SyncAdapter:

@@ -7,34 +7,6 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    ManuscriptAnalysisRequest,
-    ManuscriptCharacterCreate,
-    ManuscriptCharacterUpdate,
-    ManuscriptChapterCreate,
-    ManuscriptChapterUpdate,
-    ManuscriptCitationCreate,
-    ManuscriptPartCreate,
-    ManuscriptPartUpdate,
-    ManuscriptPlotEventCreate,
-    ManuscriptPlotEventUpdate,
-    ManuscriptPlotHoleCreate,
-    ManuscriptPlotHoleUpdate,
-    ManuscriptPlotLineCreate,
-    ManuscriptPlotLineUpdate,
-    ManuscriptProjectCreate,
-    ManuscriptProjectUpdate,
-    ManuscriptRelationshipCreate,
-    ManuscriptResearchRequest,
-    ManuscriptSceneCreate,
-    ManuscriptSceneUpdate,
-    ManuscriptVersionCreateRequest,
-    ManuscriptWorldInfoCreate,
-    ManuscriptWorldInfoUpdate,
-    ReorderRequest,
-    SceneCharacterLink,
-    SceneWorldInfoLink,
-)
 if TYPE_CHECKING:
     from ..tldw_api import TLDWAPIClient
 from .writing_markdown_adapter import markdown_to_plain_text, markdown_to_server_content
@@ -128,6 +100,9 @@ class ServerWritingService:
         return value
 
     async def create_project(self, *, title: str, **kwargs: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ManuscriptProjectCreate
+
         self._enforce(self._action_id("projects", "create"))
         response = await self._require_client().create_manuscript_project(
             ManuscriptProjectCreate(title=title, **kwargs)
@@ -155,6 +130,9 @@ class ServerWritingService:
         expected_version: int,
         **fields: Any,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ManuscriptProjectUpdate
+
         self._enforce(self._action_id("projects", "update"))
         response = await self._require_client().update_manuscript_project(
             project_id,
@@ -171,6 +149,9 @@ class ServerWritingService:
         )
 
     async def create_manuscript(self, project_id: str, *, title: str, **kwargs: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ManuscriptPartCreate
+
         self._enforce(self._action_id("manuscripts", "create"))
         response = await self._require_client().create_manuscript(
             project_id,
@@ -198,6 +179,9 @@ class ServerWritingService:
         expected_version: int,
         **fields: Any,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ManuscriptPartUpdate
+
         self._enforce(self._action_id("manuscripts", "update"))
         response = await self._require_client().update_manuscript(
             manuscript_id,
@@ -221,6 +205,9 @@ class ServerWritingService:
         manuscript_id: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ManuscriptChapterCreate
+
         self._enforce(self._action_id("chapters", "create"))
         response = await self._require_client().create_manuscript_chapter(
             project_id,
@@ -249,6 +236,9 @@ class ServerWritingService:
         manuscript_id: Any = _UNSET,
         **fields: Any,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ManuscriptChapterUpdate
+
         self._enforce(self._action_id("chapters", "update"))
         if manuscript_id is not _UNSET:
             fields["part_id"] = manuscript_id
@@ -275,6 +265,9 @@ class ServerWritingService:
         manuscript_id: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ManuscriptSceneCreate
+
         self._enforce(self._action_id("scenes", "create"))
         if chapter_id is None or manuscript_id is not None:
             raise NotImplementedError(REASON_DIRECT_MANUSCRIPT_SCENE)
@@ -317,6 +310,9 @@ class ServerWritingService:
         content_markdown: str | None = None,
         **fields: Any,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ManuscriptSceneUpdate
+
         self._enforce(self._action_id("scenes", "update"))
         if content_markdown is not None:
             fields["content"] = markdown_to_server_content(content_markdown)
@@ -341,6 +337,9 @@ class ServerWritingService:
         return normalize_writing_structure("server", self._model_to_dict(response))
 
     async def reorder_entities(self, project_id: str, entity_type: str, items: list[dict[str, Any]]) -> bool:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ReorderRequest
+
         self._enforce(self._action_id("outline", "reorder"))
         server_entity_type = "parts" if entity_type == "manuscripts" else entity_type
         response = await self._require_client().reorder_manuscript_entities(
@@ -350,6 +349,9 @@ class ServerWritingService:
         return bool(response)
 
     async def create_character(self, project_id: str, *, name: str, **kwargs: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ManuscriptCharacterCreate
+
         self._enforce(self._action_id("characters", "create"))
         response = await self._require_client().create_manuscript_character(
             project_id,
@@ -387,6 +389,9 @@ class ServerWritingService:
         expected_version: int,
         **fields: Any,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ManuscriptCharacterUpdate
+
         self._enforce(self._action_id("characters", "update"))
         response = await self._require_client().update_manuscript_character(
             character_id,
@@ -403,6 +408,9 @@ class ServerWritingService:
         )
 
     async def create_relationship(self, project_id: str, **fields: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ManuscriptRelationshipCreate
+
         self._enforce(self._action_id("relationships", "create"))
         response = await self._require_client().create_manuscript_relationship(
             project_id,
@@ -426,6 +434,9 @@ class ServerWritingService:
         )
 
     async def create_world_info(self, project_id: str, *, kind: str, name: str, **kwargs: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ManuscriptWorldInfoCreate
+
         self._enforce(self._action_id("world_info", "create"))
         response = await self._require_client().create_manuscript_world_info(
             project_id,
@@ -453,6 +464,9 @@ class ServerWritingService:
         expected_version: int,
         **fields: Any,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ManuscriptWorldInfoUpdate
+
         self._enforce(self._action_id("world_info", "update"))
         response = await self._require_client().update_manuscript_world_info(
             item_id,
@@ -469,6 +483,9 @@ class ServerWritingService:
         )
 
     async def create_plot_line(self, project_id: str, *, title: str, **kwargs: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ManuscriptPlotLineCreate
+
         self._enforce(self._action_id("plot_lines", "create"))
         response = await self._require_client().create_manuscript_plot_line(
             project_id,
@@ -491,6 +508,9 @@ class ServerWritingService:
         expected_version: int,
         **fields: Any,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ManuscriptPlotLineUpdate
+
         self._enforce(self._action_id("plot_lines", "update"))
         response = await self._require_client().update_manuscript_plot_line(
             plot_line_id,
@@ -507,6 +527,9 @@ class ServerWritingService:
         )
 
     async def create_plot_event(self, plot_line_id: str, *, title: str, **kwargs: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ManuscriptPlotEventCreate
+
         self._enforce(self._action_id("plot_events", "create"))
         response = await self._require_client().create_manuscript_plot_event(
             plot_line_id,
@@ -529,6 +552,9 @@ class ServerWritingService:
         expected_version: int,
         **fields: Any,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ManuscriptPlotEventUpdate
+
         self._enforce(self._action_id("plot_events", "update"))
         response = await self._require_client().update_manuscript_plot_event(
             plot_event_id,
@@ -545,6 +571,9 @@ class ServerWritingService:
         )
 
     async def create_plot_hole(self, project_id: str, *, title: str, **kwargs: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ManuscriptPlotHoleCreate
+
         self._enforce(self._action_id("plot_holes", "create"))
         response = await self._require_client().create_manuscript_plot_hole(
             project_id,
@@ -567,6 +596,9 @@ class ServerWritingService:
         expected_version: int,
         **fields: Any,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ManuscriptPlotHoleUpdate
+
         self._enforce(self._action_id("plot_holes", "update"))
         response = await self._require_client().update_manuscript_plot_hole(
             plot_hole_id,
@@ -589,6 +621,9 @@ class ServerWritingService:
         character_id: str,
         is_pov: bool = False,
     ) -> list[dict[str, Any]]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SceneCharacterLink
+
         self._enforce(self._action_id("scene_characters", "create"))
         response = await self._require_client().link_manuscript_scene_character(
             scene_id,
@@ -612,6 +647,9 @@ class ServerWritingService:
         return await self._require_client().unlink_manuscript_scene_character(scene_id, character_id)
 
     async def link_scene_world_info(self, scene_id: str, *, world_info_id: str) -> list[dict[str, Any]]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SceneWorldInfoLink
+
         self._enforce(self._action_id("scene_world_info", "create"))
         response = await self._require_client().link_manuscript_scene_world_info(
             scene_id,
@@ -635,6 +673,9 @@ class ServerWritingService:
         return await self._require_client().unlink_manuscript_scene_world_info(scene_id, world_info_id)
 
     async def create_citation(self, scene_id: str, *, source_type: str, **kwargs: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ManuscriptCitationCreate
+
         self._enforce(self._action_id("citations", "create"))
         response = await self._require_client().create_manuscript_citation(
             scene_id,
@@ -658,6 +699,9 @@ class ServerWritingService:
         )
 
     async def research_scene(self, scene_id: str, *, query: str, top_k: int = 5) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ManuscriptResearchRequest
+
         self._enforce(self._action_id("research", "launch"))
         response = await self._require_client().research_manuscript_scene(
             scene_id,
@@ -678,6 +722,9 @@ class ServerWritingService:
         provider: str | None = None,
         model: str | None = None,
     ) -> list[dict[str, Any]]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ManuscriptAnalysisRequest
+
         self._enforce(self._action_id("analysis", "launch"))
         request_data = ManuscriptAnalysisRequest(analysis_types=analysis_types, provider=provider, model=model)
         response = await self._require_client().analyze_manuscript_scene(scene_id, request_data)
@@ -694,6 +741,9 @@ class ServerWritingService:
         provider: str | None = None,
         model: str | None = None,
     ) -> list[dict[str, Any]]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ManuscriptAnalysisRequest
+
         self._enforce(self._action_id("analysis", "launch"))
         request_data = ManuscriptAnalysisRequest(analysis_types=analysis_types, provider=provider, model=model)
         response = await self._require_client().analyze_manuscript_chapter(chapter_id, request_data)
@@ -710,6 +760,9 @@ class ServerWritingService:
         provider: str | None = None,
         model: str | None = None,
     ) -> list[dict[str, Any]]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ManuscriptAnalysisRequest
+
         self._enforce(self._action_id("analysis", "launch"))
         request_data = ManuscriptAnalysisRequest(
             analysis_types=analysis_types or ["plot_holes"],
@@ -730,6 +783,9 @@ class ServerWritingService:
         provider: str | None = None,
         model: str | None = None,
     ) -> list[dict[str, Any]]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ManuscriptAnalysisRequest
+
         self._enforce(self._action_id("analysis", "launch"))
         request_data = ManuscriptAnalysisRequest(
             analysis_types=analysis_types or ["consistency"],
@@ -765,6 +821,9 @@ class ServerWritingService:
         return payload
 
     async def create_version(self, entity_type: str, entity_id: str, *, label: str | None = None) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ManuscriptVersionCreateRequest
+
         self._enforce(self._action_id("versions", "create"))
         response = await self._require_client().create_manuscript_version(
             entity_type,

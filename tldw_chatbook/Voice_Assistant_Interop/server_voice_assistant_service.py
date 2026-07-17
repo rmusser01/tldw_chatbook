@@ -6,14 +6,14 @@ from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    VoiceCommandDefinition,
-    VoiceCommandDryRunRequest,
-    VoiceCommandRequest,
-    VoiceCommandToggleRequest,
-)
 if TYPE_CHECKING:
-    from ..tldw_api import TLDWAPIClient
+    from ..tldw_api import (
+        TLDWAPIClient,
+        VoiceCommandDefinition,
+        VoiceCommandDryRunRequest,
+        VoiceCommandRequest,
+        VoiceCommandToggleRequest,
+    )
 
 
 class ServerVoiceAssistantService:
@@ -97,24 +97,36 @@ class ServerVoiceAssistantService:
 
     @staticmethod
     def _command_request(request_data: Any) -> VoiceCommandRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import VoiceCommandRequest
+
         if isinstance(request_data, VoiceCommandRequest):
             return request_data
         return VoiceCommandRequest(**dict(request_data or {}))
 
     @staticmethod
     def _command_definition(request_data: Any) -> VoiceCommandDefinition:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import VoiceCommandDefinition
+
         if isinstance(request_data, VoiceCommandDefinition):
             return request_data
         return VoiceCommandDefinition(**dict(request_data or {}))
 
     @staticmethod
     def _toggle_request(request_data: Any) -> VoiceCommandToggleRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import VoiceCommandToggleRequest
+
         if isinstance(request_data, VoiceCommandToggleRequest):
             return request_data
         return VoiceCommandToggleRequest(**dict(request_data or {}))
 
     @staticmethod
     def _dry_run_request(request_data: Any) -> VoiceCommandDryRunRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import VoiceCommandDryRunRequest
+
         if isinstance(request_data, VoiceCommandDryRunRequest):
             return request_data
         return VoiceCommandDryRunRequest(**dict(request_data or {}))

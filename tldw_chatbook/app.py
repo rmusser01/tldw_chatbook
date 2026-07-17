@@ -30,7 +30,7 @@ import sys
 import threading
 import time
 import traceback
-from typing import Union, Optional, Any, Dict, List, Callable
+from typing import TYPE_CHECKING, Union, Optional, Any, Dict, List, Callable
 from textual.widget import Widget
 #
 # 3rd-Party Libraries
@@ -350,7 +350,6 @@ from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer
 from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
 from tldw_chatbook.runtime_policy.types import PolicyDecision, RuntimeSourceState
 from tldw_chatbook.state import AppState
-from tldw_chatbook.tldw_api import MCPUnifiedClient
 from tldw_chatbook.Auth_Account_Interop import AuthAccountScopeService, ServerAuthAccountService
 from tldw_chatbook.Audio_Services_Interop import (
     AudioServicesScopeService,
@@ -358,6 +357,10 @@ from tldw_chatbook.Audio_Services_Interop import (
     ServerAudioServicesService,
 )
 from .Evals.eval_orchestrator import EvaluationOrchestrator
+
+if TYPE_CHECKING:
+    from tldw_chatbook.tldw_api import MCPUnifiedClient
+
 API_IMPORTS_SUCCESSFUL = True
 
 SEARCH_VIEW_RAG_QA = "search-view-rag-qa"
@@ -3678,7 +3681,10 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             get_user_data_dir() / "unified_mcp_context.json",
         )
 
-        def _build_unified_mcp_client_for_target(target: Any) -> MCPUnifiedClient:
+        def _build_unified_mcp_client_for_target(target: Any) -> "MCPUnifiedClient":
+            # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+            from tldw_chatbook.tldw_api import MCPUnifiedClient
+
             if getattr(target, "auth_reference", None) == "legacy:tldw_api":
                 root_client = build_runtime_api_client(
                     app_config=self.app_config,

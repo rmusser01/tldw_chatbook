@@ -7,20 +7,14 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    BatchMediaEmbeddingsRequest,
-    ChunkingTemplateApplyRequest,
-    ChunkingTemplateCreateRequest,
-    ChunkingTemplateLearnRequest,
-    ChunkingTemplateUpdateRequest,
-    EmbeddingCollectionCreateRequest,
-    MediaEmbeddingsBatchRequest,
-    MediaEmbeddingsGenerateRequest,
-    MediaEmbeddingsSearchRequest,
-    ReprocessMediaRequest,
-)
 if TYPE_CHECKING:
-    from ..tldw_api import TLDWAPIClient
+    from ..tldw_api import (
+        BatchMediaEmbeddingsRequest,
+        MediaEmbeddingsBatchRequest,
+        MediaEmbeddingsGenerateRequest,
+        MediaEmbeddingsSearchRequest,
+        TLDWAPIClient,
+    )
 
 
 class ServerRAGAdminService:
@@ -144,6 +138,9 @@ class ServerRAGAdminService:
         tags: Optional[Sequence[str]] = None,
         user_id: Optional[str] = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ChunkingTemplateCreateRequest
+
         self._enforce(self._template_action_id("create"))
         request = ChunkingTemplateCreateRequest(
             name=name,
@@ -162,6 +159,9 @@ class ServerRAGAdminService:
         template: Optional[Mapping[str, Any]] = None,
         tags: Optional[Sequence[str]] = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ChunkingTemplateUpdateRequest
+
         self._enforce(self._template_action_id("update"))
         request = ChunkingTemplateUpdateRequest(
             description=description,
@@ -184,6 +184,9 @@ class ServerRAGAdminService:
         override_options: Optional[Mapping[str, Any]] = None,
         include_metadata: bool = False,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ChunkingTemplateApplyRequest
+
         self._enforce(self._admin_action_id("launch"))
         request = ChunkingTemplateApplyRequest(
             template_name=template_name,
@@ -232,6 +235,9 @@ class ServerRAGAdminService:
         save: bool = False,
         classifier: Optional[Mapping[str, Any]] = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ChunkingTemplateLearnRequest
+
         request = ChunkingTemplateLearnRequest(
             name=name,
             example_text=example_text,
@@ -253,6 +259,9 @@ class ServerRAGAdminService:
         embedding_model: str | None = None,
         provider: str | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import EmbeddingCollectionCreateRequest
+
         self._enforce(self._admin_action_id("configure"))
         request = EmbeddingCollectionCreateRequest(
             name=name,
@@ -281,6 +290,9 @@ class ServerRAGAdminService:
         force_regenerate_embeddings: bool = False,
         **options: Any,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ReprocessMediaRequest
+
         self._enforce(self._admin_action_id("launch"))
         request = ReprocessMediaRequest(
             perform_chunking=perform_chunking,
@@ -308,6 +320,9 @@ class ServerRAGAdminService:
         force_regenerate: bool = False,
         priority: int = 50,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MediaEmbeddingsGenerateRequest
+
         self._enforce(self._media_embeddings_action_id("create"))
         request = request_data or MediaEmbeddingsGenerateRequest(
             embedding_model=embedding_model,
@@ -333,6 +348,9 @@ class ServerRAGAdminService:
         force_regenerate: bool = False,
         priority: int = 50,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MediaEmbeddingsBatchRequest
+
         self._enforce(self._media_embeddings_action_id("create"))
         request = request_data or MediaEmbeddingsBatchRequest(
             media_ids=[int(media_id) for media_id in list(media_ids or [])],
@@ -356,6 +374,9 @@ class ServerRAGAdminService:
         embedding_provider: str | None = None,
         filters: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MediaEmbeddingsSearchRequest
+
         self._enforce(self._media_embeddings_action_id("search"))
         if request_data is None and not query:
             raise ValueError("query is required when request_data is not provided.")

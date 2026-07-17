@@ -7,28 +7,8 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    FlashcardBulkUpdateItem,
-    FlashcardBulkUpdateItemRequest,
-    FlashcardCreateRequest,
-    FlashcardDeckCreateRequest,
-    FlashcardDeckUpdateRequest,
-    FlashcardGenerateRequest,
-    FlashcardReviewRequest,
-    FlashcardResetSchedulingRequest,
-    FlashcardTagsUpdate,
-    FlashcardTemplateCreateRequest,
-    FlashcardTemplateUpdateRequest,
-    FlashcardUpdateRequest,
-    FlashcardsImportRequest,
-    StudyAssistantRespondRequest,
-    StudyPackCreateJobRequest,
-    StructuredQaImportPreviewRequest,
-    SuggestionActionRequest,
-    SuggestionRefreshRequest,
-)
 if TYPE_CHECKING:
-    from ..tldw_api import TLDWAPIClient
+    from ..tldw_api import FlashcardCreateRequest, TLDWAPIClient
 
 
 class ServerStudyService:
@@ -167,6 +147,9 @@ class ServerStudyService:
 
     @staticmethod
     def _flashcard_create_request(card: Mapping[str, Any]) -> FlashcardCreateRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import FlashcardCreateRequest
+
         payload = dict(card)
         payload.setdefault("is_cloze", None)
         return FlashcardCreateRequest(**payload)
@@ -184,6 +167,9 @@ class ServerStudyService:
         workspace_id: Optional[str] = None,
         scheduler_type: Optional[str] = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import FlashcardDeckCreateRequest
+
         self._enforce(self._deck_action_id("create"))
         response = await self._require_client().create_flashcard_deck(
             FlashcardDeckCreateRequest(
@@ -207,6 +193,9 @@ class ServerStudyService:
         scheduler_settings: Optional[dict[str, Any]] = None,
         expected_version: Optional[int] = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import FlashcardDeckUpdateRequest
+
         self._enforce(self._deck_action_id("update"))
         response = await self._require_client().update_flashcard_deck(
             int(deck_id),
@@ -250,6 +239,9 @@ class ServerStudyService:
         notes: Optional[str] = None,
         extra: Optional[str] = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import FlashcardCreateRequest
+
         self._enforce(self._deck_action_id("update"))
         response = await self._require_client().create_flashcard(
             FlashcardCreateRequest(
@@ -275,6 +267,9 @@ class ServerStudyService:
         *,
         expected_version: int,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import FlashcardResetSchedulingRequest
+
         self._enforce(self._flashcard_action_id("update"))
         response = await self._require_client().reset_flashcard_scheduling(
             card_id,
@@ -288,6 +283,9 @@ class ServerStudyService:
         *,
         tags: list[str],
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import FlashcardTagsUpdate
+
         self._enforce(self._flashcard_tags_action_id("update"))
         response = await self._require_client().set_flashcard_tags(
             card_id,
@@ -357,6 +355,9 @@ class ServerStudyService:
         model: Optional[str] = None,
         expected_thread_version: Optional[int] = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import StudyAssistantRespondRequest
+
         self._enforce(self._flashcard_assistant_action_id("launch"))
         response = await self._require_client().respond_flashcard_assistant(
             card_id,
@@ -382,6 +383,9 @@ class ServerStudyService:
         provider: Optional[str] = None,
         model: Optional[str] = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import FlashcardGenerateRequest
+
         self._enforce(self._flashcard_generation_action_id("launch"))
         response = await self._require_client().generate_flashcards(
             FlashcardGenerateRequest(
@@ -413,6 +417,9 @@ class ServerStudyService:
         return self._model_to_dict(response)
 
     async def update_flashcards_bulk(self, updates: list[Mapping[str, Any]]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import FlashcardBulkUpdateItem
+
         self._enforce(self._flashcard_bulk_action_id("update"))
         response = await self._require_client().update_flashcards_bulk(
             [FlashcardBulkUpdateItem(**dict(update)) for update in updates]
@@ -427,6 +434,9 @@ class ServerStudyService:
         max_line_length: Optional[int] = None,
         max_field_length: Optional[int] = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import StructuredQaImportPreviewRequest
+
         self._enforce(self._flashcard_import_action_id("preview"))
         response = await self._require_client().preview_structured_qa_import(
             StructuredQaImportPreviewRequest(content=content),
@@ -446,6 +456,9 @@ class ServerStudyService:
         max_line_length: Optional[int] = None,
         max_field_length: Optional[int] = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import FlashcardsImportRequest
+
         self._enforce(self._flashcard_import_action_id("import"))
         return await self._require_client().import_flashcards(
             FlashcardsImportRequest(
@@ -525,6 +538,9 @@ class ServerStudyService:
         extra_template: Optional[str] = None,
         placeholder_definitions: Optional[list[dict[str, Any]]] = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import FlashcardTemplateCreateRequest
+
         self._enforce(self._flashcard_template_action_id("create"))
         response = await self._require_client().create_flashcard_template(
             FlashcardTemplateCreateRequest(
@@ -562,6 +578,9 @@ class ServerStudyService:
         placeholder_definitions: Optional[list[dict[str, Any]]] = None,
         expected_version: Optional[int] = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import FlashcardTemplateUpdateRequest
+
         self._enforce(self._flashcard_template_action_id("update"))
         response = await self._require_client().update_flashcard_template(
             int(template_id),
@@ -592,6 +611,9 @@ class ServerStudyService:
         target_deck_id: int,
         expected_version: Optional[int] = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import FlashcardUpdateRequest
+
         self._enforce(self._deck_action_id("update"))
         return self._model_to_dict(
             await self._require_client().update_flashcard(
@@ -620,6 +642,9 @@ class ServerStudyService:
         )
 
     async def update_flashcards_bulk(self, cards: list[Mapping[str, Any]]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import FlashcardBulkUpdateItemRequest
+
         response = await self._require_client().update_flashcards_bulk(
             [FlashcardBulkUpdateItemRequest.model_validate(dict(card)) for card in cards]
         )
@@ -631,6 +656,9 @@ class ServerStudyService:
         *,
         expected_version: int,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import FlashcardResetSchedulingRequest
+
         response = await self._require_client().reset_flashcard_scheduling(
             card_id,
             FlashcardResetSchedulingRequest(expected_version=expected_version),
@@ -643,6 +671,9 @@ class ServerStudyService:
         *,
         tags: list[str],
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import FlashcardTagsUpdate
+
         response = await self._require_client().set_flashcard_tags(
             card_id,
             FlashcardTagsUpdate(tags=tags),
@@ -670,6 +701,9 @@ class ServerStudyService:
         max_line_length: Optional[int] = None,
         max_field_length: Optional[int] = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import StructuredQaImportPreviewRequest
+
         response = await self._require_client().preview_structured_qa_import(
             StructuredQaImportPreviewRequest(content=content),
             max_lines=max_lines,
@@ -688,6 +722,9 @@ class ServerStudyService:
         max_line_length: Optional[int] = None,
         max_field_length: Optional[int] = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import FlashcardsImportRequest
+
         response = await self._require_client().import_flashcards_tsv(
             FlashcardsImportRequest(
                 content=content,
@@ -779,6 +816,9 @@ class ServerStudyService:
         model: Optional[str] = None,
         expected_thread_version: Optional[int] = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import StudyAssistantRespondRequest
+
         response = await self._require_client().respond_flashcard_study_assistant(
             card_id,
             StudyAssistantRespondRequest(
@@ -819,6 +859,9 @@ class ServerStudyService:
         extra_template: Optional[str] = None,
         placeholder_definitions: Optional[list[dict[str, Any]]] = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import FlashcardTemplateCreateRequest
+
         response = await self._require_client().create_flashcard_template(
             FlashcardTemplateCreateRequest(
                 name=name,
@@ -855,6 +898,9 @@ class ServerStudyService:
         placeholder_definitions: Optional[list[dict[str, Any]]] = None,
         expected_version: Optional[int] = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import FlashcardTemplateUpdateRequest
+
         payload = {
             key: value
             for key, value in {
@@ -921,6 +967,9 @@ class ServerStudyService:
         rating: int,
         answer_time_ms: Optional[int] = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import FlashcardReviewRequest
+
         self._enforce(self._deck_action_id("update"))
         response = await self._require_client().review_flashcard(
             FlashcardReviewRequest(card_uuid=card_id, rating=rating, answer_time_ms=answer_time_ms)
@@ -939,6 +988,9 @@ class ServerStudyService:
         source_items: list[Mapping[str, Any]],
         workspace_id: Optional[str] = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import StudyPackCreateJobRequest
+
         self._enforce(self._study_pack_action_id("launch"))
         response = await self._require_client().create_study_pack_job(
             StudyPackCreateJobRequest(
@@ -998,6 +1050,9 @@ class ServerStudyService:
         *,
         reason: Optional[str] = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SuggestionRefreshRequest
+
         self._enforce(self._study_suggestion_action_id("launch"))
         response = await self._require_client().refresh_study_suggestion_snapshot(
             int(snapshot_id),
@@ -1019,6 +1074,9 @@ class ServerStudyService:
         generator_version: str = "v1",
         force_regenerate: bool = False,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SuggestionActionRequest
+
         self._enforce(self._study_suggestion_action_id("configure"))
         response = await self._require_client().trigger_study_suggestion_action(
             int(snapshot_id),

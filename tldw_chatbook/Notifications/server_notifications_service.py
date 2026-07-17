@@ -6,12 +6,6 @@ from typing import TYPE_CHECKING, Any, AsyncGenerator, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    NotificationPreferencesUpdateRequest,
-    NotificationSnoozeRequest,
-    ReminderTaskCreateRequest,
-    ReminderTaskUpdateRequest,
-)
 if TYPE_CHECKING:
     from ..tldw_api import TLDWAPIClient
 
@@ -119,6 +113,9 @@ class ServerNotificationsService:
         return self._dump(await self._require_client().dismiss_notification(notification_id))
 
     async def snooze(self, notification_id: int, *, minutes: int = 30) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import NotificationSnoozeRequest
+
         self._enforce("notifications.reminders.launch.server")
         request = NotificationSnoozeRequest(minutes=minutes)
         return self._dump(await self._require_client().snooze_notification(notification_id, request))
@@ -138,6 +135,9 @@ class ServerNotificationsService:
         job_completed_enabled: bool | None = None,
         job_failed_enabled: bool | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import NotificationPreferencesUpdateRequest
+
         self._enforce("notifications.reminders.configure.server")
         request = NotificationPreferencesUpdateRequest(
             reminder_enabled=reminder_enabled,
@@ -173,6 +173,9 @@ class ServerNotificationsService:
         link_url: str | None = None,
         enabled: bool = True,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ReminderTaskCreateRequest
+
         self._enforce("notifications.reminders.configure.server")
         request = ReminderTaskCreateRequest(
             title=title,
@@ -211,6 +214,9 @@ class ServerNotificationsService:
         link_url: Any = None,
         enabled: Any = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ReminderTaskUpdateRequest
+
         self._enforce("notifications.reminders.configure.server")
         payload = {
             "title": title,

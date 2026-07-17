@@ -7,12 +7,14 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, TYPE_CHECKING
 
 from tldw_chatbook.DB.base_db import BaseDB
 from tldw_chatbook.DB.sql_validation import validate_column_name
 from tldw_chatbook.runtime_policy.server_parity_models import SourceAuthority
-from tldw_chatbook.tldw_api import SyncV2Envelope
+if TYPE_CHECKING:
+    from tldw_chatbook.tldw_api import SyncV2Envelope
+
 
 
 _MAPPING_STATUSES = {
@@ -815,6 +817,9 @@ class SyncStateRepository(BaseDB):
         envelope: SyncV2Envelope | Mapping[str, Any],
     ) -> dict[str, Any]:
         """Persist a client envelope until a local-first sync push accepts it."""
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api import SyncV2Envelope
+
 
         parsed = (
             envelope

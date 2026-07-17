@@ -6,23 +6,23 @@ from typing import TYPE_CHECKING, Any, AsyncGenerator, Literal, Mapping, Optiona
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    AudioTokenizerDecodeRequest,
-    AudioTokenizerEncodeRequest,
-    AudioTranscriptionRequest,
-    AudioTranslationRequest,
-    AudiobookJobRequest,
-    AudiobookParseRequest,
-    OpenAISpeechRequest,
-    SpeechChatRequest,
-    SubmitAudioJobRequest,
-    SubtitleExportRequest,
-    TTSHistoryFavoriteUpdate,
-    VoiceEncodeRequest,
-    VoiceProfileCreateRequest,
-)
 if TYPE_CHECKING:
-    from ..tldw_api import TLDWAPIClient
+    from ..tldw_api import (
+        AudioTokenizerDecodeRequest,
+        AudioTokenizerEncodeRequest,
+        AudioTranscriptionRequest,
+        AudioTranslationRequest,
+        AudiobookJobRequest,
+        AudiobookParseRequest,
+        OpenAISpeechRequest,
+        SpeechChatRequest,
+        SubmitAudioJobRequest,
+        SubtitleExportRequest,
+        TLDWAPIClient,
+        TTSHistoryFavoriteUpdate,
+        VoiceEncodeRequest,
+        VoiceProfileCreateRequest,
+    )
 
 
 class ServerAudioServicesService:

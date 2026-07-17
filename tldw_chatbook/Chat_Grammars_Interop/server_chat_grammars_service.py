@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import ChatGrammarCreate, ChatGrammarUpdate
 if TYPE_CHECKING:
     from ..tldw_api import TLDWAPIClient
 
@@ -93,6 +92,9 @@ class ServerChatGrammarsService:
         grammar_text: str,
         description: str | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ChatGrammarCreate
+
         self._enforce("chat.grammars.create.server")
         request = ChatGrammarCreate(name=name, description=description, grammar_text=grammar_text)
         return self._dump(await self._require_client().create_chat_grammar(request))
@@ -130,6 +132,9 @@ class ServerChatGrammarsService:
         last_validated_at: Any = None,
         is_archived: bool | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ChatGrammarUpdate
+
         self._enforce("chat.grammars.update.server")
         request = ChatGrammarUpdate(
             version=version,

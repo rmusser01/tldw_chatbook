@@ -7,29 +7,18 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    BatchEvaluationRequest,
-    CreateEvaluationRequest,
-    EmbeddingsABTestConfig,
-    EmbeddingsABTestCreateRequest,
-    EmbeddingsABTestRunRequest,
-    EvaluationBenchmarkRunRequest,
-    EvaluationDatasetCreateRequest,
-    EvaluationHistoryRequest,
-    EvaluationRecipeDatasetValidationRequest,
-    EvaluationRecipeRunCreateRequest,
-    EvaluationRunCreateRequest,
-    RecipeDatasetValidationRequest,
-    RecipeRunCreateRequest,
-    SyntheticEvalGenerationRequest,
-    SyntheticEvalPromotionRequest,
-    SyntheticEvalReviewRequest,
-    UpdateEvaluationRequest,
-    WebhookRegistrationRequest,
-    WebhookTestRequest,
-)
 if TYPE_CHECKING:
-    from ..tldw_api import TLDWAPIClient
+    from ..tldw_api import (
+        BatchEvaluationRequest,
+        EmbeddingsABTestConfig,
+        EmbeddingsABTestCreateRequest,
+        EmbeddingsABTestRunRequest,
+        EvaluationBenchmarkRunRequest,
+        EvaluationHistoryRequest,
+        EvaluationRecipeDatasetValidationRequest,
+        EvaluationRecipeRunCreateRequest,
+        TLDWAPIClient,
+    )
 
 
 class ServerEvaluationsService:
@@ -181,6 +170,9 @@ class ServerEvaluationsService:
         dataset: Any = None,
         metadata: Any = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import CreateEvaluationRequest
+
         self._enforce(self._dataset_action_id("create"))
         request = CreateEvaluationRequest(
             name=name,
@@ -201,6 +193,9 @@ class ServerEvaluationsService:
         eval_spec: Any = None,
         metadata: Any = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import UpdateEvaluationRequest
+
         self._enforce(self._dataset_action_id("update"))
         request = UpdateEvaluationRequest(
             description=description,
@@ -246,6 +241,9 @@ class ServerEvaluationsService:
         description: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import EvaluationDatasetCreateRequest
+
         self._enforce(self._dataset_action_id("create"))
         request = EvaluationDatasetCreateRequest(
             name=name,
@@ -293,6 +291,9 @@ class ServerEvaluationsService:
         webhook_url: str | None = None,
         run_name: str | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import EvaluationRunCreateRequest
+
         self._enforce(self._run_action_id("launch"))
         del target_id, run_name
         request = EvaluationRunCreateRequest(
@@ -453,6 +454,9 @@ class ServerEvaluationsService:
         seed_examples: list[dict[str, Any]] | None = None,
         target_sample_count: int = 0,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SyntheticEvalGenerationRequest
+
         self._enforce(self._synthetic_action_id("launch"))
         request = SyntheticEvalGenerationRequest(
             recipe_kind=recipe_kind,
@@ -498,6 +502,9 @@ class ServerEvaluationsService:
         action_payload: dict[str, Any] | None = None,
         resulting_review_state: str | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SyntheticEvalReviewRequest
+
         self._enforce(self._synthetic_action_id("update"))
         request = SyntheticEvalReviewRequest(
             action=action,
@@ -518,6 +525,9 @@ class ServerEvaluationsService:
         dataset_metadata: dict[str, Any] | None = None,
         promotion_reason: str | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SyntheticEvalPromotionRequest
+
         self._enforce(self._synthetic_action_id("create"))
         request = SyntheticEvalPromotionRequest(
             sample_ids=sample_ids,
@@ -567,6 +577,9 @@ class ServerEvaluationsService:
         retry_count: int | None = None,
         timeout_seconds: int | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import WebhookRegistrationRequest
+
         self._enforce(self._webhook_action_id("create"))
         request = WebhookRegistrationRequest(
             url=url,
@@ -586,6 +599,9 @@ class ServerEvaluationsService:
         return self._dump_model(await self._require_client().unregister_evaluation_webhook(url))
 
     async def test_webhook(self, url: str) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import WebhookTestRequest
+
         self._enforce(self._webhook_action_id("launch"))
         return self._dump_model(await self._require_client().test_evaluation_webhook(WebhookTestRequest(url=url)))
 
@@ -611,6 +627,9 @@ class ServerEvaluationsService:
         dataset: Any = None,
         run_config: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import RecipeDatasetValidationRequest
+
         self._enforce(self._recipe_action_id("launch"))
         request = RecipeDatasetValidationRequest(
             dataset_id=dataset_id,
@@ -630,6 +649,9 @@ class ServerEvaluationsService:
         run_config: dict[str, Any] | None = None,
         force_rerun: bool = False,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import RecipeRunCreateRequest
+
         self._enforce(self._recipe_action_id("launch"))
         request = RecipeRunCreateRequest(
             dataset_id=dataset_id,
