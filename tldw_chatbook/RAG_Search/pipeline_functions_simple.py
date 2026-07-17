@@ -269,15 +269,27 @@ async def search_semantic(
 
     logger.debug(f"Performing semantic search for: {query}")
 
-    # Use the shared RAG service
-    rag_results = await rag_service.search(
-        query=query,
-        search_type="semantic",
-        top_k=limit,
-        include_citations=True,
-        **kwargs
-    )
-    
+    # Use the shared RAG service. A raising search must not leave the
+    # semantic leg unaccounted for: on the direct semantic/retrieve path an
+    # uncaught exception would surface raw error text (or, in gather-based
+    # callers, vanish entirely) without ever recording WHY -- so record the
+    # search_error state and degrade to the honest-empty outcome instead
+    # (PR #692 review).
+    try:
+        rag_results = await rag_service.search(
+            query=query,
+            search_type="semantic",
+            top_k=limit,
+            include_citations=True,
+            **kwargs
+        )
+    except Exception:
+        logger.opt(exception=True).error(
+            "Semantic search raised; recording search_error state."
+        )
+        record_semantic_unavailable(diagnostics, SEMANTIC_REASON_SEARCH_ERROR)
+        return []
+
     # Convert to our SearchResult format
     results = []
     for result in rag_results:

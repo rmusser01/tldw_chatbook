@@ -95,7 +95,12 @@ def record_semantic_unavailable(
 
 
 def record_semantic_empty_index(diagnostics: Optional[Dict[str, Any]]) -> None:
-    """Record a verified-empty semantic index into pipeline diagnostics."""
+    """Record a verified-empty semantic index into pipeline diagnostics.
+
+    Args:
+        diagnostics: The pipeline diagnostics dict, or None for legacy
+            callers that did not thread one through (a no-op then).
+    """
     if diagnostics is None:
         return
     diagnostics[SEMANTIC_DIAGNOSTICS_KEY] = {
@@ -107,7 +112,13 @@ def record_semantic_empty_index(diagnostics: Optional[Dict[str, Any]]) -> None:
 def record_semantic_ok(
     diagnostics: Optional[Dict[str, Any]], result_count: int
 ) -> None:
-    """Record a successful semantic leg run into pipeline diagnostics."""
+    """Record a successful semantic leg run into pipeline diagnostics.
+
+    Args:
+        diagnostics: The pipeline diagnostics dict, or None for legacy
+            callers that did not thread one through (a no-op then).
+        result_count: Number of results the semantic leg returned.
+    """
     if diagnostics is None:
         return
     diagnostics[SEMANTIC_DIAGNOSTICS_KEY] = {
@@ -174,10 +185,21 @@ async def semantic_index_is_empty(rag_service: Any) -> bool:
     """True only when the runtime's vector store verifiably has 0 documents.
 
     Anything short of a trustworthy zero -- no ``vector_store``, stats call
-    failing, an ``error`` payload, a non-integer count -- returns False so the
-    caller falls back to the generic zero-results outcome rather than claiming
-    an empty index it cannot verify. (Same semantics as the Library canvas's
-    `_semantic_index_is_empty`, task-249.)
+    failing, an ``error`` payload, a count that is not a genuine integer 0
+    (``0.0``, ``False``, and ``"0"`` are all rejected) -- returns False so
+    the caller falls back to the generic zero-results outcome rather than
+    claiming an empty index it cannot verify. (Same intent as the Library
+    canvas's ``_semantic_index_is_empty``, task-249; this probe is stricter
+    about the count type.)
+
+    Args:
+        rag_service: RAG runtime whose ``vector_store.get_collection_stats``
+            seam is probed (missing or non-callable seams count as
+            unverifiable, not empty).
+
+    Returns:
+        True only for an error-free stats mapping whose ``count`` is the
+        integer 0; False in every other case.
     """
     get_stats = getattr(
         getattr(rag_service, "vector_store", None), "get_collection_stats", None
@@ -192,7 +214,7 @@ async def semantic_index_is_empty(rag_service: Any) -> bool:
         return False
     if not isinstance(stats, Mapping) or stats.get("error"):
         return False
-    try:
-        return int(stats.get("count")) == 0
-    except (TypeError, ValueError):
-        return False
+    count = stats.get("count")
+    # Strict integer check: bool is an int subclass, and int(...) coercion
+    # would accept 0.0 / "0" -- none of those are a trustworthy zero.
+    return isinstance(count, int) and not isinstance(count, bool) and count == 0

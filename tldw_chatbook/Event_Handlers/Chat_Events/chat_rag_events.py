@@ -309,7 +309,9 @@ async def get_or_initialize_rag_service(app: "TldwCli") -> Optional[Any]:
 
 
 def _notify_semantic_leg_state(
-    app: "TldwCli", search_mode: str, diagnostics: Dict[str, Any]
+    app: "TldwCli",
+    diagnostics: Dict[str, Any],
+    results: Optional[List[Dict[str, Any]]],
 ) -> None:
     """Tell the user when the semantic leg was skipped, failed, or was empty.
 
@@ -317,10 +319,19 @@ def _notify_semantic_leg_state(
     searches over an unavailable runtime or an empty index, all surface an
     honest notification instead of degrading silently (task-250, AC #1/#2).
 
+    The wording keys off what the search actually produced rather than the
+    mode string: custom pipeline IDs ride through ``search_mode`` verbatim,
+    so a hybrid-like custom pipeline whose FTS legs produced results while
+    the semantic leg could not run must still read as keyword-only
+    (PR #692 review).
+
     Args:
         app: App instance used for ``notify``.
-        search_mode: The mode that actually executed (post-fallback).
         diagnostics: Pipeline diagnostics collected during the search.
+        results: Result dicts the executed pipeline returned. Non-empty
+            results with an unavailable/empty semantic leg mean the context
+            is keyword-only; no results at all means semantic retrieval
+            contributed nothing and there is no context either.
     """
     semantic_state = diagnostics.get(SEMANTIC_DIAGNOSTICS_KEY) or {}
     status = semantic_state.get('status')
@@ -332,8 +343,8 @@ def _notify_semantic_leg_state(
         ]
     else:
         message = semantic_state.get('message') or SEMANTIC_EMPTY_INDEX_MESSAGE
-    if search_mode == "hybrid":
-        notification = f"Hybrid RAG context is keyword-only (FTS): {message}"
+    if results:
+        notification = f"RAG context is keyword-only (FTS): {message}"
     else:
         notification = f"Semantic retrieval returned no context: {message}"
     logger.warning(notification)
@@ -498,7 +509,7 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
                 diagnostics=diagnostics
             )
 
-        _notify_semantic_leg_state(app, search_mode, diagnostics)
+        _notify_semantic_leg_state(app, diagnostics, results)
 
         if context and context.strip():
             logger.info(f"RAG context generated: {len(context)} characters")

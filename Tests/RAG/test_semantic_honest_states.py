@@ -80,6 +80,15 @@ class StrictRagService:
         return _Store()
 
 
+class RaisingRagService:
+    """Strict-signature stub whose search always raises (search_error path)."""
+
+    async def search(self, query, top_k=None, search_type="semantic",
+                     filter_metadata=None, include_citations=None,
+                     score_threshold=None):
+        raise RuntimeError("vector store exploded")
+
+
 def _deps(monkeypatch, installed: bool) -> None:
     monkeypatch.setattr(sa, "embeddings_rag_deps_installed", lambda: installed)
 
@@ -169,6 +178,11 @@ class TestSemanticIndexIsEmpty:
         {"count": 0, "error": "stats failed"},
         {"count": None},
         {"count": "not-a-number"},
+        # Only a genuine integer 0 counts: int coercion would accept these
+        # (PR #692 review).
+        {"count": 0.0},
+        {"count": False},
+        {"count": "0"},
         "not-a-mapping",
         RuntimeError("stats probe failed"),
     ])
@@ -261,6 +275,43 @@ class TestSearchSemanticHonestStates:
         _forbidden_factory(monkeypatch)
 
         assert asyncio.run(pfs.search_semantic(app, "query", {})) == []
+
+    def test_search_raise_on_direct_path_records_search_error(self):
+        """A raising service on the direct path must degrade, not crash.
+
+        Before the PR #692 review fix only the parallel-step path recorded
+        SEMANTIC_REASON_SEARCH_ERROR; a direct semantic/retrieve search
+        surfaced raw exception text without any diagnostics.
+        """
+        app = SimpleNamespace(_rag_service=RaisingRagService())
+
+        diagnostics: Dict[str, Any] = {}
+        results = asyncio.run(pfs.search_semantic(app, "query", {}, diagnostics=diagnostics))
+
+        assert results == []
+        state = diagnostics[SEMANTIC_DIAGNOSTICS_KEY]
+        assert state["status"] == SEMANTIC_STATUS_UNAVAILABLE
+        assert state["reason"] == SEMANTIC_REASON_SEARCH_ERROR
+
+    def test_search_raise_in_semantic_pipeline_degrades_not_crashes(self):
+        """End-to-end: the pure semantic pipeline stays honest on a raise."""
+        from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
+            perform_full_rag_pipeline,
+        )
+
+        app = SimpleNamespace(media_db=None, db_config={}, _rag_service=RaisingRagService())
+        diagnostics: Dict[str, Any] = {}
+
+        results, context = asyncio.run(perform_full_rag_pipeline(
+            app, "query", {"media": True},
+            top_k=5, enable_rerank=False, diagnostics=diagnostics,
+        ))
+
+        assert results == []
+        assert isinstance(context, str)
+        state = diagnostics[SEMANTIC_DIAGNOSTICS_KEY]
+        assert state["status"] == SEMANTIC_STATUS_UNAVAILABLE
+        assert state["reason"] == SEMANTIC_REASON_SEARCH_ERROR
 
 
 class TestRetrieveStepSplatRegression:
@@ -470,6 +521,69 @@ class TestChatSidebarHonesty:
 
         assert context is not None and "fts context" in context
         assert any(
+            "keyword-only" in message.lower()
+            for message, _severity in app.notifications
+        ), app.notifications
+
+    def test_custom_pipeline_fts_only_uses_keyword_only_wording(self, monkeypatch):
+        """Custom pipeline IDs must not dodge the keyword-only wording.
+
+        get_rag_context_for_chat passes the raw pipeline id as search_mode,
+        so the wording keys off the produced results, not the mode string
+        (PR #692 review): a hybrid-like custom pipeline whose FTS legs
+        returned results while semantic was unavailable reads keyword-only.
+        """
+        from tldw_chatbook.Event_Handlers.Chat_Events import chat_rag_events as cre
+
+        app = _ChatMockApp("my_custom_hybrid")
+
+        async def fake_custom(app_arg, query, sources, pipeline_id,
+                              diagnostics=None, **kwargs):
+            assert pipeline_id == "my_custom_hybrid"
+            if diagnostics is not None:
+                diagnostics[SEMANTIC_DIAGNOSTICS_KEY] = {
+                    "status": SEMANTIC_STATUS_UNAVAILABLE,
+                    "reason": SEMANTIC_REASON_DEPS_MISSING,
+                    "message": SEMANTIC_UNAVAILABLE_MESSAGES[SEMANTIC_REASON_DEPS_MISSING],
+                }
+            return ([{"id": "1"}], "fts context")
+
+        monkeypatch.setattr(cre, "perform_search_with_pipeline", fake_custom)
+
+        context = asyncio.run(cre.get_rag_context_for_chat(app, "hello"))
+
+        assert context is not None and "fts context" in context
+        assert any(
+            "keyword-only" in message.lower()
+            for message, _severity in app.notifications
+        ), app.notifications
+
+    def test_hybrid_mode_no_results_uses_no_context_wording(self, monkeypatch):
+        """Zero results + unavailable semantic: there is no context at all,
+        so the notice must not claim keyword-only context exists."""
+        from tldw_chatbook.Event_Handlers.Chat_Events import chat_rag_events as cre
+
+        app = _ChatMockApp("hybrid")
+
+        async def fake_hybrid(app_arg, query, sources, diagnostics=None, **kwargs):
+            if diagnostics is not None:
+                diagnostics[SEMANTIC_DIAGNOSTICS_KEY] = {
+                    "status": SEMANTIC_STATUS_UNAVAILABLE,
+                    "reason": SEMANTIC_REASON_INIT_FAILED,
+                    "message": SEMANTIC_UNAVAILABLE_MESSAGES[SEMANTIC_REASON_INIT_FAILED],
+                }
+            return ([], "")
+
+        monkeypatch.setattr(cre, "perform_hybrid_rag_search", fake_hybrid)
+
+        context = asyncio.run(cre.get_rag_context_for_chat(app, "hello"))
+
+        assert context is None
+        assert any(
+            "returned no context" in message.lower()
+            for message, _severity in app.notifications
+        ), app.notifications
+        assert not any(
             "keyword-only" in message.lower()
             for message, _severity in app.notifications
         ), app.notifications
