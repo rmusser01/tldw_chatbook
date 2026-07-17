@@ -358,20 +358,22 @@ class TestLoreModeCrudRoundTrip:
                 == "personas-lore-tab-settings"
             )
 
-    async def test_duplicate_selected_lore_book_copies_entries(
+    async def test_duplicate_button_visible_and_duplicates_selected_lore_book(
         self, mock_app_instance, stub_characters_lore, lore_db, seeded_lore_book
     ):
-        """Duplicate is wired via the generic PersonaActionRequested seam (the
-        library-pane Duplicate button is gated to Dictionaries mode only; the
-        library-rail gate for Lore is a follow-up UI-polish item outside this
-        task's file scope), so this drives the handler by posting the message
-        directly - proving the screen-side plumbing that button will call."""
+        """The library-pane Duplicate button is reachable in Lore mode (gated to
+        dictionaries+lore) and clicking it duplicates the selected book (entries
+        copied) through the real WorldBookManager export+import seam."""
+        from textual.widgets import Button
+
         mock_app_instance.chachanotes_db = lore_db
         app = LorePersonasTestApp(mock_app_instance)
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _enter_lore(pilot)
             await _select_first_lore(pilot, screen)
-            screen.post_message(PersonaActionRequested(action="duplicate"))
+            # Reachable from the toolbar in Lore mode (not gated to dictionaries).
+            assert screen.query_one("#personas-library-duplicate", Button).display is True
+            await pilot.click("#personas-library-duplicate")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
