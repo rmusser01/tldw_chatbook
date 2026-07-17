@@ -374,7 +374,13 @@ class TestTemperatureForwarding:
     is 'temp'), so temperature was silently dropped for those providers.
     Pin that temp now reaches each handler as its 'temp' parameter."""
 
-    @pytest.mark.parametrize("endpoint", ["groq", "deepseek", "mistral", "google"])
+    @pytest.mark.parametrize("endpoint", [
+        "groq", "deepseek", "mistral", "google",
+        # task-286 audit: the six remaining dead-'temperature' entries,
+        # each handler signature-verified to take 'temp'.
+        "cohere", "openrouter", "huggingface", "koboldcpp",
+        "local_llamacpp", "local_llamafile",
+    ])
     def test_temp_reaches_handler(self, endpoint):
         handler = Mock(return_value={"choices": [{"message": {"content": "ok"}}]})
         handler.__name__ = f"chat_with_{endpoint}"
@@ -392,3 +398,21 @@ class TestTemperatureForwarding:
         finally:
             API_CALL_HANDLERS[endpoint] = original
         assert handler.call_args.kwargs.get("temp") == 0.42
+
+
+def test_provider_param_map_has_no_dead_generic_keys():
+    """task-286 invariant: every PROVIDER_PARAM_MAP generic-side key must be
+    an actual chat_api_call parameter — a key the dispatcher can never match
+    is silently dropped config (the 'temperature'/'prompt' bug class this
+    audit retired). Kills the class permanently."""
+    import inspect
+    from tldw_chatbook.Chat.Chat_Functions import PROVIDER_PARAM_MAP, chat_api_call
+
+    generic_params = set(inspect.signature(chat_api_call).parameters) - {"api_endpoint"}
+    dead = {
+        (provider, key)
+        for provider, mapping in PROVIDER_PARAM_MAP.items()
+        for key in mapping
+        if key not in generic_params
+    }
+    assert not dead, f"dead PROVIDER_PARAM_MAP keys (never matched by the dispatcher): {sorted(dead)}"

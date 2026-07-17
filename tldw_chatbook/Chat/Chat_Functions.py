@@ -123,7 +123,6 @@ PROVIDER_PARAM_MAP = {
     'openai': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
         'temp': 'temp',
         'system_message': 'system_message',
         'streaming': 'streaming',
@@ -149,7 +148,6 @@ PROVIDER_PARAM_MAP = {
     'anthropic': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
         'temp': 'temp',
         'system_message': 'system_prompt',
         'streaming': 'streaming',
@@ -166,8 +164,7 @@ PROVIDER_PARAM_MAP = {
     'cohere': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
-        'temperature': 'temp',
+        'temp': 'temp',  # audit task-286: generic name is 'temp'; the 'temperature' key was dead
         'system_message': 'system_prompt',
         'streaming': 'streaming',
         'model': 'model',
@@ -185,7 +182,6 @@ PROVIDER_PARAM_MAP = {
     'groq': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
         'temp': 'temp',  # generic name is 'temp' — 'temperature' was a dead key (temp silently dropped)
         'system_message': 'system_message',
         'streaming': 'streaming',
@@ -201,8 +197,7 @@ PROVIDER_PARAM_MAP = {
     'openrouter': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
-        'temperature': 'temp',
+        'temp': 'temp',  # audit task-286: generic name is 'temp'; the 'temperature' key was dead
         'system_message': 'system_message',
         'streaming': 'streaming',
         'topp': 'top_p',
@@ -226,7 +221,6 @@ PROVIDER_PARAM_MAP = {
     'deepseek': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
         'temp': 'temp',  # generic name is 'temp' — 'temperature' was a dead key (temp silently dropped)
         'system_message': 'system_message',
         'streaming': 'streaming',
@@ -245,7 +239,6 @@ PROVIDER_PARAM_MAP = {
     'mistral': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
         'temp': 'temp',  # generic name is 'temp' — 'temperature' was a dead key (temp silently dropped)
         'system_message': 'system_message',
         'streaming': 'streaming',
@@ -260,7 +253,6 @@ PROVIDER_PARAM_MAP = {
     'mistralai': {  # Same mapping as 'mistral'
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
         'temp': 'temp',  # generic name is 'temp' — 'temperature' was a dead key (temp silently dropped)
         'system_message': 'system_message',
         'streaming': 'streaming',
@@ -275,7 +267,6 @@ PROVIDER_PARAM_MAP = {
     'google': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
         'temp': 'temp',  # generic name is 'temp' — 'temperature' was a dead key (temp silently dropped)
         'system_message': 'system_message',
         'streaming': 'streaming',
@@ -291,8 +282,7 @@ PROVIDER_PARAM_MAP = {
     'huggingface': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
-        'temperature': 'temp',
+        'temp': 'temp',  # audit task-286: generic name is 'temp'; the 'temperature' key was dead
         'system_message': 'system_message',
         'streaming': 'streaming',
         'model':'model',
@@ -305,8 +295,6 @@ PROVIDER_PARAM_MAP = {
     'llama_cpp': { # Has api_url as a positional argument which needs special handling if not None
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt',
-        'temperature': 'temperature',
         'system_message': 'system_prompt',
         'streaming': 'streaming',
         'topp': 'top_p',
@@ -330,8 +318,7 @@ PROVIDER_PARAM_MAP = {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
         'llm_fixed_tokens_kobold': 'fixed_tokens_mode', # Added
-        'prompt': 'custom_prompt_input',
-        'temperature': 'temp',
+        'temp': 'temp',  # audit task-286: generic name is 'temp'; the 'temperature' key was dead
         'system_message': 'system_message',
         'streaming': 'streaming',
         'topp': 'top_p',
@@ -345,8 +332,6 @@ PROVIDER_PARAM_MAP = {
     'oobabooga': { # api_url also a consideration like llama.cpp
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt',
-        'temperature': 'temperature',
         'system_message': 'system_prompt', # often part of messages or specific param
         'streaming': 'streaming',
         'topp': 'top_p',
@@ -366,7 +351,6 @@ PROVIDER_PARAM_MAP = {
     'tabbyapi': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_input',
         'temp': 'temperature',
         'system_message': 'system_message',
         'streaming': 'streaming',
@@ -379,7 +363,7 @@ PROVIDER_PARAM_MAP = {
         'stop': 'stop',
     },
     'vllm': { # vllm_api_url consideration
-                'api_key': 'api_key', 'messages_payload': 'input_data', 'prompt': 'custom_prompt_input',
+                'api_key': 'api_key', 'messages_payload': 'input_data',
         'temp': 'temperature', 'system_message': 'system_prompt', 'streaming': 'streaming',
         'topp': 'top_p', 'topk': 'top_k', 'minp': 'min_p', 'model': 'model',
         'max_tokens': 'max_tokens',
@@ -396,7 +380,6 @@ PROVIDER_PARAM_MAP = {
     },
     'local-llm': {
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
         'temp': 'temperature',
         'system_message': 'system_message',
         'streaming': 'streaming',
@@ -411,7 +394,6 @@ PROVIDER_PARAM_MAP = {
     'ollama': { # api_url consideration
         'api_key': 'api_key', # api_key is not used by ollama directly, url is more important
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt', # This is 'prompt' for generate, 'messages' for chat
         'temp': 'temperature',
         'system_message': 'system_message', # Part of request body
         'streaming': 'streaming',
@@ -428,7 +410,6 @@ PROVIDER_PARAM_MAP = {
     'aphrodite': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt',
         'temp': 'temperature',
         'system_message': 'system_message',
         'streaming': 'streaming',
@@ -450,7 +431,6 @@ PROVIDER_PARAM_MAP = {
     'custom-openai-api': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
         'temp': 'temp',
         'system_message': 'system_message',
         'streaming': 'streaming',
@@ -475,7 +455,6 @@ PROVIDER_PARAM_MAP = {
     'custom-openai-api-2': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
         'temp': 'temp',
         'system_message': 'system_message',
         'streaming': 'streaming',
@@ -497,7 +476,6 @@ PROVIDER_PARAM_MAP = {
     'mlx_lm': {
         'api_key': 'api_key', # chat_with_mlx_lm doesn't use it, but map for consistency if passed via chat_api_call
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg', # This would be caught by **kwargs in chat_with_mlx_lm if passed
         'temp': 'temp',
         'system_message': 'system_message',
         'streaming': 'streaming',
@@ -527,8 +505,7 @@ PROVIDER_PARAM_MAP = {
     'local_llamacpp': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt',
-        'temperature': 'temperature',
+        'temp': 'temp',  # audit task-286: generic name is 'temp'; the 'temperature' key was dead
         'system_message': 'system_prompt',
         'streaming': 'streaming',
         'topp': 'top_p',
@@ -547,8 +524,7 @@ PROVIDER_PARAM_MAP = {
     'local_llamafile': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt',
-        'temperature': 'temperature',
+        'temp': 'temp',  # audit task-286: generic name is 'temp'; the 'temperature' key was dead
         'system_message': 'system_prompt',
         'streaming': 'streaming',
         'topp': 'top_p',
@@ -567,7 +543,6 @@ PROVIDER_PARAM_MAP = {
     'local_ollama': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt',
         'temp': 'temperature',
         'system_message': 'system_message',
         'streaming': 'streaming',
@@ -584,7 +559,6 @@ PROVIDER_PARAM_MAP = {
     'local_vllm': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_input',
         'temp': 'temperature',
         'system_message': 'system_prompt',
         'streaming': 'streaming',
@@ -606,7 +580,6 @@ PROVIDER_PARAM_MAP = {
     'local_mlx_lm': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
         'temp': 'temp',
         'system_message': 'system_message',
         'streaming': 'streaming',
@@ -631,7 +604,6 @@ PROVIDER_PARAM_MAP = {
     'moonshot': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
         'temp': 'temp',
         'system_message': 'system_message',
         'streaming': 'streaming',
@@ -651,7 +623,6 @@ PROVIDER_PARAM_MAP = {
     'zai': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
         'temp': 'temp',
         'system_message': 'system_message',
         'streaming': 'streaming',
