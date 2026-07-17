@@ -39,7 +39,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta  # Use timezone-aware UTC
 from math import ceil
 from pathlib import Path
-from typing import List, Tuple, Dict, Any, Optional, Union
+from typing import Callable, List, Tuple, Dict, Any, Optional, Union
 #
 # Third-Party Libraries (Ensure these are installed if used)
 import yaml
@@ -91,6 +91,47 @@ class DateTimeEncoder(json.JSONEncoder):
             # Convert to ISO format string
             return obj.isoformat()
         return super().default(obj)
+
+
+# --- Post-ingest hook registry (task-247) ---
+# Module-level, so every MediaDatabase instance (app, workers, importers)
+# dispatches through the same registry. Callbacks fire *after* the ingest
+# transaction commits, on the ingesting thread, and receive
+# (db, media_id, media_uuid). They are best-effort: any callback exception is
+# logged and swallowed so ingestion can never be broken by an observer
+# (e.g. RAG indexing, see RAG_Search/ingestion_indexing.py).
+MediaPostIngestCallback = Callable[["MediaDatabase", int, Optional[str]], None]
+_MEDIA_POST_INGEST_CALLBACKS: List[MediaPostIngestCallback] = []
+
+
+def register_media_post_ingest_callback(callback: MediaPostIngestCallback) -> None:
+    """Register a callback invoked after a media item is added or updated.
+
+    Args:
+        callback: Callable receiving (media_db, media_id, media_uuid). Invoked
+            post-commit on the ingesting thread whenever
+            ``add_media_with_keywords`` returns a non-None media_id (i.e. for
+            creates and updates, not duplicate skips).
+    """
+    if callback not in _MEDIA_POST_INGEST_CALLBACKS:
+        _MEDIA_POST_INGEST_CALLBACKS.append(callback)
+
+
+def unregister_media_post_ingest_callback(callback: MediaPostIngestCallback) -> None:
+    """Remove a previously registered post-ingest callback (no-op if absent)."""
+    try:
+        _MEDIA_POST_INGEST_CALLBACKS.remove(callback)
+    except ValueError:
+        pass
+
+
+def _dispatch_media_post_ingest(db: "MediaDatabase", media_id: int, media_uuid: Optional[str]) -> None:
+    """Invoke all registered post-ingest callbacks, guarding each one."""
+    for callback in list(_MEDIA_POST_INGEST_CALLBACKS):
+        try:
+            callback(db, media_id, media_uuid)
+        except Exception as e:
+            logger.warning(f"Media post-ingest callback {callback!r} failed for media_id={media_id}: {e}")
 
 # --- Database Class ---
 class MediaDatabase:
@@ -2617,7 +2658,22 @@ class MediaDatabase:
             logger.opt(exception=True).error(f"Error getting deletion candidates: {e}")
             raise DatabaseError(f"Failed to get deletion candidates: {e}") from e
 
-    def add_media_with_keywords(
+    def add_media_with_keywords(self, **kwargs) -> Tuple[Optional[int], Optional[str], str]:
+        """Add or update a media record, handle keyword links, optional chunks and full-text sync.
+
+        Thin wrapper around ``_add_media_with_keywords_impl`` (which holds the
+        transactional logic and the full keyword-only signature). After the
+        transaction has committed, registered post-ingest callbacks (see
+        ``register_media_post_ingest_callback``) are dispatched for any
+        operation that returned a media_id -- creates and updates, but not
+        duplicate skips. Callback failures are logged and never propagate.
+        """
+        media_id, media_uuid, message = self._add_media_with_keywords_impl(**kwargs)
+        if media_id is not None and _MEDIA_POST_INGEST_CALLBACKS:
+            _dispatch_media_post_ingest(self, media_id, media_uuid)
+        return media_id, media_uuid, message
+
+    def _add_media_with_keywords_impl(
             self,
             *,
             url: Optional[str] = None,
@@ -2634,8 +2690,8 @@ class MediaDatabase:
             chunk_options: Optional[Dict] = None,
             chunks: Optional[List[Dict[str, Any]]] = None,
     ) -> Tuple[Optional[int], Optional[str], str]:
-        """Add or update a media record, handle keyword links, optional chunks and full-text sync."""
-        
+        """Transactional body of ``add_media_with_keywords`` (see wrapper above)."""
+
         start_time = time.time()
 
         # ---------------------------------------------------------------------

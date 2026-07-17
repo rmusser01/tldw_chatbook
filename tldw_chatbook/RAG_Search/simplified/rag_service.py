@@ -291,6 +291,7 @@ class RAGService:
                     **metadata,
                     "doc_id": doc_id,
                     "doc_title": title,
+                    "chunk_id": chunk_ids[i],
                     "chunk_index": i,
                     "chunk_start": chunk.get("start_char", 0),
                     "chunk_end": chunk.get("end_char", len(chunk["text"])),

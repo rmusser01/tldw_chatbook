@@ -4073,7 +4073,16 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 check_integrity_on_startup=check_integrity
             )
             logger.info(f"Media_DB_v2 initialized successfully for client '{CLI_APP_CLIENT_ID}' at {media_db_path}")
-            
+
+            # Wire ingestion-time RAG indexing (task-247). The hook no-ops
+            # when the embeddings_rag extras are missing; indexing failures
+            # are logged and surfaced without ever affecting ingestion.
+            try:
+                from .RAG_Search.ingestion_indexing import install_media_ingest_hook
+                install_media_ingest_hook(failure_notifier=self._notify_rag_indexing_failure)
+            except Exception as e:
+                logger.warning(f"Could not install RAG ingestion-indexing hook: {e}")
+
             # Pre-fetch media types for UI
             if self.media_db:
                 db_types = self.media_db.get_distinct_media_types(include_deleted=False, include_trash=False)
@@ -4085,7 +4094,19 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             logger.opt(exception=True).error(f"Failed to initialize media DB: {e}")
             self.media_db = None
             self._media_types_for_ui = ["Error: Exception fetching media types"]
-    
+
+    def _notify_rag_indexing_failure(self, message: str) -> None:
+        """Surface a background RAG-indexing failure as a toast (best effort).
+
+        Called from the ingestion-indexer worker thread, so the notification
+        is marshalled onto the UI thread; if the app isn't running yet (or
+        anymore) the failure stays log-only.
+        """
+        try:
+            self.call_from_thread(self.notify, message, severity="warning", timeout=6)
+        except Exception as e:
+            logger.debug(f"Could not surface RAG indexing failure in UI: {e}")
+
     def _init_worker_handlers(self) -> None:
         """Initialize the worker handler registry and register all handlers."""
         self.worker_handler_registry = WorkerHandlerRegistry(self)
