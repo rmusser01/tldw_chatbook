@@ -4,19 +4,6 @@
  * Search and RAG tab interface
  * ======================================== */
 
-/* Enhanced SearchRAGWindow Styles */
-.rag-search-main-wrapper {
-    height: 100%;
-    width: 100%;
-    background: $background;
-}
-
-.rag-search-container {
-    height: 100%;
-    width: 100%;
-    padding: 0;
-    background: $background;
-}
 
 /* Header Section */
 .search-header-section {
@@ -26,19 +13,6 @@
     border-bottom: solid $primary-background;
 }
 
-.rag-title-enhanced {
-    text-align: center;
-    text-style: bold;
-    color: $primary;
-    /* font-size: 18; - not supported in TCSS */
-    margin-bottom: 1;
-}
-
-.rag-subtitle {
-    text-align: center;
-    color: $text-muted;
-    text-style: italic;
-}
 
 /* Search Section */
 .search-section {
@@ -118,13 +92,6 @@
 /* Settings Section */
 .settings-section {
     margin: 0 2;
-}
-
-.quick-settings-container {
-    background: $surface;
-    padding: 2;
-    margin-bottom: 1;
-    border: round $primary-background;
 }
 
 .settings-title {
@@ -269,31 +236,10 @@
     margin-bottom: 1;
 }
 
-.parameter-grid-enhanced {
-    layout: horizontal;
-    /* gap: 2; - not supported in TCSS */
-}
-
 .param-group {
     width: 1fr;
 }
 
-.param-label {
-    color: $text-muted;
-    margin-bottom: 0;
-    /* font-size: 12; - not supported in TCSS */
-}
-
-.param-input {
-    width: 100%;
-    margin-top: 0;
-    background: $background;
-    border: solid $primary-background;
-}
-
-.rerank-checkbox {
-    margin: 1 0;
-}
 
 .chunking-section {
     margin-top: 1;
@@ -336,25 +282,6 @@
     height: 1fr;
 }
 
-.results-title {
-    text-style: bold;
-    color: $primary;
-    margin-bottom: 1;
-    padding: 1;
-    background: $surface;
-    border: round $primary-background;
-    text-align: center;
-}
-
-.results-tabs-enhanced {
-    height: 100%;
-    background: $surface;
-    border: round $primary-background;
-}
-
-.results-tabs-enhanced TabPane {
-    padding: 1;
-}
 
 .results-header {
     background: $boost;
@@ -363,21 +290,6 @@
     border: round $primary-background;
 }
 
-.results-header-bar {
-    layout: horizontal;
-    align: center middle;
-}
-
-.results-summary-enhanced {
-    width: 1fr;
-    color: $text;
-}
-
-.pagination-controls-enhanced {
-    layout: horizontal;
-    /* gap: 1; - not supported in TCSS */
-    align: center middle;
-}
 
 .page-button {
     width: 3;
@@ -395,12 +307,6 @@
 .page-button:disabled {
     opacity: 0.6;
     background: $panel-darken-2;
-    color: $text-muted;
-}
-
-.page-info-enhanced {
-    min-width: 10;
-    text-align: center;
     color: $text-muted;
 }
 
@@ -620,10 +526,6 @@
     height: 100%;
 }
 
-.analytics-content-enhanced {
-    padding: 2;
-}
-
 /* Action Buttons */
 .actions-section {
     margin: 0 2 2 2;
@@ -637,17 +539,8 @@
     align: center middle;
 }
 
-.primary-actions {
-    layout: horizontal;
-    /* gap: 1; - not supported in TCSS */
-}
-
 .action-spacer {
     width: 1fr;
-}
-
-.maintenance-actions {
-    /* position: relative; - not supported in TCSS */
 }
 
 .action-button {
@@ -689,33 +582,7 @@
     color: $text;
 }
 
-.maintenance-menu {
-    /* position: absolute; - not supported in TCSS */
-    /* bottom: 4; - not supported in TCSS */
-    /* right: 0; - not supported in TCSS */
-    background: $surface;
-    border: solid $primary;
-    padding: 1;
-    min-width: 15;
-    /* z-index: 100; - not supported */
-}
 
-.menu-item {
-    width: 100%;
-    margin-bottom: 1;
-    background: $panel;
-    border: none;
-    text-align: left;
-}
-
-.menu-item:hover {
-    background: $primary;
-    color: $text;
-}
-
-.menu-item:last-child {
-    margin-bottom: 0;
-}
 
 /* Empty States */
 .empty-results-message {

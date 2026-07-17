@@ -74,17 +74,6 @@ ModalScreen {
     display: none;
 }
 
-/* General error at bottom */
-.error-general {
-    text-align: center;
-    background: $error 20%;
-    border: round $error;
-    padding: 1;
-    margin: 1 2;
-
-    text-style: bold;
-}
-
 /* ========================================
  * Enhanced List Item Styles
  * ======================================== */
@@ -155,17 +144,6 @@ ModalScreen {
     margin-top: 1;
 }
 
-/* Debug styles */
-.debug-message {
-    background: $warning;
-    color: $text;
-    padding: 1;
-    margin: 1;
-    border: solid $warning-darken-1;
-    text-align: center;
-    text-style: bold;
-}
-
 /* ========================================
  * Enhanced Visual Design
  * ======================================== */
@@ -177,18 +155,6 @@ Select:hover {
     border: solid $primary-lighten-1;
 }
 
-/* Consistent spacing system */
-.spacing-small {
-    margin: 1;
-}
-
-.spacing-medium {
-    margin: 2;
-}
-
-.spacing-large {
-    margin: 3;
-}
 
 /* Visual separators */
 .section-separator {
@@ -226,11 +192,6 @@ Select:hover {
 
 .help-icon:hover {
     color: $primary-lighten-1;
-}
-
-.help-icon-inline {
-    margin-left: 1;
-    min-width: 3;
 }
 
 /* ========================================
@@ -692,11 +653,6 @@ Select:hover {
     align: left middle;
 }
 
-.level-filters {
-    layout: horizontal;
-    margin-right: 2;
-}
-
 .filter-button {
     margin-right: 1;
     min-width: 8;
@@ -815,15 +771,6 @@ Select:hover {
  * Performance Metrics Widget Styles
  * ======================================== */
 
-.performance-metrics-widget {
-    width: 100%;
-    height: auto;
-}
-
-.performance-metrics-container {
-    width: 100%;
-    padding: 1;
-}
 
 .metrics-title {
     text-style: bold;
@@ -847,16 +794,6 @@ Select:hover {
     height: auto;
 }
 
-.metric-header {
-    layout: horizontal;
-    margin-bottom: 1;
-    align: left middle;
-}
-
-.metric-icon {
-
-    margin-right: 1;
-}
 
 .metric-label {
 
@@ -871,25 +808,6 @@ Select:hover {
     margin-bottom: 0;
 }
 
-.metric-percent {
-    text-align: center;
-    color: $text-muted;
-
-}
-
-.metric-info {
-    text-align: center;
-    color: $text-muted;
-
-    margin-top: 0;
-}
-
-/* I/O rates styling */
-.metric-io-rates {
-    layout: horizontal;
-    align: center middle;
-    margin-top: 1;
-}
 
 .io-rate {
     width: 50%;
@@ -903,68 +821,4 @@ Select:hover {
 
 .io-rate:last-child {
     color: $warning;
-}
-
-/* Sparkline chart styling */
-.metric-chart {
-    height: 5;
-    margin-top: 1;
-    color: $primary;
-}
-
-/* Alerts section */
-.metrics-alerts {
-    margin-top: 1;
-    padding: 1;
-    background: $error 10%;
-    border: round $error;
-}
-
-.metrics-alerts.hidden {
-    display: none;
-}
-
-.alerts-title {
-    text-style: bold;
-    color: $error;
-    margin-bottom: 1;
-}
-
-.alerts-list {
-    width: 100%;
-}
-
-.alert-item {
-    color: $error;
-
-    margin-bottom: 0;
-    padding-left: 2;
-}
-
-/* Metric-specific colors */
-.metric-cpu-usage .metric-value {
-    color: $primary;
-}
-
-.metric-memory-usage .metric-value {
-    color: $accent;
-}
-
-.metric-disk-io .io-rate {
-    color: $text;
-}
-
-.metric-embeddings-rate .metric-value {
-    color: $success;
-}
-
-/* High usage indicators */
-.metric-box.high-usage {
-    border: solid $warning;
-    background: $warning 10%;
-}
-
-.metric-box.critical-usage {
-    border: solid $error;
-    background: $error 10%;
 }

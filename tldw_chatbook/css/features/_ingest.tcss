@@ -77,11 +77,6 @@
     text-align: center;
 }
 
-/* Hide text when collapsed */
-.collapsed-hidden {
-    display: none;
-}
-
 /* Adjust button appearance when collapsed */
 .ingest-nav-pane.collapsed .ingest-nav-button {
     width: 3;
@@ -212,48 +207,8 @@ VerticalScroll.ingest-form-scrollable {
 
 /* Removed .ingest-media-tab-content - no longer needed since parent is VerticalScroll */
 
-.ingest-file-section {
-    margin-bottom: 2;
-    padding: 1;
-    border: round $primary;
-    background: $surface;
-}
 
-.ingest-options-section {
-    border: round $primary;
-    padding: 1;
-    margin-bottom: 2;
-    background: $surface;
-}
 
-.ingest-metadata-section {
-    margin-bottom: 2;
-    padding: 1;
-    border: round $primary;
-    background: $surface;
-}
-
-.ingest-action-section {
-    border-top: solid $primary;
-    padding-top: 1;
-    padding: 1;
-}
-
-.ingest-controls-row {
-    margin-bottom: 1;
-    height: 3;
-}
-
-.ingest-controls-row Button {
-    height: 3;
-    min-height: 3;
-}
-
-.ingest-url-button {
-    width: auto;
-    height: 3;
-    margin-bottom: 1;
-}
 
 .ingest-form-row {
     margin-top: 1;
@@ -289,19 +244,6 @@ VerticalScroll.ingest-form-scrollable {
     margin-bottom: 1;
 }
 
-.ingest-textarea-large {
-    min-height: 15;
-    max-height: 30;
-    height: auto;
-    margin-bottom: 1;
-}
-
-/* Responsive textarea that grows with content */
-.ingest-textarea-responsive {
-    min-height: 5;
-    height: auto;
-    margin-bottom: 1;
-}
 
 /* All ingest views are controlled programmatically */
 .ingest-view-area {
@@ -313,16 +255,6 @@ VerticalScroll.ingest-form-scrollable {
 /* --- Visibility styles for ingest views --- */
 /* Views are controlled programmatically via styles.display */
 
-/* --- Tabbed Ingest Window Styles --- */
-#ingest-media-tabs {
-    height: 100%;
-    width: 100%;
-}
-
-#ingest-media-tabs TabPane {
-    padding: 0;
-    height: 100%;
-}
 
 /* Ensure the IngestWindowTabbed container fills available space */
 IngestWindowTabbed {
@@ -378,40 +310,8 @@ IngestWindowTabbed {
     width: 100%;
 }
 
-/* Ensure TabbedContent and its children are visible and properly sized */
-#ingest-media-tabs {
-    height: 1fr !important;
-    width: 100% !important;
-}
 
-#ingest-media-tabs TabPane {
-    height: 100% !important;
-    width: 100% !important;
-    padding: 1;
-}
 
-/* Ensure all containers within TabPane are visible */
-#ingest-media-tabs TabPane > * {
-    display: block !important;
-    visibility: visible !important;
-}
-
-/* Ensure tab panes have proper sizing */
-#ingest-media-tabs TabPane Container {
-    height: 100%;
-    width: 100%;
-}
-
-#ingest-media-tabs TabPane Vertical {
-    height: 100%;
-    width: 100%;
-}
-
-#ingest-media-tabs TabPane VerticalScroll {
-    height: 1fr;
-    width: 100%;
-    min-height: 10; /* Ensure minimum height */
-}
 
 .source-content.hidden {
     display: none;
@@ -525,14 +425,6 @@ IngestWindowTabbed {
     text-style: bold;
 }
 
-/* Basic options container */
-.basic-options-container {
-    border: round $surface;
-    padding: 1;
-    margin-top: 1;
-    background: $surface-lighten-1;
-}
-
 /* Advanced options container */
 .advanced-options-container {
     margin-top: 1;
@@ -560,13 +452,6 @@ IngestWindowTabbed {
 .chunk-col {
     width: 50%;
     padding-right: 1;
-}
-
-/* Form labels */
-.form-label-primary {
-    text-style: bold;
-    color: $primary;
-    margin-bottom: 1;
 }
 
 /* Status Dashboard Styles */
