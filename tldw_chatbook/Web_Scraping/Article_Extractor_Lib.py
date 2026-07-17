@@ -1529,7 +1529,13 @@ async def recursive_scrape(
     # pre-existing behavior when unavailable: this function has never guarded
     # against a missing playwright (calling `async_playwright()` when it is
     # still `None` raises TypeError, same as before this deferral).
-    _ensure_playwright()
+    if not _ensure_playwright():
+        # PR #672 review: a silent False would surface as a cryptic
+        # "'NoneType' object is not callable" on async_playwright() below.
+        raise ImportError(
+            "playwright is required for browser-based scraping but is not "
+            "installed (pip install tldw_chatbook[websearch])."
+        )
 
     async def save_progress():
         temp_file = resume_file + ".tmp"

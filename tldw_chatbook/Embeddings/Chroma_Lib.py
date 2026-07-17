@@ -169,7 +169,14 @@ class ChromaDBManager:
         # Import numpy/chromadb (and Settings/ChromaError/etc.) now that we
         # know this instance actually needs them -- see _ensure_chromadb()
         # docstring at module scope for why this is deferred this far.
-        _ensure_chromadb()
+        if _ensure_chromadb() is None:
+            # PR #672 review: a None chromadb would surface later as a
+            # cryptic AttributeError on .PersistentClient — fail cleanly at
+            # the boundary instead.
+            raise ImportError(
+                "chromadb is required for ChromaDBManager but is not "
+                "installed (pip install tldw_chatbook[embeddings_rag])."
+            )
 
         if not user_id:
             logger.error("Initialization failed: user_id cannot be empty for ChromaDBManager.")

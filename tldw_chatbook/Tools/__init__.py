@@ -26,6 +26,8 @@ transitive deps) and are the framework's core, always-needed surface.
 
 from typing import Any
 
+from loguru import logger
+
 from .tool_executor import (
     Tool,
     ToolExecutor,
@@ -76,8 +78,15 @@ def __getattr__(name: str) -> Any:
         submodule = importlib.import_module(f".{submodule_name}", __name__)
         value = getattr(submodule, name)
     except ImportError:
-        # Preserve the previous eager-import fallback semantics: the
-        # optional dependency backing this tool isn't installed.
+        # Preserve the previous eager-import fallback semantics (the name
+        # binds to None when its optional dependency isn't installed) — but
+        # keep the original traceback visible so a genuine import-time BUG
+        # in the tool module can't hide behind a later NoneType error
+        # (PR #672 review). Non-ImportError exceptions propagate.
+        logger.debug(
+            f"Optional tool {name!r} unavailable; binding to None.",
+            exc_info=True,
+        )
         value = None
     globals()[name] = value  # cache so subsequent lookups skip __getattr__
     return value
