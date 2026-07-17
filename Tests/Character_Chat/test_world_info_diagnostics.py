@@ -100,3 +100,51 @@ def test_classify_entry_match_decomposes_reason():
     text2 = "The Vault of gold."
     p2, pk2, sr2, sh2, sk2 = proc._classify_entry_match(entry, text2, text2.lower())
     assert p2 and sr2 and sh2 and sk2 == "gold"
+
+
+def test_diagnostics_result_equals_plain_process_messages():
+    book = _book(1, "B", [
+        _entry(1, ["Warden"], "grim jailer"),
+        _entry(2, ["Ghost"], "pale figure", enabled=False),
+        _entry(3, ["Vault"], "sealed door", selective=True, secondary_keys=["gold"]),
+    ])
+    proc = WorldInfoProcessor(world_books=[book])
+    msg = "The Warden guards the Vault of gold."
+    plain = proc.process_messages(msg, [])
+    result, diag = proc.process_messages_with_diagnostics(msg, [])
+    assert result == plain                       # byte-identical result (the fired-set pin)
+    assert isinstance(diag, WorldBookScanDiagnostics)
+
+
+def test_diagnostics_classifies_disabled_secondary_and_budget():
+    book = _book(1, "B", [
+        _entry(1, ["Warden"], "AAAA " * 200),    # ~200 tokens, fires first
+        _entry(2, ["Warden"], "BBBB " * 200),    # matched but past the budget break
+        _entry(3, ["Ghost"], "pale", enabled=False),
+        _entry(4, ["Vault"], "sealed", selective=True, secondary_keys=["gold"]),
+    ], token_budget=250)
+    proc = WorldInfoProcessor(world_books=[book])
+    # `_process_world_books` takes max(self.token_budget, book_budget), and the
+    # constructor's own default is already 500, so a single book with a *lower*
+    # budget than 500 can never pull the effective budget down (pre-existing
+    # behavior, unrelated to this task). Set it directly to exercise the break.
+    proc.token_budget = 250
+    _result, diag = proc.process_messages_with_diagnostics("Warden Ghost Vault", [])
+    by_id = {e.entry_id: e for e in diag.entries}
+    assert by_id[1].status == "fired"
+    assert by_id[2].status == "skipped:budget"          # hard break drops everything after
+    assert by_id[3].status == "skipped:disabled"        # disabled but key matched
+    assert by_id[4].status == "skipped:secondary"       # 'gold' absent
+    assert diag.budget_exceeded is True
+    assert by_id[1].source_book_name == "B" and by_id[1].injection_order is not None
+    # an entry whose key never appears is NOT reported at all
+    assert all(e.status != "no_match" for e in diag.entries)
+
+
+def test_diagnostics_multi_book_priority_offset_agrees_with_plain():
+    hi = _book(10, "Hi", [_entry(1, ["Warden"], "hi-content")], priority=1)   # offset 1000
+    lo = _book(11, "Lo", [_entry(2, ["Warden"], "lo-content")], priority=0)
+    proc = WorldInfoProcessor(world_books=[lo, hi])
+    plain = proc.process_messages("Warden", [])
+    result, _diag = proc.process_messages_with_diagnostics("Warden", [])
+    assert result == plain
