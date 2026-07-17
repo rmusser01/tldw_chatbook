@@ -26,7 +26,7 @@ from loguru import logger
 #
 # Each processor is now imported lazily via the module-level placeholders +
 # `_ensure_*()` helpers below (mirroring the pattern already used by
-# `Embeddings/Chroma_Lib.py` and `Web_Scraping/Article_Extractor_Lib.py`),
+# `Web_Scraping/Article_Extractor_Lib.py`),
 # called at the top of `parse_local_file_for_ingest()`'s branch for that
 # `file_type`, once per process (Python caches `sys.modules`, so repeated
 # calls don't re-pay the cost). The module-level names are kept (rather than

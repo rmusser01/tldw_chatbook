@@ -1,40 +1,36 @@
-"""Local retrieval-admin adapter for chunking templates and embedding collections."""
+"""Local retrieval-admin adapter for chunking templates and embedding collections.
+
+The embedding-collection surface operates on the *shared* RAG vector store
+(``RAG_Search/ingestion_indexing.get_shared_rag_service().vector_store``) —
+the same persistent ChromaDB store that ingestion-time indexing writes and
+RAG semantic search reads (task-248). The legacy per-user
+``Embeddings/Chroma_Lib.ChromaDBManager`` stack this service previously
+wrapped has been removed.
+"""
 
 from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
-from datetime import datetime, timezone
 from typing import Any, Optional
-from uuid import uuid4
 
 from ..Chunking.chunking_interop_library import get_chunking_service
-from ..Utils.optional_deps import DEPENDENCIES_AVAILABLE
-
-try:
-    from ..Embeddings.Chroma_Lib import ChromaDBManager
-except Exception:  # pragma: no cover - optional dependency fallback
-    ChromaDBManager = None  # type: ignore[assignment]
 
 
 class LocalRAGAdminService:
-    """Wrap existing local chunking-template and Chroma collection operations."""
+    """Wrap local chunking-template and shared-vector-store collection operations."""
 
     def __init__(
         self,
         media_db: Any,
         *,
-        app_config: Optional[Mapping[str, Any]] = None,
-        user_id: Optional[str] = None,
         chunking_service: Any = None,
-        chroma_manager: Any = None,
+        vector_store: Any = None,
         media_service: Any = None,
     ):
         self.media_db = media_db
-        self.app_config = dict(app_config or {})
-        self.user_id = str(user_id or self.app_config.get("USERS_NAME") or "default_user")
         self.chunking_service = chunking_service or (get_chunking_service(media_db) if media_db is not None else None)
-        self._chroma_manager = chroma_manager
+        self._vector_store = vector_store
         self.media_service = media_service
 
     def _require_chunking_service(self) -> Any:
@@ -42,15 +38,36 @@ class LocalRAGAdminService:
             raise ValueError("Local chunking template backend is unavailable.")
         return self.chunking_service
 
-    def _build_chroma_manager(self) -> Any:
-        if self._chroma_manager is not None:
-            return self._chroma_manager
-        if not DEPENDENCIES_AVAILABLE.get("embeddings_rag", False) or ChromaDBManager is None:
+    def _resolve_vector_store(self) -> Any:
+        """Return the vector store RAG search reads (injected or shared service's)."""
+        if self._vector_store is not None:
+            return self._vector_store
+        from ..RAG_Search.ingestion_indexing import get_shared_rag_service
+
+        service = get_shared_rag_service()
+        store = getattr(service, "vector_store", None) if service is not None else None
+        if store is None:
             raise ValueError("Local embeddings backend is unavailable.")
-        self._chroma_manager = ChromaDBManager(self.user_id, dict(self.app_config))
-        return self._chroma_manager
+        return store
+
+    def _require_chroma_client(self) -> Any:
+        """Return the raw ChromaDB client behind the shared store.
+
+        Collection detail/export need raw collection access, which only the
+        persistent ChromaDB store exposes (the in-memory fallback store has
+        no ``client``).
+        """
+        client = getattr(self._resolve_vector_store(), "client", None)
+        if client is None:
+            raise ValueError(
+                "Local embedding collections require the persistent ChromaDB vector store."
+            )
+        return client
 
     def _coerce_collection(self, collection: Any) -> dict[str, Any]:
+        if isinstance(collection, str):
+            # Some chromadb versions list collection names rather than objects.
+            return {"name": collection, "metadata": {}}
         return {
             "name": getattr(collection, "name", ""),
             "metadata": dict(getattr(collection, "metadata", {}) or {}),
@@ -110,64 +127,7 @@ class LocalRAGAdminService:
         return payload
 
     def _get_collection(self, collection_name: str) -> Any:
-        manager = self._build_chroma_manager()
-        return manager.client.get_collection(name=collection_name)
-
-    def _default_collection_name(self, collection_name: Optional[str] = None) -> str:
-        if collection_name:
-            return str(collection_name)
-        return str(self._build_chroma_manager().get_user_default_collection_name())
-
-    def _get_media_for_embedding(self, media_id: int) -> dict[str, Any]:
-        if self.media_db is None:
-            raise ValueError("Local media DB is required for local embedding generation.")
-
-        getter = getattr(self.media_db, "get_media_by_ids_for_embedding", None)
-        if callable(getter):
-            rows = list(getter([media_id]) or [])
-            if rows:
-                return dict(rows[0])
-
-        detail_getter = getattr(self.media_db, "get_media_by_id", None)
-        if callable(detail_getter):
-            row = detail_getter(media_id)
-            if row:
-                return dict(row)
-
-        raise ValueError(f"Local media item {media_id} was not found or has no embeddable content.")
-
-    @staticmethod
-    def _word_chunks_for_reprocess(content: str, *, chunk_size: int, chunk_overlap: int) -> list[dict[str, Any]]:
-        words = [(match.group(0), match.start(), match.end()) for match in re.finditer(r"\S+", content)]
-        if not words:
-            return []
-        size = max(1, int(chunk_size))
-        overlap = min(max(0, int(chunk_overlap)), size - 1)
-        step = max(1, size - overlap)
-        chunks: list[dict[str, Any]] = []
-        for start in range(0, len(words), step):
-            bucket = words[start:start + size]
-            if not bucket:
-                continue
-            chunks.append(
-                {
-                    "text": " ".join(word for word, _start, _end in bucket),
-                    "start_index": bucket[0][1],
-                    "end_index": bucket[-1][2],
-                }
-            )
-            if start + size >= len(words):
-                break
-        return chunks
-
-    def _embedding_ids_for_media(self, media_id: int, *, collection_name: Optional[str] = None) -> list[str]:
-        collection_name = self._default_collection_name(collection_name)
-        try:
-            collection = self._build_chroma_manager().client.get_collection(name=collection_name)
-            payload = collection.get(where={"media_id": str(media_id)}, include=["metadatas"])
-        except Exception:
-            return []
-        return [str(item_id) for item_id in payload.get("ids", []) if item_id]
+        return self._require_chroma_client().get_collection(name=collection_name)
 
     def _infer_collection_dimension(self, collection: Any, metadata: Mapping[str, Any]) -> int | None:
         dimension = metadata.get("embedding_dimension")
@@ -192,34 +152,6 @@ class LocalRAGAdminService:
             return len(candidate)
         except TypeError:
             return None
-
-    def _record_local_media_job(
-        self,
-        *,
-        operation: str,
-        media_id: int,
-        result: Mapping[str, Any],
-        request: Mapping[str, Any] | None = None,
-        status: str = "completed",
-    ) -> dict[str, Any]:
-        prefix = "local-embedding" if operation == "media_embeddings" else "local-reprocess"
-        job_id = f"{prefix}-{media_id}-{uuid4().hex[:12]}"
-        now = datetime.now(timezone.utc).isoformat()
-        record = {
-            "id": job_id,
-            "job_id": job_id,
-            "uuid": job_id,
-            "operation": operation,
-            "media_id": media_id,
-            "status": status,
-            "backend": "local",
-            "created_at": now,
-            "updated_at": now,
-            "request": dict(request or {}),
-            "result": dict(result),
-        }
-        self._local_media_jobs[job_id] = record
-        return record
 
     def list_templates(
         self,
@@ -364,8 +296,8 @@ class LocalRAGAdminService:
         return method, options
 
     def list_collections(self) -> list[dict[str, Any]]:
-        manager = self._build_chroma_manager()
-        return [self._coerce_collection(collection) for collection in list(manager.list_collections() or [])]
+        client = self._require_chroma_client()
+        return [self._coerce_collection(collection) for collection in list(client.list_collections() or [])]
 
     def get_collection_detail(self, collection_name: str) -> dict[str, Any]:
         collection = self._get_collection(collection_name)
@@ -432,7 +364,19 @@ class LocalRAGAdminService:
         }
 
     def delete_collection(self, collection_name: str) -> None:
-        self._build_chroma_manager().delete_collection(collection_name)
+        store = self._resolve_vector_store()
+        deleter = getattr(store, "delete_collection", None)
+        if not callable(deleter):
+            raise ValueError("Local embeddings backend is unavailable.")
+        # ChromaVectorStore.delete_collection also resets its cached handle
+        # when the active collection is deleted, so delegate to the store.
+        # Both bundled stores return a success bool (and log rather than
+        # raise); surface an explicit False as a hard failure so the admin
+        # seam never reports success for a collection that still exists.
+        if deleter(collection_name) is False:
+            raise ValueError(
+                f"Failed to delete local embedding collection '{collection_name}'."
+            )
 
     def reprocess_media(self, media_id: Any, **options: Any) -> Any:
         if self.media_service is None:

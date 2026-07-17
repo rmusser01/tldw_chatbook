@@ -35,7 +35,7 @@ class EventDispatcher:
         from tldw_chatbook.Event_Handlers import (
             tab_events, chat_events, conv_char_events, notes_events,
             media_events, llm_nav_events, ingest_events,
-            embeddings_events, subscription_events, template_events
+            subscription_events, template_events
         )
         from tldw_chatbook.Event_Handlers.Chat_Events import (
             chat_events_sidebar, chat_events_tabs, chat_events_worldbooks
@@ -81,7 +81,6 @@ class EventDispatcher:
             **ingest_events.INGEST_BUTTON_HANDLERS,
             
             # Other modules
-            **embeddings_events.EMBEDDINGS_BUTTON_HANDLERS,
             **subscription_events.SUBSCRIPTION_BUTTON_HANDLERS,
             **template_events.TEMPLATE_BUTTON_HANDLERS,
         }

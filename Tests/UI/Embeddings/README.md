@@ -54,7 +54,6 @@ Tests are organized by functionality:
 
 ### From `test_base.py`:
 - `mock_embedding_factory` - Mocked embedding factory
-- `mock_chroma_manager` - Mocked ChromaDB manager
 - `mock_app_instance` - Mocked app instance with required attributes
 
 ### Test Utilities:

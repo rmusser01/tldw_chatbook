@@ -11,8 +11,11 @@ S2 C2) even when the corresponding feature was never used in the session:
 1. `Embeddings/Chroma_Lib.py` did module-scope `get_safe_import('chromadb')`
    (a REAL import), reachable via `RAG_Admin/local_rag_admin_service.py`
    which `app.py` imports unconditionally (~154ms: chromadb -> OTel -> gRPC
-   -> protobuf). Now deferred into `ChromaDBManager.__init__` via the
-   `_ensure_numpy()`/`_ensure_chromadb()` helpers.
+   -> protobuf). Initially deferred into `ChromaDBManager.__init__`;
+   task-248 then removed `Chroma_Lib.py` entirely (the surviving chromadb
+   consumer, `RAG_Search/simplified/vector_store.py`, already imports
+   chromadb lazily in its `client` property), so only the subprocess
+   sys.modules guard below still covers this chain.
 2. `Tools/__init__.py` eagerly imported `WebSearchTool` (and other optional
    tool classes), which pulled in `Web_Scraping/Article_Extractor_Lib.py`'s
    module-scope playwright + trafilatura imports (~197ms), even though
@@ -47,7 +50,6 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -157,73 +159,12 @@ def test_app_import_does_not_load_module_individually(tmp_path: Path, module_nam
     )
 
 
-# --- 2. Functional smoke: chromadb chain (ChromaDBManager) ------------------
-
-
-def test_chromadb_manager_still_constructs_and_resolves_real_chromadb(monkeypatch: pytest.MonkeyPatch) -> None:
-    """ChromaDBManager must still construct successfully (chromadb IS
-    installed in this venv) once its optional-deps gate is satisfied, and
-    `_ensure_chromadb()` must resolve the real chromadb module/Settings/etc.
-    -- the deferral only changes *when* the import happens, not whether it
-    eventually happens for a real construction.
-
-    Args:
-        monkeypatch: pytest fixture; used to force the `embeddings_rag`
-            optional-deps gate True without requiring a real torch/
-            transformers verification pass (out of scope here -- see
-            task-163).
-    """
-    import importlib.util
-
-    if importlib.util.find_spec("chromadb") is None:
-        pytest.skip("chromadb not installed in this environment")
-
-    from tldw_chatbook.Embeddings import Chroma_Lib
-    from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
-
-    monkeypatch.setitem(DEPENDENCIES_AVAILABLE, "embeddings_rag", True)
-
-    with tempfile.TemporaryDirectory() as td:
-        config = {
-            "USER_DB_BASE_DIR": td,
-            "embedding_config": {
-                "default_model_id": "test-model",
-                "models": {
-                    "test-model": {
-                        "provider": "huggingface",
-                        "model_name_or_path": "sentence-transformers/all-MiniLM-L6-v2",
-                    }
-                },
-            },
-        }
-        mgr = Chroma_Lib.ChromaDBManager(user_id="task257-smoke-test", user_embedding_config=config)
-
-    assert mgr is not None
-    assert mgr.client is not None
-    # _ensure_chromadb() must have resolved the real module onto the
-    # module-level placeholders (not left them as the unavailable-feature
-    # fallbacks from before __init__ ran).
-    assert Chroma_Lib.chromadb is not None
-    assert Chroma_Lib.chromadb.__name__ == "chromadb"
-    assert "chromadb" in sys.modules
-
-
-def test_chromadb_manager_still_raises_cleanly_when_deps_gate_is_false(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Preserve the pre-existing graceful-unavailable behavior: when the
-    `embeddings_rag` optional-deps gate is False, construction must still
-    raise a clear ImportError -- unaffected by the chromadb import having
-    become lazy (the gate check runs before `_ensure_chromadb()`).
-
-    Args:
-        monkeypatch: pytest fixture; forces the `embeddings_rag` gate False.
-    """
-    from tldw_chatbook.Embeddings import Chroma_Lib
-    from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
-
-    monkeypatch.setitem(DEPENDENCIES_AVAILABLE, "embeddings_rag", False)
-
-    with pytest.raises(ImportError, match="embeddings/RAG dependencies"):
-        Chroma_Lib.ChromaDBManager(user_id="task257-gate-test", user_embedding_config={"unused": True})
+# --- 2. Functional smoke: chromadb chain ------------------------------------
+# (The ChromaDBManager construction/gate smoke tests that lived here were
+# removed with `Embeddings/Chroma_Lib.py` itself in task-248; the surviving
+# chromadb chain -- vector_store.ChromaVectorStore's lazy `client` property --
+# is covered by Tests/RAG/simplified/test_vector_stores.py and the
+# sys.modules guards in section 1.)
 
 
 # --- 3. Functional smoke: web-search chain (Tools.__getattr__) --------------
@@ -376,44 +317,6 @@ def test_parse_local_file_for_ingest_pdf_branch_still_resolves_process_pdf(tmp_p
 
 
 # --- 5. Graceful-absence: simulated missing chromadb -------------------------
-
-
-def test_ensure_chromadb_degrades_gracefully_when_import_fails(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Graceful-absence case for the chromadb chain: simulate a broken
-    install (`get_safe_import` returns None, matching a real ImportError
-    inside it) and confirm `_ensure_chromadb()` returns None without
-    raising, and without mutating ChromaError/Settings/etc. any further.
-
-    Args:
-        monkeypatch: pytest fixture; forces `get_safe_import('chromadb')`
-            to return None (its real behavior on ImportError) without
-            needing to actually uninstall chromadb.
-    """
-    from tldw_chatbook.Embeddings import Chroma_Lib
-
-    # Reset module-level state so _ensure_chromadb() actually re-attempts
-    # the import instead of short-circuiting on an already-cached value.
-    monkeypatch.setattr(Chroma_Lib, "chromadb", None)
-    monkeypatch.setattr(Chroma_Lib, "numpy", None)
-
-    def _fake_get_safe_import(module_name, *args, **kwargs):
-        # Real get_safe_import() returns None on ImportError; this test
-        # only ever exercises _ensure_chromadb(), which calls it with
-        # 'numpy' and 'chromadb'.
-        return None
-
-    monkeypatch.setattr(Chroma_Lib, "get_safe_import", _fake_get_safe_import)
-
-    # Capture whatever ChromaError/Settings/etc. were bound to beforehand
-    # (they may already be the real chromadb classes if an earlier test in
-    # this process constructed a real ChromaDBManager -- module globals are
-    # process-wide) so this assertion is order-independent: the only thing
-    # under test is that THIS failed _ensure_chromadb() call doesn't mutate
-    # them further.
-    expected_chroma_error = Chroma_Lib.ChromaError
-
-    result = Chroma_Lib._ensure_chromadb()
-
-    assert result is None
-    assert Chroma_Lib.chromadb is None
-    assert Chroma_Lib.ChromaError is expected_chroma_error
+# (Removed with `Embeddings/Chroma_Lib.py` in task-248; the graceful-absence
+# behavior of the surviving chain is ChromaVectorStore.client's ImportError
+# message, exercised by the RAG vector-store tests.)
