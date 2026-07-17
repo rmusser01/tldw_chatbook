@@ -581,7 +581,10 @@ class ConsoleChatController:
         finally:
             self._pending_approval_event = None
             self._pending_approval_decisions = None
-            self._marshal_pending_approval(None)
+            try:
+                self._marshal_pending_approval(None)
+            except Exception:  # noqa: BLE001 -- suppress teardown-time errors
+                self.logger.debug("Failed to marshal approval clear during teardown", exc_info=True)
 
     def _marshal_pending_approval(self, payload: dict[str, Any] | None) -> None:
         """Push ``payload`` (or clear it) onto the UI thread, if wired."""
@@ -606,11 +609,18 @@ class ConsoleChatController:
         handler. A no-op when there is no active round (e.g. a stale
         message arriving after a timeout/cancellation already resolved and
         cleared it).
+
+        NOTE: Snapshots ``_pending_approval_decisions`` and ``_pending_approval_event``
+        into locals to avoid TOCTOU race: the worker thread's ``finally`` block nulls
+        both attributes concurrently. Guard and act only on the snapshots.
         """
-        if self._pending_approval_decisions is None or self._pending_approval_event is None:
+        # Snapshot both at once to prevent TOCTOU race with worker thread's finally block
+        decisions_dict = self._pending_approval_decisions
+        approval_event = self._pending_approval_event
+        if decisions_dict is None or approval_event is None:
             return
-        self._pending_approval_decisions.update(decisions or {})
-        self._pending_approval_event.set()
+        decisions_dict.update(decisions or {})
+        approval_event.set()
 
     def _deny_pending_approval_on_context_change(self) -> None:
         """Force-resolve a pending approval round as denied for undecided calls.
@@ -619,9 +629,14 @@ class ConsoleChatController:
         ``request_mcp_approvals``'s own post-loop fill-in resolves every
         name that still lacks an explicit entry to ``"deny"``. A no-op when
         no round is pending.
+
+        NOTE: Snapshots ``_pending_approval_event`` into a local to avoid TOCTOU race
+        with the worker thread's ``finally`` block that nulls it concurrently.
         """
-        if self._pending_approval_event is not None:
-            self._pending_approval_event.set()
+        # Snapshot to prevent TOCTOU race with worker thread's finally block
+        approval_event = self._pending_approval_event
+        if approval_event is not None:
+            approval_event.set()
 
     def stop_active_run(self) -> bool:
         """Request the active stream to stop at the next safe boundary."""

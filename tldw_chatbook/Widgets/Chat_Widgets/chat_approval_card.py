@@ -103,6 +103,15 @@ class ChatApprovalCard(Container):
             self.decisions = decisions
             super().__init__()
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Initialize batch state before mount to avoid AttributeError in pre-mount calls."""
+        super().__init__(*args, **kwargs)
+        # Batch approval state (initialized here, not in on_mount, so pre-mount
+        # calls like set_batch() or on_button_pressed() don't AttributeError).
+        self._batch_generation = 0
+        self._batch_names: list[str] = []
+        self._batch_selects: list[Select] = []
+
     def compose(self) -> ComposeResult:
         yield Static("Approval required", id="approval-title")
         with Container(id="approval-single-body"):
@@ -135,9 +144,6 @@ class ChatApprovalCard(Container):
 
     def on_mount(self) -> None:
         self.display = False
-        self._batch_generation = 0
-        self._batch_names: list[str] = []
-        self._batch_selects: list[Select] = []
         self.query_one("#approval-batch-body").display = False
 
     # -- legacy single-approval API (unchanged; kept for existing callers) --
