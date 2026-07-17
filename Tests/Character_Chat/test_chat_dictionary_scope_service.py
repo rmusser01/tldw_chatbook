@@ -167,3 +167,24 @@ async def test_chat_dictionary_scope_routes_local_history_when_backend_supports_
         ("get_version", 2, 1),
         ("revert_version", 2, 1),
     ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_character_attach_roundtrip(tmp_path):
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.Character_Chat.local_chat_dictionary_service import LocalChatDictionaryService
+    from tldw_chatbook.Character_Chat.chat_dictionary_scope_service import ChatDictionaryScopeService
+
+    db = CharactersRAGDB(tmp_path / "scope.db", "test-client")
+    local = LocalChatDictionaryService(db)
+    scope = ChatDictionaryScopeService(local_service=local, server_service=None)
+    dict_id = local.create_dictionary({"name": "Slang", "entries": [{"pattern": "x", "replacement": "y"}]})["id"]
+    char_id = db.add_character_card({"name": "Noir"})
+
+    await scope.attach_to_character(dict_id, char_id, mode="local")
+    listing = await scope.list_character_dictionaries(char_id, mode="local")
+    assert [d["name"] for d in listing["dictionaries"]] == ["Slang"]
+
+    await scope.detach_from_character(char_id, "Slang", mode="local")
+    listing = await scope.list_character_dictionaries(char_id, mode="local")
+    assert listing["dictionaries"] == []

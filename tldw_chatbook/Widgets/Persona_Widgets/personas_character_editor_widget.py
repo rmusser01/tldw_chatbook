@@ -338,6 +338,24 @@ class PersonasCharacterEditorWidget(Container):
         ]
         return data
 
+    def sync_attached_dictionaries(self, chat_dictionaries: list, new_version: int) -> None:
+        """Patch the loaded base after an out-of-band dictionary attach/detach.
+
+        Updates only ``extensions['chat_dictionaries']`` and ``version`` on the
+        base copy the Save path starts from, so an instant attach is neither
+        clobbered by a later Save nor forces a version conflict — and the user's
+        in-progress form edits are left untouched. No-op when no character is
+        loaded (empty base).
+        """
+        if not self._character_data:
+            return
+        ext = self._character_data.get("extensions")
+        if not isinstance(ext, dict):
+            ext = {}
+        ext["chat_dictionaries"] = list(chat_dictionaries)
+        self._character_data["extensions"] = ext
+        self._character_data["version"] = new_version
+
     # ===== Internals =====
 
     def _form_snapshot(self) -> tuple:
