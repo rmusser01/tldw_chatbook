@@ -1591,3 +1591,150 @@ async def test_second_show_permission_back_to_back_does_not_duplicate_ids():
         origins = list(app.query("#mcp-inspector-permission-origin"))
         assert len(origins) == 1
         assert str(origins[0].renderable) == "Inherited from the global default."
+
+
+# -- Phase 4 UX batch item 7: neutral "nothing selected" header --------------
+
+
+@pytest.mark.asyncio
+async def test_no_selection_header_reads_select_an_item_to_inspect():
+    """Item 7: the header used to say "Select a server to see its
+    readiness." even for a Tools/Permissions-mode selection -- neutral
+    copy that matches the "No {noun} selected."/"Select {noun} to {verb}."
+    convention used elsewhere on this screen."""
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        inspector = app.query_one(MCPInspector)
+        badge = str(app.query_one("#mcp-inspector-state", Static).renderable)
+        assert badge == "Select an item to inspect."
+
+        await inspector.update_readiness(_stale_snap())
+        await pilot.pause()
+        await inspector.update_readiness(None)
+        await pilot.pause()
+        badge = str(app.query_one("#mcp-inspector-state", Static).renderable)
+        assert badge == "Select an item to inspect."
+
+
+# -- Phase 4 UX batch item 8: tool identity above the permission block -------
+
+
+@pytest.mark.asyncio
+async def test_show_permission_standalone_renders_tool_identity_first():
+    """Item 8: the standalone permission block (Permissions-mode matrix row
+    selection) never mounts `#mcp-inspector-tool` at all -- without its own
+    identity line, the explanation below it had no indication of WHICH tool
+    it describes."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_permission(
+            _tool(name="search", server_label="docs"),
+            EffectiveToolState(state="allow", origin="tool_override"),
+        )
+        await pilot.pause()
+        identity = str(app.query_one("#mcp-inspector-permission-tool", Static).renderable)
+        assert identity == "search — docs"
+
+
+@pytest.mark.asyncio
+async def test_show_tool_with_effective_also_renders_tool_identity():
+    """Item 8 applies uniformly to `_render_permission_container()` --
+    Tools-mode's own combined call (`show_tool(tool, effective=...)`) gets
+    the same identity line even though `#mcp-inspector-tool` already shows
+    one above it."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(
+            _tool(name="fetch", server_label="docs"),
+            effective=EffectiveToolState(state="ask", origin="server_default"),
+        )
+        await pilot.pause()
+        identity = str(app.query_one("#mcp-inspector-permission-tool", Static).renderable)
+        assert identity == "fetch — docs"
+
+
+# -- Phase 4 UX batch items 5 & 13: blocked status + duration formatting -----
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_sub_second_uses_ms_granularity():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.show_tool_result(
+            server_key=tool.server_key, tool_name=tool.name, ok=True,
+            text="{}", duration_ms=999,
+        )
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert result.startswith("OK · 999ms")
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_seconds_tier_uses_one_decimal():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.show_tool_result(
+            server_key=tool.server_key, tool_name=tool.name, ok=False,
+            text="boom", duration_ms=45_300,
+        )
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert result.startswith("Failed · 45.3s")
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_minute_tier_uses_minutes_and_seconds():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.show_tool_result(
+            server_key=tool.server_key, tool_name=tool.name, ok=True,
+            text="{}", duration_ms=125_000,
+        )
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert result.startswith("OK · 2m 5s")
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_blocked_renders_not_run_status_line():
+    """Item 5: the deny-gate's synthetic result must read "Blocked · not
+    run", not "Failed · 0ms" -- the call never reached the tool at all, so
+    the ok/duration_ms failure template would misleadingly imply an
+    attempted, timed run."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.show_tool_result(
+            server_key=tool.server_key, tool_name=tool.name, ok=False,
+            text="Blocked — this tool is set to Off in Permissions.", duration_ms=0,
+            blocked=True,
+        )
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert result.startswith("Blocked · not run")
+        assert "Failed" not in result.split("\n", 1)[0]

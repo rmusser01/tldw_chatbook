@@ -3292,6 +3292,10 @@ async def test_deny_gate_blocks_without_calling_service():
 
         assert app.unified_mcp_service.test_calls == []
         result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        # Item 5: the deny gate's synthetic result reads "Blocked · not run"
+        # -- not "Failed · 0ms", which would misleadingly imply an
+        # attempted, timed run.
+        assert result.startswith("Blocked · not run")
         assert "Blocked — this tool is set to Off in Permissions." in result
         run_button = app.query_one("#mcp-inspector-test-run", Button)
         assert run_button.disabled is False

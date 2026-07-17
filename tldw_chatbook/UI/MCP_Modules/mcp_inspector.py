@@ -113,6 +113,26 @@ _RISK_FLOORED_NOTICE = "High-risk tool — asks even though the inherited defaul
 _REALLOW_TOOLTIP = "Store the new definition hash and allow again."
 
 
+def _format_duration_ms(duration_ms: int) -> str:
+    """Format a Test Tool run's duration for the result status line.
+
+    Mirrors `library_ingest_state._format_elapsed()`'s granularity at the
+    minute tier (integer minutes/seconds, "{m}m {s}s") but adds a finer,
+    millisecond-aware tier below it -- a Test Tool run is typically
+    sub-second, where a bare "0s" would say nothing useful:
+      - under 1000ms: "{n}ms"
+      - under 60s: "{s:.1f}s" (one decimal)
+      - 60s or more: "{m}m {s}s" (integer minutes/seconds)
+    """
+    if duration_ms < 1000:
+        return f"{duration_ms}ms"
+    total_seconds = duration_ms / 1000
+    if total_seconds < 60:
+        return f"{total_seconds:.1f}s"
+    minutes, seconds = divmod(int(round(total_seconds)), 60)
+    return f"{minutes}m {seconds}s"
+
+
 def _is_blank(value: Any) -> bool:
     """Whether a Select value means "nothing selected".
 
@@ -342,7 +362,7 @@ class MCPInspector(Vertical):
 
     def compose(self) -> ComposeResult:
         yield Static("Inspector", classes="destination-section")
-        yield Static("Select a server to see its readiness.", id="mcp-inspector-state",
+        yield Static("Select an item to inspect.", id="mcp-inspector-state",
                      classes="ds-status-badge", markup=False)
         yield Static("", id="mcp-inspector-message", classes="ds-field-row", markup=False)
         yield Vertical(id="mcp-inspector-actions")
@@ -473,7 +493,7 @@ class MCPInspector(Vertical):
             for css_class in STATE_CSS_CLASSES.values():
                 state.remove_class(css_class)
             if snapshot is None:
-                state.update("Select a server to see its readiness.")
+                state.update("Select an item to inspect.")
                 message.update("")
                 return
             state.add_class(STATE_CSS_CLASSES[snapshot.state])
@@ -645,6 +665,17 @@ class MCPInspector(Vertical):
         container.display = True
         self._current_permission_tool = tool
         widgets: list[Any] = [
+            # UX batch item 8: identity line first, mirroring
+            # `show_tool()`'s own `#mcp-inspector-tool-name` -- this block
+            # is ALSO the standalone entry point (Permissions-mode matrix
+            # row selection, `show_permission()` below), which never mounts
+            # `#mcp-inspector-tool` at all, so without this the permission
+            # explanation would render with no indication of WHICH tool it
+            # describes.
+            Static(
+                f"{tool.name} — {tool.server_label}",
+                id="mcp-inspector-permission-tool", classes="ds-field-row", markup=False,
+            ),
             Static(
                 f"Permission: {effective.ui_label}",
                 id="mcp-inspector-permission-state", classes="ds-field-row", markup=False,
@@ -887,7 +918,8 @@ class MCPInspector(Vertical):
         self.post_message(self.ToolTestRequested(tool.server_key, tool.name, arguments))
 
     def show_tool_result(
-        self, *, server_key: str, tool_name: str, ok: bool, text: str, duration_ms: int
+        self, *, server_key: str, tool_name: str, ok: bool, text: str, duration_ms: int,
+        blocked: bool = False,
     ) -> None:
         """Render one Test Tool run's outcome, and re-enable Run.
 
@@ -903,6 +935,15 @@ class MCPInspector(Vertical):
         with A's completion). A mismatched result is dropped silently
         (debug-logged only); it belongs to a panel that is no longer
         showing.
+
+        `blocked` (Task 5, UX batch item 5): True for the permissions
+        deny-gate's synthetic result -- the call never reached the tool at
+        all, so the status line reads "Blocked · not run" instead of
+        routing through the ok/duration_ms failure template ("Failed ·
+        0ms"), which would misleadingly imply an attempted, timed run.
+        `ok`/`duration_ms` are still accepted (the deny-gate call site
+        passes its usual `ok=False, duration_ms=0`) but ignored for the
+        status line when `blocked` is True.
         """
         current = self._current_tool
         if current is None or current.server_key != server_key or current.name != tool_name:
@@ -917,8 +958,12 @@ class MCPInspector(Vertical):
             result_widget = self.query_one("#mcp-inspector-test-result", Static)
         except NoMatches:
             return
-        status = "OK" if ok else "Failed"
-        result_widget.update(f"{status} · {duration_ms}ms\n{text}")
+        if blocked:
+            status_line = "Blocked · not run"
+        else:
+            status = "OK" if ok else "Failed"
+            status_line = f"{status} · {_format_duration_ms(duration_ms)}"
+        result_widget.update(f"{status_line}\n{text}")
         try:
             self.query_one("#mcp-inspector-test-run", Button).disabled = False
         except NoMatches:

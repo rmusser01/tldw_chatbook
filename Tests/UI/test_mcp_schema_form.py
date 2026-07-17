@@ -279,4 +279,4 @@ async def test_collect_arguments_raises_for_integer_with_decimal_string():
 
         with pytest.raises(ValueError) as exc_info:
             form.collect_arguments()
-        assert str(exc_info.value) == "count: must be a number."
+        assert str(exc_info.value) == "count: must be a whole number."

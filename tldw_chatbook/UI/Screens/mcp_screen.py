@@ -17,8 +17,10 @@ _MODE_BY_BUTTON_ID = {spec["button_id"]: mode for mode, spec in MCP_HUB_MODES.it
 
 _MODE_TOOLTIPS = {
     "servers": "Servers mode: view MCP servers and their readiness.",
-    "tools": "Tools mode: browse scoped MCP tools (arrives in a later phase).",
-    "permissions": "Permissions mode: manage MCP tool permissions (arrives in a later phase).",
+    "tools": "Tools mode: browse and test scoped MCP tools.",
+    "permissions": (
+        "Permissions mode: set Allow / Ask / Off per tool. Space cycles the selected row."
+    ),
     "audit": "Audit mode: review MCP action history (arrives in a later phase).",
 }
 

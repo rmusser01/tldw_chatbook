@@ -2441,6 +2441,26 @@ async def test_mcp_destination_restores_unified_mcp_view_state_after_mount(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_mcp_destination_permissions_and_tools_tooltips_are_current():
+    """UX batch item 1: the Permissions/Tools mode chip tooltips used to say
+    "(arrives in a later phase)" even after both modes shipped real canvases
+    (`MCPPermissionsMode`/`MCPToolsMode`) -- stale copy that actively misled
+    the user about what pressing the chip would do."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "mcp")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause()
+        screen = _active_destination_screen(host)
+        tools_chip = screen.query_one("#mcp-mode-tools", Button)
+        permissions_chip = screen.query_one("#mcp-mode-permissions", Button)
+        assert tools_chip.tooltip == "Tools mode: browse and test scoped MCP tools."
+        assert permissions_chip.tooltip == (
+            "Permissions mode: set Allow / Ask / Off per tool. "
+            "Space cycles the selected row."
+        )
+
+
+@pytest.mark.asyncio
 async def test_mcp_destination_mode_chip_syncs_to_restored_mode():
     """I2 regression: chips are composed with Servers active and are only
     otherwise kept in sync by `MCPScreen._activate_mode()` (a click or

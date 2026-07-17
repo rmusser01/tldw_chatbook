@@ -2009,6 +2009,7 @@ class MCPWorkbench(Container):
             inspector.show_tool_result(
                 server_key=server_key, tool_name=tool_name,
                 ok=False, text=_TOOL_TEST_BLOCKED_TEXT, duration_ms=0,
+                blocked=True,
             )
             return
         if gate is not None and gate.state == "ask" and not inspector.test_run_armed:
