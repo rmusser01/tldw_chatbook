@@ -31,10 +31,11 @@ class AppFooterStatus(Widget):
     # empty ``#footer-spacer`` -- balloon to cover most of the screen and
     # silently swallow clicks meant for whatever's actually on screen.
     # Mirroring Textual's own built-in `Footer` widget (which ships its own
-    # `DEFAULT_CSS` for exactly this reason), this repeats the same rules
-    # the app bundle declares so they always apply, with or without that
-    # bundle loaded. The two are intentionally identical -- the bundle's
-    # copy simply re-applies the same values when both are present.
+    # `DEFAULT_CSS` for exactly this reason), this repeats a SUBSET of the
+    # bundle's rules -- the core layout ones -- so they always apply, with
+    # or without that bundle loaded. The bundle carries extras (word/token
+    # count ids, per-child heights) and wins by origin when both are
+    # present.
     # KEEP IN SYNC with the live bundle source
     # css/components/_widgets.tcss ("Window Footer Widget" block, built
     # into tldw_cli_modular.tcss -- NOT Constants.py's css_content, which
