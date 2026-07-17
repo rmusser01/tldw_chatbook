@@ -309,6 +309,13 @@ class HomeScreen(BaseAppScreen):
         ``RecordingHomeActiveWorkAdapter``) don't implement the async
         refresh hook and are silently skipped.
         """
+        if getattr(self.app_instance, "_home_dashboard_test_input", None) is not None:
+            # ``_build_dashboard_input`` returns the injected test input
+            # without ever consulting the adapter, so warming its cache is
+            # pure dead weight -- and for memory-backed seams the warm
+            # compute runs inline on the event loop, where it measurably
+            # delayed mount settling (phase6 power-user replay gate).
+            return
         adapter = getattr(self.app_instance, "home_active_work_adapter", None)
         refresh = getattr(adapter, "refresh_active_work_cache_async", None)
         if not inspect.iscoroutinefunction(refresh):

@@ -412,3 +412,23 @@ async def test_home_screen_warms_active_work_cache_on_mount():
         assert _active_home_screen(host) is not None
 
     assert adapter.refresh_calls >= 1
+
+
+@pytest.mark.asyncio
+async def test_home_screen_skips_cache_warm_when_test_input_injected():
+    """Regression (task-282 verification): with ``_home_dashboard_test_input``
+    injected, ``_build_dashboard_input`` never consults the adapter, so the
+    on-mount cache warm is dead weight -- and for memory-backed seams it
+    ran inline on the event loop, delaying mount settling enough to flake
+    the phase6 power-user replay gate's immediate screen-text read."""
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(model_ready=True)
+    adapter = _AsyncRefreshAdapter()
+    app.home_active_work_adapter = adapter
+    host = HomeHarness(app)
+
+    async with host.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.2)
+        assert _active_home_screen(host) is not None
+
+    assert adapter.refresh_calls == 0
