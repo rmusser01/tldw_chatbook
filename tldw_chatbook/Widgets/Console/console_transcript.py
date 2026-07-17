@@ -393,6 +393,21 @@ class ConsoleTranscript(VerticalScroll):
         # Lives on the widget instance so a recompose starts it fresh.
         self._message_signature_cache: dict[str, tuple[tuple, tuple]] = {}
         self._signature_compute_counts: dict[str, int] = {}
+        # TASK-298: id of the newest message seen by set_messages, so a
+        # NEW user message (a send) can re-engage tail-follow even after
+        # the user scrolled up (reading history shouldn't survive an
+        # explicit send).
+        self._tail_message_id: str | None = None
+
+    def on_mount(self) -> None:
+        """Engage tail-follow: stay scrolled to the newest content.
+
+        Textual's anchor keeps the view pinned to the bottom while content
+        grows, releases when the user scrolls up, and re-engages when they
+        return to the bottom (TASK-298 -- streamed replies taller than the
+        viewport used to finish below the fold with no scroll).
+        """
+        self.anchor()
 
     def compose(self) -> ComposeResult:
         self._row_widgets.clear()
@@ -414,6 +429,18 @@ class ConsoleTranscript(VerticalScroll):
         """
         self._messages = list(messages)
         message_ids = {message.id for message in self._messages}
+        newest = self._messages[-1] if self._messages else None
+        if (
+            self.is_mounted
+            and newest is not None
+            and newest.id != self._tail_message_id
+            and newest.role == "user"
+        ):
+            # A send: jump to the tail even if the user had scrolled up
+            # (anchor() also re-engages follow for the reply that streams
+            # in next). Appended assistant/tool rows never yank a reader.
+            self.anchor()
+        self._tail_message_id = None if newest is None else newest.id
         if self.selected_message_id not in message_ids:
             self.selected_message_id = None
         for stale_id in [
