@@ -709,19 +709,11 @@ def test_native_endpoint_google_sends_tools_and_suppresses_fence(db):
     assert "tool_call" not in chat.calls[0]["messages_payload"][0]["content"]
 
 
-def test_native_endpoint_cohere_sends_tools_and_suppresses_fence(db, monkeypatch):
-    """task-267: chat_with_cohere's conversion is complete end-to-end
-    (request tools/tool-history, non-streaming + streaming tool_calls —
-    Tasks 1-4), but `NATIVE_TOOLS_PROVIDERS` doesn't gain "cohere" until a
-    live API round-trip passes (Task 6). This test overrides the registry
-    IN-PROCESS via monkeypatch to pin the service-level wiring ahead of
-    that flip — mirroring the anthropic/google siblings above, minus the
-    permanent registry membership."""
-    import tldw_chatbook.Agents.native_tools as native_tools_module
-    monkeypatch.setattr(
-        native_tools_module, "NATIVE_TOOLS_PROVIDERS",
-        frozenset(native_tools_module.NATIVE_TOOLS_PROVIDERS | {"cohere"}))
-
+def test_native_endpoint_cohere_sends_tools_and_suppresses_fence(db):
+    """task-267: cohere is a real NATIVE_TOOLS_PROVIDERS member (flipped
+    after the 2026-07-17 live gate, Docs/superpowers/qa/cohere-native-
+    2026-07/) — the service sends native tools and suppresses the fence
+    protocol, mirroring the anthropic/google siblings above."""
     service, chat = make_service(db, [
         {"content": None,
          "tool_calls": [native_call("calculator", {"expression": "2+2"},

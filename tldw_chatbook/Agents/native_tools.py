@@ -10,10 +10,9 @@ A provider earns a place in ``NATIVE_TOOLS_PROVIDERS`` only when ALL of:
 1. ``PROVIDER_PARAM_MAP`` forwards ``tools`` (and the handler accepts it),
 2. the handler returns (or normalizes to) the OpenAI-compatible response
    dict with ``choices[0].message.tool_calls`` intact — raw passthrough for
-   the OpenAI-compatible providers; full block conversion for anthropic
-   (task-263) and google (task-266). The cohere handler still normalizes
-   and DROPS tool-call data — it stays fence-only until converted
-   (task-267), and
+   the OpenAI-compatible providers; full conversion for anthropic
+   (task-263), google (task-266), and cohere (task-267, via the v2 /chat
+   migration), and
 3. the provider accepts OpenAI-shape ``role: "tool"`` history messages.
 
 Pure module: no I/O, no provider imports.
@@ -38,6 +37,12 @@ NATIVE_TOOLS_PROVIDERS = frozenset({
     # OpenAI fragments — live-gated 2026-07-17
     # (Docs/superpowers/qa/google-native-2026-07/).
     "google",
+    # task-267: chat_with_cohere migrated to the v2 /chat API (OpenAI-
+    # shaped messages/tools end-to-end), parses message.tool_calls on both
+    # response paths, and round-trips tool_plan as the cohere_tool_plan
+    # extra — live-gated 2026-07-17
+    # (Docs/superpowers/qa/cohere-native-2026-07/).
+    "cohere",
 })
 
 
