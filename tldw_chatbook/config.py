@@ -656,53 +656,24 @@ def load_settings(force_reload: bool = False) -> Dict:
     logger.info(f"Determined APP_COMPONENT_ROOT for config files: {APP_COMPONENT_ROOT}")
 
     # --- Load Comprehensive Config from TOML ---
-    base_config_data = {}
-    user_override_config_data = {}
-
-    # 1. Load the primary (e.g., server/application component) config file
-    # This path is assumed to be the original target for load_settings()
-    primary_config_toml_path = APP_COMPONENT_ROOT / "Config_Files" / "config.toml"
-    logger.info(f"Attempting to load primary TOML config from: {str(primary_config_toml_path)}")
-    try:
-        with open(primary_config_toml_path, "rb") as f: # Use "rb" for tomllib.load
-            base_config_data = tomllib.load(f)
-        logger.info(f"Successfully loaded primary TOML config from: {str(primary_config_toml_path)}")
-    except FileNotFoundError:
-        logger.warning(f"Primary TOML Config file not found at {primary_config_toml_path}. Proceeding without it.")
-    except tomllib.TOMLDecodeError as e:
-        logger.opt(exception=True).error(f"Error decoding primary TOML config file {primary_config_toml_path}: {e}. Proceeding with potentially empty base config.")
-    except Exception as e:
-        logger.opt(exception=True).error(f"An unexpected error occurred while loading primary TOML {primary_config_toml_path}: {e}. Proceeding with potentially empty base config.")
-
-    # 2. Load the user-specific CLI config file (as potential overrides or additions).
-    # Tests and embedded runtimes can override this path with TLDW_CONFIG_PATH.
-    user_cli_config_toml_path = active_config_path
-    logger.info(f"Attempting to load user-specific CLI TOML config for overrides from: {str(user_cli_config_toml_path)}")
-    if user_cli_config_toml_path.exists():
-        try:
-            with open(user_cli_config_toml_path, "rb") as f: # Use "rb" for tomllib.load
-                user_override_config_data = tomllib.load(f)
-            logger.info(f"Successfully loaded user-specific CLI TOML config from: {str(user_cli_config_toml_path)}")
-        except tomllib.TOMLDecodeError as e:
-            logger.opt(exception=True).error(f"Error decoding user-specific CLI TOML config file {user_cli_config_toml_path}: {e}. User overrides will not be applied from this file.")
-            user_override_config_data = {} # Ensure it's empty if decode fails, to prevent merging bad data
-        except Exception as e:
-            logger.opt(exception=True).error(f"An unexpected error occurred while loading user-specific CLI TOML {user_cli_config_toml_path}: {e}. User overrides will not be applied from this file.")
-            user_override_config_data = {} # Ensure it's empty on other errors
-    else:
-        logger.info(f"User-specific CLI TOML config file not found at {user_cli_config_toml_path}. No user overrides will be applied from this file.")
-
-    # 3. Merge configs: user_override_config_data will overwrite/extend keys in base_config_data
-    #    Start with DEFAULT_CONFIG_FROM_TOML as the absolute base to ensure all CLI sections are present.
-    toml_config_data = copy.deepcopy(DEFAULT_CONFIG_FROM_TOML) # Start with CLI defaults
-    toml_config_data = deep_merge_dicts(toml_config_data, base_config_data) # Merge primary config
-    toml_config_data = deep_merge_dicts(toml_config_data, user_override_config_data) # Merge user CLI overrides
-    logger.info("Merged all configurations: CLI Defaults < Primary Config < User CLI Config.")
-    # Decrypt sensitive values (e.g. [api_settings].*.api_key) when config encryption
-    # is enabled and a session password is available; a no-op otherwise. Without this,
-    # app.app_config (populated from load_settings) would carry `enc:` ciphertext keys
-    # that the Chat send path passes to providers verbatim, failing auth. Mirrors the
-    # decrypt step in load_cli_config_and_ensure_existence.
+    # load_cli_config_and_ensure_existence() already deep-merges
+    # DEFAULT_CONFIG_FROM_TOML with the user's CLI config file (creating the
+    # file with defaults on first run) and decrypts the result; reuse that
+    # single read+parse instead of re-opening the same file here a second
+    # time. The historical "primary/server-component config" previously
+    # probed at APP_COMPONENT_ROOT/Config_Files/config.toml never exists in
+    # the packaged app (no installer/build step writes it, and pyproject.toml
+    # only packages *.json/*.md from that directory) so merging it was always
+    # a no-op; dropping the probe changes nothing observable.
+    toml_config_data = copy.deepcopy(
+        load_cli_config_and_ensure_existence(force_reload=force_reload)
+    )
+    # Idempotent no-op when already decrypted (or encryption disabled) --
+    # kept so a session password entered *after* the CLI cache above was
+    # primed with ciphertext still yields plaintext here. Without this,
+    # app.app_config (populated from load_settings) could carry `enc:`
+    # ciphertext keys that the Chat send path passes to providers verbatim,
+    # failing auth.
     toml_config_data = decrypt_config_section(toml_config_data)
     logger.debug("load_settings: Configuration loaded from disk (cache miss or forced reload)")
     # logger.debug(f"Final toml_config_data after potential merge: {toml_config_data}") # Optional: for verbose debugging
@@ -713,7 +684,7 @@ def load_settings(force_reload: bool = False) -> Dict:
         return toml_config_data.get(section_name, default_val if default_val is not None else {})
 
     api_section = get_toml_section('API') # This will now check the merged config
-    # If [API] exists in user_override_config_data, it would have merged with/overridden base_config_data's [API]
+    # If [API] exists in the user's CLI config, it would have merged with/overridden the CLI defaults' [API]
     # Same applies to all other sections retrieved below.
 
     paths_section = get_toml_section('Paths')
@@ -3837,11 +3808,14 @@ def get_media_db_lazy() -> Optional[MediaDatabase]:
 # --- API Models (should be defined based on CONFIG_TOML_CONTENT or loaded from it) ---
 # These can be loaded dynamically from the config or kept as fallback statics
 # For simplicity, if CONFIG_TOML_CONTENT has [providers], use that.
-_temp_loaded_config_for_models = tomllib.loads(CONFIG_TOML_CONTENT)
+# Reuse the [providers] table already parsed into DEFAULT_CONFIG_FROM_TOML
+# above instead of re-parsing the entire embedded TOML string a second time.
+# Deep-copied (not aliased) so the per-provider model lists stay independent
+# of DEFAULT_CONFIG_FROM_TOML's own tree.
 API_MODELS_BY_PROVIDER: Dict[str, List[str]] = {}
 LOCAL_PROVIDERS: Dict[str, List[str]] = {}
 
-_config_providers = _temp_loaded_config_for_models.get("providers", {})
+_config_providers = copy.deepcopy(DEFAULT_CONFIG_FROM_TOML.get("providers", {}))
 _cloud_provider_keys = ["OpenAI", "Anthropic", "Cohere", "DeepSeek", "Groq", "Google", "HuggingFace", "MistralAI", "OpenRouter"] # Example list
 
 for provider_name, models_list in _config_providers.items():
