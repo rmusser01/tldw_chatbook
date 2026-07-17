@@ -60,23 +60,31 @@ def _mcp_inspector_row(
     ``tool_count`` is ``None`` (the P5-T6 default) whenever the caller has
     no MCP composition to report at all -- no ``unified_mcp_service`` on
     the app, or the kill switch is on -- and the row is omitted entirely.
-    Otherwise: a non-zero tool count wins ("N tools ready", ready); failing
-    that, a non-zero not-connected-server count falls back to a blocked
-    warning ("M servers enabled, not connected"); both zero omits the row
-    just like the ``None`` case -- nothing worth telling the user about.
+    Otherwise: a non-zero not-connected-server count ALWAYS wins with the
+    blocked warning ("M servers enabled, not connected"), regardless of
+    ``tool_count`` -- a stale (disconnected-with-snapshot) server still
+    contributes its own tools to the catalog (see
+    ``MCPToolProvider.compose_catalog``'s eligibility filter), so
+    ``tool_count`` is essentially never 0 in the real mixed case; checking
+    it first would make this affordance unreachable (Finding I2). Only
+    when every enabled server is connected does a non-zero tool count
+    render the ready row ("N tools ready"). Both zero omits the row just
+    like the ``None`` case -- nothing worth telling the user about.
     """
     if tool_count is None:
         return None
     normalized_tool_count = coerce_non_negative_int(tool_count)
-    if normalized_tool_count > 0:
-        return ConsoleDisplayRow("MCP", f"{normalized_tool_count} tools ready")
     normalized_not_connected_count = coerce_non_negative_int(not_connected_count)
     if normalized_not_connected_count > 0:
+        server_word = "server" if normalized_not_connected_count == 1 else "servers"
         return ConsoleDisplayRow(
             "MCP",
-            f"{normalized_not_connected_count} servers enabled, not connected",
+            f"{normalized_not_connected_count} {server_word} enabled, not connected",
             status="blocked",
         )
+    if normalized_tool_count > 0:
+        tool_word = "tool" if normalized_tool_count == 1 else "tools"
+        return ConsoleDisplayRow("MCP", f"{normalized_tool_count} {tool_word} ready")
     return None
 
 

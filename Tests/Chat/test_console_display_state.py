@@ -114,9 +114,35 @@ def test_console_inspector_state_shows_mcp_tools_ready_row():
     assert rows_by_label["MCP"].status == "ready"
 
 
-def test_console_inspector_state_shows_mcp_not_connected_row_when_no_tools():
+def test_console_inspector_state_shows_mcp_tools_ready_row_singular():
+    """Pluralization fix (Finding I2): exactly one tool reads "1 tool
+    ready", not "1 tools ready"."""
+    state = ConsoleInspectorState.from_values(mcp_tool_count=1)
+    rows_by_label = {row.label: row for row in state.rows}
+    assert rows_by_label["MCP"].value == "1 tool ready"
+
+
+def test_console_inspector_state_shows_mcp_not_connected_row_even_with_tools_ready():
+    """Finding I2: the blocked "not connected" affordance must win
+    whenever `mcp_not_connected_count > 0`, REGARDLESS of `mcp_tool_count`
+    -- a stale (disconnected-with-snapshot) server still contributes its
+    own tools to the eligible catalog (see
+    `MCPToolProvider.compose_catalog`'s eligibility filter), so in the
+    real mixed case `mcp_tool_count` is essentially never 0. The previous
+    "tool_count == 0 and not_connected > 0" gate made this branch
+    unreachable in production; pinning it at (5, 1) -- a REAL reachable
+    state -- instead of the old (0, 2) case."""
     state = ConsoleInspectorState.from_values(
-        mcp_tool_count=0, mcp_not_connected_count=2,
+        mcp_tool_count=5, mcp_not_connected_count=1,
+    )
+    rows_by_label = {row.label: row for row in state.rows}
+    assert rows_by_label["MCP"].value == "1 server enabled, not connected"
+    assert rows_by_label["MCP"].status == "blocked"
+
+
+def test_console_inspector_state_shows_mcp_not_connected_row_plural():
+    state = ConsoleInspectorState.from_values(
+        mcp_tool_count=5, mcp_not_connected_count=2,
     )
     rows_by_label = {row.label: row for row in state.rows}
     assert rows_by_label["MCP"].value == "2 servers enabled, not connected"
