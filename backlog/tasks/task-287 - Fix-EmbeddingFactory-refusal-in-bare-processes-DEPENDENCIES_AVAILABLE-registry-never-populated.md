@@ -1,7 +1,7 @@
 ---
 id: TASK-287
 title: >-
-  Fix EmbeddingFactory refusal in bare processes — DEPENDENCIES_AVAILABLE
+  Fix EmbeddingFactory refusal in bare processes - DEPENDENCIES_AVAILABLE
   registry never populated
 status: To Do
 assignee: []
