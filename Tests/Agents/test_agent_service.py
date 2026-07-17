@@ -709,6 +709,28 @@ def test_native_endpoint_google_sends_tools_and_suppresses_fence(db):
     assert "tool_call" not in chat.calls[0]["messages_payload"][0]["content"]
 
 
+def test_native_endpoint_cohere_sends_tools_and_suppresses_fence(db):
+    """task-267: cohere is a real NATIVE_TOOLS_PROVIDERS member (flipped
+    after the 2026-07-17 live gate, Docs/superpowers/qa/cohere-native-
+    2026-07/) — the service sends native tools and suppresses the fence
+    protocol, mirroring the anthropic/google siblings above."""
+    service, chat = make_service(db, [
+        {"content": None,
+         "tool_calls": [native_call("calculator", {"expression": "2+2"},
+                                    "call_c1")]},
+        "4."])
+    _run_id, outcome = service.run_turn(
+        conversation_id="c", messages=[{"role": "user", "content": "2+2?"}],
+        config=CFG, api_endpoint="cohere", should_cancel=lambda: False)
+    assert outcome.status == RUN_DONE and outcome.final_text == "4."
+    first = chat.calls[0]
+    assert "tools" in first
+    assert "tool_call" not in first["messages_payload"][0]["content"]
+    tool_msg = [m for m in chat.calls[1]["messages_payload"]
+                if m.get("role") == "tool"][0]
+    assert tool_msg["tool_call_id"] == "call_c1"
+
+
 def test_native_endpoint_with_no_schemas_omits_tools_kwarg(db):
     """Review minor m3 (task-243 final review): a native-capable endpoint
     whose run has NO disclosable schemas (empty allow-list, no sub-agents)
