@@ -254,14 +254,29 @@ def test_load_schema_unknown_id_raises_key_error():
 
 
 # ---------------------------------------------------------------------------
-# apply_batch_decisions / consume_decision
+# apply_batch_decisions / stamped_decision
 # ---------------------------------------------------------------------------
 
-def test_apply_batch_decisions_then_consume_once():
+def test_apply_batch_decisions_then_stamped_decision_is_a_peek_not_a_pop():
+    # Finding F1: stamped_decision() must NOT consume the stamp -- every
+    # call sharing an llm_name within the same turn has to see the same
+    # verdict, so reading it twice must return the same value both times.
     provider = MCPToolProvider(service=FakeMCPService(), main_loop=asyncio.new_event_loop())
     provider.apply_batch_decisions({"mcp__srv__run": "deny"})
-    assert provider.consume_decision("mcp__srv__run") == "deny"
-    assert provider.consume_decision("mcp__srv__run") is None
+    assert provider.stamped_decision("mcp__srv__run") == "deny"
+    assert provider.stamped_decision("mcp__srv__run") == "deny"
+
+
+def test_apply_batch_decisions_replaces_rather_than_merges_prior_stamps():
+    # Finding F1: apply_batch_decisions is called once per turn (even with
+    # `{}` when nothing needed gating) specifically so a stamp from an
+    # earlier turn can never survive into a later one via a stale merge.
+    provider = MCPToolProvider(service=FakeMCPService(), main_loop=asyncio.new_event_loop())
+    provider.apply_batch_decisions({"mcp__srv__run": "approve_once"})
+    assert provider.stamped_decision("mcp__srv__run") == "approve_once"
+
+    provider.apply_batch_decisions({})  # next turn: nothing needed gating
+    assert provider.stamped_decision("mcp__srv__run") is None
 
 
 def test_compose_catalog_clears_stale_stamped_decisions():
@@ -276,11 +291,11 @@ def test_compose_catalog_clears_stale_stamped_decisions():
     # Stamp a bogus tool name not in the catalog.
     bogus_name = "mcp__srv__nonexistent"
     provider.apply_batch_decisions({bogus_name: "approve_once"})
-    assert provider.consume_decision(bogus_name) == "approve_once"
+    assert provider.stamped_decision(bogus_name) == "approve_once"
 
     # Recompose: stale decision should be cleared.
     _compose(provider)
-    assert provider.consume_decision(bogus_name) is None
+    assert provider.stamped_decision(bogus_name) is None
 
 
 # ---------------------------------------------------------------------------
@@ -596,7 +611,11 @@ def test_invoke_ask_callback_raises_returns_error_never_raises(running_loop):
 # invoke() -- stamped verdicts (T6's batch-review closure path)
 # ---------------------------------------------------------------------------
 
-def test_invoke_stamped_deny_wins_without_fresh_gate_call(running_loop):
+def test_invoke_stamped_deny_wins_for_every_call_this_turn_until_cleared(running_loop):
+    """F1: a stamped verdict is PEEKED, not popped -- every call this turn
+    sharing the tool id sees the same stamp. It only stops applying once
+    `apply_batch_decisions` is called again (T6's closure does this every
+    turn, even with `{}` when nothing needed gating)."""
     service = FakeMCPService(catalog_records=[_catalog_record("srv", [_tool_dict("run")])])
     provider = MCPToolProvider(service=service, main_loop=running_loop)
     _compose(provider)
@@ -609,12 +628,20 @@ def test_invoke_stamped_deny_wins_without_fresh_gate_call(running_loop):
     assert result.error == DENY_REFUSAL
     assert service.record_tool_decision_calls[-1][2] == "denied"
     assert service.execute_calls == []
-    # The stamp is consumed -- a second call (no new stamp) re-gates fresh
-    # and, with the default "ask" state and no callback, also fails closed
-    # (but now via the fresh-gate path, proven by a second decision record).
+
+    # Same turn, second call to the same tool -- the stamp is peeked, not
+    # popped, so it applies again without a fresh gate resolution.
     result2 = provider.invoke(tool_id, {})
     assert result2.ok is False
+    assert result2.error == DENY_REFUSAL
     assert len(service.record_tool_decision_calls) == 2
+
+    # Next turn: the closure clears the stamp set (even with `{}`) -- a
+    # further call now re-gates fresh instead of reusing the stale stamp.
+    provider.apply_batch_decisions({})
+    result3 = provider.invoke(tool_id, {})
+    assert result3.ok is False  # default "ask" state, no callback -> fail closed
+    assert len(service.record_tool_decision_calls) == 3
 
 
 def test_invoke_stamped_timeout_uses_exact_model_facing_copy(running_loop):
@@ -645,6 +672,32 @@ def test_invoke_stamped_approve_once_executes(running_loop):
     assert service.execute_calls[0][4] == "approved"
 
 
+def test_invoke_stamped_approve_once_applies_to_every_same_name_call_this_turn(running_loop):
+    """F1 (Qodo): a turn with TWO calls to the same llm_name must have
+    BOTH execute off the single batch verdict -- pre-fix, `consume_
+    decision` popped the stamp on first read, so only the first of two
+    same-name calls executed and the second silently re-gated (and, with
+    no approval_callback wired here, failed closed to deny instead)."""
+    service = FakeMCPService(catalog_records=[_catalog_record("srv", [_tool_dict("run")])])
+    provider = MCPToolProvider(service=service, main_loop=running_loop)
+    _compose(provider)
+    tool_id = provider.list_catalog()[0].id
+    # One batch-review round trip, one card, one verdict for both calls.
+    provider.apply_batch_decisions({tool_id: "approve_once"})
+
+    result1 = provider.invoke(tool_id, {"query": "first"})
+    result2 = provider.invoke(tool_id, {"query": "second"})
+
+    assert result1.ok is True
+    assert result2.ok is True
+    assert len(service.execute_calls) == 2
+    assert service.execute_calls[0][4] == "approved"
+    assert service.execute_calls[1][4] == "approved"
+    # Both calls left an "approved" audit record via execute_hub_tool's
+    # own decision arg -- no denied/re-gated record for the second call.
+    assert [c[4] for c in service.execute_calls] == ["approved", "approved"]
+
+
 # ---------------------------------------------------------------------------
 # invoke() -- execute-path failure modes (must never raise, never hang)
 # ---------------------------------------------------------------------------
@@ -671,6 +724,36 @@ def test_invoke_execute_timeout_returns_error_within_bound(running_loop):
     assert elapsed < 2.0, f"invoke() blocked for {elapsed:.2f}s -- must be bounded"
 
 
+def test_invoke_execute_timeout_still_records_an_audit_decision(running_loop):
+    """F2 (Qodo): a bridge failure around the control-plane coroutine
+    (here, `future.result(timeout=...)` timing out) previously left NO
+    record at all -- Audit/Findings mode must still see the call and why
+    it failed, not silently lose it."""
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])],
+        states={("local:srv", "run"): EffectiveToolState(state="allow", origin="tool_override")},
+        execute_delay=999,
+        tool_call_timeout=-4.9,
+    )
+    provider = MCPToolProvider(service=service, main_loop=running_loop)
+    _compose(provider)
+    tool_id = provider.list_catalog()[0].id
+
+    result = provider.invoke(tool_id, {})
+
+    assert result.ok is False
+    assert service.record_tool_decision_calls, (
+        "bridge execution failure left no audit record at all"
+    )
+    server_key, tool_name, recorded_decision, initiator, error = (
+        service.record_tool_decision_calls[-1]
+    )
+    assert (server_key, tool_name) == ("local:srv", "run")
+    assert recorded_decision == "allowed"  # the decision this call was authorized under
+    assert initiator == "agent"
+    assert error is not None and error.startswith("bridge execution failed:")
+
+
 def test_invoke_execute_exception_from_coroutine_returns_error(running_loop):
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])],
@@ -688,6 +771,12 @@ def test_invoke_execute_exception_from_coroutine_returns_error(running_loop):
 
 
 def test_invoke_execute_on_closed_loop_returns_error_never_raises():
+    """Also covers F3: a closed loop makes `run_coroutine_threadsafe`
+    raise BEFORE `future` is ever assigned -- the except path must not
+    NameError trying to `future.cancel()` an unbound name (guarded by
+    `future = None` up front). And covers F2: this submit-time failure
+    still leaves a best-effort audit record, same as a post-submit
+    timeout/exception does."""
     closed_loop = asyncio.new_event_loop()
     closed_loop.close()
     service = FakeMCPService(
@@ -702,6 +791,11 @@ def test_invoke_execute_on_closed_loop_returns_error_never_raises():
 
     assert result.ok is False
     assert result.error  # some message, whatever asyncio's exact wording is
+    assert service.record_tool_decision_calls, (
+        "a submit-time bridge failure (future never assigned) left no audit record"
+    )
+    error = service.record_tool_decision_calls[-1][4]
+    assert error is not None and error.startswith("bridge execution failed:")
 
 
 # ---------------------------------------------------------------------------

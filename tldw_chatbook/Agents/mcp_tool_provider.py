@@ -131,6 +131,19 @@ class MCPToolProvider:
         main_loop: asyncio.AbstractEventLoop,
         approval_callback: Callable[[list[MCPPendingCall]], dict[str, str]] | None = None,
     ) -> None:
+        """Build an uncomposed provider; call `compose_catalog()` before use.
+
+        Args:
+            service: The `UnifiedMCPControlPlaneService`-shaped object
+                this provider drives (see the module docstring for which
+                of its methods run cross-thread vs. directly).
+            main_loop: The running Textual main event loop `invoke()`'s
+                `_execute` submits `execute_hub_tool` coroutines onto.
+            approval_callback: `invoke()`'s single-call fallback gate for
+                an `"ask"`-state tool with no batch-review stamp (e.g. no
+                `review_tool_calls` hook was wired for this run). `None`
+                fails closed to deny.
+        """
         self._service = service
         self._main_loop = main_loop
         self._approval_callback = approval_callback
@@ -142,8 +155,12 @@ class MCPToolProvider:
         self._entry_by_llm_name: dict[str, tuple[HubTool, EffectiveToolState]] = {}
         self._not_connected_count = 0
         # Per-turn verdict stamps set by T6's batch-review closure via
-        # apply_batch_decisions(); consumed (popped) by invoke() on first
-        # read so an un-stamped later call always re-gates fresh.
+        # apply_batch_decisions(). PEEKED (not popped) by invoke() via
+        # stamped_decision() so every call sharing an llm_name within the
+        # SAME turn sees the same verdict (Finding F1) -- apply_batch_
+        # decisions() itself is what clears the previous turn's stamps
+        # (REPLACE semantics, called every turn including with `{}` by
+        # build_mcp_review_hook), not a per-read pop.
         self._stamped_decisions: dict[str, str] = {}
 
     # -- composition (main loop, once per registration) -------------------
@@ -227,9 +244,33 @@ class MCPToolProvider:
     # -- ToolProvider protocol (sync; cache reads only) --------------------
 
     def list_catalog(self) -> list[ToolCatalogEntry]:
+        """Return this run's composed tool catalog.
+
+        Returns:
+            The `ToolCatalogEntry` list built by the most recent
+            `compose_catalog()` call -- empty before composition has run,
+            or when the kill switch was on at that time.
+        """
         return list(self._catalog)
 
     def load_schema(self, tool_id: str) -> ToolSchema:
+        """Resolve one catalog entry's invocation schema.
+
+        Args:
+            tool_id: An LLM-facing tool id from `list_catalog()` (a
+                `ToolCatalogEntry.id`/`.name`), as produced by
+                `MCP.tool_naming.llm_tool_name`/`dedupe_names` at
+                composition time.
+
+        Returns:
+            The tool's `ToolSchema`, with `parameters` defaulted to an
+            empty JSON-object schema (`{"type": "object", "properties":
+            {}}`) when the underlying `HubTool` declared none.
+
+        Raises:
+            KeyError: `tool_id` is not present in the catalog built by
+                the most recent `compose_catalog()` call.
+        """
         entry = self._entry_by_llm_name.get(tool_id)
         if entry is None:
             raise KeyError(f"Unknown MCP tool id: {tool_id}")
@@ -242,13 +283,46 @@ class MCPToolProvider:
             parameters=parameters,
         )
 
-    # -- per-turn verdict stamps (set/consumed same-thread by T6's closure) -
+    # -- per-turn verdict stamps (set/read same-thread by T6's closure) ----
 
     def apply_batch_decisions(self, decisions: dict[str, str]) -> None:
-        self._stamped_decisions.update(decisions or {})
+        """Replace this turn's verdict stamps with `decisions`.
 
-    def consume_decision(self, llm_name: str) -> str | None:
-        return self._stamped_decisions.pop(llm_name, None)
+        REPLACE, not merge: any stamp left over from a prior turn is
+        always cleared first (Finding F1) -- `build_mcp_review_hook` calls
+        this exactly once per turn that has any tool calls at all,
+        including with `{}` when none of them needed gating, specifically
+        so a stale stamp can never survive into a later turn and be
+        misread by `invoke()`'s `stamped_decision()` peek as this turn's
+        verdict. Also cleared wholesale by `compose_catalog()` at
+        registration time (a different, coarser-grained clear for stale
+        catalogs, not a substitute for this per-turn one).
+
+        Args:
+            decisions: This turn's `{llm_name: verdict}` map, as returned
+                by the batch-approval round trip
+                (`ConsoleChatController.request_mcp_approvals`). Falsy
+                clears without setting anything new.
+        """
+        self._stamped_decisions = dict(decisions or {})
+
+    def stamped_decision(self, llm_name: str) -> str | None:
+        """Peek at this turn's stamped verdict for `llm_name`, if any.
+
+        Non-destructive on purpose (Finding F1): multiple calls to the
+        same tool within one turn must ALL observe the identical stamped
+        verdict, so reading here never removes it -- only
+        `apply_batch_decisions` (called once per turn) ever clears a
+        stamp.
+
+        Args:
+            llm_name: The LLM-facing tool id to look up.
+
+        Returns:
+            The stamped verdict string for `llm_name` this turn, or
+            `None` if it has no stamp.
+        """
+        return self._stamped_decisions.get(llm_name)
 
     # -- gate resolution for the batch-review hook (worker thread) --------
 
@@ -267,6 +341,18 @@ class MCPToolProvider:
         its `is_session_approved` short-circuit, so skipping the prompt
         here is exactly as correct as asking and having the user approve
         it again.
+
+        Args:
+            llm_name: The LLM-facing tool id to resolve, as reported on
+                the incoming `ToolCall.name`.
+            args: The tool call's raw arguments, copied verbatim into the
+                returned `MCPPendingCall.arguments` (never mutated).
+
+        Returns:
+            An `MCPPendingCall` describing what needs asking, or `None`
+            when `llm_name` is unknown to this provider, its resolved
+            state doesn't need asking (`"allow"`/`"deny"`), or it already
+            has a live session approval.
         """
         entry = self._entry_by_llm_name.get(llm_name)
         if entry is None:
@@ -297,13 +383,26 @@ class MCPToolProvider:
         Order: the kill switch is checked FIRST (Minor 5) and wins over
         everything else, including an already-stamped verdict from this
         turn's batch review. Absent a kill-switch refusal, a stamped
-        verdict from `consume_decision()` (set by T6's batch-review
-        closure earlier this turn) wins outright; absent a stamp, this
-        resolves a fresh gate itself (direct `gate_tool_test` call -- see
-        module docstring), a live session approval short-circuits an
-        `"ask"` state to execute (decision="approved"), and otherwise an
-        `"ask"` verdict falls back to `self._approval_callback` as a
-        single-call list (no callback -> fail closed to deny).
+        verdict from `stamped_decision()` (set by T6's batch-review
+        closure earlier this turn, PEEKED not popped -- Finding F1, so
+        every call sharing this turn's `tool_id` sees the same verdict)
+        wins outright; absent a stamp, this resolves a fresh gate itself
+        (direct `gate_tool_test` call -- see module docstring), a live
+        session approval short-circuits an `"ask"` state to execute
+        (decision="approved"), and otherwise an `"ask"` verdict falls back
+        to `self._approval_callback` as a single-call list (no callback ->
+        fail closed to deny).
+
+        Args:
+            tool_id: The LLM-facing tool id to invoke (a
+                `ToolCatalogEntry.id`/`.name`).
+            args: The tool call's raw arguments.
+
+        Returns:
+            A `ToolResult`: `ok=True` with the formatted, redacted,
+            length-capped result content on success; `ok=False` with a
+            length-capped, always-non-empty `error` on refusal or
+            failure. Never raises.
         """
         entry = self._entry_by_llm_name.get(tool_id)
         if entry is None:
@@ -320,7 +419,7 @@ class MCPToolProvider:
             self._record_decision_safe(tool, decision="denied")
             return ToolResult(ok=False, error=KILL_SWITCH_REFUSAL)
 
-        stamped = self.consume_decision(tool_id)
+        stamped = self.stamped_decision(tool_id)
         if stamped is not None:
             return self._apply_verdict(stamped, tool, call_args)
 
@@ -449,7 +548,21 @@ class MCPToolProvider:
         `concurrent.futures.TimeoutError`, or any exception the coroutine
         raised) is caught here and converted to a truncated error
         `ToolResult` -- this method must never propagate.
+
+        Args:
+            tool: The resolved `HubTool` to execute.
+            args: The call's arguments, passed through unchanged.
+            decision: The audit decision string this call was authorized
+                under (e.g. `"allowed"`/`"approved"`), forwarded to
+                `execute_hub_tool` and, on a bridge failure (Finding F2),
+                to the best-effort audit record below.
+
+        Returns:
+            A `ToolResult`: `ok=True` with the formatted result on
+            success; `ok=False` with a non-empty, length-capped `error`
+            on any failure. Never raises.
         """
+        future: asyncio.Future | None = None
         try:
             timeout = self._service._tool_call_timeout() + _RESULT_WAIT_SLACK_SECONDS
             future = asyncio.run_coroutine_threadsafe(
@@ -461,14 +574,27 @@ class MCPToolProvider:
             )
             raw_result = future.result(timeout=timeout)
         except Exception as exc:  # noqa: BLE001 -- the never-raise/never-hang contract
-            # Finding 2: best-effort cancel lingering future on timeout/cancellation.
-            try:
-                future.cancel()
-            except Exception:
-                pass
+            # Finding F3: `future` may still be unbound here if
+            # `run_coroutine_threadsafe` itself raised (e.g. a dead/closed
+            # loop) -- guard before cancelling rather than assuming the
+            # submit succeeded.
+            if future is not None:
+                # Finding 2: best-effort cancel lingering future on timeout/cancellation.
+                try:
+                    future.cancel()
+                except Exception:
+                    pass
             # Finding 1: TimeoutError/CancelledError have empty str(), so guarantee
             # non-empty error via (str(exc) or repr(exc)) so the model receives actual info.
             error = (str(exc) or repr(exc))[:_MAX_ERROR_CHARS]
+            # Finding F2: a bridge failure here (submit-time raise, or the
+            # bounded wait timing/erroring out) previously left NO audit
+            # trail at all -- best-effort record it now so Findings mode
+            # can still see the call happened and why it failed.
+            self._record_decision_safe(
+                tool, decision=decision,
+                error=f"bridge execution failed: {(str(exc) or repr(exc))[:200]}",
+            )
             return ToolResult(ok=False, error=error)
         return self._format_result(raw_result)
 

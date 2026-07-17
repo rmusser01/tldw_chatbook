@@ -82,7 +82,18 @@ def build_mcp_review_hook(
     needs asking, this makes exactly ONE `request_mcp_approvals` round
     trip for the whole batch (never one per call) and hands the resulting
     decisions to `provider.apply_batch_decisions` -- a per-turn stamp
-    `invoke()` consumes on its very next call for that name.
+    every same-named call `invoke()` makes THIS turn peeks (Finding F1:
+    never popped, so two calls to the same tool in one batch both see the
+    approval, not just the first).
+
+    Finding F1 also requires this hook to call
+    `provider.apply_batch_decisions` on EVERY invocation, even when
+    `pending` ends up empty (a turn whose calls are all non-MCP, or all
+    already resolved without asking) -- passing `{}` in that case.
+    `apply_batch_decisions` REPLACES the stamp set rather than merging, so
+    this is what guarantees a stamp from an earlier turn can never survive
+    into a later one and be misread as this turn's verdict for a
+    repeated tool name.
 
     Design choice (binding, per the Phase-5 plan): this hook never
     returns a refusal string itself. Every MCP call it stamped is left to
@@ -115,13 +126,18 @@ def build_mcp_review_hook(
         `AgentService(review_tool_calls=...)`.
     """
 
-    def review_tool_calls(calls: list) -> dict[str, str]:
-        pending: list = []
+    def review_tool_calls(calls: list["ToolCall"]) -> dict[str, str]:
+        pending: list["MCPPendingCall"] = []
         for call in calls:
             gate = provider.pending_gate_for(call.name, call.args)
             if gate is not None:
                 pending.append(gate)
         if not pending:
+            # Finding F1: still clear -- a stamp from an earlier turn must
+            # never survive into this one, even when nothing here needed
+            # asking (all non-MCP calls, or MCP calls already resolved
+            # without asking).
+            provider.apply_batch_decisions({})
             return {}
         decisions = request_mcp_approvals(pending)
         provider.apply_batch_decisions(decisions)
