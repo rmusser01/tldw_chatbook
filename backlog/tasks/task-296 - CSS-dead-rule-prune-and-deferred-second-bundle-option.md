@@ -36,7 +36,7 @@ The task-262 investigation (Docs/Design/2026-07-17-css-split-investigation.md) r
 
 Executed on branch `worktree-css-prune-296` (base `origin/dev` @ 1fd7a099). Audit
 script + full evidence artifact:
-`/private/tmp/claude-501/-Users-macbook-dev-Documents-GitHub-tldw-chatbook/3c226b20-7367-4bd0-90e6-a316764632a0/scratchpad/css-prune-296/`
+`the implementing session's scratchpad (css-prune-296/: audit.py, audit_results.json with per-token grep evidence, VERIFIED_DEAD_TOKENS.txt, prune.py, parse_probe.py, monolith_before.tcss). Methodology, reproducible from this note alone: a token was pruned only if (a) zero bare-substring hits in any tracked non-CSS file, (b) no hyphen-prefix of it is constructible from any .py string (f-string/concat check on the longest two prefix fragments), (c) not referenced by tests, (d) every comma-part of the containing rule is itself unmatchable`
 (`audit.py`, `audit_results.json` — per-token grep-absence evidence,
 `VERIFIED_DEAD_TOKENS.txt`, `prune.py`, `parse_probe.py`, `monolith_before.tcss`).
 
