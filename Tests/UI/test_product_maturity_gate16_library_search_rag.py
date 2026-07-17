@@ -744,17 +744,29 @@ async def test_library_search_rag_server_result_launches_server_console_live_wor
 
 
 @pytest.mark.asyncio
-async def test_library_search_rag_run_query_renders_persistent_recovery_without_service() -> None:
-    """RAG mode with no ``_rag_service`` on the app is blocked at the
-    query-readiness gate itself (``provider_ready``), never reaching the
-    retrieval service -- the provider gate added in L3a front-runs the
-    previous service-level "RAG unavailable" recovery for this scenario
-    (the retrieval service still double-guards internally for non-UI
-    callers, but the Run button is disabled before that code can run). The
-    default canvas mode is "search" (keyword, always available given
-    seeded local seams), so reaching this state requires explicitly
-    cycling to RAG mode first.
+async def test_library_search_rag_run_query_renders_persistent_recovery_without_service(
+    monkeypatch,
+) -> None:
+    """RAG mode without embeddings support runs the query and renders the
+    retrieval service's persistent "RAG unavailable" recovery state (task-249).
+
+    The L3a provider gate that pre-disabled Run when ``app._rag_service`` was
+    unset is retired: the runtime now initializes lazily at query time, so
+    the Run button stays enabled and the real production service
+    (``LibraryLocalRagSearchService``, wired by ``_build_test_app``'s real
+    ``TldwCli``) owns the recovery copy routing the user to setup. The deps
+    probe is pinned False so the lazy path never constructs a real embedding
+    runtime inside a UI test. The default canvas mode is "search" (keyword,
+    always available given seeded local seams), so reaching this state
+    requires explicitly cycling to RAG mode first.
     """
+    from tldw_chatbook.Library import library_local_rag_search_service
+
+    monkeypatch.setattr(
+        library_local_rag_search_service,
+        "embeddings_rag_deps_installed",
+        lambda: False,
+    )
     app = _build_test_app()
     _seed_library_sources(app)
     host = DestinationHarness(app, "library")
@@ -779,22 +791,19 @@ async def test_library_search_rag_run_query_renders_persistent_recovery_without_
             raise AssertionError("Mode toggle never switched to RAG Answer.")
 
         screen.query_one("#library-rag-query-input", Input).value = query
-        # `.value` lands on the widget synchronously, but the screen's own
-        # query state (and therefore the disabled reason) only catches up
-        # once the Input.Changed handler runs -- poll for the settled
-        # blocked reason rather than the transient "no query yet" one.
-        for _ in range(150):
-            if "provider/model before asking for a RAG answer" in _visible_text(screen):
-                break
-            await pilot.pause(0.02)
-        else:
-            raise AssertionError(
-                f"RAG mode never blocked Run without a provider. "
-                f"Visible text: {_visible_text(screen)}"
-            )
+        await _wait_for_query_ready(screen, pilot, query)
 
-        assert screen.query_one("#library-rag-run-query", Button).disabled is True
-        assert not screen.query("#library-rag-service-error")
+        run_button = screen.query_one("#library-rag-run-query", Button)
+        assert run_button.disabled is False
+
+        run_button.press()
+        await _wait_for_selector(screen, pilot, "#library-rag-service-error")
+
+        visible_text = _visible_text(screen)
+        assert "RAG unavailable" in visible_text
+        assert "Install embeddings support or switch mode to Search" in visible_text
+        # The display sanitizer HTML-escapes the recovery route's ">".
+        assert "Recovery: Settings &gt; RAG." in visible_text
 
 
 @pytest.mark.asyncio
