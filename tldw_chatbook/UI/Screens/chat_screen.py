@@ -3433,8 +3433,27 @@ class ChatScreen(BaseAppScreen):
                 if include_mode:
                     list_kwargs["mode"] = "local"
                 try:
-                    result = list_conversations(**list_kwargs)
-                    result = await result if inspect.isawaitable(result) else result
+                    if include_mode:
+                        # Routed through ChatConversationScopeService, which
+                        # already threads its own local-mode sync DB call
+                        # internally (B4/task-283) -- just await it.
+                        result = list_conversations(**list_kwargs)
+                        result = await result if inspect.isawaitable(result) else result
+                    else:
+                        # Raw ChatConversationService (scope_service.local_service
+                        # or app.local_chat_conversation_service): a plain sync
+                        # sqlite/FTS call that bypasses the scope service's own
+                        # threading. run_worker(coroutine) is not a thread, so
+                        # this used to block the event loop on every debounce
+                        # fire -- thread it directly, same is_memory_db guard as
+                        # ChatConversationScopeService._is_memory_backed (a
+                        # per-connection :memory: DB is only visible to the
+                        # thread that migrated it).
+                        db = getattr(service, "db", None)
+                        if bool(getattr(db, "is_memory_db", False)):
+                            result = list_conversations(**list_kwargs)
+                        else:
+                            result = await asyncio.to_thread(list_conversations, **list_kwargs)
                 except Exception as exc:
                     if (
                         isinstance(exc, ValueError)

@@ -2,6 +2,7 @@
 # Description:
 #
 # Imports
+import asyncio
 import json  # For export
 import logging
 import os
@@ -612,10 +613,119 @@ async def handle_ccp_right_delete_character_button_pressed(app: 'TldwCli', event
         app.notify(f"An unexpected error occurred while deleting: {type(e_unexp).__name__}. Check logs.", severity="error")
 
 
+def _compute_ccp_conversation_search_results(
+    db: Any,
+    *,
+    search_term: str,
+    keyword_search_term: str,
+    tag_search_term: str,
+    effective_character_id: Any,
+    include_char_chats: bool,
+    logger: Any,
+) -> List[Dict[str, Any]]:
+    """Synchronous leaf: run the CCP conversation search filters against the DB.
+
+    Isolated so it can run via ``asyncio.to_thread`` off the event loop
+    (B4/task-283) -- thread-local sqlite connections make this safe for a
+    real (file-backed) ChaChaNotes DB; the caller keeps a per-connection
+    ``:memory:`` DB inline instead of threading it.
+    """
+    # Base search - by title or get all
+    if not search_term:
+        # No search term - get conversations based on filters
+        if effective_character_id is not None:
+            # Specific character selected
+            logger.debug(f"CCP Search: All conversations for CharID {effective_character_id}")
+            conversations = db.get_conversations_for_character(
+                character_id=effective_character_id,
+                limit=200
+            )
+        else:
+            # All conversations
+            logger.debug("CCP Search: Getting all active conversations")
+            conversations = db.list_all_active_conversations(limit=200)
+    else:
+        # Search by title
+        logger.debug(f"CCP Search: Term '{search_term}', CharID {effective_character_id}")
+        conversations = db.search_conversations_by_title(
+            title_query=search_term,
+            character_id=effective_character_id,
+            limit=200
+        )
+
+    # Apply keyword/content search filter if provided
+    if keyword_search_term and conversations:
+        logger.debug(f"Applying keyword filter: '{keyword_search_term}'")
+        # Get conversation IDs that match the keyword search
+        keyword_matches = db.search_conversations_by_content(keyword_search_term, limit=200)
+        keyword_conv_ids = {match['id'] for match in keyword_matches}
+
+        # Filter conversations to only those that match keyword search
+        original_count = len(conversations)
+        conversations = [conv for conv in conversations if conv['id'] in keyword_conv_ids]
+        filtered_count = original_count - len(conversations)
+        if filtered_count > 0:
+            logger.debug(f"Keyword filter removed {filtered_count} conversations, keeping {len(conversations)}")
+
+    # Apply tag search filter if provided
+    if tag_search_term and conversations:
+        logger.debug(f"Applying tag filter: '{tag_search_term}'")
+        # Parse comma-separated tags
+        search_tags = [tag.strip() for tag in tag_search_term.split(',') if tag.strip()]
+
+        if search_tags:
+            # Get conversation IDs that have matching tags
+            matching_conv_ids = set()
+
+            for tag in search_tags:
+                # Search for keywords matching the tag
+                keyword_results = db.search_keywords(tag, limit=10)
+
+                # For each matching keyword, get conversations
+                for keyword in keyword_results:
+                    keyword_id = keyword['id']
+                    tag_conversations = db.get_conversations_for_keyword(keyword_id, limit=200)
+
+                    # Add conversation IDs to our set
+                    for conv in tag_conversations:
+                        matching_conv_ids.add(conv['id'])
+
+            # Filter conversations to only those that have matching tags
+            original_count = len(conversations)
+            conversations = [conv for conv in conversations if conv['id'] in matching_conv_ids]
+            filtered_count = original_count - len(conversations)
+            if filtered_count > 0:
+                logger.debug(f"Tag filter removed {filtered_count} conversations, keeping {len(conversations)}")
+
+    # Apply character chat filter if needed
+    if not include_char_chats and conversations:
+        # Filter out character chats - keep only regular chats (no character_id or DEFAULT_CHARACTER_ID)
+        original_count = len(conversations)
+        # Use the already imported ccl (Character_Chat_Lib) for DEFAULT_CHARACTER_ID
+        conversations = [conv for conv in conversations
+                       if conv.get('character_id') == ccl.DEFAULT_CHARACTER_ID or conv.get('character_id') is None]
+        filtered_count = original_count - len(conversations)
+        if filtered_count > 0:
+            logger.debug(f"Character chat filter removed {filtered_count} conversations")
+
+    return conversations
+
+
 async def perform_ccp_conversation_search(app: 'TldwCli') -> None:
-    """Performs conversation search for the CCP tab with enhanced capabilities."""
+    """Performs conversation search for the CCP tab with enhanced capabilities.
+
+    Args:
+        app: The running TldwCli app instance whose CCP widgets are queried
+            and populated.
+    """
     logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.debug("Performing CCP conversation search...")
+    # task-283 (B4): staleness generation -- the DB work below now runs via
+    # asyncio.to_thread, which the 0.5s debounce timer cannot cancel
+    # mid-flight, so a slower older search could otherwise overwrite a
+    # newer one's results.
+    generation = getattr(app, "_ccp_conversation_search_generation", 0) + 1
+    app._ccp_conversation_search_generation = generation
     try:
         # Get all search inputs
         search_input = app.query_one("#conv-char-search-input", Input)
@@ -668,89 +778,46 @@ async def perform_ccp_conversation_search(app: 'TldwCli') -> None:
             return
 
         db = app.notes_service._get_db(app.notes_user_id)
-        conversations: List[Dict[str, Any]] = []
-        
+
         # Determine effective character filter
         # If "All Characters" is checked, ignore specific character selection
         effective_character_id = None if all_characters else selected_character_id
 
-        # Base search - by title or get all
-        if not search_term:
-            # No search term - get conversations based on filters
-            if effective_character_id is not None:
-                # Specific character selected
-                logger.debug(f"CCP Search: All conversations for CharID {effective_character_id}")
-                conversations = db.get_conversations_for_character(
-                    character_id=effective_character_id,
-                    limit=200
-                )
-            else:
-                # All conversations
-                logger.debug("CCP Search: Getting all active conversations")
-                conversations = db.list_all_active_conversations(limit=200)
-        else:
-            # Search by title
-            logger.debug(f"CCP Search: Term '{search_term}', CharID {effective_character_id}")
-            conversations = db.search_conversations_by_title(
-                title_query=search_term,
-                character_id=effective_character_id,
-                limit=200
+        # B4 (task-283): the filter cascade below is a plain sync
+        # sqlite/FTS leaf (perform_ccp_conversation_search is a coroutine,
+        # but nothing inside it used to yield to the event loop). Thread it
+        # off the loop unless the DB is a per-connection :memory: store
+        # (thread-local hazard -- only the thread that migrated the schema
+        # can see it).
+        if bool(getattr(db, "is_memory_db", False)):
+            conversations = _compute_ccp_conversation_search_results(
+                db,
+                search_term=search_term,
+                keyword_search_term=keyword_search_term,
+                tag_search_term=tag_search_term,
+                effective_character_id=effective_character_id,
+                include_char_chats=include_char_chats,
+                logger=logger,
             )
-        
-        # Apply keyword/content search filter if provided
-        if keyword_search_term and conversations:
-            logger.debug(f"Applying keyword filter: '{keyword_search_term}'")
-            # Get conversation IDs that match the keyword search
-            keyword_matches = db.search_conversations_by_content(keyword_search_term, limit=200)
-            keyword_conv_ids = {match['id'] for match in keyword_matches}
-            
-            # Filter conversations to only those that match keyword search
-            original_count = len(conversations)
-            conversations = [conv for conv in conversations if conv['id'] in keyword_conv_ids]
-            filtered_count = original_count - len(conversations)
-            if filtered_count > 0:
-                logger.debug(f"Keyword filter removed {filtered_count} conversations, keeping {len(conversations)}")
-        
-        # Apply tag search filter if provided
-        if tag_search_term and conversations:
-            logger.debug(f"Applying tag filter: '{tag_search_term}'")
-            # Parse comma-separated tags
-            search_tags = [tag.strip() for tag in tag_search_term.split(',') if tag.strip()]
-            
-            if search_tags:
-                # Get conversation IDs that have matching tags
-                matching_conv_ids = set()
-                
-                for tag in search_tags:
-                    # Search for keywords matching the tag
-                    keyword_results = db.search_keywords(tag, limit=10)
-                    
-                    # For each matching keyword, get conversations
-                    for keyword in keyword_results:
-                        keyword_id = keyword['id']
-                        tag_conversations = db.get_conversations_for_keyword(keyword_id, limit=200)
-                        
-                        # Add conversation IDs to our set
-                        for conv in tag_conversations:
-                            matching_conv_ids.add(conv['id'])
-                
-                # Filter conversations to only those that have matching tags
-                original_count = len(conversations)
-                conversations = [conv for conv in conversations if conv['id'] in matching_conv_ids]
-                filtered_count = original_count - len(conversations)
-                if filtered_count > 0:
-                    logger.debug(f"Tag filter removed {filtered_count} conversations, keeping {len(conversations)}")
-        
-        # Apply character chat filter if needed
-        if not include_char_chats and conversations:
-            # Filter out character chats - keep only regular chats (no character_id or DEFAULT_CHARACTER_ID)
-            original_count = len(conversations)
-            # Use the already imported ccl (Character_Chat_Lib) for DEFAULT_CHARACTER_ID
-            conversations = [conv for conv in conversations 
-                           if conv.get('character_id') == ccl.DEFAULT_CHARACTER_ID or conv.get('character_id') is None]
-            filtered_count = original_count - len(conversations)
-            if filtered_count > 0:
-                logger.debug(f"Character chat filter removed {filtered_count} conversations")
+        else:
+            conversations = await asyncio.to_thread(
+                _compute_ccp_conversation_search_results,
+                db,
+                search_term=search_term,
+                keyword_search_term=keyword_search_term,
+                tag_search_term=tag_search_term,
+                effective_character_id=effective_character_id,
+                include_char_chats=include_char_chats,
+                logger=logger,
+            )
+
+        if generation != getattr(app, "_ccp_conversation_search_generation", None):
+            # A newer search started while this one was in flight -- an
+            # exclusive debounce timer can't cancel a thread mid-call, so
+            # discard these now-stale results instead of clobbering the
+            # newer search's output.
+            logger.debug("Discarding stale CCP conversation search results.")
+            return
 
         if not conversations:
             msg = "Enter search term or select a character." if not search_term and not selected_character_id else "No items found matching your criteria."

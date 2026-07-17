@@ -2339,6 +2339,14 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     current_loaded_media_item: reactive[Optional[Dict[str, Any]]] = reactive(None)
     _media_search_timers: Dict[str, Timer] = {}  # For debouncing per media type
     _media_sidebar_search_timer: Optional[Timer] = None # For chat sidebar media search debouncing
+    # task-283 (B4): per-type_slug staleness generation, incremented each time a
+    # debounced media search starts; the DB call now runs via asyncio.to_thread,
+    # which an exclusive worker/timer cannot cancel mid-flight, so this guards
+    # against an older, slower search overwriting a newer one's results.
+    # Annotation only -- the dict is created per-instance in __init__ because a
+    # class-level {} would be mutated in place and shared across TldwCli
+    # instances in one process (PR #683 review).
+    _media_search_generation: Dict[str, int]
 
     # Add media_types_for_ui to store fetched types
     media_types_for_ui: List[str] = []
@@ -2386,6 +2394,10 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
 
     # De-Bouncers
     _conv_char_search_timer: Optional[Timer] = None
+    # task-283 (B4): staleness generation for the CCP conversation search --
+    # see _media_search_generation for why this is needed now that the DB
+    # work runs via asyncio.to_thread.
+    _ccp_conversation_search_generation: int = 0
     _conversation_search_timer: Optional[Timer] = None
     _notes_search_timer: Optional[Timer] = None
     _chat_sidebar_prompt_search_timer: Optional[Timer] = None # New timer
@@ -2413,6 +2425,9 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         
         # Tab switching optimization
         self._initialized_tabs = set()  # Track which tabs have been initialized
+
+        # task-283 (B4): per-instance -- see the class-level annotation.
+        self._media_search_generation = {}
         
         # Reduce logging in production
         if not os.environ.get("TLDW_DEBUG"):
@@ -2859,6 +2874,14 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 target_id=target_id,
                 target_route=target_route,
             )
+        # B3 (task-282): approve/reject/pause/resume/retry can change the
+        # watchlist-run/notification state the adapter's short-TTL cache
+        # holds -- invalidate so the next Home read is not stale for up to
+        # the TTL window. Defensive getattr: the honest-unavailable adapter
+        # and test doubles don't implement this hook.
+        invalidate_cache = getattr(adapter, "invalidate_active_work_cache", None)
+        if callable(invalidate_cache):
+            invalidate_cache()
         self.notify(result.message, severity=result.severity)
         return result
 
