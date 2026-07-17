@@ -10,6 +10,8 @@ from loguru import logger
 
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..STTS_Window import STTSWindow
+from ..Workbench.workbench_state import WorkbenchHeaderState
+from ..Workbench.workbench_widgets import DestinationHeader
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -28,9 +30,19 @@ class STTSScreen(BaseAppScreen):
         self.stts_window: Optional[STTSWindow] = None
     
     def compose_content(self) -> ComposeResult:
-        """Compose the STTS screen with the STTS window."""
+        """Compose the STTS screen with the STTS window and its destination header."""
         logger.info("Composing STTS screen")
+        yield DestinationHeader(
+            WorkbenchHeaderState(
+                title="Speech",
+                subtitle="Speech-to-text and text-to-speech tools.",
+                status="ready",
+            ),
+            id="stts-destination-header",
+        )
         self.stts_window = STTSWindow(self.app_instance, classes="window")
+        # Leave room for the destination header above the window.
+        self.stts_window.styles.height = "1fr"
         yield self.stts_window
     
     async def on_mount(self) -> None:

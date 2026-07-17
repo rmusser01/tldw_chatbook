@@ -4380,9 +4380,11 @@ class LibraryScreen(BaseAppScreen):
         ``dependency_info``, ``registry_recorded``.
         """
         try:
-            export_result = asyncio.run(service.export_chatbook(
-                payload, progress_callback=progress_callback, cancel_check=cancel_check,
-            ))
+            export_result = asyncio.run(  # policy-exception: worker-thread loop
+                service.export_chatbook(
+                    payload, progress_callback=progress_callback, cancel_check=cancel_check,
+                )
+            )
         except Exception as exc:
             logger.opt(exception=True).warning("Library export service call failed.")
             return {
@@ -4408,7 +4410,7 @@ class LibraryScreen(BaseAppScreen):
         dependency_info = export_result.get("dependency_info") or {}
         registry_recorded = False
         try:
-            asyncio.run(
+            asyncio.run(  # policy-exception: worker-thread loop
                 service.create_chatbook(
                     name=name,
                     description=description,

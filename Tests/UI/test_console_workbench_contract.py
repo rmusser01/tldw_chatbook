@@ -1,6 +1,7 @@
 import pytest
 from textual.app import App, ComposeResult
 from textual.containers import Vertical
+from textual.widgets import Static
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunState, ConsoleRunStatus
@@ -173,7 +174,7 @@ def _control_state() -> ConsoleControlState:
 
 
 @pytest.mark.asyncio
-async def test_console_workbench_header_seam_has_no_visible_layout_cost():
+async def test_console_workbench_header_is_the_visible_destination_identity():
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
@@ -182,12 +183,17 @@ async def test_console_workbench_header_seam_has_no_visible_layout_cost():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-shell")
 
+        # The DestinationHeader is the visible Console identity header; the
+        # mode strip and command strip remain hidden parity seams, and the
+        # legacy #console-title/#console-purpose compat statics stay hidden.
         header = console.query_one("#console-workbench-header")
-        assert not _is_displayed(header)
-        assert _style_scalar_value(header.styles.height) == 0
-        assert _style_scalar_value(header.styles.min_height) == 0
+        assert _is_displayed(header)
+        assert "Console" in _widget_text(console.query_one("#workbench-header-title", Static))
+        assert _widget_text(console.query_one("#workbench-header-subtitle", Static))
+        assert _widget_text(console.query_one("#workbench-header-status", Static))
         assert not _is_displayed(console.query_one("#console-workbench-mode-strip"))
         assert not _is_displayed(console.query_one("#console-workbench-command-strip"))
+        assert not _is_displayed(console.query_one("#console-title"))
         assert _is_displayed(console.query_one("#console-control-bar"))
 
 

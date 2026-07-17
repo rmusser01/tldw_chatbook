@@ -111,8 +111,8 @@ async def test_nielsen_closeout_replays_core_heuristic_signals_in_running_app() 
             )
             library_text = _screen_text(app)
             assert "Library" in library_text
-            assert "Import/Export Sources" in library_text
-            assert "Search/RAG" in library_text
+            assert "Import / Export" in library_text
+            assert "Search / RAG" in library_text
 
             app.screen.query_one("#nav-settings", Button).press()
             await _wait_until(

@@ -196,7 +196,10 @@ async def test_phase6_recovery_copy_is_visible_in_running_app(
             )
             mcp_text = _screen_text(app)
             assert "Manage MCP servers, scoped tools, permissions, and audit readiness." in mcp_text
-            assert "Select Section: Inventory to inspect runnable MCP tools." in mcp_text
+            # The legacy panel's "Select Section: Inventory ..." line was
+            # retired with the MCP Hub workbench; the Unified MCP Overview
+            # section's next-step line is the surviving guidance copy.
+            assert "Next: select Inventory to inspect tools and actions." in mcp_text
 
             await app.handle_screen_navigation(NavigateToScreen("library"))
             await _wait_until(
@@ -209,4 +212,8 @@ async def test_phase6_recovery_copy_is_visible_in_running_app(
             )
             library_text = _screen_text(app)
             assert "Library source services unavailable; retry Library later." in library_text
-            assert "No source selected." in library_text
+            # The retired inspector pane's "No source selected." placeholder
+            # went away with the legacy workbench chrome; the shell canvas
+            # landing copy is the surviving empty/no-source cue (design: the
+            # canvas empty state carries the landing-page guidance).
+            assert "Search, pick a content type, or ingest something new." in library_text

@@ -151,9 +151,10 @@ class TestWorkbenchShell:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
-            title = screen.query_one("#personas-title", Static)
+            header = screen.query_one("#personas-header")
+            assert "ds-destination-header" in header.classes
+            title = screen.query_one("#personas-header #workbench-header-title", Static)
             assert "Roleplay" in str(title.renderable)
-            assert "ds-destination-header" in title.classes
             assert screen.query_one("#personas-mode-strip")
             assert screen.query_one("#personas-library-pane")
             assert screen.query_one("#personas-work-area")
@@ -423,13 +424,16 @@ class TestWorkbenchShell:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
-            assert str(screen.query_one("#personas-title", Static).renderable).startswith("Roleplay")
+            title = screen.query_one("#personas-header #workbench-header-title", Static)
+            assert str(title.renderable).startswith("Roleplay")
+            status = screen.query_one("#personas-header #workbench-header-status", Static)
+            assert str(status.renderable) == "Ready"
             # dynamic suffix still appends in create mode
             screen._edit_mode = "create"
             screen._update_title()
             await pilot.pause()
-            title = str(screen.query_one("#personas-title", Static).renderable)
-            assert title.startswith("Roleplay") and "New character" in title
+            subtitle = str(screen.query_one("#personas-header #workbench-header-subtitle", Static).renderable)
+            assert "New character" in subtitle
 
     async def test_purpose_shows_active_mode_descriptor_and_updates_on_switch(self, mock_app_instance, stub_characters):
         app = PersonasTestApp(mock_app_instance)
@@ -2392,7 +2396,7 @@ class TestConsoleActions:
 
             screen._console_action_allowed = lambda: False
             screen._console_action_block_reason = lambda: "prompts are not attachable"
-            screen._register_footer_shortcuts()
+            screen._sync_title_and_console_actions()
             await pilot.pause()
 
             assert screen.query_one("#personas-attach-to-console", Button).disabled is True
@@ -2633,19 +2637,13 @@ class TestConsoleActions:
     async def test_footer_shortcut_attach_available(
         self, mock_app_instance, stub_characters, stub_conversations
     ):
-        """The attach hint is truthful: available only with a saved selection."""
+        """The attach action is truthful: allowed only with a saved selection."""
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await _mounted(pilot)
-            context = screen._shortcut_context()
-            attach = next(a for a in context.actions if a.label == "attach")
-            assert attach.key == "ctrl+enter"
-            assert attach.available is False  # nothing selected yet
+            assert screen._console_action_allowed() is False  # nothing selected yet
             await self._select_first_character(pilot)
-            attach = next(
-                a for a in screen._shortcut_context().actions if a.label == "attach"
-            )
-            assert attach.available is True
+            assert screen._console_action_allowed() is True
 
 
 class _FakePreviewGateway:
@@ -3892,10 +3890,15 @@ class TestKeyboardInteraction:
     async def test_footer_save_hint_flips_with_edit_mode(
         self, mock_app_instance, stub_characters
     ):
+        # ctrl+s stays hidden in the native Footer; edit-mode transitions still
+        # gate whether saving is meaningful (no-op in view mode).
+        bindings_by_key = {binding.key: binding for binding in PersonasScreen.BINDINGS}
+        assert bindings_by_key["ctrl+s"].show is False
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
+            assert screen._edit_mode == "view"
 
             def _save_action(context):
                 return next(a for a in context.actions if a.label == "save")
@@ -3903,6 +3906,7 @@ class TestKeyboardInteraction:
             assert _save_action(screen._shortcut_context()).available is False
             await pilot.press("ctrl+n")
             await pilot.pause()
+            assert screen._edit_mode == "create"
             assert _save_action(screen._shortcut_context()).available is True
             # The footer was re-registered on the transition.
             # task-264: the registration lands on the SCREEN's own footer,
@@ -3918,6 +3922,7 @@ class TestKeyboardInteraction:
             # A pristine create session cancels without the discard dialog
             # (change-based dirty tracking).
             assert confirms == []
+            assert screen._edit_mode == "view"
             assert _save_action(screen._shortcut_context()).available is False
             assert "ctrl+s save unavailable" in footer.shortcut_text
 
@@ -4122,22 +4127,21 @@ class TestDirtyTracking:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._edit_first_character(pilot)
-            title = screen.query_one("#personas-title", Static)
-            text = str(title.renderable)
+            subtitle = screen.query_one("#personas-header #workbench-header-subtitle", Static)
+            text = str(subtitle.renderable)
             assert "Editing Detective Sam" in text
             assert "unsaved" not in text
             await self._type_in_description(pilot, screen)
-            assert "Editing Detective Sam - unsaved" in str(title.renderable)
+            assert "Editing Detective Sam - unsaved" in str(subtitle.renderable)
             await pilot.press("ctrl+s")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
-            # Back to Ready; "Local" stays out of the title (the status row
-            # already carries "Source: Local").
-            assert (
-                str(title.renderable)
-                == "Roleplay | Author the pieces that shape a chat | Ready"
-            )
+            # Back to the purpose line; "Local" stays out of the header (the
+            # status row already carries "Source: Local").
+            assert str(subtitle.renderable) == "Author the pieces that shape a chat"
+            title = screen.query_one("#personas-header #workbench-header-title", Static)
+            assert str(title.renderable) == "Roleplay"
 
     async def test_active_row_gets_unsaved_badge(
         self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
@@ -4178,10 +4182,10 @@ class TestDirtyTracking:
             assert screen.state.selected_entity_id == "2"
             assert not screen.query(".personas-library-row.is-unsaved")
 
-    async def test_import_reregisters_footer(
+    async def test_import_refreshes_attach_action(
         self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
     ):
-        """UX-E2 carryover: import-selection must refresh the attach hint."""
+        """UX-E2 carryover: import-selection must enable the attach action."""
         monkeypatch.setattr(
             character_handler_module, "import_character_card", lambda path: 1
         )
@@ -4189,6 +4193,7 @@ class TestDirtyTracking:
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
+            assert screen._console_action_allowed() is False  # no prior selection
             attach = next(
                 a for a in screen._shortcut_context().actions if a.label == "attach"
             )
@@ -4201,12 +4206,7 @@ class TestDirtyTracking:
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
-            attach = next(
-                a for a in screen._shortcut_context().actions if a.label == "attach"
-            )
-            assert attach.available is True
-            assert "ctrl+enter attach unavailable" not in footer.shortcut_text
-            assert "ctrl+enter attach" in footer.shortcut_text
+            assert screen._console_action_allowed() is True
 
 
 class TestConfirmationDialogEscape:

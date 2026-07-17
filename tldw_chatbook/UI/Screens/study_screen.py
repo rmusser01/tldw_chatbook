@@ -14,6 +14,7 @@ from rich.markup import escape as escape_markup
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.widgets import Button
 
@@ -21,6 +22,8 @@ from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Study_Window import StudyWindow
+from ..Workbench.workbench_state import WorkbenchHeaderState
+from ..Workbench.workbench_widgets import DestinationHeader
 from ...Widgets.Study import QuizSessionWidget, StudyDashboard
 from ...Widgets.Study.quiz_session_widget import (
     QUIZ_REVIEW_ENABLED_TOOLTIP,
@@ -117,6 +120,14 @@ class StudyScreen(BaseAppScreen):
         self.study_window_widget.display = False
 
         with Vertical(id="study-shell"):
+            yield DestinationHeader(
+                WorkbenchHeaderState(
+                    title="Study",
+                    subtitle="Flashcards, quizzes, and study sessions.",
+                    status="ready",
+                ),
+                id="study-destination-header",
+            )
             with Horizontal(id="study-section-bar"):
                 yield Button(
                     "Dashboard",
@@ -889,8 +900,15 @@ class StudyScreen(BaseAppScreen):
         )
 
     def sync_shell_from_window(self) -> None:
-        self._sync_dashboard_widgets()
-        self._sync_quiz_session_widget()
+        try:
+            self._sync_dashboard_widgets()
+            self._sync_quiz_session_widget()
+        except NoMatches:
+            # is_mounted flips True before a widget's compose children are
+            # queryable, so a sync racing the initial mount can query nodes
+            # that do not exist yet. The updates are idempotent; retry once
+            # the DOM has settled instead of crashing the caller's worker.
+            self.call_after_refresh(self.sync_shell_from_window)
 
     async def _refresh_dashboard_snapshot(self) -> None:
         if self.scope_state.scope_type == StudyScopeType.WORKSPACE and self.scope_state.error_message:

@@ -251,12 +251,12 @@ class EvalNavigationScreen(Screen):
         ]
 
     def compose(self) -> ComposeResult:
-        """Compose the navigation screen."""
-        # Header with title
-        with Container(classes="nav-header"):
-            yield Static("🧪 Evaluation Lab", classes="nav-title")
-            yield Static("Choose an evaluation workflow", classes="nav-subtitle")
+        """Compose the navigation screen.
 
+        No internal title block: the shell's DestinationHeader already carries
+        the destination identity, so the hub goes straight to the workflow
+        cards (de-duplicated, emoji marketing header removed per DESIGN.md).
+        """
         # Main content with cards
         with Container(classes="cards-container"):
             with Grid(classes="cards-grid"):

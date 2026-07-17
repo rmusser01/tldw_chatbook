@@ -6,6 +6,8 @@ from textual.app import ComposeResult
 
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..LLM_Management_Window import LLMManagementWindow
+from ..Workbench.workbench_state import WorkbenchHeaderState
+from ..Workbench.workbench_widgets import DestinationHeader
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -21,8 +23,18 @@ class LLMScreen(BaseAppScreen):
         self.llm_window = None
     
     def compose_content(self) -> ComposeResult:
-        """Compose the LLM management window content."""
+        """Compose the LLM management window content with its destination header."""
+        yield DestinationHeader(
+            WorkbenchHeaderState(
+                title="Models",
+                subtitle="Manage providers, models, and endpoints.",
+                status="ready",
+            ),
+            id="llm-destination-header",
+        )
         self.llm_window = LLMManagementWindow(self.app_instance, classes="window")
+        # Leave room for the destination header above the window.
+        self.llm_window.styles.height = "1fr"
         # Yield the window widget directly
         yield self.llm_window
     

@@ -173,7 +173,6 @@ def test_footer_status_scheduling_records_stable_timer_names():
         set_interval=lambda interval, callback: scheduled_periodic.append(
             ("token", interval, callback)
         ),
-        _db_size_status_widget=None,
         _token_count_update_timer=None,
     )
 
@@ -250,7 +249,8 @@ async def test_console_sync_records_worker_lifecycle():
 
     screen._sync_console_chat_core_state = assert_worker_active
     screen._sync_console_session_draft = lambda: None
-    screen._sync_console_control_bar = lambda: None
+    screen._refresh_active_dictionaries_summary_if_scope_changed = async_noop
+    screen._sync_console_control_bar = lambda _rail_state: None
     screen._sync_console_settings_summary = lambda: None
     screen._sync_console_mode_bar = lambda: None
     screen._sync_console_native_session_tabs = async_noop
@@ -258,6 +258,7 @@ async def test_console_sync_records_worker_lifecycle():
     screen._sync_native_console_transcript_to_legacy_surface = async_noop
     screen._sync_console_rail_visibility = lambda _state: None
     screen._current_console_rail_state = lambda: object()
+    screen._dispatch_console_rail_preference_prune = lambda: None
 
     await ChatScreen._sync_native_console_chat_ui(screen)
 

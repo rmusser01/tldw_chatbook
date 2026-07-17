@@ -521,7 +521,15 @@ async def test_library_source_snapshot_times_out_to_stable_error(monkeypatch):
     )
     elapsed = time.perf_counter() - start
 
-    assert records == {"notes": (), "media": (), "conversations": ()}
+    assert records == {
+        "notes": (),
+        "media": (),
+        "conversations": (),
+        # The prompts and skills seams carry (count, payload) placeholders,
+        # not bare records tuples (see LibraryScreen.__init__).
+        "prompts": (None, ()),
+        "skills": (None, {"available_skills": [], "blocked_skills": []}),
+    }
     assert counts == {"notes": 0, "media": 0, "conversations": 0}
     assert total_known == {"notes": True, "media": True, "conversations": True}
     assert error == library_screen_module.LIBRARY_SERVICE_ERROR_COPY
@@ -567,7 +575,15 @@ async def test_library_source_snapshot_timeout_handles_blocking_async_services(m
     )
     elapsed = time.perf_counter() - start
 
-    assert records == {"notes": (), "media": (), "conversations": ()}
+    assert records == {
+        "notes": (),
+        "media": (),
+        "conversations": (),
+        # The prompts and skills seams carry (count, payload) placeholders,
+        # not bare records tuples (see LibraryScreen.__init__).
+        "prompts": (None, ()),
+        "skills": (None, {"available_skills": [], "blocked_skills": []}),
+    }
     assert counts == {"notes": 0, "media": 0, "conversations": 0}
     assert total_known == {"notes": True, "media": True, "conversations": True}
     assert error == library_screen_module.LIBRARY_SERVICE_ERROR_COPY
@@ -1564,7 +1580,7 @@ COMPACT_DESTINATION_CONTRACTS = {
         "actions": ("#home-primary-action", "#home-open-details", "#home-open-chatbook-details"),
     },
     "chat": {
-        "identity": "#console-title",
+        "identity": "#console-workbench-header",
         "workbench": "#console-workspace-grid",
         "object": "#console-left-rail",
         "detail": "#console-session-surface",
@@ -1600,7 +1616,7 @@ COMPACT_DESTINATION_CONTRACTS = {
         ),
     },
     "personas": {
-        "identity": "#personas-title",
+        "identity": "#personas-header",
         "workbench": "#personas-workbench",
         "object": "#personas-library-pane",
         "detail": "#personas-work-area",

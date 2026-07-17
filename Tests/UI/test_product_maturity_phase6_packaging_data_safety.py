@@ -100,7 +100,10 @@ def test_phase6_packaging_config_and_data_safety_source_seams_are_present() -> N
     assert project["requires-python"] == ">=3.11"
     assert "textual>=3.3.0" in project["dependencies"]
     assert "tldw-cli" in project["scripts"]
-    assert project["scripts"]["tldw-cli"] == "tldw_chatbook.app:main_cli_runner"
+    # The supported launcher is the lightweight shim in cli.py (it defers the
+    # heavy app import until invocation); app:main_cli_runner remains the
+    # underlying runner the shim delegates to.
+    assert project["scripts"]["tldw-cli"] == "tldw_chatbook.cli:main_cli_runner"
     assert "tldw-serve" in project["scripts"]
     assert project["scripts"]["tldw-serve"] == "tldw_chatbook.Web_Server.serve:main"
     for extra in ("dev", "embeddings_rag", "mcp", "web"):

@@ -50,7 +50,7 @@ async def test_master_shell_navigation_order_and_labels():
         ("nav-workflows", "Workflows"),
         ("nav-mcp", "MCP"),
         ("nav-acp", "ACP"),
-        ("nav-skills", "Skills"),
+        ("nav-lab", "Lab"),
         ("nav-settings", "Settings"),
     ]
 
@@ -170,3 +170,52 @@ async def test_every_visible_master_shell_nav_destination_resolves():
     for destination in SHELL_DESTINATION_ORDER:
         _screen_name, _tab_id, screen_class = app._resolve_screen_navigation_target(destination.primary_route)
         assert screen_class is not None, destination.primary_route
+
+
+def test_folded_routes_highlight_owning_destination():
+    folded = {
+        "search": ("library", "search"),
+        "media": ("library", "media"),
+        "study": ("library", "study"),
+        "writing": ("library", "writing"),
+        "research": ("library", "research"),
+        "ingest": ("library", "ingest"),
+        "llm": ("lab", "llm"),
+        "stts": ("lab", "stts"),
+        "evals": ("lab", "evals"),
+        "logs": ("settings", "logs"),
+        "stats": ("settings", "stats"),
+        "customize": ("settings", "customize"),
+        # The retired Coding screen folds into Console.
+        "coding": ("console", "chat"),
+    }
+
+    for route, (destination_id, canonical_route) in folded.items():
+        nav = MainNavigationBar(active=route)
+        assert nav.active_destination_id == destination_id, route
+        assert nav.active_route == canonical_route, route
+
+
+@pytest.mark.asyncio
+async def test_folded_screen_boxes_owning_destination_button():
+    class TestApp(App):
+        def compose(self):
+            yield MainNavigationBar(active="search", active_route="search")
+
+    app = TestApp()
+
+    async with app.run_test(size=(180, 20)) as pilot:
+        await pilot.pause(0.1)
+        assert app.query_one("#nav-library", Button).has_class("is-active")
+        assert not app.query_one("#nav-lab", Button).has_class("is-active")
+
+    class LabApp(App):
+        def compose(self):
+            yield MainNavigationBar(active="llm", active_route="llm")
+
+    lab_app = LabApp()
+
+    async with lab_app.run_test(size=(180, 20)) as pilot:
+        await pilot.pause(0.1)
+        assert lab_app.query_one("#nav-lab", Button).has_class("is-active")
+        assert not lab_app.query_one("#nav-library", Button).has_class("is-active")
