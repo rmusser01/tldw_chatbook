@@ -370,7 +370,13 @@ class LocalRAGAdminService:
             raise ValueError("Local embeddings backend is unavailable.")
         # ChromaVectorStore.delete_collection also resets its cached handle
         # when the active collection is deleted, so delegate to the store.
-        deleter(collection_name)
+        # Both bundled stores return a success bool (and log rather than
+        # raise); surface an explicit False as a hard failure so the admin
+        # seam never reports success for a collection that still exists.
+        if deleter(collection_name) is False:
+            raise ValueError(
+                f"Failed to delete local embedding collection '{collection_name}'."
+            )
 
     def reprocess_media(self, media_id: Any, **options: Any) -> Any:
         if self.media_service is None:

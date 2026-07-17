@@ -75,8 +75,8 @@ class VectorStore(Protocol):
         """Enhanced search that includes citations."""
         ...
     
-    def delete_collection(self, name: str) -> None:
-        """Delete a collection by name."""
+    def delete_collection(self, name: str) -> bool:
+        """Delete a collection by name. Returns True when it was deleted."""
         ...
 
     def delete_document(self, doc_id: str) -> None:
@@ -473,15 +473,28 @@ class ChromaVectorStore:
         
         return citations
     
-    def delete_collection(self, name: str) -> None:
-        """Delete a collection."""
+    def delete_collection(self, name: str) -> bool:
+        """Delete a collection.
+
+        Args:
+            name: Name of the collection to delete.
+
+        Returns:
+            True when the collection was deleted; False when the underlying
+            Chroma delete failed (including "collection not found"). Failures
+            are logged, not raised — matching InMemoryVectorStore's
+            bool-returning contract — so callers that need hard failure
+            (e.g. the retrieval-admin surface) must check the return value.
+        """
         try:
             self.client.delete_collection(name)
             if name == self.collection_name:
                 self._collection = None
             logger.info(f"Deleted collection: {name}")
+            return True
         except Exception as e:
             logger.error(f"Failed to delete collection: {e}")
+            return False
 
     def delete_document(self, doc_id: str) -> None:
         """Delete all chunks belonging to a document (no-op when absent).
