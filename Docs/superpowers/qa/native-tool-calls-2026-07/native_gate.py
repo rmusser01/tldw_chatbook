@@ -27,8 +27,16 @@ from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
-MODEL = "Qwen3.6-27B-Uncensored-HauhauCS-Aggressive-Q8_K_P.gguf"
 BASE = "http://127.0.0.1:9099"
+
+def _served_model() -> str:
+    import urllib.request
+    with urllib.request.urlopen(f"{BASE}/v1/models", timeout=5) as r:
+        data = json.load(r)
+    entries = data.get("models") or data.get("data") or []
+    return entries[0].get("model") or entries[0].get("id")
+
+MODEL = _served_model()
 
 
 class RecordingGateway:
