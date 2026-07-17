@@ -525,3 +525,178 @@ def test_malformed_tool_call_arguments_guaranteed_string(mock_post):
         mock_post, response, [{"role": "user", "content": "go"}])
     entry = result["choices"][0]["message"]["tool_calls"][0]
     assert entry["function"]["arguments"] == "{}"
+
+
+# ---------------------------------------------------------------------------
+# Task 4: streaming tool-call fragments + tool_plan extra
+#
+# NOTE: the exact wire shape of Cohere v2's tool-call-start/-delta stream
+# events (and precisely where the "index" field lives) is scout knowledge
+# per the plan, not independently verified against the live API in this
+# offline task. These fixtures encode the plan's stated shape
+# (`delta.message.tool_calls` carrying id/name on start, incremental
+# `function.arguments` on delta; a sibling top-level `index`) -- Task 6's
+# live gate is authoritative if the real API differs.
+# ---------------------------------------------------------------------------
+
+def _cohere_tool_call_start(index, call_id, name):
+    return {"type": "tool-call-start", "index": index,
+            "delta": {"message": {"tool_calls": {
+                "id": call_id, "type": "function",
+                "function": {"name": name, "arguments": ""}}}}}
+
+
+def _cohere_tool_call_delta(index, arguments_piece):
+    return {"type": "tool-call-delta", "index": index,
+            "delta": {"message": {"tool_calls": {
+                "function": {"arguments": arguments_piece}}}}}
+
+
+def _cohere_tool_plan_delta(text):
+    return {"type": "tool-plan-delta", "delta": {"message": {"tool_plan": text}}}
+
+
+def _tool_call_fragments(chunks):
+    return [f for c in chunks
+            for f in c["choices"][0].get("delta", {}).get("tool_calls", [])]
+
+
+@patch("requests.Session.post")
+def test_streaming_tool_call_start_emits_first_fragment(mock_post):
+    events = [
+        _cohere_tool_call_start(0, "call_A", "calculator"),
+        {"type": "tool-call-end", "index": 0},
+        {"type": "message-end", "delta": {"finish_reason": "TOOL_CALL"}},
+    ]
+    raw = _call_cohere_stream(mock_post, _cohere_stream_lines(events),
+                              [{"role": "user", "content": "2+2?"}])
+    chunks = _decode_sse_chunks(raw)
+    fragments = _tool_call_fragments(chunks)
+    assert fragments == [{"index": 0, "id": "call_A", "type": "function",
+                          "function": {"name": "calculator", "arguments": ""}}]
+
+
+@patch("requests.Session.post")
+def test_streaming_tool_call_delta_appends_arguments_substring(mock_post):
+    events = [
+        _cohere_tool_call_start(0, "call_A", "calculator"),
+        _cohere_tool_call_delta(0, '{"expres'),
+        _cohere_tool_call_delta(0, 'sion": "2+2"}'),
+        {"type": "tool-call-end", "index": 0},
+        {"type": "message-end", "delta": {"finish_reason": "TOOL_CALL"}},
+    ]
+    raw = _call_cohere_stream(mock_post, _cohere_stream_lines(events),
+                              [{"role": "user", "content": "2+2?"}])
+    chunks = _decode_sse_chunks(raw)
+    fragments = _tool_call_fragments(chunks)
+    assert fragments[1] == {"index": 0, "function": {"arguments": '{"expres'}}
+    assert fragments[2] == {"index": 0, "function": {"arguments": 'sion": "2+2"}'}}
+
+
+@patch("requests.Session.post")
+def test_streaming_tool_plan_accumulated_and_emitted_on_first_fragment(mock_post):
+    events = [
+        _cohere_tool_plan_delta("I should "),
+        _cohere_tool_plan_delta("use the calculator."),
+        _cohere_tool_call_start(0, "call_A", "calculator"),
+        _cohere_tool_call_delta(0, "{}"),
+        {"type": "message-end", "delta": {"finish_reason": "TOOL_CALL"}},
+    ]
+    raw = _call_cohere_stream(mock_post, _cohere_stream_lines(events),
+                              [{"role": "user", "content": "2+2?"}])
+    chunks = _decode_sse_chunks(raw)
+    fragments = _tool_call_fragments(chunks)
+    assert fragments[0]["cohere_tool_plan"] == "I should use the calculator."
+    # continuation fragments must NOT re-carry the plan text:
+    assert "cohere_tool_plan" not in fragments[1]
+
+
+@patch("requests.Session.post")
+def test_streaming_message_end_after_tool_calls_finish_reason_tool_calls(mock_post):
+    events = [
+        _cohere_tool_call_start(0, "call_A", "calculator"),
+        _cohere_tool_call_delta(0, "{}"),
+        {"type": "message-end", "delta": {"finish_reason": "TOOL_CALL"}},
+    ]
+    raw = _call_cohere_stream(mock_post, _cohere_stream_lines(events),
+                              [{"role": "user", "content": "2+2?"}])
+    chunks = _decode_sse_chunks(raw)
+    finishes = [c["choices"][0].get("finish_reason") for c in chunks
+                if c["choices"][0].get("finish_reason")]
+    assert finishes == ["tool_calls"]
+
+
+@patch("requests.Session.post")
+def test_streaming_two_tool_calls_get_distinct_indexes(mock_post):
+    events = [
+        _cohere_tool_call_start(0, "call_A", "calculator"),
+        _cohere_tool_call_delta(0, "{}"),
+        {"type": "tool-call-end", "index": 0},
+        _cohere_tool_call_start(1, "call_B", "get_current_datetime"),
+        _cohere_tool_call_delta(1, "{}"),
+        {"type": "tool-call-end", "index": 1},
+        {"type": "message-end", "delta": {"finish_reason": "TOOL_CALL"}},
+    ]
+    raw = _call_cohere_stream(mock_post, _cohere_stream_lines(events),
+                              [{"role": "user", "content": "go"}])
+    chunks = _decode_sse_chunks(raw)
+    fragments = _tool_call_fragments(chunks)
+    starts = [f for f in fragments if "id" in f]
+    assert [(f["index"], f["id"], f["function"]["name"]) for f in starts] == [
+        (0, "call_A", "calculator"), (1, "call_B", "get_current_datetime")]
+
+
+@patch("requests.Session.post")
+def test_streaming_position_fallback_when_index_missing(mock_post):
+    """When the stream event omits an explicit index entirely, positions
+    must still be assigned via a running 0-based counter rather than
+    crashing or colliding."""
+    events = [
+        {"type": "tool-call-start", "delta": {"message": {"tool_calls": {
+            "id": "call_A", "type": "function",
+            "function": {"name": "calculator", "arguments": ""}}}}},
+        {"type": "tool-call-start", "delta": {"message": {"tool_calls": {
+            "id": "call_B", "type": "function",
+            "function": {"name": "get_current_datetime", "arguments": ""}}}}},
+        {"type": "message-end", "delta": {"finish_reason": "TOOL_CALL"}},
+    ]
+    raw = _call_cohere_stream(mock_post, _cohere_stream_lines(events),
+                              [{"role": "user", "content": "go"}])
+    chunks = _decode_sse_chunks(raw)
+    fragments = _tool_call_fragments(chunks)
+    assert [f["index"] for f in fragments] == [0, 1]
+
+
+@patch("requests.Session.post")
+def test_streaming_fragments_reassemble_via_gateway_accumulator(mock_post):
+    """Cross-layer contract pin: feed this handler's yielded SSE strings
+    through the REAL gateway accumulator path (`_decode_stream_item` +
+    `_ToolCallAccumulator` from `tldw_chatbook.Chat.console_provider_gateway`,
+    task-243) and assert they reassemble into one merged tool call with the
+    `cohere_tool_plan` extra preserved (mirrors task-266's
+    `google_thought_signature` cross-layer pin)."""
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        _decode_stream_item, _ToolCallAccumulator,
+    )
+
+    events = [
+        _cohere_tool_plan_delta("I should use the calculator."),
+        _cohere_tool_call_start(0, "call_A", "calculator"),
+        _cohere_tool_call_delta(0, '{"expres'),
+        _cohere_tool_call_delta(0, 'sion": "2+2"}'),
+        {"type": "tool-call-end", "index": 0},
+        {"type": "message-end", "delta": {"finish_reason": "TOOL_CALL"}},
+    ]
+    sse_lines = _call_cohere_stream(mock_post, _cohere_stream_lines(events),
+                                    [{"role": "user", "content": "2+2?"}])
+
+    accumulator = _ToolCallAccumulator()
+    for line in sse_lines:
+        accumulator.feed_payload(_decode_stream_item(line))
+
+    calls = accumulator.calls()
+    assert len(calls) == 1
+    assert calls[0]["id"] == "call_A"
+    assert calls[0]["function"]["name"] == "calculator"
+    assert calls[0]["function"]["arguments"] == json.dumps({"expression": "2+2"})
+    assert calls[0]["cohere_tool_plan"] == "I should use the calculator."

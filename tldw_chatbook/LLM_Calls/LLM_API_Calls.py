@@ -1255,6 +1255,34 @@ def _cohere_response_tool_calls(raw_tool_calls: list) -> list:
     return converted
 
 
+def _cohere_stream_event_index(event: dict, message_delta: dict, fallback: int) -> int:
+    """Best-effort position resolution for a Cohere v2 streaming tool-call
+    event: prefer the event's top-level ``index``; fall back to an
+    ``index`` nested under ``delta.message.tool_calls``; else the caller's
+    own running counter.
+
+    NOTE: the exact placement of Cohere's ``index`` field on tool-call
+    stream events is scout knowledge, not independently verified against
+    the live API in this offline task (task-267 Task 4) -- this helper is
+    deliberately tolerant of either placement, or its total absence, so
+    the position is never mis-synced with the gateway's
+    `_ToolCallAccumulator` regardless of which shape the real API sends.
+    Task 6's live gate is authoritative.
+    """
+    tool_calls_field = message_delta.get("tool_calls")
+    candidates = [event.get("index")]
+    if isinstance(tool_calls_field, dict):
+        candidates.append(tool_calls_field.get("index"))
+    for raw in candidates:
+        if isinstance(raw, bool):
+            continue
+        if isinstance(raw, int):
+            return raw
+        if isinstance(raw, str) and raw.strip().lstrip('-').isdigit():
+            return int(raw.strip())
+    return fallback
+
+
 def chat_with_cohere(
         input_data: List[Dict[str, Any]],
         model: Optional[str] = None,
@@ -1458,11 +1486,21 @@ def chat_with_cohere(
                 created_ts = int(time.time())
                 stream_properly_closed = False
                 accumulated_text_for_log = []
+                # task-267 Task 4: tool-call streaming state. `tool_plan_text`
+                # accumulates tool-plan-delta text so it can ride on the
+                # FIRST tool-call fragment (mirrors the shipped
+                # google_thought_signature mechanism -- task-266); position
+                # tracking lets tool-call-delta events resolve their index
+                # even when the event itself omits one.
+                next_tool_position = 0
+                last_tool_position = 0
+                tool_plan_text = ""
                 # v2 SSE events are discriminated by "type" (v1 used
                 # "event_type"): message-start, content-start, content-delta
-                # (delta.message.content.text), content-end, message-end
-                # (delta.finish_reason, usage). tool-plan-delta/tool-call-*
-                # land in Task 4.
+                # (delta.message.content.text), content-end, tool-plan-delta
+                # (delta.message.tool_plan), tool-call-start/-delta/-end
+                # (delta.message.tool_calls), message-end (delta.finish_reason,
+                # usage).
                 fr_map = {"COMPLETE": "stop", "MAX_TOKENS": "length",
                           "STOP_SEQUENCE": "stop", "TOOL_CALL": "tool_calls"}
                 try:
@@ -1496,6 +1534,45 @@ def chat_with_cohere(
                             if text_chunk:
                                 accumulated_text_for_log.append(text_chunk)
                                 sse_delta["content"] = text_chunk
+                        elif event_type == "tool-plan-delta":
+                            plan_chunk = message_delta.get("tool_plan")
+                            if plan_chunk:
+                                tool_plan_text += plan_chunk
+                        elif event_type == "tool-call-start":
+                            tool_call = message_delta.get("tool_calls")
+                            if not isinstance(tool_call, dict):
+                                logger.warning("Cohere Stream: malformed tool-call-start event, skipping.")
+                            else:
+                                function = tool_call.get("function") or {}
+                                position = _cohere_stream_event_index(cohere_event, message_delta, next_tool_position)
+                                next_tool_position = position + 1
+                                last_tool_position = position
+                                fragment: Dict[str, Any] = {
+                                    "index": position,
+                                    "id": str(tool_call.get("id") or ""),
+                                    "type": str(tool_call.get("type") or "function"),
+                                    "function": {"name": str(function.get("name") or ""),
+                                                "arguments": function.get("arguments") or ""},
+                                }
+                                if tool_plan_text:
+                                    # Ride the accumulated tool-plan text on
+                                    # the FIRST fragment only -- the gateway
+                                    # accumulator's extras allow-list
+                                    # preserves whatever key survives the
+                                    # merge (task-267 Task 4).
+                                    fragment["cohere_tool_plan"] = tool_plan_text
+                                sse_delta["tool_calls"] = [fragment]
+                        elif event_type == "tool-call-delta":
+                            tool_call = message_delta.get("tool_calls")
+                            if not isinstance(tool_call, dict):
+                                logger.warning("Cohere Stream: malformed tool-call-delta event, skipping.")
+                            else:
+                                function = tool_call.get("function") or {}
+                                position = _cohere_stream_event_index(cohere_event, message_delta, last_tool_position)
+                                sse_delta["tool_calls"] = [{
+                                    "index": position,
+                                    "function": {"arguments": function.get("arguments") or ""},
+                                }]
                         elif event_type == "message-end":
                             stream_properly_closed = True
                             raw_finish_reason = delta.get("finish_reason") or cohere_event.get("finish_reason")
@@ -1505,9 +1582,9 @@ def chat_with_cohere(
                             logger.info(
                                 f"Cohere stream: 'message-end' event. Finish: {raw_finish_reason} "
                                 f"(Mapped: {finish_reason}). Fragments: {len(accumulated_text_for_log)}")
-                        elif event_type in ("message-start", "content-start", "content-end"):
+                        elif event_type in ("message-start", "content-start", "content-end", "tool-call-end"):
                             logger.debug(f"Cohere stream: '{event_type}' event.")
-                        elif event_type: # tool-plan-delta / tool-call-* -- Task 4
+                        elif event_type:
                             logger.debug(f"Cohere stream event type: {event_type}, data: {cohere_event}")
 
                         if sse_delta or finish_reason:
