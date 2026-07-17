@@ -1,5 +1,5 @@
 ---
-id: TASK-272
+id: TASK-284
 title: Library RAG panel: stop rebuilding results/history per keystroke
 status: To Do
 assignee: []

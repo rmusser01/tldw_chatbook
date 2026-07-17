@@ -1,5 +1,5 @@
 ---
-id: TASK-263
+id: TASK-275
 title: Restore lazy DB debug logging (eager param stringify on every query)
 status: Done
 assignee: []

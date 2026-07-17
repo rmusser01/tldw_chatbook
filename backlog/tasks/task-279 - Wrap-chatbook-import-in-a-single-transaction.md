@@ -1,5 +1,5 @@
 ---
-id: TASK-267
+id: TASK-279
 title: Wrap chatbook import in a single transaction
 status: Done
 assignee: []
