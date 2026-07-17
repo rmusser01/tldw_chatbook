@@ -20,7 +20,6 @@ from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
-
 from textual.timer import Timer
 from textual.widgets import Button, Collapsible, Input, Static, TextArea
 

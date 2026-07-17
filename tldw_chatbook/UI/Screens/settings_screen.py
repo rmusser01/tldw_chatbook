@@ -15,7 +15,6 @@ from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import QueryError
-
 from textual.events import DescendantFocus, Key
 from textual.message_pump import NoActiveAppError
 from textual.reactive import reactive
