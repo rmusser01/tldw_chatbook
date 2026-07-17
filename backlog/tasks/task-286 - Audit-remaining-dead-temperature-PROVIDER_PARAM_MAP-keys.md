@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-17 05:04'
-updated_date: '2026-07-17 05:36'
+updated_date: '2026-07-17 05:48'
 labels:
   - providers
   - bug
@@ -24,10 +24,11 @@ The review-minors sweep fixed the dead 'temperature' generic key (the dispatcher
 - [x] #2 Duplicate temperature keys in huggingface/koboldcpp are deduplicated
 - [x] #3 A forwarding test pins temp reaching each fixed handler
 - [x] #4 Dead 'prompt' map keys (vestigial from the pre-messages_payload API, present in every provider entry) are removed,An invariant test pins that every PROVIDER_PARAM_MAP generic key is an actual chat_api_call parameter (kills the dead-key class permanently)
+- [ ] #5 Provider-side map TARGETS verified against handler signatures (tabbyapi/local-llm temp crash + five user_identifier->user dead targets fixed) and pinned by a second invariant test
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Audit executed programmatically: every PROVIDER_PARAM_MAP generic-side key diffed against chat_api_call's actual parameters. Findings + fixes: (1) all six remaining dead 'temperature' entries fixed to 'temp': 'temp' after per-handler signature verification (cohere/openrouter/huggingface/koboldcpp -> temp; local_llamacpp + local_llamafile route to chat_with_llama which takes temp — their old 'temperature'->'temperature' mapping would have CRASHED the handler had the key ever fired); (2) huggingface + koboldcpp duplicate temperature keys deduplicated (one entry each); (3) BONUS same-class finding, AC-extended before implementing: dead 'prompt' keys (vestigial from the pre-messages_payload API) removed from all 28 entries — including a vllm straggler caught only by the new invariant test; (4) forwarding pins extended to all six providers (parametrized, mocked handlers); (5) invariant test test_provider_param_map_has_no_dead_generic_keys pins every map key to inspect.signature(chat_api_call) — the dead-key class is now structurally impossible to reintroduce. 273 targeted + 95 provider-suite tests green.
+AMENDED post-review: the reviewer's sweep exposed the provider-SIDE dead-target sibling class — 7 entries whose mapped target name doesn't exist on the handler: tabbyapi + local-llm mapped generic temp to 'temperature' (handlers take temp — a temperature-carrying call TypeErrored, WORSE than the silent drop), and oobabooga/vllm/aphrodite/custom-openai x2 mapped user_identifier to 'user' (handlers take user_identifier). All 7 fixed after authoritative inspect.signature verification (vllm/aphrodite legitimately take 'temperature' for temp — left as-is); second invariant test pins every map target to its handler's signature (or **kwargs). Also from review: llama_cpp + oobabooga temperature keys had been dropped (comment-bearing dict-open lines confused the rewrite script) — restored as temp:temp; unreachable cohere-prompt dispatcher branch deleted. Both dead-key classes (generic-side + provider-side) are now structurally pinned.
 <!-- SECTION:NOTES:END -->

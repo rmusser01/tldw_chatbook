@@ -420,3 +420,28 @@ def test_provider_param_map_has_no_dead_generic_keys():
         if key not in generic_params
     }
     assert not dead, f"dead PROVIDER_PARAM_MAP keys (never matched by the dispatcher): {sorted(dead)}"
+
+
+def test_provider_param_map_targets_exist_on_handlers():
+    """task-286 invariant #2 (provider side): every mapped TARGET must be an
+    actual parameter of that provider's handler (or the handler must accept
+    **kwargs) — a wrong target name TypeErrors the call the moment the
+    generic param is supplied (the tabbyapi/local-llm 'temperature' and the
+    five user_identifier->'user' bugs this audit retired)."""
+    import inspect
+    from tldw_chatbook.Chat.Chat_Functions import API_CALL_HANDLERS, PROVIDER_PARAM_MAP
+
+    problems = []
+    for provider, mapping in PROVIDER_PARAM_MAP.items():
+        handler = API_CALL_HANDLERS.get(provider)
+        if handler is None:
+            problems.append((provider, "<no handler>", ""))
+            continue
+        sig = inspect.signature(handler)
+        if any(p.kind == inspect.Parameter.VAR_KEYWORD
+               for p in sig.parameters.values()):
+            continue
+        for generic, target in mapping.items():
+            if target not in sig.parameters:
+                problems.append((provider, generic, target))
+    assert not problems, f"map targets missing on handlers: {sorted(problems)}"
