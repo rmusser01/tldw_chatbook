@@ -33,6 +33,7 @@ __all__ = [
     "reciprocal_rank_fusion",
     "interleave_rankings",
     "resolve_hybrid_alpha",
+    "resolve_rrf_k",
 ]
 
 # Server-parity constants (tldw_server database_retrievers.py)
@@ -119,7 +120,27 @@ def reciprocal_rank_fusion(
         FusedResult list sorted by fused score descending. Ties break
         deterministically: better FTS rank first, then better vector rank
         (absent legs sort last).
+
+    Note:
+        As a last-resort invariant (config-sourced values should already be
+        validated via resolve_hybrid_alpha / resolve_rrf_k), out-of-range
+        inputs are sanitized rather than propagated into the math: alpha is
+        clamped into [0, 1] and a negative rrf_k falls back to
+        DEFAULT_RRF_K, so no call site can produce negative blend weights
+        or a zero/negative RRF denominator.
     """
+    if not 0.0 <= alpha <= 1.0:
+        clamped = min(1.0, max(0.0, alpha))
+        logger.warning(
+            f"reciprocal_rank_fusion: alpha {alpha} outside [0, 1]; clamping to {clamped}"
+        )
+        alpha = clamped
+    if rrf_k < 0:
+        logger.warning(
+            f"reciprocal_rank_fusion: rrf_k {rrf_k} is negative; using {DEFAULT_RRF_K}"
+        )
+        rrf_k = DEFAULT_RRF_K
+
     fts_ranks = _leg_ranks(fts_results, key)
     vector_ranks = _leg_ranks(vector_results, key)
 
@@ -233,3 +254,29 @@ def resolve_hybrid_alpha(explicit: Optional[float] = None) -> float:
         )
         return DEFAULT_HYBRID_ALPHA
     return alpha
+
+
+def resolve_rrf_k(value: Optional[Any] = None) -> int:
+    """Resolve the RRF constant k from an untrusted (config) value.
+
+    Args:
+        value: Caller/config-supplied k, if any (e.g. a TOML pipeline's
+            ``steps[].config.rrf_k``).
+
+    Returns:
+        A non-negative int; ``DEFAULT_RRF_K`` (60, server parity) when the
+        value is missing, non-numeric, or negative. Invalid values are
+        logged, never raised: a misconfigured pipeline must not abort
+        search at merge time.
+    """
+    if value is None:
+        return DEFAULT_RRF_K
+    try:
+        k = int(float(value))
+    except (TypeError, ValueError):
+        logger.warning(f"Invalid rrf_k {value!r}; falling back to {DEFAULT_RRF_K}")
+        return DEFAULT_RRF_K
+    if k < 0:
+        logger.warning(f"rrf_k {k} is negative; falling back to {DEFAULT_RRF_K}")
+        return DEFAULT_RRF_K
+    return k

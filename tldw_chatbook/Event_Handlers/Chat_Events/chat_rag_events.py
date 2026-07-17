@@ -124,8 +124,7 @@ async def perform_hybrid_rag_search(
     vector_weight: Optional[float] = None,
     keyword_filter_list: Optional[List[str]] = None
 ) -> Tuple[List[Dict[str, Any]], str]:
-    """
-    Perform a hybrid RAG search using the pipeline system.
+    """Perform a hybrid RAG search using the pipeline system.
 
     The FTS5 and semantic legs are fused via Reciprocal Rank Fusion (k=60)
     plus an alpha-weighted blend, matching the tldw_server design. Alpha
@@ -134,6 +133,28 @@ async def perform_hybrid_rag_search(
     Alpha precedence: ``hybrid_alpha`` argument -> legacy ``bm25_weight`` /
     ``vector_weight`` (mapped to ``vector / (bm25 + vector)``) ->
     ``[AppRAGSearchConfig.rag.retriever] hybrid_alpha`` config knob (0.7).
+
+    Args:
+        app: The TldwCli app instance providing database handles.
+        query: Search query text.
+        sources: Which sources to search (e.g. media/conversations/notes).
+        top_k: Maximum number of fused results to return.
+        max_context_length: Character budget for the formatted context.
+        enable_rerank: Whether to run the reranking step after fusion.
+        reranker_model: Reranker model name when reranking is enabled.
+        chunk_size: Chunk size forwarded to the pipeline parameters.
+        chunk_overlap: Chunk overlap forwarded to the pipeline parameters.
+        chunk_type: Chunking method forwarded to the pipeline parameters.
+        hybrid_alpha: Explicit fusion alpha (0 = FTS only, 1 = vector only);
+            overrides the legacy weights and the config knob.
+        bm25_weight: Legacy FTS-leg weight; mapped onto alpha together with
+            vector_weight when hybrid_alpha is not given.
+        vector_weight: Legacy vector-leg weight; see bm25_weight.
+        keyword_filter_list: Optional keywords the media FTS leg must match.
+
+    Returns:
+        Tuple of (result dicts sorted by fused score, formatted context
+        string for the LLM).
     """
     logger.info(f"Performing hybrid RAG search for query: '{query}'")
 

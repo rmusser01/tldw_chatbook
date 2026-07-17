@@ -30,7 +30,7 @@ from .vector_store import (
 )
 from .citations import Citation, CitationType, merge_citations
 from .config import RAGConfig
-from ..fusion import reciprocal_rank_fusion, DEFAULT_RRF_K
+from ..fusion import reciprocal_rank_fusion, resolve_hybrid_alpha, DEFAULT_RRF_K
 from ..chunking_service import ChunkingService
 from .simple_cache import SimpleRAGCache, get_rag_cache
 from .db_connection_pool import get_connection_pool
@@ -781,11 +781,18 @@ class RAGService:
             semantic_results: Vector/semantic leg, best first.
             top_k: Maximum number of fused results to return.
             alpha: Vector-leg weight (0 = FTS only, 1 = vector only).
+                Validated via resolve_hybrid_alpha: out-of-range/invalid
+                config values fall back to the 0.7 default, matching the
+                pipeline path.
             include_citations: Whether results carry citations to merge.
 
         Returns:
             Fused results sorted by fused score descending.
         """
+        # config.search.hybrid_alpha is not range-checked at load time
+        # (RAGConfig.validate() has no callers); resolve here so this path
+        # gets the same fallback semantics as the pipeline merge.
+        alpha = resolve_hybrid_alpha(alpha)
         fused = reciprocal_rank_fusion(
             keyword_results,
             semantic_results,

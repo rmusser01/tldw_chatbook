@@ -21,7 +21,7 @@ from .pipeline_functions_simple import (
 )
 from .fusion import (
     reciprocal_rank_fusion, interleave_rankings, resolve_hybrid_alpha,
-    DEFAULT_RRF_K,
+    resolve_rrf_k,
 )
 
 # Retrieval functions whose results form the vector (semantic) leg of hybrid
@@ -273,7 +273,7 @@ def _rrf_merge_parallel_results(
     alpha = resolve_hybrid_alpha(
         merge_config.get('alpha', context['params'].get('hybrid_alpha'))
     )
-    rrf_k = int(merge_config.get('rrf_k', DEFAULT_RRF_K))
+    rrf_k = resolve_rrf_k(merge_config.get('rrf_k'))
 
     fused_entries = reciprocal_rank_fusion(
         fts_leg, vector_leg, key=result_key, alpha=alpha, rrf_k=rrf_k
@@ -283,8 +283,23 @@ def _rrf_merge_parallel_results(
     for entry in fused_entries:
         result = entry.item
         result.score = entry.score
+        merged_metadata = dict(result.metadata or {})
+        # When a doc surfaced in both legs the FTS item is primary; carry the
+        # other leg's citation metadata (search_semantic stashes citations as
+        # _has_citations/_citations) so citations survive fusion and reach
+        # _results_to_dicts.
+        if entry.fts_item is not None and entry.vector_item is not None:
+            other = entry.vector_item if result is entry.fts_item else entry.fts_item
+            other_metadata = other.metadata or {}
+            if other_metadata.get('_has_citations'):
+                combined_citations = (
+                    list(merged_metadata.get('_citations') or [])
+                    + list(other_metadata.get('_citations') or [])
+                )
+                merged_metadata['_citations'] = combined_citations
+                merged_metadata['_has_citations'] = True
         result.metadata = {
-            **(result.metadata or {}),
+            **merged_metadata,
             'hybrid_fusion': {**entry.provenance(), 'alpha': alpha, 'rrf_k': rrf_k},
         }
         fused_results.append(result)

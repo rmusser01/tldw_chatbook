@@ -155,6 +155,27 @@ class TestReciprocalRankFusion:
         )
         assert fused[0].score == pytest.approx(1.0)  # 1/(0+1)
 
+    def test_out_of_range_alpha_is_clamped_never_negative(self):
+        # Last-resort invariant: no call site can produce negative blend
+        # weights. alpha=1.3 behaves as 1.0, alpha=-0.2 as 0.0.
+        fts = [Doc("A")]
+        vector = [Doc("B")]
+        over = reciprocal_rank_fusion(fts, vector, key=lambda d: d.id, alpha=1.3)
+        exact_one = reciprocal_rank_fusion(fts, vector, key=lambda d: d.id, alpha=1.0)
+        assert _scores(over) == _scores(exact_one)
+        assert all(entry.score >= 0.0 for entry in over)
+
+        under = reciprocal_rank_fusion(fts, vector, key=lambda d: d.id, alpha=-0.2)
+        exact_zero = reciprocal_rank_fusion(fts, vector, key=lambda d: d.id, alpha=0.0)
+        assert _scores(under) == _scores(exact_zero)
+
+    def test_negative_rrf_k_falls_back_no_zero_division(self):
+        # rrf_k=-1 with rank 1 would divide by zero; must fall back to 60.
+        fused = reciprocal_rank_fusion(
+            [Doc("A")], [], key=lambda d: d.id, alpha=0.0, rrf_k=-1
+        )
+        assert fused[0].score == pytest.approx(1 / (K + 1))
+
     def test_duplicate_key_within_leg_keeps_best_rank(self):
         fts = [Doc("A"), Doc("A"), Doc("B")]
         fused = reciprocal_rank_fusion(fts, [], key=lambda d: d.id, alpha=0.0)
@@ -247,6 +268,23 @@ class TestResolveHybridAlpha:
     @pytest.mark.parametrize("edge", [0.0, 1.0])
     def test_bounds_are_valid(self, edge):
         assert resolve_hybrid_alpha(edge) == edge
+
+
+class TestResolveRrfK:
+    def test_none_returns_default(self):
+        from tldw_chatbook.RAG_Search.fusion import resolve_rrf_k
+        assert resolve_rrf_k(None) == DEFAULT_RRF_K
+        assert resolve_rrf_k() == DEFAULT_RRF_K
+
+    @pytest.mark.parametrize("value,expected", [(60, 60), (0, 0), ("42", 42), (59.5, 59)])
+    def test_valid_values_coerced(self, value, expected):
+        from tldw_chatbook.RAG_Search.fusion import resolve_rrf_k
+        assert resolve_rrf_k(value) == expected
+
+    @pytest.mark.parametrize("bad", ["abc", -1, -60, object(), None])
+    def test_invalid_values_fall_back_to_default(self, bad):
+        from tldw_chatbook.RAG_Search.fusion import resolve_rrf_k
+        assert resolve_rrf_k(bad) == DEFAULT_RRF_K
 
 
 class TestRAGServiceFusion:
@@ -342,6 +380,33 @@ class TestRAGServiceFusion:
         )
         assert [r.id for r in results] == ["B", "A"]
         assert results[0].score == pytest.approx(1 / (K + 1))
+
+    def test_out_of_range_config_alpha_falls_back_to_default(self):
+        """An unvalidated config alpha (e.g. 1.3) must not distort scores.
+
+        config.search.hybrid_alpha is not range-checked at load time
+        (RAGConfig.validate() has no callers), so the fuse seam resolves it:
+        out-of-range values behave exactly like the 0.7 default.
+        """
+        from tldw_chatbook.RAG_Search.simplified.rag_service import RAGService
+
+        def run(alpha):
+            keyword, semantic = self._make_results()
+            return RAGService._fuse_hybrid_results(
+                keyword_results=keyword, semantic_results=semantic,
+                top_k=10, alpha=alpha, include_citations=True,
+            )
+
+        for bad in (1.3, -0.2):
+            results = run(bad)
+            expected = run(DEFAULT_HYBRID_ALPHA)
+            assert [r.id for r in results] == [r.id for r in expected]
+            assert [r.score for r in results] == pytest.approx(
+                [r.score for r in expected]
+            )
+            assert all(r.score >= 0.0 for r in results)
+            # Provenance records the resolved alpha, not the bad input
+            assert results[0].metadata['hybrid_fusion']['alpha'] == DEFAULT_HYBRID_ALPHA
 
 
 class TestPipelineRrfMerge:
@@ -544,3 +609,90 @@ class TestPipelineRrfMerge:
 
         assert [r.id for r in results] == ["m1", "m2"]
         assert results[0].score == pytest.approx(0.3 / (K + 1))
+
+    @pytest.mark.parametrize("bad_k", ["abc", -1])
+    def test_bad_rrf_k_config_does_not_abort_pipeline(self, monkeypatch, bad_k):
+        """Misconfigured steps[].config.rrf_k must fall back to 60, not crash.
+
+        Unguarded int() raised ValueError on non-numeric values, and a
+        negative k (e.g. -1 with rank 1) divided by zero — both aborted the
+        whole pipeline at merge time.
+        """
+        from tldw_chatbook.RAG_Search import pipeline_builder_simple as pbs
+
+        async def fake_media(app, query, top_k, keyword_filter=None):
+            return [self._pipeline_result("media", "m1")]
+
+        monkeypatch.setitem(pbs.RETRIEVAL_FUNCTIONS, 'search_media_fts5', fake_media)
+
+        step_config = {
+            'type': 'parallel',
+            'functions': [{'function': 'search_media_fts5', 'config': {'top_k': 20}}],
+            'merge': 'rrf_merge',
+            'config': {'alpha': 0.0, 'rrf_k': bad_k},
+        }
+        context = {
+            'app': object(), 'query': 'q', 'sources': {}, 'params': {}, 'results': [],
+        }
+
+        results = asyncio.run(pbs._execute_parallel_step(step_config, context))
+
+        assert [r.id for r in results] == ["m1"]
+        assert results[0].score == pytest.approx(1 / (K + 1))  # default k=60
+        assert results[0].metadata['hybrid_fusion']['rrf_k'] == K
+
+    def test_overlap_keeps_semantic_citation_metadata(self, monkeypatch):
+        """A doc in both legs must keep the vector leg's citation metadata.
+
+        The fused primary item is the FTS one; search_semantic stores its
+        citations as metadata['_has_citations']/['_citations'], which
+        _results_to_dicts surfaces as the 'citations' key. Fusion must carry
+        them across even though the FTS item wins as primary.
+        """
+        from tldw_chatbook.RAG_Search import pipeline_builder_simple as pbs
+        from tldw_chatbook.RAG_Search.pipeline_types import SearchResult
+
+        fts_item = self._pipeline_result("media", "shared")
+        semantic_item = SearchResult(
+            source="media", id="shared", title="shared", content="content shared",
+            metadata={
+                '_has_citations': True,
+                '_citations': [{'document_id': 'shared', 'text': 'snippet'}],
+            },
+        )
+
+        async def fake_media(app, query, top_k, keyword_filter=None):
+            return [fts_item]
+
+        async def fake_semantic(app, query, sources, **config):
+            return [semantic_item]
+
+        monkeypatch.setitem(pbs.RETRIEVAL_FUNCTIONS, 'search_media_fts5', fake_media)
+        monkeypatch.setitem(pbs.RETRIEVAL_FUNCTIONS, 'search_semantic', fake_semantic)
+
+        step_config = {
+            'type': 'parallel',
+            'functions': [
+                {'function': 'search_media_fts5', 'config': {'top_k': 20}},
+                {'function': 'search_semantic', 'config': {'top_k': 20}},
+            ],
+            'merge': 'rrf_merge',
+            'config': {'alpha': 0.7},
+        }
+        context = {
+            'app': object(), 'query': 'q', 'sources': {}, 'params': {}, 'results': [],
+        }
+
+        results = asyncio.run(pbs._execute_parallel_step(step_config, context))
+
+        assert len(results) == 1
+        fused = results[0]
+        assert fused is fts_item  # FTS item stays primary
+        assert fused.metadata['_has_citations'] is True
+        assert fused.metadata['_citations'] == [
+            {'document_id': 'shared', 'text': 'snippet'}
+        ]
+        # And they surface through the pipeline's dict conversion
+        dicts = pbs._results_to_dicts(results)
+        assert dicts[0]['citations'] == [{'document_id': 'shared', 'text': 'snippet'}]
+        assert '_citations' not in dicts[0]['metadata']
