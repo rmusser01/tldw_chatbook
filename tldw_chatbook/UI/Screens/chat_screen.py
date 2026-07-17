@@ -5111,6 +5111,22 @@ class ChatScreen(BaseAppScreen):
             return "not available for this item"
         return "unavailable"
 
+    def _console_can_save_chatbook_flag(
+        self,
+        pending_launch: Optional[ConsoleLiveWorkLaunch],
+    ) -> bool:
+        """Return whether a Chatbook artifact is available to save right now.
+
+        TASK-251: factored out of ``_build_console_inspector_state`` so the
+        composer's priority-action state can stay fresh from
+        ``_sync_console_control_bar`` even while the right rail (and
+        therefore the full inspector-state build) is hidden and skipped.
+        """
+        return bool(
+            getattr(self.app_instance, "console_chatbook_artifact_available", False)
+            or self._launch_targets_chatbook_artifact(pending_launch)
+        )
+
     def _build_console_inspector_state(
         self,
         pending_launch: Optional[ConsoleLiveWorkLaunch],
@@ -5139,10 +5155,7 @@ class ChatScreen(BaseAppScreen):
                 if provider_readiness.reason == "Missing API key"
                 else settings_readiness.detail
             )
-        can_save_chatbook = bool(
-            getattr(self.app_instance, "console_chatbook_artifact_available", False)
-            or self._launch_targets_chatbook_artifact(pending_launch)
-        )
+        can_save_chatbook = self._console_can_save_chatbook_flag(pending_launch)
         evidence_state = build_console_evidence_display_state(pending_launch)
         inspector_state = ConsoleInspectorState.from_values(
             live_work_title=pending_launch.title if pending_launch else None,
@@ -5514,7 +5527,18 @@ class ChatScreen(BaseAppScreen):
                     ),
                 )
             )
-        excerpt = self._console_message_excerpt(message, max_length=90)
+        # TASK-251 (audit P1 B1): while a message is streaming, its content
+        # (and therefore this excerpt) changes every tick -- rendering the
+        # live text here forced a full inspector-panel recompose 5x/second
+        # for the whole duration of the stream. The transcript already shows
+        # the live text, so the inspector shows a stable placeholder instead
+        # and reveals the real excerpt once the message settles. Deliberate
+        # UX change: flagged for the user gate per the task-251 report.
+        excerpt = (
+            "Streaming…"
+            if message.status == "streaming"
+            else self._console_message_excerpt(message, max_length=90)
+        )
         if excerpt:
             rows.append(ConsoleDisplayRow("Excerpt", excerpt))
         if self._pending_console_delete_message_id == message.id:
@@ -9944,6 +9968,23 @@ class ChatScreen(BaseAppScreen):
             self._last_console_control_state = control_state
             self._last_console_workbench_state = workbench_state
         self._sync_console_transcript_guidance()
+        # TASK-251 (audit P1 B1) -- DEVIATION FROM THE BRIEF, documented in
+        # the task-251 report: the brief's Change 3 asked to skip this
+        # build+push entirely while the right rail is hidden. Measured
+        # against the actual test suite, that broke real behavior --
+        # Console keeps the inspector's mounted content fresh in the
+        # background regardless of paint visibility (selecting a message,
+        # a setup blocker appearing, resuming a conversation, etc. all
+        # still need `#console-run-inspector-state`'s children to reflect
+        # the latest state even while collapsed, and several existing
+        # tests assert exactly that). The audit's actual measured
+        # complaint -- "streaming-excerpt selection = 5 teardowns/s" -- is
+        # already fixed below by `_selected_console_message_inspector_rows`
+        # rendering a stable "Streaming…" placeholder: the built state stops
+        # changing tick-to-tick while streaming, so `ConsoleRunInspector.
+        # sync_state`'s own equality guard (`if state == self.state: return`)
+        # already skips the recompose regardless of visibility. So this
+        # keeps building and pushing unconditionally, as before task-251.
         try:
             inspector = self.query_one("#console-run-inspector-state", ConsoleRunInspector)
         except QueryError:
