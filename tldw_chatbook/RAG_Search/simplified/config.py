@@ -15,6 +15,9 @@ from loguru import logger
 # Import the main config module to access existing configuration
 from tldw_chatbook.config import get_cli_setting, load_cli_config_and_ensure_existence, get_user_data_dir
 
+# Server-parity hybrid fusion default (alpha weights the vector leg)
+from ..fusion import DEFAULT_HYBRID_ALPHA
+
 
 def _coerce_int_setting(value: Any, default: int) -> int:
     """Coerce user-editable integer settings without raising on bad config."""
@@ -237,7 +240,11 @@ class SearchConfig:
     # Search-specific settings
     fts_top_k: int = 10  # For keyword search
     vector_top_k: int = 10  # For semantic search
-    hybrid_alpha: float = 0.5  # Weight for hybrid search (0=keyword only, 1=semantic only)
+    # Hybrid fusion alpha: weight of the vector leg in the RRF blend
+    # (0 = FTS/keyword only, 1 = vector/semantic only). Default 0.7 matches
+    # tldw_server. Authoritative TOML knob:
+    # [AppRAGSearchConfig.rag.retriever] hybrid_alpha
+    hybrid_alpha: float = DEFAULT_HYBRID_ALPHA
     # Re-ranking
     enable_reranking: bool = False
     reranker_model: Optional[str] = None
@@ -876,7 +883,6 @@ default_search_mode = "semantic"  # "plain", "semantic", or "hybrid"
 max_context_size = 16000
 fts_top_k = 10
 vector_top_k = 10
-hybrid_alpha = 0.5
 cache_size = 100
 cache_ttl = 3600  # 1 hour default for all search types
 # Optional search-type specific cache TTLs
@@ -885,8 +891,11 @@ cache_ttl = 3600  # 1 hour default for all search types
 # hybrid_cache_ttl = 3600    # 1 hour for hybrid search
 fts5_connection_pool_size = 3  # Adjust based on concurrent search load
 
-# Legacy configuration locations (still supported)
+# Retriever configuration (authoritative location for hybrid_alpha)
 [AppRAGSearchConfig.rag.retriever]
+# Hybrid fusion alpha: weight of the vector leg in the RRF blend
+# (0 = FTS only, 1 = vector only). Default 0.7 matches tldw_server.
+hybrid_alpha = 0.7
 media_collection = "media_embeddings"
 chat_collection = "chat_embeddings"
 notes_collection = "notes_embeddings"

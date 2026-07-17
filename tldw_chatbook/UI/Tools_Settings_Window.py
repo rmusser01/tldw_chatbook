@@ -1540,7 +1540,7 @@ class ToolsSettingsWindow(Container):
         
         retriever_widgets.append(Label("Hybrid Alpha (0.0-1.0):", classes="form-label"))
         retriever_widgets.append(Input(
-            value=str(retriever_config.get("hybrid_alpha", 0.5)),
+            value=str(retriever_config.get("hybrid_alpha", 0.7)),
             id="config-rag-retriever-hybrid-alpha"
         ))
         

@@ -4,12 +4,14 @@
 # Imports
 from typing import TYPE_CHECKING, Dict, Any, List, Optional, Tuple
 import asyncio
+import copy
 from loguru import logger
 import os
 
 # Local Imports
 from ...RAG_Search.pipeline_builder_simple import execute_pipeline, BUILTIN_PIPELINES
 from ...RAG_Search.pipeline_loader import get_pipeline_loader
+from ...RAG_Search.fusion import resolve_hybrid_alpha
 
 if TYPE_CHECKING:
     from ...app import TldwCli
@@ -117,33 +119,58 @@ async def perform_hybrid_rag_search(
     chunk_size: int = 400,
     chunk_overlap: int = 100,
     chunk_type: str = "words",
-    bm25_weight: float = 0.5,
-    vector_weight: float = 0.5,
+    hybrid_alpha: Optional[float] = None,
+    bm25_weight: Optional[float] = None,
+    vector_weight: Optional[float] = None,
     keyword_filter_list: Optional[List[str]] = None
 ) -> Tuple[List[Dict[str, Any]], str]:
-    """
-    Perform a hybrid RAG search using the pipeline system.
+    """Perform a hybrid RAG search using the pipeline system.
+
+    The FTS5 and semantic legs are fused via Reciprocal Rank Fusion (k=60)
+    plus an alpha-weighted blend, matching the tldw_server design. Alpha
+    weights the vector leg: 0 = FTS only, 1 = vector only.
+
+    Alpha precedence: ``hybrid_alpha`` argument -> legacy ``bm25_weight`` /
+    ``vector_weight`` (mapped to ``vector / (bm25 + vector)``) ->
+    ``[AppRAGSearchConfig.rag.retriever] hybrid_alpha`` config knob (0.7).
+
+    Args:
+        app: The TldwCli app instance providing database handles.
+        query: Search query text.
+        sources: Which sources to search (e.g. media/conversations/notes).
+        top_k: Maximum number of fused results to return.
+        max_context_length: Character budget for the formatted context.
+        enable_rerank: Whether to run the reranking step after fusion.
+        reranker_model: Reranker model name when reranking is enabled.
+        chunk_size: Chunk size forwarded to the pipeline parameters.
+        chunk_overlap: Chunk overlap forwarded to the pipeline parameters.
+        chunk_type: Chunking method forwarded to the pipeline parameters.
+        hybrid_alpha: Explicit fusion alpha (0 = FTS only, 1 = vector only);
+            overrides the legacy weights and the config knob.
+        bm25_weight: Legacy FTS-leg weight; mapped onto alpha together with
+            vector_weight when hybrid_alpha is not given.
+        vector_weight: Legacy vector-leg weight; see bm25_weight.
+        keyword_filter_list: Optional keywords the media FTS leg must match.
+
+    Returns:
+        Tuple of (result dicts sorted by fused score, formatted context
+        string for the LLM).
     """
     logger.info(f"Performing hybrid RAG search for query: '{query}'")
-    
-    # Normalize weights
-    total_weight = bm25_weight + vector_weight
-    if total_weight > 0:
-        bm25_weight = bm25_weight / total_weight
-        vector_weight = vector_weight / total_weight
-    else:
-        bm25_weight = 0.5
-        vector_weight = 0.5
-    
-    # Build pipeline configuration
-    config = BUILTIN_PIPELINES['hybrid'].copy()
-    
-    # Update weights based on sources and user preferences
-    # FTS5 gets 3/4 of bm25_weight (split among media, conv, notes)
-    # Semantic gets vector_weight
-    fts_weight_per_source = bm25_weight / 3
-    weights = [fts_weight_per_source, fts_weight_per_source, fts_weight_per_source, vector_weight]
-    
+
+    # Map legacy weight parameters onto alpha for backwards compatibility
+    if hybrid_alpha is None and (bm25_weight is not None or vector_weight is not None):
+        bm25 = bm25_weight if bm25_weight is not None else 0.5
+        vector = vector_weight if vector_weight is not None else 0.5
+        total_weight = bm25 + vector
+        if total_weight > 0:
+            hybrid_alpha = vector / total_weight
+    alpha = resolve_hybrid_alpha(hybrid_alpha)
+
+    # Build pipeline configuration (deep copy: steps are nested dicts and the
+    # builtin definition must not be mutated across calls)
+    config = copy.deepcopy(BUILTIN_PIPELINES['hybrid'])
+
     # Update config
     config['parameters'] = {
         'top_k': top_k,
@@ -153,11 +180,11 @@ async def perform_hybrid_rag_search(
         'chunk_type': chunk_type,
         'keyword_filter': keyword_filter_list
     }
-    
-    # Update weights in parallel step
+
+    # Pin the resolved alpha on the fusion step
     for step in config['steps']:
-        if step.get('type') == 'parallel':
-            step['config']['weights'] = weights
+        if step.get('type') == 'parallel' and step.get('merge') == 'rrf_merge':
+            step['config'] = {**step.get('config', {}), 'alpha': alpha}
     
     # Adjust reranking step if needed
     if not enable_rerank:
