@@ -779,13 +779,23 @@ def chat_with_anthropic(
         if role == "assistant" and msg.get("tool_calls"):
             # OpenAI assistant tool_calls echo -> Anthropic tool_use blocks
             # (text block first when the turn also carried visible content).
-            blocks = []
-            if isinstance(content, str) and content.strip():
-                blocks.append({"type": "text", "text": content})
+            # Guards mirror native_tools.parse_native_tool_calls: the live
+            # Anthropic API rejects both an empty "content": [] array and a
+            # tool_use block with an empty "name", so a call only converts
+            # when it has a dict `function` with a non-empty stripped
+            # `name` (task-263 review). Build the candidate blocks first —
+            # if every call is junk, fall through to the plain content
+            # handling below instead of sending a blocks-only message.
+            tool_use_blocks = []
             for call in msg.get("tool_calls") or []:
                 if not isinstance(call, dict):
                     continue
-                function = call.get("function") or {}
+                function = call.get("function")
+                if not isinstance(function, dict):
+                    continue
+                name = str(function.get("name") or "").strip()
+                if not name:
+                    continue
                 raw_args = function.get("arguments")
                 tool_input = raw_args if isinstance(raw_args, dict) else {}
                 if isinstance(raw_args, str) and raw_args.strip():
@@ -795,12 +805,19 @@ def chat_with_anthropic(
                         parsed = None
                     if isinstance(parsed, dict):
                         tool_input = parsed
-                blocks.append({"type": "tool_use",
-                               "id": str(call.get("id") or ""),
-                               "name": str(function.get("name") or ""),
-                               "input": tool_input})
-            anthropic_messages.append({"role": "assistant", "content": blocks})
-            continue
+                tool_use_blocks.append({"type": "tool_use",
+                                        "id": str(call.get("id") or ""),
+                                        "name": name,
+                                        "input": tool_input})
+            if tool_use_blocks:
+                blocks = []
+                if isinstance(content, str) and content.strip():
+                    blocks.append({"type": "text", "text": content})
+                blocks.extend(tool_use_blocks)
+                anthropic_messages.append({"role": "assistant", "content": blocks})
+                continue
+            # else: no valid tool_use blocks survived the guards above —
+            # fall through to the plain user/assistant content handling.
         if role not in ["user", "assistant"]:
             logger.warning(f"Anthropic: Skipping message with unsupported role: {role}")
             continue

@@ -153,3 +153,41 @@ def test_plain_chat_payload_unchanged(mock_post):
         {"role": "user", "content": [{"type": "text", "text": "hi"}]},
         {"role": "assistant", "content": [{"type": "text", "text": "there"}]},
     ]
+
+
+@patch("requests.Session.post")
+def test_all_junk_tool_calls_fall_back_to_plain_content(mock_post):
+    # The live Anthropic API rejects both an empty "content": [] array and a
+    # tool_use block with an empty "name". When every tool_calls entry is
+    # junk, the assistant turn must be sent as a normal plain-text message
+    # instead of a blocks-only message with no valid tool_use (task-263
+    # review).
+    messages = [
+        {"role": "user", "content": "2+2?"},
+        {"role": "assistant", "content": "hello",
+         "tool_calls": ["junk", {"function": "junk"}, {"function": {"name": ""}}]},
+    ]
+    sent = _call_anthropic(mock_post, messages)["messages"]
+
+    assert sent[1]["role"] == "assistant"
+    assert sent[1]["content"] == [{"type": "text", "text": "hello"}]
+
+
+@patch("requests.Session.post")
+def test_junk_tool_call_skipped_among_valid_entries(mock_post):
+    messages = [
+        {"role": "user", "content": "2+2?"},
+        {"role": "assistant", "content": "",
+         "tool_calls": [
+             "junk",
+             {"id": "toolu_1", "type": "function",
+              "function": {"name": "calculator",
+                            "arguments": "{\"expression\": \"2+2\"}"}},
+         ]},
+    ]
+    sent = _call_anthropic(mock_post, messages)["messages"]
+
+    assert sent[1]["role"] == "assistant"
+    assert sent[1]["content"] == [
+        {"type": "tool_use", "id": "toolu_1", "name": "calculator",
+         "input": {"expression": "2+2"}}]
