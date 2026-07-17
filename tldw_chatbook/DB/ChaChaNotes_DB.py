@@ -140,7 +140,7 @@ class CharactersRAGDB:
         is_memory_db (bool): True if the database is in-memory.
         db_path_str (str): String representation of the database path for SQLite connection.
     """
-    _CURRENT_SCHEMA_VERSION = 20  # Adds per-conversation metadata (P1e).
+    _CURRENT_SCHEMA_VERSION = 21  # Adds world_book_entries.priority (P2c).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -1199,6 +1199,7 @@ CREATE TABLE IF NOT EXISTS world_book_entries(
   enabled         BOOLEAN  DEFAULT 1,
   position        TEXT     DEFAULT 'before_char', -- before_char, after_char, at_start, at_end
   insertion_order INTEGER  DEFAULT 0,
+  priority        INTEGER  DEFAULT 0,
   selective       BOOLEAN  DEFAULT 0,
   secondary_keys  TEXT,    -- JSON array of secondary keywords
   case_sensitive  BOOLEAN  DEFAULT 0,
@@ -1346,14 +1347,14 @@ END;
 CREATE TRIGGER world_book_entries_sync_create
 AFTER INSERT ON world_book_entries BEGIN
   INSERT INTO sync_log(entity, entity_id, operation, timestamp, client_id, version, payload)
-  VALUES('world_book_entries', CAST(NEW.id AS TEXT), 'create', NEW.last_modified, 
+  VALUES('world_book_entries', CAST(NEW.id AS TEXT), 'create', NEW.last_modified,
          (SELECT client_id FROM world_books WHERE id = NEW.world_book_id), 1,
          json_object('id', NEW.id, 'world_book_id', NEW.world_book_id, 'keys', NEW.keys,
                      'content', NEW.content, 'enabled', NEW.enabled, 'position', NEW.position,
-                     'insertion_order', NEW.insertion_order, 'selective', NEW.selective,
-                     'secondary_keys', NEW.secondary_keys, 'case_sensitive', NEW.case_sensitive,
-                     'extensions', NEW.extensions, 'created_at', NEW.created_at,
-                     'last_modified', NEW.last_modified));
+                     'insertion_order', NEW.insertion_order, 'priority', NEW.priority,
+                     'selective', NEW.selective, 'secondary_keys', NEW.secondary_keys,
+                     'case_sensitive', NEW.case_sensitive, 'extensions', NEW.extensions,
+                     'created_at', NEW.created_at, 'last_modified', NEW.last_modified));
 END;
 
 CREATE TRIGGER world_book_entries_sync_update
@@ -1363,6 +1364,7 @@ WHEN OLD.keys IS NOT NEW.keys OR
      OLD.enabled IS NOT NEW.enabled OR
      OLD.position IS NOT NEW.position OR
      OLD.insertion_order IS NOT NEW.insertion_order OR
+     OLD.priority IS NOT NEW.priority OR
      OLD.selective IS NOT NEW.selective OR
      OLD.secondary_keys IS NOT NEW.secondary_keys OR
      OLD.case_sensitive IS NOT NEW.case_sensitive OR
@@ -1373,10 +1375,10 @@ BEGIN
          (SELECT client_id FROM world_books WHERE id = NEW.world_book_id), 1,
          json_object('id', NEW.id, 'world_book_id', NEW.world_book_id, 'keys', NEW.keys,
                      'content', NEW.content, 'enabled', NEW.enabled, 'position', NEW.position,
-                     'insertion_order', NEW.insertion_order, 'selective', NEW.selective,
-                     'secondary_keys', NEW.secondary_keys, 'case_sensitive', NEW.case_sensitive,
-                     'extensions', NEW.extensions, 'created_at', NEW.created_at,
-                     'last_modified', NEW.last_modified));
+                     'insertion_order', NEW.insertion_order, 'priority', NEW.priority,
+                     'selective', NEW.selective, 'secondary_keys', NEW.secondary_keys,
+                     'case_sensitive', NEW.case_sensitive, 'extensions', NEW.extensions,
+                     'created_at', NEW.created_at, 'last_modified', NEW.last_modified));
 END;
 
 CREATE TRIGGER world_book_entries_sync_delete
@@ -2329,6 +2331,55 @@ UPDATE db_schema_version
    SET version = 20
  WHERE schema_name = 'rag_char_chat_schema'
    AND version = 19;
+"""
+
+    # Keep this runner SQL aligned with
+    # tldw_chatbook/DB/migrations/chachanotes_v20_to_v21_world_book_entry_priority.sql.
+    _MIGRATE_V20_TO_V21_SQL = """
+DROP TRIGGER IF EXISTS world_book_entries_sync_create;
+DROP TRIGGER IF EXISTS world_book_entries_sync_update;
+
+CREATE TRIGGER world_book_entries_sync_create
+AFTER INSERT ON world_book_entries BEGIN
+  INSERT INTO sync_log(entity, entity_id, operation, timestamp, client_id, version, payload)
+  VALUES('world_book_entries', CAST(NEW.id AS TEXT), 'create', NEW.last_modified,
+         (SELECT client_id FROM world_books WHERE id = NEW.world_book_id), 1,
+         json_object('id', NEW.id, 'world_book_id', NEW.world_book_id, 'keys', NEW.keys,
+                     'content', NEW.content, 'enabled', NEW.enabled, 'position', NEW.position,
+                     'insertion_order', NEW.insertion_order, 'priority', NEW.priority,
+                     'selective', NEW.selective, 'secondary_keys', NEW.secondary_keys,
+                     'case_sensitive', NEW.case_sensitive, 'extensions', NEW.extensions,
+                     'created_at', NEW.created_at, 'last_modified', NEW.last_modified));
+END;
+
+CREATE TRIGGER world_book_entries_sync_update
+AFTER UPDATE ON world_book_entries
+WHEN OLD.keys IS NOT NEW.keys OR
+     OLD.content IS NOT NEW.content OR
+     OLD.enabled IS NOT NEW.enabled OR
+     OLD.position IS NOT NEW.position OR
+     OLD.insertion_order IS NOT NEW.insertion_order OR
+     OLD.priority IS NOT NEW.priority OR
+     OLD.selective IS NOT NEW.selective OR
+     OLD.secondary_keys IS NOT NEW.secondary_keys OR
+     OLD.case_sensitive IS NOT NEW.case_sensitive OR
+     OLD.extensions IS NOT NEW.extensions
+BEGIN
+  INSERT INTO sync_log(entity, entity_id, operation, timestamp, client_id, version, payload)
+  VALUES('world_book_entries', CAST(NEW.id AS TEXT), 'update', NEW.last_modified,
+         (SELECT client_id FROM world_books WHERE id = NEW.world_book_id), 1,
+         json_object('id', NEW.id, 'world_book_id', NEW.world_book_id, 'keys', NEW.keys,
+                     'content', NEW.content, 'enabled', NEW.enabled, 'position', NEW.position,
+                     'insertion_order', NEW.insertion_order, 'priority', NEW.priority,
+                     'selective', NEW.selective, 'secondary_keys', NEW.secondary_keys,
+                     'case_sensitive', NEW.case_sensitive, 'extensions', NEW.extensions,
+                     'created_at', NEW.created_at, 'last_modified', NEW.last_modified));
+END;
+
+UPDATE db_schema_version
+   SET version = 21
+ WHERE schema_name = 'rag_char_chat_schema'
+   AND version = 20;
 """
 
     # Keep this runner SQL aligned with
@@ -3287,6 +3338,42 @@ UPDATE db_schema_version
             logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V19→V20] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V19 to V20 for '{self._SCHEMA_NAME}': {e}") from e
 
+    def _migrate_from_v20_to_v21(self, conn: sqlite3.Connection):
+        """
+        Migrates the database schema from version 20 to version 21.
+
+        This migration adds a ``priority`` column to ``world_book_entries``
+        (entry injection priority / budget-survival weight), and redefines
+        the ``world_book_entries_sync_*`` triggers so edits to the new
+        column are reflected in ``sync_log``.
+        """
+        logger.info(f"Migrating schema from V20 to V21 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        try:
+            # Idempotent column add: SQLite has no ``ADD COLUMN IF NOT EXISTS``, so
+            # skip the ALTER when a replayed/partial migration already left the
+            # column in place (mirrors the v19->v20 ``metadata`` column guard).
+            existing_columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(world_book_entries)").fetchall()
+            }
+            if "priority" not in existing_columns:
+                conn.execute("ALTER TABLE world_book_entries ADD COLUMN priority INTEGER DEFAULT 0")
+            conn.executescript(self._MIGRATE_V20_TO_V21_SQL)
+            logger.debug(f"[{self._SCHEMA_NAME} V20→V21] Migration script executed.")
+
+            final_version = self._get_db_version(conn)
+            if final_version != 21:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V20→V21] Migration version check failed. Expected 21, got: {final_version}"
+                )
+
+            logger.info(f"[{self._SCHEMA_NAME} V20→V21] Migration completed successfully for DB: {self.db_path_str}.")
+        except sqlite3.Error as e:
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V20→V21] Migration failed: {e}")
+            raise SchemaError(f"Migration from V20 to V21 failed for '{self._SCHEMA_NAME}': {e}") from e
+        except Exception as e:
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V20→V21] Unexpected error during migration: {e}")
+            raise SchemaError(f"Unexpected error migrating from V20 to V21 for '{self._SCHEMA_NAME}': {e}") from e
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -3404,6 +3491,7 @@ UPDATE db_schema_version
                     17: self._migrate_from_v17_to_v18,
                     18: self._migrate_from_v18_to_v19,
                     19: self._migrate_from_v19_to_v20,
+                    20: self._migrate_from_v20_to_v21,
                 }
 
                 if current_db_version == 0:
