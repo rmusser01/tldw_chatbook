@@ -393,6 +393,22 @@ class ConsoleTranscript(VerticalScroll):
         # Lives on the widget instance so a recompose starts it fresh.
         self._message_signature_cache: dict[str, tuple[tuple, tuple]] = {}
         self._signature_compute_counts: dict[str, int] = {}
+        # TASK-298: every message id seen by set_messages, so a NEW
+        # user-role message ANYWHERE in the update (a send) re-engages
+        # tail-follow even after the user scrolled up. The send path
+        # appends USER + ASSISTANT placeholder together, so the tail
+        # alone can miss the send (PR #697 review).
+        self._seen_message_ids: set[str] = set()
+
+    def on_mount(self) -> None:
+        """Engage tail-follow: stay scrolled to the newest content.
+
+        Textual's anchor keeps the view pinned to the bottom while content
+        grows, releases when the user scrolls up, and re-engages when they
+        return to the bottom (TASK-298 -- streamed replies taller than the
+        viewport used to finish below the fold with no scroll).
+        """
+        self.anchor()
 
     def compose(self) -> ComposeResult:
         self._row_widgets.clear()
@@ -414,6 +430,21 @@ class ConsoleTranscript(VerticalScroll):
         """
         self._messages = list(messages)
         message_ids = {message.id for message in self._messages}
+        new_user_send = any(
+            message.id not in self._seen_message_ids
+            and message.role == ConsoleMessageRole.USER
+            for message in self._messages
+        )
+        if self.is_mounted and new_user_send:
+            # A send: jump to the tail even if the user had scrolled up
+            # (anchor() also re-engages follow for the reply that streams
+            # in next). Checked against ALL newly-seen ids, not just the
+            # tail -- the send path appends USER + ASSISTANT placeholder
+            # together and the first polled update can already have the
+            # placeholder at the tail. Appended assistant/tool rows alone
+            # never yank a reader.
+            self.anchor()
+        self._seen_message_ids = message_ids
         if self.selected_message_id not in message_ids:
             self.selected_message_id = None
         for stale_id in [
