@@ -186,7 +186,7 @@ PROVIDER_PARAM_MAP = {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
         'prompt': 'custom_prompt_arg',
-        'temperature': 'temp',
+        'temp': 'temp',  # generic name is 'temp' — 'temperature' was a dead key (temp silently dropped)
         'system_message': 'system_message',
         'streaming': 'streaming',
         'maxp': 'maxp',
@@ -227,7 +227,7 @@ PROVIDER_PARAM_MAP = {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
         'prompt': 'custom_prompt_arg',
-        'temperature': 'temp',
+        'temp': 'temp',  # generic name is 'temp' — 'temperature' was a dead key (temp silently dropped)
         'system_message': 'system_message',
         'streaming': 'streaming',
         'topp': 'topp',
@@ -246,7 +246,7 @@ PROVIDER_PARAM_MAP = {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
         'prompt': 'custom_prompt_arg',
-        'temperature': 'temp',
+        'temp': 'temp',  # generic name is 'temp' — 'temperature' was a dead key (temp silently dropped)
         'system_message': 'system_message',
         'streaming': 'streaming',
         'topp': 'topp',
@@ -261,7 +261,7 @@ PROVIDER_PARAM_MAP = {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
         'prompt': 'custom_prompt_arg',
-        'temperature': 'temp',
+        'temp': 'temp',  # generic name is 'temp' — 'temperature' was a dead key (temp silently dropped)
         'system_message': 'system_message',
         'streaming': 'streaming',
         'topp': 'topp',
@@ -276,7 +276,7 @@ PROVIDER_PARAM_MAP = {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
         'prompt': 'custom_prompt_arg',
-        'temperature': 'temp',
+        'temp': 'temp',  # generic name is 'temp' — 'temperature' was a dead key (temp silently dropped)
         'system_message': 'system_message',
         'streaming': 'streaming',
         'topp': 'topp',

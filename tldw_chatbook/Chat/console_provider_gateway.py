@@ -246,6 +246,12 @@ class ProviderToolCalls:
     tool_calls: tuple[dict, ...]
 
 
+_PRESERVED_FRAGMENT_EXTRAS = frozenset({
+    # Gemini 3 thought signatures — must round-trip verbatim (task-266).
+    "google_thought_signature",
+})
+
+
 class _ToolCallAccumulator:
     """Merges OpenAI streaming ``delta.tool_calls`` fragments (and
     non-streaming ``message.tool_calls`` entries) into complete calls."""
@@ -295,14 +301,15 @@ class _ToolCallAccumulator:
                 entry["function"]["arguments"] += arguments
             elif isinstance(arguments, Mapping):
                 entry["function"]["arguments"] = json.dumps(arguments)
-        # Preserve provider-specific extra keys (last-wins) — e.g. Gemini 3
-        # thought signatures carried as google_thought_signature, which the
-        # request converter must echo back verbatim (task-266 live gate).
-        for key, value in fragment.items():
-            if key in ("index", "id", "type", "function"):
-                continue
-            if value is not None:
-                entry[key] = value
+        # Preserve KNOWN provider-specific extra keys verbatim (last-wins;
+        # falsy-but-present survives, None drops) — e.g. Gemini 3 thought
+        # signatures, which the request converter must echo back (task-266
+        # live gate). Allow-listed rather than open-ended so a quirky
+        # provider can't inject arbitrary keys that get echoed into the
+        # next request (PR #662 final-review minor).
+        for key in _PRESERVED_FRAGMENT_EXTRAS:
+            if key in fragment and fragment[key] is not None:
+                entry[key] = fragment[key]
 
     def calls(self) -> tuple[dict, ...]:
         # Numeric index order, not first-seen order: the provider's index
@@ -947,19 +954,16 @@ class ConsoleProviderGateway:
                 accumulator = _ToolCallAccumulator() if tools else None
                 if accumulator is not None:
                     response = _tee_tool_calls(response, accumulator)
-                suppressed_fallback_copy = False
                 emitted_content = False
-                for text in self.normalize_provider_response(response):
+                # tools= runs: fallback UI copy must never leak into agent
+                # history, so it is suppressed at GENERATION (not filtered
+                # by string equality — review minor m4: a real answer that
+                # happens to equal the copy text now flows through).
+                for text in self.normalize_provider_response(
+                        response,
+                        suppress_fallback_copy=accumulator is not None):
                     if stop_event.is_set():
                         break
-                    if accumulator is not None and text in (
-                            NO_PROVIDER_CONTENT_COPY,
-                            UNSUPPORTED_PROVIDER_RESPONSE_COPY):
-                        # tools= runs: fallback UI copy must never leak into
-                        # agent history -- a tool-call-only turn legitimately
-                        # has no visible content.
-                        suppressed_fallback_copy = True
-                        continue
                     if text:
                         emitted_content = True
                     enqueue(_QueueItem.content(text))
@@ -967,15 +971,14 @@ class ConsoleProviderGateway:
                     calls = accumulator.calls()
                     if calls:
                         enqueue(_QueueItem.native_tool_calls(calls))
-                    elif suppressed_fallback_copy and not emitted_content:
+                    elif not emitted_content:
                         # PR #648 review Minor 1: the turn produced NEITHER
-                        # visible content NOR tool-calls -- only filtered
-                        # fallback copy. On the fence path that copy surfaces
-                        # as the (diagnostic) answer; silently completing here
-                        # would make a misbehaving provider's junk 200-body
-                        # indistinguishable from a legitimate empty answer.
-                        # Surface it as a provider error instead, feeding the
-                        # run's existing honest RUN_ERROR outcome path.
+                        # visible content NOR tool-calls. On the fence path
+                        # junk surfaces as diagnostic copy; silently
+                        # completing here would make a misbehaving provider's
+                        # junk 200-body indistinguishable from a legitimate
+                        # empty answer. Surface it as a provider error,
+                        # feeding the run's existing honest RUN_ERROR path.
                         enqueue(_QueueItem.error(self._safe_error_copy(
                             resolution.provider,
                             ChatProviderError(
@@ -1010,18 +1013,29 @@ class ConsoleProviderGateway:
                 await asyncio.wait_for(asyncio.shield(worker_task), timeout=0)
 
     @staticmethod
-    def normalize_provider_response(response: Any) -> Iterator[str]:
+    def normalize_provider_response(
+        response: Any, suppress_fallback_copy: bool = False,
+    ) -> Iterator[str]:
         """Yield safe assistant-visible chunks from generic provider output.
 
         Args:
             response: Raw return value from ``chat_api_call``.
+            suppress_fallback_copy: When True (tools= agent runs), the
+                NO_PROVIDER_CONTENT / UNSUPPORTED fallback UI copy is never
+                GENERATED instead of being string-filtered downstream — so a
+                real model answer that happens to equal the copy text flows
+                through untouched (review minor m4, PR #648 line).
 
         Yields:
-            Assistant-visible text chunks or normalized fallback copy.
+            Assistant-visible text chunks (and, unless suppressed,
+            normalized fallback copy).
         """
         content = _content_from_provider_item(response)
         if isinstance(content, str):
-            yield content if content else NO_PROVIDER_CONTENT_COPY
+            if content:
+                yield content
+            elif not suppress_fallback_copy:
+                yield NO_PROVIDER_CONTENT_COPY
             return
         if content is _UNSUPPORTED_RESPONSE:
             if _is_iterable_response(response):
@@ -1036,13 +1050,16 @@ class ConsoleProviderGateway:
                     if item_content is _EMPTY_RESPONSE:
                         continue
                     emitted = True
-                    yield UNSUPPORTED_PROVIDER_RESPONSE_COPY
-                if not emitted:
+                    if not suppress_fallback_copy:
+                        yield UNSUPPORTED_PROVIDER_RESPONSE_COPY
+                if not emitted and not suppress_fallback_copy:
                     yield NO_PROVIDER_CONTENT_COPY
                 return
-            yield UNSUPPORTED_PROVIDER_RESPONSE_COPY
+            if not suppress_fallback_copy:
+                yield UNSUPPORTED_PROVIDER_RESPONSE_COPY
             return
-        yield NO_PROVIDER_CONTENT_COPY
+        if not suppress_fallback_copy:
+            yield NO_PROVIDER_CONTENT_COPY
 
     def _chat_api_call(self, **kwargs: Any) -> Any:
         if self._chat_api_call_fn is None:

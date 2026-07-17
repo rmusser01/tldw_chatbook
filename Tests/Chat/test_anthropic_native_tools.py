@@ -488,3 +488,52 @@ def test_streaming_junk_index_event_is_skipped_not_fatal(mock_post):
     texts = [c["choices"][0].get("delta", {}).get("content") for c in chunks]
     assert "still alive" in texts
     assert not any("error" in c for c in chunks)
+
+
+@patch("requests.Session.post")
+def test_streaming_two_interleaved_tool_blocks_reassemble_distinctly(mock_post):
+    """task-263 T3 review advisory (live-covered at the gate, now unit-
+    pinned): two tool_use blocks whose input_json_delta fragments interleave
+    across Anthropic block indexes must reassemble as DISTINCT calls in
+    call order via the real gateway accumulator."""
+    # Comment: imports gateway privates deliberately — cross-layer contract pin.
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        _ToolCallAccumulator, _decode_stream_item,
+    )
+    events = [
+        {"type": "content_block_start", "index": 0,
+         "content_block": {"type": "tool_use", "id": "toolu_A",
+                           "name": "calculator", "input": {}}},
+        {"type": "content_block_start", "index": 1,
+         "content_block": {"type": "tool_use", "id": "toolu_B",
+                           "name": "get_current_datetime", "input": {}}},
+        {"type": "content_block_delta", "index": 1,
+         "delta": {"type": "input_json_delta", "partial_json": "{}"}},
+        {"type": "content_block_delta", "index": 0,
+         "delta": {"type": "input_json_delta", "partial_json": '{"expres'}},
+        {"type": "content_block_delta", "index": 0,
+         "delta": {"type": "input_json_delta", "partial_json": 'sion": "2+2"}'}},
+        {"type": "content_block_stop", "index": 0},
+        {"type": "content_block_stop", "index": 1},
+        {"type": "message_delta", "delta": {"stop_reason": "tool_use"}},
+        {"type": "message_stop"},
+    ]
+    lines = [f"data: {json.dumps(e)}".encode() for e in events]
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.raise_for_status = Mock()
+    mock_response.iter_lines.return_value = iter(lines)
+    mock_post.return_value = mock_response
+    gen = chat_api_call("anthropic",
+                        messages_payload=[{"role": "user", "content": "go"}],
+                        api_key="test-key", model="claude-x", streaming=True)
+    acc = _ToolCallAccumulator()
+    for raw in gen:
+        payload = _decode_stream_item(raw)
+        if payload is not None:
+            acc.feed_payload(payload)
+    calls = acc.calls()
+    assert [(c["id"], c["function"]["name"]) for c in calls] == [
+        ("toolu_A", "calculator"), ("toolu_B", "get_current_datetime")]
+    assert json.loads(calls[0]["function"]["arguments"]) == {"expression": "2+2"}
+    assert json.loads(calls[1]["function"]["arguments"]) == {}
