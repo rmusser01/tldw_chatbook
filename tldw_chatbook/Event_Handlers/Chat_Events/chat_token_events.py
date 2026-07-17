@@ -23,6 +23,73 @@ if TYPE_CHECKING:
 #
 # Functions:
 
+def _estimate_tokens_cached(
+    app: 'TldwCli',
+    chat_history: list,
+    *,
+    model: str,
+    provider: str,
+    max_tokens_response: int,
+    system_prompt: str,
+):
+    """Estimate token usage, reusing the last result when the inputs are unchanged.
+
+    task-261 dirty gate: the footer's 10 s interval timer re-ran the full
+    tokenizer over the entire visible history every tick even when nothing
+    had changed. A cheap signature over every input that influences the
+    estimate — settings plus message count and a per-message (role, content)
+    hash tuple — is compared against the previous tick's; on a match
+    the cached counts are returned without re-tokenizing. The cache lives on
+    the app instance (one live history per app), and the caller still
+    refreshes the footer widget every tick, so display behavior is
+    unchanged.
+
+    Args:
+        app: The running app instance the cache is stored on.
+        chat_history: Completed messages as ``{"role", "content"}`` dicts.
+        model: Model name the tokenizer estimate is computed for.
+        provider: Provider name the tokenizer estimate is computed for.
+        max_tokens_response: Reserved response-token budget.
+        system_prompt: System prompt text included in the estimate.
+
+    Returns:
+        The ``(used_tokens, total_limit, remaining)`` tuple from
+        ``estimate_remaining_tokens``.
+    """
+    signature = (
+        model,
+        provider,
+        max_tokens_response,
+        system_prompt,
+        len(chat_history),
+        # Per-message content hashes, not lengths: a same-length edit to an
+        # earlier message (or a role flip) must invalidate the cache too
+        # (PR #688 review). CPython caches str.__hash__ on the string object,
+        # so for an unchanged history this stays O(1) amortized per message.
+        tuple(
+            (hash(message.get("role", "")), hash(message.get("content", "")))
+            for message in chat_history
+        ),
+    )
+    cached = getattr(app, "_footer_token_estimate_cache", None)
+    if cached is not None and cached[0] == signature:
+        return cached[1]
+    result = estimate_remaining_tokens(
+        chat_history,
+        model=model,
+        provider=provider,
+        max_tokens_response=max_tokens_response,
+        system_prompt=system_prompt,
+    )
+    try:
+        app._footer_token_estimate_cache = (signature, result)
+    except Exception:
+        # A slot-restricted or frozen test double can refuse the attribute;
+        # caching is best-effort and never worth failing the update over.
+        logger.debug("Footer token-estimate cache not stored on app instance.")
+    return result
+
+
 async def update_chat_token_counter(app: 'TldwCli') -> None:
     """
     Update the token counter display in the chat window.
@@ -65,16 +132,18 @@ async def update_chat_token_counter(app: 'TldwCli') -> None:
                         chat_history.append({"role": role_for_api, "content": content})
         except QueryError as e:
             logger.debug(f"Could not get chat messages for token counting: {e}")
-        
-        # Calculate tokens
-        used_tokens, total_limit, remaining = estimate_remaining_tokens(
+
+        # Calculate tokens (task-261: skips re-tokenizing when history and
+        # settings are unchanged since the last periodic tick).
+        used_tokens, total_limit, remaining = _estimate_tokens_cached(
+            app,
             chat_history,
             model=model,
             provider=provider,
             max_tokens_response=max_tokens_response,
             system_prompt=system_prompt
         )
-        
+
         # Use max_tokens_response as the display limit instead of model's total limit
         # This allows users to see how their conversation measures against their configured limit
         display_limit = max_tokens_response

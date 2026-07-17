@@ -148,6 +148,11 @@ class CharactersRAGDB:
     _ALLOWED_PERSONA_MEMORY_MODES = ("read_only", "read_write")
     _ALLOWED_CONVERSATION_CHARACTER_SCOPES = ("all", "character", "generic")
     _ALLOWED_SCOPE_TYPES = ("global", "workspace")
+    # task-261: how long a thread-local connection may sit unused before the
+    # next `get_connection()` re-verifies it with a `SELECT 1` liveness ping.
+    # Within this window the ping is skipped (it used to run on every call,
+    # ~doubling raw statement counts on query-heavy paths).
+    _LIVENESS_PING_IDLE_SECONDS = 30.0
 
     _FULL_SCHEMA_SQL_V4 = """
 /*───────────────────────────────────────────────────────────────
@@ -2474,6 +2479,15 @@ UPDATE db_schema_version
         Enables WAL mode for file-based databases and sets PRAGMA foreign_keys=ON.
         Sets a timeout for database operations.
 
+        task-261: the ``SELECT 1`` liveness ping used to run on EVERY call,
+        roughly doubling the raw statement count for query-heavy paths. It is
+        now gated behind an idle threshold (``_LIVENESS_PING_IDLE_SECONDS``):
+        connections here are thread-local and long-lived, and
+        ``close_connection()`` always clears the thread-local reference, so a
+        recently-used connection is known-good without a ping. A connection
+        idle past the threshold still gets the full ping + transparent-reopen
+        treatment.
+
         Returns:
             A thread-local sqlite3.Connection object.
 
@@ -2482,17 +2496,19 @@ UPDATE db_schema_version
         """
         conn = getattr(self._local, 'conn', None)
         if conn:
-            try:
-                conn.execute("SELECT 1")  # Check if connection is still alive
-            except (sqlite3.ProgrammingError, sqlite3.OperationalError):
-                logger.warning(
-                    f"Thread-local connection for {self.db_path_str} was closed or became unusable. Reopening.")
+            last_used = getattr(self._local, 'conn_last_used', None)
+            if last_used is None or (time.monotonic() - last_used) >= self._LIVENESS_PING_IDLE_SECONDS:
                 try:
-                    conn.close()
-                except sqlite3.Error:
-                    # Ignore connection close errors - connection may already be closed
-                    pass
-                conn = None
+                    conn.execute("SELECT 1")  # Check if connection is still alive
+                except (sqlite3.ProgrammingError, sqlite3.OperationalError):
+                    logger.warning(
+                        f"Thread-local connection for {self.db_path_str} was closed or became unusable. Reopening.")
+                    try:
+                        conn.close()
+                    except sqlite3.Error:
+                        # Ignore connection close errors - connection may already be closed
+                        pass
+                    conn = None
 
         if not conn:
             try:
@@ -2514,6 +2530,7 @@ UPDATE db_schema_version
                 logger.opt(exception=True).error(f"Failed to connect to database {self.db_path_str}: {e}")
                 self._local.conn = None
                 raise CharactersRAGDBError(f"Failed to connect to database '{self.db_path_str}': {e}") from e
+        self._local.conn_last_used = time.monotonic()
         return self._local.conn
 
     def get_connection(self) -> sqlite3.Connection:
