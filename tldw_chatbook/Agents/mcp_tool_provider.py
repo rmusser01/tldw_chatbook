@@ -162,6 +162,10 @@ class MCPToolProvider:
         uniqueness), and cache both the `ToolCatalogEntry` list and the
         `{llm_name: (HubTool, EffectiveToolState)}` lookup table.
         """
+        # Clear stale stamped decisions from prior catalogs to prevent
+        # auto-approval of tools not in the new catalog (Finding 3).
+        self._stamped_decisions.clear()
+
         if self._service.get_kill_switch():
             self._catalog = []
             self._entry_by_llm_name = {}
@@ -408,7 +412,15 @@ class MCPToolProvider:
             )
             raw_result = future.result(timeout=timeout)
         except Exception as exc:  # noqa: BLE001 -- the never-raise/never-hang contract
-            return ToolResult(ok=False, error=str(exc)[:_MAX_ERROR_CHARS])
+            # Finding 2: best-effort cancel lingering future on timeout/cancellation.
+            try:
+                future.cancel()
+            except Exception:
+                pass
+            # Finding 1: TimeoutError/CancelledError have empty str(), so guarantee
+            # non-empty error via (str(exc) or repr(exc)) so the model receives actual info.
+            error = (str(exc) or repr(exc))[:_MAX_ERROR_CHARS]
+            return ToolResult(ok=False, error=error)
         return self._format_result(raw_result)
 
     def _format_result(self, raw_result: Any) -> ToolResult:

@@ -263,6 +263,25 @@ def test_apply_batch_decisions_then_consume_once():
     assert provider.consume_decision("mcp__srv__run") is None
 
 
+def test_compose_catalog_clears_stale_stamped_decisions():
+    # Finding 3: stale stamps for tools not in the new catalog should be
+    # cleared on recompose to prevent auto-approval of old tool names.
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])],
+    )
+    provider = MCPToolProvider(service=service, main_loop=asyncio.new_event_loop())
+    _compose(provider)
+
+    # Stamp a bogus tool name not in the catalog.
+    bogus_name = "mcp__srv__nonexistent"
+    provider.apply_batch_decisions({bogus_name: "approve_once"})
+    assert provider.consume_decision(bogus_name) == "approve_once"
+
+    # Recompose: stale decision should be cleared.
+    _compose(provider)
+    assert provider.consume_decision(bogus_name) is None
+
+
 # ---------------------------------------------------------------------------
 # pending_gate_for
 # ---------------------------------------------------------------------------
@@ -627,6 +646,7 @@ def test_invoke_execute_timeout_returns_error_within_bound(running_loop):
     elapsed = time.monotonic() - started
 
     assert result.ok is False
+    assert result.error  # Finding 1: guarantee non-empty error even for TimeoutError
     assert elapsed < 2.0, f"invoke() blocked for {elapsed:.2f}s -- must be bounded"
 
 
