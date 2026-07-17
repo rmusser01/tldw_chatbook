@@ -666,6 +666,12 @@ class SettingsScreen(BaseAppScreen):
         self._navigation_provider: str | None = None
         self._navigation_model: str | None = None
         self._navigation_field: str | None = None
+        #: One-shot focus intent (task-290): `Widget.focus()` defers its
+        #: set_focus via call_later, so a storm recompose can destroy the
+        #: target between intent and processing. Recorded when navigation
+        #: focuses a provider field, cleared when ANY descendant focus
+        #: lands, consumed by the post-recompose restore.
+        self._pending_navigation_focus_selector: str | None = None
         self._diagnostics_validation_result = "Config validation: not run"
         self._diagnostics_reload_result = "Config reload: not run"
         self._storage_check_rows: tuple[str, ...] = (
@@ -684,10 +690,19 @@ class SettingsScreen(BaseAppScreen):
         self._advanced_config_result = "Advanced config validation: not run"
         self._advanced_config_validated_text: str | None = None
         self._ownership_by_category_cache = self._build_ownership_by_category()
-        self.server_sync_workspace_handoff_rows = (
-            self._server_sync_workspace_handoff_loading_rows()
+        # set_reactive, NOT plain assignment: assigning a recompose=True
+        # reactive here fires refresh(recompose=True) on the not-yet-mounted
+        # screen; the flag survives into mount and forces a full recompose of
+        # the JUST-composed screen -- a wasted startup recompose (task-290
+        # timeline: REFRESH pre-mount -> COMPOSE -> phantom re-COMPOSE).
+        self.set_reactive(
+            SettingsScreen.server_sync_workspace_handoff_rows,
+            self._server_sync_workspace_handoff_loading_rows(),
         )
-        self.manual_sync_rows = self._manual_sync_loading_rows()
+        self.set_reactive(
+            SettingsScreen.manual_sync_rows,
+            self._manual_sync_loading_rows(),
+        )
 
     def save_state(self) -> dict[str, object]:
         """Save process-local Settings navigation and draft state.
@@ -758,22 +773,15 @@ class SettingsScreen(BaseAppScreen):
     def on_mount(self) -> None:
         super().on_mount()
         self._register_footer_shortcuts()
-        self._queue_server_sync_workspace_handoff_refresh()
-        self._queue_manual_sync_refresh()
+        self._queue_sync_rows_refresh()
 
     def on_screen_resume(self) -> None:
-        self._queue_server_sync_workspace_handoff_refresh()
-        self._queue_manual_sync_refresh()
+        self._queue_sync_rows_refresh()
 
-    def _queue_server_sync_workspace_handoff_refresh(self) -> None:
+    def _queue_sync_rows_refresh(self) -> None:
         if not getattr(self, "is_mounted", False):
             return
-        self._refresh_server_sync_workspace_handoff_rows()
-
-    def _queue_manual_sync_refresh(self) -> None:
-        if not getattr(self, "is_mounted", False):
-            return
-        self._refresh_manual_sync_rows()
+        self._refresh_sync_rows()
 
     @staticmethod
     def _server_sync_workspace_handoff_loading_rows() -> tuple[tuple[str, str], ...]:
@@ -2682,17 +2690,90 @@ class SettingsScreen(BaseAppScreen):
             for domain, count in pending_by_domain.items()
         ) or "none"
 
-    @work(exclusive=True, thread=True)
-    def _refresh_server_sync_workspace_handoff_rows(self) -> None:
+    @work(exclusive=True, thread=True, group="settings-sync-rows-refresh")
+    def _refresh_sync_rows(self) -> None:
+        """Compute BOTH sync row sets off-thread, apply in ONE hop (task-290).
+
+        The previous shape ran two independent thread workers whose
+        completions each set a ``recompose=True`` reactive at its own
+        nondeterministic moment -- two full-screen recomposes shortly after
+        mount (the "mount storm"). Computing both row sets in one pass and
+        applying them in a single ``call_from_thread`` coalesces the storm:
+        Textual's ``refresh(recompose=True)`` is flag-based, so two reactive
+        assignments in the same message-loop slot recompose ONCE.
+
+        Own worker group (not "settings-manual-sync-preview"): a solo manual
+        refresh racing this one is benign last-wins between two fresh
+        snapshots, whereas sharing the group would let a solo refresh CANCEL
+        an in-flight combined pass and silently drop the handoff update.
+        """
         try:
-            rows = self._server_sync_workspace_handoff_rows()
+            handoff_rows = self._server_sync_workspace_handoff_rows()
         except Exception:
             logger.warning(
                 "Failed to refresh Settings server/sync/workspace/handoff rows.",
                 exc_info=True,
             )
-            rows = self._server_sync_workspace_handoff_loading_rows()
-        self.app.call_from_thread(self._apply_server_sync_workspace_handoff_rows, rows)
+            handoff_rows = self._server_sync_workspace_handoff_loading_rows()
+        try:
+            manual_rows = self._manual_sync_rows()
+        except Exception:
+            logger.warning("Failed to refresh Settings manual sync rows.", exc_info=True)
+            manual_rows = self._manual_sync_loading_rows()
+        self.app.call_from_thread(self._apply_sync_rows, handoff_rows, manual_rows)
+
+    def _apply_sync_rows(
+        self,
+        handoff_rows: tuple[tuple[str, str], ...],
+        manual_rows: tuple[tuple[str, str], ...],
+    ) -> None:
+        """Apply both row sets in one hop, preserving focus across the
+        recompose they trigger.
+
+        The recompose replaces every child, dropping whatever the user (or a
+        route-targeted navigation like ``_apply_navigation_provider_context``)
+        had focused -- restore it by id once the fresh children mount.
+        """
+        changed = (
+            handoff_rows != self.server_sync_workspace_handoff_rows
+            or manual_rows != self.manual_sync_rows
+        )
+        focused = self.app.focused
+        focused_id = (
+            focused.id
+            if focused is not None and focused.screen is self and focused.id
+            else None
+        )
+        self.server_sync_workspace_handoff_rows = handoff_rows
+        self.manual_sync_rows = manual_rows
+        if changed:
+            # Scheduled on ANY change, not only when something was focused:
+            # the pending-intent case is precisely a focus that has NOT
+            # landed yet (Widget.focus defers via call_later).
+            self.call_after_refresh(self._restore_focus_after_sync_rows, focused_id)
+
+    def _restore_focus_after_sync_rows(self, widget_id: str | None) -> None:
+        pending = self._pending_navigation_focus_selector
+        self._pending_navigation_focus_selector = None
+        if self.app.focused is not None:
+            # A post-recompose focus already exists (user action or a
+            # late-landing deliberate focus) -- honor it, drop the intent.
+            return
+        if pending:
+            # A navigation focus intent never landed (the recompose destroyed
+            # its target before the deferred set_focus processed) -- re-issue
+            # it against the fresh children. call_later is FIFO, so this
+            # focus is queued after any stale earlier intents and wins.
+            try:
+                self.query_one(pending).focus()
+                return
+            except QueryError:
+                pass
+        if widget_id:
+            try:
+                self.query_one(f"#{widget_id}").focus()
+            except QueryError:
+                pass
 
     @work(exclusive=True, thread=True, group="settings-manual-sync-preview")
     def _refresh_manual_sync_rows(self) -> None:
@@ -6895,6 +6976,7 @@ class SettingsScreen(BaseAppScreen):
         selector = field_selectors.get(str(field or "").strip())
         if not selector:
             return
+        self._pending_navigation_focus_selector = selector
         try:
             self.query_one(selector).focus()
         except QueryError:
@@ -6905,13 +6987,20 @@ class SettingsScreen(BaseAppScreen):
             self._active_settings_field_id = None
         self.active_category = category_value
         if category_value == SettingsCategoryId.OVERVIEW.value:
-            self._queue_server_sync_workspace_handoff_refresh()
-            self._queue_manual_sync_refresh()
+            self._queue_sync_rows_refresh()
         if restore_focus:
             self.call_after_refresh(self._focus_category, category_value)
 
     @on(DescendantFocus)
     def handle_descendant_focus(self, event: DescendantFocus) -> None:
+        # Clear the pending navigation focus intent only when SATISFIED (the
+        # intended widget landed focus). Clearing on any focus is too eager:
+        # the stale category-chip focus the intent is meant to supersede
+        # lands first and would erase it (task-290).
+        pending = self._pending_navigation_focus_selector
+        landed_id = str(getattr(event.widget, "id", "") or "")
+        if pending and landed_id and f"#{landed_id}" == pending:
+            self._pending_navigation_focus_selector = None
         active_category = self._active_category_id()
         widget_id = str(getattr(event.widget, "id", "") or "")
         if active_category is SettingsCategoryId.APPEARANCE:
