@@ -1,9 +1,11 @@
 ---
 id: TASK-245
 title: Memoize per-turn tool-protocol render and prepare for provider prompt-caching
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-07-16 16:00'
+updated_date: '2026-07-17 01:42'
 labels:
   - agents
   - console
@@ -23,3 +25,9 @@ _make_call_model re-renders render_tool_protocol(runtime_schemas + active_schema
 - [ ] #2 A cache invalidates correctly the moment load_tools admits a new schema into the active set
 - [ ] #3 A short design note records what would be needed to additionally mark this stable prefix for provider-side prompt caching, as a distinct follow-up rather than in-scope work here
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Plan at Docs/superpowers/plans/2026-07-17-protocol-render-memoization.md — 1 SDD task: per-run closure memo in _make_call_model keyed by schema-name tuple (fence branch only; native untouched; per-run scoping by construction), invalidates when load_tools grows the active set; + Docs/superpowers/reviews/2026-07-17-provider-prompt-caching-note.md for AC#3 (Anthropic cache_control needs structured system blocks — moot until task-263; OpenAI prefix caching needs only the byte-stability this delivers; native tools= symmetry as follow-up).
+<!-- SECTION:PLAN:END -->
