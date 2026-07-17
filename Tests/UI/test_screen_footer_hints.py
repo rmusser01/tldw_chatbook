@@ -231,7 +231,11 @@ def _parse_css_blocks(css_text: str) -> dict[str, dict[str, str]]:
                 continue
             prop, value = declaration.split(":", 1)
             declarations[prop.strip()] = " ".join(value.split())
-        blocks[selector] = declarations
+        # CSS merges duplicate selector blocks in source order (later
+        # properties win per-property); mirror that instead of overwriting
+        # the whole block, so a legitimate split of one selector across two
+        # blocks cannot false-fail the drift guard (Qodo #687-2).
+        blocks.setdefault(selector, {}).update(declarations)
     return blocks
 
 
@@ -338,6 +342,7 @@ def test_personas_screen_has_no_recompose_path_while_footer_hints_are_non_persis
 
     recompose_sites: list[int] = []
     uses_persisting_api = False
+    screen_classes_found = 0
     for top_level in tree.body:
         if isinstance(top_level, ast.ClassDef):
             base_names = {
@@ -345,6 +350,7 @@ def test_personas_screen_has_no_recompose_path_while_footer_hints_are_non_persis
                 for base in top_level.bases
             }
             is_screen_class = "BaseAppScreen" in base_names
+            screen_classes_found += is_screen_class
             for inner in ast.walk(top_level):
                 if not isinstance(inner, ast.Call):
                     continue
@@ -373,6 +379,22 @@ def test_personas_screen_has_no_recompose_path_while_footer_hints_are_non_persis
                     and _has_literal_true_recompose(inner)
                 ):
                     recompose_sites.append(inner.lineno)
+
+    # Self-check: the walk identifies screen classes by the literal direct
+    # base name "BaseAppScreen". If personas ever inherits via an alias or an
+    # intermediate class, this guard goes blind -- fail loudly instead of
+    # silently scanning nothing (Qodo #687-3a). Runtime truth check keeps the
+    # assertion honest against renames.
+    from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
+
+    assert issubclass(PersonasScreen, BaseAppScreen)
+    assert screen_classes_found >= 1, (
+        "The recompose guard found no class with a direct 'BaseAppScreen' "
+        "base in personas_screen.py, but PersonasScreen IS a BaseAppScreen "
+        "subclass at runtime -- the inheritance is no longer literal/direct "
+        "and this guard's AST detection is blind. Update the guard's "
+        "screen-class detection to match the new inheritance shape."
+    )
 
     assert not (recompose_sites and not uses_persisting_api), (
         f"personas_screen.py gained recompose=True at line(s) {recompose_sites} "
