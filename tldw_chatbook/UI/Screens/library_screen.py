@@ -6671,7 +6671,7 @@ class LibraryScreen(BaseAppScreen):
             self._apply_library_skills_import_outcome_from_exception(skill_name, exc)
             return
 
-        self._apply_library_skills_import_success()
+        self._apply_library_skills_import_success(skill_name)
 
     async def _import_library_skill_from_loose_file(
         self, file_path: Path, import_skill_file: Any,
@@ -6732,13 +6732,22 @@ class LibraryScreen(BaseAppScreen):
             )
             return
 
-        self._apply_library_skills_import_success()
+        self._apply_library_skills_import_success(
+            self._safe_text(file_path.stem, max_length=64)
+        )
 
-    def _apply_library_skills_import_success(self) -> None:
-        """Report a successful single-skill import and refresh the rail/list."""
+    def _apply_library_skills_import_success(self, skill_name: str) -> None:
+        """Report a successful single-skill import and refresh the rail/list.
+
+        The imported skill's NAME is part of the outcome line (task-291):
+        the copy used to be byte-identical for every import, so a test (or
+        a user doing repeat imports) could not attribute the line to a
+        specific import -- a stale success from the previous skill read
+        exactly like a fresh one.
+        """
         self._library_skills_import_path = ""
         self._apply_library_skills_import_status(
-            "1 imported · re-review it in the trust panel"
+            f'Imported "{skill_name}" · re-review it in the trust panel'
         )
         self._refresh_local_source_snapshot()
 

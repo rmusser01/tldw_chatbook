@@ -104,6 +104,10 @@ async def _run_skills_import_via_ui(
     I/O (~3.5s even unloaded), so the previous 150x0.02s = 3.0s iteration
     ceiling sat below the zero-load baseline and flaked whenever the suite
     ran under contention.
+
+    task-291 closed the residual stale-text false-pass: the success copy now
+    carries the imported skill's NAME, so callers assert the name-specific
+    line and a stale success from the previous import can never satisfy it.
     """
     previous = str(screen.query_one("#library-skills-import-status", Static).renderable)
     screen.query_one("#library-skills-import-path", Input).value = str(path)
@@ -143,7 +147,9 @@ async def test_import_real_superpowers_skills_lands_trust_pending(tmp_path):
 
         for name in REAL_FIXTURE_SKILLS:
             status = await _run_skills_import_via_ui(screen, pilot, FIXTURES_DIR / name)
-            assert status == "1 imported · re-review it in the trust panel", (
+            # Name-specific outcome copy (task-291): a stale success line
+            # from the PREVIOUS skill can never satisfy this assertion.
+            assert status == f'Imported "{name}" · re-review it in the trust panel', (
                 f"unexpected outcome importing {name!r}: {status!r}"
             )
 
@@ -187,7 +193,7 @@ async def test_import_skill_via_skill_md_file_path_derives_name_from_parent_dire
 
         skill_md_path = FIXTURES_DIR / "verification-before-completion" / "SKILL.md"
         status = await _run_skills_import_via_ui(screen, pilot, skill_md_path)
-        assert status == "1 imported · re-review it in the trust panel"
+        assert status == 'Imported "verification-before-completion" · re-review it in the trust panel'
 
     record = await local_service.get_skill("verification-before-completion")
     assert record["name"] == "verification-before-completion"
@@ -218,7 +224,7 @@ async def test_import_skill_with_supporting_reference_file_threads_it_through(tm
         await _open_skills_import_row(screen, pilot)
 
         status = await _run_skills_import_via_ui(screen, pilot, skill_dir)
-        assert status == "1 imported · re-review it in the trust panel"
+        assert status == 'Imported "requesting-code-review" · re-review it in the trust panel'
 
     record = await local_service.get_skill("requesting-code-review")
     assert record["supporting_files"] == {"code-reviewer.md": real_supporting_content}
@@ -254,7 +260,7 @@ async def test_import_skill_with_extra_frontmatter_fields_applies_recognized_and
         status = await _run_skills_import_via_ui(
             screen, pilot, FIXTURES_DIR / "executing-plans-with-metadata",
         )
-        assert status == "1 imported · re-review it in the trust panel"
+        assert status == 'Imported "executing-plans-with-metadata" · re-review it in the trust panel'
 
     record = await local_service.get_skill("executing-plans-with-metadata")
     assert record["argument_hint"] == "plan file path"
@@ -298,7 +304,7 @@ async def test_reimporting_the_same_skill_name_is_skipped_not_duplicated(tmp_pat
         await _open_skills_import_row(screen, pilot)
 
         first_status = await _run_skills_import_via_ui(screen, pilot, skill_dir)
-        assert first_status == "1 imported · re-review it in the trust panel"
+        assert first_status == 'Imported "executing-plans" · re-review it in the trust panel'
 
         second_status = await _run_skills_import_via_ui(screen, pilot, skill_dir)
         assert second_status == 'Skipped — a skill named "executing-plans" already exists.'
@@ -450,7 +456,7 @@ async def test_import_row_skips_nested_reference_subfolder_without_failing_impor
         await _open_skills_import_row(screen, pilot)
 
         status = await _run_skills_import_via_ui(screen, pilot, skill_dir)
-        assert status == "1 imported · re-review it in the trust panel"
+        assert status == 'Imported "nested-refs-skill" · re-review it in the trust panel'
 
     record = await local_service.get_skill("nested-refs-skill")
     assert record["trust_blocked"] is True
