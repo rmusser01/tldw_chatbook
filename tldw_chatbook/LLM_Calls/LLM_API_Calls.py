@@ -678,6 +678,36 @@ def chat_with_openai(
         raise ChatProviderError(provider="openai", message=f"Unexpected error: {e}")
 
 
+def _anthropic_tools_payload(tools: list) -> list:
+    """Convert OpenAI function-format tool entries to Anthropic's format.
+
+    Entries already in Anthropic shape (carrying ``input_schema``) pass
+    through untouched — the handler's historical contract. Non-dict junk is
+    dropped.
+
+    Args:
+        tools: The ``tools`` list as received (OpenAI or Anthropic shaped).
+
+    Returns:
+        Anthropic-format entries: ``{"name", "description", "input_schema"}``.
+    """
+    converted = []
+    for entry in tools or []:
+        if not isinstance(entry, dict):
+            continue
+        function = entry.get("function")
+        if entry.get("type") == "function" and isinstance(function, dict):
+            converted.append({
+                "name": str(function.get("name") or ""),
+                "description": str(function.get("description") or ""),
+                "input_schema": function.get("parameters")
+                or {"type": "object", "properties": {}},
+            })
+        else:
+            converted.append(entry)
+    return converted
+
+
 def chat_with_anthropic(
         input_data: List[Dict[str, Any]], # Mapped from 'messages_payload'
         model: Optional[str] = None,
@@ -729,6 +759,48 @@ def chat_with_anthropic(
     for msg in input_data:
         role = msg.get("role")
         content = msg.get("content")
+        if role == "tool":
+            # OpenAI tool-result convention -> Anthropic tool_result block.
+            # Consecutive tool results coalesce into ONE user turn: they all
+            # answer the same assistant tool_use turn, and Anthropic requires
+            # alternating roles (task-263 AC#2).
+            block = {"type": "tool_result",
+                     "tool_use_id": str(msg.get("tool_call_id") or ""),
+                     "content": str(content or "")}
+            last = anthropic_messages[-1] if anthropic_messages else None
+            if (last is not None and last.get("role") == "user"
+                    and isinstance(last.get("content"), list)
+                    and any(isinstance(b, dict) and b.get("type") == "tool_result"
+                            for b in last["content"])):
+                last["content"].append(block)
+            else:
+                anthropic_messages.append({"role": "user", "content": [block]})
+            continue
+        if role == "assistant" and msg.get("tool_calls"):
+            # OpenAI assistant tool_calls echo -> Anthropic tool_use blocks
+            # (text block first when the turn also carried visible content).
+            blocks = []
+            if isinstance(content, str) and content.strip():
+                blocks.append({"type": "text", "text": content})
+            for call in msg.get("tool_calls") or []:
+                if not isinstance(call, dict):
+                    continue
+                function = call.get("function") or {}
+                raw_args = function.get("arguments")
+                tool_input = raw_args if isinstance(raw_args, dict) else {}
+                if isinstance(raw_args, str) and raw_args.strip():
+                    try:
+                        parsed = json.loads(raw_args)
+                    except json.JSONDecodeError:
+                        parsed = None
+                    if isinstance(parsed, dict):
+                        tool_input = parsed
+                blocks.append({"type": "tool_use",
+                               "id": str(call.get("id") or ""),
+                               "name": str(function.get("name") or ""),
+                               "input": tool_input})
+            anthropic_messages.append({"role": "assistant", "content": blocks})
+            continue
         if role not in ["user", "assistant"]:
             logger.warning(f"Anthropic: Skipping message with unsupported role: {role}")
             continue
@@ -787,7 +859,7 @@ def chat_with_anthropic(
             "Anthropic: omitting temperature/top_p/top_k because thinking is enabled."
         )
     if stop_sequences is not None: data["stop_sequences"] = stop_sequences
-    if tools is not None: data["tools"] = tools # Assuming 'tools' is already in Anthropic's required format
+    if tools is not None: data["tools"] = _anthropic_tools_payload(tools)
     if thinking_config is not None: data["thinking"] = thinking_config
 
     api_url = anthropic_config.get('api_base_url', 'https://api.anthropic.com/v1').rstrip('/') + '/messages'
