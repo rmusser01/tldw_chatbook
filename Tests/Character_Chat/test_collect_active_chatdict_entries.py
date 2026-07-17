@@ -110,3 +110,22 @@ def test_non_list_active_dictionaries_never_raises(db):
     db.update_conversation(conv_id, {"metadata": _json.dumps({"active_dictionaries": 5})},
                            expected_version=conv["version"])
     assert collect_active_chatdict_entries(db, conv_id, None) == []
+
+
+def test_collect_disabled_conversation_dict_does_not_shadow_character(db):
+    from tldw_chatbook.Character_Chat.local_chat_dictionary_service import LocalChatDictionaryService
+    import json as _json
+    service = LocalChatDictionaryService(db)
+    conv_id = db.add_conversation({"title": "chat"})
+    did = service.create_dictionary({"name": "Dup", "entries": [{"pattern": "a", "replacement": "conv"}]})["id"]
+    rec = service.get_dictionary(did)
+    service.update_dictionary(did, {"is_active": False}, expected_version=rec["version"])  # disable it
+    conv = db.get_conversation_by_id(conv_id)
+    meta = _json.loads(conv.get("metadata") or "{}"); meta["active_dictionaries"] = [did]
+    db.update_conversation(conv_id, {"metadata": _json.dumps(meta)}, expected_version=conv["version"])
+    char_id = db.add_character_card({"name": "C"})
+    r = db.get_character_card_by_id(char_id); ext = r["extensions"] if isinstance(r["extensions"], dict) else {}
+    ext["chat_dictionaries"] = [{"name": "Dup", "enabled": True, "entries": [{"key": "a", "content": "char"}]}]
+    db.update_character_card(char_id, {"extensions": ext}, expected_version=r["version"])
+    entries = collect_active_chatdict_entries(db, conv_id, db.get_character_card_by_id(char_id))
+    assert [e.content for e in entries] == ["char"]  # character applies; disabled conv dict didn't shadow
