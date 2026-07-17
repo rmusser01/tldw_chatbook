@@ -1,9 +1,11 @@
 ---
 id: TASK-264
 title: 'Fix footer shortcut hints: AppFooterStatus never renders on feature screens'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-07-17 02:00'
+updated_date: '2026-07-17 06:11'
 labels:
   - ux
   - infrastructure
@@ -19,5 +21,13 @@ Live QA (MCP Hub Phase 4) found the footer shortcut-hint system is dead app-wide
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Registered workbench shortcut hints visibly render on every BaseAppScreen that registers them,MCP and Console hint sets verified live,Decision recorded: fix the AppFooterStatus mounting vs ship a per-screen hint strip
+- [ ] #1 Registered workbench shortcut hints visibly render on every BaseAppScreen that registers them
+- [ ] #2 MCP and Console hint sets verified live
+- [ ] #3 Decision recorded: fix the AppFooterStatus mounting vs ship a per-screen hint strip
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Plan at Docs/superpowers/plans/2026-07-17-footer-shortcut-hints.md. DECISION (AC#3): per-screen AppFooterStatus mounted by BaseAppScreen (replacing its render-nothing Footer), fed by the unchanged registration API with screen-aware lookups — the single-global-strip repair is impossible under push_screen navigation (Textual screens are full-viewport; App.query_one resolves against the default screen by design) and the app-owned-chrome migration is explicitly deferred by the design contract. Console's four visible Footer bindings fold into CONSOLE_WORKBENCH_SHORTCUTS (Ctrl+K/Ctrl+T rendered; alt-hints stay functional unrendered). DB-size/word/token stat updaters become active-screen-aware with default-screen fallback.
+<!-- SECTION:PLAN:END -->
