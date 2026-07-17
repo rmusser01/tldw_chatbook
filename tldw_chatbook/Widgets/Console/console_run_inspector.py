@@ -29,6 +29,7 @@ _ROW_IDS = {
     "Provider": "console-inspector-provider",
     "Sources": "console-inspector-sources",
     "Tools": "console-inspector-tools",
+    "MCP": "console-inspector-mcp",
     "RAG/source": "console-inspector-rag-source",
     "Evidence": "console-inspector-evidence",
     "Authority": "console-inspector-authority",
@@ -72,7 +73,7 @@ _ROW_GROUPS = (
     (
         "Tools",
         "console-inspector-tools-heading",
-        ("Tools",),
+        ("Tools", "MCP"),
     ),
     (
         "Approvals",

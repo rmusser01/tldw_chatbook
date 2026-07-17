@@ -13,8 +13,13 @@ from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 from tldw_chatbook.Agents.agent_models import (
-    AgentStep, RunOutcome, RUN_DONE, RUN_ERROR, RUN_STUCK, STEP_ERROR,
+    AgentStep, RunOutcome, RUN_DONE, RUN_ERROR, RUN_STUCK, SPAWN_TOOL_NAME,
+    STEP_ERROR, STEP_TOOL_RESULT,
 )
+from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
+from tldw_chatbook.MCP.permission_store import EffectiveToolState
+
+from Tests.Agents.test_mcp_tool_provider import FakeMCPService, _catalog_record, _tool_dict
 
 
 def _fence(name, args):
@@ -728,3 +733,394 @@ async def test_agent_runtime_gate_refreshes_without_screen_teardown():
     store = screen._ensure_console_chat_store()
     messages = store.messages_for_session(store.active_session_id)
     assert messages[-1].content == "legacy answer."
+
+
+# -- P5-T6: per-run MCPToolProvider registration + review-hook wiring --
+
+
+def _fake_app(service=None):
+    """`controller.app`-shaped stand-in: `call_from_thread` (needed by
+    `request_mcp_approvals`) plus, when given, `unified_mcp_service`."""
+    kwargs = {} if service is None else {"unified_mcp_service": service}
+    return SimpleNamespace(call_from_thread=lambda fn, *a, **kw: fn(*a, **kw), **kwargs)
+
+
+def _capturing_run_reply(captured, *, final_text="ok."):
+    def run_reply(**kwargs):
+        captured.append(kwargs)
+        return RunOutcome(status=RUN_DONE, steps=[], final_text=final_text)
+    return run_reply
+
+
+@pytest.mark.asyncio
+async def test_mcp_provider_not_wired_when_no_unified_mcp_service(tmp_path):
+    controller, store, _db = _controller(tmp_path, [["ok."]])
+    captured = []
+    controller._agent_bridge.run_reply = _capturing_run_reply(captured)
+    controller.app = _fake_app()  # no unified_mcp_service attribute at all
+
+    result = await controller.submit_draft("hi")
+
+    assert result.accepted is True
+    assert captured[0]["mcp_provider"] is None
+    assert captured[0]["review_tool_calls"] is None
+
+
+@pytest.mark.asyncio
+async def test_mcp_provider_not_wired_when_kill_switch_on(tmp_path):
+    controller, store, _db = _controller(tmp_path, [["ok."]])
+    captured = []
+    controller._agent_bridge.run_reply = _capturing_run_reply(captured)
+    service = FakeMCPService(
+        kill_switch=True,
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])],
+    )
+    controller.app = _fake_app(service)
+
+    result = await controller.submit_draft("hi")
+
+    assert result.accepted is True
+    assert captured[0]["mcp_provider"] is None
+    assert captured[0]["review_tool_calls"] is None
+
+
+@pytest.mark.asyncio
+async def test_mcp_provider_not_wired_when_catalog_empty(tmp_path):
+    controller, store, _db = _controller(tmp_path, [["ok."]])
+    captured = []
+    controller._agent_bridge.run_reply = _capturing_run_reply(captured)
+    service = FakeMCPService()  # no catalog records, no builtin inventory
+    controller.app = _fake_app(service)
+
+    result = await controller.submit_draft("hi")
+
+    assert result.accepted is True
+    assert captured[0]["mcp_provider"] is None
+    assert captured[0]["review_tool_calls"] is None
+
+
+@pytest.mark.asyncio
+async def test_mcp_provider_wired_when_eligible(tmp_path):
+    controller, store, _db = _controller(tmp_path, [["ok."]])
+    captured = []
+    controller._agent_bridge.run_reply = _capturing_run_reply(captured)
+    service = FakeMCPService(catalog_records=[_catalog_record("srv", [_tool_dict("run")])])
+    controller.app = _fake_app(service)
+
+    result = await controller.submit_draft("hi")
+
+    assert result.accepted is True
+    provider = captured[0]["mcp_provider"]
+    assert isinstance(provider, MCPToolProvider)
+    assert len(provider.list_catalog()) == 1
+    assert callable(captured[0]["review_tool_calls"])
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_call_executes_end_to_end_when_state_allows(tmp_path):
+    """Full plumbing, real bridge: a fence call to an MCP tool name is
+    registered, dispatched, and actually invoked via the real provider --
+    no approval needed since the fake service's default state is "allow"."""
+    scripts = [
+        [_fence("mcp__srv__run", {"x": 1})],
+        ["done with mcp."],
+    ]
+    controller, store, _db = _controller(tmp_path, scripts)
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])],
+        default_state=EffectiveToolState(state="allow", origin="tool_override"),
+    )
+    controller.app = _fake_app(service)
+
+    result = await controller.submit_draft("please run it")
+
+    assert result.accepted is True
+    messages = store.messages_for_session(store.active_session_id)
+    assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
+    assert assistant.content == "done with mcp."
+    assert service.execute_calls == [("local:srv", "run", {"x": 1}, "agent", "allowed")]
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_call_ask_state_routes_through_review_hook_and_approves(tmp_path):
+    """The T4/T6 review hook collects the pending call, makes ONE
+    `request_mcp_approvals` round trip, and a UI-thread approval lets the
+    call actually execute -- full worker-thread <-> UI-thread round trip
+    through the real bridge, controller, and provider."""
+    scripts = [
+        [_fence("mcp__srv__run", {"x": 1})],
+        ["approved and done."],
+    ]
+    controller, store, _db = _controller(tmp_path, scripts)
+    received: list[dict | None] = []
+    service = FakeMCPService(catalog_records=[_catalog_record("srv", [_tool_dict("run")])])
+    controller.app = _fake_app(service)
+    controller.set_pending_approval = received.append
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    send_task = asyncio.ensure_future(controller.submit_draft("please run it"))
+    for _ in range(3000):  # 30s deadline, CI-contention headroom
+        if received and received[-1] is not None:
+            break
+        await asyncio.sleep(0.01)
+    assert received and received[-1] is not None, "approval card was never surfaced"
+    llm_name = received[-1]["calls"][0]["llm_name"]
+    assert llm_name == "mcp__srv__run"
+    controller.resolve_pending_approval({llm_name: "approve_once"})
+
+    result = await send_task
+
+    assert result.accepted is True
+    messages = store.messages_for_session(store.active_session_id)
+    assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
+    assert assistant.content == "approved and done."
+    assert service.execute_calls == [("local:srv", "run", {"x": 1}, "agent", "approved")]
+    assert received[-1] is None  # the card is always cleared afterwards
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_call_session_approval_suppresses_card_on_next_turn(tmp_path):
+    """Finding I1: "Approve for session" must actually suppress the
+    approval card on the NEXT turn in the live Console flow -- mirrors the
+    reviewer's probe (worker-thread review hook -> pending_gate_for ->
+    card, across two real model turns through the real bridge, controller,
+    and provider). Pre-fix, `pending_gate_for` never consulted
+    `is_session_approved`, so turn 2's identical tool call re-prompted."""
+    scripts = [
+        [_fence("mcp__srv__run", {"x": 1})],
+        ["turn one done."],
+        [_fence("mcp__srv__run", {"x": 2})],
+        ["turn two done."],
+    ]
+    controller, store, _db = _controller(tmp_path, scripts)
+    received: list[dict | None] = []
+    service = FakeMCPService(catalog_records=[_catalog_record("srv", [_tool_dict("run")])])
+    controller.app = _fake_app(service)
+    controller.set_pending_approval = received.append
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    # -- turn 1: the card is shown; the user approves for the session --
+    send_task = asyncio.ensure_future(controller.submit_draft("please run it"))
+    for _ in range(3000):  # 30s deadline, CI-contention headroom
+        if received and received[-1] is not None:
+            break
+        await asyncio.sleep(0.01)
+    assert received and received[-1] is not None, "approval card was never surfaced"
+    llm_name = received[-1]["calls"][0]["llm_name"]
+    assert llm_name == "mcp__srv__run"
+    controller.resolve_pending_approval({llm_name: "approve_session"})
+    result1 = await send_task
+    assert result1.accepted is True
+    cards_pushed_after_turn1 = len(received)
+
+    # -- turn 2: same tool, same session -- must NOT surface a card --
+    result2 = await controller.submit_draft("run it again")
+
+    assert result2.accepted is True
+    assert len(received) == cards_pushed_after_turn1, (
+        "a second approval card was shown despite an active session approval"
+    )
+    messages = store.messages_for_session(store.active_session_id)
+    assistants = [m for m in messages if m.role is ConsoleMessageRole.ASSISTANT]
+    assert assistants[-1].content == "turn two done."
+    # Both calls executed under the "approved" decision (a session
+    # approval, not a persistent "allowed" server default -- the
+    # vocabulary fix half of Finding I1).
+    assert service.execute_calls == [
+        ("local:srv", "run", {"x": 1}, "agent", "approved"),
+        ("local:srv", "run", {"x": 2}, "agent", "approved"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_call_ask_state_times_out_denies(tmp_path):
+    """An undecided pending call fails closed to the exact TIMEOUT_REFUSAL
+    copy -- single-sourced through `invoke()`'s own gate (never invoked)."""
+    scripts = [
+        [_fence("mcp__srv__run", {"x": 1})],
+        ["it was refused."],
+    ]
+    controller, store, _db = _controller(tmp_path, scripts)
+    service = FakeMCPService(catalog_records=[_catalog_record("srv", [_tool_dict("run")])])
+    controller.app = _fake_app(service)
+    controller.mcp_approval_timeout_seconds = lambda: 0.05
+
+    result = await controller.submit_draft("please run it")
+
+    assert result.accepted is True
+    messages = store.messages_for_session(store.active_session_id)
+    assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
+    assert assistant.content == "it was refused."
+    tool_rows = [m for m in messages if m.role is ConsoleMessageRole.TOOL]
+    assert any(
+        "user did not approve within the time limit" in row.content for row in tool_rows
+    )
+    assert service.execute_calls == []  # never invoked -- refused before dispatch
+
+
+# -- P5 review fix: `_compose_mcp_provider` must publish the inspector's
+# "MCP" row counts -- previously composed but never written anywhere the
+# `ChatScreen._console_mcp_tool_count`/`_console_mcp_not_connected_count`
+# accessors could read, so the row was permanently dead scaffolding. --
+
+
+@pytest.mark.asyncio
+async def test_compose_mcp_provider_publishes_none_counts_when_no_service(tmp_path):
+    controller, _store, _db = _controller(tmp_path, [["ok."]])
+    controller.app = _fake_app()  # no unified_mcp_service attribute at all
+
+    provider, hook = await controller._compose_mcp_provider()
+
+    assert provider is None and hook is None
+    assert controller.app.console_mcp_tool_count is None
+    assert controller.app.console_mcp_not_connected_count is None
+
+
+@pytest.mark.asyncio
+async def test_compose_mcp_provider_publishes_none_counts_when_kill_switch_on(tmp_path):
+    controller, _store, _db = _controller(tmp_path, [["ok."]])
+    service = FakeMCPService(
+        kill_switch=True,
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])],
+    )
+    controller.app = _fake_app(service)
+
+    provider, hook = await controller._compose_mcp_provider()
+
+    assert provider is None and hook is None
+    assert controller.app.console_mcp_tool_count is None
+    assert controller.app.console_mcp_not_connected_count is None
+
+
+@pytest.mark.asyncio
+async def test_compose_mcp_provider_publishes_none_counts_when_catalog_empty(tmp_path):
+    controller, _store, _db = _controller(tmp_path, [["ok."]])
+    service = FakeMCPService()  # no catalog records, no builtin inventory
+    controller.app = _fake_app(service)
+
+    provider, hook = await controller._compose_mcp_provider()
+
+    assert provider is None and hook is None
+    assert controller.app.console_mcp_tool_count is None
+    assert controller.app.console_mcp_not_connected_count is None
+
+
+@pytest.mark.asyncio
+async def test_compose_mcp_provider_publishes_none_counts_when_get_kill_switch_raises(tmp_path):
+    controller, _store, _db = _controller(tmp_path, [["ok."]])
+
+    class _RaisingService:
+        def get_kill_switch(self):
+            raise RuntimeError("boom")
+
+    controller.app = _fake_app()
+    controller.app.unified_mcp_service = _RaisingService()
+
+    provider, hook = await controller._compose_mcp_provider()
+
+    assert provider is None and hook is None
+    assert controller.app.console_mcp_tool_count is None
+    assert controller.app.console_mcp_not_connected_count is None
+
+
+@pytest.mark.asyncio
+async def test_compose_mcp_provider_publishes_counts_when_eligible(tmp_path):
+    """Both counts flow through simultaneously: server "a" is stale but
+    still contributes an eligible tool (mirrors `Tests.Agents.
+    test_mcp_tool_provider.test_not_connected_count_counts_distinct_
+    eligible_stale_servers`), so `not_connected_count == 1` alongside a
+    real `tool_count >= 1` -- the composed provider's own catalog and
+    `not_connected_count` land on the app object verbatim, not just a
+    truthy/falsy summary."""
+    controller, _store, _db = _controller(tmp_path, [["ok."]])
+    service = FakeMCPService(
+        catalog_records=[
+            _catalog_record("a", [_tool_dict("t1")], is_connected=False),
+            _catalog_record("c", [_tool_dict("t3")], is_connected=True),
+        ],
+    )
+    controller.app = _fake_app(service)
+
+    provider, hook = await controller._compose_mcp_provider()
+
+    assert provider is not None
+    assert callable(hook)
+    assert controller.app.console_mcp_tool_count == len(provider.list_catalog())
+    assert controller.app.console_mcp_tool_count == 2
+    assert controller.app.console_mcp_not_connected_count == provider.not_connected_count
+    assert controller.app.console_mcp_not_connected_count == 1
+
+
+# -- P5 review fix: the property that a sub-agent's MCP tool calls flow
+# through the SAME review closure + invoke() gate as the primary's holds
+# via shared `_run_one` + `AgentService`'s ctor-level `review_tool_calls`
+# hook (see `agent_service.py`'s docstring), but nothing pinned it with a
+# test -- easy to regress silently outside this diff. --
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_call_gates_subagent_call_same_as_primary(tmp_path):
+    """A spawned child's own MCP tool call is gated exactly like the
+    primary's: an undecided "ask"-state approval times out and denies --
+    the call is refused before dispatch (`execute_calls == []`) -- because
+    `AgentService._run_one`'s `spawn` closure threads the SAME ctor-level
+    `review_tool_calls` hook (and the same `self.registry`) into the
+    child's own `LoopDeps`/`invoke_tool`, not a bespoke unwired path."""
+    scripts = [
+        [_fence(SPAWN_TOOL_NAME, {"task": "please run it"})],  # primary: spawn a child
+        [_fence("mcp__srv__run", {"x": 1})],                    # child: call the MCP tool
+        ["child refused."],                                      # child: final answer
+        ["primary done."],                                        # primary: final answer
+    ]
+    controller, store, db = _controller(tmp_path, scripts)
+    service = FakeMCPService(catalog_records=[_catalog_record("srv", [_tool_dict("run")])])
+    controller.app = _fake_app(service)
+    controller.mcp_approval_timeout_seconds = lambda: 0.05
+
+    result = await controller.submit_draft("please delegate it")
+
+    assert result.accepted is True
+    assert service.execute_calls == []  # never invoked -- refused before dispatch
+
+    subagent_runs = [r for r in _all_runs(db) if r["agent_kind"] == "subagent"]
+    assert len(subagent_runs) == 1
+    child_steps = json.loads(subagent_runs[0]["steps"])
+    tool_result_steps = [s for s in child_steps if s["kind"] == STEP_TOOL_RESULT]
+    assert tool_result_steps, "the child never attempted the gated MCP tool call"
+    assert "user did not approve within the time limit" in tool_result_steps[0]["result"]
+
+    messages = store.messages_for_session(store.active_session_id)
+    assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
+    assert assistant.content == "primary done."
+
+
+@pytest.mark.asyncio
+async def test_mcp_review_hook_raise_fails_open_but_invoke_gate_still_refuses(tmp_path):
+    """`request_mcp_approvals` raising inside the T4/T6 review closure must
+    never abort the run: `run_agent_loop`'s own call to `review_tool_calls`
+    fails OPEN (an empty verdicts map, so every call in the batch defaults
+    to "proceed" -- the runtime's own documented fail-open policy for this
+    hook). The call still never executes, though: `invoke()` re-resolves
+    the SAME "ask" gate itself on dispatch and its own `self.
+    _approval_callback` fallback is the identical monkeypatched-raising
+    method, so it refuses there instead -- `execute_calls` stays empty."""
+    scripts = [
+        [_fence("mcp__srv__run", {"x": 1})],
+        ["it was refused too."],
+    ]
+    controller, store, _db = _controller(tmp_path, scripts)
+    service = FakeMCPService(catalog_records=[_catalog_record("srv", [_tool_dict("run")])])
+    controller.app = _fake_app(service)
+
+    def _raise(_pending):
+        raise RuntimeError("approval channel unavailable")
+
+    controller.request_mcp_approvals = _raise
+
+    result = await controller.submit_draft("please run it")
+
+    assert result.accepted is True
+    messages = store.messages_for_session(store.active_session_id)
+    assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
+    assert assistant.content == "it was refused too."
+    assert service.execute_calls == []  # never invoked -- refused by invoke()'s own gate

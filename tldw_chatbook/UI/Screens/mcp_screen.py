@@ -19,7 +19,7 @@ _MODE_TOOLTIPS = {
     "permissions": (
         "Permissions mode: set Allow / Ask / Off per tool. Space cycles the selected row."
     ),
-    "audit": "Audit mode: review MCP action history (arrives in a later phase).",
+    "audit": "Audit mode: review MCP tool execution history and drill into a call's detail.",
 }
 
 # T13: Console precedent is `CONSOLE_WORKBENCH_SHORTCUTS` (chat_screen.py) --

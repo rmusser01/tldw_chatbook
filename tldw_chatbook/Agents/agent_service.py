@@ -7,6 +7,7 @@ Runs synchronously — callers put it on a worker thread (Plan B).
 """
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import time
 from datetime import datetime, timezone
@@ -106,6 +107,10 @@ class AgentService:
                  clock: Callable[[], float] = time.monotonic,
                  on_step: Callable[[AgentStep, str], None] | None = None,
                  skill_runner: SkillRunner | None = None,
+                 review_tool_calls: Callable[[list[ToolCall]], dict[str, str]]
+                 | None = None,
+                 review_state_scope: Callable[[], "contextlib.AbstractContextManager"]
+                 | None = None,
                  ) -> None:
         self.db = db
         self.registry = registry
@@ -113,6 +118,30 @@ class AgentService:
         self.clock = clock
         self._on_step = on_step
         self.skill_runner = skill_runner
+        # P5 Task 4: generic pre-dispatch batch-review hook, threaded
+        # straight into every LoopDeps this service builds (mirrors how
+        # should_cancel flows through run_turn/_run_one). MCP-specific
+        # wiring (Task 6) builds the callable passed here; this service
+        # stays agnostic to what it does.
+        self.review_tool_calls = review_tool_calls
+        # C1 (probe-verified security regression, pre-merge review of the
+        # Phase 5 chat bridge): an optional, generically-shaped seam a
+        # caller can wire to snapshot/restore whatever per-turn state
+        # `review_tool_calls` owns around a NESTED sub-agent run -- see
+        # `spawn` below. `spawn_subagent` runs the child's entire loop
+        # INLINE, synchronously, mid-parent-dispatch (before the parent's
+        # own remaining same-batch tool calls are dispatched); if
+        # `review_tool_calls` is backed by mutable shared state keyed only
+        # by tool name (as `MCPToolProvider._stamped_decisions` is --
+        # REPLACED, not merged, every turn including the child's own), the
+        # child's turn(s) can silently clobber a verdict the PARENT's own
+        # turn already decided, before the parent gets to consume it. `None`
+        # (the default, and every caller before this task) preserves
+        # byte-identical behavior: `spawn` falls back to a no-op
+        # `contextlib.nullcontext()`. See `MCPToolProvider.stamp_scope` for
+        # the concrete MCP-specific context manager wired here by
+        # `console_agent_bridge.ConsoleAgentBridge.run_reply`.
+        self.review_state_scope = review_state_scope
 
     # -- internals -------------------------------------------------------
 
@@ -337,13 +366,23 @@ class AgentService:
                 allowed_tools=child_allowed_tools,
                 budget=clamp_child_budget(config.budget, remaining),
                 native_tools=config.native_tools)
-            _child_id, child_outcome = self._run_one(
-                conversation_id=conversation_id,
-                messages=[{"role": "user", "content": spawn_task}],
-                config=child_config, api_endpoint=api_endpoint,
-                should_cancel=should_cancel,
-                agent_kind=AGENT_KIND_SUBAGENT, task=spawn_task,
-                parent_run_id=run_id)
+            # C1: snapshot/restore whatever review_state_scope owns (see
+            # __init__'s own comment) around the ENTIRE nested run -- the
+            # child's own turns must never be able to leave the parent's
+            # per-turn review state (e.g. MCPToolProvider._stamped_
+            # decisions) mutated once control returns here. A no-op
+            # contextlib.nullcontext() when no scope was wired (every
+            # non-MCP run, and every caller before this task).
+            scope = (self.review_state_scope() if self.review_state_scope
+                     else contextlib.nullcontext())
+            with scope:
+                _child_id, child_outcome = self._run_one(
+                    conversation_id=conversation_id,
+                    messages=[{"role": "user", "content": spawn_task}],
+                    config=child_config, api_endpoint=api_endpoint,
+                    should_cancel=should_cancel,
+                    agent_kind=AGENT_KIND_SUBAGENT, task=spawn_task,
+                    parent_run_id=run_id)
             text = child_outcome.final_text
             cap = config.budget.max_subagent_result_chars
             if len(text) > cap:
@@ -404,6 +443,7 @@ class AgentService:
             clock=self.clock,
             on_step=((lambda s: self._on_step(s, agent_kind))
                      if self._on_step is not None else (lambda s: None)),
+            review_tool_calls=self.review_tool_calls,
         )
         try:
             outcome = run_agent_loop(config, messages, active, deps)

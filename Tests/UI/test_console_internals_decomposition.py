@@ -18,6 +18,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
     _visible_text,
 )
+from Tests.Agents.test_mcp_tool_provider import FakeMCPService, _catalog_record, _tool_dict
 from tldw_chatbook.Chat.chat_models import ChatSessionData
 from tldw_chatbook.Chat.console_display_state import (
     ConsoleInspectorState,
@@ -3334,6 +3335,138 @@ async def test_console_run_inspector_exposes_pending_approval_and_chatbook_artif
             < console.query_one("#console-inspector-save-chatbook").region.y
         )
         assert console.query_one("#console-live-work-primary-action", Button).disabled is False
+
+
+@pytest.mark.asyncio
+async def test_console_run_inspector_shows_mcp_tools_ready_row():
+    app = _build_test_app()
+    app.console_mcp_tool_count = 5
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _open_console_inspector(console, pilot)
+        await _wait_for_selector(console, pilot, "#console-inspector-mcp")
+
+        assert "MCP: 5 tools ready" in str(
+            console.query_one("#console-inspector-mcp", Static).renderable
+        )
+        assert (
+            console.query_one("#console-inspector-tools-heading").region.y
+            < console.query_one("#console-inspector-tools").region.y
+            < console.query_one("#console-inspector-mcp").region.y
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_run_inspector_shows_mcp_not_connected_row():
+    """Finding I2: the blocked "not connected" row must win even when
+    `console_mcp_tool_count` is non-zero -- (5, 2) is the REAL reachable
+    mixed state (a stale server's snapshot tools still count toward
+    `tool_count`); the old (0, 2) case this test used to pin can never
+    actually happen in production (see `_mcp_inspector_row`'s docstring)."""
+    app = _build_test_app()
+    app.console_mcp_tool_count = 5
+    app.console_mcp_not_connected_count = 2
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _open_console_inspector(console, pilot)
+        await _wait_for_selector(console, pilot, "#console-inspector-mcp")
+
+        assert "MCP: 2 servers enabled, not connected" in str(
+            console.query_one("#console-inspector-mcp", Static).renderable
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_run_inspector_omits_mcp_row_by_default():
+    """No `console_mcp_tool_count` seam wired -- e.g. no `unified_mcp_service`
+    on the app, or the kill switch is on -- must not render an "MCP" row."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _open_console_inspector(console, pilot)
+        await _wait_for_selector(console, pilot, "#console-inspector-tools")
+
+        assert not list(console.query("#console-inspector-mcp"))
+
+
+@pytest.mark.asyncio
+async def test_console_run_inspector_mcp_row_reflects_real_compose_mcp_provider():
+    """P5 review fix: the three tests above only prove the render logic
+    given a hand-set `console_mcp_tool_count`/`console_mcp_not_connected_
+    count` -- they never prove anything in production actually SETS those
+    attributes. This drives the real `ConsoleChatController._compose_mcp_
+    provider` (the only production writer) against a real mounted
+    ChatScreen and confirms its output reaches the rendered row, closing
+    the "dead scaffolding, no production writer" gap."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        controller = console._ensure_console_chat_controller()
+        app.unified_mcp_service = FakeMCPService(
+            catalog_records=[_catalog_record("srv", [_tool_dict("run")])],
+        )
+
+        provider, review_hook = await controller._compose_mcp_provider()
+        assert provider is not None
+        assert callable(review_hook)
+        assert app.console_mcp_tool_count == 1
+        assert app.console_mcp_not_connected_count == 0
+
+        console._sync_console_control_bar()
+        await _open_console_inspector(console, pilot)
+        await _wait_for_selector(console, pilot, "#console-inspector-mcp")
+
+        # Pluralization fix (Finding I2): exactly one tool reads
+        # "1 tool ready", not "1 tools ready".
+        assert "MCP: 1 tool ready" in str(
+            console.query_one("#console-inspector-mcp", Static).renderable
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_run_inspector_mcp_row_shows_blocked_when_stale_server_has_tools():
+    """Finding I2, RED per the review: build the state from a REAL
+    composed catalog with one stale (disconnected-with-snapshot) server
+    that still contributes an eligible tool -- `tool_count` is 1 (not 0),
+    so pre-fix the blocked affordance never rendered and the row silently
+    claimed "1 tool ready" for a server the user cannot actually reach."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        controller = console._ensure_console_chat_controller()
+        app.unified_mcp_service = FakeMCPService(
+            catalog_records=[
+                _catalog_record("stale", [_tool_dict("run")], is_connected=False),
+            ],
+        )
+
+        provider, review_hook = await controller._compose_mcp_provider()
+        assert provider is not None
+        assert callable(review_hook)
+        assert app.console_mcp_tool_count == 1
+        assert app.console_mcp_not_connected_count == 1
+
+        console._sync_console_control_bar()
+        await _open_console_inspector(console, pilot)
+        await _wait_for_selector(console, pilot, "#console-inspector-mcp")
+
+        assert "MCP: 1 server enabled, not connected" in str(
+            console.query_one("#console-inspector-mcp", Static).renderable
+        )
 
 
 @pytest.mark.asyncio

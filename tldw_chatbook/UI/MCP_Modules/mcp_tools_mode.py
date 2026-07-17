@@ -19,6 +19,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import Button, DataTable, Input, Select, Static
+from textual.widgets.data_table import RowDoesNotExist
 
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool, filter_tools
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
@@ -229,6 +230,46 @@ class MCPToolsMode(Vertical):
         """
         self._states = dict(states) if states else {}
         self._apply_filter()
+
+    async def select_tool_row(self, tool_id: str) -> bool:
+        """Move the table cursor to `tool_id`'s row for an external drill
+        (T7, MCP Hub Phase 5: `MCPWorkbench`'s Audit-mode "Open tool"
+        routing) -- does NOT post `ToolSelected` itself (the caller already
+        knows the resolved `HubTool` and populates the inspector directly;
+        posting here would be a redundant, indirect round trip).
+
+        Clears any active text/server filter first when `tool_id` isn't
+        currently a rendered row -- an active filter must not silently
+        swallow an external drill's target row. Returns whether `tool_id`
+        exists in the current (unfiltered) catalog at all; `False` means
+        the caller should fall back to a "tool no longer available" toast
+        rather than assume the cursor moved.
+        """
+        if not any(tool.tool_id == tool_id for tool in self._tools):
+            return False
+        table = self.query_one("#mcp-tools-table", DataTable)
+        try:
+            table.get_row_index(tool_id)
+        except RowDoesNotExist:
+            # Hidden by the active filter -- clear it so the row renders,
+            # then retry the lookup below.
+            if self._filter_text:
+                self._filter_text = ""
+                text_input = self.query_one("#mcp-tools-filter-text", Input)
+                with text_input.prevent(Input.Changed):
+                    text_input.value = ""
+            if self._filter_server_key is not None:
+                self._filter_server_key = None
+                select = self.query_one("#mcp-tools-filter-server", Select)
+                with select.prevent(Select.Changed):
+                    select.value = Select.NULL
+            self._apply_filter()
+        try:
+            index = table.get_row_index(tool_id)
+        except RowDoesNotExist:
+            return False
+        table.move_cursor(row=index)
+        return True
 
     def _server_options(self) -> list[tuple[str, str]]:
         """Unique `(server_label, server_key)` options, one per server

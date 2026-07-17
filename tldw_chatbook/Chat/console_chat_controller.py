@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Protocol
@@ -32,16 +33,136 @@ from tldw_chatbook.Chat.console_skill_resolver import (
     cap_skill_args,
     resolve_skill_command,
 )
+from loguru import logger
+
+from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
+from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 from tldw_chatbook.model_capabilities import is_vision_capable
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+
+
+#: Fallback used when no `mcp_approval_timeout_seconds` seam is injected --
+#: mirrors `UnifiedMCPControlPlaneService.approval_timeout_seconds`'s own
+#: default (task-201/T2), read directly here since the controller has no
+#: dependency on that service (T6 wires the service into `MCPToolProvider`,
+#: not into this controller).
+_DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS = 120.0
+#: Poll granularity for `request_mcp_approvals`'s wait loop (binding, from
+#: the Phase-5 plan) -- also the worst-case slack added on top of a
+#: configured timeout/cancellation before this method observes it.
+_MCP_APPROVAL_POLL_SECONDS = 1.0
 
 
 MAX_CONSOLE_DRAFT_LENGTH = 100_000
 CONSOLE_CONTINUE_INSTRUCTION = "Continue and extend the selected message."
+
+
+def build_mcp_review_hook(
+    provider: MCPToolProvider,
+    request_mcp_approvals: Callable[[list["MCPPendingCall"]], dict[str, str]],
+) -> Callable[[list["ToolCall"]], dict[str, str]]:
+    """Build this run's T4 `review_tool_calls` hook for one composed MCP provider.
+
+    Handed to `ConsoleAgentBridge.run_reply` (P5-T6), which forwards it
+    straight through to `AgentService`/`LoopDeps.review_tool_calls` (T4):
+    called ONCE per turn with the full batch of tool calls about to be
+    dispatched, before any of them is invoked.
+
+    For every call in the batch, `provider.pending_gate_for(name, args)`
+    resolves whether it needs human gating (`None` for both "not an MCP
+    call this provider owns" and "an MCP call whose current state doesn't
+    need asking" -- `invoke()` re-resolves either case for itself, so
+    this hook does not need to distinguish them). When at least one call
+    needs asking, this makes exactly ONE `request_mcp_approvals` round
+    trip for the whole batch (never one per call) and hands the resulting
+    decisions to `provider.apply_batch_decisions` -- a per-turn stamp
+    every same-named call `invoke()` makes THIS turn peeks (Finding F1:
+    never popped, so two calls to the same tool in one batch both see the
+    approval, not just the first).
+
+    Finding F1 also requires this hook to call
+    `provider.apply_batch_decisions` on EVERY invocation, even when
+    `pending` ends up empty (a turn whose calls are all non-MCP, or all
+    already resolved without asking) -- passing `{}` in that case.
+    `apply_batch_decisions` REPLACES the stamp set rather than merging, so
+    this is what guarantees a stamp from an earlier turn can never survive
+    into a later one and be misread as this turn's verdict for a
+    repeated tool name.
+
+    I3 (probe-verified): that clear happens at hook ENTRY, before
+    `pending_gate_for` is even resolved and before the
+    `request_mcp_approvals` round trip -- not only after a successful one.
+    `request_mcp_approvals` can raise (e.g. the unguarded
+    `_marshal_pending_approval` call mid-shutdown); `run_agent_loop`'s own
+    hook-exception handling fails the WHOLE batch open (treats every call
+    in it as `"proceed"`) when that happens. If the clear only ran after a
+    successful round trip, a raise would leave THIS turn's stamp set
+    exactly as the PREVIOUS turn left it -- so the fail-open runtime would
+    hand `invoke()` a stale prior-turn stamp (e.g. a real `"approve_once"`)
+    for a call the user never decided on this turn. Clearing first means a
+    raised round trip always leaves `invoke()` with no stamp to peek,
+    falling through to its own fresh gate -- which fails closed for an
+    `"ask"` tool with no approval_callback wired.
+
+    Design choice (binding, per the Phase-5 plan): this hook never
+    returns a refusal string itself. Every MCP call it stamped is left to
+    resolve through `invoke()`'s own gate on dispatch -- `invoke()`
+    already handles every decision string uniformly (`approve_once`/
+    `approve_session`/`always_allow` execute; `deny`/`timeout` refuse with
+    the exact model-facing copy AND record the audit decision), so
+    routing every decision through that ONE place keeps the refusal copy
+    and the audit trail single-sourced instead of duplicating that logic
+    here. The verdict map this hook returns therefore only ever contains
+    `"proceed"` entries (for calls it gated this turn) -- purely
+    documentary, since `run_agent_loop` already treats any name this hook
+    doesn't mention as `"proceed"` by default; returning `{}` when nothing
+    needed gating is exactly as correct as omitting entries would be.
+    Non-MCP calls are untouched either way: `pending_gate_for` returns
+    `None` for any name the provider doesn't own, so they never enter
+    `pending` and are never mentioned in the returned map.
+
+    Args:
+        provider: This run's already-composed `MCPToolProvider` (P5-T6:
+            built and `compose_catalog()`-ed by the caller on the main
+            loop before the run's worker thread starts).
+        request_mcp_approvals: The bound `ConsoleChatController.
+            request_mcp_approvals` method for THIS run -- runs on the
+            agent bridge's worker thread and blocks until the batch is
+            decided, cancelled, or times out (T5).
+
+    Returns:
+        A `review_tool_calls`-shaped callable suitable for `LoopDeps`/
+        `AgentService(review_tool_calls=...)`.
+    """
+
+    def review_tool_calls(calls: list["ToolCall"]) -> dict[str, str]:
+        # I3: clear THIS turn's stamps FIRST, before pending_gate_for/the
+        # approval round trip even run -- subsumes the `if not pending`
+        # branch's own clear below (every invocation of this hook clears,
+        # unconditionally). See this function's own docstring for why the
+        # clear must happen at entry, not only after a successful round
+        # trip: a raising `request_mcp_approvals` must never leave a stale
+        # prior-turn stamp live for the fail-open runtime to hand straight
+        # to `invoke()`.
+        provider.apply_batch_decisions({})
+        pending: list["MCPPendingCall"] = []
+        for call in calls:
+            gate = provider.pending_gate_for(call.name, call.args)
+            if gate is not None:
+                pending.append(gate)
+        if not pending:
+            return {}
+        decisions = request_mcp_approvals(pending)
+        provider.apply_batch_decisions(decisions)
+        return {call.llm_name: "proceed" for call in pending}
+
+    return review_tool_calls
 
 
 def describe_stream_failure(exc: BaseException) -> str:
@@ -192,6 +313,33 @@ class ConsoleChatController:
         #: ``_stop_requested``, which the run's own ``finally`` block
         #: resets as soon as the coroutine side is done (task-227).
         self._active_cancel_event: threading.Event | None = None
+
+        # -- MCP batch-approval bridge (task-5) ------------------------------
+        #: Textual App-like object exposing ``call_from_thread`` -- assigned
+        #: by the owning screen (``ChatScreen._ensure_console_chat_
+        #: controller``), mirroring how ``on_submission_accepted`` is wired.
+        #: ``None`` (e.g. in most existing controller-only tests) makes
+        #: ``request_mcp_approvals`` a safe no-op UI bridge that still
+        #: resolves via cancellation/timeout.
+        self.app: Any | None = None
+        #: UI-thread callback that pushes/clears the pending-approval batch
+        #: into the owning screen's task-resume state (``ChatScreen.
+        #: _set_console_pending_approval``). Always invoked through
+        #: ``self.app.call_from_thread`` from ``request_mcp_approvals``.
+        self.set_pending_approval: Callable[[dict[str, Any] | None], None] | None = None
+        #: Optional override for how long ``request_mcp_approvals`` waits
+        #: for a human decision before failing every undecided call to
+        #: ``"timeout"``. Defaults to reading ``[mcp] approval_timeout_
+        #: seconds`` (T2's ``approval_timeout_seconds``) when unset.
+        self.mcp_approval_timeout_seconds: Callable[[], float] | None = None
+        #: The active batch-approval round's release signal + shared
+        #: decisions holder, set for the duration of one ``request_mcp_
+        #: approvals`` call (worker thread) and read/written from the UI
+        #: thread by ``resolve_pending_approval`` /
+        #: ``_deny_pending_approval_on_context_change``. ``None`` whenever
+        #: no approval round is in flight.
+        self._pending_approval_event: threading.Event | None = None
+        self._pending_approval_decisions: dict[str, str] | None = None
 
     async def submit_draft(self, draft: str) -> ConsoleSubmitResult:
         """Submit a composer draft through native Console validation and provider resolution."""
@@ -397,6 +545,14 @@ class ConsoleChatController:
         """Activate an existing native Console session."""
         session = self.store.switch_session(session_id)
         self._clear_terminal_run_state()
+        # Binding threading contract (task-5): a conversation switch denies
+        # any pending MCP approval round rather than leaving its worker
+        # thread blocked on a card the user just navigated away from. Only
+        # one run (and therefore one approval round) can be active
+        # controller-wide at a time (`_active_run_rejection` blocks a new
+        # send while one is running), so this is unconditional -- a no-op
+        # whenever no round is in flight.
+        self._deny_pending_approval_on_context_change()
         return session
 
     def close_session(self, session_id: str) -> ConsoleChatSession | None:
@@ -437,6 +593,328 @@ class ConsoleChatController:
         self._stop_requested = True
         if self._active_cancel_event is not None:
             self._active_cancel_event.set()
+
+    # -- MCP batch-approval bridge (task-5) ----------------------------------
+
+    def request_mcp_approvals(self, pending: list[MCPPendingCall]) -> dict[str, str]:
+        """Bridge one batch of pending MCP tool calls to the Console UI and back.
+
+        WORKER THREAD. Bound as ``MCPToolProvider``'s ``approval_callback``
+        (T6's closure hands ``self.request_mcp_approvals`` straight
+        through), so this runs on the agent bridge's background OS thread
+        (the ``asyncio.to_thread`` call inside ``_run_agent_reply``) --
+        it must never touch a widget directly, only through
+        ``self.app.call_from_thread``.
+
+        Builds a fresh ``threading.Event`` + shared decisions dict, surfaces
+        the batch via ``self.set_pending_approval`` (marshaled onto the UI
+        thread), then polls ``event.wait(1.0)`` re-checking this run's
+        cancel signals and a deadline every second until one of three things
+        happens: the user submits a decision (``resolve_pending_approval``,
+        called from the UI thread, sets the Event), the run is
+        cancelled/stopped/torn down (``_stop_requested``/
+        ``_active_cancel_event`` -- already wired by ``stop_active_run``,
+        ``close_session``, and ``shutdown`` via ``_signal_stop``), or the
+        configured approval timeout elapses. Whichever unique ``llm_name``
+        never received an explicit decision by then fails closed to
+        ``"deny"`` (cancellation) or ``"timeout"`` (deadline) -- see
+        ``MCPToolProvider._apply_verdict`` for how each decision string is
+        consumed. The card is always cleared afterwards (``finally``),
+        regardless of outcome.
+
+        Args:
+            pending: One turn's pending tool calls awaiting approval,
+                possibly containing repeated ``llm_name``s (T3: calls
+                sharing a name share one verdict).
+
+        Returns:
+            A decision string (``approve_once``/``approve_session``/
+            ``always_allow``/``deny``/``timeout``) for every unique
+            ``llm_name`` in ``pending``.
+        """
+        unique_names: list[str] = []
+        seen: set[str] = set()
+        call_by_name: dict[str, "MCPPendingCall"] = {}
+        for call in pending:
+            if call.llm_name not in seen:
+                seen.add(call.llm_name)
+                unique_names.append(call.llm_name)
+                call_by_name[call.llm_name] = call
+        if not unique_names:
+            return {}
+
+        event = threading.Event()
+        decisions: dict[str, str] = {}
+        self._pending_approval_event = event
+        self._pending_approval_decisions = decisions
+
+        timeout_seconds = self._resolve_mcp_approval_timeout_seconds()
+        deadline = time.monotonic() + timeout_seconds
+        payload = {
+            "calls": [
+                {
+                    "llm_name": call.llm_name,
+                    "server_key": call.server_key,
+                    "tool_name": call.tool_name,
+                    "server_label": call.server_label,
+                    "arguments": dict(call.arguments or {}),
+                    "reason": call.reason,
+                }
+                for call in pending
+            ],
+            "timeout_seconds": timeout_seconds,
+        }
+
+        try:
+            self._marshal_pending_approval(payload)
+            while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
+                if self._stop_requested or (
+                    self._active_cancel_event is not None
+                    and self._active_cancel_event.is_set()
+                ):
+                    # Finding I3: a stop/unmount that resolves THIS round
+                    # denies every still-undecided call, but
+                    # `run_agent_loop`'s own `should_cancel()` check fires
+                    # for every call in this turn's batch BEFORE any of
+                    # them reaches `invoke()` -- so the "deny" verdict
+                    # stamped below is never consumed there and would
+                    # otherwise leave no audit record at all (contrast
+                    # with the timeout branch, whose calls DO still reach
+                    # `invoke()`'s own gate and get logged there, since a
+                    # timeout is not itself a cancellation). Log directly
+                    # here, best-effort, for exactly the names this branch
+                    # is about to fail closed.
+                    cancelled_names = [
+                        name for name in unique_names if name not in decisions
+                    ]
+                    for name in unique_names:
+                        decisions.setdefault(name, "deny")
+                    self._record_cancelled_approval_decisions(
+                        cancelled_names, call_by_name,
+                    )
+                    break
+                if time.monotonic() >= deadline:
+                    for name in unique_names:
+                        decisions.setdefault(name, "timeout")
+                    break
+            # Any name the resolution path above didn't already cover (e.g.
+            # a partial/empty decisions dict handed to `resolve_pending_
+            # approval`) fails closed to "deny" rather than silently
+            # dropping the call from the returned mapping.
+            for name in unique_names:
+                decisions.setdefault(name, "deny")
+            # Finding F4: build the snapshot by keyed lookup over the
+            # (locally-owned, never-mutated) `unique_names` list rather
+            # than `dict(decisions)` -- the latter iterates `decisions`
+            # itself, which `resolve_pending_approval` can concurrently
+            # `.update()` from the UI thread; a same-size update can't
+            # change dict length, so this is unreachable today, but a
+            # keyed `.get()` per name can never raise "dictionary changed
+            # size during iteration" regardless. The `setdefault` pass
+            # above already guarantees every name resolves, so `.get`'s
+            # own "deny" fallback here is a belt-and-suspenders no-op, not
+            # a second source of truth.
+            return {name: decisions.get(name, "deny") for name in unique_names}
+        finally:
+            self._pending_approval_event = None
+            self._pending_approval_decisions = None
+            try:
+                self._marshal_pending_approval(None)
+            except Exception:  # noqa: BLE001 -- suppress teardown-time errors
+                logger.opt(exception=True).debug(
+                    "Failed to marshal approval clear during teardown"
+                )
+
+    def _record_cancelled_approval_decisions(
+        self,
+        names: list[str],
+        call_by_name: dict[str, "MCPPendingCall"],
+    ) -> None:
+        """Best-effort audit log for calls denied by a stop/unmount mid-approval.
+
+        Finding I3: see the cancellation branch's own comment in
+        ``request_mcp_approvals`` for why this direct call is necessary --
+        `MCPToolProvider._record_decision_safe` (the normal recording
+        path) is never reached for these calls, since `run_agent_loop`
+        cancels the whole turn before dispatching any of them. Reached via
+        `self.app.unified_mcp_service` (the same object
+        `_compose_mcp_provider` built this run's `MCPToolProvider` from --
+        see that method), never raises: a missing app/service, or the
+        service lacking `record_tool_decision`, is a silent no-op, and any
+        exception the real call raises is logged and swallowed, mirroring
+        `MCPToolProvider._record_decision_safe`'s own never-raise
+        contract.
+        """
+        service = getattr(self.app, "unified_mcp_service", None)
+        if service is None:
+            return
+        record = getattr(service, "record_tool_decision", None)
+        if not callable(record):
+            return
+        for name in names:
+            call = call_by_name.get(name)
+            if call is None:
+                continue
+            try:
+                record(
+                    call.server_key, call.tool_name,
+                    decision="denied", initiator="agent",
+                    error="run stopped while approval pending",
+                )
+            except Exception:  # noqa: BLE001 -- best-effort audit trail only
+                logger.opt(exception=True).debug(
+                    "Failed to record cancelled MCP approval decision"
+                )
+
+    def _marshal_pending_approval(self, payload: dict[str, Any] | None) -> None:
+        """Push ``payload`` (or clear it) onto the UI thread, if wired."""
+        if self.app is not None and self.set_pending_approval is not None:
+            self.app.call_from_thread(self.set_pending_approval, payload)
+
+    def _resolve_mcp_approval_timeout_seconds(self) -> float:
+        if self.mcp_approval_timeout_seconds is not None:
+            try:
+                return float(self.mcp_approval_timeout_seconds())
+            except Exception:  # noqa: BLE001 -- fail open to the documented default
+                pass
+        try:
+            return float(get_cli_setting("mcp", "approval_timeout_seconds", _DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS))
+        except (TypeError, ValueError):
+            return _DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS
+
+    # -- MCP provider registration (task-6) ----------------------------------
+
+    def _publish_mcp_inspector_counts(
+        self, tool_count: int | None, not_connected_count: int | None,
+    ) -> None:
+        """Publish this run's MCP catalog counts for the inspector's "MCP" row.
+
+        ``setattr`` onto ``self.app`` -- the exact same object
+        ``ChatScreen._console_mcp_tool_count``/``_console_mcp_not_connected_
+        count`` ``getattr`` from (wired onto this controller as ``self.app``
+        by ``ChatScreen._ensure_console_chat_controller``). Every
+        ``_compose_mcp_provider`` return path calls this: ``(None, None)``
+        is the row's documented "absent" contract (see
+        ``console_display_state._mcp_inspector_row``) for the no-service /
+        kill-switch-on / compose-failed / empty-catalog paths; the eligible
+        path publishes the real counts.
+
+        No separate UI refresh is triggered here by design -- piggybacking
+        on machinery the screen already runs, not a new mechanism:
+        ``_compose_mcp_provider`` always executes on the main loop while
+        this run's state is already STREAMING (set moments earlier by
+        ``_run_agent_reply``), so the screen's own active-run poll timer
+        (``ChatScreen._start_console_transcript_sync_timer``, already
+        ticking every 0.2s by the time this runs -- started before
+        ``submit_draft`` is even awaited) and the guaranteed post-
+        ``submit_draft`` sync (``ChatScreen._submit_console_native_draft``)
+        both already re-derive inspector state from these attributes on
+        their own next pass.
+        """
+        if self.app is None:
+            return
+        self.app.console_mcp_tool_count = tool_count
+        self.app.console_mcp_not_connected_count = not_connected_count
+
+    async def _compose_mcp_provider(
+        self,
+    ) -> tuple[MCPToolProvider | None, Callable[[list["ToolCall"]], dict[str, str]] | None]:
+        """Build + compose THIS run's MCPToolProvider on the running main loop.
+
+        MUST be awaited from an async caller with the real Textual main
+        loop running (``_run_agent_reply``, BEFORE its own
+        ``asyncio.to_thread`` call) -- never from the agent bridge's
+        worker thread. See ``MCPToolProvider``'s own module docstring:
+        ``compose_catalog()`` performs async I/O
+        (``local_external_catalog()``) that is documented to run on the
+        main loop at registration time.
+
+        Returns ``(None, None)`` whenever MCP tools should not be offered
+        this run: no ``unified_mcp_service`` on the app, the kill switch
+        is on, ``get_kill_switch``/``compose_catalog`` raised, or the
+        composed catalog is empty (nothing to register, and -- since
+        ``not_connected_count`` is only ever non-zero for servers that
+        already contributed at least one eligible tool -- nothing an
+        empty catalog could usefully report either). Every return path
+        also publishes this run's inspector counts via
+        ``_publish_mcp_inspector_counts`` -- see that method's docstring;
+        this is the only production writer of ``console_mcp_tool_count``/
+        ``console_mcp_not_connected_count``.
+
+        Returns:
+            ``(provider, review_tool_calls)`` when eligible -- a composed
+            ``MCPToolProvider`` ready to hand to ``ConsoleAgentBridge.
+            run_reply`` and this run's ``build_mcp_review_hook``-built
+            batch-review closure; ``(None, None)`` otherwise.
+        """
+        service = getattr(self.app, "unified_mcp_service", None)
+        if service is None:
+            self._publish_mcp_inspector_counts(None, None)
+            return None, None
+        try:
+            kill_switch = service.get_kill_switch()
+        except Exception:  # noqa: BLE001 -- fail closed to "no MCP this run"
+            logger.opt(exception=True).warning(
+                "ConsoleChatController: get_kill_switch failed; skipping MCP this run")
+            self._publish_mcp_inspector_counts(None, None)
+            return None, None
+        if kill_switch:
+            self._publish_mcp_inspector_counts(None, None)
+            return None, None
+        provider = MCPToolProvider(
+            service=service,
+            main_loop=asyncio.get_running_loop(),
+            approval_callback=self.request_mcp_approvals,
+        )
+        try:
+            await provider.compose_catalog()
+        except Exception:  # noqa: BLE001 -- a composition failure must not abort the send
+            logger.opt(exception=True).warning(
+                "ConsoleChatController: MCP compose_catalog failed; skipping MCP this run")
+            self._publish_mcp_inspector_counts(None, None)
+            return None, None
+        catalog = provider.list_catalog()
+        if not catalog:
+            self._publish_mcp_inspector_counts(None, None)
+            return None, None
+        self._publish_mcp_inspector_counts(len(catalog), provider.not_connected_count)
+        return provider, build_mcp_review_hook(provider, self.request_mcp_approvals)
+
+    def resolve_pending_approval(self, decisions: dict[str, str]) -> None:
+        """UI THREAD: apply the user's batch decision, releasing the waiting worker thread.
+
+        Called by ``ChatScreen``'s ``ChatApprovalCard.ApprovalDecided``
+        handler. A no-op when there is no active round (e.g. a stale
+        message arriving after a timeout/cancellation already resolved and
+        cleared it).
+
+        NOTE: Snapshots ``_pending_approval_decisions`` and ``_pending_approval_event``
+        into locals to avoid TOCTOU race: the worker thread's ``finally`` block nulls
+        both attributes concurrently. Guard and act only on the snapshots.
+        """
+        # Snapshot both at once to prevent TOCTOU race with worker thread's finally block
+        decisions_dict = self._pending_approval_decisions
+        approval_event = self._pending_approval_event
+        if decisions_dict is None or approval_event is None:
+            return
+        decisions_dict.update(decisions or {})
+        approval_event.set()
+
+    def _deny_pending_approval_on_context_change(self) -> None:
+        """Force-resolve a pending approval round as denied for undecided calls.
+
+        Sets the round's Event without pre-filling ``decisions`` --
+        ``request_mcp_approvals``'s own post-loop fill-in resolves every
+        name that still lacks an explicit entry to ``"deny"``. A no-op when
+        no round is pending.
+
+        NOTE: Snapshots ``_pending_approval_event`` into a local to avoid TOCTOU race
+        with the worker thread's ``finally`` block that nulls it concurrently.
+        """
+        # Snapshot to prevent TOCTOU race with worker thread's finally block
+        approval_event = self._pending_approval_event
+        if approval_event is not None:
+            approval_event.set()
 
     def stop_active_run(self) -> bool:
         """Request the active stream to stop at the next safe boundary."""
@@ -1088,6 +1566,15 @@ class ConsoleChatController:
         # late poll from the surviving thread still sees the cancellation.
         should_cancel = lambda: self._stop_requested or cancel_event.is_set()  # noqa: E731
 
+        # P5-T6: compose this run's MCP tool provider (if eligible) HERE,
+        # on the running main loop, BEFORE the bridge is dispatched onto
+        # asyncio.to_thread below -- see `_compose_mcp_provider`'s own
+        # docstring for why `compose_catalog()`'s async I/O can never run
+        # from the worker thread. `(None, None)` (no service, kill switch
+        # on, or nothing composed) leaves the bridge's MCP-free path
+        # byte-identical to before this task.
+        mcp_provider, mcp_review_hook = await self._compose_mcp_provider()
+
         # Swap site: the agent loop runs synchronously on a worker thread via
         # asyncio.to_thread, so Stop is cooperative-only -- `should_cancel` is
         # polled between chunks/steps inside the bridge, never preempts the
@@ -1108,6 +1595,8 @@ class ConsoleChatController:
                 agent_messages=agent_messages,
                 should_cancel=should_cancel,
                 supersede_previous=bool(prepare_retry or variant_mode),
+                mcp_provider=mcp_provider,
+                review_tool_calls=mcp_review_hook,
             )
         except asyncio.CancelledError:
             if self._stop_requested:
