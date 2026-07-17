@@ -25,7 +25,8 @@ This cycle wires the native Console send to apply the same shared-resolver union
 - **Both branches covered pre-split.** `_stream_assistant_response` dispatches to `_run_agent_reply` (agent runtime) or the provider stream. The agent path splits the leading system message off `provider_messages` and forwards the rest as `agent_messages=` to `run_reply` (:994-1035). So a transform applied to `provider_messages` *before* `_stream_assistant_response` reaches both branches.
 - **Message content shape.** `_provider_message_payloads` emits a user turn's `content` as a **str** for text-only turns (:1327) and as a **parts list** (`{"type":"text","text":…}` + image parts) when the turn carries budgeted images (:1305); an over-budget image-only turn becomes a str placeholder (:1324).
 - **Controller has no db and no character.** Constructor deps include `store`, `provider_gateway`, `_skills_service`, `_agent_bridge` — no `chachanotes_db`. `session.persisted_conversation_id` is the DB conversation id (None for an unsaved session). `_agent_conversation_id()` returns `persisted_conversation_id or session_id` — the fallback is **not** a DB conversation and must not be used for dictionary lookup.
-- **Applier primitives.** `Chat_Dictionary_Lib.collect_active_chatdict_entries(db, conversation_id, char_data)` (never-raise union) + `process_user_input(text, entries, max_tokens, strategy) -> str` (never-raise text substitution). The legacy send uses `max_tokens=500`, `strategy="sorted_evenly"`.
+- **Applier primitives.** `Chat_Dictionary_Lib.collect_active_chatdict_entries(db, conversation_id, char_data) -> List[ChatDictionary]` (never-raise union) + `process_user_input(text, entries: List[ChatDictionary], max_tokens, strategy) -> str` (never-raise text substitution). The legacy send uses `max_tokens=500`, `strategy="sorted_evenly"`, and applies them on a `thread=True` worker (`chat_events.py:1258`).
+- **Native sends run on the UI event loop.** `_submit_console_native_draft` (and the retry/continue/regenerate handlers) are dispatched via `run_worker(<coroutine>, …)` — an **async** worker, NOT `thread=True` (`chat_screen.py:7983`), so it runs on the app's event loop. Any synchronous DB/CPU work in the send path therefore blocks the UI loop and must be offloaded (`asyncio.to_thread`). `collect_active_chatdict_entries` (DB read) + `process_user_input` (regex matching) are synchronous.
 - **Single construction site.** `ChatScreen` builds the controller once at `chat_screen.py:2369` (injecting `skills_service=`, `agent_bridge=`, …). `self.app_instance.chachanotes_db` is the db handle.
 - `COMMAND_PREFIX = "/"` (`console_command_grammar.py:25`).
 
@@ -39,11 +40,11 @@ Mirror the established skill-substitution pattern: a post-assembly, pre-stream t
 
 2. **`ConsoleChatController`** gains:
    - a constructor param `chat_dictionary_applier: Callable[[str | None, str], str] | None = None` (a bound `(conversation_id, text) -> substituted_text`), stored as `self._chat_dictionary_applier`. Presence is the enable gate (mirrors `_skills_service`).
-   - `_apply_chat_dictionaries(provider_messages, session_id) -> list[dict]` (new): returns `provider_messages` unchanged when no applier; resolves `conversation_id = <active session>.persisted_conversation_id` (None → unchanged); finds the final `role == "user"` message; **skips** if that message's pre-substitution content is a str starting with `COMMAND_PREFIX` (a skill command — leave the skill mechanism untouched); otherwise substitutes:
-     - **str content** → `applier(conversation_id, content)`;
-     - **parts list** → for each `{"type": "text"}` part, replace its `"text"` with `applier(conversation_id, part_text)`;
-     - writes the result into a **new** message dict (never mutates the stored message or the input dict) and returns a new list with only that message replaced.
-   - a call `provider_messages = self._apply_chat_dictionaries(provider_messages, session_id)` added at each of the 4 sites, immediately after the `if refuse is not None: return …` skill-substitution guard.
+   - `async _apply_chat_dictionaries(provider_messages, session_id) -> list[dict]` (new): returns `provider_messages` unchanged when no applier; resolves `conversation_id = <active session>.persisted_conversation_id` (None → unchanged); finds the final `role == "user"` message; **skips** if that message's pre-substitution content is a str starting with `COMMAND_PREFIX` (a skill command — leave the skill mechanism untouched); otherwise substitutes each substitutable text via `await asyncio.to_thread(self._chat_dictionary_applier, conversation_id, text)` — **offloaded** so the synchronous DB read + regex matching never block the UI event loop (native sends are async workers on that loop):
+     - **str content** → substitute the whole string;
+     - **parts list** → substitute each `{"type": "text"}` part's `"text"` (image parts untouched);
+     - writes the result into a **new** message dict (never mutates the stored message or the input dict) and returns a new list with only that message replaced. The message-shape logic (find final user message, command check, extract text, rebuild) is cheap and stays on the loop; only the applier call is offloaded.
+   - a call `provider_messages = await self._apply_chat_dictionaries(provider_messages, session_id)` added at each of the 4 sites, immediately after the `if refuse is not None: return …` skill-substitution guard.
 
 3. **`ChatScreen`** gains `_console_chat_dictionary_applier(conversation_id, text) -> str`: resolves `db = getattr(self.app_instance, "chachanotes_db", None)` **at call time**; returns `text` if `db is None` or `not conversation_id`; else `cdl.apply_active_chatdicts_to_text(db, conversation_id, None, text, max_tokens=_CHATDICT_MAX_TOKENS, strategy=_CHATDICT_STRATEGY)`. It is passed as `chat_dictionary_applier=self._console_chat_dictionary_applier` at the controller construction site. Constants `_CHATDICT_MAX_TOKENS = 500`, `_CHATDICT_STRATEGY = "sorted_evenly"` (legacy parity).
 
@@ -53,7 +54,7 @@ Mirror the established skill-substitution pattern: a post-assembly, pre-stream t
 stored messages (raw)
   → _provider_messages_for_session / _through_message   (assembly)
   → _apply_skill_substitution                            (existing; may refuse → abort)
-  → _apply_chat_dictionaries(provider_messages, session_id)   (NEW, ephemeral)
+  → await _apply_chat_dictionaries(provider_messages, session_id)   (NEW, ephemeral, applier offloaded via asyncio.to_thread)
         · conv_id = session.persisted_conversation_id  (None → no-op)
         · final user message: skip if "/command", else substitute str / text-parts
   → _stream_assistant_response
@@ -72,13 +73,13 @@ The stored transcript is never touched; only the ephemeral payload for this turn
 ### Error handling
 
 - `apply_active_chatdicts_to_text` and `_console_chat_dictionary_applier` never raise; any failure returns the raw text so a send always proceeds.
-- `_apply_chat_dictionaries` never mutates stored messages or the input list/dicts; it builds fresh copies.
+- `_apply_chat_dictionaries` catches any unexpected `Exception` (from the offloaded applier call or shape handling) and returns `provider_messages` unchanged — a dictionary problem must never break a send. It does **not** swallow `asyncio.CancelledError` (a Stop mid-send must still cancel the run). It never mutates stored messages or the input list/dicts; it builds fresh copies.
 - Unsaved session (`persisted_conversation_id is None`), missing db, or no attached dicts → the payload is returned unchanged.
 
 ## Testing
 
 - **Lib (`apply_active_chatdicts_to_text`), real DB:** a conversation with an attached dict whose pattern matches → substituted; no conversation / no attached dicts / conversation with a hostile (malformed) dict row → raw text returned; never raises.
-- **Controller (`_apply_chat_dictionaries`), fake applier:** final user message substituted (str content); text part of a **parts-list** content substituted while image parts are untouched; a `"/command"` final message left unchanged; earlier (non-final) user messages untouched; no applier / no `persisted_conversation_id` → unchanged; the stored `ConsoleChatStore` messages are unchanged after the transform; parametrized so the transform is exercised for `submit`/`retry`/`continue`/`regenerate` structure.
+- **Controller (`_apply_chat_dictionaries`), fake applier:** final user message substituted (str content); text part of a **parts-list** content substituted while image parts are untouched; a `"/command"` final message left unchanged; earlier (non-final) user messages untouched; no applier / no `persisted_conversation_id` → unchanged; the stored `ConsoleChatStore` messages are unchanged after the transform; the applier is invoked off the event loop (e.g. a fake applier that records its thread differs from the loop thread, or simply that a synchronous-blocking fake applier does not stall the run); parametrized so the transform is exercised for `submit`/`retry`/`continue`/`regenerate` structure.
 - **Integration (load-bearing), real `ChatScreen` + real DB + real controller:** attach a conversation dict via the P1g seam, submit a native draft whose text matches the dict pattern, and assert — through a fake `provider_gateway.stream_chat` capturing the payload — that the model received the **substituted** text while the stored transcript kept the **raw** text. Include a second assertion (or a sibling test) that the **agent** branch's `agent_messages` also carries the substituted text (both branches derive from the same post-transform `provider_messages`).
 
 ## Task shape
