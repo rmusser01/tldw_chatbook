@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, Mapping, Optional, TypeVar
 
 from pydantic import BaseModel
 
@@ -23,8 +23,9 @@ from ..tldw_api import (
     MCPPolicyAssignmentCreate,
     MCPPolicyAssignmentUpdate,
     MCPSecretSetRequest,
-    TLDWAPIClient,
 )
+if TYPE_CHECKING:
+    from ..tldw_api import TLDWAPIClient
 
 TModel = TypeVar("TModel", bound=BaseModel)
 

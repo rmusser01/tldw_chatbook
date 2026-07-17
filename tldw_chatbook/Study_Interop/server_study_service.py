@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
@@ -26,8 +26,9 @@ from ..tldw_api import (
     StructuredQaImportPreviewRequest,
     SuggestionActionRequest,
     SuggestionRefreshRequest,
-    TLDWAPIClient,
 )
+if TYPE_CHECKING:
+    from ..tldw_api import TLDWAPIClient
 
 
 class ServerStudyService:

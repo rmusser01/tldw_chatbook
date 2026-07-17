@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from tldw_chatbook.runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from tldw_chatbook.runtime_policy.types import PolicyDeniedError
@@ -13,8 +13,9 @@ from tldw_chatbook.tldw_api import (
     CharacterChatSessionCreate,
     ConversationShareLinkCreateRequest,
     ConversationUpdateRequest,
-    TLDWAPIClient,
 )
+if TYPE_CHECKING:
+    from tldw_chatbook.tldw_api import TLDWAPIClient
 
 
 class ServerChatConversationService:

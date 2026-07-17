@@ -5,7 +5,7 @@ Service helpers for server-backed notes and workspace resources.
 from __future__ import annotations
 
 import json
-from typing import Any, Mapping, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Optional, Sequence
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..tldw_api import (
@@ -13,7 +13,6 @@ from ..tldw_api import (
     NoteGraphRequest,
     NoteLinkCreate,
     NoteUpdateRequest,
-    TLDWAPIClient,
     WorkspaceArtifactCreateRequest,
     WorkspaceArtifactUpdateRequest,
     WorkspaceCreateRequest,
@@ -23,6 +22,8 @@ from ..tldw_api import (
     WorkspaceSourceUpdateRequest,
     WorkspaceUpdateRequest,
 )
+if TYPE_CHECKING:
+    from ..tldw_api import TLDWAPIClient
 
 _UNSET = object()
 

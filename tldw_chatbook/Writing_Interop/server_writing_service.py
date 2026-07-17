@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
@@ -34,8 +34,9 @@ from ..tldw_api import (
     ReorderRequest,
     SceneCharacterLink,
     SceneWorldInfoLink,
-    TLDWAPIClient,
 )
+if TYPE_CHECKING:
+    from ..tldw_api import TLDWAPIClient
 from .writing_markdown_adapter import markdown_to_plain_text, markdown_to_server_content
 from .writing_normalizers import normalize_writing_record, normalize_writing_structure
 

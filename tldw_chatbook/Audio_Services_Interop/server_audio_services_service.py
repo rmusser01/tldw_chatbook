@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, AsyncGenerator, Literal, Mapping, Optional
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Literal, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
@@ -17,11 +17,12 @@ from ..tldw_api import (
     SpeechChatRequest,
     SubmitAudioJobRequest,
     SubtitleExportRequest,
-    TLDWAPIClient,
     TTSHistoryFavoriteUpdate,
     VoiceEncodeRequest,
     VoiceProfileCreateRequest,
 )
+if TYPE_CHECKING:
+    from ..tldw_api import TLDWAPIClient
 
 
 class ServerAudioServicesService:

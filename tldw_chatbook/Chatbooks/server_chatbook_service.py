@@ -2,9 +2,11 @@
 Service helpers for server-backed chatbook import/export flows.
 """
 
+from __future__ import annotations
+
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Mapping, Optional, Union
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
@@ -13,9 +15,11 @@ from ..tldw_api import (
     ChatbookExportRequest,
     ChatbookImportRequest,
     ReadingExportResponse,
-    TLDWAPIClient,
 )
 from .chatbook_models import ChatbookManifest, ContentType
+
+if TYPE_CHECKING:
+    from ..tldw_api import TLDWAPIClient
 
 
 SelectionKey = Union[str, ContentType]
