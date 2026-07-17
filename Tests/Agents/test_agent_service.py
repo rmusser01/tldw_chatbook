@@ -570,3 +570,32 @@ def test_idless_native_call_gets_synthesized_id_pairing_echo_and_result(db):
     assert not any(m.get("role") == "user" and
                    str(m.get("content", "")).startswith("Tool result for")
                    for m in second_payload[1:])
+
+
+def test_load_tools_same_batch_name_and_id_aliases_load_once(db):
+    """PR #655 review (Gemini): one load_tools batch naming the SAME tool
+    twice — bare name plus catalog id — must disclose it exactly once, so
+    the loop's active list and this gate's disclosed set stay in lockstep
+    (no duplicate schema, no phantom room-slot consumption)."""
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    registry.register_provider(FakeBigProvider())  # catalog > threshold: forces find/load
+    config = AgentConfig(
+        model="m", system_prompt="s",
+        allowed_tools=("calculator", "get_current_datetime"),
+        budget=RunBudget(max_active_tools=8, max_steps=20))
+    chat = ScriptedChat([
+        fence(LOAD_TOOLS_NAME, {"ids": ["calculator", "builtin:calculator"]}),
+        fence("calculator", {"expression": "2+2"}),
+        "4.",
+    ])
+    service = AgentService(db=db, registry=registry, chat_call=chat)
+    run_id, outcome = service.run_turn(
+        conversation_id="c", messages=[{"role": "user", "content": "2+2?"}],
+        config=config, api_endpoint="llama_cpp")
+
+    assert outcome.status == RUN_DONE and outcome.final_text == "4."
+    run = db.get_run(run_id)
+    load_result = [s for s in run["steps"] if s["kind"] == "tool_result"][0]
+    # Exactly one mention: "loaded: calculator" — not "calculator, calculator".
+    assert load_result["result"] == "loaded: calculator"

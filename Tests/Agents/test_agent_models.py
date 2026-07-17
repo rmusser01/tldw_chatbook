@@ -34,6 +34,12 @@ def test_budget_defaults():
 
 
 def test_run_budget_default_model_turns_equal_steps_and_child_clamp_carries():
+    """Pin the engine-default unreachability invariant and child passthrough.
+
+    At ``RunBudget()`` the model-turn cap must equal ``max_steps`` (so the
+    new check can never fire before the step check), and
+    ``clamp_child_budget`` must carry ``max_model_turns`` through unclamped.
+    """
     b = RunBudget()
     # Unreachability invariant: each model turn appends >=1 step, so with
     # max_model_turns == max_steps the step check always fires first (or

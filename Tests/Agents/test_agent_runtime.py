@@ -413,3 +413,19 @@ def test_fence_history_convention_unchanged():
     assert set(history[1].keys()) == {"role", "content"}
     assert history[2]["role"] == "user"
     assert history[2]["content"].startswith("Tool result for")
+
+
+def test_load_tools_same_batch_duplicate_names_admit_one_into_active():
+    """PR #655 review: the loop's own last line of defense must also dedupe
+    by name WITHIN one load batch (a caller can hand the same schema back
+    twice via name/id aliases), so ``active`` never gains a duplicate."""
+    deps = make_deps([ModelTurn(text=fence(
+        "load_tools", {"ids": ["calculator", "builtin:calculator"]})),
+        ModelTurn(text=fence("calculator", {"expression": "1"})),
+        ModelTurn(text="done")])
+    deps.load_schemas = lambda ids: [CALC, CALC]  # duplicate in ONE batch
+    out = run_agent_loop(CFG, [{"role": "user", "content": "hi"}], [], deps)
+    assert out.status == RUN_DONE
+    load_result = [s for s in out.steps
+                   if s.kind == STEP_TOOL_RESULT and s.tool_name == "load_tools"][0]
+    assert load_result.result == "loaded: calculator"  # once, not twice

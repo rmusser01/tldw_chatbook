@@ -246,6 +246,14 @@ class AgentService:
                 # integrity (see PR review decision).
                 if schema.name in disclosed_names:
                     continue
+                # PR #655 review (Gemini): one batch can reach the SAME
+                # schema twice — its bare name plus its catalog id, or a
+                # repeated id. disclosed_names only guards against PRIOR
+                # rounds (it is updated after this loop), so without an
+                # in-batch dedupe both copies would append and desync the
+                # loop's active list from this gate's disclosed set.
+                if any(s.name == schema.name for s in schemas):
+                    continue
                 schemas.append(schema)
             # Mirror the loop's own room-slicing (agent_runtime.py's
             # load_tools branch) so the gate-disclosed set never grows past
