@@ -178,6 +178,22 @@ class MCPAuditMode(Vertical):
         width: 20;
         height: auto;
     }
+    /* T9 (Phase 5): defensive, EXPLICIT width pins directly on the two
+    Selects' own ids, matching their slots' widths (24/20) exactly --
+    ADDITIONAL to the slot rules above, not a replacement for them. The
+    slot approach alone already avoids the 0x0 collapse (see the comment
+    above), but nothing before this pinned a width on the Select's own id
+    -- its rendered width came solely from the bundle's bare `Select {
+    width: 100%; }` rule resolving against the slot's definite size. These
+    two rules keep this layer in lockstep with T9's bundle-layer copy in
+    _agentic_terminal.tcss (same id selectors, same values) so both layers
+    agree even if a Select were ever mounted outside its slot. */
+    #mcp-audit-filter-decision {
+        width: 24;
+    }
+    #mcp-audit-filter-initiator {
+        width: 20;
+    }
     #mcp-audit-table {
         height: auto;
         max-height: 70%;

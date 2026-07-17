@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
@@ -21,6 +22,7 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Select, Static
 
+import tldw_chatbook
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
@@ -28,9 +30,39 @@ from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
 
+_CSS_ROOT = Path(tldw_chatbook.__file__).parent / "css"
+_AGENTIC_TERMINAL_TCSS = _CSS_ROOT / "components" / "_agentic_terminal.tcss"
+_BUNDLED_STYLESHEET = _CSS_ROOT / "tldw_cli_modular.tcss"
+
 
 def _text(widget: Static) -> str:
     return str(widget.render())
+
+
+def _assert_rule_pinned_in_bundle_source_and_bundle(
+    selector: str, expected_declarations: tuple[str, ...]
+) -> None:
+    """Shared pin-test body (T9, MCP Hub Phase 5) -- mirrors the identical
+    helper in test_mcp_audit_mode.py: asserts ``selector``'s block carries
+    every one of ``expected_declarations`` in BOTH the bundle-source
+    component file (`_agentic_terminal.tcss`) and the generated bundle
+    (`tldw_cli_modular.tcss`), proving `build_css.py` was re-run after the
+    source edit."""
+    agentic_terminal = _AGENTIC_TERMINAL_TCSS.read_text(encoding="utf-8")
+    bundled_stylesheet = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+
+    for text, label in (
+        (agentic_terminal, "_agentic_terminal.tcss"),
+        (bundled_stylesheet, "tldw_cli_modular.tcss"),
+    ):
+        start = text.find(selector)
+        assert start != -1, f"{label} is missing {selector!r}"
+        end = text.find("}", start)
+        block = text[start:end]
+        for declaration in expected_declarations:
+            assert declaration in block, (
+                f"{label}'s {selector!r} block is missing {declaration!r}"
+            )
 
 
 class _CardHarnessApp(App[None]):
@@ -178,6 +210,113 @@ async def test_set_batch_remount_does_not_duplicate_rows():
         rows = list(app.query(".approval-row"))
         assert len(rows) == 1
         assert card._batch_names == ["mcp__srv_a__search"]
+
+
+# ---------------------------------------------------------------------------
+# CSS / geometry (T9, MCP Hub Phase 5) -- T5 deferred `.approval-row*`
+# styling to this task's phase gate; `ChatApprovalCard` carries no
+# `DEFAULT_CSS` of its own at all, so these bundle-source rules are the
+# ONLY styling this card has anywhere.
+# ---------------------------------------------------------------------------
+
+
+class _CardHarnessAppWithBundledCSS(App[None]):
+    """Mirrors `_CardHarnessApp` but loads the real generated bundle as
+    CSS_PATH, so a batch row's header/args/decision-Select contest their
+    actual CSS priority battle exactly as they do in the live Console
+    screen -- mirrors `AuditModeAppWithBundledCSS` (test_mcp_audit_mode.py)
+    / `ToolsModeAppWithBundledCSS` (test_mcp_tools_mode.py)."""
+
+    CSS_PATH = str(_BUNDLED_STYLESHEET)
+
+    def compose(self) -> ComposeResult:
+        yield ChatApprovalCard()
+
+
+@pytest.mark.asyncio
+async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_bundled_css():
+    """Without an explicit width, `_conversations.tcss`'s bare `Select {
+    width: 100%; }` rule would size a row's decision Select to the FULL
+    row width (not just its own share), overlapping/clipping it behind the
+    header and args Statics laid out before it in the row's Horizontal --
+    verified empirically before landing the fix. Asserts all three
+    per-row widgets render with real size AND stay within the row's own
+    bounds in left-to-right order, under the real bundled stylesheet."""
+    app = _CardHarnessAppWithBundledCSS()
+    async with app.run_test(size=(120, 40)) as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(_sample_calls(), timeout_seconds=45.0)
+        await pilot.pause()
+
+        rows = list(app.query(".approval-row"))
+        assert len(rows) == 2
+        for row in rows:
+            header = row.query_one(".approval-row-header", Static)
+            args = row.query_one(".approval-row-args", Static)
+            select = row.query_one(".approval-row-decision", Select)
+
+            assert header.size.width > 0 and header.size.height > 0, (
+                "approval row header collapsed to zero size under bundled CSS"
+            )
+            assert args.size.width > 0 and args.size.height > 0, (
+                "approval row args summary collapsed to zero size under bundled CSS"
+            )
+            assert select.size.width > 0 and select.size.height > 0, (
+                "approval row decision Select collapsed to zero size under bundled CSS"
+            )
+            # The decision Select must not claim the row's FULL width (the
+            # actual bug this CSS fixes) -- it gets a definite, bounded
+            # share instead.
+            assert select.size.width < row.size.width, (
+                f"decision Select width {select.size.width} claimed the "
+                f"entire row width {row.size.width} under bundled CSS"
+            )
+            assert select.size.width == 26, (
+                f"decision Select width {select.size.width} != pinned 26"
+            )
+            # Left-to-right order, no overlap: header, then args, then the
+            # decision Select, each starting no earlier than the previous
+            # widget's right edge, and the Select stays inside the row.
+            assert header.region.x <= args.region.x
+            assert args.region.x >= header.region.right
+            assert select.region.x >= args.region.right
+            assert select.region.right <= row.region.right
+
+
+def test_approval_row_decision_select_width_rule_pinned_in_bundle_source_and_bundle() -> None:
+    """T9: id-scoped bundle rule directly on `.approval-row-decision`
+    (a class selector -- higher specificity than `_conversations.tcss`'s
+    bare `Select { width: 100%; }` type selector, so it wins regardless of
+    the two files' relative concatenation order in build_css.py) -- same
+    Defect-1 Select-width lesson as `#mcp-tools-filter-server-slot Select`
+    / `#mcp-audit-filter-decision` above, applied to the approval card."""
+    _assert_rule_pinned_in_bundle_source_and_bundle(
+        ".approval-row-decision {", ("width: 26;",)
+    )
+
+
+def test_approval_row_height_rule_pinned_in_bundle_source_and_bundle() -> None:
+    """T9: `.approval-row` (a Horizontal, which defaults to `height: 1fr`)
+    needs an explicit `height: auto` -- otherwise each row would try to
+    claim a `1fr` share of its `#approval-batch-rows` parent's remaining
+    space instead of hugging its own single-line content, the same
+    fr-inside-auto-parent collapse class documented on
+    `MCPAuditMode.DEFAULT_CSS`'s Findings-view comment."""
+    _assert_rule_pinned_in_bundle_source_and_bundle(
+        ".approval-row {", ("height: auto;", "width: 1fr;")
+    )
+
+
+def test_approval_batch_rows_height_rule_pinned_in_bundle_source_and_bundle() -> None:
+    """T9: `#approval-batch-rows` is a bare Vertical (default `height:
+    1fr`) that would otherwise balloon to fill the card and push the
+    sibling Approve-all/Submit/Deny-all action bar
+    (`#approval-batch-actions`) far below the visible rows -- same bug
+    class as `#mcp-perm-preview`/`#mcp-detail-builtin-toggles`/
+    `#mcp-import-list`."""
+    _assert_rule_pinned_in_bundle_source_and_bundle(
+        "#approval-batch-rows {", ("height: auto;",)
+    )
 
 
 # ---------------------------------------------------------------------------

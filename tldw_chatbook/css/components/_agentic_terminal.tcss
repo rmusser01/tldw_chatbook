@@ -4500,3 +4500,101 @@ Button.mcp-callout {
     border: none;
     background: $ds-surface-panel;
 }
+
+/* --- MCP Hub Phase 5 (T9: Audit mode + Console batch approvals) ------ */
+
+/* Kept in lockstep with the baseline copy in MCPAuditMode.DEFAULT_CSS
+   (mcp_audit_mode.py) -- same fix, same rationale, as #mcp-servers-table/
+   #mcp-tools-table/#mcp-perm-table above: the execution-log table hugs its
+   own row count instead of ballooning to fill the canvas. */
+#mcp-audit-table {
+    height: auto;
+    max-height: 70%;
+}
+
+/* Kept in lockstep with the baseline copy in MCPAuditMode.DEFAULT_CSS --
+   same fix, same rationale, for the T8 Findings sub-view table. */
+#mcp-audit-findings-table {
+    height: auto;
+    max-height: 70%;
+}
+
+/* Kept in lockstep with the baseline copy in MCPAuditMode.DEFAULT_CSS.
+   The T8 Executions/Findings sub-view toggle strip is a Horizontal, which
+   defaults to `height: 1fr` -- without this override it would expand to
+   compete with the table below it for the canvas's remaining space
+   instead of hugging its own two-button content, same bug class as
+   #mcp-perm-preview/#mcp-detail-builtin-toggles/#mcp-import-list above. */
+#mcp-audit-subview-strip {
+    height: auto;
+    min-height: 0;
+}
+
+/* Same Defect-1 Select-width lesson as #mcp-tools-filter-server-slot
+   Select above (QA round mcp-hub-phase3-2026-07): `_conversations.tcss`'s
+   bare `Select { width: 100%; }` rule always beats DEFAULT_CSS regardless
+   of source order, so an id-scoped bundle rule is required for it to
+   actually win. MCPAuditMode.DEFAULT_CSS already avoids the 0x0 collapse a
+   different way for these two Selects (each lives in its own definite-
+   width slot Vertical, not a bare auto-sized one -- see that file's own
+   comment) -- these two rules are additional, defensive, EXPLICIT-width
+   pins directly on the Selects' own ids (mirroring their slots' widths,
+   24/20), kept in lockstep with the matching pair T9 added to
+   MCPAuditMode.DEFAULT_CSS itself, so the Selects stay correctly sized
+   even if the slot wrapper's own CSS were ever removed or the Select were
+   ever mounted outside it. */
+#mcp-audit-filter-decision {
+    width: 24;
+}
+#mcp-audit-filter-initiator {
+    width: 20;
+}
+
+/* The Console MCP batch-approval card's per-row layout
+   (`ChatApprovalCard.set_batch()`, chat_approval_card.py -- T5 deferred
+   this CSS to T9's phase gate). This card carries no `DEFAULT_CSS` of its
+   own at all (unlike the MCP mode widgets above) -- these rules are the
+   ONLY styling `.approval-row*` has anywhere, bundle or otherwise.
+
+   `.approval-row` is a Horizontal, which defaults to `height: 1fr` --
+   live-repro'd ballooning to the full card height (and its decision
+   Select claiming the full ROW width in turn) before this fix, the same
+   fr-inside-flex bug class as the MCP lockstep rules above. `height:
+   auto` makes each row hug its own single line of content instead.
+
+   `#approval-batch-rows` (the Vertical wrapping all rows) gets the same
+   `height: auto` treatment as #mcp-perm-preview/#mcp-detail-builtin-
+   toggles/#mcp-import-list above -- without it, its own `height: 1fr`
+   default would balloon it to fill the card and push the sibling
+   Approve-all/Submit/Deny-all action bar (#approval-batch-actions) far
+   below the visible rows.
+
+   `.approval-row-header`/`.approval-row-args` (Statics, natively `width:
+   auto`) get an explicit `1fr` share each so unbounded text (a long
+   tool/server header, or an args summary up to 80 chars) can't hog the
+   row and squeeze the decision Select out of view. `.approval-row-
+   decision` (the class selector on the row's Select) gets an explicit
+   fixed width -- a CLASS selector already outranks the bare `Select {
+   width: 100%; }` type selector on specificity alone, so (unlike the two
+   MCP Select fixes above) no id-scoped selector is needed here for it to
+   win; without this rule the Select would otherwise claim the row's FULL
+   width instead of its own bounded share, overlapping/clipping behind the
+   header and args text laid out before it. */
+#approval-batch-rows {
+    height: auto;
+    min-height: 0;
+}
+.approval-row {
+    height: auto;
+    min-height: 1;
+    width: 1fr;
+}
+.approval-row-header {
+    width: 1fr;
+}
+.approval-row-args {
+    width: 1fr;
+}
+.approval-row-decision {
+    width: 26;
+}

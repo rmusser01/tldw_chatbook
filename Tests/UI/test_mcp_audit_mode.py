@@ -12,7 +12,38 @@ import tldw_chatbook
 from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import MCPAuditMode
 
 _CSS_ROOT = Path(tldw_chatbook.__file__).parent / "css"
+_AGENTIC_TERMINAL_TCSS = _CSS_ROOT / "components" / "_agentic_terminal.tcss"
 _BUNDLED_STYLESHEET = _CSS_ROOT / "tldw_cli_modular.tcss"
+
+
+def _assert_rule_pinned_in_bundle_source_and_bundle(
+    selector: str, expected_declarations: tuple[str, ...]
+) -> None:
+    """Shared pin-test body (T9, MCP Hub Phase 5): asserts ``selector``'s
+    block carries every one of ``expected_declarations`` in BOTH the
+    bundle-source component file (`_agentic_terminal.tcss`) and the
+    generated bundle (`tldw_cli_modular.tcss`) -- the latter also proves
+    `build_css.py` was re-run after the source edit. Mirrors
+    `test_tools_table_height_rule_pinned_in_bundle_source_and_bundle` /
+    `test_filter_server_select_width_rule_pinned_in_bundle_source_and_bundle`
+    in test_mcp_tools_mode.py, factored into a helper since T9 adds several
+    of these pins at once (audit table, findings table, sub-view strip,
+    both filter Selects)."""
+    agentic_terminal = _AGENTIC_TERMINAL_TCSS.read_text(encoding="utf-8")
+    bundled_stylesheet = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+
+    for text, label in (
+        (agentic_terminal, "_agentic_terminal.tcss"),
+        (bundled_stylesheet, "tldw_cli_modular.tcss"),
+    ):
+        start = text.find(selector)
+        assert start != -1, f"{label} is missing {selector!r}"
+        end = text.find("}", start)
+        block = text[start:end]
+        for declaration in expected_declarations:
+            assert declaration in block, (
+                f"{label}'s {selector!r} block is missing {declaration!r}"
+            )
 
 
 def _entry(
@@ -451,13 +482,27 @@ async def test_table_and_filter_bar_have_nonzero_geometry_with_bundled_css():
     async with app.run_test(size=(120, 40)) as pilot:
         canvas = app.query_one(MCPAuditMode)
         await canvas.update_entries(
-            [_entry(server_key="local:docs", tool_name="search_docs")]
+            [
+                _entry(server_key="local:docs", tool_name="search_docs"),
+                _entry(server_key="local:docs", tool_name="write_docs"),
+                _entry(server_key="server:weather", tool_name="get_forecast"),
+            ]
         )
         await pilot.pause()
 
         table = app.query_one("#mcp-audit-table", DataTable)
         assert table.size.width > 0, "audit table collapsed to zero width under bundled CSS"
         assert table.size.height > 0, "audit table collapsed to zero height under bundled CSS"
+        # T9: `height: auto; max-height: 70%;` (bundle-pinned below) must
+        # make the table hug its own row count instead of ballooning to
+        # fill the whole canvas the way a bare `height: 1fr` DataTable does
+        # -- mirrors `test_overview_table_hugs_content_so_callouts_sit_
+        # close_below` (test_mcp_servers_mode.py). Header + 3 rows, generous
+        # slack.
+        assert table.size.height <= 6, (
+            f"audit table ballooned to height {table.size.height} under bundled CSS "
+            "-- height: auto; max-height: 70%; is not winning"
+        )
 
         text_input = app.query_one("#mcp-audit-filter-text", Input)
         assert text_input.size.width > 0, "filter text Input collapsed to zero width under bundled CSS"
@@ -478,6 +523,68 @@ async def test_table_and_filter_bar_have_nonzero_geometry_with_bundled_css():
         assert initiator_select.size.height > 0, (
             "filter-initiator Select collapsed to zero height under bundled CSS"
         )
+        # T9: id-scoped bundle-layer width pins (`#mcp-audit-filter-
+        # decision`/`#mcp-audit-filter-initiator`) must win outright over
+        # `_conversations.tcss`'s bare `Select { width: 100%; }` rule,
+        # matching their own slot widths exactly (24/20) rather than
+        # merely "some nonzero value" -- a stronger check than the
+        # nonzero-only assertions above.
+        assert decision_select.size.width == 24, (
+            f"filter-decision Select width {decision_select.size.width} != pinned 24"
+        )
+        assert initiator_select.size.width == 20, (
+            f"filter-initiator Select width {initiator_select.size.width} != pinned 20"
+        )
+
+
+def test_audit_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
+    """T9 (MCP Hub Phase 5): `#mcp-audit-table` gets `height: auto;
+    max-height: 70%;` in `MCPAuditMode.DEFAULT_CSS` alone -- mirrors
+    `#mcp-servers-table`/`#mcp-tools-table`/`#mcp-perm-table`'s own
+    established lockstep bundle-source copies (test_mcp_servers_mode.py /
+    test_mcp_tools_mode.py / test_mcp_permissions_mode.py) so app-loaded
+    CSS cascading on top of DEFAULT_CSS can't silently reintroduce the
+    `height: 1fr` ballooning regression those fixed."""
+    _assert_rule_pinned_in_bundle_source_and_bundle(
+        "#mcp-audit-table {", ("height: auto;", "max-height: 70%;")
+    )
+
+
+def test_findings_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
+    """T9: same fix, same rationale, for the T8 Findings sub-view table."""
+    _assert_rule_pinned_in_bundle_source_and_bundle(
+        "#mcp-audit-findings-table {", ("height: auto;", "max-height: 70%;")
+    )
+
+
+def test_subview_strip_height_rule_pinned_in_bundle_source_and_bundle() -> None:
+    """T9: `#mcp-audit-subview-strip` is a Horizontal, which defaults to
+    `height: 1fr` -- without this pin it would expand to compete with the
+    table below it for the canvas's remaining space instead of hugging its
+    own two-button content, same bug class as `#mcp-perm-preview`/
+    `#mcp-detail-builtin-toggles`/`#mcp-import-list`."""
+    _assert_rule_pinned_in_bundle_source_and_bundle(
+        "#mcp-audit-subview-strip {", ("height: auto;",)
+    )
+
+
+def test_filter_decision_select_width_rule_pinned_in_bundle_source_and_bundle() -> None:
+    """T9: Defect-1 Select-width lesson (`_conversations.tcss`'s bare
+    `Select { width: 100%; }` rule always beats DEFAULT_CSS regardless of
+    source order) applies to `#mcp-audit-filter-decision` too -- an
+    id-scoped bundle rule directly on the Select's own id, matching its
+    slot's width (24), pins it defensively even if the slot wrapper were
+    ever removed or the Select mounted outside it."""
+    _assert_rule_pinned_in_bundle_source_and_bundle(
+        "#mcp-audit-filter-decision {", ("width: 24;",)
+    )
+
+
+def test_filter_initiator_select_width_rule_pinned_in_bundle_source_and_bundle() -> None:
+    """T9: same fix, same rationale, as the decision Select above."""
+    _assert_rule_pinned_in_bundle_source_and_bundle(
+        "#mcp-audit-filter-initiator {", ("width: 20;",)
+    )
 
 
 # -- T8 (MCP Hub Phase 5): sub-view strip --------------------------------
@@ -768,10 +875,14 @@ async def test_subview_strip_and_findings_table_have_nonzero_geometry_with_bundl
     app = AuditModeAppWithBundledCSS()
     async with app.run_test(size=(120, 40)) as pilot:
         canvas = app.query_one(MCPAuditMode)
-        await canvas.update_findings([_finding()], source="server")
+        await canvas.update_findings(
+            [_finding(message="a"), _finding(message="b"), _finding(message="c")],
+            source="server",
+        )
         await pilot.click("#mcp-audit-subview-findings")
         await pilot.pause()
 
+        strip = app.query_one("#mcp-audit-subview-strip")
         exec_btn = app.query_one("#mcp-audit-subview-executions", Button)
         find_btn = app.query_one("#mcp-audit-subview-findings", Button)
         assert exec_btn.size.width > 0 and exec_btn.size.height > 0, (
@@ -780,7 +891,20 @@ async def test_subview_strip_and_findings_table_have_nonzero_geometry_with_bundl
         assert find_btn.size.width > 0 and find_btn.size.height > 0, (
             "Findings sub-view button collapsed to zero size under bundled CSS"
         )
+        # T9: `#mcp-audit-subview-strip { height: auto; }` (bundle-pinned
+        # below) must make the toggle strip hug its own single button row
+        # instead of ballooning to `height: 1fr` (Horizontal's own default)
+        # and competing with the findings table below it for the canvas's
+        # remaining space.
+        assert strip.size.height <= 3, (
+            f"sub-view strip ballooned to height {strip.size.height} under bundled CSS"
+        )
 
         table = app.query_one("#mcp-audit-findings-table", DataTable)
         assert table.size.width > 0, "findings table collapsed to zero width under bundled CSS"
         assert table.size.height > 0, "findings table collapsed to zero height under bundled CSS"
+        # T9: same `height: auto; max-height: 70%;` hugging discipline as
+        # the Executions table above -- header + 3 rows, generous slack.
+        assert table.size.height <= 6, (
+            f"findings table ballooned to height {table.size.height} under bundled CSS"
+        )
