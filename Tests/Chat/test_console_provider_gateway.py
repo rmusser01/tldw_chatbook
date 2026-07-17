@@ -1532,11 +1532,14 @@ def test_active_http_client_concurrent_swap_never_leaves_client_bound_to_wrong_l
         for _ in range(rounds):
             try:
                 # Kept >= the (test-widened) probe timeout: a slower-than-
-                # barrier probe would BrokenBarrier the other threads into an
-                # early return, silently shrinking the round count instead of
-                # failing.
+                # barrier probe would break the barrier for every thread.
                 barrier.wait(timeout=30)
-            except threading.BrokenBarrierError:
+            except threading.BrokenBarrierError as exc:
+                # A broken barrier means the concurrency scenario stopped
+                # executing as designed — record it as a FAILURE instead of
+                # returning quietly with fewer rounds (Qodo #680-3).
+                with errors_lock:
+                    errors.append(exc)
                 return
             try:
                 future = asyncio.run_coroutine_threadsafe(
