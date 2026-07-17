@@ -1177,8 +1177,8 @@ class ConsoleChatController:
         generic failure -- it means the run hit a budget or loop-detection
         limit (agent_runtime.py), not a raw exception -- so the concrete
         reason recorded on the last ``STEP_ERROR`` step (e.g. "step budget
-        exhausted", "wall-clock budget exhausted", "loop detected: ...") is
-        surfaced when available.
+        exhausted", "model-turn budget exhausted", "wall-clock budget
+        exhausted", "loop detected: ...") is surfaced when available.
         """
         from tldw_chatbook.Agents.agent_models import RUN_STUCK, STEP_ERROR
 
