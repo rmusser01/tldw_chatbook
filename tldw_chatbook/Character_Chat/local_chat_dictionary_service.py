@@ -907,5 +907,14 @@ class LocalChatDictionaryService:
             )
         return {"dictionaries": dictionaries, "source": "local"}
 
+    def summarize_active_dictionaries(self, conversation_id, character_id) -> dict[str, Any]:
+        """What's-in-play summary for a chat: conversation dicts (by id) + a character's embedded dicts."""
+        from . import Chat_Dictionary_Lib as cdl
+        char_data = None
+        if character_id is not None:
+            char_data = self._require_db().get_character_card_by_id(int(character_id))
+        conv_id = str(conversation_id) if conversation_id is not None else None
+        return cdl.summarize_active_dictionaries(self._require_db(), conv_id, char_data)
+
 
 __all__ = ["LocalChatDictionaryService"]

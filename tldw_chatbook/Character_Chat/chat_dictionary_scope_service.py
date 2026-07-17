@@ -382,5 +382,15 @@ class ChatDictionaryScopeService:
             character_id,
         )
 
+    async def summarize_active_dictionaries(self, conversation_id, character_id, mode: str = "local") -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        return await self._invoke(
+            normalized_mode,
+            self._statistics_action(normalized_mode, "detail"),
+            "summarize_active_dictionaries",
+            conversation_id,
+            character_id,
+        )
+
 
 __all__ = ["ChatDictionaryScopeService"]
