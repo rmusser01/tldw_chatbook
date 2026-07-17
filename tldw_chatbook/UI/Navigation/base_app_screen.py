@@ -7,7 +7,6 @@ from textual.app import ComposeResult
 from textual.geometry import Region
 from textual.screen import Screen
 from textual.containers import Container
-from textual.widgets import Footer
 
 from .main_navigation import MainNavigationBar
 
@@ -86,18 +85,32 @@ class BaseAppScreen(Screen):
 
     def compose(self) -> ComposeResult:
         """Compose the screen with navigation bar and content."""
+        # Imported locally (not at module level): `AppFooterStatus` imports
+        # `UI.Navigation.shortcut_context`, and `UI/Navigation/__init__.py`
+        # eagerly imports THIS module -- a module-level import here would be
+        # a circular import (base_app_screen -> AppFooterStatus ->
+        # UI.Navigation package init -> base_app_screen, partially
+        # initialized).
+        from ...Widgets.AppFooterStatus import AppFooterStatus
+
         # Navigation bar at the top
         yield MainNavigationBar(active=self.screen_name, active_route=self.screen_name)
-        
+
         # Content area below navigation
         with Container(id="screen-content"):
             yield from self.compose_content()
 
-        # The app-level Ctrl+P "Palette Menu" binding is show=True, so it
-        # already renders in the footer's binding list; the Footer's built-in
-        # right-corner command-palette pill would duplicate it (UAT 2026-07:
-        # "^p Palette Menu" shown twice).
-        yield Footer(show_command_palette=False)
+        # Per-screen footer status bar (task-264): the App only ever mounts
+        # ONE Footer-equivalent widget on its DEFAULT screen (app.py's own
+        # compose()), which is occluded the moment any BaseAppScreen is
+        # pushed on top -- `App.query_one`/`query` always resolve against
+        # `App.default_screen` by design (see `App._get_dom_base`), so a
+        # caller doing `self.app.query_one(AppFooterStatus)` from within a
+        # pushed screen silently updates an invisible widget. Composing an
+        # `AppFooterStatus` here gives every screen its OWN instance that
+        # `self.query_one(AppFooterStatus)` (queried against the screen
+        # itself) correctly resolves.
+        yield AppFooterStatus(id="screen-footer-status")
     
     def compose_content(self) -> ComposeResult:
         """Override in subclasses to provide screen-specific content."""

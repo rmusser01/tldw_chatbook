@@ -215,9 +215,9 @@ class MCPScreen(BaseAppScreen):
         )
 
     def _register_footer_shortcuts(self) -> None:
-        """Register MCP Hub shortcuts with the app footer if mounted."""
+        """Register MCP Hub shortcuts with this screen's own footer if mounted."""
         try:
-            footer = self.app.query_one(AppFooterStatus)
+            footer = self.query_one(AppFooterStatus)
         except QueryError:
             return
         set_shortcuts = getattr(footer, "set_workbench_shortcuts", None)
@@ -225,9 +225,9 @@ class MCPScreen(BaseAppScreen):
             set_shortcuts(source="mcp", shortcuts=MCP_SHORTCUTS)
 
     def _clear_footer_shortcuts(self) -> None:
-        """Clear MCP Hub shortcuts from the app footer if mounted."""
+        """Clear MCP Hub shortcuts from this screen's own footer if mounted."""
         try:
-            footer = self.app.query_one(AppFooterStatus)
+            footer = self.query_one(AppFooterStatus)
         except QueryError:
             return
         clear_shortcuts = getattr(footer, "clear_shortcut_context", None)

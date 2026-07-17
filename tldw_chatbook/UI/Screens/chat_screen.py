@@ -369,6 +369,8 @@ CONSOLE_WORKBENCH_SHORTCUTS = (
     ("Shift+F6", "previous pane"),
     ("F1", "help"),
     ("Enter", "send"),
+    ("Ctrl+K", "switch session"),
+    ("Ctrl+T", "new tab"),
     ("Ctrl+P", "palette"),
 )
 def _is_empty_select_value(value: Any) -> bool:
@@ -979,9 +981,9 @@ class ChatScreen(BaseAppScreen):
                 return
 
     def _register_console_footer_shortcuts(self) -> None:
-        """Register Console Workbench shortcuts with the app footer if mounted."""
+        """Register Console Workbench shortcuts with this screen's own footer if mounted."""
         try:
-            footer = self.app.query_one(AppFooterStatus)
+            footer = self.query_one(AppFooterStatus)
         except QueryError:
             return
         set_shortcuts = getattr(footer, "set_workbench_shortcuts", None)
@@ -989,9 +991,9 @@ class ChatScreen(BaseAppScreen):
             set_shortcuts(source="console", shortcuts=CONSOLE_WORKBENCH_SHORTCUTS)
 
     def _clear_console_footer_shortcuts(self) -> None:
-        """Clear Console Workbench shortcuts from the app footer if mounted."""
+        """Clear Console Workbench shortcuts from this screen's own footer if mounted."""
         try:
-            footer = self.app.query_one(AppFooterStatus)
+            footer = self.query_one(AppFooterStatus)
         except QueryError:
             return
         clear_shortcuts = getattr(footer, "clear_shortcut_context", None)

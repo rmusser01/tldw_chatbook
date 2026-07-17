@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 #
 # 3rd-Party Imports
 from loguru import logger
+from textual.app import ScreenStackError
 from textual.widgets import Input, Select
 from textual.css.query import QueryError
 #
@@ -97,13 +98,20 @@ async def update_chat_token_counter(app: 'TldwCli') -> None:
                 # Store for potential screen usage
                 app.current_token_count = (used_tokens, display_limit)
             else:
-                # Legacy tab mode - update footer directly
-                footer = app.query_one("AppFooterStatus")
+                # Legacy tab mode - update the active screen's footer directly.
+                # Resolved via `app.screen` rather than `app.query_one`
+                # because BaseAppScreen mounts a per-screen AppFooterStatus
+                # (task-264): the default screen's instance is occluded once
+                # any screen is pushed, and App.query_one only ever searches
+                # the default screen. ScreenStackError is caught alongside
+                # QueryError: this can run from interval timers that fire
+                # during shutdown, after the screen stack is drained.
+                footer = app.screen.query_one("AppFooterStatus")
                 from ...Utils.token_counter import format_token_display
                 display_text = format_token_display(used_tokens, display_limit)
                 footer.update_token_count(display_text)
                 logger.debug(f"Token count updated: {used_tokens}/{display_limit} (model limit: {total_limit})")
-        except QueryError as e:
+        except (QueryError, ScreenStackError) as e:
             logger.debug(f"Footer widget not found (may be in screen mode): {e}")
                 
     except Exception as e:
@@ -204,15 +212,17 @@ async def update_chat_token_counter_with_pending(app: 'TldwCli', pending_text: s
                 app.current_token_count = (used_tokens, display_limit)
                 app.token_count_pending = bool(pending_text)
             else:
-                # Legacy tab mode - update footer directly
-                footer = app.query_one("AppFooterStatus")
+                # Legacy tab mode - update the active screen's footer directly
+                # (see the analogous comment in update_chat_token_counter above;
+                # same task-264 active-screen resolution + shutdown guard).
+                footer = app.screen.query_one("AppFooterStatus")
                 from ...Utils.token_counter import format_token_display
                 display_text = format_token_display(used_tokens, display_limit)
                 # Add pending indicator
                 if pending_text:
                     display_text = display_text.replace("Tokens:", "Tokens (typing):")
                 footer.update_token_count(display_text)
-        except QueryError:
+        except (QueryError, ScreenStackError):
             logger.debug("Footer widget not found (may be in screen mode)")
                 
     except Exception as e:

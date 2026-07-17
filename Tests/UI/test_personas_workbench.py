@@ -108,9 +108,14 @@ class PersonasTestApp(App):
         return getattr(self.__dict__["_mock"], name)
 
     def compose(self):
-        # Mirrors the real app: the footer lives on the app's default screen
-        # (see app.py compose), which is exactly where the screen's
-        # ``self.app.query_one("AppFooterStatus")`` lookup resolves.
+        # Mirrors the real app: an `AppFooterStatus` composed directly on
+        # the app's own default screen (see app.py's `compose()`).
+        # Task-264: `PersonasScreen` (via `BaseAppScreen.compose()`) now
+        # mounts its OWN `AppFooterStatus` too, and
+        # `PersonasScreen._register_footer_shortcuts()` resolves that
+        # screen-owned instance via ``self.query_one("AppFooterStatus")`` --
+        # so this default-screen widget is only kept around as a foil (the
+        # tests below assert the registration does NOT land here).
         yield AppFooterStatus(id="app-footer-status")
 
     def on_mount(self) -> None:
@@ -273,8 +278,19 @@ class TestWorkbenchShell:
                 "personas-workbench-compact"
             )
 
-            def fail_query(*_args, **_kwargs):
-                raise AssertionError("unchanged compact state should not query panes")
+            # Guard only the pane/workbench selectors `_sync_responsive_workbench()`
+            # itself would touch if it (incorrectly) did work on an unchanged
+            # compact state. A blanket fail-on-any-call patch is too broad now
+            # that the screen's own `on_unmount` teardown legitimately calls
+            # `self.query_one("AppFooterStatus")` (task-264, per-screen footer)
+            # -- that unrelated call happens when this `async with` block exits
+            # and would otherwise trip this guard as a false positive.
+            original_query_one = screen.query_one
+
+            def fail_query(selector, *args, **kwargs):
+                if isinstance(selector, str) and selector.startswith("#personas-"):
+                    raise AssertionError("unchanged compact state should not query panes")
+                return original_query_one(selector, *args, **kwargs)
 
             monkeypatch.setattr(screen, "query_one", fail_query)
             screen._sync_responsive_workbench()
@@ -305,12 +321,22 @@ class TestWorkbenchShell:
             assert "save" in rendered.lower()
             assert "attach" in rendered.lower()
             assert context.source == "personas"
-            footer = pilot.app.query_one(AppFooterStatus)
+            # task-264: the registration lands on the SCREEN's own footer,
+            # not the harness's default-screen stand-in.
+            footer = screen.query_one(AppFooterStatus)
             assert "new" in footer.shortcut_text.lower()
             assert "search" in footer.shortcut_text.lower()
             await pilot.app.pop_screen()
             await pilot.pause()
-            assert footer.shortcut_text == AppFooterStatus.DEFAULT_SHORTCUT_TEXT
+            # task-264: the context dies WITH the screen -- its footer is
+            # detached from the DOM along with it (Textual's `is_mounted`
+            # flag is stale after removal; `parent is None` is the reliable
+            # signal), so no stale personas hints can leak to another
+            # surface. The default-screen stand-in (never registered
+            # against) shows the default shortcuts.
+            assert footer.parent is None
+            default_footer = pilot.app.query_one(AppFooterStatus)
+            assert default_footer.shortcut_text == AppFooterStatus.DEFAULT_SHORTCUT_TEXT
 
     async def test_unmount_clear_does_not_stomp_other_screens_context(
         self, mock_app_instance, stub_characters
@@ -318,7 +344,9 @@ class TestWorkbenchShell:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
-            footer = pilot.app.query_one(AppFooterStatus)
+            # task-264: the registration lands on the SCREEN's own footer,
+            # not the harness's default-screen stand-in.
+            footer = screen.query_one(AppFooterStatus)
             # Another screen registers its context (switch_screen mounts the
             # incoming screen before unmounting the outgoing one).
             footer.set_shortcut_context(
@@ -3873,7 +3901,9 @@ class TestKeyboardInteraction:
             await pilot.pause()
             assert _save_action(screen._shortcut_context()).available is True
             # The footer was re-registered on the transition.
-            footer = pilot.app.query_one(AppFooterStatus)
+            # task-264: the registration lands on the SCREEN's own footer,
+            # not the harness's default-screen stand-in.
+            footer = screen.query_one(AppFooterStatus)
             assert "ctrl+s save unavailable" not in footer.shortcut_text
             assert "ctrl+s save" in footer.shortcut_text
             confirms = self._bypass_confirm(screen, True)
@@ -4159,7 +4189,9 @@ class TestDirtyTracking:
                 a for a in screen._shortcut_context().actions if a.label == "attach"
             )
             assert attach.available is False  # no prior selection
-            footer = pilot.app.query_one(AppFooterStatus)
+            # task-264: the registration lands on the SCREEN's own footer,
+            # not the harness's default-screen stand-in.
+            footer = screen.query_one(AppFooterStatus)
             assert "ctrl+enter attach unavailable" in footer.shortcut_text
             await screen._import_character_from_path("/tmp/card.json")
             await pilot.pause()

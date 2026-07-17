@@ -36,6 +36,15 @@ class ConsoleHarness(App):
 
 
 class ConsoleFooterHarness(App):
+    """Composes an `AppFooterStatus` directly on the App's own default
+    screen, exactly like `TldwCli._create_main_ui_widgets` does in the real
+    app (id="app-footer-status"). Task-264: `ChatScreen` (via
+    `BaseAppScreen.compose()`) now mounts its OWN `AppFooterStatus` too, and
+    `ChatScreen._register_console_footer_shortcuts()` resolves that
+    screen-owned instance via `self.query_one(AppFooterStatus)` -- so this
+    harness's default-screen widget is only kept around to prove the
+    registration does NOT land there (see the assertions below)."""
+
     def __init__(self, app_instance):
         super().__init__()
         self.app_instance = app_instance
@@ -1117,16 +1126,26 @@ async def test_console_registers_footer_workbench_shortcuts():
     async with host.run_test(size=(120, 40)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-shell")
-        footer = host.query_one(AppFooterStatus)
+        # task-264: the registration lands on the SCREEN's own footer, not
+        # the harness's default-screen stand-in.
+        footer = console.query_one(AppFooterStatus)
 
         assert footer.shortcut_text == (
-            "F6 next pane | Shift+F6 previous pane | F1 help | Enter send | Ctrl+P palette"
+            "F6 next pane | Shift+F6 previous pane | F1 help | Enter send | "
+            "Ctrl+K switch session | Ctrl+T new tab | Ctrl+P palette"
         )
 
         await console.remove()
         await pilot.pause()
 
-        assert footer.shortcut_text == AppFooterStatus.DEFAULT_SHORTCUT_TEXT
+        # task-264: the context dies WITH the screen -- its footer is
+        # detached from the DOM along with it (Textual's `is_mounted` flag
+        # is stale after removal; `parent is None` is the reliable signal),
+        # so no stale console hints can leak to another surface. The
+        # harness's default-screen stand-in (never registered against)
+        # keeps the default shortcuts.
+        assert footer.parent is None
+        assert host.query_one(AppFooterStatus).shortcut_text == AppFooterStatus.DEFAULT_SHORTCUT_TEXT
 
 
 @pytest.mark.asyncio
