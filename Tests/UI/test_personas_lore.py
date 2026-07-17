@@ -4,6 +4,8 @@ Also (Task 6): PersonasScreen wiring — mounted integration against a REAL
 CharactersRAGDB seeded through WorldBookManager (mirrors
 test_personas_dictionaries.py's PersonasTestApp harness)."""
 
+import json
+
 import pytest
 from textual.app import App, ComposeResult
 from textual.coordinate import Coordinate
@@ -12,6 +14,7 @@ from textual.widgets import Button, DataTable, Input, ListView, Static, Switch, 
 from tldw_chatbook.Widgets.Persona_Widgets.personas_lore_detail import (
     PersonasLoreDetailWidget,
     LoreBookEnableToggled,
+    LoreBookExportRequested,
     LoreBookSettingsSaveRequested,
     LoreEntryAddRequested,
 )
@@ -728,3 +731,31 @@ async def test_selective_entry_created_via_editor_gates_matching(
     # primary + secondary present → fires
     r2 = proc.process_messages("the hero draws a sword", [])
     assert any("brave hero" in c for c in r2["injections"]["before_char"])
+
+
+@pytest.mark.asyncio
+async def test_export_selected_lore_book_writes_json_file(
+    mock_app_instance, stub_characters_lore, lore_db, seeded_lore_book, tmp_path, monkeypatch
+):
+    """Exporting the selected lore book writes a JSON file that parses back to the
+    book's export payload (name + entries)."""
+    import json as _json
+    mock_app_instance.chachanotes_db = lore_db
+    app = LorePersonasTestApp(mock_app_instance)
+    async with app.run_test(size=(200, 60)) as pilot:
+        screen = await _enter_lore(pilot)
+        await _select_first_lore(pilot, screen)
+        target = tmp_path / "exported.json"
+
+        async def _fake_save(picker):
+            return target
+
+        monkeypatch.setattr(app, "push_screen_wait", _fake_save)
+        screen.post_message(LoreBookExportRequested())
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        assert target.exists()
+        payload = _json.loads(target.read_text("utf-8"))
+        assert payload["name"] == "Blackreach"
+        assert any(e["keys"] == ["Warden"] for e in payload["entries"])

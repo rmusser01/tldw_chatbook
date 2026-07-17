@@ -89,6 +89,7 @@ from ...Widgets.Persona_Widgets.personas_dictionary_tryit import (
 )
 from ...Widgets.Persona_Widgets.personas_lore_detail import (
     LoreBookEnableToggled,
+    LoreBookExportRequested,
     LoreBookSettingsSaveRequested,
     LoreEntriesReorderRequested,
     LoreEntryAddRequested,
@@ -2095,6 +2096,64 @@ class PersonasScreen(BaseAppScreen):
         await self._render_lore_rows(query=self.state.search_query)
         self.query_one(PersonasLibraryPane).mark_active_row("lore", entity_id)
         self._sync_inspector_console_actions()
+
+    @on(LoreBookExportRequested)
+    async def _handle_lore_export(self, message: LoreBookExportRequested) -> None:
+        message.stop()
+        if self.state.selected_entity_kind != "lore" or not self.state.selected_entity_id:
+            return
+        if self._io_dialog_active:
+            return
+        self._io_dialog_active = True
+        self.run_worker(self._lore_export_worker(), group="personas-io")
+
+    async def _lore_export_worker(self) -> None:
+        """Save the selected world book to a user-chosen JSON path."""
+        from ...Widgets.enhanced_file_picker import EnhancedFileSave, Filters
+
+        try:
+            manager = self._lore_manager()
+            entity_id = self.state.selected_entity_id
+            if manager is None or not entity_id:
+                return
+            try:
+                data = await asyncio.to_thread(manager.export_world_book, int(entity_id))
+            except Exception as exc:
+                logger.opt(exception=True).warning(f"Could not export world book {entity_id}.")
+                self._notify(f"Export failed: {exc}", "error")
+                return
+            raw_name = str(data.get("name") or "world_book")
+            safe_name = "".join(c for c in raw_name if c.isalnum() or c in " -_").rstrip()
+            default_filename = f"{safe_name or 'world_book'}.json"
+            picker = EnhancedFileSave(
+                title="Export World Book",
+                default_filename=default_filename,
+                filters=Filters(
+                    ("JSON Files", lambda p: p.suffix.lower() == ".json"),
+                    ("All Files", lambda p: True),
+                ),
+                context="lore_export",
+            )
+            try:
+                target = await self.app.push_screen_wait(picker)
+            except Exception:
+                logger.opt(exception=True).warning("Could not show the export file dialog.")
+                return
+            if not target:
+                return
+            body = json.dumps(data, indent=2, ensure_ascii=False)
+            try:
+                await asyncio.to_thread(target.write_text, body, "utf-8")
+            except OSError as exc:
+                logger.opt(exception=True).warning("Could not write the world-book export file.")
+                self._notify(f"Export failed: {exc}", "error")
+                return
+            self._notify(f"Exported to {target}", "information")
+        except Exception as exc:
+            logger.opt(exception=True).error("Unexpected error exporting the world book.")
+            self._notify(f"Export failed: {exc}", "error")
+        finally:
+            self._io_dialog_active = False
 
     @on(LoreBookEnableToggled)
     async def _handle_lore_enable_toggled(self, message: LoreBookEnableToggled) -> None:
