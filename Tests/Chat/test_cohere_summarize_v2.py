@@ -179,3 +179,26 @@ def test_streaming_non_200_reports_the_same_pinned_error_format(mock_post):
     )
 
     assert result == 'Cohere: API request failed: {"message": "bad request"}'
+
+
+@patch("requests.Session.post")
+def test_streaming_parses_raw_json_lines_without_sse_framing(mock_post):
+    """task-297 live-smoke regression: with 'accept: application/json' the
+    REAL v2 stream is raw JSON lines (no 'data:' prefix) — a strict
+    SSE-only filter dropped every line and yielded zero chunks live."""
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.raise_for_status = Mock()
+    mock_response.iter_lines.return_value = [
+        b'{"type": "message-start"}',
+        b'{"type": "content-delta", "delta": {"message": {"content": {"text": "Raw "}}}}',
+        b'{"type": "content-delta", "delta": {"message": {"content": {"text": "lines."}}}}',
+        b'{"type": "message-end", "delta": {"finish_reason": "COMPLETE"}}',
+    ]
+    mock_post.return_value = mock_response
+
+    chunks = list(summarize_with_cohere(
+        "test-key", "Text.", "Prompt.", streaming=True,
+    ))
+
+    assert chunks == ["Raw ", "lines."]

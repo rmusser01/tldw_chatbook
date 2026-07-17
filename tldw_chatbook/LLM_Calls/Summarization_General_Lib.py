@@ -1001,15 +1001,19 @@ def summarize_with_cohere(api_key, input_data, custom_prompt_arg, temp=None, sys
                     if not line:
                         continue
                     decoded_line = line.decode('utf-8').strip()
-                    if not decoded_line.startswith("data:"):
-                        # Cohere v2 SSE interleaves standalone "event: <type>"
-                        # lines; without this skip they reach json.loads and
-                        # log a misleading decode "error" per line (mirrors
-                        # chat_with_cohere's filter, task-297 review).
-                        if not decoded_line.startswith("event:"):
-                            logging.warning(f"Cohere: Unexpected SSE line: {decoded_line[:120]}")
+                    # This request sends "accept: application/json", so the
+                    # LIVE v2 stream is raw JSON lines (no SSE framing) --
+                    # proven by the task-297 live smoke, where a strict
+                    # data:-only filter dropped every line. Handle both
+                    # framings: strip a data: prefix when present, skip
+                    # standalone event:/comment lines, parse bare JSON.
+                    if decoded_line.startswith("data:"):
+                        decoded_line = decoded_line[len("data:"):].strip()
+                    elif decoded_line.startswith("event:"):
                         continue
-                    decoded_line = decoded_line[len("data:"):].strip()
+                    elif not decoded_line.startswith("{"):
+                        logging.warning(f"Cohere: Unexpected stream line: {decoded_line[:120]}")
+                        continue
                     if not decoded_line or decoded_line == "[DONE]":
                         continue
                     try:
