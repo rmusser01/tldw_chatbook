@@ -28,7 +28,9 @@ Backlog task IDs collided three times in one week (152+, 196-203, 246-256): two 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Renumber colliding perf batch 246-256 to 263-273 (unblocks ambiguity)\n2. Add .github/workflows/backlog-guard.yml duplicate-ID check on PR + push\n3. Verify detection with a planted duplicate
+1. Renumber colliding perf batch 246-256 to 263-273 (unblocks ambiguity)
+2. Add .github/workflows/backlog-guard.yml duplicate-ID check on PR + push
+3. Verify detection with a planted duplicate
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
