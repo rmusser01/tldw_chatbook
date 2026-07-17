@@ -139,7 +139,10 @@ _REALLOW_TOOLTIP = "Store the new definition hash and allow again."
 _GOTO_PERMISSION_TOOLTIP = "Switch to Permissions mode and select this tool's row."
 
 
-def _cascade_rungs(cascade: tuple[str | None, str | None, str]) -> list[Static]:
+def _cascade_rungs(
+    cascade: tuple[str | None, str | None, str],
+    effective: EffectiveToolState | None = None,
+) -> list[Static]:
     """Build the three provenance-rung Statics for `show_permission()`'s
     `cascade` tuple: `(tool_entry_state, server_default, global_default)`,
     the raw STORE values straight off the permission-store payload for one
@@ -162,6 +165,26 @@ def _cascade_rungs(cascade: tuple[str | None, str | None, str]) -> list[Static]:
     `_build_permission_rows()` already uses for a server row's own label; an
     unset rung renders `"—"`. The global rung never carries the marker (it
     has no parent level to override).
+
+    Critical review fix (MCP Hub Phase 6): the winning rung used to color
+    and label itself from a SYNTHETIC `EffectiveToolState` built straight
+    off the raw, pre-downgrade cascade value -- a rug-pulled tool (stale
+    `definition_hash`) or a risk-floored inherited `allow` rendered
+    "▸ Tool override: Allow •" READY-green even though the REAL resolved
+    `effective.state` (passed in here, the same value `resolve_
+    effective_state()` already downgraded to `"ask"`) reads "Ask" one line
+    above. `effective`, when given (every `show_permission()` call site
+    now passes its own already-resolved state), overrides the winning
+    rung's color to the downgraded WARNING kind and appends the same
+    `⚠`/`⚑` marker `format_tool_state_label()` bakes into the matrix's own
+    State column -- replacing, not stacking on top of, the plain `" •"`
+    override marker, mirroring that helper's own marker precedence. The
+    raw stored label itself (e.g. "Allow") is kept as-is: this block's
+    whole purpose is showing what is actually STORED at each level, not
+    the resolved verdict the origin sentence already stated. `None`
+    (the default -- direct/legacy callers with no `EffectiveToolState` to
+    hand) skips this and falls back to the plain `tool_state_kind()` color,
+    exactly the pre-fix behavior.
     """
     tool_state, server_state, global_state = cascade
     if tool_state is not None:
@@ -170,6 +193,8 @@ def _cascade_rungs(cascade: tuple[str | None, str | None, str]) -> list[Static]:
         winner = "server"
     else:
         winner = "global"
+    downgraded = effective is not None and (effective.config_changed or effective.risk_floored)
+    downgrade_marker = "⚠" if (effective is not None and effective.config_changed) else "⚑"
     rungs = (
         ("tool", "Tool override", tool_state, "tool_override"),
         ("server", "Server default", server_state, "server_default"),
@@ -177,20 +202,28 @@ def _cascade_rungs(cascade: tuple[str | None, str | None, str]) -> list[Static]:
     )
     widgets: list[Static] = []
     for key, label, state, origin in rungs:
+        is_winner = key == winner
         if state is None:
             value_text = "—"
         elif key == "global":
             # The global rung has no parent level to override -- never
             # marked, even though it always carries a concrete state.
             value_text = EffectiveToolState(state=state, origin=origin).ui_label
+        elif is_winner and downgraded:
+            # Marker replaces the bare override bullet -- same precedence
+            # as `format_tool_state_label()`'s own config_changed/
+            # risk_floored branches ahead of its plain-override one.
+            value_text = f"{EffectiveToolState(state=state, origin=origin).ui_label} {downgrade_marker}"
         else:
             value_text = f"{EffectiveToolState(state=state, origin=origin).ui_label} •"
-        is_winner = key == winner
         prefix = "▸ " if is_winner else ""
         classes = "ds-field-row"
         if is_winner:
             assert state is not None, "the winning rung always has a concrete state"
-            classes += f" mcp-status-{tool_state_kind(EffectiveToolState(state=state, origin=origin))}"
+            kind = "warning" if downgraded else tool_state_kind(
+                EffectiveToolState(state=state, origin=origin)
+            )
+            classes += f" mcp-status-{kind}"
         else:
             classes += " mcp-status-muted"
         widgets.append(
@@ -994,7 +1027,7 @@ class MCPInspector(Vertical):
             ),
         ]
         if cascade is not None:
-            widgets.extend(_cascade_rungs(cascade))
+            widgets.extend(_cascade_rungs(cascade, effective))
         else:
             widgets.append(
                 Static(

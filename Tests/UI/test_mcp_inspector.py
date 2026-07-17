@@ -1737,6 +1737,85 @@ async def test_show_permission_cascade_deny_winner_uses_error_class():
 
 
 @pytest.mark.asyncio
+async def test_show_permission_cascade_config_changed_winner_renders_warning_not_ready():
+    """Critical review fix: a rug-pulled tool (an explicit `allow` whose
+    stored `definition_hash` no longer matches the live tool) must not
+    render its winning cascade rung READY-green. `resolve_effective_
+    state()` already downgrades `effective.state` to `"ask"` for exactly
+    this case (`config_changed=True`) -- `_cascade_rungs()` used to ignore
+    that real, already-resolved `effective` entirely and build its own
+    SYNTHETIC `EffectiveToolState` straight off the raw cascade tuple's
+    still-`"allow"` stored value, so the tool rung rendered
+    "▸ Tool override: Allow •" GREEN directly under a "Permission: Ask"
+    state line and the definition-changed notice."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_permission(
+            _tool(),
+            EffectiveToolState(state="ask", origin="tool_override", config_changed=True),
+            cascade=("allow", None, "ask"),
+        )
+        await pilot.pause()
+
+        tool_rung = app.query_one("#mcp-inspector-permission-cascade-tool", Static)
+        assert str(tool_rung.renderable) == "▸ Tool override: Allow ⚠"
+        assert "mcp-status-warning" in tool_rung.classes
+        assert "mcp-status-ready" not in tool_rung.classes
+
+
+@pytest.mark.asyncio
+async def test_show_permission_cascade_risk_floored_winner_renders_warning_not_ready():
+    """Same fix, the OTHER downgrade path: an *inherited* `allow` (here,
+    the server default) floored to `"ask"` for a high-risk tool must also
+    render its winning rung warning-colored with the ⚑ marker, not the raw
+    stored "Allow" rendered ready-green."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_permission(
+            _tool(),
+            EffectiveToolState(state="ask", origin="server_default", risk_floored=True),
+            cascade=(None, "allow", "ask"),
+        )
+        await pilot.pause()
+
+        server_rung = app.query_one("#mcp-inspector-permission-cascade-server", Static)
+        assert str(server_rung.renderable) == "▸ Server default: Allow ⚑"
+        assert "mcp-status-warning" in server_rung.classes
+        assert "mcp-status-ready" not in server_rung.classes
+
+
+@pytest.mark.asyncio
+async def test_show_permission_cascade_muted_rung_dimmed_under_real_bundled_css():
+    """Minor 3 (review): `.mcp-status-muted` is scoped to this widget's own
+    `DEFAULT_CSS` (the raw `$text-muted` token -- see that rule's own
+    comment), while the winner's `.mcp-status-{ready|warning|error}` class
+    resolves from the shared bundle's `$ds-status-*` design-system aliases
+    (`css/tldw_cli_modular.tcss`). Every other cascade test in this module
+    mounts a bundle-less `InspectorApp`, where `.mcp-status-ready` has no
+    concrete color to resolve at all -- proving the dimming actually WORKS
+    (not just that the class name differs) needs the real bundle
+    (`InspectorAppWithBundledCSS`, same harness `test_disabled_action_
+    buttons_stay_legible_with_bundled_css` already uses for exactly this
+    reason)."""
+    app = InspectorAppWithBundledCSS()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_permission(
+            _tool(),
+            EffectiveToolState(state="allow", origin="tool_override"),
+            cascade=("allow", "ask", "ask"),
+        )
+        await pilot.pause()
+        tool_rung = app.query_one("#mcp-inspector-permission-cascade-tool", Static)
+        server_rung = app.query_one("#mcp-inspector-permission-cascade-server", Static)
+        assert "mcp-status-ready" in tool_rung.classes
+        assert "mcp-status-muted" in server_rung.classes
+        assert tool_rung.styles.color != server_rung.styles.color
+
+
+@pytest.mark.asyncio
 async def test_show_tool_effective_block_never_renders_cascade_rungs():
     """Task 3's cascade wiring is `show_permission()`-only (per the brief) --
     Tools-mode's own combined call (`show_tool(tool, effective=...)`) keeps

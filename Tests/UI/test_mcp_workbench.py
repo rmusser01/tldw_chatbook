@@ -4359,8 +4359,18 @@ async def test_reallow_round_trip_clears_config_changed_marker_and_matrix_warnin
 @pytest.mark.asyncio
 async def test_permissions_row_selection_cascade_marks_tool_override_as_winner(tmp_path):
     store_path = tmp_path / "mcp_permissions.json"
+    # Critical review fix regression: the stored hash must match "search"'s
+    # REAL definition (`PermissionsHubService`'s own discovery_snapshot
+    # description, "Search docs.", no inputSchema -- see
+    # `hub_tool_catalog.local_tools_from_record()`'s `input_schema=None`
+    # default) -- a mismatched hash (this test's own pre-fix
+    # `definition_hash="anything"`) trips the SAME rug-pull guard
+    # `test_reallow_refreshes_cascade_with_tool_rung_as_winner` exercises
+    # on purpose, downgrading `config_changed=True` and coloring the
+    # winning rung warning, not the plain undowngraded-override "ready"
+    # this test's own name asserts.
     MCPPermissionStore(store_path).set_tool_state(
-        "local:docs", "search", "allow", definition_hash="anything"
+        "local:docs", "search", "allow", definition_hash=definition_hash("Search docs.", None)
     )
     app = PermissionsApp(store_path)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -4564,6 +4574,83 @@ async def test_goto_permission_row_is_the_single_shared_implementation_for_all_t
         ]
 
 
+@pytest.mark.asyncio
+async def test_tools_mode_permission_block_change_button_clears_stale_tool_detail():
+    """Critical review fix: jumping to Permissions mode via the Tools-mode
+    permission block's own "Change in Permissions" button fires from Tools
+    mode, where `#mcp-inspector-tool` is populated. `_goto_permission_row()`
+    dispatches `_open_audit_permission()` into the SAME exclusive
+    `"mcp-tool-clear"` worker group `set_mode()`'s own `_clear_tool_view()`
+    just used, cancelling that clear before it runs (the documented trap --
+    see `_open_audit_tool()`'s own docstring for the mechanism), so
+    `_open_audit_permission()` must explicitly clear `#mcp-inspector-tool`
+    itself (mirroring its existing explicit `show_audit_entry(None)` clear)
+    or the stale tool detail stays stacked underneath the new Permissions-
+    mode block."""
+    app = ToolTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
+        assert app.query_one("#mcp-inspector-tool-name", Static)
+        assert app.query_one("#mcp-inspector-tool", Vertical).display is True
+
+        await pilot.click("#mcp-inspector-goto-permission")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert workbench.active_mode == "permissions"
+        assert app.query_one("#mcp-inspector-permission").display is True
+        assert not list(app.query("#mcp-inspector-tool-name"))
+        assert app.query_one("#mcp-inspector-tool", Vertical).display is False
+
+
+@pytest.mark.asyncio
+async def test_test_tool_armed_change_button_clears_stale_tool_detail_and_arm():
+    """Same Critical fix as above, exercised via the Test Tool panel's own
+    blocked/ask "Change in Permissions" button (`#mcp-inspector-goto-
+    permission-test`) with the panel actually OPEN and ARMED (an "ask" gate
+    that has already consumed one Run press) -- the worse of the two new
+    Tools-mode-origin jump triggers, since a live "Confirm run" button would
+    otherwise stay mounted and pressable underneath the Permissions-mode
+    block. `show_tool(None)` clearing `#mcp-inspector-tool` also resets
+    `test_run_armed` (its own `remove_children()` discards the panel, and
+    it explicitly sets the flag false), so this doubles as the "no armed
+    buttons survive the jump" assertion."""
+    app = ToolTestApp()
+    app.unified_mcp_service.gate_state = "ask"
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-run")  # arms
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        inspector = app.query_one(MCPInspector)
+        assert inspector.test_run_armed is True
+        assert app.query_one("#mcp-inspector-goto-permission-test", Button).display is True
+
+        await pilot.click("#mcp-inspector-goto-permission-test")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert workbench.active_mode == "permissions"
+        assert app.query_one("#mcp-inspector-permission").display is True
+        assert not list(app.query("#mcp-inspector-tool-name"))
+        assert not list(app.query("#mcp-inspector-test-panel"))
+        assert app.query_one("#mcp-inspector-tool", Vertical).display is False
+        assert inspector.test_run_armed is False
+
+
 # -- Task 3 (MCP Hub Phase 6): mutation echo ---------------------------------
 
 
@@ -4586,6 +4673,48 @@ async def test_space_cycle_prefixes_preview_with_mutation_echo(tmp_path):
 
         preview = str(app.query_one("#mcp-perm-preview", Static).renderable)
         assert preview.startswith("search → Allow · ")
+
+
+@pytest.mark.asyncio
+async def test_double_space_cycle_echo_replaces_not_appends(tmp_path):
+    """Minor 4 (review): back-to-back Space-cycles on the same tool row must
+    each render their OWN fresh mutation echo, not stack the previous
+    press's echo underneath the new one -- `MCPPermissionsMode.
+    update_matrix()`'s `#mcp-perm-preview` render is a single
+    `Static.update()` call per pass (full replace, never append), and each
+    Space press recomputes `echo` fresh from ITS OWN cycle event
+    (`_cycled_ui_label(event.new_state)`), so the second press's preview
+    must show exactly one "→" -- the SECOND cycle's own arrow -- not two.
+    Mirrors `test_double_space_cycle_on_tool_row_stays_on_that_row`'s own
+    double-press-same-row choreography (the `pilot.pause(0.3)` settle
+    between presses)."""
+    app = PermissionsApp(tmp_path / "mcp_permissions.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=3)  # local:docs::search
+        await pilot.press("space")  # cycle_ui_state(None) == "allow"
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause(0.3)
+
+        preview = str(app.query_one("#mcp-perm-preview", Static).renderable)
+        assert preview.startswith("search → Allow · ")
+        assert preview.count("→") == 1
+
+        await pilot.press("space")  # cycle_ui_state("allow") == "ask"
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause(0.3)
+
+        preview = str(app.query_one("#mcp-perm-preview", Static).renderable)
+        assert preview.startswith("search → Ask · ")
+        assert preview.count("→") == 1
 
 
 @pytest.mark.asyncio

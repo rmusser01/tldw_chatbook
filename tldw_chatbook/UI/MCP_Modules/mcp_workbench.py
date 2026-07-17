@@ -2388,6 +2388,21 @@ class MCPWorkbench(Container):
         # `_goto_permission_row()` callers, where `#mcp-inspector-audit` is
         # already hidden.
         await inspector.show_audit_entry(None)
+        # Critical review fix: the other two `_goto_permission_row()`
+        # callers -- the Tools-mode permission block's own "Change in
+        # Permissions" button, and the Test Tool panel's blocked/ask
+        # button -- fire from Tools mode, where `#mcp-inspector-tool` (and,
+        # for the Test Tool trigger, a live armed Run/Close panel inside
+        # it) is populated. `set_mode()`'s own `_clear_tool_view()` worker
+        # -- which would otherwise hide it via `show_tool(None)` -- is
+        # cancelled by this method's SAME exclusive `"mcp-tool-clear"`
+        # dispatch before it ever runs (the exact mechanism the comment
+        # above already documents for the audit panel), so this must clear
+        # `#mcp-inspector-tool` itself too, or the stale tool detail (and
+        # any armed Test Tool buttons) stays stacked underneath the new
+        # Permissions-mode block. Harmless no-op for the audit-drill
+        # caller, where `#mcp-inspector-tool` is already hidden.
+        await inspector.show_tool(None)
         self.query_one(MCPPermissionsMode).select_tool_row(tool.server_key, tool.name)
         await inspector.show_permission(
             tool, self._effective_for_display(tool), cascade=self._cascade_for_tool(tool)
