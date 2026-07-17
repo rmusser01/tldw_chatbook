@@ -18,7 +18,7 @@ from typing import Any, Callable
 from tldw_chatbook.Agents.agent_models import (
     AGENT_KIND_PRIMARY, AGENT_KIND_SUBAGENT, FIND_TOOLS_NAME, LOAD_TOOLS_NAME,
     RunBudget, RUNTIME_TOOL_NAMES, SPAWN_TOOL_NAME, STEP_ERROR, STEP_SPAWN,
-    STEP_TOOL_RESULT, AgentConfig, AgentStep, RunOutcome, ToolCatalogEntry,
+    STEP_TOOL_RESULT, AgentConfig, AgentStep, RunOutcome, ToolCall, ToolCatalogEntry,
     ToolResult, ToolSchema,
 )
 from tldw_chatbook.Agents.agent_service import SUBAGENT_SYSTEM_PROMPT, AgentService
@@ -666,7 +666,7 @@ class ConsoleAgentBridge:
                   agent_messages: list[dict], should_cancel: Callable[[], bool],
                   supersede_previous: bool = False,
                   mcp_provider: Any | None = None,
-                  review_tool_calls: Callable[[list], dict[str, str]] | None = None,
+                  review_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None,
                   ) -> RunOutcome:
         # Per-run tool registry + allow-list (Task 12, extended by P5-T6 for
         # MCP): rebuilt FRESH for this run whenever there is a skills
