@@ -20,6 +20,7 @@ committed as fixture files, to keep the fixtures directory small.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
@@ -86,7 +87,9 @@ async def _open_skills_import_row(screen, pilot) -> None:
     await pilot.pause()
 
 
-async def _run_skills_import_via_ui(screen, pilot, path: Path, *, attempts: int = 150) -> str:
+async def _run_skills_import_via_ui(
+    screen, pilot, path: Path, *, deadline_seconds: float = 30.0
+) -> str:
     """Type ``path`` into the Import row and press Import, returning the
     outcome line once it changes from whatever it showed before this call.
 
@@ -95,6 +98,12 @@ async def _run_skills_import_via_ui(screen, pilot, path: Path, *, attempts: int 
     (only "Cancel" clears it), so blindly waiting for non-empty text would
     read a STALE outcome left over from a previous import in the same
     Import-row session.
+
+    The wait is a WALL-CLOCK deadline, not a fixed iteration count: each
+    import spins up a fresh OS thread + ``asyncio.run()`` loop + real file
+    I/O (~3.5s even unloaded), so the previous 150x0.02s = 3.0s iteration
+    ceiling sat below the zero-load baseline and flaked whenever the suite
+    ran under contention.
     """
     previous = str(screen.query_one("#library-skills-import-status", Static).renderable)
     screen.query_one("#library-skills-import-path", Input).value = str(path)
@@ -102,7 +111,8 @@ async def _run_skills_import_via_ui(screen, pilot, path: Path, *, attempts: int 
     screen.query_one("#library-skills-import-run", Button).press()
     await pilot.pause()
     status_text = previous
-    for _ in range(attempts):
+    deadline = time.monotonic() + deadline_seconds
+    while time.monotonic() < deadline:
         status_text = str(screen.query_one("#library-skills-import-status", Static).renderable)
         if status_text != previous:
             return status_text

@@ -1279,9 +1279,17 @@ class _JSONOKHandler(http.server.BaseHTTPRequestHandler):
         pass
 
 
+class _DeepBacklogHTTPServer(http.server.ThreadingHTTPServer):
+    # The stdlib default listen backlog is 5; the concurrent-swap test
+    # barrier-releases 6 threads into fresh cold connections every round,
+    # so refused/queued connects under load showed up as probe timeouts
+    # (de-flake pass 2026-07-17).
+    request_queue_size = 32
+
+
 @pytest.fixture
 def local_http_server():
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _JSONOKHandler)
+    server = _DeepBacklogHTTPServer(("127.0.0.1", 0), _JSONOKHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -1467,6 +1475,7 @@ def test_first_swap_still_schedules_close_of_the_original_owned_client(monkeypat
 
 def test_active_http_client_concurrent_swap_never_leaves_client_bound_to_wrong_loop(
     local_http_server,
+    monkeypatch,
 ):
     """PR #629 Fix 1(a) (Gemini HIGH x2 + Qodo-8): the check-and-swap of
     ``http_client``/``_client_loop`` was not atomic, so concurrent callers
@@ -1480,7 +1489,19 @@ def test_active_http_client_concurrent_swap_never_leaves_client_bound_to_wrong_l
     all race the swap concurrently) against the gateway's single owned
     client and asserts every single real request against a local server
     succeeds -- a mismatch manifests as a genuine RuntimeError out of
-    httpx/httpcore, not just a stale internal-state assertion."""
+    httpx/httpcore, not just a stale internal-state assertion.
+
+    De-flake (2026-07-17, ~1% repro): the observed failures were probe
+    TIMEOUTS (`_is_reachable` swallowing an ``httpx`` timeout under the
+    test's own 6-thread cold-connection stampede), NOT the loop-binding
+    RuntimeError this guards against. The production probe timeout (5s) is
+    tuned for one readiness probe, not 120 barrier-synchronized cold
+    connects -- widen it for this test only so a genuine loop-binding
+    regression (which fails instantly) stays the only failure mode.
+    """
+    import tldw_chatbook.Chat.console_provider_gateway as gateway_module
+
+    monkeypatch.setattr(gateway_module, "PROBE_TIMEOUT_SECONDS", 20.0)
     gateway = ConsoleProviderGateway()
     thread_count = 6
     rounds = 20
@@ -1517,7 +1538,7 @@ def test_active_http_client_concurrent_swap_never_leaves_client_bound_to_wrong_l
                 future = asyncio.run_coroutine_threadsafe(
                     gateway._is_reachable(local_http_server), loop
                 )
-                assert future.result(timeout=10) is True
+                assert future.result(timeout=30) is True
             except BaseException as exc:  # noqa: BLE001 -- collected, asserted below
                 with errors_lock:
                     errors.append(exc)
