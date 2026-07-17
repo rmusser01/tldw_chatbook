@@ -87,6 +87,19 @@ from ...Widgets.Persona_Widgets.personas_dictionary_tryit import (
     DictionaryTryItRunRequested,
     PersonasDictionaryTryItWidget,
 )
+from ...Widgets.Persona_Widgets.personas_lore_detail import (
+    LoreBookEnableToggled,
+    LoreBookSettingsSaveRequested,
+    LoreEntriesReorderRequested,
+    LoreEntryAddRequested,
+    LoreEntryDeleteRequested,
+    LoreEntryUpdateRequested,
+    PersonasLoreDetailWidget,
+)
+from ...Widgets.Persona_Widgets.personas_lore_tryit import (
+    LoreTryItRunRequested,
+    PersonasLoreTryItWidget,
+)
 from ...Widgets.Persona_Widgets.personas_preview_pane import PersonasPreviewPane
 from ...Widgets.Persona_Widgets.personas_state import MODE_LABELS, PersonasWorkbenchState
 from ...Widgets.workbench_focus import WorkbenchPaneTarget, focus_relative_workbench_pane
@@ -125,11 +138,11 @@ _MODE_DESCRIPTORS: dict[str, str] = {
 
 #: Modes genuinely coming to Roleplay — their chips carry the "· soon" marker.
 #: Departing modes (prompts) are deliberately excluded: they are leaving, not arriving.
-_COMING_SOON_MODES: frozenset[str] = frozenset({"lore"})
+#: Lore (P2a Task 6) is now wired, so nothing remains here.
+_COMING_SOON_MODES: frozenset[str] = frozenset()
 
 #: Placeholder body per not-yet-built (or departing) mode; generic fallback for others.
 _MODE_PLACEHOLDER_BODY: dict[str, str] = {
-    "lore": "Lore — build world facts that get injected when keywords appear. Coming soon.",
     "prompts": "Prompts are moving to the Library — you'll manage them there.",
 }
 _PLACEHOLDER_FALLBACK = "This mode is coming soon."
@@ -150,6 +163,7 @@ PERSONAS_INSPECTOR_RAIL_HANDLE_WIDTH = 11
 #: Center-area widgets toggled by ``_show_center``.
 _CENTER_VIEW_IDS: tuple[str, ...] = (
     "#personas-dictionary-detail",
+    "#personas-lore-detail",
     "#ccp-character-card-view",
     "#ccp-character-editor-view",
     "#ccp-persona-card-view",
@@ -389,6 +403,12 @@ class PersonasScreen(BaseAppScreen):
         self._profiles: list[dict] = []
         self._dictionaries_cache: list[dict] = []
         self._selected_dictionary_version: int | None = None
+        self._lore_books_cache: list[dict] = []
+        # Full record + entries for the currently-selected lore book, kept in
+        # memory so Try-it can build a WorldInfoProcessor without a re-fetch.
+        self._selected_lore_book: dict | None = None
+        self._selected_lore_entries: list[dict] = []
+        self._selected_lore_book_version: int | None = None
         self._profile_lookup_recovery_state: DestinationRecoveryState | None = None
         self._search_debounce_timer: Timer | None = None
         # Serializes library renders: the pane's update_rows has two
@@ -483,12 +503,16 @@ class PersonasScreen(BaseAppScreen):
                                 id="personas-conversation-open-library",
                             )
                         yield PersonasDictionaryDetailWidget(id="personas-dictionary-detail")
+                        yield PersonasLoreDetailWidget(id="personas-lore-detail")
                         yield PersonasConversationTranscriptWidget()
-                        yield Static(self._mode_placeholder_text("lore"), id="personas-mode-placeholder")
+                        yield Static(self._mode_placeholder_text("prompts"), id="personas-mode-placeholder")
                     yield PersonasPreviewPane(id="personas-preview-pane")
                     tryit = PersonasDictionaryTryItWidget(id="personas-dict-tryit")
                     tryit.display = False
                     yield tryit
+                    lore_tryit = PersonasLoreTryItWidget(id="personas-lore-tryit")
+                    lore_tryit.display = False
+                    yield lore_tryit
 
                 inspector_pane = PersonasInspectorPane(
                     id="personas-inspector-pane",
@@ -845,6 +869,11 @@ class PersonasScreen(BaseAppScreen):
                 await self._render_dictionary_rows(query=query)
             except Exception:
                 logger.opt(exception=True).warning("Could not re-render dictionary rows after search.")
+        elif mode == "lore":
+            try:
+                await self._render_lore_rows(query=query)
+            except Exception:
+                logger.opt(exception=True).warning("Could not re-render lore rows after search.")
 
     def _profile_record(self, item_id: str | None) -> dict | None:
         if item_id is None:
@@ -935,6 +964,59 @@ class PersonasScreen(BaseAppScreen):
             rows, total=len(records), noun="dictionaries", filtered=bool(needle),
         )
 
+    def _lore_manager(self) -> Any:
+        """A ``WorldBookManager`` bound to the app's local DB, or None when absent."""
+        from ...Character_Chat.world_book_manager import WorldBookManager
+
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        return WorldBookManager(db) if db is not None else None
+
+    @staticmethod
+    def _lore_row(record: dict) -> LibraryRow:
+        count = record.get("entry_count") or 0
+        state = "on" if record.get("enabled", True) else "off"
+        return LibraryRow(
+            item_id=str(record.get("id")),
+            kind="lore",
+            name=str(record.get("name") or "Unnamed"),
+            meta=f"{count} entries · {state}",
+        )
+
+    @staticmethod
+    def _list_world_books_with_counts(manager: Any) -> list[dict]:
+        """Sync helper run off-thread: list_world_books() plus a per-book entry count."""
+        books = manager.list_world_books(True)
+        for book in books:
+            book["entry_count"] = len(manager.get_world_book_entries(book["id"]))
+        return books
+
+    async def _render_lore_rows(self, query: str = "") -> None:
+        """Fetch and render lore/world-book rows; degrade to recovery copy on failure."""
+        library = self.query_one(PersonasLibraryPane)
+        manager = self._lore_manager()
+        if manager is None:
+            await library.update_rows(
+                (), total=0, noun="lore books",
+                recovery_copy="Lore is unavailable: the database is not configured.",
+            )
+            return
+        try:
+            records = await asyncio.to_thread(self._list_world_books_with_counts, manager)
+        except Exception:
+            logger.opt(exception=True).warning("Could not list lore books.")
+            await library.update_rows(
+                (), total=0, noun="lore books",
+                recovery_copy="Lore books could not be loaded.\nSwitch modes and back to retry.",
+            )
+            return
+        self._lore_books_cache = records
+        needle = query.strip().lower()
+        visible = [r for r in records if needle in str(r.get("name", "")).lower()] if needle else records
+        rows = tuple(self._lore_row(r) for r in visible)
+        await library.update_rows(
+            rows, total=len(records), noun="lore books", filtered=bool(needle),
+        )
+
     # ===== Mode switching =====
 
     @on(Button.Pressed, ".personas-mode-chip")
@@ -989,11 +1071,16 @@ class PersonasScreen(BaseAppScreen):
         library = self.query_one(PersonasLibraryPane)
         library.set_mode(mode)
         is_dictionaries = mode == "dictionaries"
-        self.query_one(PersonasPreviewPane).display = not is_dictionaries
+        is_lore = mode == "lore"
+        self.query_one(PersonasPreviewPane).display = not (is_dictionaries or is_lore)
         tryit = self.query_one(PersonasDictionaryTryItWidget)
         tryit.display = is_dictionaries
         if is_dictionaries:
             tryit.set_ready(False, "Select a dictionary to preview substitutions.")
+        lore_tryit = self.query_one(PersonasLoreTryItWidget)
+        lore_tryit.display = is_lore
+        if is_lore:
+            lore_tryit.set_ready(False, "Select a lore book to preview injections.")
         # clear_selection empties the conversations panel; drop the caches too.
         self.conversations.reset()
         await self.preview.reset("")
@@ -1008,6 +1095,9 @@ class PersonasScreen(BaseAppScreen):
             self._refresh_profile_rows_worker()
         elif mode == "dictionaries":
             await self._render_dictionary_rows()
+            self._show_center(None)
+        elif mode == "lore":
+            await self._render_lore_rows()
             self._show_center(None)
         else:
             await library.update_rows((), total=0, noun=MODE_LABELS.get(mode, mode).lower())
@@ -1079,9 +1169,12 @@ class PersonasScreen(BaseAppScreen):
             await self._run_guarded(
                 lambda: self._select_dictionary(message.entity_id, message.entity_name)
             )
-        # Lore is wired in a follow-up task. Prompts are not: prompt
-        # management is retired from Personas and lives entirely inside
-        # Library (Task 7).
+        elif message.entity_kind == "lore":
+            await self._run_guarded(
+                lambda: self._select_lore_entry(message.entity_id, message.entity_name)
+            )
+        # Prompts are not wired here: prompt management is retired from
+        # Personas and lives entirely inside Library (Task 7).
 
     async def _select_character(self, entity_id: str, entity_name: str) -> None:
         self.state.select_entity(
@@ -1180,6 +1273,55 @@ class PersonasScreen(BaseAppScreen):
         self._update_status_row()
         await self._refresh_dictionary_versions()
         await self._refresh_dictionary_attachments()
+
+    @staticmethod
+    def _load_lore_book_and_entries(manager: Any, book_id: int) -> tuple[dict | None, list[dict]]:
+        """Sync helper run off-thread: the book record plus its entries in one hop."""
+        record = manager.get_world_book(book_id)
+        if record is None:
+            return None, []
+        entries = manager.get_world_book_entries(book_id)
+        return record, entries
+
+    async def _select_lore_entry(self, entity_id: str, entity_name: str) -> None:
+        """Load one lore/world book into the center detail; inspector shows the selection."""
+        manager = self._lore_manager()
+        if manager is None:
+            self._notify("Lore is not configured: the database is unavailable.", "error")
+            return
+        try:
+            record, entries = await asyncio.to_thread(
+                self._load_lore_book_and_entries, manager, int(entity_id)
+            )
+        except Exception as exc:
+            logger.opt(exception=True).warning(f"Could not load lore book {entity_id}.")
+            self._notify(f"Could not load lore book: {exc}", "error")
+            return
+        if record is None:
+            self._notify("Lore book not found.", "error")
+            return
+        self._edit_mode = "view"
+        self.state.has_unsaved_changes = False
+        raw_version = record.get("version")
+        self._selected_lore_book_version = int(raw_version) if raw_version is not None else None
+        self._selected_lore_book = record
+        self._selected_lore_entries = entries
+        self.state.select_entity(
+            entity_kind="lore", entity_id=entity_id, entity_name=entity_name
+        )
+        detail = self.query_one(PersonasLoreDetailWidget)
+        detail.load_book({**record, "entries": entries})
+        self._show_center("#personas-lore-detail")
+        library = self.query_one(PersonasLibraryPane)
+        library.mark_active_row("lore", entity_id)
+        inspector = self.query_one(PersonasInspectorPane)
+        inspector.show_selection(name=entity_name, kind="lore", authority="Local")
+        self.query_one(PersonasLoreTryItWidget).set_ready(
+            True, "Run the preview to see what this lore book injects."
+        )
+        self._sync_inspector_console_actions()
+        self._update_title()
+        self._update_status_row()
 
     async def _refresh_dictionary_statistics(self, record: dict) -> None:
         """Re-feed the Stats tab for the given loaded record (best-effort).
@@ -1768,6 +1910,230 @@ class PersonasScreen(BaseAppScreen):
             response.get("diagnostics"),
         )
 
+    # ===== Lore (world books) =====
+
+    async def _reload_selected_lore_entries(self) -> bool:
+        """Re-fetch entries for the selected lore book after a mutation.
+
+        Returns:
+            True on success; False on an internal failure path (already
+            surfaced via ``detail.set_status``), so callers know not to
+            clobber that status with a blanket "".
+        """
+        entity_id = self.state.selected_entity_id
+        manager = self._lore_manager()
+        if manager is None or self.state.selected_entity_kind != "lore" or not entity_id:
+            return False
+        detail = self.query_one(PersonasLoreDetailWidget)
+        try:
+            entries = await asyncio.to_thread(manager.get_world_book_entries, int(entity_id))
+        except Exception as exc:
+            logger.opt(exception=True).warning(f"Could not reload lore book {entity_id} entries.")
+            detail.set_status(f"Reload failed: {exc}")
+            return False
+        self._selected_lore_entries = entries
+        detail.update_entries(entries)
+        await self._render_lore_rows(query=self.state.search_query)
+        self.query_one(PersonasLibraryPane).mark_active_row("lore", entity_id)
+        return True
+
+    async def _run_lore_entry_op(self, op: Callable[[Any], Awaitable[Any]], failure: str) -> None:
+        """One guarded manager mutation (off-thread) + the mandatory entries reload."""
+        manager = self._lore_manager()
+        detail = self.query_one(PersonasLoreDetailWidget)
+        if manager is None or self.state.selected_entity_kind != "lore":
+            return
+        try:
+            await op(manager)
+        except ConflictError:
+            detail.set_status(
+                "Change failed: the lore book changed since it was loaded. Reselect and try again."
+            )
+            return
+        except Exception as exc:
+            logger.opt(exception=True).warning(failure)
+            detail.set_status(f"{failure}: {exc}")
+            return
+        if await self._reload_selected_lore_entries():
+            detail.set_status("")
+        # else: the reload already set its own "Reload failed: ..." status -
+        # blanking it here would silently hide that failure from the user.
+
+    @on(LoreEntryAddRequested)
+    async def _handle_lore_entry_add(self, message: LoreEntryAddRequested) -> None:
+        message.stop()
+        entity_id = self.state.selected_entity_id
+        if not entity_id:
+            return
+        payload = message.payload
+        await self._run_lore_entry_op(
+            lambda manager: asyncio.to_thread(
+                manager.create_world_book_entry,
+                int(entity_id),
+                keys=payload.get("keys", []),
+                content=payload.get("content", ""),
+                enabled=payload.get("enabled", True),
+                position=payload.get("position", "before_char"),
+                insertion_order=payload.get("insertion_order", 0),
+            ),
+            "Could not add the entry",
+        )
+
+    @on(LoreEntryUpdateRequested)
+    async def _handle_lore_entry_update(self, message: LoreEntryUpdateRequested) -> None:
+        message.stop()
+        payload = message.payload
+        await self._run_lore_entry_op(
+            lambda manager: asyncio.to_thread(
+                manager.update_world_book_entry, int(message.entry_id), **payload
+            ),
+            "Could not update the entry",
+        )
+
+    @on(LoreEntryDeleteRequested)
+    async def _handle_lore_entry_delete(self, message: LoreEntryDeleteRequested) -> None:
+        message.stop()
+        await self._run_lore_entry_op(
+            lambda manager: asyncio.to_thread(manager.delete_world_book_entry, int(message.entry_id)),
+            "Could not delete the entry",
+        )
+
+    @on(LoreEntriesReorderRequested)
+    async def _handle_lore_entries_reorder(self, message: LoreEntriesReorderRequested) -> None:
+        message.stop()
+        entity_id = self.state.selected_entity_id
+        if not entity_id:
+            return
+        entry_ids = list(message.entry_ids)
+
+        async def _op(manager: Any) -> None:
+            for index, entry_id in enumerate(entry_ids):
+                await asyncio.to_thread(
+                    manager.update_world_book_entry, int(entry_id), insertion_order=index
+                )
+
+        await self._run_lore_entry_op(_op, "Could not reorder entries")
+
+    @on(LoreBookSettingsSaveRequested)
+    async def _handle_lore_settings_save(self, message: LoreBookSettingsSaveRequested) -> None:
+        message.stop()
+        if self.state.selected_entity_kind != "lore" or not self.state.selected_entity_id:
+            return
+        detail = self.query_one(PersonasLoreDetailWidget)
+        payload = dict(message.payload)
+        if not payload.get("name"):
+            detail.set_status("A name is required.")
+            return
+        manager = self._lore_manager()
+        if manager is None:
+            self._notify("Lore is not configured: the database is unavailable.", "error")
+            return
+        entity_id = self.state.selected_entity_id
+        try:
+            ok = await asyncio.to_thread(
+                manager.update_world_book,
+                int(entity_id),
+                name=payload.get("name"),
+                description=payload.get("description"),
+                scan_depth=payload.get("scan_depth"),
+                token_budget=payload.get("token_budget"),
+                recursive_scanning=payload.get("recursive_scanning"),
+                enabled=payload.get("enabled"),
+                expected_version=self._selected_lore_book_version,
+            )
+        except ConflictError:
+            detail.set_status(
+                "Save failed: the lore book changed since it was loaded. Reselect and try again."
+            )
+            return
+        except Exception as exc:
+            logger.opt(exception=True).warning(f"Could not save lore book {entity_id}.")
+            detail.set_status(f"Save failed: {exc}")
+            return
+        if not ok:
+            # update_world_book() only returns False (rather than raising)
+            # when expected_version was None and the row vanished/mismatched;
+            # world_books.version is NOT NULL so this path is effectively
+            # unreachable once a book is selected, but stay defensive.
+            detail.set_status("Save failed: the lore book could not be found.")
+            return
+        try:
+            record = await asyncio.to_thread(manager.get_world_book, int(entity_id))
+        except Exception:
+            logger.opt(exception=True).warning(f"Could not reload lore book {entity_id} after save.")
+            record = None
+        if record is not None:
+            raw_version = record.get("version")
+            self._selected_lore_book_version = int(raw_version) if raw_version is not None else None
+            self._selected_lore_book = record
+            self.state.selected_entity_name = str(record.get("name") or "")
+            self.query_one(PersonasInspectorPane).show_selection(
+                name=self.state.selected_entity_name, kind="lore", authority="Local"
+            )
+        detail.set_status("Saved.")
+        self._update_title()
+        await self._render_lore_rows(query=self.state.search_query)
+        self.query_one(PersonasLibraryPane).mark_active_row("lore", entity_id)
+        self._sync_inspector_console_actions()
+
+    @on(LoreBookEnableToggled)
+    async def _handle_lore_enable_toggled(self, message: LoreBookEnableToggled) -> None:
+        message.stop()
+        if self.state.selected_entity_kind != "lore" or not self.state.selected_entity_id:
+            return
+        manager = self._lore_manager()
+        if manager is None:
+            return
+        entity_id = self.state.selected_entity_id
+        detail = self.query_one(PersonasLoreDetailWidget)
+        try:
+            await asyncio.to_thread(manager.update_world_book, int(entity_id), enabled=message.enabled)
+        except Exception as exc:
+            logger.opt(exception=True).warning(f"Could not toggle lore book {entity_id}.")
+            self._notify(f"Toggle failed: {exc}", "error")
+            # Revert the switch to the last-known-good value.
+            detail.apply_enabled(not message.enabled)
+            return
+        if self._selected_lore_book is not None:
+            self._selected_lore_book["enabled"] = bool(message.enabled)
+        await self._render_lore_rows(query=self.state.search_query)
+        self.query_one(PersonasLibraryPane).mark_active_row("lore", entity_id)
+
+    @on(LoreTryItRunRequested)
+    async def _handle_lore_tryit_run(self, message: LoreTryItRunRequested) -> None:
+        message.stop()
+        tryit = self.query_one(PersonasLoreTryItWidget)
+        entity_id = self.state.selected_entity_id
+        if (
+            self.state.selected_entity_kind != "lore"
+            or not entity_id
+            or self._selected_lore_book is None
+        ):
+            tryit.show_error("Select a lore book first.")
+            return
+        book = {**self._selected_lore_book, "entries": self._selected_lore_entries}
+        # Recent-turn history is out of P2a's authoring scope: no conversation
+        # is trivially available here, so history is always [] regardless of
+        # the pull-history switch (message.pull_history).
+        history: list[dict] = []
+        try:
+            result, diagnostics = await asyncio.to_thread(
+                self._run_lore_scan, book, message.text, history
+            )
+        except Exception as exc:
+            logger.opt(exception=True).warning(f"Try-it preview failed for lore book {entity_id}.")
+            tryit.show_error(f"Couldn't run the preview: {exc}")
+            return
+        tryit.render_result(result.get("injections") or {}, diagnostics.to_dict())
+
+    @staticmethod
+    def _run_lore_scan(book: dict, text: str, history: list[dict]) -> tuple[dict, Any]:
+        """Sync helper run off-thread: build the processor and scan in one hop."""
+        from ...Character_Chat.world_info_processor import WorldInfoProcessor
+
+        processor = WorldInfoProcessor(world_books=[book])
+        return processor.process_messages_with_diagnostics(text, history)
+
     # ===== Saved conversations =====
 
     def _character_db(self) -> Any:
@@ -2010,6 +2376,8 @@ class PersonasScreen(BaseAppScreen):
                 await self._run_guarded(self._begin_create_profile)
             elif self.state.active_mode == "dictionaries":
                 await self._run_guarded(self._begin_create_dictionary)
+            elif self.state.active_mode == "lore":
+                await self._run_guarded(self._begin_create_lore)
             # Creation in the remaining modes is wired in follow-up tasks.
         elif message.action == "import":
             if self.state.active_mode == "characters":
@@ -2019,10 +2387,15 @@ class PersonasScreen(BaseAppScreen):
         elif message.action == "duplicate":
             if self.state.active_mode == "dictionaries":
                 await self._run_guarded(self._duplicate_selected_dictionary)
+            elif self.state.active_mode == "lore":
+                await self._run_guarded(self._duplicate_selected_lore)
         elif message.action == "toggle_enabled":
             if self.state.active_mode == "dictionaries" and message.entity_id:
                 await self._toggle_dictionary_enabled(message.entity_id)
-        # Delete and the rest are wired in follow-up tasks.
+        # Delete is wired via the generic Inspector "#personas-delete" seam
+        # (_begin_delete_selection / _delete_entity), same as dictionaries -
+        # not this action-requested handler. The rest are wired in follow-up
+        # tasks.
 
     async def _begin_create_character(self) -> None:
         self._character_editor_generation += 1
@@ -2153,6 +2526,71 @@ class PersonasScreen(BaseAppScreen):
                 )
         await self._render_dictionary_rows(query="")
         await self._select_dictionary(str(record.get("id")), str(record.get("name") or name))
+
+    def _unique_lore_name(self, base: str) -> str:
+        """Disambiguate against the loaded list (world_books.name is UNIQUE)."""
+        existing = {str(r.get("name") or "") for r in self._lore_books_cache}
+        if base not in existing:
+            return base
+        suffix = 2
+        while f"{base} {suffix}" in existing:
+            suffix += 1
+        return f"{base} {suffix}"
+
+    async def _begin_create_lore(self) -> None:
+        manager = self._lore_manager()
+        if manager is None:
+            self._notify("Lore is not configured: the database is unavailable.", "error")
+            return
+        name = self._unique_lore_name("Untitled world book")
+        try:
+            book_id = await asyncio.to_thread(manager.create_world_book, name)
+        except ConflictError:
+            self._notify("A lore book with that name already exists.", "error")
+            return
+        except Exception as exc:
+            logger.opt(exception=True).warning("Could not create a lore book.")
+            self._notify(f"Create failed: {exc}", "error")
+            return
+        await self._render_lore_rows(query="")
+        await self._select_lore_entry(str(book_id), name)
+        # Land the user in Settings to rename immediately.
+        try:
+            self.query_one("#personas-lore-tabs", TabbedContent).active = "personas-lore-tab-settings"
+            self.query_one("#personas-lore-name", Input).focus()
+        except QueryError:
+            pass
+
+    async def _duplicate_selected_lore(self) -> None:
+        manager = self._lore_manager()
+        entity_id = self.state.selected_entity_id
+        if manager is None or self.state.selected_entity_kind != "lore" or not entity_id:
+            self._notify("Select a lore book to duplicate.", "warning")
+            return
+        try:
+            source = await asyncio.to_thread(manager.export_world_book, int(entity_id))
+        except Exception as exc:
+            logger.opt(exception=True).warning(f"Could not load lore book {entity_id} to duplicate.")
+            self._notify(f"Duplicate failed: {exc}", "error")
+            return
+        base = f"{source.get('name') or 'World book'} (copy)"
+        existing = {str(r.get("name") or "") for r in self._lore_books_cache}
+        name = base
+        suffix = 2
+        while name in existing:
+            name = f"{source.get('name') or 'World book'} (copy {suffix})"
+            suffix += 1
+        try:
+            new_id = await asyncio.to_thread(manager.import_world_book, source, name_override=name)
+        except ConflictError:
+            self._notify("A lore book with that name already exists.", "error")
+            return
+        except Exception as exc:
+            logger.opt(exception=True).warning("Could not duplicate the lore book.")
+            self._notify(f"Duplicate failed: {exc}", "error")
+            return
+        await self._render_lore_rows(query="")
+        await self._select_lore_entry(str(new_id), name)
 
     async def _toggle_dictionary_enabled(self, entity_id: str) -> None:
         """Flip a dictionary's enabled flag from the rail (space on the row)."""
@@ -2780,7 +3218,7 @@ class PersonasScreen(BaseAppScreen):
         """Validate the selection and launch the delete-confirm dialog worker."""
         kind = self.state.selected_entity_kind
         entity_id = str(self.state.selected_entity_id or "")
-        if not entity_id or kind not in ("character", "persona_profile", "dictionary"):
+        if not entity_id or kind not in ("character", "persona_profile", "dictionary", "lore"):
             # The inspector disables Delete without a selection; defensive.
             self._notify("Select a saved item before deleting.", "warning")
             return
@@ -2799,6 +3237,15 @@ class PersonasScreen(BaseAppScreen):
             )
             if record is None:
                 self._notify("Dictionary data is not loaded yet.", "warning")
+                return
+            raw_version = record.get("version")
+            version = int(raw_version) if raw_version is not None else None
+        elif kind == "lore":
+            record = next(
+                (r for r in self._lore_books_cache if str(r.get("id")) == entity_id), None
+            )
+            if record is None:
+                self._notify("Lore book data is not loaded yet.", "warning")
                 return
             raw_version = record.get("version")
             version = int(raw_version) if raw_version is not None else None
@@ -2893,6 +3340,41 @@ class PersonasScreen(BaseAppScreen):
             self.query_one(PersonasDictionaryTryItWidget).set_ready(False, "Select a dictionary to preview substitutions.")
             await self.query_one(PersonasInspectorPane).clear_selection()
             await self._render_dictionary_rows(query=self.state.search_query)
+            self._update_title()
+            self._update_status_row()
+            return
+        elif kind == "lore":
+            # No staleness re-check here (unlike _after_delete's character/
+            # persona worker-hop path): the delete-confirm dialog is modal,
+            # so mode/selection cannot change beneath this synchronous branch.
+            manager = self._lore_manager()
+            if manager is None:
+                self._notify("Lore is not configured: the database is unavailable.", "error")
+                return
+            try:
+                ok = await asyncio.to_thread(
+                    manager.delete_world_book, int(entity_id), expected_version=version
+                )
+            except ConflictError:
+                self._notify(conflict_copy.format(noun="lore book"), "error")
+                return
+            except Exception as exc:
+                logger.opt(exception=True).error(f"Error deleting lore book {entity_id}: {exc}")
+                self._notify(f"Delete failed: {exc}", "error")
+                return
+            if not ok:
+                self._notify(conflict_copy.format(noun="lore book"), "error")
+                return
+            self.state.clear_selection()
+            self.state.has_unsaved_changes = False
+            self._selected_lore_book_version = None
+            self._selected_lore_book = None
+            self._selected_lore_entries = []
+            self.query_one(PersonasLoreDetailWidget).clear()
+            self._show_center(None)
+            self.query_one(PersonasLoreTryItWidget).set_ready(False, "Select a lore book to preview injections.")
+            await self.query_one(PersonasInspectorPane).clear_selection()
+            await self._render_lore_rows(query=self.state.search_query)
             self._update_title()
             self._update_status_row()
             return
