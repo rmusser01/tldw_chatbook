@@ -2973,6 +2973,10 @@ async def test_test_tool_double_run_dispatches_exactly_one_service_call():
             "already running" in msg.lower() and severity == "warning"
             for msg, severity in notifications
         ), f"expected a warning toast, got: {notifications!r}"
+        # UX batch item 12: verb-first, parenthetical context -- resolved
+        # from the tool/labels map already available, not a bare
+        # "server_key::tool_name" prefix.
+        assert ("Test already running for search (docs).", "warning") in notifications
         app.unified_mcp_service.test_gate.set()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -3326,6 +3330,13 @@ async def test_ask_gate_arms_run_button_without_calling_service():
         assert run_button.tooltip == "Ask is set for this tool — press again to run once."
         assert run_button.disabled is False
         assert app.query_one(MCPInspector).test_run_armed is True
+        # UX batch item 6: the generic armed explainer always shows once
+        # armed, even with no specific config-changed/unverifiable reason.
+        hint = app.query_one("#mcp-inspector-test-armed-hint", Static)
+        assert (
+            str(hint.renderable)
+            == "This tool is set to Ask — press again to run; anything else cancels."
+        )
 
 
 @pytest.mark.asyncio
@@ -3630,6 +3641,50 @@ async def test_denied_tool_vanished_from_catalog_run_is_blocked_not_executed():
         assert app.unified_mcp_service.gate_by_key_calls == [("local:docs", "fetch")]
         result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
         assert mcp_workbench_module._TOOL_TEST_BLOCKED_TEXT in result
+
+
+@pytest.mark.asyncio
+async def test_ask_gate_vanished_tool_shows_unverifiable_notice_not_config_changed():
+    """UX batch item 15: `gate_tool_test_by_key()`'s "any allow downgrades
+    to ask" rule reuses `config_changed=True` for a tool with NO live
+    definition to hash-compare at all -- distinct from a genuine rug-pull
+    downgrade (a live tool whose definition actually changed). The arm
+    notice must use the origin-neutral "can't be verified" copy for this
+    BY-KEY case, not the "you allowed it and it changed" copy, which would
+    misrepresent a tool the user may never have explicitly allowed.
+    """
+    app = ToolTestApp()
+    app.unified_mcp_service.gate_state = "ask"
+    app.unified_mcp_service.gate_config_changed = True
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+
+        # Same vanish simulation as the deny-gate regression above.
+        workbench._last_hub_tools = [
+            t for t in workbench._last_hub_tools if t.name != "fetch"
+        ]
+
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+
+        assert app.unified_mcp_service.gate_by_key_calls == [("local:docs", "fetch")]
+        notice = app.query_one("#mcp-inspector-test-arm-notice", Static)
+        assert str(notice.renderable) == (
+            "This tool's definition can't be verified against the catalog — "
+            "review in Permissions."
+        )
+        # The generic armed hint (item 6) still renders regardless.
+        hint = app.query_one("#mcp-inspector-test-armed-hint", Static)
+        assert (
+            str(hint.renderable)
+            == "This tool is set to Ask — press again to run; anything else cancels."
+        )
 
 
 @pytest.mark.asyncio

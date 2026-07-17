@@ -205,6 +205,18 @@ _TOOL_TEST_BLOCKED_TEXT = "Blocked — this tool is set to Off in Permissions."
 _TOOL_TEST_CONFIG_CHANGED_NOTICE = (
     "Definition changed since you allowed it — review in Permissions."
 )
+# UX batch item 15: origin-neutral counterpart for the BY-KEY/unverifiable
+# case only -- `_resolve_test_gate()` routes a catalog-vanished tool through
+# `gate_tool_test_by_key()` (T4's hashless, store-only resolution), which
+# reuses `config_changed=True` to mean "can't verify this without a live
+# definition to hash against", NOT "you explicitly allowed this and it
+# changed" (`resolve_effective_state_by_key()`'s own docstring). The genuine
+# `_TOOL_TEST_CONFIG_CHANGED_NOTICE` above stays reserved for resolutions
+# with a live `HubTool`; this fires whenever `tool is None` at the call site
+# instead (see `on_mcp_inspector_tool_test_requested()`).
+_TOOL_TEST_UNVERIFIABLE_NOTICE = (
+    "This tool's definition can't be verified against the catalog — review in Permissions."
+)
 
 
 def _import_summary(succeeded: list[str], failed: list[tuple[str, str]]) -> str:
@@ -2009,6 +2021,14 @@ class MCPWorkbench(Container):
             running, UNLESS the inspector is already armed (this press IS
             the confirm -- `MCPInspector.test_run_armed`), in which case it
             consumes the arm (`disarm_test_run()`) and falls through to run.
+            UX batch item 15: `gate.config_changed` alone is ambiguous
+            between two distinct causes -- a genuine rug-pull downgrade
+            (`tool is not None`, a live definition hash mismatched) and the
+            BY-KEY/unverifiable fallback (`tool is None`, no live
+            definition to hash-compare at all,
+            `resolve_effective_state_by_key()`'s "any allow downgrades to
+            ask" rule) -- so the notice copy branches on `tool`, not just
+            the flag.
           - "allow" (or no gate applies -- `_resolve_test_gate()` returned
             `None`): falls through to the existing dispatch, unchanged from
             Phase 3. `disarm_test_run()` here is a no-op unless the
@@ -2035,15 +2055,26 @@ class MCPWorkbench(Container):
             )
             return
         if gate is not None and gate.state == "ask" and not inspector.test_run_armed:
-            notice = _TOOL_TEST_CONFIG_CHANGED_NOTICE if gate.config_changed else None
+            notice = None
+            if gate.config_changed:
+                notice = (
+                    _TOOL_TEST_UNVERIFIABLE_NOTICE if tool is None
+                    else _TOOL_TEST_CONFIG_CHANGED_NOTICE
+                )
             inspector.require_confirm(notice)
             return
         inspector.disarm_test_run()
 
         key = (server_key, tool_name)
         if key in self._tool_test_in_flight:
+            # UX batch item 12: verb-first, parenthetical context (Console/
+            # Library data-summary shape) -- `tool.server_label` when the
+            # tool is still resolvable, else the raw `server_key` (mirrors
+            # every other fallback-to-key precedent in this module).
+            server_label = tool.server_label if tool is not None else server_key
             self.app.notify(
-                _toast(f"{server_key}::{tool_name}: test already running."), severity="warning"
+                _toast(f"Test already running for {tool_name} ({server_label})."),
+                severity="warning",
             )
             return
         self._tool_test_in_flight.add(key)

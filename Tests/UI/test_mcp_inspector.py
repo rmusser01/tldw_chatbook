@@ -1217,6 +1217,13 @@ async def test_require_confirm_arms_button_with_confirm_label_and_tooltip():
         assert run_button.tooltip == "Ask is set for this tool — press again to run once."
         assert run_button.disabled is False
         assert inspector.test_run_armed is True
+        # UX batch item 6: the generic armed explainer is ALWAYS shown once
+        # armed, independent of any specific `notice`.
+        hint = app.query_one("#mcp-inspector-test-armed-hint", Static)
+        assert (
+            str(hint.renderable)
+            == "This tool is set to Ask — press again to run; anything else cancels."
+        )
 
 
 @pytest.mark.asyncio
@@ -1238,6 +1245,13 @@ async def test_require_confirm_with_notice_shows_arm_notice_text():
         assert (
             str(notice.renderable)
             == "Definition changed since you allowed it — review in Permissions."
+        )
+        # UX batch item 6: both the specific notice AND the generic
+        # explainer render together.
+        hint = app.query_one("#mcp-inspector-test-armed-hint", Static)
+        assert (
+            str(hint.renderable)
+            == "This tool is set to Ask — press again to run; anything else cancels."
         )
 
 
@@ -1280,6 +1294,8 @@ async def test_disarm_test_run_reverts_button_and_clears_notice():
         assert inspector.test_run_armed is False
         notice = app.query_one("#mcp-inspector-test-arm-notice", Static)
         assert str(notice.renderable) == ""
+        hint = app.query_one("#mcp-inspector-test-armed-hint", Static)
+        assert str(hint.renderable) == ""
 
 
 @pytest.mark.asyncio

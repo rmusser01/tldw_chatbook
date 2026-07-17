@@ -91,6 +91,14 @@ _LATER_PHASE_TOOLTIP = "Available in a later phase — use Advanced below."
 # and arms this pane for "ask", but the button copy/mechanics live here.
 _TEST_RUN_TOOLTIP = "Send these arguments to the tool and show the result."
 _TEST_RUN_CONFIRM_TOOLTIP = "Ask is set for this tool — press again to run once."
+# UX batch item 6: always shown while the Run button is armed (mounted
+# above Run/Close, `#mcp-inspector-test-armed-hint`) -- distinct from the
+# SPECIFIC `notice` `require_confirm()` also accepts (config_changed /
+# unverifiable, `#mcp-inspector-test-arm-notice`, mounted below the
+# buttons, unchanged position/contract): this one explains the Ask
+# mechanic itself, present on every arm regardless of whether a specific
+# reason is also shown.
+_TEST_RUN_ARMED_HINT = "This tool is set to Ask — press again to run; anything else cancels."
 
 # Task 7: permission-explanation copy (spec-verbatim, binding) -- rendered
 # into `#mcp-inspector-permission` by `_render_permission_container()`,
@@ -744,6 +752,12 @@ class MCPInspector(Vertical):
             pass
         panel = Vertical(
             MCPSchemaForm(schema=tool.input_schema, id="mcp-inspector-test-form"),
+            # UX batch item 6: blank until `require_confirm()` fills it in
+            # (every arm, unconditionally) -- mounted ABOVE Run/Close so the
+            # armed-explainer reads before the button whose behavior it's
+            # explaining, unlike the specific `#mcp-inspector-test-arm-
+            # notice` below, which keeps its pre-existing position.
+            Static("", id="mcp-inspector-test-armed-hint", classes="ds-field-row", markup=False),
             Button(
                 "Run", id="mcp-inspector-test-run",
                 classes="console-action-primary", compact=True,
@@ -755,7 +769,8 @@ class MCPInspector(Vertical):
                 tooltip="Close this test form without running the tool.",
             ),
             # Task 5: blank until `require_confirm()` fills it in for a
-            # config_changed downgrade -- see that method's docstring.
+            # config_changed/unverifiable downgrade -- see that method's
+            # docstring.
             Static("", id="mcp-inspector-test-arm-notice", classes="ds-field-row", markup=False),
             Static("", id="mcp-inspector-test-result", classes="ds-field-row", markup=False),
             id="mcp-inspector-test-panel",
@@ -846,8 +861,14 @@ class MCPInspector(Vertical):
         "ask": the press that triggered this did NOT run the tool -- the
         SAME Run button (relabeled/re-tooltipped in place, not replaced)
         becomes the confirm control instead. `notice`, when given (Task 5:
-        only for a `config_changed` downgrade), is rendered as an extra line
-        explaining why a confirm is required this time; `None` clears it.
+        a `config_changed` downgrade, or UX batch item 15's unverifiable-
+        by-key variant), is rendered as an extra, SPECIFIC line explaining
+        why a confirm is required this time (`#mcp-inspector-test-arm-
+        notice`); `None` clears it. UX batch item 6: independent of
+        `notice`, `#mcp-inspector-test-armed-hint` always gets the generic
+        armed-explainer text on every arm -- the two can render together
+        (specific reason below, generic mechanic above it, see
+        `_mount_test_tool_panel()`'s widget order).
 
         No-op (beyond the label/variant/tooltip writes) if the panel isn't
         actually mounted -- tolerant of a race where the panel closed
@@ -863,6 +884,12 @@ class MCPInspector(Vertical):
             run_button.variant = "primary"
             run_button.tooltip = _TEST_RUN_CONFIRM_TOOLTIP
             run_button.disabled = False
+        try:
+            hint_widget = self.query_one("#mcp-inspector-test-armed-hint", Static)
+        except NoMatches:
+            pass
+        else:
+            hint_widget.update(_TEST_RUN_ARMED_HINT)
         try:
             notice_widget = self.query_one("#mcp-inspector-test-arm-notice", Static)
         except NoMatches:
@@ -892,6 +919,12 @@ class MCPInspector(Vertical):
             run_button.label = "Run"
             run_button.variant = "default"
             run_button.tooltip = _TEST_RUN_TOOLTIP
+        try:
+            hint_widget = self.query_one("#mcp-inspector-test-armed-hint", Static)
+        except NoMatches:
+            pass
+        else:
+            hint_widget.update("")
         try:
             notice_widget = self.query_one("#mcp-inspector-test-arm-notice", Static)
         except NoMatches:
