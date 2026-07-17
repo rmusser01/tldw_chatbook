@@ -498,6 +498,145 @@ def _collection_scoped_conflicts(
     return tuple(scoped)
 
 
+# --- task-252: targeted (non-recompose) selection-interaction updates ------
+#
+# Docs/Design/2026-07-16-performance-audit.md §P1 B2: library_screen.py
+# called self.refresh(recompose=True) -- a whole-screen remove/remount of
+# the nav bar, footer, ~20-row rail, and 50-100-row canvas -- from every
+# per-row selection/checkbox handler. These two helpers are the SELECTION
+# interaction class's staged fix: Tier 1 patches a toggled row in place;
+# Tier 2 routes structural selection changes (browse-mode row pick,
+# select-mode enter/exit/select-all/clear) through the canvas widget's own
+# sync_state(), a canvas-scoped recompose that never touches the nav bar,
+# footer, or rail.
+#
+# Both are MODULE-LEVEL functions (screen passed explicitly), not
+# LibraryScreen methods, so that existing bare-SimpleNamespace-fake unit
+# tests (Tests/UI/test_library_multiselect_{conversations,media,notes}.py)
+# that stub only `.refresh` -- not a new method name -- keep passing: a
+# `self._new_method(...)` call would fail attribute lookup on a fake
+# lacking that attribute BEFORE this function's own try/except could ever
+# run; calling a module-level function with `screen` as an explicit
+# argument has no such attribute-lookup step, so a fake missing
+# `query_one`/`app`/etc. correctly falls through to the `except` below and
+# reaches the already-stubbed `screen.refresh(...)` fallback instead.
+def _apply_library_row_toggle(
+    screen: "LibraryScreen", kind: str, button: Button, row_id: str
+) -> None:
+    """In-place select-mode checkbox toggle for a Library row button.
+
+    Tier 1: after the caller's ``row_selection.toggle(row_id)``, flips the
+    pressed row's marker, the "N selected" Static, and the
+    export-selected button's disabled state directly -- never a
+    screen-level recompose. Any failure (e.g. the select-mode action
+    strip isn't mounted because the mode raced) falls back to the old
+    ``screen.refresh(recompose=True)`` rather than raising.
+
+    Args:
+        screen: The Library screen instance driving the update.
+        kind: One of "conversations", "media", "notes" -- selects
+            ``screen._library_<kind>_row_selection`` and the
+            ``#library-<kind>-selected-count`` /
+            ``#library-<kind>-export-selected`` action-strip ids.
+        button: The pressed row's Button, rendered with the marker at
+            position 0 (``f"{marker} {title}..."`` / notes'
+            ``f"{marker} {title}..."`` glyph shape) -- only that leading
+            character is replaced; the rest of the label (title,
+            secondary line) is untouched since a selection toggle never
+            changes it.
+        row_id: The row's id, already toggled into/out of
+            ``screen._library_<kind>_row_selection`` by the caller --
+            read back here (single source of truth) rather than inferred
+            by flipping the old marker text.
+
+    Returns:
+        None.
+    """
+    try:
+        selection = getattr(screen, f"_library_{kind}_row_selection")
+        count_static = screen.query_one(f"#library-{kind}-selected-count", Static)
+        export_button = screen.query_one(f"#library-{kind}-export-selected", Button)
+        checked = selection.is_selected(row_id)
+        marker = "☑" if checked else "☐"
+        current = button.label.plain
+        if current:
+            button.label = f"{marker}{current[1:]}"
+        count_static.update(f"{selection.count} selected")
+        export_button.disabled = selection.count == 0
+    except Exception:
+        logger.debug(
+            f"Library {kind} row toggle in-place update failed; falling back "
+            "to full recompose.",
+            exc_info=True,
+        )
+        screen.refresh(recompose=True)
+
+
+def _sync_library_canvas(screen: "LibraryScreen", kind: str) -> None:
+    """Canvas-scoped targeted update for a Library browse canvas (Tier 2).
+
+    Rebuilds the given canvas's fresh display state and hands it to the
+    mounted canvas widget's own ``sync_state`` -- a canvas-scoped
+    ``recompose`` (the widget rebuilds only its OWN children) that skips
+    the nav bar, footer, and rail entirely, unlike a screen-level
+    ``screen.refresh(recompose=True)``.
+
+    Releases the app's mouse capture first, mirroring
+    ``BaseAppScreen.refresh`` (see that method's docstring for the full
+    mouse-capture war story it defends against): this path recomposes the
+    canvas directly via ``sync_state``, bypassing ``BaseAppScreen.refresh``
+    -- and hence its guard -- entirely, so a canvas row mid mouse-capture
+    (e.g. an ``Input`` click/selection whose ``MouseUp`` hasn't arrived
+    yet) would otherwise be recomposed away and leave
+    ``App.mouse_captured`` referencing a removed widget forever,
+    permanently breaking click dispatch app-wide.
+
+    Only "conversations" and "media" have a canvas ``sync_state`` hook
+    today -- ``LibraryNotesCanvas`` has none (see task-252's
+    Implementation Notes inventory: its constructor's own ``sync_state``
+    parameter, an unrelated notes-sync-panel display state, shadows the
+    method name a targeted-update hook would need). An unsupported
+    ``kind``, like any other failure here (e.g. the canvas isn't mounted
+    because a mode switch raced), falls back to the old whole-screen
+    recompose rather than raising.
+
+    Args:
+        screen: The Library screen instance driving the update.
+        kind: "conversations" or "media".
+
+    Returns:
+        None.
+    """
+    try:
+        if kind == "conversations":
+            canvas = screen.query_one(
+                "#library-conversations-canvas", LibraryConversationsCanvas
+            )
+            new_state = screen._build_library_conversations_state()
+        elif kind == "media":
+            canvas = screen.query_one("#library-media-canvas", LibraryMediaCanvas)
+            new_state = screen._build_library_media_state()
+        else:
+            raise ValueError(
+                f"Unsupported Library canvas kind for targeted sync: {kind!r}"
+            )
+        if screen.is_running:
+            try:
+                screen.app.capture_mouse(None)
+            except Exception:
+                logger.debug(
+                    "Mouse-capture release before Library canvas sync skipped.",
+                    exc_info=True,
+                )
+        canvas.sync_state(new_state)
+    except Exception:
+        logger.debug(
+            f"Library {kind} canvas sync failed; falling back to full recompose.",
+            exc_info=True,
+        )
+        screen.refresh(recompose=True)
+
+
 class LibraryScreen(BaseAppScreen):
     """Source material, imports/exports, conversations, and Search/RAG entry."""
 
@@ -5911,10 +6050,15 @@ class LibraryScreen(BaseAppScreen):
         """Select mode: toggle the row's checkbox. Normal mode: select the row.
 
         In select mode, a row press toggles that row's id in
-        ``_library_conversations_row_selection`` and recomposes the screen --
-        it never sets the normal-mode selection/detail while in select mode.
-        Outside select mode, behavior is unchanged: selects the conversation
-        and switches the Library rail to the conversations browse row.
+        ``_library_conversations_row_selection`` and patches the row's
+        marker, the "N selected" Static, and export-selected's disabled
+        state in place (task-252 Tier 1) -- it never sets the normal-mode
+        selection/detail while in select mode. Outside select mode,
+        behavior is unchanged: selects the conversation and switches the
+        Library rail to the conversations browse row -- a canvas-scoped
+        ``sync_state`` (task-252 Tier 2), not a screen-level recompose;
+        the rail row itself never changes here (this row press is only
+        reachable while already browsing conversations).
 
         Args:
             event: Button press event emitted by a conversation row button.
@@ -5923,12 +6067,14 @@ class LibraryScreen(BaseAppScreen):
         conversation_id = str(getattr(event.button, "conversation_id", "") or "")
         if self._library_conversations_select_mode:
             self._library_conversations_row_selection.toggle(conversation_id)
-            self.refresh(recompose=True)
+            _apply_library_row_toggle(
+                self, "conversations", event.button, conversation_id
+            )
             return
         if conversation_id:
             self._selected_conversation_id = conversation_id
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_CONVERSATIONS
-        self.refresh(recompose=True)
+        _sync_library_canvas(self, "conversations")
 
     @on(Button.Pressed, "#library-conversations-select-toggle")
     def handle_library_conversations_select_toggle(self, event: Button.Pressed) -> None:
@@ -5936,7 +6082,7 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         self._library_conversations_select_mode = not self._library_conversations_select_mode
         self._library_conversations_row_selection.clear()
-        self.refresh(recompose=True)
+        _sync_library_canvas(self, "conversations")
 
     @on(Button.Pressed, "#library-conversations-select-all")
     def handle_library_conversations_select_all(self, event: Button.Pressed) -> None:
@@ -5946,14 +6092,14 @@ class LibraryScreen(BaseAppScreen):
         self._library_conversations_row_selection.select_all(
             r.conversation_id for r in rows
         )
-        self.refresh(recompose=True)
+        _sync_library_canvas(self, "conversations")
 
     @on(Button.Pressed, "#library-conversations-select-clear")
     def handle_library_conversations_select_clear(self, event: Button.Pressed) -> None:
         """Clear the current conversations selection without leaving select mode."""
         event.stop()
         self._library_conversations_row_selection.clear()
-        self.refresh(recompose=True)
+        _sync_library_canvas(self, "conversations")
 
     @on(Button.Pressed, "#library-conversations-export-selected")
     async def handle_library_conversations_export_selected(self, event: Button.Pressed) -> None:
@@ -6002,11 +6148,14 @@ class LibraryScreen(BaseAppScreen):
         """Select mode: toggle the row's checkbox. Normal mode: open the viewer.
 
         In select mode, a row press toggles that row's id in
-        ``_library_media_row_selection`` and recomposes the screen -- it
-        never opens the full Library media viewer while in select mode.
-        Outside select mode, behavior is unchanged: switches the media
-        canvas from its list view to the in-canvas viewer, clears any
-        stale detail, and kicks the async detail fetch
+        ``_library_media_row_selection`` and patches the row's marker, the
+        "N selected" Static, and export-selected's disabled state in
+        place (task-252 Tier 1) -- it never opens the full Library media
+        viewer while in select mode. Outside select mode, behavior is
+        unchanged: switches the media canvas from its list view to the
+        in-canvas viewer (a widget-class swap to ``LibraryMediaViewer``,
+        not this canvas -- out of the Tier 2 sync_state scope), clears
+        any stale detail, and kicks the async detail fetch
         (``_refresh_library_media_detail``); the viewer renders a loading
         line until that worker stores the fetched detail and recomposes.
 
@@ -6017,7 +6166,7 @@ class LibraryScreen(BaseAppScreen):
         media_id = str(getattr(event.button, "media_id", "") or "")
         if self._library_media_select_mode:
             self._library_media_row_selection.toggle(media_id)
-            self.refresh(recompose=True)
+            _apply_library_row_toggle(self, "media", event.button, media_id)
             return
         self._open_library_media_viewer(media_id)
 
@@ -6027,7 +6176,7 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         self._library_media_select_mode = not self._library_media_select_mode
         self._library_media_row_selection.clear()
-        self.refresh(recompose=True)
+        _sync_library_canvas(self, "media")
 
     @on(Button.Pressed, "#library-media-select-all")
     def handle_library_media_select_all(self, event: Button.Pressed) -> None:
@@ -6035,14 +6184,14 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         rows = self._build_library_media_state().rows
         self._library_media_row_selection.select_all(r.media_id for r in rows)
-        self.refresh(recompose=True)
+        _sync_library_canvas(self, "media")
 
     @on(Button.Pressed, "#library-media-select-clear")
     def handle_library_media_select_clear(self, event: Button.Pressed) -> None:
         """Clear the current media selection without leaving select mode."""
         event.stop()
         self._library_media_row_selection.clear()
-        self.refresh(recompose=True)
+        _sync_library_canvas(self, "media")
 
     @on(Button.Pressed, "#library-media-export-selected")
     async def handle_library_media_export_selected(self, event: Button.Pressed) -> None:
@@ -10247,13 +10396,15 @@ class LibraryScreen(BaseAppScreen):
         surviving the flush aborts either path.
 
         In select mode, a row press toggles that row's id in
-        ``_library_notes_row_selection`` and recomposes the screen -- it
-        never opens the in-canvas Library note editor while in select mode.
-        Outside select mode, behavior is unchanged: switches the notes
-        canvas from its list view to the editor, clears any stale detail,
-        and kicks the async detail fetch (``_refresh_library_note_detail``);
-        ``compose_content`` renders a loading line until that worker stores
-        the fetched detail and recomposes. Mirrors ``handle_library_media_row``.
+        ``_library_notes_row_selection`` and patches the row's marker, the
+        "N selected" Static, and export-selected's disabled state in
+        place (task-252 Tier 1) -- it never opens the in-canvas Library
+        note editor while in select mode. Outside select mode, behavior
+        is unchanged: switches the notes canvas from its list view to the
+        editor, clears any stale detail, and kicks the async detail fetch
+        (``_refresh_library_note_detail``); ``compose_content`` renders a
+        loading line until that worker stores the fetched detail and
+        recomposes. Mirrors ``handle_library_media_row``.
 
         Args:
             event: Button press event emitted by a note row button.
@@ -10265,7 +10416,7 @@ class LibraryScreen(BaseAppScreen):
         note_id = str(getattr(event.button, "note_id", "") or "")
         if self._library_notes_select_mode:
             self._library_notes_row_selection.toggle(note_id)
-            self.refresh(recompose=True)
+            _apply_library_row_toggle(self, "notes", event.button, note_id)
             return
         if note_id:
             self._selected_note_id = note_id
@@ -10301,6 +10452,14 @@ class LibraryScreen(BaseAppScreen):
         unconditional here to mirror ``handle_library_notes_row``'s
         always-flush-first behavior.
 
+        Still a full ``self.refresh(recompose=True)`` (task-252 leaves
+        this un-converted, unlike its conversations/media equivalents):
+        ``LibraryNotesCanvas`` has no ``sync_state`` hook -- its
+        constructor's own ``sync_state`` parameter (the unrelated
+        notes-sync-panel display state) shadows that method name. See
+        ``_sync_library_canvas``'s docstring and task-252's
+        Implementation Notes inventory.
+
         Args:
             event: Button press event emitted by the notes canvas's
                 Select/Done toggle.
@@ -10313,7 +10472,11 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-notes-select-all")
     def handle_library_notes_select_all(self, event: Button.Pressed) -> None:
-        """Select every note row currently rendered by the canvas."""
+        """Select every note row currently rendered by the canvas.
+
+        Full recompose, not converted -- see
+        ``handle_library_notes_select_toggle``'s docstring.
+        """
         event.stop()
         rows = self._build_library_notes_state().rows
         self._library_notes_row_selection.select_all(r.note_id for r in rows)
@@ -10321,7 +10484,11 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-notes-select-clear")
     def handle_library_notes_select_clear(self, event: Button.Pressed) -> None:
-        """Clear the current notes selection without leaving select mode."""
+        """Clear the current notes selection without leaving select mode.
+
+        Full recompose, not converted -- see
+        ``handle_library_notes_select_toggle``'s docstring.
+        """
         event.stop()
         self._library_notes_row_selection.clear()
         self.refresh(recompose=True)
