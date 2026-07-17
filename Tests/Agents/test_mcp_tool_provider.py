@@ -17,6 +17,7 @@ import pytest
 
 from tldw_chatbook.Agents.mcp_tool_provider import (
     DENY_REFUSAL,
+    KILL_SWITCH_REFUSAL,
     MCPPendingCall,
     MCPToolProvider,
     NON_TEXT_PLACEHOLDER,
@@ -347,6 +348,22 @@ def test_pending_gate_for_unknown_name_returns_none():
     assert provider.pending_gate_for("mcp__nope__run", {}) is None
 
 
+def test_pending_gate_for_returns_none_when_session_approved():
+    # Finding I1: "Approve for session" must suppress the approval card on
+    # the NEXT turn's `pending_gate_for` call -- the real service's
+    # `gate_tool_test` resolves from the permission store only (mirrored
+    # here: it never consults `session_approvals`), so `pending_gate_for`
+    # itself must consult `is_session_approved` -- without this, the tool
+    # re-prompts on every turn even after a session approval.
+    service = FakeMCPService(catalog_records=[_catalog_record("srv", [_tool_dict("run")])])
+    provider = MCPToolProvider(service=service, main_loop=asyncio.new_event_loop())
+    _compose(provider)
+    tool_id = provider.list_catalog()[0].id
+    service.session_approvals.add(("local:srv", "run"))
+
+    assert provider.pending_gate_for(tool_id, {}) is None
+
+
 # ---------------------------------------------------------------------------
 # invoke() -- unknown tool
 # ---------------------------------------------------------------------------
@@ -497,11 +514,15 @@ def test_invoke_ask_callback_approve_session_persists_and_short_circuits_next_ca
 
     # A later call with no stamp and NO callback still executes: the
     # service's own is_session_approved() short-circuits the "ask" gate.
+    # Finding I1: this fresh-path execution records decision="approved"
+    # (a live session approval), NOT "allowed" (a persistent server
+    # default) -- the two are different entries in the decision
+    # vocabulary and must not collapse together.
     provider._approval_callback = None
     result2 = provider.invoke(tool_id, {})
     assert result2.ok is True
     assert len(service.execute_calls) == 2
-    assert service.execute_calls[1][4] == "allowed"
+    assert service.execute_calls[1][4] == "approved"
 
 
 def test_invoke_ask_callback_always_allow_sets_tool_state_with_live_hub_tool(running_loop):
@@ -681,3 +702,67 @@ def test_invoke_execute_on_closed_loop_returns_error_never_raises():
 
     assert result.ok is False
     assert result.error  # some message, whatever asyncio's exact wording is
+
+
+# ---------------------------------------------------------------------------
+# invoke() -- kill switch checked at call time (Minor 5)
+# ---------------------------------------------------------------------------
+
+def test_invoke_refuses_when_kill_switch_flips_between_compose_and_invoke(running_loop):
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])],
+        states={("local:srv", "run"): EffectiveToolState(state="allow", origin="tool_override")},
+    )
+    provider = MCPToolProvider(service=service, main_loop=running_loop)
+    _compose(provider)
+    tool_id = provider.list_catalog()[0].id
+
+    service.kill_switch = True  # flipped AFTER compose_catalog(), before invoke()
+
+    result = provider.invoke(tool_id, {})
+
+    assert result.ok is False
+    assert result.error == KILL_SWITCH_REFUSAL
+    assert service.execute_calls == []
+    assert service.record_tool_decision_calls[-1][2] == "denied"
+
+
+def test_invoke_refuses_when_kill_switch_flips_even_with_a_stamped_verdict(running_loop):
+    """The kill-switch check wins over an earlier-this-turn stamp too --
+    the T6 batch-review closure could have stamped `approve_once` before
+    the kill switch flipped between review and dispatch."""
+    service = FakeMCPService(catalog_records=[_catalog_record("srv", [_tool_dict("run")])])
+    provider = MCPToolProvider(service=service, main_loop=running_loop)
+    _compose(provider)
+    tool_id = provider.list_catalog()[0].id
+    provider.apply_batch_decisions({tool_id: "approve_once"})
+
+    service.kill_switch = True
+
+    result = provider.invoke(tool_id, {})
+
+    assert result.ok is False
+    assert result.error == KILL_SWITCH_REFUSAL
+    assert service.execute_calls == []
+
+
+def test_invoke_kill_switch_check_survives_getter_exception(running_loop):
+    """A read failure on the kill-switch getter must not block execution --
+    fails open, same as any other best-effort read in this provider."""
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])],
+        states={("local:srv", "run"): EffectiveToolState(state="allow", origin="tool_override")},
+    )
+    provider = MCPToolProvider(service=service, main_loop=running_loop)
+    _compose(provider)  # kill_switch is still False here -- compose must succeed
+    tool_id = provider.list_catalog()[0].id
+
+    def _raise():
+        raise RuntimeError("kill switch read failed")
+
+    service.get_kill_switch = _raise
+
+    result = provider.invoke(tool_id, {})
+
+    assert result.ok is True
+    assert service.execute_calls

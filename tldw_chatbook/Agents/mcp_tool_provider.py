@@ -55,6 +55,7 @@ SOURCE = "mcp"
 # drift from what is logged via `record_tool_decision`.
 DENY_REFUSAL = "blocked by MCP permissions (set to Off)"
 TIMEOUT_REFUSAL = "user did not approve within the time limit; do not retry"
+KILL_SWITCH_REFUSAL = "blocked — MCP tools are switched off"
 NON_TEXT_PLACEHOLDER = "[image result — not yet supported]"
 
 # `.result(timeout=...)` slack added on top of the configured per-call tool
@@ -257,7 +258,15 @@ class MCPToolProvider:
         Direct (not main-loop-submitted) call to `gate_tool_test` -- see the
         module docstring's threading decision. `None` for allow/deny: the
         caller (T6's closure) lets those flow through to `invoke()`'s own
-        gate rather than duplicating that logic here.
+        gate rather than duplicating that logic here. Also `None` when an
+        "ask" tool already has a live session approval (Finding I1):
+        `gate_tool_test` resolves from the permission store only and never
+        consults session approvals, so without this check every ask-state
+        tool would re-prompt on every turn even after "Approve for
+        session" -- `invoke()`'s own fresh gate resolves the same tool via
+        its `is_session_approved` short-circuit, so skipping the prompt
+        here is exactly as correct as asking and having the user approve
+        it again.
         """
         entry = self._entry_by_llm_name.get(llm_name)
         if entry is None:
@@ -271,6 +280,8 @@ class MCPToolProvider:
             )
             return None
         if state.state != "ask":
+            return None
+        if self._is_session_approved_safe(tool):
             return None
         return MCPPendingCall(
             llm_name=llm_name, server_key=tool.server_key, tool_name=tool.name,
@@ -296,6 +307,15 @@ class MCPToolProvider:
         tool, _cached_state = entry
         call_args = dict(args or {})
 
+        # Cheap hardening (Minor 5): a kill switch flipped after
+        # compose_catalog() (or between a T6 batch-review stamp and this
+        # dispatch) must still block execution -- checked before the
+        # stamped-verdict short-circuit below so even an earlier-this-turn
+        # approval cannot bypass it.
+        if self._kill_switch_engaged():
+            self._record_decision_safe(tool, decision="denied")
+            return ToolResult(ok=False, error=KILL_SWITCH_REFUSAL)
+
         stamped = self.consume_decision(tool_id)
         if stamped is not None:
             return self._apply_verdict(stamped, tool, call_args)
@@ -309,8 +329,16 @@ class MCPToolProvider:
             self._record_decision_safe(tool, decision="denied")
             return ToolResult(ok=False, error=DENY_REFUSAL)
 
-        if state.state == "allow" or self._is_session_approved_safe(tool):
+        if state.state == "allow":
             return self._execute(tool, call_args, decision="allowed")
+
+        if self._is_session_approved_safe(tool):
+            # Finding I1: a live session approval is a DIFFERENT decision
+            # than a permanent "allow" state -- keep the audit vocabulary
+            # (and the model-facing execution record) distinct so Findings
+            # mode can tell "server default was allow" apart from "the
+            # user approved this session".
+            return self._execute(tool, call_args, decision="approved")
 
         # state == "ask"
         if self._approval_callback is None:
@@ -330,6 +358,23 @@ class MCPToolProvider:
         return self._apply_verdict(verdict, tool, call_args)
 
     # -- internals ----------------------------------------------------------
+
+    def _kill_switch_engaged(self) -> bool:
+        """Best-effort, never-raise read of the service's kill switch.
+
+        Guarded (``getattr``/``try``) rather than a direct call: unlike
+        ``compose_catalog`` (main-loop, once at registration -- a raise
+        there is acceptable to surface), ``invoke()`` must never raise, and
+        a fake/test double may not define this method at all.
+        """
+        getter = getattr(self._service, "get_kill_switch", None)
+        if not callable(getter):
+            return False
+        try:
+            return bool(getter())
+        except Exception as exc:  # noqa: BLE001 -- a read failure must not block execution
+            logger.warning(f"MCPToolProvider: get_kill_switch failed during invoke: {exc}")
+            return False
 
     def _is_session_approved_safe(self, tool: HubTool) -> bool:
         try:

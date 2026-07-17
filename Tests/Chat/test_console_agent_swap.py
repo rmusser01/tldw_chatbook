@@ -879,6 +879,60 @@ async def test_mcp_tool_call_ask_state_routes_through_review_hook_and_approves(t
 
 
 @pytest.mark.asyncio
+async def test_mcp_tool_call_session_approval_suppresses_card_on_next_turn(tmp_path):
+    """Finding I1: "Approve for session" must actually suppress the
+    approval card on the NEXT turn in the live Console flow -- mirrors the
+    reviewer's probe (worker-thread review hook -> pending_gate_for ->
+    card, across two real model turns through the real bridge, controller,
+    and provider). Pre-fix, `pending_gate_for` never consulted
+    `is_session_approved`, so turn 2's identical tool call re-prompted."""
+    scripts = [
+        [_fence("mcp__srv__run", {"x": 1})],
+        ["turn one done."],
+        [_fence("mcp__srv__run", {"x": 2})],
+        ["turn two done."],
+    ]
+    controller, store, _db = _controller(tmp_path, scripts)
+    received: list[dict | None] = []
+    service = FakeMCPService(catalog_records=[_catalog_record("srv", [_tool_dict("run")])])
+    controller.app = _fake_app(service)
+    controller.set_pending_approval = received.append
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    # -- turn 1: the card is shown; the user approves for the session --
+    send_task = asyncio.ensure_future(controller.submit_draft("please run it"))
+    for _ in range(3000):  # 30s deadline, CI-contention headroom
+        if received and received[-1] is not None:
+            break
+        await asyncio.sleep(0.01)
+    assert received and received[-1] is not None, "approval card was never surfaced"
+    llm_name = received[-1]["calls"][0]["llm_name"]
+    assert llm_name == "mcp__srv__run"
+    controller.resolve_pending_approval({llm_name: "approve_session"})
+    result1 = await send_task
+    assert result1.accepted is True
+    cards_pushed_after_turn1 = len(received)
+
+    # -- turn 2: same tool, same session -- must NOT surface a card --
+    result2 = await controller.submit_draft("run it again")
+
+    assert result2.accepted is True
+    assert len(received) == cards_pushed_after_turn1, (
+        "a second approval card was shown despite an active session approval"
+    )
+    messages = store.messages_for_session(store.active_session_id)
+    assistants = [m for m in messages if m.role is ConsoleMessageRole.ASSISTANT]
+    assert assistants[-1].content == "turn two done."
+    # Both calls executed under the "approved" decision (a session
+    # approval, not a persistent "allowed" server default -- the
+    # vocabulary fix half of Finding I1).
+    assert service.execute_calls == [
+        ("local:srv", "run", {"x": 1}, "agent", "approved"),
+        ("local:srv", "run", {"x": 2}, "agent", "approved"),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_mcp_tool_call_ask_state_times_out_denies(tmp_path):
     """An undecided pending call fails closed to the exact TIMEOUT_REFUSAL
     copy -- single-sourced through `invoke()`'s own gate (never invoked)."""
