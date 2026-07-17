@@ -393,11 +393,12 @@ class ConsoleTranscript(VerticalScroll):
         # Lives on the widget instance so a recompose starts it fresh.
         self._message_signature_cache: dict[str, tuple[tuple, tuple]] = {}
         self._signature_compute_counts: dict[str, int] = {}
-        # TASK-298: id of the newest message seen by set_messages, so a
-        # NEW user message (a send) can re-engage tail-follow even after
-        # the user scrolled up (reading history shouldn't survive an
-        # explicit send).
-        self._tail_message_id: str | None = None
+        # TASK-298: every message id seen by set_messages, so a NEW
+        # user-role message ANYWHERE in the update (a send) re-engages
+        # tail-follow even after the user scrolled up. The send path
+        # appends USER + ASSISTANT placeholder together, so the tail
+        # alone can miss the send (PR #697 review).
+        self._seen_message_ids: set[str] = set()
 
     def on_mount(self) -> None:
         """Engage tail-follow: stay scrolled to the newest content.
@@ -429,18 +430,21 @@ class ConsoleTranscript(VerticalScroll):
         """
         self._messages = list(messages)
         message_ids = {message.id for message in self._messages}
-        newest = self._messages[-1] if self._messages else None
-        if (
-            self.is_mounted
-            and newest is not None
-            and newest.id != self._tail_message_id
-            and newest.role == "user"
-        ):
+        new_user_send = any(
+            message.id not in self._seen_message_ids
+            and message.role == ConsoleMessageRole.USER
+            for message in self._messages
+        )
+        if self.is_mounted and new_user_send:
             # A send: jump to the tail even if the user had scrolled up
             # (anchor() also re-engages follow for the reply that streams
-            # in next). Appended assistant/tool rows never yank a reader.
+            # in next). Checked against ALL newly-seen ids, not just the
+            # tail -- the send path appends USER + ASSISTANT placeholder
+            # together and the first polled update can already have the
+            # placeholder at the tail. Appended assistant/tool rows alone
+            # never yank a reader.
             self.anchor()
-        self._tail_message_id = None if newest is None else newest.id
+        self._seen_message_ids = message_ids
         if self.selected_message_id not in message_ids:
             self.selected_message_id = None
         for stale_id in [

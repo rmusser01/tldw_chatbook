@@ -21,6 +21,11 @@ class TailFollowHarness(App):
     CSS = "ConsoleTranscript { height: 10; }"
 
     def compose(self) -> ComposeResult:
+        """Yield the transcript under test.
+
+        Returns:
+            The compose result mounting one ConsoleTranscript.
+        """
         yield ConsoleTranscript(id="console-native-transcript")
 
 
@@ -104,6 +109,40 @@ async def test_new_user_message_reanchors_from_scrolled_up_position():
 
         assert transcript.scroll_y == transcript.max_scroll_y, (
             "a new user message (a send) must re-engage tail-follow"
+        )
+
+
+@pytest.mark.asyncio
+async def test_send_with_assistant_placeholder_still_reanchors():
+    """The REAL send shape: USER + ASSISTANT placeholder appended together.
+
+    The first polled update after a send can already have the assistant
+    placeholder at the tail; the user message is one back. Re-anchoring
+    must key on newly-seen user ids anywhere, not the tail (PR #697
+    review finding).
+    """
+    app = TailFollowHarness()
+    async with app.run_test() as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        history = _messages(12)
+        transcript.set_messages(history)
+        await transcript.refresh_messages()
+        await pilot.pause()
+
+        transcript.release_anchor()
+        transcript.scroll_to(y=0, animate=False)
+        await pilot.pause()
+
+        history = history + [
+            _msg(13, ConsoleMessageRole.USER),
+            _msg(14, ConsoleMessageRole.ASSISTANT),
+        ]
+        transcript.set_messages(history)
+        await transcript.refresh_messages()
+        await pilot.pause()
+
+        assert transcript.scroll_y == transcript.max_scroll_y, (
+            "a send observed with its assistant placeholder must still re-anchor"
         )
 
 
