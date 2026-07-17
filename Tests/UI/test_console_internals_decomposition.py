@@ -567,6 +567,10 @@ async def test_console_composer_cursor_blink_toggles():
         visible_draft = composer.query_one("#console-command-visible-text", Static)
 
         composer.focus()
+        # De-flake (2026-07-17): same hazard as the wrap-width test below —
+        # focus auto-resumes the real 0.53s blink interval; pause it so the
+        # manual toggles below own every phase flip.
+        composer._cursor_blink_timer.pause()
         await pilot.pause(0.1)
         assert ConsoleComposerBar.CURSOR_GLYPH in visible_draft.renderable.plain
 
@@ -599,10 +603,22 @@ async def test_console_composer_cursor_blink_keeps_row_count_stable_at_wrap_widt
 
         composer.focus()
         await pilot.pause(0.1)
+        # De-flake (2026-07-17): focus auto-resumes the REAL 0.53s blink
+        # interval timer; on a loaded machine the pilot pauses below can
+        # cross a real tick, which fires an extra toggle and desyncs the
+        # manual _toggle_cursor_blink() phase assertions. Pause the timer so
+        # this test owns every toggle and is clock-independent.
+        composer._cursor_blink_timer.pause()
 
         width = composer._draft_render_width()
         composer.load_draft("a" * width)
         await pilot.pause(0.1)
+
+        # load_draft/focus paths re-sync blink state; make sure the caret is
+        # in its VISIBLE phase and the timer is still ours before asserting.
+        if ConsoleComposerBar.CURSOR_GLYPH not in visible_draft.renderable.plain:
+            composer._toggle_cursor_blink()
+        composer._cursor_blink_timer.pause()
 
         height_visible = composer.styles.height
         assert ConsoleComposerBar.CURSOR_GLYPH in visible_draft.renderable.plain
