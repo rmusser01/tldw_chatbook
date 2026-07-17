@@ -192,15 +192,21 @@ class LibraryNotesCanvas(Vertical):
                     # glyph shifts line 1, so indent the age line by 2 to keep it
                     # aligned under the title rather than under the checkbox.
                     glyph = "☑ " if row.checked else "☐ "
-                    label = f"{glyph}{title}\n  {row.age_label}" if row.age_label else f"{glyph}{title}"
+                    label_rest = f"{title}\n  {row.age_label}" if row.age_label else title
+                    label = f"{glyph}{label_rest}"
                 else:
-                    label = f"{title}\n{row.age_label}" if row.age_label else title
+                    label_rest = f"{title}\n{row.age_label}" if row.age_label else title
+                    label = label_rest
                 button = Button(
                     label,
                     id=f"library-notes-row-{index}",
                     classes="library-notes-row", compact=True,
                 )
                 button.note_id = row.note_id
+                # task-281 (PR #665 review): raw marker-less label for the
+                # in-place toggle (reading it back off the Button un-escapes
+                # user titles).
+                button._library_row_label_rest = label_rest
                 yield button
 
     def _compose_editor(self) -> ComposeResult:

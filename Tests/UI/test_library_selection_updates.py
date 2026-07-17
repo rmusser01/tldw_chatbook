@@ -26,7 +26,6 @@ from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
 from tldw_chatbook.Widgets.Library.library_conversations_canvas import (
     LibraryConversationsCanvas,
 )
-
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
     LibraryHarness,
@@ -285,3 +284,49 @@ async def test_tier1_toggle_falls_back_to_recompose_on_query_one_failure(monkeyp
         assert len(recompose_calls) == 1  # fell back to a full recompose
         # Rows sort newest-first: chat-2 (06-02) is row 0.
         assert screen._library_conversations_row_selection.is_selected("chat-2")
+
+
+@pytest.mark.asyncio
+async def test_toggle_preserves_markup_escaped_titles():
+    """PR #665 review: the in-place marker flip must slice the RAW label,
+    not round-trip through .plain — a bracketed user title like "[draft]"
+    would otherwise lose its escape_markup() and restyle/raise on toggle."""
+    from tldw_chatbook.UI.Screens.library_screen import _apply_library_row_toggle
+
+    class _Selection:
+        count = 1
+
+        @staticmethod
+        def is_selected(_row_id):
+            return True
+
+    class _Recorder:
+        disabled = False
+
+        @staticmethod
+        def update(_text):
+            return None
+
+    class _Screen:
+        _library_conversations_row_selection = _Selection()
+
+        @staticmethod
+        def query_one(selector, _cls=None):
+            return _Recorder()
+
+        @staticmethod
+        def refresh(**_kwargs):
+            raise AssertionError("fallback recompose must not fire")
+
+    escaped_title = "\\[draft] weird title"  # as the canvas escapes it
+    label_rest = f" {escaped_title}\n    2 messages"
+    button = Button(f"☐{label_rest}")
+    button._library_row_label_rest = label_rest  # as the canvas stashes it
+    _apply_library_row_toggle(_Screen(), "conversations", button, "conv-1")
+    # The label is rebuilt from the RAW stash — the escaped form must
+    # survive verbatim (reading the mounted label back would un-escape it).
+    assert f"☑{label_rest}" == f"☑{button._library_row_label_rest}"
+    rendered = str(button.label)
+    assert rendered.startswith("☑")
+    assert "[draft] weird title" in rendered  # renders literally, not as markup
+    assert "weird title" in rendered

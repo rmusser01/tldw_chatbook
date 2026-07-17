@@ -558,9 +558,17 @@ def _apply_library_row_toggle(
         export_button = screen.query_one(f"#library-{kind}-export-selected", Button)
         checked = selection.is_selected(row_id)
         marker = "☑" if checked else "☐"
-        current = button.label.plain
-        if current:
-            button.label = f"{marker}{current[1:]}"
+        # Rebuild the label from the RAW remainder the canvas stashed on the
+        # button at compose time — NEVER from the mounted label: both
+        # ``.plain`` and Textual 8's ``str(Content)`` return RENDERED text,
+        # stripping the escape_markup() the canvas applied to user titles,
+        # so a title like "[draft] notes" would restyle or drop on toggle
+        # (PR #665 review; same escape lesson as the Library redesign). A
+        # missing stash (unexpected widget shape) raises into the fallback
+        # full recompose below.
+        label_rest = button._library_row_label_rest
+        glyph = f"{marker} " if kind == "notes" else marker
+        button.label = f"{glyph}{label_rest}"
         count_static.update(f"{selection.count} selected")
         export_button.disabled = selection.count == 0
     except Exception:
