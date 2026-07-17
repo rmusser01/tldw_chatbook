@@ -349,6 +349,24 @@ def test_assistant_tool_calls_history_converts_to_v2_shape(mock_post):
 
 
 @patch("requests.Session.post")
+def test_empty_streamed_arguments_echo_as_empty_json_object(mock_post):
+    """Live-gate case B finding (2026-07-17): a NO-ARG streamed call
+    accumulates arguments="" (tool-call-start seeds "", no deltas follow);
+    Cohere 400s the echo ('tool arguments must be a stringified JSON
+    object') unless it is normalized to "{}"."""
+    messages = [
+        {"role": "user", "content": "date?"},
+        {"role": "assistant", "content": "",
+         "tool_calls": [{"id": "call_A", "type": "function",
+                         "function": {"name": "get_current_datetime",
+                                      "arguments": ""}}]},
+        {"role": "tool", "tool_call_id": "call_A", "content": "2026-07-17"},
+    ]
+    sent = _call_cohere(mock_post, messages)["messages"]
+    assert sent[1]["tool_calls"][0]["function"]["arguments"] == "{}"
+
+
+@patch("requests.Session.post")
 def test_dict_arguments_normalized_via_json_dumps(mock_post):
     messages = [
         {"role": "user", "content": "2+2?"},

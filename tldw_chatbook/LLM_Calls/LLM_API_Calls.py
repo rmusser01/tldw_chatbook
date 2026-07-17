@@ -1218,7 +1218,11 @@ def _cohere_request_tool_calls(tool_calls: list) -> list:
         if isinstance(raw_args, dict):
             arguments = json.dumps(raw_args)
         elif isinstance(raw_args, str):
-            arguments = raw_args
+            # A NO-ARG streamed call accumulates to "" (tool-call-start
+            # seeds arguments:"" and no deltas follow); Cohere 400s the
+            # echo unless arguments is a stringified JSON OBJECT (live
+            # gate case B, 2026-07-17).
+            arguments = raw_args.strip() or "{}"
         else:
             arguments = "{}"
         converted.append({
