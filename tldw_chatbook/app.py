@@ -5477,6 +5477,54 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         except Exception as e_watch:
             self.loguru_logger.opt(exception=True).error(f"Unexpected error in watch_current_chat_is_ephemeral: {e_watch}")
 
+    def watch_current_chat_conversation_id(self, old_value: Optional[str], new_value: Optional[str]) -> None:
+        """P1g: recompute the Console "what's in play" chat-dictionary
+        summary whenever the active conversation changes."""
+        if old_value == new_value:
+            # Textual's `reactive(...)` defaults `init=True`, so the very
+            # first touch of this attribute on an app instance fires this
+            # watcher once with old==new==default before any real change --
+            # skip that no-op call rather than scheduling a wasted refresh.
+            return
+        self._refresh_console_dictionary_summary_on_change()
+
+    def watch_current_chat_active_character_data(
+        self, old_value: Optional[Dict[str, Any]], new_value: Optional[Dict[str, Any]]
+    ) -> None:
+        """P1g: recompute the Console "what's in play" chat-dictionary
+        summary whenever the active character changes."""
+        if old_value == new_value:
+            # See `watch_current_chat_conversation_id` -- same init=True
+            # first-touch quirk.
+            return
+        self._refresh_console_dictionary_summary_on_change()
+
+    def _refresh_console_dictionary_summary_on_change(self) -> None:
+        """Kick off `ChatScreen.refresh_active_dictionaries_summary()` on the
+        active Console screen, if any.
+
+        These reactives live on the app (`current_chat_conversation_id`/
+        `current_chat_active_character_data`), so `ChatScreen` cannot define
+        its own `watch_*` for them -- Textual only dispatches reactive
+        watchers on the object that owns the attribute. Mirrors the existing
+        `isinstance(self.screen, ChatScreen)` dispatch used by
+        `set_current_chat_is_streaming` to reach the mounted Console screen.
+        """
+        try:
+            from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+            if self.screen and isinstance(self.screen, ChatScreen):
+                self.run_worker(
+                    self.screen.refresh_active_dictionaries_summary(),
+                    exclusive=False,
+                    group="console-dictionary-summary",
+                )
+        except Exception:
+            # Never let a rail-summary refresh crash a conversation/character
+            # switch (mirrors set_current_chat_is_streaming's tolerant guard).
+            self.loguru_logger.opt(exception=True).debug(
+                "Could not refresh Console dictionary summary on change."
+            )
+
     # --- Add explicit methods to update reactives from Select changes ---
     def update_chat_provider_reactive(self, new_value: Optional[str]) -> None:
         self.chat_api_provider_value = new_value # Watcher will call _update_model_select
