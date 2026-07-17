@@ -249,16 +249,32 @@ def test_hook_exception_is_caught_and_treated_as_proceed_all():
     assert invoked == ["calculator", "echo"]  # fail-open: exception -> proceed
 
 
-def test_hook_exception_is_logged(caplog):
+def test_hook_exception_is_logged():
+    from loguru import logger
+
     def review(batch):
         raise RuntimeError("boom")
 
     turns = [_native_turn(
         [ToolCall(name="calculator", args={}, call_id="idA")]),
         ModelTurn(text="done")]
-    out = run_agent_loop(CFG, [{"role": "user", "content": "go"}], [CALC],
-                         make_deps(turns, review=review))
-    assert out.status == RUN_DONE  # never raises out of the loop
+
+    # Capture loguru output directly (not caplog — loguru doesn't propagate
+    # to stdlib logging in this repo)
+    records = []
+    sink_id = logger.add(lambda m: records.append(m), level="WARNING")
+    try:
+        out = run_agent_loop(CFG, [{"role": "user", "content": "go"}], [CALC],
+                             make_deps(turns, review=review))
+        assert out.status == RUN_DONE  # never raises out of the loop
+        # Assert the hook exception was logged with batch context
+        assert any(
+            "review_tool_calls hook raised" in m.record["message"] and
+            "calculator" in m.record["message"]
+            for m in records
+        ), f"Expected hook exception log with batch context, got: {[m.record['message'] for m in records]}"
+    finally:
+        logger.remove(sink_id)
 
 
 # --- hook absent: byte-identical behavior (pinning) ---------------------

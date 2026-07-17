@@ -339,9 +339,10 @@ def run_agent_loop(config: AgentConfig, initial_messages: list[dict],
                 # MCP-specific fail-closed policy lives in the Task 6
                 # closure that builds this callable, not in this generic
                 # runtime.
-                logger.warning(
-                    "review_tool_calls hook raised, treating batch as "
-                    f"all-proceed: {exc}")
+                logger.opt(exception=True).warning(
+                    f"review_tool_calls hook raised for batch "
+                    f"{[c.name for c in calls]}; treating all {len(calls)} "
+                    f"calls as proceed")
                 verdicts = {}
 
         for call in calls:
@@ -364,6 +365,8 @@ def run_agent_loop(config: AgentConfig, initial_messages: list[dict],
             # load_tools/invoke_tool branches below run, and the verdict
             # string itself becomes the call's tool result, same as any
             # other result content from here down.
+            # NOTE: verdict lookup by name only; same-name calls in one batch
+            # share a verdict (T5/T6 closure authors: this is a known limitation).
             verdict = verdicts.get(call.name, "proceed")
             if verdict != "proceed":
                 content = verdict
