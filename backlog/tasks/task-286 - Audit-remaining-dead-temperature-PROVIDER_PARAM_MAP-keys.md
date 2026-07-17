@@ -18,5 +18,7 @@ The review-minors sweep fixed the dead 'temperature' generic key (the dispatcher
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every remaining 'temperature'-keyed entry is either fixed to 'temp': '<verified handler param>' or documented why it must stay,Duplicate temperature keys in huggingface/koboldcpp are deduplicated,A forwarding test pins temp reaching each fixed handler
+- [ ] #1 Every remaining 'temperature'-keyed entry is either fixed to 'temp': '<verified handler param>' or documented why it must stay
+- [ ] #2 Duplicate temperature keys in huggingface/koboldcpp are deduplicated
+- [ ] #3 A forwarding test pins temp reaching each fixed handler
 <!-- AC:END -->
