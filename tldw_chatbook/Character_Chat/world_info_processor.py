@@ -24,7 +24,12 @@ class WorldInfoProcessor:
         self.scan_depth = 3  # Default scan depth
         self.token_budget = 500  # Default token budget
         self.recursive_scanning = False
-        
+
+        # Parallel diagnostics candidate list: ALL entries (incl. disabled), each
+        # tagged with source-book + id + enabled metadata. Built alongside
+        # self.entries but never consumed by the plain process_messages() path.
+        self._candidate_entries: List[Dict[str, Any]] = []
+
         # Process character book if available
         if character_data:
             self.character_book = self._extract_character_book(character_data)
@@ -59,15 +64,23 @@ class WorldInfoProcessor:
         
         # Extract and prepare entries
         raw_entries = self.character_book.get('entries', [])
+        character_book_name = self.character_book.get('name', 'Character book')
         for entry in raw_entries:
             if entry.get('enabled', True):
                 processed_entry = self._process_entry(entry)
                 if processed_entry:
                     self.entries.append(processed_entry)
-        
+
+            # Diagnostics: candidate list carries EVERY entry (enabled or not).
+            # Does not affect self.entries / the plain path.
+            candidate = self._make_candidate(entry, None, character_book_name)
+            if candidate is not None:
+                self._candidate_entries.append(candidate)
+
         # Sort by insertion order
         self.entries.sort(key=lambda x: x.get('insertion_order', 0))
-        
+        self._candidate_entries.sort(key=lambda x: x.get('insertion_order', 0))
+
         logger.debug(f"Loaded {len(self.entries)} active world info entries from character book")
     
     def _process_world_books(self, world_books: List[Dict[str, Any]]):
@@ -84,7 +97,9 @@ class WorldInfoProcessor:
             # Process entries from this book
             book_entries = book.get('entries', [])
             priority_offset = book.get('priority', 0) * 1000  # Use priority to offset insertion order
-            
+            book_id = book.get('id')
+            book_name = book.get('name', '')
+
             for entry in book_entries:
                 if entry.get('enabled', True):
                     processed_entry = self._process_entry(entry)
@@ -92,10 +107,17 @@ class WorldInfoProcessor:
                         # Adjust insertion order based on book priority
                         processed_entry['insertion_order'] += priority_offset
                         self.entries.append(processed_entry)
-        
+
+                # Diagnostics: candidate list carries EVERY entry (enabled or not).
+                # Does not affect self.entries / the plain path.
+                candidate = self._make_candidate(entry, book_id, book_name, priority_offset)
+                if candidate is not None:
+                    self._candidate_entries.append(candidate)
+
         # Re-sort all entries by insertion order
         self.entries.sort(key=lambda x: x.get('insertion_order', 0))
-        
+        self._candidate_entries.sort(key=lambda x: x.get('insertion_order', 0))
+
         logger.debug(f"Total {len(self.entries)} active world info entries after processing {len(world_books)} world books")
     
     def _process_entry(self, entry: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -133,8 +155,24 @@ class WorldInfoProcessor:
             'case_sensitive': entry.get('case_sensitive', False),
             'extensions': entry.get('extensions', {})
         }
-    
-    def process_messages(self, current_message: str, conversation_history: List[Dict[str, str]], 
+
+    def _make_candidate(self, entry: Dict[str, Any], book_id: Optional[Any], book_name: str,
+                         priority_offset: int = 0) -> Optional[Dict[str, Any]]:
+        """Build a diagnostics candidate for ANY entry (enabled or not), carrying
+        source-book + id + enabled metadata. Does NOT affect self.entries / the
+        plain path. Returns None only if the entry has no usable keys."""
+        processed = self._process_entry(entry)
+        if processed is None:
+            return None
+        processed = dict(processed)
+        processed['insertion_order'] = processed.get('insertion_order', 0) + priority_offset
+        processed['_entry_id'] = entry.get('id')
+        processed['_book_id'] = book_id
+        processed['_book_name'] = book_name
+        processed['_enabled'] = bool(entry.get('enabled', True))
+        return processed
+
+    def process_messages(self, current_message: str, conversation_history: List[Dict[str, str]],
                         scan_depth: Optional[int] = None, apply_token_budget: bool = True) -> Dict[str, Any]:
         """
         Process messages and find matching world info entries.
@@ -248,7 +286,28 @@ class WorldInfoProcessor:
                     return True
         
         return False
-    
+
+    def _classify_entry_match(self, entry: Dict[str, Any], scan_text: str,
+                               scan_text_lower: str) -> Tuple[bool, Optional[str], bool, bool, Optional[str]]:
+        """Decompose an entry's match for diagnostics. Returns
+        (primary_hit, primary_key, secondary_required, secondary_hit, secondary_key).
+        Mirrors _entry_matches' logic exactly but reports WHICH key matched / why not."""
+        case = entry.get('case_sensitive', False)
+
+        def hit(key):
+            return (self._keyword_in_text(key, scan_text) if case
+                    else self._keyword_in_text(key.lower(), scan_text_lower))
+
+        primary_key = next((k for k in entry.get('keys', []) if hit(k)), None)
+        primary_hit = primary_key is not None
+        if not primary_hit:
+            return (False, None, False, False, None)
+        secondary_required = bool(entry.get('selective', False) and entry.get('secondary_keys'))
+        if not secondary_required:
+            return (True, primary_key, False, False, None)
+        secondary_key = next((k for k in entry.get('secondary_keys', []) if hit(k)), None)
+        return (True, primary_key, True, secondary_key is not None, secondary_key)
+
     def _keyword_in_text(self, keyword: str, text: str) -> bool:
         """Check if a keyword appears in text with word boundary matching."""
         # Use word boundary regex for more accurate matching
