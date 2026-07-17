@@ -1840,6 +1840,17 @@ def chat_with_google(
             parts = []
             if isinstance(content, str) and content.strip():
                 parts.append({"text": content})
+            elif isinstance(content, list):
+                # List-form (multimodal) content: keep its text parts —
+                # dropping them would silently lose visible text that
+                # accompanied the tool calls (same bug class as the
+                # anthropic sibling, PR #659 review).
+                for part in content:
+                    if (isinstance(part, dict)
+                            and part.get("type") == "text"
+                            and isinstance(part.get("text"), str)
+                            and part["text"].strip()):
+                        parts.append({"text": part["text"]})
             call_names = []
             for call in msg.get("tool_calls") or []:
                 if not isinstance(call, dict):

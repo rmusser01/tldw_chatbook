@@ -218,3 +218,24 @@ def test_plain_chat_payload_unchanged(mock_post):
         {"role": "user", "parts": [{"text": "hi"}]},
         {"role": "model", "parts": [{"text": "there"}]},
     ]
+
+
+@patch("requests.Session.post")
+def test_list_content_with_tool_calls_keeps_text_parts(mock_post):
+    """T1 review Important: list-form (multimodal) assistant content
+    alongside tool_calls must keep its text parts (same bug class as the
+    anthropic sibling, PR #659 review)."""
+    messages = [
+        {"role": "user", "content": "go"},
+        {"role": "assistant",
+         "content": [{"type": "text", "text": "Let me check."},
+                     {"type": "image_url", "image_url": {"url": "data:x"}}],
+         "tool_calls": [{"id": "call_L", "type": "function",
+                         "function": {"name": "calculator",
+                                      "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "call_L", "content": "4"},
+    ]
+    sent = _call_google(mock_post, messages)
+    model_turn = sent["contents"][1]
+    assert model_turn["parts"][0] == {"text": "Let me check."}
+    assert "functionCall" in model_turn["parts"][-1]
