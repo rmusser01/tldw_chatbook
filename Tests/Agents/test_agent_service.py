@@ -709,6 +709,36 @@ def test_native_endpoint_google_sends_tools_and_suppresses_fence(db):
     assert "tool_call" not in chat.calls[0]["messages_payload"][0]["content"]
 
 
+def test_native_endpoint_cohere_sends_tools_and_suppresses_fence(db, monkeypatch):
+    """task-267: chat_with_cohere's conversion is complete end-to-end
+    (request tools/tool-history, non-streaming + streaming tool_calls —
+    Tasks 1-4), but `NATIVE_TOOLS_PROVIDERS` doesn't gain "cohere" until a
+    live API round-trip passes (Task 6). This test overrides the registry
+    IN-PROCESS via monkeypatch to pin the service-level wiring ahead of
+    that flip — mirroring the anthropic/google siblings above, minus the
+    permanent registry membership."""
+    import tldw_chatbook.Agents.native_tools as native_tools_module
+    monkeypatch.setattr(
+        native_tools_module, "NATIVE_TOOLS_PROVIDERS",
+        frozenset(native_tools_module.NATIVE_TOOLS_PROVIDERS | {"cohere"}))
+
+    service, chat = make_service(db, [
+        {"content": None,
+         "tool_calls": [native_call("calculator", {"expression": "2+2"},
+                                    "call_c1")]},
+        "4."])
+    _run_id, outcome = service.run_turn(
+        conversation_id="c", messages=[{"role": "user", "content": "2+2?"}],
+        config=CFG, api_endpoint="cohere", should_cancel=lambda: False)
+    assert outcome.status == RUN_DONE and outcome.final_text == "4."
+    first = chat.calls[0]
+    assert "tools" in first
+    assert "tool_call" not in first["messages_payload"][0]["content"]
+    tool_msg = [m for m in chat.calls[1]["messages_payload"]
+                if m.get("role") == "tool"][0]
+    assert tool_msg["tool_call_id"] == "call_c1"
+
+
 def test_native_endpoint_with_no_schemas_omits_tools_kwarg(db):
     """Review minor m3 (task-243 final review): a native-capable endpoint
     whose run has NO disclosable schemas (empty allow-list, no sub-agents)
