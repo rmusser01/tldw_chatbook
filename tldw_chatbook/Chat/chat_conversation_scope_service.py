@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from typing import Any, Mapping
 
@@ -141,10 +142,39 @@ class ChatConversationScopeService:
             return await value
         return value
 
+    @staticmethod
+    def _is_memory_backed(service: Any) -> bool:
+        """True when a local service's backing DB is a per-connection ``:memory:`` store.
+
+        Thread-local (file-backed) sqlite connections are safe to run via
+        ``asyncio.to_thread``; a ``:memory:`` ChaChaNotes DB is only visible
+        to the thread that created/migrated it, so threading it would hand
+        the worker an empty, unmigrated database (same hazard documented at
+        ``HomeScreen._home_content_seam_call``). Degrades to False (i.e.
+        thread it) when the service shape doesn't expose ``.db`` -- the
+        server service, for one, has no local sqlite connection at all.
+        """
+        db = getattr(service, "db", None)
+        return bool(getattr(db, "is_memory_db", False))
+
     async def list_conversations(self, *, mode: str = "local", **kwargs: Any) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("list", normalized_mode))
-        return await self._maybe_await(self._service_for_mode(normalized_mode).list_conversations(**kwargs))
+        service = self._service_for_mode(normalized_mode)
+        list_conversations_fn = getattr(service, "list_conversations")
+        # B4 (task-283): local list_conversations is a plain sync sqlite/FTS
+        # call -- run_worker(coroutine) is not a thread, so without this the
+        # debounce-fired Console browser search worker (chat_screen.py)
+        # blocks the event loop on every fire. Server mode's list_conversations
+        # is already a real coroutine (network I/O); threading it would just
+        # hand back an unawaited coroutine object, so only local is eligible.
+        if (
+            normalized_mode == "local"
+            and not inspect.iscoroutinefunction(list_conversations_fn)
+            and not self._is_memory_backed(service)
+        ):
+            return await asyncio.to_thread(list_conversations_fn, **kwargs)
+        return await self._maybe_await(list_conversations_fn(**kwargs))
 
     async def get_conversation(self, conversation_id: str, *, mode: str = "local", **kwargs: Any) -> dict[str, Any] | None:
         normalized_mode = self._normalize_mode(mode)

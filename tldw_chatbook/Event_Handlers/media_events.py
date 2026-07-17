@@ -2,6 +2,7 @@
 #
 #
 # Imports
+import asyncio
 import math
 from datetime import datetime
 from typing import TYPE_CHECKING, Dict, Any
@@ -518,12 +519,19 @@ async def handle_media_page_change_button_pressed(app: 'TldwCli', event: Button.
 async def perform_media_search_and_display(app: 'TldwCli', type_slug: str, search_term: str = "", keyword_filter: str = "") -> None:
     """Performs search in media DB and populates the ListView with rich, informative items."""
     logger = app.loguru_logger
-    
+
     # Skip search for special windows that don't have standard media views
     if type_slug in ["collections-tags", "multi-item-review"]:
         logger.info(f"Skipping search for special window: {type_slug}")
         return
-    
+
+    # task-283 (B4): staleness generation, per type_slug -- the DB call
+    # below now runs via asyncio.to_thread, which a replaced debounce timer
+    # (or a fast pagination click) cannot cancel mid-flight, so this guards
+    # a slower/older search from overwriting a newer one's results.
+    generation = app._media_search_generation.get(type_slug, 0) + 1
+    app._media_search_generation[type_slug] = generation
+
     list_view_id = f"media-list-view-{type_slug}"
 
     try:
@@ -568,7 +576,7 @@ async def perform_media_search_and_display(app: 'TldwCli', type_slug: str, searc
         except QueryError:
             logger.debug("MediaWindow not found, using default show_deleted=False")
 
-        results, total_matches = app.media_db.search_media_db(
+        search_kwargs = dict(
             search_query=query_arg,
             media_types=media_types_filter,
             search_fields=fields_arg,
@@ -579,6 +587,19 @@ async def perform_media_search_and_display(app: 'TldwCli', type_slug: str, searc
             include_trash=False,
             include_deleted=show_deleted
         )
+        # B4 (task-283): search_media_db is a plain sync sqlite/FTS call --
+        # thread it off the event loop unless the DB is a per-connection
+        # :memory: store (thread-local hazard).
+        if bool(getattr(app.media_db, "is_memory_db", False)):
+            results, total_matches = app.media_db.search_media_db(**search_kwargs)
+        else:
+            results, total_matches = await asyncio.to_thread(
+                app.media_db.search_media_db, **search_kwargs
+            )
+
+        if generation != app._media_search_generation.get(type_slug):
+            logger.debug(f"Discarding stale media search results for type '{type_slug}'.")
+            return
 
         if not results:
             await list_view.append(ListItem(Label("No media items found.")))
