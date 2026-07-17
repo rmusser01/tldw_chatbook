@@ -461,3 +461,29 @@ class TestLoreModeCrudRoundTrip:
             book = manager.get_world_book(seeded_lore_book["book_id"])
             assert book["name"] == "Blackreach Renamed"
             assert book["enabled"] is False and book["scan_depth"] == 5
+
+
+@pytest.mark.asyncio
+async def test_new_entry_appends_after_max_insertion_order():
+    """Adding a new entry appends AFTER the current max insertion_order (not at
+    len()), so non-contiguous/imported books keep injection order (Qodo #673)."""
+    app = _DetailHost()
+    async with app.run_test(size=(140, 40)) as pilot:
+        widget = app.query_one(PersonasLoreDetailWidget)
+        widget.load_book({"id": 1, "name": "B", "description": "", "scan_depth": 3,
+                          "token_budget": 500, "recursive_scanning": False, "enabled": True})
+        widget.update_entries([
+            {"id": 1, "keys": ["a"], "content": "x", "position": "before_char",
+             "enabled": True, "insertion_order": 0},
+            {"id": 2, "keys": ["b"], "content": "y", "position": "before_char",
+             "enabled": True, "insertion_order": 10},
+        ])
+        await pilot.pause()
+        app.query_one("#personas-lore-entry-keys", Input).value = "c"
+        app.query_one("#personas-lore-entry-content", TextArea).text = "z"
+        await pilot.pause()
+        await pilot.click("#personas-lore-entry-add")
+        await pilot.pause()
+        assert app.posted, "add must post LoreEntryAddRequested"
+        # max(0, 10) + 1 == 11 — NOT len()==2 nor the selected row's order.
+        assert app.posted[-1]["insertion_order"] == 11

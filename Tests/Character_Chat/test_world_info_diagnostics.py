@@ -199,3 +199,18 @@ def test_classify_entry_match_tolerates_null_keys():
         "The Warden.", "the warden.",
     )
     assert p is True and pk == "Warden" and sr is False
+
+
+def test_diagnostics_duplicate_signature_entries_keep_distinct_ids():
+    """Two entries sharing an identical (insertion_order, content, position)
+    signature that BOTH fire must each be attributed to their own entry_id, not
+    collapsed onto the first candidate (Qodo #673)."""
+    book = _book(1, "B", [
+        _entry(1, ["alpha"], "SAME"),
+        _entry(2, ["beta"], "SAME"),
+    ])
+    proc = WorldInfoProcessor(world_books=[book])
+    _result, diag = proc.process_messages_with_diagnostics("alpha and beta here", [])
+    fired = [e for e in diag.entries if e.status == "fired"]
+    assert len(fired) == 2
+    assert {e.entry_id for e in fired} == {1, 2}
