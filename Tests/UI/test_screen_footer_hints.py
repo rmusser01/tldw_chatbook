@@ -124,3 +124,72 @@ async def test_mcp_registration_updates_the_screens_own_footer():
         default_screen_footer = host.query_one(AppFooterStatus)
         assert default_screen_footer is not screen_footer
         assert default_screen_footer.shortcut_text == AppFooterStatus.DEFAULT_SHORTCUT_TEXT
+
+
+@pytest.mark.asyncio
+async def test_registration_survives_screen_recompose():
+    """Screen-level recompose (settings' recompose=True reactives, library/
+    chat `refresh(recompose=True)`) replaces the footer widget; the
+    persisted registration must re-seed the fresh instance (task-264
+    review)."""
+    host = _MinimalScreenHost()
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        screen = host.screen_stack[-1]
+        screen.register_footer_shortcuts(
+            source="minimal", shortcuts=(("x", "do the thing"),)
+        )
+        footer_before = screen.query_one(AppFooterStatus)
+        assert "do the thing" in footer_before.shortcut_text
+
+        screen.refresh(recompose=True)
+        await pilot.pause()
+
+        footer_after = screen.query_one(AppFooterStatus)
+        assert footer_after is not footer_before
+        assert "do the thing" in footer_after.shortcut_text
+
+        # And a source-guarded clear drops both the live text and the
+        # persisted copy, so a later recompose stays at the default.
+        screen.clear_footer_shortcuts(source="minimal")
+        screen.refresh(recompose=True)
+        await pilot.pause()
+        footer_cleared = screen.query_one(AppFooterStatus)
+        assert footer_cleared.shortcut_text == AppFooterStatus.DEFAULT_SHORTCUT_TEXT
+
+
+@pytest.mark.asyncio
+async def test_library_registration_updates_the_screens_own_footer():
+    """task-264 review Important: Library's `u` hint (previously rendered by
+    the retired Textual Footer's show=True binding) must reach its own
+    footer via the registration API."""
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app_instance = _build_test_app()
+    host = _DefaultScreenFooterHost(app_instance, LibraryScreen)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        await pilot.pause()
+        screen = host.screen_stack[-1]
+        screen_footer = screen.query_one(AppFooterStatus)
+        assert "u" in screen_footer.shortcut_text
+        assert "use Library context in Console" in screen_footer.shortcut_text
+
+
+@pytest.mark.asyncio
+async def test_settings_registration_updates_the_screens_own_footer():
+    """task-264 review Important: Settings' s/r/t hints (previously rendered
+    by the retired Footer) must reach its own footer via registration."""
+    from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+
+    app_instance = _build_test_app()
+    host = _DefaultScreenFooterHost(app_instance, SettingsScreen)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        screen = host.screen_stack[-1]
+        screen_footer = screen.query_one(AppFooterStatus)
+        for token in ("save category", "revert category", "test category"):
+            assert token in screen_footer.shortcut_text

@@ -5,10 +5,8 @@ from typing import Any
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
-from textual.css.query import QueryError
 from textual.widgets import Button, Static
 
-from ...Widgets.AppFooterStatus import AppFooterStatus
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ..MCP_Modules.mcp_workbench import MCP_HUB_MODES, MCPWorkbench
 from ..Navigation.base_app_screen import BaseAppScreen
@@ -215,24 +213,12 @@ class MCPScreen(BaseAppScreen):
         )
 
     def _register_footer_shortcuts(self) -> None:
-        """Register MCP Hub shortcuts with this screen's own footer if mounted."""
-        try:
-            footer = self.query_one(AppFooterStatus)
-        except QueryError:
-            return
-        set_shortcuts = getattr(footer, "set_workbench_shortcuts", None)
-        if callable(set_shortcuts):
-            set_shortcuts(source="mcp", shortcuts=MCP_SHORTCUTS)
+        """Register MCP Hub shortcuts via BaseAppScreen's persisting API."""
+        self.register_footer_shortcuts(source="mcp", shortcuts=MCP_SHORTCUTS)
 
     def _clear_footer_shortcuts(self) -> None:
-        """Clear MCP Hub shortcuts from this screen's own footer if mounted."""
-        try:
-            footer = self.query_one(AppFooterStatus)
-        except QueryError:
-            return
-        clear_shortcuts = getattr(footer, "clear_shortcut_context", None)
-        if callable(clear_shortcuts):
-            clear_shortcuts(source="mcp")
+        """Clear MCP Hub shortcuts from this screen's own footer."""
+        self.clear_footer_shortcuts(source="mcp")
 
     def on_mount(self) -> None:
         super().on_mount()

@@ -1609,6 +1609,9 @@ MetricsScreen Label.-info-message {
 /* ----------------------------- ************************* ----------------------------- */
 /* --- Window Footer Widget --- */
 
+/* KEEP IN SYNC with AppFooterStatus.DEFAULT_CSS (task-264): the widget
+   bakes these rules in for stylesheet-less harnesses; edits here must be
+   mirrored there or harness geometry silently diverges. */
 AppFooterStatus {
     dock: bottom;
     height: 1;

@@ -202,7 +202,6 @@ from ...UI.Workbench import (
 )
 from ...UI.Workbench.focus import WorkbenchFocusRegistry
 from ...state.ui_state import UIState
-from ...Widgets.AppFooterStatus import AppFooterStatus
 from ...Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
 from ...Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 from ...Widgets.Console import (
@@ -981,24 +980,19 @@ class ChatScreen(BaseAppScreen):
                 return
 
     def _register_console_footer_shortcuts(self) -> None:
-        """Register Console Workbench shortcuts with this screen's own footer if mounted."""
-        try:
-            footer = self.query_one(AppFooterStatus)
-        except QueryError:
-            return
-        set_shortcuts = getattr(footer, "set_workbench_shortcuts", None)
-        if callable(set_shortcuts):
-            set_shortcuts(source="console", shortcuts=CONSOLE_WORKBENCH_SHORTCUTS)
+        """Register Console Workbench shortcuts with this screen's own footer.
+
+        Routed through BaseAppScreen's persisting registration so the hints
+        survive screen-level recompose (`_stage_console_library_rag_launch`
+        calls `refresh(recompose=True)`, which replaces the footer widget).
+        """
+        self.register_footer_shortcuts(
+            source="console", shortcuts=CONSOLE_WORKBENCH_SHORTCUTS
+        )
 
     def _clear_console_footer_shortcuts(self) -> None:
-        """Clear Console Workbench shortcuts from this screen's own footer if mounted."""
-        try:
-            footer = self.query_one(AppFooterStatus)
-        except QueryError:
-            return
-        clear_shortcuts = getattr(footer, "clear_shortcut_context", None)
-        if callable(clear_shortcuts):
-            clear_shortcuts(source="console")
+        """Clear Console Workbench shortcuts from this screen's own footer."""
+        self.clear_footer_shortcuts(source="console")
 
     def _open_console_session_rename_modal(self, session_id: str) -> None:
         """Open a modal for viewing and editing the active Console tab title."""

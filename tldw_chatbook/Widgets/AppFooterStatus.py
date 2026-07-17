@@ -35,6 +35,10 @@ class AppFooterStatus(Widget):
     # the app bundle declares so they always apply, with or without that
     # bundle loaded. The two are intentionally identical -- the bundle's
     # copy simply re-applies the same values when both are present.
+    # KEEP IN SYNC with the identical rules in Constants.py (~line 1612):
+    # DEFAULT_CSS covers stylesheet-less harnesses; the app bundle wins by
+    # origin in production. A bundle-only edit would silently diverge
+    # harness geometry from production (task-264 review).
     DEFAULT_CSS = """
     AppFooterStatus {
         dock: bottom;
