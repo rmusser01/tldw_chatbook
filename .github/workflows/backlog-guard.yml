@@ -1,0 +1,52 @@
+name: Backlog Guard
+
+on:
+  pull_request:
+    paths:
+      - 'backlog/tasks/**'
+  push:
+    branches: [dev, main]
+    paths:
+      - 'backlog/tasks/**'
+
+jobs:
+  duplicate-task-ids:
+    name: No duplicate backlog task IDs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail on duplicate backlog task IDs
+        run: |
+          set -euo pipefail
+          # Task files are named "task-<id> - <Title>.md"; subtask ids may be multi-dotted
+          # (task-3.1, task-10.6.1). Two branches minting the same id and merging separately
+          # produces two files that share an id — backlog CLI lookups become ambiguous. This
+          # has happened three times (ids 152+, 196-203, 246-256); catch it on every PR and
+          # again post-merge on dev. IDs are checked in both namespaces the repo relies on:
+          # the filename prefix and the YAML frontmatter `id:` (they can disagree after a
+          # hand-edited rename, and the backlog CLI resolves by frontmatter).
+          fail=0
+          file_dupes=$(ls backlog/tasks | sed -nE 's/^(task-[0-9]+(\.[0-9]+)*) - .*\.md$/\1/p' | sort | uniq -d)
+          if [ -n "$file_dupes" ]; then
+            fail=1
+            echo "::error::Duplicate backlog task IDs in filenames:"
+            while IFS= read -r id; do
+              echo "--- $id ---"
+              ls backlog/tasks | grep -F "$id - "
+            done <<< "$file_dupes"
+          fi
+          # First `id:` line per file, normalized to lowercase (frontmatter uses TASK-NNN).
+          fm_dupes=$(awk 'FNR==1{seen=0} /^id:/ && !seen {seen=1; print tolower($2)}' backlog/tasks/*.md | sort | uniq -d)
+          if [ -n "$fm_dupes" ]; then
+            fail=1
+            echo "::error::Duplicate backlog task IDs in frontmatter id: fields:"
+            while IFS= read -r id; do
+              echo "--- $id ---"
+              grep -il "^id: *${id}\$" backlog/tasks/*.md
+            done <<< "$fm_dupes"
+          fi
+          if [ "$fail" -ne 0 ]; then
+            echo "Renumber the batch that has not started (rename files, update frontmatter id:, dependencies:, and doc references)."
+            exit 1
+          fi
+          echo "No duplicate task IDs across $(ls backlog/tasks | grep -c '^task-') task files (filenames + frontmatter)."

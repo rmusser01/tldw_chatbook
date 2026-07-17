@@ -1,5 +1,5 @@
 ---
-id: TASK-248
+id: TASK-277
 title: Fix cpu_percent event-loop freeze in PerformanceMetricsWidget
 status: Done
 assignee: []
