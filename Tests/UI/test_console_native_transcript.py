@@ -857,3 +857,190 @@ def test_toggle_image_view_action_offered_and_dispatched_for_image_messages():
     assert result.status == "completed"
     assert result.visible_copy == "Toggled image view."
     assert result.target_message_id == with_image.id
+
+
+# ---------------------------------------------------------------------------
+# TASK-259: per-message row-signature cache. Derivation of the expensive row
+# render payload must be O(changed messages) per changed tick, with
+# correctness preserved for delete, reorder, and variant-switch.
+# ---------------------------------------------------------------------------
+
+
+def _cache_test_messages(count: int) -> list[ConsoleChatMessage]:
+    return [
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.USER if index % 2 == 0 else ConsoleMessageRole.ASSISTANT,
+            content=f"message body {index}",
+            id=f"m{index}",
+        )
+        for index in range(count)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_transcript_signature_derivation_is_o_changed_messages():
+    """A changed tick re-derives only the changed message's render signature."""
+    app = MutableTranscriptHarness()
+    messages = _cache_test_messages(10)
+
+    async with app.run_test(size=(100, 32)):
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.set_messages(messages)
+        await transcript.refresh_messages()
+        baseline = transcript.message_signature_compute_counts()
+        assert all(count == 1 for count in baseline.values())
+
+        # Unchanged tick (same objects re-set, as the 0.2s sync does).
+        transcript.set_messages(messages)
+        await transcript.refresh_messages()
+        assert transcript.message_signature_compute_counts() == baseline
+
+        # Changed tick: exactly one message's content changed.
+        messages[4].content = "message body 4 (edited)"
+        transcript.set_messages(messages)
+        await transcript.refresh_messages()
+        after = transcript.message_signature_compute_counts()
+        rendered = transcript.query_one("#console-message-m4", Static)
+        assert "message body 4 (edited)" in str(rendered.renderable)
+
+    assert after["m4"] == baseline["m4"] + 1
+    for message in messages:
+        if message.id == "m4":
+            continue
+        assert after[message.id] == baseline[message.id]
+
+
+@pytest.mark.asyncio
+async def test_transcript_signature_cache_miss_on_equal_length_edit():
+    """The cache must key on content, never on content length alone."""
+    app = MutableTranscriptHarness()
+    message = ConsoleChatMessage(role=ConsoleMessageRole.USER, content="aaaa", id="m-edit")
+
+    async with app.run_test(size=(100, 32)):
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.set_messages([message])
+        await transcript.refresh_messages()
+
+        message.content = "bbbb"  # same length, same status
+        transcript.set_messages([message])
+        await transcript.refresh_messages()
+        rendered = transcript.query_one("#console-message-m-edit", Static)
+
+        assert "bbbb" in str(rendered.renderable)
+        assert transcript.message_signature_compute_counts()["m-edit"] == 2
+
+
+@pytest.mark.asyncio
+async def test_transcript_signature_cache_survives_delete():
+    """Deleting a message prunes its cache entry and its mounted row."""
+    app = MutableTranscriptHarness()
+    messages = _cache_test_messages(5)
+
+    async with app.run_test(size=(100, 32)):
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.set_messages(messages)
+        await transcript.refresh_messages()
+        assert "m2" in transcript.message_signature_cache_ids()
+
+        survivors = [message for message in messages if message.id != "m2"]
+        transcript.set_messages(survivors)
+        await transcript.refresh_messages()
+
+        assert "m2" not in transcript.message_signature_cache_ids()
+        assert len(transcript.query("#console-message-m2")) == 0
+        # Survivors were not re-derived by the delete.
+        counts = transcript.message_signature_compute_counts()
+        assert all(counts[message.id] == 1 for message in survivors)
+
+        # Re-adding the same id with different content renders the new text.
+        replacement = ConsoleChatMessage(
+            role=ConsoleMessageRole.USER, content="replacement body", id="m2"
+        )
+        transcript.set_messages(survivors + [replacement])
+        await transcript.refresh_messages()
+        rendered = transcript.query_one("#console-message-m2", Static)
+        assert "replacement body" in str(rendered.renderable)
+
+
+@pytest.mark.asyncio
+async def test_transcript_signature_cache_survives_reorder():
+    """Reordering messages re-derives nothing and renders the new order."""
+    app = MutableTranscriptHarness()
+    messages = _cache_test_messages(4)
+
+    async with app.run_test(size=(100, 32)):
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.set_messages(messages)
+        await transcript.refresh_messages()
+        baseline = transcript.message_signature_compute_counts()
+
+        reordered = [messages[2], messages[0], messages[3], messages[1]]
+        transcript.set_messages(reordered)
+        await transcript.refresh_messages()
+
+        assert transcript.message_signature_compute_counts() == baseline
+        rendered_ids = [
+            widget.message_id
+            for widget in transcript.query(ConsoleTranscriptMessage)
+        ]
+
+    assert rendered_ids == ["m2", "m0", "m3", "m1"]
+
+
+@pytest.mark.asyncio
+async def test_transcript_signature_cache_survives_variant_switch():
+    """Switching variants re-derives only that message and shows the variant."""
+    app = MutableTranscriptHarness()
+    plain = ConsoleChatMessage(role=ConsoleMessageRole.USER, content="prompt", id="m-plain")
+    varied = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="first answer", id="m-varied"
+    )
+    varied.variants = ConsoleVariantSet.from_contents(
+        turn_id="turn-1",
+        contents=["first answer", "second answer"],
+    )
+
+    async with app.run_test(size=(100, 32)):
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.set_messages([plain, varied])
+        await transcript.refresh_messages()
+        baseline = transcript.message_signature_compute_counts()
+        rendered = transcript.query_one("#console-message-m-varied", Static)
+        assert "first answer" in str(rendered.renderable)
+
+        varied.variants.selected_index = 1
+        transcript.set_messages([plain, varied])
+        await transcript.refresh_messages()
+        after = transcript.message_signature_compute_counts()
+        rendered = transcript.query_one("#console-message-m-varied", Static)
+
+        assert "second answer" in str(rendered.renderable)
+        assert after["m-varied"] == baseline["m-varied"] + 1
+        assert after["m-plain"] == baseline["m-plain"]
+
+
+@pytest.mark.asyncio
+async def test_transcript_signature_cache_miss_on_status_change():
+    """A status-only change (streaming -> complete) re-derives the row."""
+    app = MutableTranscriptHarness()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="partial",
+        id="m-stream",
+        status="streaming",
+    )
+
+    async with app.run_test(size=(100, 32)):
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.set_messages([message])
+        await transcript.refresh_messages()
+        rendered = transcript.query_one("#console-message-m-stream", Static)
+        assert "[streaming]" in str(rendered.renderable)
+
+        message.status = "complete"
+        transcript.set_messages([message])
+        await transcript.refresh_messages()
+        rendered = transcript.query_one("#console-message-m-stream", Static)
+
+        assert "[streaming]" not in str(rendered.renderable)
+        assert transcript.message_signature_compute_counts()["m-stream"] == 2

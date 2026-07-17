@@ -60,3 +60,18 @@ class ConsoleStagedContextTray(Vertical):
                 id="console-staged-context-recovery",
                 classes="console-staged-context-recovery",
             )
+
+    def sync_state(self, state: ConsoleStagedContextState) -> None:
+        """Refresh the mounted tray from a new staged-context snapshot.
+
+        Equality-guarded like the other Console tray widgets; a real change
+        recomposes only this widget (row count, Attach button, and recovery
+        line presence all vary with the state), never the owning screen.
+
+        Args:
+            state: Staged-context display-state snapshot to render.
+        """
+        if state == self.state:
+            return
+        self.state = state
+        self.refresh(recompose=True)

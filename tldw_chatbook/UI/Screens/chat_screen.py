@@ -137,6 +137,8 @@ from ...Chat.console_save_targets import (
     derive_console_save_title,
 )
 from ...Chat.console_live_work import (
+    PENDING_LAUNCH_CARD_ID,
+    SOURCE_READINESS_CARD_ID,
     ConsoleLiveWorkLaunch,
     ConsoleLiveWorkSourceReadinessState,
     ConsoleLiveWorkStatusCardState,
@@ -984,8 +986,10 @@ class ChatScreen(BaseAppScreen):
         """Register Console Workbench shortcuts with this screen's own footer.
 
         Routed through BaseAppScreen's persisting registration so the hints
-        survive screen-level recompose (`_stage_console_library_rag_launch`
-        calls `refresh(recompose=True)`, which replaces the footer widget).
+        survive any screen-level recompose, which replaces the footer widget.
+        (TASK-259: `_stage_console_library_rag_launch` no longer recomposes
+        the screen, but the fallback path and future recompose sources keep
+        this persisting registration load-bearing.)
         """
         self.register_footer_shortcuts(
             source="console", shortcuts=CONSOLE_WORKBENCH_SHORTCUTS
@@ -1274,6 +1278,10 @@ class ChatScreen(BaseAppScreen):
         self._handoff_consumption_in_progress = False
         self._pending_console_launch_context: Optional[ConsoleLiveWorkLaunch] = None
         self._pending_console_launch_auto_open_inspector = False
+        # TASK-259: dedupe guard for the scheduled inspector-rail card swap
+        # (rapid searching->staged staging would otherwise remove+remount
+        # the card once per stage; each swap re-reads the current context).
+        self._console_live_work_card_swap_scheduled = False
         self._console_control_provider: Optional[Any] = None
         self._console_control_model: Optional[Any] = None
         self._console_library_rag_query = ""
@@ -5615,24 +5623,52 @@ class ChatScreen(BaseAppScreen):
             severity="warning",
         )
 
-    def _render_console_live_work_status_card(self, launch: ConsoleLiveWorkLaunch) -> ComposeResult:
-        """Render a reusable live-work status card for Console launch context."""
+    def _build_console_live_work_status_card(
+        self, launch: ConsoleLiveWorkLaunch
+    ) -> Container:
+        """Build the mounted live-work status card for Console launch context.
+
+        Shared by compose-time rendering and the TASK-259 targeted card swap
+        in ``_apply_console_live_work_card_swap`` (which mounts the returned
+        container without recomposing the screen).
+
+        Args:
+            launch: Live-work launch metadata to display.
+
+        Returns:
+            The card container (id ``console-pending-launch-card``) with its
+            badge, optional primary action, and payload rows as children.
+        """
         card_state = ConsoleLiveWorkStatusCardState.from_launch(launch)
-        with Container(id=card_state.container_id, classes=card_state.container_classes):
-            yield Static(
+        children: list[Any] = [
+            Static(
                 card_state.badge_text,
                 id=card_state.badge_id,
                 classes=card_state.badge_classes,
             )
-            if card_state.primary_action is not None:
-                yield Button(
+        ]
+        if card_state.primary_action is not None:
+            children.append(
+                Button(
                     card_state.primary_action.label,
                     id=card_state.primary_action.widget_id,
                     classes=card_state.primary_action.classes,
                     variant="primary",
                 )
-            for row in card_state.rows:
-                yield Static(row.text, id=row.widget_id, classes=row.classes)
+            )
+        children.extend(
+            Static(row.text, id=row.widget_id, classes=row.classes)
+            for row in card_state.rows
+        )
+        return Container(
+            *children,
+            id=card_state.container_id,
+            classes=card_state.container_classes,
+        )
+
+    def _render_console_live_work_status_card(self, launch: ConsoleLiveWorkLaunch) -> ComposeResult:
+        """Render a reusable live-work status card for Console launch context."""
+        yield self._build_console_live_work_status_card(launch)
 
     def _console_library_rag_scope_label(self) -> str:
         return f"Scope: {', '.join(CONSOLE_LIBRARY_RAG_SOURCE_SCOPE)}"
@@ -6147,8 +6183,16 @@ class ChatScreen(BaseAppScreen):
         """Keep workspace context visually nested inside the framed left rail."""
         return "quiet"
 
-    def _render_console_live_work_source_readiness(self) -> ComposeResult:
-        """Render Console source readiness when no live-work item is staged."""
+    def _build_console_live_work_source_readiness_card(self) -> Container:
+        """Build the mounted source-readiness card shown without a launch.
+
+        Shared by compose-time rendering and the TASK-259 targeted card swap
+        (which mounts the returned container without recomposing the screen).
+
+        Returns:
+            The readiness container (id ``console-live-work-source-readiness``)
+            with title, Library RAG query controls, and per-source rows.
+        """
         acp_status = "not_configured"
         manager = getattr(self.app_instance, "acp_runtime_process_manager", None)
         snapshot = getattr(manager, "snapshot", None)
@@ -6157,36 +6201,48 @@ class ChatScreen(BaseAppScreen):
             if isinstance(raw_snapshot, dict):
                 acp_status = str(raw_snapshot.get("status") or acp_status)
         readiness = ConsoleLiveWorkSourceReadinessState.from_acp_runtime_status(acp_status)
-        container = Container(id=readiness.container_id, classes=readiness.container_classes)
-        container.styles.height = "auto"
-        container.styles.min_height = 0
-        with container:
-            yield Static(
+        query_ready = bool(
+            _sanitize_console_library_rag_query(self._console_library_rag_query)
+        )
+        children: list[Any] = [
+            Static(
                 readiness.title,
                 id=readiness.title_id,
                 classes=readiness.title_classes,
-            )
-            yield Static(
+            ),
+            Static(
                 self._console_library_rag_scope_label(),
                 id="console-library-rag-scope",
                 classes="destination-section console-library-rag-scope",
-            )
-            yield Input(
+            ),
+            Input(
                 value=self._console_library_rag_query,
                 placeholder="Ask Library sources before sending",
                 id="console-library-rag-query-input",
-            )
-            query_ready = bool(
-                _sanitize_console_library_rag_query(self._console_library_rag_query)
-            )
-            yield Button(
+            ),
+            Button(
                 "Run Library RAG",
                 id="console-run-library-rag",
                 disabled=not query_ready,
                 classes="destination-action-button console-library-rag-run",
-            )
-            for row in readiness.rows:
-                yield Static(row.text, id=row.widget_id, classes=row.classes)
+            ),
+        ]
+        children.extend(
+            Static(row.text, id=row.widget_id, classes=row.classes)
+            for row in readiness.rows
+        )
+        container = Container(
+            *children,
+            id=readiness.container_id,
+            classes=readiness.container_classes,
+        )
+        container.styles.height = "auto"
+        container.styles.min_height = 0
+        return container
+
+    def _render_console_live_work_source_readiness(self) -> ComposeResult:
+        """Render Console source readiness when no live-work item is staged."""
+        yield self._build_console_live_work_source_readiness_card()
 
     @on(Button.Pressed, "#console-live-work-primary-action")
     def handle_console_live_work_primary_action(self, event: Button.Pressed) -> None:
@@ -6255,8 +6311,108 @@ class ChatScreen(BaseAppScreen):
         self._execute_console_library_rag_search(request)
 
     def _stage_console_library_rag_launch(self, launch: ConsoleLiveWorkLaunch) -> None:
+        """Stage live-work launch context and refresh Console surfaces in place.
+
+        TASK-259: previously this recomposed the ENTIRE ChatScreen to show
+        one pending launch card. Now every mounted reader of
+        ``_pending_console_launch_context`` is refreshed with a targeted
+        update instead; the full recompose survives only as a fallback for
+        the never-composed case (Console shell not mounted yet).
+
+        Args:
+            launch: Live-work launch metadata to stage for Console.
+        """
         self._pending_console_launch_context = launch
-        self.refresh(recompose=True)
+        if not self._sync_console_pending_launch_surfaces():
+            self.refresh(recompose=True)
+
+    def _sync_console_pending_launch_surfaces(self) -> bool:
+        """Refresh every mounted reader of the pending launch context in place.
+
+        Reader audit (TASK-259) -- outputs of builders that read
+        ``_pending_console_launch_context`` and how each stays fresh here:
+
+        * ``_build_console_control_state`` -> control bar, Workbench header/
+          mode strip/command strip/recovery callout, hidden mode bar:
+          ``_sync_console_control_bar`` + ``_sync_console_mode_bar``.
+        * ``_build_console_inspector_state`` -> ``ConsoleRunInspector`` rows
+          and composer Chatbook action: pushed inside
+          ``_sync_console_control_bar``.
+        * ``_build_console_staged_context_state`` -> staged-context tray
+          (``_sync_console_staged_context_tray``), rail badges/summary and
+          the pending-launch inspector auto-open (both applied through the
+          rail-state build inside ``_sync_console_control_bar``), and the
+          settings context estimate (``_sync_console_settings_summary``).
+        * ``_current_console_workspace_context`` (staged sources include the
+          launch) -> workspace context + details trays:
+          ``_sync_console_workspace_context``.
+        * The pending-launch status card / source-readiness card in the
+          inspector rail: swapped via ``_apply_console_live_work_card_swap``.
+        * Remaining readers (``action_show_workbench_help``,
+          ``_sync_console_workbench_actions_from_draft``,
+          ``_console_send_blocked_reason``, the live-work/Chatbook button
+          handlers) build their state on demand at event time and cannot go
+          stale.
+
+        Returns:
+            True when the Console shell was mounted and synced; False when
+            the caller must fall back to a full recompose.
+        """
+        try:
+            self.query_one("#console-inspector-rail-body", VerticalScroll)
+        except QueryError:
+            return False
+        if not self._console_live_work_card_swap_scheduled:
+            self._console_live_work_card_swap_scheduled = True
+            self.call_later(self._apply_console_live_work_card_swap)
+        self._sync_console_staged_context_tray()
+        self._sync_console_control_bar()
+        self._sync_console_workspace_context()
+        self._sync_console_settings_summary()
+        self._sync_console_mode_bar()
+        return True
+
+    async def _apply_console_live_work_card_swap(self) -> None:
+        """Swap the inspector-rail live-work card to match the launch context.
+
+        Removes whichever of the pending-launch / source-readiness cards is
+        mounted, then mounts the card for the CURRENT context (re-read after
+        the awaits -- staging can happen again while a swap is in flight).
+        """
+        self._console_live_work_card_swap_scheduled = False
+        try:
+            rail_body = self.query_one("#console-inspector-rail-body", VerticalScroll)
+            anchor = self.query_one("#console-run-inspector", Vertical)
+        except QueryError:
+            return
+        for selector in (f"#{PENDING_LAUNCH_CARD_ID}", f"#{SOURCE_READINESS_CARD_ID}"):
+            try:
+                stale_card = self.query_one(selector)
+            except QueryError:
+                continue
+            await stale_card.remove()
+        launch = self._pending_console_launch_context
+        card = (
+            self._build_console_live_work_status_card(launch)
+            if launch is not None
+            else self._build_console_live_work_source_readiness_card()
+        )
+        await rail_body.mount(card, after=anchor)
+
+    def _sync_console_staged_context_tray(self) -> None:
+        """Refresh the mounted staged-context tray from the launch context."""
+        try:
+            tray = self.query_one(
+                "#console-staged-context-tray", ConsoleStagedContextTray
+            )
+        except QueryError:
+            return
+        state = self._build_console_staged_context_state(
+            self._pending_console_launch_context
+        )
+        tray.styles.min_height = 3 if state.is_empty else 4
+        tray.styles.max_height = 6 if state.is_empty else 10
+        tray.sync_state(state)
 
     @work(exclusive=True, group="console-library-rag-search")
     async def _execute_console_library_rag_search(self, request: LibraryRagSearchRequest) -> None:
@@ -6293,6 +6449,10 @@ class ChatScreen(BaseAppScreen):
             if recovery_state is not None
             else "Library Search/RAG did not return usable evidence."
         )
+        # TASK-259: set the auto-open flag BEFORE staging. Staging now syncs
+        # the rail state synchronously (no deferred screen recompose), so a
+        # flag set after the stage call would miss the rail-visibility pass.
+        self._pending_console_launch_auto_open_inspector = True
         self._stage_console_library_rag_launch(
             ConsoleLiveWorkLaunch.from_values(
                 source="Library Search/RAG",
@@ -6306,7 +6466,6 @@ class ChatScreen(BaseAppScreen):
                 action_label="Resolve Library RAG setup",
             )
         )
-        self._pending_console_launch_auto_open_inspector = True
         
     def compose_content(self) -> ComposeResult:
         """Compose the chat content."""

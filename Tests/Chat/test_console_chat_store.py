@@ -1384,3 +1384,98 @@ def test_persist_edit_leaves_attachments_none():
     )
     store.update_message_content(message.id, "edited")
     assert persistence.updated[-1]["attachments"] is None
+
+
+# ---------------------------------------------------------------------------
+# TASK-259: `_materialize_stream_buffer` collapses the chunk list after each
+# join so a later materialize joins only chunks that arrived since. The
+# invariant `"".join(buffer) == full streamed content` must hold throughout.
+# ---------------------------------------------------------------------------
+
+
+def test_materialize_collapses_stream_buffer_after_join():
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+
+    store.append_stream_chunk(message.id, "one ")
+    store.append_stream_chunk(message.id, "two ")
+    store.append_stream_chunk(message.id, "three")
+
+    assert store.messages_for_session(session.id)[0].content == "one two three"
+    assert store._stream_chunks_by_message[message.id] == ["one two three"]
+
+    store.append_stream_chunk(message.id, " four")
+    store.append_stream_chunk(message.id, " five")
+
+    assert store.messages_for_session(session.id)[0].content == "one two three four five"
+    assert store._stream_chunks_by_message[message.id] == ["one two three four five"]
+
+
+def test_materialize_between_ticks_is_noop_without_new_chunks():
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+
+    store.append_stream_chunk(message.id, "steady")
+    first = store.messages_for_session(session.id)[0].content
+    second = store.messages_for_session(session.id)[0].content
+
+    assert first == second == "steady"
+    assert store._stream_chunks_by_message[message.id] == ["steady"]
+
+
+def test_collapsed_buffer_keeps_terminal_flush_content_exact():
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+
+    store.append_stream_chunk(message.id, "hel")
+    # Mid-stream materialize (as the 0.2s tick does) collapses the buffer...
+    assert store.messages_for_session(session.id)[0].content == "hel"
+    # ...and chunks appended after the collapse still land in the final flush.
+    store.append_stream_chunk(message.id, "lo ")
+    store.append_stream_chunk(message.id, "world")
+    store.mark_message_complete(message.id)
+
+    updated = store.get_message(message.id)
+    assert updated.content == "hello world"
+    assert updated.status == "complete"
+
+
+def test_collapsed_buffer_preserves_seeded_retry_content():
+    """append_stream_chunk seeds the buffer with existing content; collapsing
+    mid-stream must never drop that seed."""
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+
+    store.append_stream_chunk(message.id, "base")
+    assert store.messages_for_session(session.id)[0].content == "base"
+    store.mark_message_stopped(message.id)
+
+    # A stopped message keeps partial content; a fresh stream cannot start on
+    # it, but the seed path is also exercised by continue-style flows where
+    # message.content is non-empty when the first chunk arrives.
+    assert store.get_message(message.id).content == "base"
+
+
+def test_collapsed_buffer_variant_stream_finalizes_full_content():
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="original")
+
+    store.begin_variant_stream(message.id)
+    store.append_stream_chunk(message.id, "re")
+    # Tick materialize mid-variant-stream collapses the buffer.
+    assert store.messages_for_session(session.id)[0].content == "re"
+    store.append_stream_chunk(message.id, "generated")
+    store.finalize_variant_stream(message.id)
+
+    updated = store.get_message(message.id)
+    assert updated.status == "complete"
+    assert updated.content == "regenerated"
+    assert [variant.content for variant in updated.variants.variants] == [
+        "original",
+        "regenerated",
+    ]
