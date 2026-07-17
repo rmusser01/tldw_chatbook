@@ -931,8 +931,6 @@ def summarize_with_cohere(api_key, input_data, custom_prompt_arg, temp=None, sys
         if temp is None:
             temp = 0.3
         temp = float(temp)
-        if system_message is None:
-            system_message = "You are a helpful AI assistant who does whatever the user requests."
 
         headers = {
             'accept': 'application/json',
@@ -986,7 +984,13 @@ def summarize_with_cohere(api_key, input_data, custom_prompt_arg, temp=None, sys
                 json=data,
                 stream=True  # Enable response streaming
             )
-            response.raise_for_status()
+            if response.status_code != 200:
+                # Same pinned format as the non-streaming path -- the old
+                # raise_for_status() surfaced a bodyless HTTPError through
+                # the outer except with a different string (task-297 review).
+                logging.error(
+                    f"Cohere: API request failed with status code {response.status_code}: {response.text}")
+                return f"Cohere: API request failed: {response.text}"
 
             def stream_generator():
                 # v2 streams SSE "data: {...}" events discriminated by
@@ -997,8 +1001,15 @@ def summarize_with_cohere(api_key, input_data, custom_prompt_arg, temp=None, sys
                     if not line:
                         continue
                     decoded_line = line.decode('utf-8').strip()
-                    if decoded_line.startswith("data:"):
-                        decoded_line = decoded_line[len("data:"):].strip()
+                    if not decoded_line.startswith("data:"):
+                        # Cohere v2 SSE interleaves standalone "event: <type>"
+                        # lines; without this skip they reach json.loads and
+                        # log a misleading decode "error" per line (mirrors
+                        # chat_with_cohere's filter, task-297 review).
+                        if not decoded_line.startswith("event:"):
+                            logging.warning(f"Cohere: Unexpected SSE line: {decoded_line[:120]}")
+                        continue
+                    decoded_line = decoded_line[len("data:"):].strip()
                     if not decoded_line or decoded_line == "[DONE]":
                         continue
                     try:

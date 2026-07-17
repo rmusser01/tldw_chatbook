@@ -137,3 +137,45 @@ def test_missing_api_key_short_circuits_without_network(mock_post, mock_setting)
 
     assert result == "Cohere: API Key Not Provided/Found in Config file or is empty"
     mock_post.assert_not_called()
+
+
+@patch("requests.Session.post")
+def test_streaming_skips_interleaved_event_lines_without_log_noise(mock_post):
+    """task-297 review: Cohere v2 SSE interleaves standalone 'event: <type>'
+    lines; they must be skipped before json.loads, not logged as decode
+    errors."""
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.raise_for_status = Mock()
+    mock_response.iter_lines.return_value = [
+        b"event: message-start",
+        b'data: {"type": "message-start"}',
+        b"event: content-delta",
+        b'data: {"type": "content-delta", "delta": {"message": {"content": {"text": "Hi."}}}}',
+        b"event: message-end",
+        b'data: {"type": "message-end", "delta": {"finish_reason": "COMPLETE"}}',
+    ]
+    mock_post.return_value = mock_response
+
+    chunks = list(summarize_with_cohere(
+        "test-key", "Text.", "Prompt.", streaming=True,
+    ))
+
+    assert chunks == ["Hi."]
+
+
+@patch("requests.Session.post")
+def test_streaming_non_200_reports_the_same_pinned_error_format(mock_post):
+    """task-297 review: a streaming-path 4xx must report the same
+    'Cohere: API request failed: ...' format as the non-streaming path
+    (raise_for_status used to surface a bodyless HTTPError instead)."""
+    mock_response = Mock()
+    mock_response.status_code = 400
+    mock_response.text = '{"message": "bad request"}'
+    mock_post.return_value = mock_response
+
+    result = summarize_with_cohere(
+        "test-key", "Text.", "Prompt.", streaming=True,
+    )
+
+    assert result == 'Cohere: API request failed: {"message": "bad request"}'
