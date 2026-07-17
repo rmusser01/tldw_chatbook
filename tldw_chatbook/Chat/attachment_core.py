@@ -355,19 +355,29 @@ async def process_attachment_bytes(
     )
 
 
-def vision_block_reason(provider: str, model: str | None) -> str | None:
+def vision_block_reason(
+    provider: str,
+    model: str | None,
+    *,
+    is_capable: Any | None = None,
+) -> str | None:
     """Return user-facing blocked-send copy when the model can't accept images.
 
     Args:
         provider: Provider key for the capability lookup (e.g. "llama_cpp").
         model: Selected model identifier, or None when no model is chosen.
+        is_capable: Optional capability predicate ``(provider, model) -> bool``
+            overriding this module's ``is_vision_capable`` — callers with
+            their own patchable capability seam (the Console controller)
+            inject it so ONE check decides both the gate and the copy.
 
     Returns:
         None when the model is vision-capable; otherwise the blocked-send
         copy, which names the model and the [model_capabilities.models]
         config override escape hatch.
     """
-    if model and is_vision_capable(provider, model):
+    checker = is_capable if is_capable is not None else is_vision_capable
+    if model and checker(provider, model):
         return None
     model_label = model or "the selected model"
     return (
