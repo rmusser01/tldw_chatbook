@@ -16,7 +16,8 @@ def test_capability_set_membership():
     assert provider_supports_native_tools("OpenAI")   # case-insensitive
     assert not provider_supports_native_tools("llama_cpp")
     assert not provider_supports_native_tools("local_llamacpp")
-    assert not provider_supports_native_tools("anthropic")  # normalizer drops tool_use
+    assert provider_supports_native_tools("anthropic")  # converted (task-263)
+    assert not provider_supports_native_tools("google")  # normalizer drops tool_use
     assert not provider_supports_native_tools("")
     assert not provider_supports_native_tools(None)
 
