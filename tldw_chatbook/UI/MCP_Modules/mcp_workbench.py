@@ -1303,21 +1303,34 @@ class MCPWorkbench(Container):
                     )
                 )
 
-        preview = self._build_permission_preview(tools_by_server, labels_by_key, effective, global_label)
+        preview = self._build_permission_preview(
+            rows, tools_by_server, labels_by_key, effective, global_label
+        )
         return rows, preview
 
     def _build_permission_preview(
         self,
+        rows: list[PermRow],
         tools_by_server: dict[str, list[HubTool]],
         labels_by_key: dict[str, str],
         effective: dict[tuple[str, str], EffectiveToolState],
         global_label: str,
     ) -> str:
-        """One plain-language sentence, scoped to the rail's currently
-        selected server when that server has any discovered tools --
-        `"<label>: N allowed, M asks, K off. Global default: <Global>."`
-        -- else just the global default alone.
+        """One plain-language sentence -- UX batch item 9: Library counts-
+        line vocabulary (lowercase state words, no noun, " · " separators,
+        no trailing period -- `library_ingest_state._queue_counts_line()`'s
+        own precedent), scoped to the rail's currently selected server when
+        that server has any discovered tools:
+        `"<label>: N allow · M ask · K off — global default: <word>"`.
+
+        With no selection (or the selected server has no discovered
+        tools): `"global default: <word>"`, plus a
+        `" · N overrides across M servers"` suffix when at least one
+        explicit server- or tool-level override exists anywhere in `rows`
+        (omitted entirely when there are none, rather than a "0 overrides"
+        segment nobody needs).
         """
+        global_word = global_label.lower()
         server_key = self._selected_server_key
         tools = tools_by_server.get(server_key) if server_key else None
         if tools:
@@ -1328,10 +1341,19 @@ class MCPWorkbench(Container):
                 counts[state] = counts.get(state, 0) + 1
             label = labels_by_key.get(server_key, server_key)
             return (
-                f"{label}: {counts['allow']} allowed, {counts['ask']} asks, "
-                f"{counts['deny']} off. Global default: {global_label}."
+                f"{label}: {counts['allow']} allow · {counts['ask']} ask · "
+                f"{counts['deny']} off — global default: {global_word}"
             )
-        return f"Global default: {global_label}."
+        override_rows = [
+            row for row in rows if row.kind in ("server", "tool") and row.cycle_current is not None
+        ]
+        if not override_rows:
+            return f"global default: {global_word}"
+        override_servers = {row.server_key for row in override_rows}
+        return (
+            f"global default: {global_word} · {len(override_rows)} overrides "
+            f"across {len(override_servers)} servers"
+        )
 
     async def on_mcp_permissions_mode_state_cycle_requested(
         self, event: MCPPermissionsMode.StateCycleRequested

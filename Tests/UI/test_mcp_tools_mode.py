@@ -438,6 +438,78 @@ async def test_server_select_options_reflect_current_catalog_and_prune_stale_fil
         assert table.row_count == 1
 
 
+# -- UX batch item 11: adaptive Tags column ----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_tags_column_omitted_when_no_tool_has_tags():
+    app = ToolsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPToolsMode)
+        await canvas.update_tools(
+            [_tool(server_key="local:docs", server_label="docs", name="search")],
+            empty_diagnosis=None,
+        )
+        await pilot.pause()
+        table = app.query_one("#mcp-tools-table", DataTable)
+        columns = [str(col.label) for col in table.ordered_columns]
+        assert columns == ["Tool", "State", "Server", "Schema"]
+        assert len(table.get_row_at(0)) == 4
+
+
+@pytest.mark.asyncio
+async def test_tags_column_shown_when_any_tool_has_tags():
+    app = ToolsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPToolsMode)
+        await canvas.update_tools(
+            [
+                _tool(server_key="local:docs", server_label="docs", name="bare"),
+                _tool(
+                    server_key="local:docs", server_label="docs", name="tagged",
+                    tags=("network",),
+                ),
+            ],
+            empty_diagnosis=None,
+        )
+        await pilot.pause()
+        table = app.query_one("#mcp-tools-table", DataTable)
+        columns = [str(col.label) for col in table.ordered_columns]
+        assert columns == ["Tool", "State", "Server", "Tags", "Schema"]
+        assert len(table.get_row_at(0)) == 5
+
+
+@pytest.mark.asyncio
+async def test_tags_column_stays_stable_while_filtering_to_a_tagless_subset():
+    """The column choice is decided from the FULL catalog once per
+    `update_tools()` call, not recomputed against the filtered subset --
+    otherwise the column would flicker away while the user is mid-typing a
+    filter that happens to narrow to tagless rows."""
+    app = ToolsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPToolsMode)
+        await canvas.update_tools(
+            [
+                _tool(server_key="local:docs", server_label="docs", name="bare"),
+                _tool(
+                    server_key="local:docs", server_label="docs", name="tagged",
+                    tags=("network",),
+                ),
+            ],
+            empty_diagnosis=None,
+        )
+        await pilot.pause()
+
+        text_input = app.query_one("#mcp-tools-filter-text", Input)
+        text_input.value = "bare"
+        await pilot.pause()
+
+        table = app.query_one("#mcp-tools-table", DataTable)
+        assert table.row_count == 1
+        columns = [str(col.label) for col in table.ordered_columns]
+        assert columns == ["Tool", "State", "Server", "Tags", "Schema"]
+
+
 def test_tools_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
     """T7 (P3 UX batch) gave `#mcp-tools-table` `height: auto; max-height:
     70%;` in `MCPToolsMode.DEFAULT_CSS` alone -- no matching rule was ever

@@ -3801,12 +3801,12 @@ async def test_permissions_mode_renders_pinned_grouped_sorted_matrix(tmp_path):
 
         table = app.query_one("#mcp-perm-table", DataTable)
         assert table.row_count == 6
-        assert _perm_table_texts(app, 0) == ["Global default", "Ask", "—"]
-        assert _perm_table_texts(app, 1) == ["Server default — docs", "Ask", "—"]
-        assert _perm_table_texts(app, 2) == ["fetch", "Ask", "—"]
-        assert _perm_table_texts(app, 3) == ["search", "Ask", "—"]
-        assert _perm_table_texts(app, 4) == ["Server default — notes", "Ask", "—"]
-        assert _perm_table_texts(app, 5) == ["list_notes", "Ask", "—"]
+        assert _perm_table_texts(app, 0) == ["Global default", "Ask"]
+        assert _perm_table_texts(app, 1) == ["Server default — docs", "Ask"]
+        assert _perm_table_texts(app, 2) == ["  fetch", "Ask"]
+        assert _perm_table_texts(app, 3) == ["  search", "Ask"]
+        assert _perm_table_texts(app, 4) == ["Server default — notes", "Ask"]
+        assert _perm_table_texts(app, 5) == ["  list_notes", "Ask"]
 
         expected_keys = [
             "__global__",
@@ -3821,7 +3821,7 @@ async def test_permissions_mode_renders_pinned_grouped_sorted_matrix(tmp_path):
             assert row_key.value == expected_key
 
         preview = app.query_one("#mcp-perm-preview", Static)
-        assert str(preview.renderable) == "Global default: Ask."
+        assert str(preview.renderable) == "global default: ask"
 
 
 @pytest.mark.asyncio
@@ -3848,10 +3848,10 @@ async def test_space_cycle_round_trip_mutates_store_and_rerenders_override_marke
         tool_entry = payload["profiles"]["default"]["servers"]["local:docs"]["tools"]["search"]
         assert tool_entry["state"] == "allow"
 
-        assert _perm_table_texts(app, 3) == ["search", "Allow •", "—"]
+        assert _perm_table_texts(app, 3) == ["  search", "Allow •"]
         # Sibling rows are untouched by the single-row mutation.
-        assert _perm_table_texts(app, 2) == ["fetch", "Ask", "—"]
-        assert _perm_table_texts(app, 0) == ["Global default", "Ask", "—"]
+        assert _perm_table_texts(app, 2) == ["  fetch", "Ask"]
+        assert _perm_table_texts(app, 0) == ["Global default", "Ask"]
 
 
 @pytest.mark.asyncio
@@ -3873,7 +3873,7 @@ async def test_space_on_server_default_row_round_trips_through_store(tmp_path):
 
         payload = app.unified_mcp_service.permission_store.load()
         assert payload["profiles"]["default"]["servers"]["local:docs"]["default"] == "allow"
-        assert _perm_table_texts(app, 1) == ["Server default — docs", "Allow •", "—"]
+        assert _perm_table_texts(app, 1) == ["Server default — docs", "Allow •"]
 
 
 @pytest.mark.asyncio
@@ -3896,7 +3896,7 @@ async def test_space_on_global_row_round_trips_through_store(tmp_path):
         payload = app.unified_mcp_service.permission_store.load()
         # cycle_global("ask") == "deny"
         assert payload["profiles"]["default"]["global_default"] == "deny"
-        assert _perm_table_texts(app, 0) == ["Global default", "Off", "—"]
+        assert _perm_table_texts(app, 0) == ["Global default", "Off"]
 
 
 @pytest.mark.asyncio
@@ -3908,27 +3908,29 @@ async def test_kill_switch_toggle_round_trip_persists_and_resyncs(tmp_path):
         workbench.set_mode("permissions")
         await pilot.pause()
 
-        checkbox = app.query_one("#mcp-perm-kill-switch", Checkbox)
-        assert checkbox.value is False
+        button = app.query_one("#mcp-perm-kill-switch", Button)
+        assert str(button.label) == "block MCP tools in chat: no ▸"
         await pilot.click("#mcp-perm-kill-switch")
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
 
         assert app.unified_mcp_service.get_kill_switch() is True
-        assert checkbox.value is True
+        assert str(button.label) == "block MCP tools in chat: yes ▸"
 
 
 @pytest.mark.asyncio
 async def test_kill_switch_starting_true_renders_without_extra_toggle(tmp_path):
-    """A resync that pushes a kill_switch value DIFFERENT from the
-    checkbox's constructor default (False) must not itself post a second
-    `KillSwitchToggled` -- `MCPPermissionsMode.update_matrix()`'s
-    `checkbox.prevent(Checkbox.Changed)` guard covers exactly this. Proven
-    here by asserting the store still reads back exactly the seeded value
-    after the mount-time resync -- a phantom echo would have round-tripped
-    through `set_kill_switch()` too (harmlessly idempotent in THIS case,
-    but the widget-level test suite pins the zero-events contract directly)."""
+    """A resync that pushes a kill_switch value DIFFERENT from the Button's
+    constructor default (False) must not itself post a `KillSwitchToggled`
+    -- `MCPPermissionsMode.update_matrix()` only ever relabels the Button,
+    which posts no message of its own (unlike the old Checkbox's `.value =`
+    assignment, which needed an explicit `prevent(Checkbox.Changed)` guard).
+    Proven here by asserting the store still reads back exactly the seeded
+    value after the mount-time resync -- a phantom echo would have
+    round-tripped through `set_kill_switch()` too (harmlessly idempotent in
+    THIS case, but the widget-level test suite pins the zero-events
+    contract directly)."""
     store_path = tmp_path / "mcp_permissions.json"
     MCPPermissionStore(store_path).set_kill_switch(True)
     app = PermissionsApp(store_path)
@@ -3937,8 +3939,8 @@ async def test_kill_switch_starting_true_renders_without_extra_toggle(tmp_path):
         workbench = app.query_one(MCPWorkbench)
         workbench.set_mode("permissions")
         await pilot.pause()
-        checkbox = app.query_one("#mcp-perm-kill-switch", Checkbox)
-        assert checkbox.value is True
+        button = app.query_one("#mcp-perm-kill-switch", Button)
+        assert str(button.label) == "block MCP tools in chat: yes ▸"
         assert app.unified_mcp_service.get_kill_switch() is True
 
 
@@ -3952,14 +3954,42 @@ async def test_preview_scoped_to_rail_selection(tmp_path):
         await pilot.pause()
 
         preview = app.query_one("#mcp-perm-preview", Static)
-        assert str(preview.renderable) == "Global default: Ask."
+        assert str(preview.renderable) == "global default: ask"
 
         rail = app.query_one(MCPRail)
         rail.post_message(MCPRail.ServerSelected("local:docs"))
         await pilot.pause()
 
         assert str(preview.renderable) == (
-            "docs: 0 allowed, 2 asks, 0 off. Global default: Ask."
+            "docs: 0 allow · 2 ask · 0 off — global default: ask"
+        )
+
+
+@pytest.mark.asyncio
+async def test_preview_shows_override_count_when_no_server_selected(tmp_path):
+    """UX batch item 9: with no rail selection, the preview is just the
+    global default -- plus an override-count suffix once at least one
+    explicit server/tool override exists anywhere in the matrix."""
+    app = PermissionsApp(tmp_path / "mcp_permissions.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        preview = app.query_one("#mcp-perm-preview", Static)
+        assert str(preview.renderable) == "global default: ask"
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=3)  # local:docs::search
+        await pilot.press("space")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert str(preview.renderable) == (
+            "global default: ask · 1 overrides across 1 servers"
         )
 
 
@@ -3981,9 +4011,9 @@ async def test_permissions_mode_renders_fail_soft_without_t4_seams():
 
         table = app.query_one("#mcp-perm-table", DataTable)
         assert table.row_count >= 1
-        assert _perm_table_texts(app, 0) == ["Global default", "Ask", "—"]
-        checkbox = app.query_one("#mcp-perm-kill-switch", Checkbox)
-        assert checkbox.value is False
+        assert _perm_table_texts(app, 0) == ["Global default", "Ask"]
+        button = app.query_one("#mcp-perm-kill-switch", Button)
+        assert str(button.label) == "block MCP tools in chat: no ▸"
 
 
 @pytest.mark.asyncio
@@ -4022,8 +4052,8 @@ async def test_double_space_cycle_on_tool_row_stays_on_that_row(tmp_path):
         # cycle_ui_state(None) == "allow", cycle_ui_state("allow") == "ask"
         assert tool_entry["state"] == "ask"
         assert payload["profiles"]["default"]["global_default"] == "ask"
-        assert _perm_table_texts(app, 3) == ["search", "Ask •", "—"]
-        assert _perm_table_texts(app, 0) == ["Global default", "Ask", "—"]
+        assert _perm_table_texts(app, 3) == ["  search", "Ask •"]
+        assert _perm_table_texts(app, 0) == ["Global default", "Ask"]
 
 
 @pytest.mark.asyncio
@@ -4229,7 +4259,7 @@ async def test_reallow_round_trip_clears_config_changed_marker_and_matrix_warnin
         workbench.set_mode("permissions")
         await pilot.pause()
 
-        assert _perm_table_texts(app, 3) == ["search", "Ask ⚠", "—"]
+        assert _perm_table_texts(app, 3) == ["  search", "Ask ⚠"]
 
         table = app.query_one("#mcp-perm-table", DataTable)
         table.focus()
@@ -4250,7 +4280,7 @@ async def test_reallow_round_trip_clears_config_changed_marker_and_matrix_warnin
         tool_entry = payload["profiles"]["default"]["servers"]["local:docs"]["tools"]["search"]
         assert tool_entry["state"] == "allow"
 
-        assert _perm_table_texts(app, 3) == ["search", "Allow •", "—"]
+        assert _perm_table_texts(app, 3) == ["  search", "Allow •"]
         assert not list(app.query("#mcp-inspector-reallow"))
 
 
@@ -4311,9 +4341,9 @@ async def test_invalid_global_default_renders_ask_instead_of_panicking(tmp_path)
         workbench.set_mode("permissions")
         await pilot.pause()
 
-        assert _perm_table_texts(app, 0) == ["Global default", "Ask", "—"]
+        assert _perm_table_texts(app, 0) == ["Global default", "Ask"]
         # row 2: docs::fetch -- inherits the (invalid) global default.
-        assert _perm_table_texts(app, 2) == ["fetch", "Ask", "—"]
+        assert _perm_table_texts(app, 2) == ["  fetch", "Ask"]
 
 
 # -- T8: Tools-mode State column + server-source governance listing ---------
@@ -4392,7 +4422,7 @@ async def test_space_cycle_propagates_fresh_states_to_tools_mode_without_full_re
         await app.workers.wait_for_complete()
         await pilot.pause()
 
-        assert _perm_table_texts(app, 3) == ["search", "Allow •", "—"]
+        assert _perm_table_texts(app, 3) == ["  search", "Allow •"]
 
         # Switch to Tools mode WITHOUT a full resync (no `r` keypress, no
         # `_sync_children()` call) -- `set_mode()` only swaps the
@@ -4421,7 +4451,7 @@ async def test_reallow_propagates_fresh_states_to_tools_mode_without_full_resync
         workbench.set_mode("permissions")
         await pilot.pause()
 
-        assert _perm_table_texts(app, 3) == ["search", "Ask ⚠", "—"]
+        assert _perm_table_texts(app, 3) == ["  search", "Ask ⚠"]
         assert _tools_table_state(app, "search") == "Ask ⚠"
 
         table = app.query_one("#mcp-perm-table", DataTable)
@@ -4435,7 +4465,7 @@ async def test_reallow_propagates_fresh_states_to_tools_mode_without_full_resync
         await app.workers.wait_for_complete()
         await pilot.pause()
 
-        assert _perm_table_texts(app, 3) == ["search", "Allow •", "—"]
+        assert _perm_table_texts(app, 3) == ["  search", "Allow •"]
 
         workbench.set_mode("tools")
         await pilot.pause()

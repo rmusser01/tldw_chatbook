@@ -24,7 +24,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.message import Message
-from textual.widgets import Checkbox, DataTable, Static
+from textual.widgets import Button, DataTable, Static
 
 from tldw_chatbook.MCP.permission_store import (
     DEFAULT_GLOBAL,
@@ -34,6 +34,26 @@ from tldw_chatbook.MCP.permission_store import (
 )
 
 _TABLE_COLUMNS = ("Tool", "State", "Tags")
+# UX batch item 11: the Tags column is omitted entirely when no row in the
+# current matrix carries a real tag -- mirrors `mcp_servers_mode.py`'s own
+# per-source `_TABLE_COLUMNS_NO_SCOPE` precedent (Task 11 there): columns
+# are rebuilt from scratch on every `update_matrix()` call.
+_TABLE_COLUMNS_NO_TAGS = _TABLE_COLUMNS[:-1]
+
+# UX batch item 10: tool rows are indented two spaces under their pinned
+# "Server default — X" row -- Console/Library hierarchy idiom (label prefix
+# only; row keys are unaffected).
+_TOOL_ROW_INDENT = "  "
+
+# UX batch item 4: a fixed, dimmed marker-key line under the policy preview
+# -- explains the matrix's own State-column glyphs (bullet/warning/flag) and
+# gives Space-cycling minimal discoverability. Static content (not derived
+# from any PermRow), so it's set once at compose time rather than threaded
+# through `update_matrix()`.
+_LEGEND_TEXT = (
+    "• override · ⚠ definition changed · ⚑ high-risk floor · "
+    "Space cycles Inherit → Allow → Ask → Off"
+)
 
 # T8: exact copy pinned by the server-source governance section below --
 # tests assert this verbatim, so any copy change must happen here (single
@@ -156,12 +176,29 @@ def _row_key(row: PermRow) -> str:
     return f"{row.server_key}::{row.tool_name}"
 
 
+def _kill_switch_label(value: bool) -> str:
+    """Render the kill-switch toggle Button's label.
+
+    UX batch items 2+3: Console/Library deliberately avoid Textual
+    Checkbox/Switch (see `library_skills_canvas.skill_user_invocable_label()`
+    and the rationale docstring at `library_notes_canvas.py`'s sync-panel
+    compose method -- neither control renders reliably in this app's
+    canvases). Spelling the boolean out in the label itself also resolves
+    the checked-polarity trap a Checkbox would have here (checked == MCP
+    tools BLOCKED, an inverted "checked means on" reading) and the
+    invisible-unchecked-glyph CSS problem the old Checkbox needed a
+    defensive `min-height` bundle workaround for (T6/T9) -- both moot for a
+    Button.
+    """
+    return f"block MCP tools in chat: {'yes' if value else 'no'} ▸"
+
+
 def _tool_column_text(row: PermRow) -> str:
     if row.kind == "global":
         return "Global default"
     if row.kind == "server":
         return f"Server default — {row.server_label}"
-    return row.tool_name or ""
+    return f"{_TOOL_ROW_INDENT}{row.tool_name or ''}"
 
 
 class MCPPermissionsMode(Vertical):
@@ -172,21 +209,6 @@ class MCPPermissionsMode(Vertical):
         width: 1fr;
         height: 100%;
         min-height: 0;
-    }
-    /* Defensive against a PRE-EXISTING bundle defect (verified empirically,
-    same family as Phase 3's Select-collapse Defect 1): the app bundle's
-    bare, unscoped `Checkbox { height: 2; }` rule (a different component's
-    global rule) wins over even a compact Checkbox's OWN `!important`
-    border-removal DEFAULT_CSS -- a fixed 2-row Checkbox still renders its
-    (non-removable, from this override's perspective) 1-row-top + 1-row-
-    bottom border, leaving ZERO rows for content. `height` itself can't be
-    reclaimed here without editing the bundle (Task 9's scope, not this
-    one) -- but `min-height`, a DIFFERENT property the bundle rule never
-    touches, still applies per-declaration and forces enough total room for
-    one visible content row. */
-    #mcp-perm-kill-switch {
-        height: auto;
-        min-height: 3;
     }
     /* Mirrors MCPToolsMode/MCPServersMode's own #mcp-tools-table /
     #mcp-servers-table rule (T7, P3 UX batch): height: auto + max-height so
@@ -200,6 +222,19 @@ class MCPPermissionsMode(Vertical):
     #mcp-perm-preview {
         height: auto;
         min-height: 0;
+    }
+    /* UX batch item 4: the legend is a single dimmed hint line -- same
+    muted tier as the disabled-inspector-action-button color
+    (mcp_inspector.py's Button.mcp-inspector-action:disabled) and Library's
+    own `.library-prompt-field-hint` (library_skills_canvas.py). Uses the
+    raw `$text-muted` token rather than the project's `$ds-text-muted`
+    alias, same rationale as mcp_inspector.py's own disabled-button rule:
+    this widget's unit tests mount it without the app-wide tcss bundle
+    where the `$ds-*` aliases are defined. */
+    #mcp-perm-legend {
+        height: auto;
+        min-height: 0;
+        color: $text-muted;
     }
     /* T8: the server-source governance section is a plain read-only
     listing (a handful of Static rows at most) -- hugs its own content,
@@ -240,9 +275,12 @@ class MCPPermissionsMode(Vertical):
             self.new_state = new_state
 
     class KillSwitchToggled(Message, namespace="mcp_permissions_mode"):
-        """Posted once per genuine user toggle of `#mcp-perm-kill-switch` --
-        never for `update_matrix()`'s own programmatic sync (see that
-        method's `checkbox.prevent(Checkbox.Changed)` guard)."""
+        """Posted once per press of `#mcp-perm-kill-switch` (a Library-style
+        toggle Button, not a Checkbox -- see `_kill_switch_label()`).
+        `value` is the NEXT state (`not` whatever `update_matrix()` last
+        synced this widget to) -- the workbench applies it and resyncs this
+        canvas with the resolved value, same single-writer contract as
+        `StateCycleRequested`."""
 
         def __init__(self, value: bool) -> None:
             super().__init__()
@@ -271,22 +309,28 @@ class MCPPermissionsMode(Vertical):
         super().__init__(**kwargs)
         self._rows: list[PermRow] = []
         self._rows_by_key: dict[str, PermRow] = {}
+        # UX batch items 2+3: the kill switch's current state, tracked here
+        # (a Button carries no `.value` of its own the way a Checkbox did)
+        # -- `update_matrix()` is the single writer; a press posts
+        # `KillSwitchToggled(not self._kill_switch)`.
+        self._kill_switch: bool = False
 
     def compose(self) -> ComposeResult:
-        yield Checkbox(
-            "MCP tools in chat",
-            value=False,
+        yield Button(
+            _kill_switch_label(self._kill_switch),
             id="mcp-perm-kill-switch",
+            classes="console-action-secondary",
             compact=True,
             tooltip=(
-                "Master switch for chat tool calls (arrives with the chat "
-                "bridge). Does not affect Hub tool tests."
+                "Master kill switch for chat tool calls — takes effect with "
+                "the chat bridge. Does not affect Hub tool tests."
             ),
         )
         table = DataTable(id="mcp-perm-table")
         table.cursor_type = "row"
         yield table
         yield Static("", id="mcp-perm-preview", markup=False)
+        yield Static(_LEGEND_TEXT, id="mcp-perm-legend", markup=False)
         # T8: dedicated slot container for the server-source governance
         # listing -- mirrors `MCPToolsMode`'s own
         # `#mcp-tools-filter-server-slot` pattern (a persistent empty
@@ -335,15 +379,12 @@ class MCPPermissionsMode(Vertical):
         self._rows = rows
         self._rows_by_key = {_row_key(row): row for row in rows}
 
-        checkbox = self.query_one("#mcp-perm-kill-switch", Checkbox)
-        # Programmatic sync from the workbench, never a user toggle -- must
-        # not echo back as a KillSwitchToggled. `ToggleButton.__init__`
-        # already suppresses its OWN constructor-value echo the same way
-        # (see mcp_servers_mode.py's `on_checkbox_changed` docstring for the
-        # verified-against-source precedent); this guards the same class's
-        # post-mount `.value =` assignment, which is not otherwise silent.
-        with checkbox.prevent(Checkbox.Changed):
-            checkbox.value = kill_switch
+        # UX batch items 2+3: a Button has no `.value` echo to guard against
+        # (unlike the old Checkbox's `prevent(Checkbox.Changed)` -- setting
+        # `.label` posts no message at all) -- just track the state and
+        # relabel.
+        self._kill_switch = kill_switch
+        self.query_one("#mcp-perm-kill-switch", Button).label = _kill_switch_label(kill_switch)
 
         table = self.query_one("#mcp-perm-table", DataTable)
 
@@ -369,14 +410,19 @@ class MCPPermissionsMode(Vertical):
             if row_key is not None and row_key.value is not None:
                 cursor_key = str(row_key.value)
 
-        table.clear()
+        # UX batch item 11: the Tags column is omitted entirely when no row
+        # in this batch carries a real tag -- columns are rebuilt from
+        # scratch every call (`clear(columns=True)`), mirroring
+        # `mcp_servers_mode.py`'s own per-source Scope-column precedent
+        # (Task 11 there).
+        show_tags = any(row.tags_label not in ("—", "") for row in rows)
+        table.clear(columns=True)
+        table.add_columns(*(_TABLE_COLUMNS if show_tags else _TABLE_COLUMNS_NO_TAGS))
         for row in rows:
-            table.add_row(
-                Text(_tool_column_text(row)),
-                Text(row.state_label),
-                Text(row.tags_label),
-                key=_row_key(row),
-            )
+            row_cells: list[Any] = [Text(_tool_column_text(row)), Text(row.state_label)]
+            if show_tags:
+                row_cells.append(Text(row.tags_label))
+            table.add_row(*row_cells, key=_row_key(row))
 
         if cursor_key is not None:
             for index, row in enumerate(rows):
@@ -437,11 +483,11 @@ class MCPPermissionsMode(Vertical):
 
     # -- events -----------------------------------------------------------
 
-    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
-        if event.checkbox.id != "mcp-perm-kill-switch":
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id != "mcp-perm-kill-switch":
             return
         event.stop()
-        self.post_message(self.KillSwitchToggled(event.value))
+        self.post_message(self.KillSwitchToggled(not self._kill_switch))
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """T7: resolve the selected row back to the `PermRow` it renders

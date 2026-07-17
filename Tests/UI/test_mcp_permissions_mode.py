@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Checkbox, DataTable, Static
+from textual.widgets import Button, DataTable, Static
 
 import tldw_chatbook
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
@@ -140,12 +140,15 @@ async def test_rows_render_in_given_order_with_pinned_row_keys():
         table = app.query_one("#mcp-perm-table", DataTable)
         assert table.row_count == 6
 
+        # UX batch item 10: tool-row labels get a two-space indent under
+        # their "Server default — X" row; the pinned global/server rows
+        # themselves are never indented.
         assert _row_texts(table, 0) == ["Global default", "Ask", "—"]
         assert _row_texts(table, 1) == ["Server default — docs", "Ask", "—"]
-        assert _row_texts(table, 2) == ["fetch", "Ask", "—"]
-        assert _row_texts(table, 3) == ["search", "Allow •", "network"]
+        assert _row_texts(table, 2) == ["  fetch", "Ask", "—"]
+        assert _row_texts(table, 3) == ["  search", "Allow •", "network"]
         assert _row_texts(table, 4) == ["Server default — notes", "Off •", "—"]
-        assert _row_texts(table, 5) == ["list_notes", "Off •", "—"]
+        assert _row_texts(table, 5) == ["  list_notes", "Off •", "—"]
 
         expected_keys = [
             "__global__",
@@ -191,7 +194,9 @@ async def test_update_matrix_skips_duplicate_row_keys_instead_of_crashing():
 
         table = app.query_one("#mcp-perm-table", DataTable)
         assert table.row_count == 2
-        assert _row_texts(table, 1) == ["search", "Ask", "—"]
+        # No row in this batch carries a tag -- Tags column omitted (item
+        # 11); the surviving tool row is indented (item 10).
+        assert _row_texts(table, 1) == ["  search", "Ask"]
 
 
 @pytest.mark.asyncio
@@ -212,7 +217,8 @@ async def test_state_label_renders_verbatim_and_markup_safe():
         await canvas.update_matrix(rows, kill_switch=False, preview="")
         await pilot.pause()
         table = app.query_one("#mcp-perm-table", DataTable)
-        assert _row_texts(table, 1) == ["Server default — [bold red]x", "Ask ⚠", "—"]
+        # No row in this batch carries a tag -- Tags column omitted (item 11).
+        assert _row_texts(table, 1) == ["Server default — [bold red]x", "Ask ⚠"]
 
 
 # -- kill switch ----------------------------------------------------------
@@ -227,19 +233,27 @@ async def test_mount_alone_posts_no_kill_switch_event():
 
 
 @pytest.mark.asyncio
-async def test_update_matrix_sets_kill_switch_without_posting_mount_echo():
+async def test_update_matrix_sets_kill_switch_label_without_posting_a_toggle():
     app = PermissionsModeApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPPermissionsMode)
         await canvas.update_matrix([_global_row()], kill_switch=True, preview="")
         await pilot.pause()
-        checkbox = app.query_one("#mcp-perm-kill-switch", Checkbox)
-        assert checkbox.value is True
+        button = app.query_one("#mcp-perm-kill-switch", Button)
+        assert str(button.label) == "block MCP tools in chat: yes ▸"
         assert app.events == []
 
 
 @pytest.mark.asyncio
-async def test_user_toggle_posts_kill_switch_toggled_exactly_once():
+async def test_kill_switch_button_default_label_reads_no():
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        button = app.query_one("#mcp-perm-kill-switch", Button)
+        assert str(button.label) == "block MCP tools in chat: no ▸"
+
+
+@pytest.mark.asyncio
+async def test_user_press_posts_kill_switch_toggled_exactly_once():
     app = PermissionsModeApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPPermissionsMode)
@@ -251,6 +265,21 @@ async def test_user_toggle_posts_kill_switch_toggled_exactly_once():
         event = app.events[0]
         assert isinstance(event, MCPPermissionsMode.KillSwitchToggled)
         assert event.value is True
+
+
+@pytest.mark.asyncio
+async def test_user_press_toggles_off_when_currently_on():
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        await canvas.update_matrix([_global_row()], kill_switch=True, preview="")
+        await pilot.pause()
+        await pilot.click("#mcp-perm-kill-switch")
+        await pilot.pause()
+        assert len(app.events) == 1
+        event = app.events[0]
+        assert isinstance(event, MCPPermissionsMode.KillSwitchToggled)
+        assert event.value is False
 
 
 # -- Space cycling ----------------------------------------------------------
@@ -429,6 +458,61 @@ async def test_preview_text_renders_verbatim():
         await canvas.update_matrix([_global_row()], kill_switch=False, preview=preview)
         await pilot.pause()
         assert str(app.query_one("#mcp-perm-preview", Static).renderable) == preview
+
+
+# -- UX batch item 4: marker legend ------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_legend_line_renders_fixed_marker_key():
+    """The legend is a fixed, dimmed hint line -- not derived from any
+    `PermRow`/preview text -- explaining the matrix's own State-column
+    glyphs and giving Space-cycling minimal discoverability."""
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        legend = str(app.query_one("#mcp-perm-legend", Static).renderable)
+        assert legend == (
+            "• override · ⚠ definition changed · ⚑ high-risk floor · "
+            "Space cycles Inherit → Allow → Ask → Off"
+        )
+
+
+# -- UX batch item 11: adaptive Tags column ----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_tags_column_omitted_when_no_row_has_tags():
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        rows = [
+            _global_row(),
+            _tool_row(server_key="local:docs", server_label="docs", tool_name="search"),
+        ]
+        await canvas.update_matrix(rows, kill_switch=False, preview="")
+        await pilot.pause()
+        table = app.query_one("#mcp-perm-table", DataTable)
+        columns = [str(col.label) for col in table.ordered_columns]
+        assert columns == ["Tool", "State"]
+
+
+@pytest.mark.asyncio
+async def test_tags_column_shown_when_any_row_has_tags():
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        rows = [
+            _global_row(),
+            _tool_row(
+                server_key="local:docs", server_label="docs", tool_name="search",
+                tags_label="network",
+            ),
+        ]
+        await canvas.update_matrix(rows, kill_switch=False, preview="")
+        await pilot.pause()
+        table = app.query_one("#mcp-perm-table", DataTable)
+        columns = [str(col.label) for col in table.ordered_columns]
+        assert columns == ["Tool", "State", "Tags"]
 
 
 # -- T8: shared state-label rendering helper -----------------------------
@@ -621,38 +705,14 @@ def test_perm_preview_height_rule_pinned_in_bundle_source_and_bundle() -> None:
         assert "height: auto;" in block, f"{label}'s {selector!r} block is missing 'height: auto;'"
 
 
-def test_kill_switch_height_rule_pinned_in_bundle_source_and_bundle() -> None:
-    """T6 flagged a pre-existing bundle defect (verified empirically, same
-    family as Phase 3's Select-collapse Defect 1, see `test_filter_server_
-    select_width_rule_pinned_in_bundle_source_and_bundle` in
-    test_mcp_tools_mode.py): `_conversations.tcss` compiles a bare,
-    unscoped `Checkbox { height: 2; }` rule into the same app bundle, which
-    -- because Textual's cascade always treats every CSS_PATH-sourced rule
-    as higher priority than any widget's own DEFAULT_CSS regardless of
-    selector specificity -- wins over `MCPPermissionsMode.DEFAULT_CSS`'s
-    own `#mcp-perm-kill-switch` override for the `height` property itself
-    (only `min-height`, a DIFFERENT property the bare rule never touches,
-    leaked through as a floor). T6 shipped with that DEFAULT_CSS-only
-    `min-height: 3` workaround; T9 adds a properly SCOPED, id-selector
-    bundle-layer copy here -- higher specificity than the bare type
-    selector, so it wins within the bundle's own layer -- so the fix no
-    longer depends on the DEFAULT_CSS-only property-level gap alone. Pins
-    the bundle-layer copy in both the bundle-source file and the generated
-    bundle, mirroring the sibling pinned tests above."""
-    agentic_terminal = _AGENTIC_TERMINAL_TCSS.read_text(encoding="utf-8")
-    bundled_stylesheet = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
-
-    for text, label in (
-        (agentic_terminal, "_agentic_terminal.tcss"),
-        (bundled_stylesheet, "tldw_cli_modular.tcss"),
-    ):
-        selector = "#mcp-perm-kill-switch {"
-        start = text.find(selector)
-        assert start != -1, f"{label} is missing {selector!r}"
-        end = text.find("}", start)
-        block = text[start:end]
-        assert "height: auto;" in block, f"{label}'s {selector!r} block is missing 'height: auto;'"
-        assert "min-height: 3;" in block, f"{label}'s {selector!r} block is missing 'min-height: 3;'"
+# UX batch items 2+3: the kill-switch Checkbox is gone -- the whole
+# defensive-bundle-rule class `test_kill_switch_height_rule_pinned_in_
+# bundle_source_and_bundle` existed for (a bare, unscoped `Checkbox {
+# height: 2; }` rule elsewhere in the bundle clobbering a compact
+# Checkbox's own focus-border DEFAULT_CSS) is moot for a Button, which
+# needs no such floor -- the rule itself was removed from
+# `_agentic_terminal.tcss`, so this pinned-bundle test is retired along
+# with it rather than repointed at a Button that doesn't need the guard.
 
 
 # -- real bundled CSS (Phase 3 lesson: DEFAULT_CSS alone can still collapse
@@ -688,28 +748,14 @@ async def test_matrix_and_kill_switch_have_nonzero_geometry_with_bundled_css():
         assert table.size.width > 0, "matrix table collapsed to zero width under bundled CSS"
         assert table.size.height > 0, "matrix table collapsed to zero height under bundled CSS"
 
-        checkbox = app.query_one("#mcp-perm-kill-switch", Checkbox)
-        assert checkbox.size.width > 0, "kill-switch row collapsed to zero width under bundled CSS"
-        # T9: Assert the OUTER box (`outer_size`, "the size of the widget
-        # including padding and border") against the actual `min-height: 3`
-        # floor `MCPPermissionsMode.DEFAULT_CSS` sets (now also pinned in the
-        # bundle itself, T9). The content-area `size.height` check would also
-        # catch a collapse (when it equals 0), but `outer_size.height >= 3`
-        # is more precise: it pins the floor more exactly. Reason: `MCPPermissionsMode`
-        # mounted alone auto-focuses this Checkbox (the only focusable widget
-        # on screen), and a focused compact ToggleButton's OWN DEFAULT_CSS
-        # deliberately re-draws a 1-row-top + 1-row-bottom focus-ring border
-        # (`&.-textual-compact:focus` in Textual's `_toggle_button.py`) -- so
-        # `checkbox.size.height` is legitimately 1 (content only) whenever this
-        # test runs, making `> 0`/`>= 1` ambiguous. The `outer_size >= 3` floor
-        # is unambiguous: with only the bare `Checkbox { height: 2; }` rule and
-        # no min-height floor, the 2-row outer box minus the 2-row focus border
-        # leaves ZERO rows for content -- exactly the defect T6 documented.
-        assert checkbox.outer_size.height >= 3, (
-            "kill-switch row's outer box is shorter than its min-height: 3 floor under "
-            f"bundled CSS (got {checkbox.outer_size.height}) -- a focused compact Checkbox's "
-            "own 2-row focus border would leave zero rows for content"
-        )
+        # UX batch items 2+3: the kill switch is now a Button, not a
+        # Checkbox -- it needs no `min-height: 3` floor (the defect class
+        # T6/T9 defended against was specific to a compact Checkbox's own
+        # focus-border redraw), so this only checks ordinary non-zero
+        # geometry, same shape as every other Button check in this suite.
+        kill_button = app.query_one("#mcp-perm-kill-switch", Button)
+        assert kill_button.size.width > 0, "kill-switch button collapsed to zero width under bundled CSS"
+        assert kill_button.size.height > 0, "kill-switch button collapsed to zero height under bundled CSS"
 
         # T8's server-source governance listing is its own dedicated slot
         # (`#mcp-perm-server-profiles-slot`, `height: auto; min-height: 0;`)
@@ -727,10 +773,8 @@ async def test_matrix_and_kill_switch_have_nonzero_geometry_with_bundled_css():
         pointer = app.query_one("#mcp-perm-server-profiles-pointer", Static)
         assert pointer.size.width > 0, "server-profiles pointer collapsed to zero width under bundled CSS"
         assert pointer.size.height > 0, "server-profiles pointer collapsed to zero height under bundled CSS"
-        # Re-check after the server-profiles mount above (T9: same
-        # outer-box `>= 3` floor, not just `size.height > 0` -- see the
-        # first checkbox-height assertion for why `size` alone can't tell).
-        assert checkbox.outer_size.height >= 3, (
-            "kill-switch row's outer box is shorter than its min-height: 3 floor under "
-            f"bundled CSS (got {checkbox.outer_size.height})"
+        # Re-check after the server-profiles mount above.
+        assert kill_button.size.height > 0, (
+            "kill-switch button collapsed to zero height under bundled CSS after the "
+            "server-profiles mount"
         )

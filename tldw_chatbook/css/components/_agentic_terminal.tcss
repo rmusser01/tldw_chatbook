@@ -4436,29 +4436,6 @@ Button.mcp-callout {
     min-height: 0;
 }
 
-/* T9 (P4): a properly SCOPED bundle-layer rule for the permissions
-   kill-switch Checkbox -- unlike the two rules immediately above, this one
-   is load-bearing, not just defensive (same class as the Defect 1 fix
-   below). `_conversations.tcss` compiles a bare, unscoped
-   `Checkbox { height: 2; }` rule into this same bundle (a different
-   screen's rule, out of scope to edit here). Textual's own compact
-   ToggleButton removes its border while blurred but deliberately re-draws
-   a 1-row-top + 1-row-bottom focus-ring border while focused
-   (`&.-textual-compact:focus` in `_toggle_button.py`) -- so a bare 2-row
-   Checkbox with no floor leaves ZERO rows for content the moment this
-   Checkbox is focused (verified empirically). `MCPPermissionsMode.
-   DEFAULT_CSS` alone already floors this with `min-height: 3`. This rule
-   is a defensive scoped guard against the bare `Checkbox { height: 2; }` rule
-   from `_conversations.tcss`, which contests `height` (not `min-height`) and
-   would otherwise override our floor within the bundle cascade. Today, the
-   DEFAULT_CSS min-height already holds because the bare rule does not set
-   min-height, so this id-scoped copy is load-bearing only if that bare rule
-   ever changes. */
-#mcp-perm-kill-switch {
-    height: auto;
-    min-height: 3;
-}
-
 /* Defect 1 fix (QA round mcp-hub-phase3-2026-07): kept in lockstep with the
    baseline copy in MCPToolsMode.DEFAULT_CSS (mcp_tools_mode.py), but here
    it's load-bearing, not just defensive. Textual's cascade always treats
