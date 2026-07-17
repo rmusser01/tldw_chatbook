@@ -2728,21 +2728,36 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
 
     @property
     def server_rag_admin_service(self) -> "ServerRAGAdminService":
-        """Server-backed RAG admin service, built lazily and cached (task-254)."""
+        """Server-backed RAG admin service, built lazily and cached (task-254).
+
+        Returns:
+            ServerRAGAdminService: The cached service, constructed together
+            with the local and scope services on first access.
+        """
         if self._server_rag_admin_service is None:
             self._build_rag_admin_services()
         return self._server_rag_admin_service
 
     @property
     def local_rag_admin_service(self) -> "LocalRAGAdminService":
-        """Local RAG admin service, built lazily and cached (task-254)."""
+        """Local RAG admin service, built lazily and cached (task-254).
+
+        Returns:
+            LocalRAGAdminService: The cached service, constructed together
+            with the server and scope services on first access.
+        """
         if self._local_rag_admin_service is None:
             self._build_rag_admin_services()
         return self._local_rag_admin_service
 
     @property
     def rag_admin_scope_service(self) -> "RAGAdminScopeService":
-        """Local/server RAG admin scope router, built lazily and cached (task-254)."""
+        """Local/server RAG admin scope router, built lazily and cached (task-254).
+
+        Returns:
+            RAGAdminScopeService: The cached scope router wired to the cached
+            local and server services, constructed on first access.
+        """
         if self._rag_admin_scope_service is None:
             self._build_rag_admin_services()
         return self._rag_admin_scope_service
