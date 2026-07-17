@@ -2355,7 +2355,7 @@ async def test_mcp_destination_labels_server_first_workbench_columns():
 
         # Inspector is present and explains readiness (not a bare shell).
         assert "Inspector" in text
-        assert "Select a server to see its readiness." in text
+        assert "Select an item to inspect." in text
 
         assert "Manage MCP servers, scoped tools, permissions, and audit readiness." in text
 

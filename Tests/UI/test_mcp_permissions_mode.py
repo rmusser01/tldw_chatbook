@@ -454,7 +454,7 @@ async def test_preview_text_renders_verbatim():
     app = PermissionsModeApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPPermissionsMode)
-        preview = "docs-server: 2 allowed, 1 asks, 1 off. Global default: Ask."
+        preview = "docs-server: 2 allow · 1 ask · 1 off — global default: ask"
         await canvas.update_matrix([_global_row()], kill_switch=False, preview=preview)
         await pilot.pause()
         assert str(app.query_one("#mcp-perm-preview", Static).renderable) == preview
