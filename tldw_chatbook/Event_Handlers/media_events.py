@@ -573,15 +573,15 @@ async def perform_media_search_and_display(app: 'TldwCli', type_slug: str, searc
         if keyword_filter:
             keywords_list = [k.strip() for k in keyword_filter.split(',') if k.strip()]
 
-        # Check if we should show deleted items
+        # Deleted items are never included HERE. The toggle this block used
+        # to read lived on the legacy UI.MediaWindow, removed in the Library
+        # redesign; its import raised ModuleNotFoundError, which the broad
+        # handler below rendered as a permanent "Error loading" list
+        # (task-292). MediaWindow_v2 does have its own "Show deleted"
+        # checkbox, but that flows through its own search call (it passes
+        # include_deleted directly), never through this handler -- none of
+        # this handler's callers carry such a toggle.
         show_deleted = False
-        try:
-            # Try to get the MediaWindow and check its show_deleted_items state
-            from ..UI.MediaWindow import MediaWindow
-            media_window = app.query_one(MediaWindow)
-            show_deleted = media_window.show_deleted_items
-        except QueryError:
-            logger.debug("MediaWindow not found, using default show_deleted=False")
 
         search_kwargs = dict(
             search_query=query_arg,
