@@ -1,6 +1,6 @@
 # Roleplay P1g — Console "What's in play" (dictionaries) design
 
-**Status:** Design approved (brainstorm), pending spec review.
+**Status:** Implemented (P1g).
 **Program:** Personas→Roleplay redesign. P0 #619, P1a #622, P1b #625, P1c #627, P1d #630, P1e #633, P1f #645 MERGED. This slice = the cross-mode **"What's in play"** summary, deferred from P1e/P1f — surfaced in the **Console** (the live chat), not the Personas authoring workbench.
 **Worktree/branch:** `.claude/worktrees/personas-redesign`, `claude/roleplay-p1g-whats-in-play` off dev `3db848e0`.
 
