@@ -30,13 +30,6 @@ SplashScreenViewer {
     dock: top;
 }
 
-/* Main section layout */
-.viewer-main {
-    height: 1fr;
-    layout: horizontal;
-    padding: 1;
-}
-
 /* Main horizontal container */
 SplashScreenViewer > Horizontal {
     height: 25;
@@ -114,38 +107,12 @@ SplashScreenViewer > Horizontal {
     border-top: solid $primary;
 }
 
-.setting-row {
-    height: 3;
-    layout: horizontal;
-    align: center middle;
-    margin-bottom: 1;
-}
-
 .setting-label {
     width: 20;
     text-align: right;
     margin-right: 1;
 }
 
-.setting-control {
-    width: 1fr;
-    max-width: 40;
-}
-
-.value-label {
-    width: 10;
-    margin-left: 1;
-    text-align: left;
-}
-
-/* Active cards section */
-.active-cards-container {
-    height: auto;
-    max-height: 10;
-    border: solid $primary-lighten-2;
-    padding: 1;
-    margin-bottom: 1;
-}
 
 .checkbox-button {
     width: 100%;

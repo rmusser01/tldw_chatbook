@@ -89,11 +89,6 @@ SplashScreen, .splash-screen {
     text-style: bold;
 }
 
-.glitch-effect-primary {
-    color: $primary;
-    text-style: bold;
-}
-
 .glitch-effect-warning {
     color: $warning;
     text-style: bold;
@@ -120,18 +115,6 @@ SplashScreen, .splash-screen {
     opacity: 0.0;
 }
 
-.fade-out {
-    opacity: 1.0;
-}
-
-/* Animated states */
-.splash-visible {
-    opacity: 1.0;
-}
-
-.splash-hidden {
-    opacity: 0.0;
-}
 
 /* Loading placeholder for lazy-loaded content */
 .loading-placeholder {
