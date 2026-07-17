@@ -6043,6 +6043,10 @@ UPDATE db_schema_version
             
         Returns:
             Dictionary mapping conversation_id to list of messages
+            
+        Raises:
+            InputError: If ``order_by_timestamp`` is not "ASC"/"DESC".
+            CharactersRAGDBError: For database errors.
         """
         if not conversation_ids:
             return {}
