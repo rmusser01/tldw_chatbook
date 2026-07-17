@@ -684,7 +684,18 @@ class ConsoleChatController:
             # dropping the call from the returned mapping.
             for name in unique_names:
                 decisions.setdefault(name, "deny")
-            return dict(decisions)
+            # Finding F4: build the snapshot by keyed lookup over the
+            # (locally-owned, never-mutated) `unique_names` list rather
+            # than `dict(decisions)` -- the latter iterates `decisions`
+            # itself, which `resolve_pending_approval` can concurrently
+            # `.update()` from the UI thread; a same-size update can't
+            # change dict length, so this is unreachable today, but a
+            # keyed `.get()` per name can never raise "dictionary changed
+            # size during iteration" regardless. The `setdefault` pass
+            # above already guarantees every name resolves, so `.get`'s
+            # own "deny" fallback here is a belt-and-suspenders no-op, not
+            # a second source of truth.
+            return {name: decisions.get(name, "deny") for name in unique_names}
         finally:
             self._pending_approval_event = None
             self._pending_approval_decisions = None

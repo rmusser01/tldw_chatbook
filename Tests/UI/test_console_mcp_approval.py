@@ -635,6 +635,37 @@ def test_request_mcp_approvals_with_no_pending_calls_returns_empty_and_never_sur
     assert received == []
 
 
+def test_request_mcp_approvals_snapshot_covers_exactly_the_unique_names():
+    """F4 (Gemini): the final snapshot is built by keyed lookup over
+    `unique_names` rather than `dict(decisions)` -- must still return
+    exactly one entry per unique llm_name in `pending`, matching whatever
+    `resolve_pending_approval` supplied (extra keys are dropped, missing
+    ones fail closed to "deny", both preserved by the setdefault pass
+    before the snapshot)."""
+    controller, _ = _build_controller()
+    controller.app = _FakeApp()
+    controller.set_pending_approval = lambda payload: None
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    pending = [
+        _pending(llm_name="mcp__srv__a", tool_name="a"),
+        _pending(llm_name="mcp__srv__b", tool_name="b"),
+    ]
+
+    def _resolve_soon() -> None:
+        time.sleep(0.05)
+        # Only decides "a" explicitly, includes an unrelated stray key,
+        # and leaves "b" undecided (backstopped to "deny" pre-snapshot).
+        controller.resolve_pending_approval({
+            "mcp__srv__a": "approve_once", "mcp__unrelated__c": "deny",
+        })
+
+    threading.Thread(target=_resolve_soon).start()
+    decisions = controller.request_mcp_approvals(pending)
+
+    assert decisions == {"mcp__srv__a": "approve_once", "mcp__srv__b": "deny"}
+
+
 # ---------------------------------------------------------------------------
 # ChatScreen wiring: pending-approval state bridge + ApprovalDecided handler
 # ---------------------------------------------------------------------------
