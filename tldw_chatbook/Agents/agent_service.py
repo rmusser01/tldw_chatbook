@@ -219,7 +219,17 @@ class AgentService:
                 try:
                     schema = self.registry.load_schema(str(tool_id))
                 except KeyError:
-                    continue
+                    # task-244 AC#3: models often echo a bare tool NAME from
+                    # a find_tools result line instead of the catalog id —
+                    # resolve it before giving up on this entry, instead of
+                    # burning the whole round on a generic load error.
+                    resolved = self.registry.resolve_name(str(tool_id))
+                    if resolved is None:
+                        continue
+                    try:
+                        schema = self.registry.load_schema(resolved)
+                    except KeyError:
+                        continue
                 # Q7(c): never disclose a tool outside the allow-list.
                 if schema.name not in config.allowed_tools:
                     continue
@@ -235,6 +245,14 @@ class AgentService:
                 # redundant re-loads — an acceptable trade-off for cap
                 # integrity (see PR review decision).
                 if schema.name in disclosed_names:
+                    continue
+                # PR #655 review (Gemini): one batch can reach the SAME
+                # schema twice — its bare name plus its catalog id, or a
+                # repeated id. disclosed_names only guards against PRIOR
+                # rounds (it is updated after this loop), so without an
+                # in-batch dedupe both copies would append and desync the
+                # loop's active list from this gate's disclosed set.
+                if any(s.name == schema.name for s in schemas):
                     continue
                 schemas.append(schema)
             # Mirror the loop's own room-slicing (agent_runtime.py's

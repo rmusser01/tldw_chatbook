@@ -207,7 +207,9 @@ def run_agent_loop(config: AgentConfig, initial_messages: list[dict],
     as a ``role="tool"`` message keyed on ``tool_call_id``.
 
     Args:
-        config: The agent's model, system prompt, allow-list, and budget.
+        config: The agent's model, system prompt, allow-list, and budget
+            (step count, wall-clock seconds, and — task-244 —
+            provider-call/model-turn count all independently cap the run).
         initial_messages: The starting conversation history (role/content
             dicts); not mutated in place — the loop works on a copy.
         active_schemas: Tool schemas already disclosed to the model at the
@@ -228,6 +230,7 @@ def run_agent_loop(config: AgentConfig, initial_messages: list[dict],
     active = list(active_schemas)
     started = deps.clock()
     spawned = 0
+    model_turns = 0
     last_key: tuple | None = None
     repeat_count = 0
 
@@ -250,11 +253,15 @@ def run_agent_loop(config: AgentConfig, initial_messages: list[dict],
         if len(steps) >= budget.max_steps:
             add(STEP_ERROR, summary="step budget exhausted")
             return RunOutcome(RUN_STUCK, steps, subagents_spawned=spawned)
+        if model_turns >= budget.max_model_turns:
+            add(STEP_ERROR, summary="model-turn budget exhausted")
+            return RunOutcome(RUN_STUCK, steps, subagents_spawned=spawned)
         if deps.clock() - started > budget.max_wall_seconds:
             add(STEP_ERROR, summary="wall-clock budget exhausted")
             return RunOutcome(RUN_STUCK, steps, subagents_spawned=spawned)
 
         turn = deps.call_model(messages, tuple(active))
+        model_turns += 1
         add(STEP_MODEL, summary=turn.text[:200])
 
         calls = list(turn.tool_calls)
@@ -356,7 +363,18 @@ def run_agent_loop(config: AgentConfig, initial_messages: list[dict],
                     # list-vs-set cap-boundary integrity.
                     active_names = {a.name for a in active}
                     already_active = [s.name for s in loaded if s.name in active_names]
-                    new_loaded = [s for s in loaded if s.name not in active_names]
+                    # PR #655 review: also dedupe by name WITHIN this batch
+                    # (a caller may hand back the same schema twice — e.g.
+                    # bare name + catalog id aliases) so `active` can never
+                    # gain a duplicate from one load, mirroring the
+                    # across-rounds guard above.
+                    new_loaded = []
+                    batch_names: set = set()
+                    for s in loaded:
+                        if s.name in active_names or s.name in batch_names:
+                            continue
+                        batch_names.add(s.name)
+                        new_loaded.append(s)
                     if not new_loaded:
                         # Every requested id was already active — a no-op,
                         # not the "no valid ids at all" error case above,

@@ -42,24 +42,33 @@ CONSOLE_AGENT_OPERATING_PROMPT = (
 # Skills Phase-2 gate finding 1 (Task-14 report, scenario 5: "Find a skill
 # that can shout, load it, and use it on: hello"): a discovery-heavy run --
 # find_tools -> load_tools -> a tool/skill call -> the final wrap-up reply --
-# needs exactly 10 primary-loop steps at the floor (3 steps per tool round:
-# STEP_MODEL + STEP_TOOL_CALL + STEP_TOOL_RESULT, times 3 rounds, plus 1
-# final STEP_MODEL with no tool call -- see agent_runtime.run_agent_loop).
-# That floor already sits ABOVE the engine's own pure default
-# (agent_models.RunBudget.max_steps == 8), so any >DIRECT_DISCLOSE_THRESHOLD
-# skill catalog -- which forces the find/load path -- exhausts the bare
-# default right after the skill's successful tool_result, one step short of
-# the wrap-up reply: the run persists `stuck` even though every tool call
-# already succeeded (live-gate confirmed). max_steps=16 gives ~60% headroom
-# above the 10-step floor (room for ~2 more tool rounds for a model that
-# retries or double-checks); max_wall_seconds is raised by the same 16/8=2x
-# factor (240s -> 480s) so a run that actually uses that headroom still has
-# time for it at the slow local-model pace this gate exercises
-# (25-50s/turn x up to ~6 model turns). The engine's own RunBudget defaults
-# (agent_models.RunBudget) are left UNCHANGED -- this override applies only
-# at the Console bridge's own config-assembly site (run_reply below); other
-# callers of RunBudget()/AgentConfig keep the bare engine default.
-CONSOLE_RUN_BUDGET = RunBudget(max_steps=16, max_wall_seconds=480.0)
+# needs, at the floor, 3 tool rounds + 1 wrap-up = 4 model turns / 10 steps
+# (3 steps per tool round: STEP_MODEL + STEP_TOOL_CALL + STEP_TOOL_RESULT,
+# times 3 rounds, plus 1 final STEP_MODEL with no tool call -- see
+# agent_runtime.run_agent_loop). That 10-step floor already sat ABOVE the
+# engine's own pure step default (agent_models.RunBudget.max_steps == 8),
+# so any >DIRECT_DISCLOSE_THRESHOLD skill catalog -- which forces the
+# find/load path -- used to exhaust the bare step default right after the
+# skill's successful tool_result, one step short of the wrap-up reply: the
+# run persisted `stuck` even though every tool call already succeeded
+# (live-gate confirmed, pre-task-244).
+#
+# task-244 adds a model-turn budget tier (agent_models.RunBudget.
+# max_model_turns) and makes IT, not the raw step count, this run's PRIMARY
+# limiter. Two additional real tool rounds beyond the 4-turn/10-step floor
+# cost 2 more turns / 6 more steps (6 turns / 16 steps total); under
+# max_model_turns=8 the floor plus those two extra rounds fits with 2 turns
+# to spare. max_steps=32 is now a pure backstop (~4 steps/turn worst case
+# across all 8 turns) that can no longer starve a discovery run one step
+# short of its wrap-up the way the bare step default once did.
+# max_wall_seconds stays at the prior 480s (25-50s/turn x up to 8 model
+# turns at the slow local-model pace this gate exercises). The engine's own
+# RunBudget defaults (agent_models.RunBudget) are left UNCHANGED -- this
+# override applies only at the Console bridge's own config-assembly site
+# (run_reply below); other callers of RunBudget()/AgentConfig keep the bare
+# engine default.
+CONSOLE_RUN_BUDGET = RunBudget(
+    max_steps=32, max_wall_seconds=480.0, max_model_turns=8)
 
 _QUIET_STEP_TOOLS = {FIND_TOOLS_NAME, LOAD_TOOLS_NAME}
 

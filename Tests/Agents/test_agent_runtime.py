@@ -4,8 +4,8 @@ import json
 
 from tldw_chatbook.Agents.agent_models import (
     LOOP_DETECTION_N, RUN_CANCELLED, RUN_DONE, RUN_STUCK, SPAWN_TOOL_NAME,
-    STEP_SPAWN, STEP_TOOL_RESULT, AgentConfig, ModelTurn, RunBudget,
-    ToolCall, ToolCatalogEntry, ToolResult, ToolSchema,
+    STEP_MODEL, STEP_SPAWN, STEP_TOOL_RESULT, AgentConfig, ModelTurn,
+    RunBudget, ToolCall, ToolCatalogEntry, ToolResult, ToolSchema,
 )
 from tldw_chatbook.Agents.agent_runtime import LoopDeps, run_agent_loop
 
@@ -143,6 +143,43 @@ def test_wall_clock_budget_trips_to_stuck():
     out = run([ModelTurn(text="never reached")],
               clock=lambda: next(ticker))
     assert out.status == RUN_STUCK
+
+
+def test_model_turn_budget_exhaustion_is_distinct_from_step_budget():
+    """A run that spends its model turns on tool rounds must stop with the
+    model-turn copy while raw steps are still well under max_steps."""
+    # budget: max_model_turns=2, max_steps=99 (steps can never bind)
+    # script: every model turn returns a fence tool call (never a final
+    # answer) -> turn 1 (3 steps), turn 2 (3 steps), then the check fires
+    # BEFORE a third provider call.
+    turns = [ModelTurn(text=fence("calculator", {"expression": str(i)}))
+             for i in range(10)]
+    out = run(turns, config=AgentConfig(
+        model="m", system_prompt="s", allowed_tools=("calculator",),
+        budget=RunBudget(max_steps=99, max_model_turns=2)))
+    assert out.status == RUN_STUCK
+    assert out.steps[-1].summary == "model-turn budget exhausted"
+    assert sum(1 for s in out.steps if s.kind == STEP_MODEL) == 2
+    assert len(out.steps) < 99
+
+
+def test_console_budget_floor_plus_two_extra_rounds_completes():
+    """AC #2: the documented 4-turn/10-step discovery floor plus TWO more
+    real tool rounds (6 turns / 16 steps) completes under
+    CONSOLE_RUN_BUDGET."""
+    from tldw_chatbook.Chat.console_agent_bridge import CONSOLE_RUN_BUDGET
+
+    # script: 5 fence tool-call turns then a final answer (6 model turns,
+    # 16 steps) with a generous monotonic fake clock -> RUN_DONE, not stuck.
+    turns = [ModelTurn(text=fence("calculator", {"expression": str(i)}))
+             for i in range(5)] + [ModelTurn(text="final answer")]
+    tick = iter(float(i) for i in range(100))
+    out = run(turns, config=AgentConfig(
+        model="m", system_prompt="s", allowed_tools=("calculator",),
+        budget=CONSOLE_RUN_BUDGET), clock=lambda: next(tick))
+    assert out.status == RUN_DONE
+    assert sum(1 for s in out.steps if s.kind == STEP_MODEL) == 6
+    assert len(out.steps) == 16
 
 
 def test_identical_consecutive_calls_trip_loop_detection():
@@ -376,3 +413,19 @@ def test_fence_history_convention_unchanged():
     assert set(history[1].keys()) == {"role", "content"}
     assert history[2]["role"] == "user"
     assert history[2]["content"].startswith("Tool result for")
+
+
+def test_load_tools_same_batch_duplicate_names_admit_one_into_active():
+    """PR #655 review: the loop's own last line of defense must also dedupe
+    by name WITHIN one load batch (a caller can hand the same schema back
+    twice via name/id aliases), so ``active`` never gains a duplicate."""
+    deps = make_deps([ModelTurn(text=fence(
+        "load_tools", {"ids": ["calculator", "builtin:calculator"]})),
+        ModelTurn(text=fence("calculator", {"expression": "1"})),
+        ModelTurn(text="done")])
+    deps.load_schemas = lambda ids: [CALC, CALC]  # duplicate in ONE batch
+    out = run_agent_loop(CFG, [{"role": "user", "content": "hi"}], [], deps)
+    assert out.status == RUN_DONE
+    load_result = [s for s in out.steps
+                   if s.kind == STEP_TOOL_RESULT and s.tool_name == "load_tools"][0]
+    assert load_result.result == "loaded: calculator"  # once, not twice
