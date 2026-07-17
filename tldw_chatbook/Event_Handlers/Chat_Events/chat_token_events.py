@@ -37,8 +37,8 @@ def _estimate_tokens_cached(
     task-261 dirty gate: the footer's 10 s interval timer re-ran the full
     tokenizer over the entire visible history every tick even when nothing
     had changed. A cheap signature over every input that influences the
-    estimate — settings plus message count, last-message length, and total
-    character count — is compared against the previous tick's; on a match
+    estimate — settings plus message count and a per-message (role, content)
+    hash tuple — is compared against the previous tick's; on a match
     the cached counts are returned without re-tokenizing. The cache lives on
     the app instance (one live history per app), and the caller still
     refreshes the footer widget every tick, so display behavior is
@@ -56,15 +56,20 @@ def _estimate_tokens_cached(
         The ``(used_tokens, total_limit, remaining)`` tuple from
         ``estimate_remaining_tokens``.
     """
-    last_content = chat_history[-1].get("content", "") if chat_history else ""
     signature = (
         model,
         provider,
         max_tokens_response,
         system_prompt,
         len(chat_history),
-        len(last_content),
-        sum(len(message.get("content", "")) for message in chat_history),
+        # Per-message content hashes, not lengths: a same-length edit to an
+        # earlier message (or a role flip) must invalidate the cache too
+        # (PR #688 review). CPython caches str.__hash__ on the string object,
+        # so for an unchanged history this stays O(1) amortized per message.
+        tuple(
+            (hash(message.get("role", "")), hash(message.get("content", "")))
+            for message in chat_history
+        ),
     )
     cached = getattr(app, "_footer_token_estimate_cache", None)
     if cached is not None and cached[0] == signature:

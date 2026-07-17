@@ -55,6 +55,36 @@ def test_unchanged_history_skips_retokenizing(tokenizer_spy):
     assert second == first
 
 
+def test_same_length_edit_retokenizes(tokenizer_spy):
+    """A same-length edit to an EARLIER message must invalidate the cache.
+
+    Length-based signatures miss this (message count, last-message length,
+    and total chars all survive a same-length swap); the per-message content
+    hashes catch it (PR #688 review finding).
+    """
+    app = SimpleNamespace()
+    history = _history()
+
+    chat_token_events._estimate_tokens_cached(app, history, **SETTINGS)
+    assert len(history[0]["content"]) == len("HELLO THERE")
+    history[0]["content"] = "HELLO THERE"  # same length, different content
+    chat_token_events._estimate_tokens_cached(app, history, **SETTINGS)
+
+    assert len(tokenizer_spy) == 2, "same-length content edit must re-tokenize"
+
+
+def test_role_flip_retokenizes(tokenizer_spy):
+    """Changing only a message's role must invalidate the cache."""
+    app = SimpleNamespace()
+    history = _history()
+
+    chat_token_events._estimate_tokens_cached(app, history, **SETTINGS)
+    history[0]["role"] = "system"
+    chat_token_events._estimate_tokens_cached(app, history, **SETTINGS)
+
+    assert len(tokenizer_spy) == 2, "role change must re-tokenize"
+
+
 def test_cached_result_matches_direct_tokenizer_output(tokenizer_spy):
     app = SimpleNamespace()
     history = _history()
