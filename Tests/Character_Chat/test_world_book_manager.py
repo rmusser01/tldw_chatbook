@@ -485,7 +485,30 @@ class TestWorldInfoProcessorIntegration:
             "Tell me about the character trait in this world",
             []
         )
-        
+
         assert len(result['matched_entries']) == 2
         assert 'before_char' in result['injections']
         assert 'at_start' in result['injections']
+
+
+def test_entry_priority_round_trips(wb_manager):
+    book_id = wb_manager.create_world_book("B")
+    eid = wb_manager.create_world_book_entry(book_id, ["Warden"], "grim jailer", priority=75)
+    assert wb_manager.get_world_book_entries(book_id)[0]["priority"] == 75
+    wb_manager.update_world_book_entry(eid, priority=20)
+    assert wb_manager.get_world_book_entries(book_id)[0]["priority"] == 20
+
+
+def test_entry_priority_default_zero(wb_manager):
+    book_id = wb_manager.create_world_book("B")
+    wb_manager.create_world_book_entry(book_id, ["k"], "c")
+    assert wb_manager.get_world_book_entries(book_id)[0]["priority"] == 0
+
+
+def test_export_import_preserves_priority(wb_manager):
+    book_id = wb_manager.create_world_book("B")
+    wb_manager.create_world_book_entry(book_id, ["Warden"], "grim jailer", priority=90)
+    data = wb_manager.export_world_book(book_id)
+    assert data["entries"][0]["priority"] == 90
+    new_id = wb_manager.import_world_book(data, name_override="B copy")
+    assert wb_manager.get_world_book_entries(new_id)[0]["priority"] == 90
