@@ -1362,9 +1362,11 @@ class MCPWorkbench(Container):
         if not override_rows:
             return f"global default: {global_word}"
         override_servers = {row.server_key for row in override_rows}
+        override_word = "override" if len(override_rows) == 1 else "overrides"
+        server_word = "server" if len(override_servers) == 1 else "servers"
         return (
-            f"global default: {global_word} · {len(override_rows)} overrides "
-            f"across {len(override_servers)} servers"
+            f"global default: {global_word} · {len(override_rows)} {override_word} "
+            f"across {len(override_servers)} {server_word}"
         )
 
     async def on_mcp_permissions_mode_state_cycle_requested(

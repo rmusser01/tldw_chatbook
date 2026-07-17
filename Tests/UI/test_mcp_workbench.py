@@ -4044,7 +4044,7 @@ async def test_preview_shows_override_count_when_no_server_selected(tmp_path):
         await pilot.pause()
 
         assert str(preview.renderable) == (
-            "global default: ask · 1 overrides across 1 servers"
+            "global default: ask · 1 override across 1 server"
         )
 
 
