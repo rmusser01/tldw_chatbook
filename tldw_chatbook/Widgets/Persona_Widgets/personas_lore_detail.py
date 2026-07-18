@@ -66,6 +66,10 @@ class LoreBookSettingsSaveRequested(Message):
         self.payload = payload
 
 
+class LoreBookExportRequested(Message):
+    """Intent: export the currently selected world book to a file (JSON)."""
+
+
 class PersonasLoreDetailWidget(Vertical):
     """Entries + Settings tabs for one lore/world book. Emits intents; owns no I/O."""
 
@@ -149,6 +153,7 @@ class PersonasLoreDetailWidget(Vertical):
                     yield Static("Enabled", markup=False)
                     yield Switch(value=True, id="personas-lore-enabled")
                 yield Button("Save settings", id="personas-lore-settings-save", classes="console-action-secondary")
+                yield Button("Export", id="personas-lore-export", classes="console-action-secondary")
         yield Static("", id="personas-lore-status", markup=False)
 
     def on_mount(self) -> None:
@@ -458,6 +463,11 @@ class PersonasLoreDetailWidget(Vertical):
         event.stop()
         self.post_message(LoreBookSettingsSaveRequested(self.settings_payload()))
 
+    @on(Button.Pressed, "#personas-lore-export")
+    def _export_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(LoreBookExportRequested())
+
     @on(Switch.Changed, "#personas-lore-enabled")
     def _enabled_changed(self, event: Switch.Changed) -> None:
         event.stop()
@@ -476,6 +486,7 @@ class PersonasLoreDetailWidget(Vertical):
 
 __all__ = [
     "LoreBookEnableToggled",
+    "LoreBookExportRequested",
     "LoreBookSettingsSaveRequested",
     "LoreEntriesReorderRequested",
     "LoreEntryAddRequested",
