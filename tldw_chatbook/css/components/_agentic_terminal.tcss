@@ -2363,6 +2363,7 @@ ConsoleSystemPromptModal {
 .console-rail-section-body {
     height: auto;
     min-height: 0;
+    padding: 0 1 1 1;
 }
 
 .console-model-section-line {
