@@ -758,3 +758,12 @@ git commit -m "test(console): update UI tests for left-rail redesign"
 - Each task commits independently so the diff stays reviewable.
 - The ADR must be created before implementation code changes begin.
 - If any CSS class is added, add it to `Tests/UI/test_console_persistent_rails.py` if that test guards generated stylesheets.
+
+## Implementation Notes
+
+- All planned tasks completed; the full `Tests/UI` gate passes (Set A, Set B, Set C) plus targeted Console smoke tests after the final rebase.
+- Code review fixes applied before merge:
+  - `#console-model-section-recovery` is now always composed (hidden via `display: none`) and `_sync_console_settings_summary` only toggles visibility/updates text, avoiding a full-screen `recompose=True` on the Console polling path.
+  - `change_workspace_recovery` copy is rendered below the Switch/New button row when switching is disabled, restoring the explanation that the disabled `[Switch]` button previously lost.
+  - New rail CSS classes were added to the generated-stylesheet guard in `Tests/UI/test_console_persistent_rails.py`.
+- Out-of-scope but gate-blocking fix: removed the stable `id` from rule-row separators in `tldw_chatbook/Widgets/Console/console_transcript.py` to prevent `DuplicateIds` errors during transcript recomposes that blocked the UI gate. This change is recorded here for changelog/traceability purposes.

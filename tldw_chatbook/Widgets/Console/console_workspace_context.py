@@ -568,6 +568,13 @@ class ConsoleWorkspaceContextTray(Vertical):
                 disabled=not self.state.new_workspace_enabled,
             )
 
+        if not self.state.change_workspace_enabled and self.state.change_workspace_recovery:
+            yield self._static(
+                self.state.change_workspace_recovery,
+                id="console-change-workspace-recovery",
+                classes="console-workspace-recovery",
+            )
+
         scope_value = self.state.scope_label or ""
         yield ConsoleWorkspaceStatusPair(
             "Scope",

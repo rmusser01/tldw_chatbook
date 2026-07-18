@@ -293,6 +293,12 @@ def test_generated_console_stylesheet_includes_rail_section_rules():
         ".console-rail-section-title",
         ".console-rail-section-toggle",
         ".console-rail-section-body",
+        ".console-workspace-conversations-header",
+        ".console-model-section-label",
+        ".console-model-section-value",
+        ".console-staged-source-status",
+        ".console-workspace-empty-copy",
+        ".console-workspace-action-row",
     ):
         assert selector in component_css, selector
         assert selector in generated_css, selector

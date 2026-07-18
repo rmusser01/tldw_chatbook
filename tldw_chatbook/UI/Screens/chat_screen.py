@@ -1988,8 +1988,7 @@ class ChatScreen(BaseAppScreen):
         try:
             recovery = self.query_one("#console-model-section-recovery", Static)
         except (NoMatches, QueryError):
-            if readiness and readiness != "Ready":
-                self.refresh(recompose=True)
+            pass
         else:
             if readiness and readiness != "Ready":
                 recovery.update(readiness)
@@ -6847,13 +6846,14 @@ class ChatScreen(BaseAppScreen):
                                 )
 
                             readiness = (summary_state.readiness_label or "").strip()
-                            if readiness and readiness != "Ready":
-                                yield Static(
-                                    readiness,
-                                    id="console-model-section-recovery",
-                                    classes="console-model-section-recovery",
-                                    markup=False,
-                                )
+                            recovery = Static(
+                                readiness or "",
+                                id="console-model-section-recovery",
+                                classes="console-model-section-recovery",
+                                markup=False,
+                            )
+                            recovery.styles.display = "none"
+                            yield recovery
 
                             system_line_text, system_line_dim = (
                                 self._console_rail_system_line_state()
