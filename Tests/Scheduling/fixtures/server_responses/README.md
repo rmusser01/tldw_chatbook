@@ -8,7 +8,7 @@ All models are imported from `tldw_chatbook.tldw_api.notifications_reminders_sch
 
 ### Request / response models by client method
 
-| Client method (`TldwApiClient`) | HTTP | Path | Request model | Response model |
+| Client method (`TLDWAPIClient`) | HTTP | Path | Request model | Response model |
 |--------------------------------|------|------|---------------|----------------|
 | `create_reminder_task` | POST | `/api/v1/tasks` | `ReminderTaskCreateRequest` | `ReminderTaskResponse` |
 | `list_reminder_tasks` | GET | `/api/v1/tasks` | — | `ReminderTaskListResponse` |
@@ -73,11 +73,15 @@ In `tldw_chatbook.Notifications.server_notifications_service.ServerNotifications
 - `update_reminder`
 - `delete_reminder`
 
-These wrap the `TldwApiClient` methods listed above and enforce the corresponding permissions:
+These wrap the `TLDWAPIClient` methods listed above and enforce the corresponding permissions:
 
-- `notifications.reminders.configure.server`
-- `notifications.reminders.list.server`
+- `notifications.reminders.configure.server` → `create_reminder`, `update_reminder`, `delete_reminder`
+- `notifications.reminders.list.server` → `list_reminders`, `get_reminder`
 
 ## Search for other scheduling-related endpoints
 
 A search of `tldw_chatbook/tldw_api/client.py` for the strings `scheduled-tasks`, `automation`, and `definition` returned **no matches**. The only server-side task endpoints currently available are the `/api/v1/tasks` reminder endpoints documented above.
+
+## Fixture scope
+
+Only the `list_reminder_tasks` response fixture (`reminder_list.json`) is present at this commit. Future fixtures for create/get/update/delete responses should follow the same format and be validated against the models documented above.
