@@ -4,7 +4,7 @@ title: Auto-refresh model catalogs for cloud providers
 status: In Progress
 assignee: []
 created_date: '2026-07-18 05:43'
-updated_date: '2026-07-18 05:59'
+updated_date: '2026-07-18 15:08'
 labels: []
 dependencies: []
 ---
@@ -31,5 +31,7 @@ Refresh model lists for OpenRouter, Moonshot, Z.AI, OpenAI, Anthropic, and Mistr
 
 <!-- SECTION:PLAN:BEGIN -->
 Implementation plan: Docs/superpowers/plans/2026-07-17-model-catalog-auto-refresh.md
-ADR: backlog/decisions/014-automatic-model-catalog-refresh.md (amends ADR-002)
+ADR required: yes
+ADR path: backlog/decisions/014-automatic-model-catalog-refresh.md (amends ADR-002)
+Reason: amends ADR-002 explicit-persistence-only stance for opt-in write-through
 <!-- SECTION:PLAN:END -->

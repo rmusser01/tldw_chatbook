@@ -31,7 +31,7 @@ as an opt-in. OpenRouter's catalog is public (no key required).
 
 ## Consequences
 
-- Startup performs bounded background network I/O (per-provider, 10s timeout, stale-after 24h default); failures degrade silently to cached/saved models.
+- Startup performs bounded background network I/O (per-provider, 10s timeout, stale-after 24h default); failures degrade to cached/saved models and are surfaced via one consolidated end-of-refresh notification.
 - Write-through is append-only and never removes models; users prune `[providers]` themselves.
 - `model_catalog_cache.json` under the user data dir stores model IDs + timestamps only (no credentials).
 - Manual Discover/Save/Clear flows from ADR-002 remain unchanged.
