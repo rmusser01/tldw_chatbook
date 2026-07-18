@@ -149,8 +149,8 @@ class ConsoleWorkspaceStatusPair(Horizontal):
             classes="console-workspace-status-label",
             markup=False,
         )
-        label_widget.styles.width = 10
-        label_widget.styles.min_width = 10
+        label_widget.styles.width = 12
+        label_widget.styles.min_width = 12
         yield label_widget
 
         value_widget = Static(
@@ -536,24 +536,51 @@ class ConsoleWorkspaceContextTray(Vertical):
                 id="console-workspace-context-title",
                 classes="destination-section",
             )
-        yield self._static(
-            self._workspace_selector_label(),
+
+        workspace_value = self.state.workspace_name or self._workspace_selector_label()
+        yield ConsoleWorkspaceStatusPair(
+            "Workspace",
+            workspace_value,
+            label_id="console-active-workspace-label",
+            value_id="console-active-workspace-value",
             id="console-active-workspace",
-            classes="console-workspace-status-row console-workspace-selector-row",
         )
-        if self.state.change_workspace_enabled:
+
+        with Horizontal(
+            id="console-workspace-action-row",
+            classes="console-workspace-action-row",
+        ):
             yield Button(
-                "Change workspace",
+                "Switch",
                 id="console-change-workspace",
                 classes="console-workspace-action",
                 compact=True,
+                disabled=not self.state.change_workspace_enabled,
             )
-            if self.state.change_workspace_recovery:
-                yield self._static(
-                    self.state.change_workspace_recovery,
-                    id="console-change-workspace-recovery",
-                    classes="console-workspace-recovery",
-                )
+            yield Button(
+                "New",
+                id="console-new-workspace",
+                classes="console-workspace-action",
+                compact=True,
+                disabled=not self.state.new_workspace_enabled,
+            )
+
+        if not self.state.change_workspace_enabled and self.state.change_workspace_recovery:
+            yield self._static(
+                self.state.change_workspace_recovery,
+                id="console-change-workspace-recovery",
+                classes="console-workspace-recovery",
+            )
+
+        scope_value = self.state.scope_label or ""
+        yield ConsoleWorkspaceStatusPair(
+            "Scope",
+            scope_value,
+            label_id="console-active-scope-label",
+            value_id="console-active-scope-value",
+            id="console-active-scope",
+        )
+
         if self.state.recovery_copy:
             yield self._static(
                 self.state.recovery_copy,
@@ -574,12 +601,12 @@ class ConsoleWorkspaceContextTray(Vertical):
         section_controls_enabled = self.state.conversation_section is not None
         with Horizontal(
             id="console-workspace-conversations-header",
-            classes="console-workspace-conversations-header",
+            classes="console-rail-header console-workspace-conversations-header",
         ):
             title = self._static(
                 self._conversation_count_title(section),
                 id="console-workspace-conversations-title",
-                classes="destination-section",
+                classes="console-rail-section-title",
             )
             title.styles.width = "1fr"
             yield title
@@ -698,12 +725,12 @@ class ConsoleWorkspaceContextTray(Vertical):
 
         with Horizontal(
             id="console-workspace-conversations-header",
-            classes="console-workspace-conversations-header",
+            classes="console-rail-header console-workspace-conversations-header",
         ):
             title = self._static(
                 "Conversations",
                 id="console-workspace-conversations-title",
-                classes="destination-section",
+                classes="console-rail-section-title",
             )
             title.styles.width = "1fr"
             yield title

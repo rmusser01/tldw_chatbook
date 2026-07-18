@@ -442,8 +442,8 @@ async def test_console_left_rail_orders_session_then_staged_context():
             if _is_displayed(child)
         )
 
-        assert visible_text.index("Conversations") < visible_text.index("Attach")
-        assert "No sources attached." in visible_text
+        assert visible_text.index("Conversations") < visible_text.index("Sources")
+        assert "Stage sources from Library" in visible_text
         assert "Chat 1" in visible_text
 
 

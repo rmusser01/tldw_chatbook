@@ -293,6 +293,12 @@ def test_generated_console_stylesheet_includes_rail_section_rules():
         ".console-rail-section-title",
         ".console-rail-section-toggle",
         ".console-rail-section-body",
+        ".console-workspace-conversations-header",
+        ".console-model-section-label",
+        ".console-model-section-value",
+        ".console-staged-source-status",
+        ".console-workspace-empty-copy",
+        ".console-workspace-action-row",
     ):
         assert selector in component_css, selector
         assert selector in generated_css, selector
@@ -428,9 +434,9 @@ async def test_console_visible_rail_headers_are_left_aligned_and_collapse_button
         assert context_title.has_class("console-rail-title")
         # Pane title is distinct from the "Context" (staged sources) section
         # header below it, so no two left-rail titles collide (task-186).
-        assert str(context_title.renderable) == "Session & Context"
+        assert str(context_title.renderable) == "Console context"
         assert str(context_collapse.label) == "◂"
-        assert context_collapse.tooltip == "Collapse Session & Context rail"
+        assert context_collapse.tooltip == "Collapse Console context rail"
         assert context_collapse.region.width >= 3
         assert context_title.region.x < context_collapse.region.x
 
@@ -1149,10 +1155,12 @@ async def test_console_left_rail_renders_four_sections_with_details_collapsed():
         _assert_selector_hidden_or_absent(console, "#console-workspace-context-title")
         # Details content exists but is hidden.
         assert list(console.query("#console-workspace-details"))
-        # Model section content: provider/model readout lines alongside the
-        # Configure shortcut.
-        assert _is_displayed(console.query_one("#console-model-section-line1"))
-        assert _is_displayed(console.query_one("#console-model-section-line2"))
+        # Model section content: labeled provider/model/temperature/max-tokens
+        # rows alongside the Configure shortcut.
+        assert _is_displayed(console.query_one("#console-model-section-provider"))
+        assert _is_displayed(console.query_one("#console-model-section-model"))
+        assert _is_displayed(console.query_one("#console-model-section-temperature"))
+        assert _is_displayed(console.query_one("#console-model-section-max-tokens"))
         assert _is_displayed(console.query_one("#console-model-section-configure"))
 
 
@@ -1170,9 +1178,14 @@ async def test_console_details_toggle_expands_and_persists():
     app.chat_api_model_value = "local-model"
     host = ConsoleHarness(app)
 
-    async with host.run_test(size=(180, 48)) as pilot:
+    async with host.run_test(size=(180, 70)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-rail-section-header-details")
+
+        rail_body = console.query_one("#console-left-rail-body")
+        details_header = console.query_one("#console-rail-section-header-details")
+        rail_body.scroll_to_widget(details_header, animate=False)
+        await pilot.pause(0.1)
 
         await pilot.click("#console-rail-section-toggle-details")
         try:

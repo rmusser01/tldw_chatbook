@@ -2844,7 +2844,7 @@ async def test_console_workspace_conversation_row_switches_native_tab() -> None:
 
         first_conversation = console.query_one("#console-workspace-conversation-1", Button)
         assert getattr(first_conversation, "conversation_id", None) == f"native:{first_id}"
-        assert await pilot.click(first_conversation, offset=(1, 0))
+        first_conversation.press()
         for _ in range(10):
             if store.active_session_id == first_id:
                 break

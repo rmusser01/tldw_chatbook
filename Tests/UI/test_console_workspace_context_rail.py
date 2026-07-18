@@ -18,6 +18,9 @@ from tldw_chatbook.Widgets.Console import (
     ConsoleWorkspaceContextTray,
     ConsoleWorkspaceSwitcherModal,
 )
+from tldw_chatbook.Widgets.Console.console_workspace_context import (
+    ConsoleWorkspaceStatusPair,
+)
 from tldw_chatbook.Widgets.Console.console_workspace_details import (
     ConsoleWorkspaceDetailsTray,
 )
@@ -999,11 +1002,12 @@ async def test_console_left_rail_splits_staged_context_from_workspace_context() 
         conversations_title = console.query_one("#console-workspace-conversations-title")
         assert conversations_title.region.y > workspace_context.region.y
         assert len(console.query("#console-workspace-recovery")) == 0
-        assert len(console.query("#console-change-workspace")) == 0
+        switch_button = console.query_one("#console-change-workspace", Button)
+        assert switch_button.disabled is True
         new_conversation = console.query_one("#console-new-workspace-conversation", Button)
         assert new_conversation.disabled is False
         text = _visible_text(console)
-        assert "Staged Context" in text
+        assert "Sources" in text
         # The workspace context tray no longer renders its own heading; the
         # "Session" rail-section header labels this section instead.
         assert "Session" in text
@@ -1061,7 +1065,8 @@ async def test_console_workspace_selector_is_compact_plain_status_row() -> None:
         await _wait_for_selector(console, pilot, "#console-active-workspace")
 
         active_workspace = console.query_one("#console-active-workspace")
-        rendered_label = str(active_workspace.renderable)
+        value = active_workspace.query_one("#console-active-workspace-value", Static)
+        rendered_label = str(value.renderable)
         border = active_workspace.styles.border
 
         assert rendered_label == "Default"
@@ -1070,6 +1075,54 @@ async def test_console_workspace_selector_is_compact_plain_status_row() -> None:
         assert border.right[0] in {"", "none"}
         assert border.bottom[0] in {"", "none"}
         assert border.left[0] in {"", "none"}
+
+
+@pytest.mark.asyncio
+async def test_session_tray_shows_workspace_scope_and_new_button() -> None:
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    service.create_workspace(workspace_id="ws-a", name="Research Sprint")
+    service.set_active_workspace("ws-a")
+    service.link_membership(
+        "ws-a",
+        item_type="conversation",
+        item_id="conv-1",
+        role="workspace-thread",
+        title="Planning thread",
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-active-workspace")
+
+        workspace_label = console.query_one(
+            "#console-active-workspace .console-workspace-status-label", Static
+        )
+        scope_label = console.query_one(
+            "#console-active-scope .console-workspace-status-label", Static
+        )
+        assert "Workspace" in str(workspace_label.renderable)
+        assert "Scope" in str(scope_label.renderable)
+
+        new_button = console.query_one("#console-new-workspace", Button)
+        assert new_button.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_status_label_width_is_twelve() -> None:
+    from textual.app import App
+
+    class TestApp(App):
+        def compose(self):
+            yield ConsoleWorkspaceStatusPair(
+                "Workspace", "demo", label_id="l", value_id="v"
+            )
+
+    app = TestApp()
+    async with app.run_test():
+        label = app.query_one(".console-workspace-status-label")
+        assert label.styles.width.value == 12
 
 
 @pytest.mark.asyncio

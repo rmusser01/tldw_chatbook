@@ -2830,7 +2830,9 @@ async def test_console_staged_context_tray_stays_quiet_when_populated():
         # assertion below is meaningful for the non-empty state (and not
         # accidentally re-checking the empty case).
         staged_context = console.query_one("#console-staged-context-tray")
-        assert "source_id: note-42" in _visible_text(staged_context)
+        staged_text = _visible_text(staged_context)
+        assert "Incident Review" in staged_text
+        assert "ready" in staged_text
 
         staged_context_border = staged_context.styles.border
         assert staged_context_border.top[0] in {"", "none"}
@@ -2901,67 +2903,38 @@ async def test_console_workbench_panes_have_visible_terminal_frames():
 
 
 @pytest.mark.asyncio
-async def test_console_empty_staged_context_action_fits_tray():
+async def test_console_empty_staged_context_shows_guidance_and_count():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-staged-context-attach")
+        await _wait_for_selector(console, pilot, "#console-staged-context-empty")
 
-        summary = console.query_one("#console-staged-context-summary")
-        attach_button = console.query_one("#console-staged-context-attach", Button)
-        summary_plain = getattr(summary.render(), "plain", str(summary.render()))
+        count = console.query_one("#console-staged-context-count", Static)
+        guidance = console.query_one("#console-staged-context-empty", Static)
+        guidance_plain = str(guidance.renderable)
 
-        assert summary_plain == "No sources attached."
-        assert str(attach_button.label) == "Attach"
-        visible_text_width = max(0, summary.region.width - 2)
-        assert all(len(line) <= visible_text_width for line in summary_plain.splitlines())
-        assert len(str(attach_button.label)) <= max(0, attach_button.region.width - 2)
+        assert str(count.renderable) == "0"
+        assert "Stage sources from Library" in guidance_plain
 
 
 @pytest.mark.asyncio
-async def test_console_empty_staged_context_exposes_attach_action():
+async def test_console_empty_staged_context_omits_attach_action():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-staged-context-attach")
+        await _wait_for_selector(console, pilot, "#console-staged-context-empty")
 
-        summary = console.query_one("#console-staged-context-summary", Static)
-        attach_button = console.query_one("#console-staged-context-attach", Button)
-        tray_text = _visible_text(console.query_one("#console-staged-context-tray"))
-
-        assert getattr(summary.render(), "plain", str(summary.render())) == "No sources attached."
-        assert str(attach_button.label) == "Attach"
-        assert attach_button.compact is True
-        assert "Attach sources." not in tray_text
-
-        pushed_screens = []
-        original_push_screen = console.app.push_screen
-
-        def _spy_push_screen(screen, *args, **kwargs):
-            pushed_screens.append(screen)
-            return original_push_screen(screen, *args, **kwargs)
-
-        console.app.push_screen = _spy_push_screen
-
-        await pilot.click("#console-staged-context-attach")
-        await pilot.pause()
-
-        from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen
-
-        assert len(pushed_screens) == 1
-        assert isinstance(pushed_screens[0], EnhancedFileOpen)
-
-        console.app.push_screen = original_push_screen
-        await pilot.press("escape")
-        await pilot.pause()
+        tray = console.query_one("#console-staged-context-tray")
+        assert not list(tray.query("#console-staged-context-attach"))
+        assert "Stage sources from Library" in _visible_text(tray)
 
 
 @pytest.mark.asyncio
-async def test_console_staged_context_attach_uses_semantic_empty_state():
+async def test_console_staged_context_empty_state_renders_summary_when_provided():
     state = ConsoleStagedContextState(
         heading="Staged Context",
         summary="Nothing attached yet.",
@@ -2970,12 +2943,12 @@ async def test_console_staged_context_attach_uses_semantic_empty_state():
     app = StagedContextHarness(state)
 
     async with app.run_test(size=(60, 10)) as pilot:
-        await _wait_for_selector(app.screen, pilot, "#console-staged-context-attach")
+        await _wait_for_selector(app.screen, pilot, "#console-staged-context-empty")
 
-        assert app.query_one("#console-staged-context-summary", Static).render().plain == (
+        assert str(app.query_one("#console-staged-context-summary", Static).renderable) == (
             "Nothing attached yet."
         )
-        assert str(app.query_one("#console-staged-context-attach", Button).label) == "Attach"
+        assert not list(app.screen.query("#console-staged-context-attach"))
 
 
 @pytest.mark.asyncio
@@ -3005,8 +2978,10 @@ async def test_console_non_empty_staged_context_keeps_room_for_source_details():
             staged_context.styles.max_height,
         )
         assert max_height >= 10
-        assert "source_id: note-42" in _visible_text(staged_context)
-        assert "Review citations before sending." in _visible_text(staged_context)
+        staged_text = _visible_text(staged_context)
+        assert "Incident Review" in staged_text
+        assert "ready" in staged_text
+        assert "Review citations before sending." in staged_text
 
 
 @pytest.mark.asyncio
@@ -3082,7 +3057,7 @@ async def test_console_native_control_bar_and_staged_context_reflect_pending_han
         assert "RAG:" in text
         assert "Sources: 1 staged" in text
         assert "Transformer notes" in text
-        assert "citation_count: 2" in text
+        assert "ready" in text
         assert "Review citations before sending." in text
 
 
@@ -3650,9 +3625,8 @@ async def test_console_rag_staging_shows_evidence_summary_authority_and_snippet(
         text = _visible_text(console)
         assert "Evidence: 1/1 available (available)" in text
         assert "Authority: Source authority: local" in text
-        assert "Evidence source: [S1] Incident Review" in text
-        assert "Evidence authority: Source authority: local" in text
-        assert "Evidence status: available" in text
+        assert "Incident Review" in text
+        assert "ready" in text
         assert "Expired credential caused the incident." in text
         assert "evidence_bundle:" not in text
 

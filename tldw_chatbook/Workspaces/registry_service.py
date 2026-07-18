@@ -638,3 +638,31 @@ def _normalize_required_text(value: str, field_name: str) -> str:
     if not normalized:
         raise ValueError(f"{field_name} is required")
     return normalized
+
+
+def next_local_workspace_identity(
+    registry_service: LocalWorkspaceRegistryService,
+) -> tuple[str, str]:
+    """Return a collision-free local workspace id and display name.
+
+    Scans the registry for existing workspace ids and names, then returns the
+    first ``workspace-local-<n>`` / ``Workspace <n>`` pair that is not already
+    in use. The helper is shared between Library and Console so both create
+    local workspaces with the same naming scheme.
+
+    Args:
+        registry_service: The local workspace registry to check for collisions.
+
+    Returns:
+        A tuple of ``(workspace_id, workspace_name)``.
+    """
+    existing_workspaces = tuple(registry_service.list_workspaces(include_archived=True))
+    existing_ids = {workspace.workspace_id for workspace in existing_workspaces}
+    existing_names = {workspace.name for workspace in existing_workspaces}
+    index = 1
+    while True:
+        workspace_id = f"workspace-local-{index}"
+        workspace_name = f"Workspace {index}"
+        if workspace_id not in existing_ids and workspace_name not in existing_names:
+            return workspace_id, workspace_name
+        index += 1

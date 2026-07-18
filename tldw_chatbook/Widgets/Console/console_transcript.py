@@ -811,9 +811,11 @@ class ConsoleTranscript(VerticalScroll):
         if track:
             self._row_build_counts[row.key] = self._row_build_counts.get(row.key, 0) + 1
         if row.kind == "rule":
+            # Rule separators do not need stable IDs; using None avoids
+            # DuplicateIds when a recompose/race leaves the previous end-rule
+            # widget in the DOM briefly while the new one is mounted.
             return Static(
                 row.renderable,
-                id=self._row_widget_id(row),
                 classes="console-transcript-rule",
             )
         if row.kind == "empty":
