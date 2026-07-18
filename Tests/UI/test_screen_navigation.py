@@ -1057,16 +1057,16 @@ def test_screen_lifecycle_methods():
 @pytest.mark.asyncio
 async def test_main_navigation_copy_and_order():
     expected_button_order = [
-        ("nav-home", "Home"),
-        ("nav-console", "Console"),
-        ("nav-library", "Library"),
-        ("nav-artifacts", "Artifacts"),
-        ("nav-personas", "Personas"),
-        ("nav-watchlists_collections", "Watchlists"),
-        ("nav-schedules", "Schedules"),
-        ("nav-workflows", "Workflows"),
-        ("nav-mcp", "MCP"),
-        ("nav-acp", "ACP"),
+        ("nav-home", "1 Home"),
+        ("nav-console", "2 Console"),
+        ("nav-library", "3 Library"),
+        ("nav-artifacts", "4 Artifacts"),
+        ("nav-personas", "5 Personas"),
+        ("nav-watchlists_collections", "6 Watchlists"),
+        ("nav-schedules", "7 Schedules"),
+        ("nav-workflows", "8 Workflows"),
+        ("nav-mcp", "9 MCP"),
+        ("nav-acp", "0 ACP"),
         ("nav-lab", "Lab"),
         ("nav-settings", "Settings"),
     ]
@@ -1084,7 +1084,7 @@ async def test_main_navigation_copy_and_order():
         actual_button_order = [(button.id, str(button.label).strip()) for button in nav_buttons]
 
         assert actual_button_order == expected_button_order
-        assert str(app.query_one("#nav-console", Button).label).strip() == "Console"
+        assert str(app.query_one("#nav-console", Button).label).strip() == "2 Console"
         assert nav_buttons[0].id == "nav-home"
         assert nav_buttons[1].id == "nav-console"
         assert nav_buttons[-1].id == "nav-settings"

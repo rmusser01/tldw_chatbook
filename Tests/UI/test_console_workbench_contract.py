@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import Mock
 from textual.app import App, ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Static
@@ -6,6 +7,7 @@ from textual.widgets import Static
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunState, ConsoleRunStatus
 from tldw_chatbook.Chat.console_display_state import (
+    CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
     ConsoleControlState,
     build_console_disabled_reason,
 )
@@ -18,6 +20,7 @@ from tldw_chatbook.UI.Screens.chat_screen import (
     CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
     ChatScreen,
 )
+from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Console.console_setup_modal import ConsoleSetupModal
@@ -272,6 +275,129 @@ async def test_console_counter_chips_dim_when_zero():
             assert chip.has_class("console-chip-dim"), chip_id
             assert not chip.has_class("console-chip-alert"), chip_id
         assert not console.query_one("#console-provider-chip").has_class("console-chip-dim")
+
+
+@pytest.mark.asyncio
+async def test_console_control_chips_are_focusable_and_reveal_full_label_on_focus():
+    long_model = "very-long-local-model-name-for-ellipsis"
+    app = _build_test_app()
+    _configure_native_ready_console(app, model=long_model)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-control-bar")
+
+        chip_ids = (
+            "#console-provider-chip",
+            "#console-model-chip",
+            "#console-persona-chip",
+            "#console-rag-chip",
+            "#console-sources-chip",
+            "#console-tools-chip",
+            "#console-approvals-chip",
+        )
+        for chip_id in chip_ids:
+            chip = console.query_one(chip_id)
+            assert chip.can_focus, chip_id
+            chip.focus()
+            await pilot.pause()
+            assert chip.has_focus, chip_id
+
+        # Chips ellipsize at 22 cells; focus lifts the cap so the full label
+        # is reachable by keyboard (the tooltip carries the same full text).
+        model_chip = console.query_one("#console-model-chip")
+        assert long_model in str(model_chip.tooltip)
+        assert model_chip.region.width > 22
+
+
+@pytest.mark.asyncio
+async def test_console_approvals_chip_activation_focuses_pending_approval_card():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-control-bar")
+
+        console.set_task_resume_state(
+            TaskResumeState(
+                pending_approval={
+                    "summary": "Allow workspace write for chip test",
+                    "details": "Approvals chip activation must reach this card",
+                }
+            )
+        )
+        await pilot.pause(0.1)
+
+        chip = console.query_one("#console-approvals-chip")
+        chip.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+
+        focused = host.focused
+        assert getattr(focused, "id", None) == "approval-allow-once"
+
+
+@pytest.mark.asyncio
+async def test_console_approvals_chip_activation_focuses_batch_submit_button():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-control-bar")
+
+        console.set_task_resume_state(
+            TaskResumeState(
+                pending_approval={
+                    "calls": [
+                        {
+                            "llm_name": "mcp__srv__auth",
+                            "server_label": "Srv",
+                            "tool_name": "auth",
+                            "arguments": {},
+                        }
+                    ],
+                    "timeout_seconds": 30.0,
+                }
+            )
+        )
+        await pilot.pause(0.1)
+
+        chip = console.query_one("#console-approvals-chip")
+        chip.focus()
+        await pilot.pause()
+        await pilot.press("space")
+        await pilot.pause(0.1)
+
+        focused = host.focused
+        assert getattr(focused, "id", None) == "approval-submit"
+
+
+@pytest.mark.asyncio
+async def test_console_approvals_chip_activation_without_pending_approval_notifies():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-control-bar")
+
+        host.notify = Mock()
+        chip = console.query_one("#console-approvals-chip")
+        chip.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+
+        host.notify.assert_called_once()
+        assert CONSOLE_INSPECTOR_NO_APPROVAL_REASON in host.notify.call_args.args[0]
+        assert getattr(host.focused, "id", None) != "approval-allow-once"
 
 
 @pytest.mark.asyncio

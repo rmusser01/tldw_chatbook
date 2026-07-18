@@ -12,6 +12,7 @@ from ..Navigation.base_app_screen import BaseAppScreen
 from ..STTS_Window import STTSWindow
 from ..Workbench.workbench_state import WorkbenchHeaderState
 from ..Workbench.workbench_widgets import DestinationHeader
+from .lab_mode_strip import LabModeStrip
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -40,6 +41,7 @@ class STTSScreen(BaseAppScreen):
             ),
             id="stts-destination-header",
         )
+        yield LabModeStrip(active_route="stts", id="lab-mode-strip")
         self.stts_window = STTSWindow(self.app_instance, classes="window")
         # Leave room for the destination header above the window.
         self.stts_window.styles.height = "1fr"

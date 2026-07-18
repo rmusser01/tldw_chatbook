@@ -28,16 +28,16 @@ PHASE_6_FIRST_TIME_TASK = Path(
 )
 
 EXPECTED_NAV = [
-    ("nav-home", "Home"),
-    ("nav-console", "Console"),
-    ("nav-library", "Library"),
-    ("nav-artifacts", "Artifacts"),
-    ("nav-personas", "Personas"),
-    ("nav-watchlists_collections", "Watchlists"),
-    ("nav-schedules", "Schedules"),
-    ("nav-workflows", "Workflows"),
-    ("nav-mcp", "MCP"),
-    ("nav-acp", "ACP"),
+    ("nav-home", "1 Home"),
+    ("nav-console", "2 Console"),
+    ("nav-library", "3 Library"),
+    ("nav-artifacts", "4 Artifacts"),
+    ("nav-personas", "5 Personas"),
+    ("nav-watchlists_collections", "6 Watchlists"),
+    ("nav-schedules", "7 Schedules"),
+    ("nav-workflows", "8 Workflows"),
+    ("nav-mcp", "9 MCP"),
+    ("nav-acp", "0 ACP"),
     ("nav-lab", "Lab"),
     ("nav-settings", "Settings"),
 ]
@@ -127,7 +127,12 @@ async def test_first_time_shell_replay_exposes_home_console_and_orientation_path
         async with app.run_test(size=(180, 50)) as pilot:
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "home" and app.screen.__class__.__name__ == "HomeScreen",
+                # Nav strip + docked hint mount a tick after the screen swap;
+                # wait for the full chrome before asserting/clicking.
+                lambda: app.current_tab == "home"
+                and app.screen.__class__.__name__ == "HomeScreen"
+                and len(app.screen.query(".nav-button")) == len(EXPECTED_NAV)
+                and len(app.screen.query("#nav-overflow-hint")) == 1,
             )
 
             nav_buttons = list(app.screen.query(MainNavigationBar).first().query(Button))

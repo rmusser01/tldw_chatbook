@@ -8,6 +8,7 @@ from ..Navigation.base_app_screen import BaseAppScreen
 from ..LLM_Management_Window import LLMManagementWindow
 from ..Workbench.workbench_state import WorkbenchHeaderState
 from ..Workbench.workbench_widgets import DestinationHeader
+from .lab_mode_strip import LabModeStrip
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -32,6 +33,7 @@ class LLMScreen(BaseAppScreen):
             ),
             id="llm-destination-header",
         )
+        yield LabModeStrip(active_route="llm", id="lab-mode-strip")
         self.llm_window = LLMManagementWindow(self.app_instance, classes="window")
         # Leave room for the destination header above the window.
         self.llm_window.styles.height = "1fr"

@@ -4,15 +4,21 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from textual import events, on
 from textual.app import ComposeResult
-from textual import on
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
+from textual.message import Message
 from textual.widgets import Button, Static
 
-from tldw_chatbook.Chat.console_display_state import ConsoleControlState
+from tldw_chatbook.Chat.console_display_state import (
+    CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
+    ConsoleControlState,
+)
 from tldw_chatbook.UI.Workbench.workbench_state import WorkbenchAction
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
+from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
 from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
 
 
@@ -69,6 +75,40 @@ def _summary_line(state: ConsoleControlState) -> str:
             state.approvals_label,
         )
     )
+
+
+class ConsoleChip(Static):
+    """Focusable Console readiness chip.
+
+    Chips ellipsize at 22 cells; focusing a chip lifts that cap (see
+    `.console-control-chip:focus` in `_agentic_terminal.tcss`) so the full
+    label is reachable from the keyboard, while the tooltip keeps carrying
+    the same full text on hover.
+    """
+
+    can_focus = True
+
+
+class ConsoleApprovalsChip(ConsoleChip):
+    """Approvals readiness chip that doubles as an approval-review action.
+
+    Activating it (Enter/Space while focused, or click) asks the control
+    bar to focus the pending approval card in the transcript.
+    """
+
+    BINDINGS = [
+        Binding("enter", "review_approval", "Review pending approval", show=False),
+        Binding("space", "review_approval", "Review pending approval", show=False),
+    ]
+
+    class ReviewRequested(Message):
+        """Posted when the approvals chip is activated from keyboard or mouse."""
+
+    def action_review_approval(self) -> None:
+        self.post_message(self.ReviewRequested())
+
+    def _on_click(self, event: events.Click) -> None:
+        self.post_message(self.ReviewRequested())
 
 
 class ConsoleControlBar(Vertical):
@@ -180,15 +220,22 @@ class ConsoleControlBar(Vertical):
             chip.set_class(active, "console-chip-alert")
 
     @staticmethod
-    def _chip(label: str, *, id: str, emphasis: bool | None = None) -> Static:
+    def _chip(
+        label: str,
+        *,
+        id: str,
+        emphasis: bool | None = None,
+        chip_class: type[ConsoleChip] = ConsoleChip,
+    ) -> ConsoleChip:
         classes = "console-control-chip"
         if emphasis is False:
             classes += " console-chip-dim"
         elif emphasis is True:
             classes += " console-chip-alert"
-        chip = Static(label, id=id, classes=classes)
+        chip = chip_class(label, id=id, classes=classes)
         # Chips ellipsize at 22 cells; the tooltip carries the full label so
-        # two models sharing a prefix stay distinguishable.
+        # two models sharing a prefix stay distinguishable, and focusing the
+        # chip expands it to show the same full label (see ConsoleChip).
         chip.tooltip = label
         return chip
 
@@ -281,6 +328,7 @@ class ConsoleControlBar(Vertical):
                 self.state.approvals_label,
                 id="console-approvals-chip",
                 emphasis=self.state.approvals_active,
+                chip_class=ConsoleApprovalsChip,
             )
         with Horizontal(id="console-control-action-row", classes="console-control-action-row"):
             for action in self._visible_actions():
@@ -340,3 +388,40 @@ class ConsoleControlBar(Vertical):
             return
         event.stop()
         self.post_message(WorkbenchActionRequested(action_id))
+
+    @on(ConsoleApprovalsChip.ReviewRequested)
+    def on_approval_review_requested(self, event: ConsoleApprovalsChip.ReviewRequested) -> None:
+        """Focus the pending approval card in the transcript.
+
+        Falls back to the run inspector's notification seam when no approval
+        is pending, so the keyboard-only path never dead-ends silently.
+        """
+        event.stop()
+        self._focus_pending_approval_card()
+
+    def _focus_pending_approval_card(self) -> None:
+        """Scroll the displayed approval card into view and focus its action."""
+        try:
+            cards = list(self.screen.query("#chat-approval-card"))
+        except Exception:
+            cards = []
+        card = next(
+            (candidate for candidate in cards if isinstance(candidate, ChatApprovalCard) and candidate.display),
+            None,
+        )
+        if card is None:
+            self.app.notify(CONSOLE_INSPECTOR_NO_APPROVAL_REASON, severity="warning")
+            return
+        try:
+            card.scroll_visible(animate=False)
+        except Exception:
+            pass
+        try:
+            batch_visible = card.query_one("#approval-batch-body").display
+        except NoMatches:
+            batch_visible = False
+        target_id = "#approval-submit" if batch_visible else "#approval-allow-once"
+        try:
+            card.query_one(target_id, Button).focus()
+        except NoMatches:
+            pass

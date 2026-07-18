@@ -1952,6 +1952,16 @@ ConsoleSystemPromptModal {
     text-style: bold;
 }
 
+/* Keyboard reachability: chips ellipsize at 22 cells, so focusing a chip
+   lifts the width cap to reveal the full label (the tooltip carries the
+   same text on hover). Later chips clip under the bar's hidden overflow. */
+.console-control-chip:focus {
+    max-width: 100%;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
 .console-control-action {
     width: auto;
     min-width: 7;

@@ -15,6 +15,28 @@ if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
 
 
+#: Hotkey digits for the nav keyboard layer: ctrl+1..ctrl+9 select the first
+#: nine destinations in SHELL_DESTINATION_ORDER and ctrl+0 selects the tenth.
+#: The remaining destinations (Lab, Settings) carry no hotkey, so their
+#: labels stay unnumbered.
+NAV_HOTKEY_DIGITS: tuple[str, ...] = ("1", "2", "3", "4", "5", "6", "7", "8", "9", "0")
+
+
+def nav_button_label(index: int, label: str) -> str:
+    """Prefix a destination label with its hotkey digit when it has one.
+
+    Args:
+        index: Position of the destination in SHELL_DESTINATION_ORDER.
+        label: Compact destination label from the shell destination model.
+
+    Returns:
+        ``"<digit> <label>"`` for the first ten destinations, else ``label``.
+    """
+    if 0 <= index < len(NAV_HOTKEY_DIGITS):
+        return f"{NAV_HOTKEY_DIGITS[index]} {label}"
+    return label
+
+
 class NavigateToScreen(Message):
     """Message to request navigation to a specific screen."""
     
@@ -52,15 +74,19 @@ class MainNavigationBar(Container):
         dock: top;
         background: $background;
         border-bottom: solid $surface-lighten-2;
-        overflow-x: auto;
+        layout: horizontal;
+        overflow: hidden;
     }
 
     .main-nav {
         height: 100%;
-        width: auto;
+        width: 1fr;
         layout: horizontal;
         align: left middle;
         padding: 0;
+        margin: 0;
+        overflow-x: auto;
+        scrollbar-size-horizontal: 0;
     }
 
     .nav-button {
@@ -138,10 +164,10 @@ class MainNavigationBar(Container):
 
     def compose(self) -> ComposeResult:
         """Compose the navigation bar from master-shell destination metadata."""
-        with Horizontal(classes="main-nav"):
-            for destination in SHELL_DESTINATION_ORDER:
+        with Horizontal(id="nav-destination-strip", classes="main-nav"):
+            for index, destination in enumerate(SHELL_DESTINATION_ORDER):
                 button = NavigationButton(
-                    destination.label,
+                    nav_button_label(index, destination.label),
                     id=f"nav-{destination.destination_id}",
                     classes="nav-button ascii-nav-tab",
                     tooltip=destination.tooltip,
@@ -150,9 +176,27 @@ class MainNavigationBar(Container):
                 if destination.destination_id == self.active_destination_id:
                     button.add_class("is-active")
                 yield button
-            overflow_hint = Static("More: Ctrl+P", id="nav-overflow-hint", classes="nav-overflow-hint")
-            overflow_hint.tooltip = "Open command palette"
-            yield overflow_hint
+        # Docked outside the scrollable strip so the hint stays visible at the
+        # right edge exactly when the destinations overflow.
+        overflow_hint = Static("More: Ctrl+P", id="nav-overflow-hint", classes="nav-overflow-hint")
+        overflow_hint.tooltip = "Open command palette"
+        yield overflow_hint
+
+    def on_mount(self) -> None:
+        """Scroll the initially active destination's button into view."""
+        self.call_after_refresh(self._scroll_active_destination_into_view)
+
+    def _scroll_active_destination_into_view(self) -> None:
+        """Bring the active destination's button into the strip's visible scroll window."""
+        try:
+            strip = self.query_one("#nav-destination-strip", Horizontal)
+            button = strip.query_one(f"#nav-{self.active_destination_id}", NavigationButton)
+        except Exception:
+            return
+        try:
+            strip.scroll_to_widget(button, animate=False)
+        except Exception:
+            return
 
     @on(Button.Pressed, ".nav-button")
     def handle_navigation(self, event: Button.Pressed) -> None:
@@ -165,7 +209,10 @@ class MainNavigationBar(Container):
             clicked_widget = self.app.get_widget_at(event.screen_x, event.screen_y)[0]
         except Exception:
             return
-        if clicked_widget is not self:
+        if clicked_widget is not self and not (
+            isinstance(clicked_widget, Horizontal)
+            and clicked_widget.has_class("main-nav")
+        ):
             return
 
         click_point = (event.screen_x, event.screen_y)
@@ -200,6 +247,7 @@ class MainNavigationBar(Container):
         self.active_destination_id = destination.destination_id
         self.active_route = screen_name
         self.active_screen = self.active_destination_id
+        self.call_after_refresh(self._scroll_active_destination_into_view)
         
         # Post navigation message to app
         self.post_message(NavigateToScreen(screen_name))

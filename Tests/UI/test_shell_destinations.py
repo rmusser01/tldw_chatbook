@@ -84,6 +84,55 @@ def test_ccp_screen_route_loads_personas_screen():
     assert screen_class.__name__ == "PersonasScreen"
 
 
+def test_lab_destination_id_resolves_to_models_screen():
+    """NavigateToScreen("lab") must seat Lab's primary route (llm -> Models),
+    not fall through the registry and leave the app on the current screen."""
+    from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_target
+
+    screen_name, _tab, screen_class = resolve_screen_target("lab")
+    assert screen_name == "llm"
+    assert screen_class is not None
+    assert screen_class.__name__ == "LLMScreen"
+
+
+def test_lab_legacy_routes_resolve_to_their_lab_screens():
+    from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_target
+
+    expectations = {
+        "llm": "LLMScreen",
+        "llm_management": "LLMScreen",
+        "stts": "STTSScreen",
+        "evals": "EvalsScreen",
+    }
+    for route, expected_class in expectations.items():
+        _screen_name, _tab, screen_class = resolve_screen_target(route)
+        assert screen_class is not None, route
+        assert screen_class.__name__ == expected_class, route
+
+
+def test_every_shell_destination_id_resolves_to_its_primary_screen():
+    """Destination-id resolution: a destination id lands on the same screen
+    as the destination's primary route (covers "lab" and "console", whose
+    ids are not themselves screen routes)."""
+    app = _build_test_app()
+
+    for destination in SHELL_DESTINATION_ORDER:
+        by_id = app._resolve_screen_navigation_target(destination.destination_id)
+        by_primary = app._resolve_screen_navigation_target(destination.primary_route)
+        assert by_id[2] is not None, destination.destination_id
+        assert by_id == by_primary, destination.destination_id
+
+
+def test_unknown_route_still_misses_cleanly():
+    from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_target
+
+    assert resolve_screen_target("definitely-not-a-route") == (
+        "definitely-not-a-route",
+        "definitely-not-a-route",
+        None,
+    )
+
+
 def test_each_shell_destination_has_recovery_tooltip_copy():
     for destination in SHELL_DESTINATION_ORDER:
         assert destination.tooltip

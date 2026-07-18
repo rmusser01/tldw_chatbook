@@ -95,6 +95,11 @@ class ConsoleComposerBar(Horizontal):
         )
         self._segments: list[_DraftSegment] = []
         self._segments_initialized = False
+        # Caret position as an offset into the canonical draft text (the
+        # concatenation of segment payloads), clamped to [0, len(draft)] on
+        # every mutation. Collapsed/confirm paste tokens are single units for
+        # caret movement and deletion.
+        self._cursor_index = 0
         self._run_active = False
         self._send_blocked = False
         self._setup_blocked_reason = ""
@@ -137,6 +142,81 @@ class ConsoleComposerBar(Horizontal):
     def _canonical_draft_text(self) -> str:
         """Return the full payload represented by composer segments."""
         return "".join(segment.text for segment in self._segments)
+
+    @property
+    def cursor_index(self) -> int:
+        """Return the caret offset into the canonical draft text.
+
+        Returns:
+            The zero-based character index of the caret in the canonical
+            (non-display) draft text.
+        """
+        return self._cursor_index
+
+    def _clamp_cursor(self) -> None:
+        """Keep the caret inside the canonical draft bounds."""
+        self._cursor_index = max(
+            0,
+            min(self._cursor_index, len(self._canonical_draft_text())),
+        )
+
+    def _locate_canonical(self, index: int) -> tuple[int, int]:
+        """Map a canonical draft offset to (segment index, intra-segment offset).
+
+        An offset exactly on a segment boundary maps to the END of the left
+        segment, so a caret right after a paste token resolves to that token.
+        """
+        if not self._segments:
+            return (0, 0)
+        remaining = index
+        for segment_index, segment in enumerate(self._segments):
+            segment_length = len(segment.text)
+            if remaining <= segment_length:
+                return (segment_index, remaining)
+            remaining -= segment_length
+        last_index = len(self._segments) - 1
+        return (last_index, len(self._segments[last_index].text))
+
+    def _cursor_display_index(self) -> int:
+        """Map the canonical caret offset to an unwrapped display-string offset.
+
+        Collapsed/confirm paste tokens render as a short display token, so a
+        caret inside one snaps to the token's nearest display edge.
+        """
+        remaining = self._cursor_index
+        display_offset = 0
+        for segment in self._segments:
+            segment_length = len(segment.text)
+            display_length = len(self._segment_display_text(segment))
+            if remaining <= segment_length:
+                if segment.collapse_state in {"collapsed", "confirm"}:
+                    return display_offset + (display_length if remaining else 0)
+                return display_offset + remaining
+            remaining -= segment_length
+            display_offset += display_length
+        return display_offset
+
+    def _canonical_index_at_display(self, display_index: int) -> int:
+        """Map an unwrapped display-string offset to a canonical draft offset.
+
+        Offsets landing on a collapsed/confirm paste token snap to the
+        token's nearest canonical edge (the caret never sits inside a token).
+        """
+        display_offset = 0
+        canonical_offset = 0
+        for segment in self._segments:
+            display_length = len(self._segment_display_text(segment))
+            canonical_length = len(segment.text)
+            if display_index < display_offset + display_length:
+                if segment.collapse_state in {"collapsed", "confirm"}:
+                    within = display_index - display_offset
+                    if within * 2 < display_length:
+                        return canonical_offset
+                    return canonical_offset + canonical_length
+                return canonical_offset + (display_index - display_offset)
+            display_offset += display_length
+            canonical_offset += canonical_length
+        return canonical_offset
 
     def _display_draft_text(self) -> str:
         """Return the display-only draft text represented by composer segments."""
@@ -393,14 +473,44 @@ class ConsoleComposerBar(Horizontal):
         """Return the bounded visible draft lines, biased toward the caret end."""
         return [line_slice.text for line_slice in cls._visible_draft_line_slices(text, width)]
 
+    @staticmethod
+    def _row_index_for_source_offset(
+        line_slices: list[_DraftLineSlice],
+        source_offset: int,
+    ) -> int:
+        """Return the wrapped row containing a source-text offset."""
+        for row_index, line_slice in enumerate(line_slices):
+            if line_slice.start <= source_offset < line_slice.end:
+                return row_index
+        return len(line_slices) - 1
+
     @classmethod
-    def _visible_draft_line_slices(cls, text: str, width: int) -> list[_DraftLineSlice]:
-        """Return bounded wrapped draft rows with source-offset mapping."""
+    def _visible_draft_line_slices(
+        cls,
+        text: str,
+        width: int,
+        *,
+        cursor_index: int | None = None,
+    ) -> list[_DraftLineSlice]:
+        """Return bounded wrapped draft rows with source-offset mapping.
+
+        When ``cursor_index`` is given (an offset into ``text``, typically the
+        reserved caret cell), the visible window scrolls just enough to keep
+        the caret row on screen; otherwise it stays biased toward the tail.
+        """
         line_slices = cls._wrap_draft_line_slices(text, width)
         if len(line_slices) <= cls.MAX_DRAFT_ROWS:
             return line_slices
 
-        visible_slices = line_slices[-cls.MAX_DRAFT_ROWS :]
+        if cursor_index is None:
+            first_visible = len(line_slices) - cls.MAX_DRAFT_ROWS
+        else:
+            caret_row = cls._row_index_for_source_offset(line_slices, cursor_index)
+            first_visible = min(
+                max(caret_row - (cls.MAX_DRAFT_ROWS - 1), 0),
+                len(line_slices) - cls.MAX_DRAFT_ROWS,
+            )
+        visible_slices = list(line_slices[first_visible : first_visible + cls.MAX_DRAFT_ROWS])
         first_slice = visible_slices[0]
         first_line_stripped = first_slice.text.lstrip()
         if first_line_stripped:
@@ -420,6 +530,28 @@ class ConsoleComposerBar(Horizontal):
             )
         return visible_slices
 
+    @staticmethod
+    def _shift_style_ranges_for_caret(
+        style_ranges: list[_DraftStyleRange],
+        caret_position: int,
+    ) -> list[_DraftStyleRange]:
+        """Shift style spans right of the spliced caret cell by one column.
+
+        Spans starting exactly at the caret move whole; spans containing the
+        caret grow to cover the caret cell; spans ending exactly at the caret
+        are untouched.
+        """
+        shifted: list[_DraftStyleRange] = []
+        for style_start, style_end, style in style_ranges:
+            shifted.append(
+                (
+                    style_start + 1 if style_start >= caret_position else style_start,
+                    style_end + 1 if style_end > caret_position else style_end,
+                    style,
+                )
+            )
+        return shifted
+
     @classmethod
     def _draft_renderable(
         cls,
@@ -429,15 +561,16 @@ class ConsoleComposerBar(Horizontal):
         style_ranges: list[_DraftStyleRange] | None = None,
         focused: bool = False,
         cursor_visible: bool = True,
+        cursor_index: int | None = None,
     ) -> Text:
         if text:
-            # While focused, exactly one trailing display cell is always
-            # reserved after the wrapped draft -- the caret glyph during the
-            # visible blink phase, an ordinary space during the hidden phase
-            # -- and it is wrapped in the *same* pass as the draft itself
-            # (rather than appended afterward). That keeps the two blink
-            # phases layout-identical: whichever character reserves the row
-            # is decided by wrap width alone, never by which literal
+            # While focused, exactly one display cell is always reserved at
+            # the caret position inside the wrapped draft -- the caret glyph
+            # during the visible blink phase, an ordinary space during the
+            # hidden phase -- and it is wrapped in the *same* pass as the
+            # draft itself (rather than appended afterward). That keeps the
+            # two blink phases layout-identical: whichever character reserves
+            # the cell is decided by wrap width alone, never by which literal
             # character it is, so a blink tick can never change how many
             # visual rows the draft occupies (which previously could clip or
             # jitter the composer when the last wrapped line landed exactly
@@ -445,8 +578,27 @@ class ConsoleComposerBar(Horizontal):
             # character is prominent enough on its own, and leaving it
             # unstyled keeps it from being mistaken for a stateful paste
             # token.
-            trailing_cell = (cls.CURSOR_GLYPH if cursor_visible else " ") if focused else ""
-            line_slices = cls._visible_draft_line_slices(f"{text}{trailing_cell}", width)
+            if focused:
+                caret_cell = cls.CURSOR_GLYPH if cursor_visible else " "
+                caret_position = (
+                    len(text)
+                    if cursor_index is None
+                    else max(0, min(cursor_index, len(text)))
+                )
+                render_text = f"{text[:caret_position]}{caret_cell}{text[caret_position:]}"
+                if style_ranges:
+                    style_ranges = cls._shift_style_ranges_for_caret(
+                        style_ranges,
+                        caret_position,
+                    )
+            else:
+                caret_position = None
+                render_text = text
+            line_slices = cls._visible_draft_line_slices(
+                render_text,
+                width,
+                cursor_index=caret_position,
+            )
             rendered = Text("\n".join(line.text for line in line_slices))
             if style_ranges:
                 output_offset = 0
@@ -527,22 +679,128 @@ class ConsoleComposerBar(Horizontal):
         self.styles.max_height = self.MAX_DRAFT_ROWS + self.COMPOSER_CHROME_ROWS
         self.refresh(layout=True)
 
-    def _append_literal_segment(self, text: str) -> None:
-        """Append literal text while coalescing adjacent literal segments."""
-        if self._segments and self._segments[-1].collapse_state == "literal":
-            self._segments[-1].text += text
+    def _insert_literal_at_cursor(self, text: str) -> None:
+        """Splice literal text into the draft at the caret, coalescing segments.
+
+        Paste tokens are never spliced into: text typed at a token boundary
+        merges into the adjacent literal segment (or starts a new one).
+        """
+        if not self._segments:
+            self._segments = [_DraftSegment(text)]
+            self._cursor_index = len(text)
+            return
+        segment_index, offset = self._locate_canonical(self._cursor_index)
+        segment = self._segments[segment_index]
+        if segment.collapse_state in {"literal", "expanded"}:
+            segment.text = segment.text[:offset] + text + segment.text[offset:]
+            self._cursor_index += len(text)
+            return
+        if offset == len(segment.text):
+            # Caret just past a paste token: prepend to the right literal
+            # neighbour when possible, else start a new literal segment.
+            right_index = segment_index + 1
+            if (
+                right_index < len(self._segments)
+                and self._segments[right_index].collapse_state == "literal"
+            ):
+                self._segments[right_index].text = text + self._segments[right_index].text
+            else:
+                self._segments.insert(right_index, _DraftSegment(text))
+            self._cursor_index += len(text)
+            return
+        # Caret just before a leading paste token (offset == 0).
+        left_index = segment_index - 1
+        if left_index >= 0 and self._segments[left_index].collapse_state == "literal":
+            self._segments[left_index].text += text
         else:
-            self._segments.append(_DraftSegment(text))
+            self._segments.insert(segment_index, _DraftSegment(text))
+        self._cursor_index += len(text)
+
+    def _insert_segment_at_cursor(self, segment: _DraftSegment) -> None:
+        """Insert a paste/file segment at the caret, splitting literal text."""
+        if not self._segments:
+            self._segments = [segment]
+            self._cursor_index = len(segment.text)
+            return
+        segment_index, offset = self._locate_canonical(self._cursor_index)
+        target = self._segments[segment_index]
+        if target.collapse_state in {"collapsed", "confirm"}:
+            insert_index = segment_index if offset == 0 else segment_index + 1
+            self._segments.insert(insert_index, segment)
+        else:
+            left_text = target.text[:offset]
+            right_text = target.text[offset:]
+            replacement: list[_DraftSegment] = []
+            if left_text:
+                replacement.append(
+                    _DraftSegment(
+                        left_text,
+                        collapse_state=target.collapse_state,
+                        label=target.label,
+                    )
+                )
+            replacement.append(segment)
+            if right_text:
+                replacement.append(
+                    _DraftSegment(
+                        right_text,
+                        collapse_state=target.collapse_state,
+                        label=target.label,
+                    )
+                )
+            self._segments[segment_index : segment_index + 1] = replacement
+        self._cursor_index += len(segment.text)
+
+    def _delete_canonical_range(self, start: int, end: int) -> None:
+        """Delete canonical text in ``[start, end)`` and move the caret there.
+
+        Collapsed/confirm paste tokens intersecting the range are removed as
+        whole units; literal and expanded segments keep their uncovered parts.
+        """
+        if start >= end:
+            return
+        kept_segments: list[_DraftSegment] = []
+        offset = 0
+        for segment in self._segments:
+            segment_start = offset
+            segment_end = offset + len(segment.text)
+            offset = segment_end
+            if segment_end <= start or segment_start >= end:
+                kept_segments.append(segment)
+                continue
+            if segment.collapse_state in {"collapsed", "confirm"}:
+                continue
+            kept_text = (
+                segment.text[: max(0, start - segment_start)]
+                + segment.text[max(0, end - segment_start) :]
+            )
+            if kept_text:
+                kept_segments.append(
+                    _DraftSegment(
+                        kept_text,
+                        collapse_state=segment.collapse_state,
+                        label=segment.label,
+                    )
+                )
+        self._segments = kept_segments
+        self._cursor_index = start
+        self._clamp_cursor()
 
     def _current_visible_draft_renderable(self, draft: str, width: int) -> Text:
         """Build the Text renderable for the current draft/placeholder state."""
         if draft:
+            focused = self.has_focus_within
             return self._draft_renderable(
                 draft,
                 width=width,
                 style_ranges=self._display_draft_style_ranges(),
-                focused=self.has_focus_within,
+                focused=focused,
                 cursor_visible=getattr(self, "_cursor_visible", True),
+                cursor_index=(
+                    self._cursor_display_index()
+                    if focused and self._segments_initialized
+                    else None
+                ),
             )
         return self._placeholder_renderable(width=width)
 
@@ -629,12 +887,15 @@ class ConsoleComposerBar(Horizontal):
     def load_draft(self, text: str) -> None:
         """Replace the native Console draft with literal text.
 
+        The caret lands at the end of the restored draft.
+
         Args:
             text: Draft payload to show and send literally.
         """
         self._draft_selection_all = False
         self._segments = [_DraftSegment(text)] if text else []
         self._segments_initialized = True
+        self._cursor_index = len(text)
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
@@ -645,6 +906,7 @@ class ConsoleComposerBar(Horizontal):
         self._draft_selection_all = False
         self._segments = []
         self._segments_initialized = True
+        self._cursor_index = 0
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
@@ -665,6 +927,7 @@ class ConsoleComposerBar(Horizontal):
             self._segments = [_DraftSegment(existing)] if existing else []
             self._segments_initialized = True
         self._draft_selection_all = True
+        self._cursor_index = len(self._canonical_draft_text())
         self._refresh_visible_draft()
         return True
 
@@ -677,10 +940,10 @@ class ConsoleComposerBar(Horizontal):
         return self._draft_selection_all and bool(self.draft_text())
 
     def insert_text(self, text: str) -> None:
-        """Append user-entered text to the Console draft as literal text.
+        """Insert user-entered text into the Console draft at the caret.
 
         Args:
-            text: Typed text to append without paste-collapse transformation.
+            text: Typed text to insert without paste-collapse transformation.
         """
         if not text:
             self._sync_interaction_classes()
@@ -690,18 +953,21 @@ class ConsoleComposerBar(Horizontal):
             existing = self.draft_text()
             self._segments = [_DraftSegment(existing)] if existing else []
             self._segments_initialized = True
+            self._cursor_index = len(existing)
         if self._draft_selection_all:
             self._segments = []
             self._draft_selection_all = False
+            self._cursor_index = 0
         self._reset_pending_unfurl_state()
-        self._append_literal_segment(text)
+        self._clamp_cursor()
+        self._insert_literal_at_cursor(text)
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
         self._sync_current_action_state()
 
     def insert_pasted_text(self, text: str) -> None:
-        """Append pasted text, collapsing only large inserted chunks for display.
+        """Insert pasted text at the caret, collapsing only large chunks for display.
 
         Args:
             text: Raw text inserted through a paste event.
@@ -714,18 +980,21 @@ class ConsoleComposerBar(Horizontal):
             existing = self.draft_text()
             self._segments = [_DraftSegment(existing)] if existing else []
             self._segments_initialized = True
+            self._cursor_index = len(existing)
         if self._draft_selection_all:
             self._segments = []
             self._draft_selection_all = False
+            self._cursor_index = 0
         self._reset_pending_unfurl_state()
+        self._clamp_cursor()
         should_collapse = (
             self.collapse_large_pastes_enabled
             and len(text) > self.paste_collapse_threshold
         )
         if should_collapse:
-            self._segments.append(_DraftSegment(text, collapse_state="collapsed"))
+            self._insert_segment_at_cursor(_DraftSegment(text, collapse_state="collapsed"))
         else:
-            self._append_literal_segment(text)
+            self._insert_literal_at_cursor(text)
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
@@ -747,7 +1016,7 @@ class ConsoleComposerBar(Horizontal):
         self.insert_pasted_text(text)
 
     def insert_file_segment(self, text: str, label: str) -> None:
-        """Append inlined file content as a labeled, display-collapsed segment.
+        """Insert inlined file content at the caret as a labeled, display-collapsed segment.
 
         Args:
             text: Full file text that becomes part of the canonical draft.
@@ -762,11 +1031,14 @@ class ConsoleComposerBar(Horizontal):
             existing = self.draft_text()
             self._segments = [_DraftSegment(existing)] if existing else []
             self._segments_initialized = True
+            self._cursor_index = len(existing)
         if self._draft_selection_all:
             self._segments = []
             self._draft_selection_all = False
+            self._cursor_index = 0
         self._reset_pending_unfurl_state()
-        self._segments.append(
+        self._clamp_cursor()
+        self._insert_segment_at_cursor(
             _DraftSegment(text, collapse_state="collapsed", label=label)
         )
         self._sync_hidden_input()
@@ -774,35 +1046,221 @@ class ConsoleComposerBar(Horizontal):
         self._sync_interaction_classes()
         self._sync_current_action_state()
 
+    def _ensure_editable_segments(self) -> None:
+        """Initialize segments from any legacy draft text, caret at the end."""
+        if not self._segments_initialized:
+            existing = self.draft_text()
+            self._segments = [_DraftSegment(existing)] if existing else []
+            self._segments_initialized = True
+            self._cursor_index = len(existing)
+
     def delete_left(self) -> None:
-        """Delete the last draft character for simple terminal-style editing."""
+        """Delete the character (or paste token) immediately left of the caret."""
         if self._draft_selection_all:
             self.clear_draft()
             return
         if not self._segments_initialized:
             self.load_draft(self.draft_text()[:-1])
             return
-        if not self._segments:
+        self._clamp_cursor()
+        if not self._segments or self._cursor_index == 0:
             self._sync_interaction_classes()
             self._sync_current_action_state()
             return
 
-        last_segment = self._segments[-1]
-        if last_segment.collapse_state in {"collapsed", "confirm"}:
-            self._segments.pop()
-            self._sync_hidden_input()
-            self._refresh_visible_draft()
-            self._sync_interaction_classes()
-            self._sync_current_action_state()
-            return
-
-        last_segment.text = last_segment.text[:-1]
-        if not last_segment.text:
-            self._segments.pop()
+        segment_index, offset = self._locate_canonical(self._cursor_index)
+        segment = self._segments[segment_index]
+        if segment.collapse_state in {"collapsed", "confirm"}:
+            # A paste token deletes as a unit; the caret lands where it started.
+            self._cursor_index -= offset
+            del self._segments[segment_index]
+        else:
+            segment.text = segment.text[: offset - 1] + segment.text[offset:]
+            self._cursor_index -= 1
+            if not segment.text:
+                del self._segments[segment_index]
+        self._clamp_cursor()
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
         self._sync_current_action_state()
+
+    def delete_right(self) -> None:
+        """Delete the character (or paste token) immediately right of the caret."""
+        if self._draft_selection_all:
+            self.clear_draft()
+            return
+        self._ensure_editable_segments()
+        self._clamp_cursor()
+        if not self._segments or self._cursor_index >= len(self._canonical_draft_text()):
+            self._sync_interaction_classes()
+            self._sync_current_action_state()
+            return
+
+        segment_index, offset = self._locate_canonical(self._cursor_index)
+        segment = self._segments[segment_index]
+        if offset == len(segment.text):
+            # Caret on a boundary: the next segment holds the deletion target.
+            next_segment = self._segments[segment_index + 1]
+            if next_segment.collapse_state in {"collapsed", "confirm"}:
+                del self._segments[segment_index + 1]
+            else:
+                next_segment.text = next_segment.text[1:]
+                if not next_segment.text:
+                    del self._segments[segment_index + 1]
+        elif segment.collapse_state in {"collapsed", "confirm"}:
+            del self._segments[segment_index]
+        else:
+            segment.text = segment.text[:offset] + segment.text[offset + 1 :]
+            if not segment.text:
+                del self._segments[segment_index]
+        self._clamp_cursor()
+        self._sync_hidden_input()
+        self._refresh_visible_draft()
+        self._sync_interaction_classes()
+        self._sync_current_action_state()
+
+    def delete_word_left(self) -> bool:
+        """Delete the whitespace+word run left of the caret (readline Ctrl+W).
+
+        Collapsed/confirm paste tokens overlapped by the deleted range are
+        removed as whole units; a word boundary never splits a token.
+
+        Returns:
+            True when text (or a full-draft selection) was deleted.
+        """
+        if self._draft_selection_all:
+            self.clear_draft()
+            return True
+        self._ensure_editable_segments()
+        self._clamp_cursor()
+        canonical = self._canonical_draft_text()
+        cursor = self._cursor_index
+        if cursor == 0:
+            return False
+        token_ranges: list[tuple[int, int]] = []
+        offset = 0
+        for segment in self._segments:
+            segment_end = offset + len(segment.text)
+            if segment.collapse_state in {"collapsed", "confirm"}:
+                token_ranges.append((offset, segment_end))
+            offset = segment_end
+
+        def inside_token(index: int) -> bool:
+            return any(start <= index < end for start, end in token_ranges)
+
+        # Readline word-rubout, token-aware: skip the whitespace run left of
+        # the caret, then delete one word -- where a collapsed paste token
+        # counts as a single opaque word and is never split.
+        start = cursor
+        while start > 0 and canonical[start - 1].isspace() and not inside_token(start - 1):
+            start -= 1
+        if start > 0 and inside_token(start - 1):
+            start = min(
+                token_start
+                for token_start, token_end in token_ranges
+                if token_start <= start - 1 < token_end
+            )
+        else:
+            while start > 0 and not canonical[start - 1].isspace() and not inside_token(start - 1):
+                start -= 1
+        if start == cursor:
+            return False
+        self._delete_canonical_range(start, cursor)
+        self._sync_hidden_input()
+        self._refresh_visible_draft()
+        self._sync_interaction_classes()
+        self._sync_current_action_state()
+        return True
+
+    def _move_cursor_to(self, index: int) -> bool:
+        """Move the caret to a canonical offset, collapsing any selection."""
+        self._draft_selection_all = False
+        if not self._segments_initialized:
+            self._refresh_visible_draft()
+            return False
+        previous = self._cursor_index
+        self._cursor_index = index
+        self._clamp_cursor()
+        self._refresh_visible_draft()
+        self._sync_interaction_classes()
+        return self._cursor_index != previous
+
+    def move_cursor_left(self) -> bool:
+        """Move the caret one character left, skipping paste tokens as units.
+
+        Returns:
+            True when the caret moved.
+        """
+        self._clamp_cursor()
+        if self._cursor_index <= 0:
+            return self._move_cursor_to(0)
+        segment_index, offset = self._locate_canonical(self._cursor_index)
+        segment = self._segments[segment_index]
+        if segment.collapse_state in {"collapsed", "confirm"}:
+            return self._move_cursor_to(self._cursor_index - offset)
+        return self._move_cursor_to(self._cursor_index - 1)
+
+    def move_cursor_right(self) -> bool:
+        """Move the caret one character right, skipping paste tokens as units.
+
+        Returns:
+            True when the caret moved.
+        """
+        self._clamp_cursor()
+        if self._cursor_index >= len(self._canonical_draft_text()):
+            return self._move_cursor_to(self._cursor_index)
+        segment_index, offset = self._locate_canonical(self._cursor_index)
+        segment = self._segments[segment_index]
+        if offset == len(segment.text):
+            # Caret on a boundary: the next segment is the move target.
+            next_segment = self._segments[segment_index + 1]
+            step = (
+                len(next_segment.text)
+                if next_segment.collapse_state in {"collapsed", "confirm"}
+                else 1
+            )
+        elif segment.collapse_state in {"collapsed", "confirm"}:
+            step = len(segment.text) - offset
+        else:
+            step = 1
+        return self._move_cursor_to(self._cursor_index + step)
+
+    def move_cursor_home(self) -> bool:
+        """Move the caret to the start of the draft.
+
+        Returns:
+            True when the caret moved.
+        """
+        return self._move_cursor_to(0)
+
+    def move_cursor_end(self) -> bool:
+        """Move the caret to the end of the draft.
+
+        Returns:
+            True when the caret moved.
+        """
+        if not self._segments_initialized:
+            return self._move_cursor_to(self._cursor_index)
+        return self._move_cursor_to(len(self._canonical_draft_text()))
+
+    def position_cursor_from_display_index(self, display_index: int) -> bool:
+        """Set the caret from an unwrapped display-string offset (click-to-position).
+
+        Args:
+            display_index: Offset into the visible draft text; offsets landing
+                on a collapsed paste token snap to the token's nearest edge.
+
+        Returns:
+            True when the caret was positioned.
+        """
+        self._ensure_editable_segments()
+        self._draft_selection_all = False
+        self._cursor_index = self._canonical_index_at_display(display_index)
+        self._clamp_cursor()
+        self._refresh_visible_draft()
+        self._sync_interaction_classes()
+        return True
 
     def _reset_pending_unfurl_state(self) -> bool:
         """Reset pending paste unfurl confirmations without refreshing display."""
@@ -914,13 +1372,26 @@ class ConsoleComposerBar(Horizontal):
         return False
 
     def _display_index_at(self, click_x: int, click_y: int, *, padding_left: int = 0) -> int | None:
-        """Map visible-draft coordinates to an unwrapped display-string offset."""
+        """Map visible-draft coordinates to an unwrapped display-string offset.
+
+        While the composer is focused the rendered draft carries a reserved
+        caret cell at the caret position; the same cell is spliced in here so
+        click coordinates line up with the rows actually on screen (a click on
+        the caret cell itself maps to the caret position).
+        """
         click_x = max(0, click_x - padding_left)
         click_y = max(0, click_y)
         display_text = self._display_draft_text()
+        caret_position: int | None = None
+        if self.has_focus_within and self._segments_initialized and display_text:
+            caret_position = max(0, min(self._cursor_display_index(), len(display_text)))
+            render_text = f"{display_text[:caret_position]} {display_text[caret_position:]}"
+        else:
+            render_text = display_text
         visible_slices = self._visible_draft_line_slices(
-            display_text,
+            render_text,
             self._draft_render_width(),
+            cursor_index=caret_position,
         )
         if click_y >= len(visible_slices):
             return None
@@ -930,8 +1401,17 @@ class ConsoleComposerBar(Horizontal):
         if clicked_slice.synthetic_prefix_columns:
             if click_x < clicked_slice.synthetic_prefix_columns:
                 return None
-            return clicked_slice.start + click_x - clicked_slice.synthetic_prefix_columns
-        return clicked_slice.start + click_x
+            source_index = (
+                clicked_slice.start + click_x - clicked_slice.synthetic_prefix_columns
+            )
+        else:
+            source_index = clicked_slice.start + click_x
+        if caret_position is not None:
+            if source_index == caret_position:
+                return caret_position
+            if source_index > caret_position:
+                return source_index - 1
+        return source_index
 
     def _click_display_index(self, event: Click) -> int | None:
         """Map a visible-draft click to an unwrapped display-string offset."""
@@ -1046,14 +1526,15 @@ class ConsoleComposerBar(Horizontal):
         return self._visible_draft_screen_hit(screen_x, screen_y) is not None
 
     def activate_visible_draft_screen_position(self, screen_x: int, screen_y: int) -> bool:
-        """Advance a paste token from absolute screen coordinates in the draft row.
+        """Activate the draft surface from absolute screen coordinates.
 
         Args:
             screen_x: Absolute screen column from a terminal mouse/click event.
             screen_y: Absolute screen row from a terminal mouse/click event.
 
         Returns:
-            True when the coordinates targeted a collapsed/confirm paste token.
+            True when the coordinates targeted a collapsed/confirm paste
+            token, reset a pending prompt, or positioned the caret.
         """
         hit = self._visible_draft_screen_hit(screen_x, screen_y)
         if hit is None:
@@ -1063,15 +1544,47 @@ class ConsoleComposerBar(Horizontal):
         self.focus()
         padding_left = getattr(getattr(visible_draft, "styles", None), "padding", None)
         padding_left = getattr(padding_left, "left", 0)
-        return self._advance_targeted_paste_segment(
+        return self._activate_draft_point(
             local_x,
             local_y,
             padding_left=padding_left,
         )
 
+    def _activate_draft_point(
+        self,
+        click_x: int,
+        click_y: int,
+        *,
+        padding_left: int = 0,
+    ) -> bool:
+        """Handle a draft-surface pointer activation.
+
+        A click targeting a collapsed/confirm paste token advances the unfurl
+        flow; any other in-text click positions the caret there (clearing a
+        pending unfurl prompt first, matching the previous click-away reset).
+
+        Returns:
+            True when the click advanced a token, reset a pending prompt, or
+            positioned the caret.
+        """
+        if self._target_unfurl_segment_at(click_x, click_y, padding_left=padding_left) is not None:
+            return self._advance_targeted_paste_segment(
+                click_x,
+                click_y,
+                padding_left=padding_left,
+            )
+        changed = bool(self._reset_pending_unfurl_state())
+        display_index = self._display_index_at(click_x, click_y, padding_left=padding_left)
+        if display_index is not None:
+            self.position_cursor_from_display_index(display_index)
+            return True
+        if changed:
+            self._refresh_visible_draft()
+        return changed
+
     @on(Click, "#console-command-visible-text")
     def _handle_visible_draft_click(self, event: Click) -> None:
-        """Advance the simple two-step unfurl flow for collapsed paste segments."""
+        """Advance a paste token or position the caret for draft clicks."""
         self.focus()
         if self.consume_suppressed_draft_click():
             event.stop()
@@ -1080,33 +1593,27 @@ class ConsoleComposerBar(Horizontal):
         widget = getattr(event, "widget", None) or getattr(event, "control", None)
         padding_left = getattr(getattr(widget, "styles", None), "padding", None)
         padding_left = getattr(padding_left, "left", 0)
-        if not self._advance_targeted_paste_segment(
+        self._activate_draft_point(
             event.x,
             event.y,
             padding_left=padding_left,
-        ):
-            event.stop()
-            event.prevent_default()
-            return
+        )
         event.stop()
         event.prevent_default()
 
     @on(MouseUp, "#console-command-visible-text")
     def _handle_visible_draft_mouse_up(self, event: MouseUp) -> None:
-        """Advance paste tokens for terminal mouse events before Click synthesis."""
+        """Handle terminal mouse events on the draft before Click synthesis."""
         self.focus()
         widget = getattr(event, "widget", None) or getattr(event, "control", None)
         padding_left = getattr(getattr(widget, "styles", None), "padding", None)
         padding_left = getattr(padding_left, "left", 0)
-        if not self._advance_targeted_paste_segment(
+        if self._activate_draft_point(
             event.x,
             event.y,
             padding_left=padding_left,
         ):
-            event.stop()
-            event.prevent_default()
-            return
-        self.suppress_next_draft_click()
+            self.suppress_next_draft_click()
         event.stop()
         event.prevent_default()
 

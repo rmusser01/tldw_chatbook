@@ -1119,6 +1119,13 @@ async def test_console_collapsed_paste_backspace_deletes_whole_chunk():
 
 @pytest.mark.asyncio
 async def test_console_collapsed_paste_delete_key_deletes_whole_chunk():
+    """Forward Delete removes the paste token right of the caret as a unit.
+
+    Since the composer caret is now a real editable position, ``delete`` is a
+    forward delete (``backspace`` deletes left): with the caret at the draft
+    end it is a no-op, so this first steps left over the token -- arrows skip
+    collapsed paste tokens as units -- and then deletes it forward.
+    """
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
@@ -1135,6 +1142,13 @@ async def test_console_collapsed_paste_delete_key_deletes_whole_chunk():
         composer.insert_text(prefix)
         composer.insert_pasted_text(pasted_text)
         composer.focus()
+        await pilot.press("delete")
+        await pilot.pause(0.1)
+
+        # Forward delete at the end of the draft is a no-op.
+        assert composer.draft_text() == f"{prefix}{pasted_text}"
+
+        await pilot.press("left")
         await pilot.press("delete")
         await pilot.pause(0.1)
 

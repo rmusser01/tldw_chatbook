@@ -14,6 +14,7 @@ from textual.widgets import Button, Static
 
 from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.Home.dashboard_state import HomeDashboardInput
+from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 from tldw_chatbook.app import TldwCli
 
 
@@ -47,6 +48,7 @@ REQUIRED_WORKFLOWS = {
     "study-loop",
     "recovery-loop",
 }
+TOP_LEVEL_DESTINATION_IDS = tuple(destination.destination_id for destination in SHELL_DESTINATION_ORDER)
 
 
 def _text(path: Path) -> str:
@@ -140,7 +142,12 @@ async def test_phase6_power_user_release_replay_exposes_fast_repeat_paths() -> N
         async with app.run_test(size=(180, 50)) as pilot:
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "home" and app.screen.__class__.__name__ == "HomeScreen",
+                # Nav strip + docked hint mount a tick after the screen swap;
+                # wait for the full chrome before capturing screen text.
+                lambda: app.current_tab == "home"
+                and app.screen.__class__.__name__ == "HomeScreen"
+                and len(app.screen.query(".nav-button")) == len(TOP_LEVEL_DESTINATION_IDS)
+                and len(app.screen.query("#nav-overflow-hint")) == 1,
             )
             home_text = _screen_text(app)
             assert "Start in Console" in home_text
