@@ -12,6 +12,7 @@ import tempfile
 from pathlib import Path
 
 from textual import on, work
+from textual.message_pump import _MessagePumpMeta
 from textual.widgets import Button, Select, Checkbox, Input, ListView, ListItem, DataTable, Static
 from textual.css.query import NoMatches
 from rich.text import Text
@@ -39,8 +40,16 @@ except ImportError:
     RAG_EVENTS_AVAILABLE = False
 
 
-class SearchEventHandlersMixin:
-    """Mixin class containing all event handlers for SearchRAGWindow"""
+class SearchEventHandlersMixin(metaclass=_MessagePumpMeta):
+    """Mixin class containing all event handlers for SearchRAGWindow.
+
+    The mixin must be created through Textual's message-pump metaclass:
+    ``@on`` registration happens per-class at class-creation time and message
+    dispatch walks each MRO class's own ``_decorated_handlers``. As a plain
+    class, NONE of these ``@on`` handlers (including the Search button's)
+    were ever dispatched -- found and fixed in task-251. ``Container`` uses
+    exactly this metaclass, so combining the two bases stays conflict-free.
+    """
     
     @on(Button.Pressed, "#search-button")
     @work(exclusive=True)
@@ -258,7 +267,54 @@ class SearchEventHandlersMixin:
                 "Hybrid search combines keyword and semantic search",
                 severity="information"
             )
-    
+
+    # Results-header, pagination, history, and Maintenance controls (task-251):
+    # every rendered control routes to a real implementation.
+
+    @on(Button.Pressed, "#export-results")
+    def handle_export_results(self, event: Button.Pressed) -> None:
+        """Export the current results (same path as the Ctrl+E action)."""
+        self.action_export()
+
+    @on(Button.Pressed, "#prev-page")
+    async def handle_prev_page(self, event: Button.Pressed) -> None:
+        """Show the previous page of search results."""
+        if self.current_page > 1:
+            self.current_page -= 1
+            await self._display_results()
+
+    @on(Button.Pressed, "#next-page")
+    async def handle_next_page(self, event: Button.Pressed) -> None:
+        """Show the next page of search results."""
+        total_pages = max(
+            1,
+            (self.total_results + self.results_per_page - 1) // self.results_per_page,
+        )
+        if self.current_page < total_pages:
+            self.current_page += 1
+            await self._display_results()
+
+    @on(Button.Pressed, "#refresh-history")
+    def handle_refresh_history(self, event: Button.Pressed) -> None:
+        """Reload the history table for the selected time range."""
+        self._refresh_history_view()
+
+    @on(Select.Changed, "#history-range-select")
+    def handle_history_range_change(self, event: Select.Changed) -> None:
+        """Apply a newly selected history time range immediately."""
+        self._refresh_history_view()
+
+    @on(Button.Pressed, "#refresh-collections")
+    def handle_refresh_collections(self, event: Button.Pressed) -> None:
+        """Refresh the Maintenance tab's collections list and index statistics."""
+        self._refresh_collections_list()
+        self._refresh_index_stats()
+
+    @on(Button.Pressed, "#start-indexing")
+    def handle_start_indexing(self, event: Button.Pressed) -> None:
+        """Run the real bulk semantic-index backfill (task-251)."""
+        self._start_indexing_run()
+
     # Helper methods for search functionality
     def _get_search_config(self) -> Dict[str, Any]:
         """Get current search configuration from UI"""

@@ -152,6 +152,16 @@ def get_shared_rag_service(profile_name: Optional[str] = None) -> Optional[Any]:
     return _shared_service
 
 
+def peek_shared_rag_service() -> Optional[Any]:
+    """Return the shared RAG service only if it already exists (never creates).
+
+    Read-only accessor for surfaces that display runtime state (e.g. the
+    Search window's index statistics, task-251) and must not pay the
+    embedding-model construction cost as a side effect of rendering.
+    """
+    return _shared_service
+
+
 def set_shared_rag_service(service: Optional[Any]) -> None:
     """Inject a shared RAG service instance (primarily for tests)."""
     global _shared_service
