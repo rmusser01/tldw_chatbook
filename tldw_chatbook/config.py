@@ -4706,7 +4706,9 @@ _cloud_provider_keys = [
     "Google",
     "HuggingFace",
     "MistralAI",
+    "Moonshot",
     "OpenRouter",
+    "ZAI",
 ]  # Example list
 
 for provider_name, models_list in _config_providers.items():
