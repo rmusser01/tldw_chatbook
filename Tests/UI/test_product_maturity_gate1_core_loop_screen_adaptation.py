@@ -207,7 +207,7 @@ async def test_console_core_loop_exposes_agentic_shell_regions():
         text = _visible_text(console)
         assert "Console" in text
         assert "Transcript / Event Stream" in text
-        assert "Staged Context" in text
+        assert "Sources" in text
         assert "Choose model" in text or "Open Settings" in text
         assert "Inspector" in text
 
