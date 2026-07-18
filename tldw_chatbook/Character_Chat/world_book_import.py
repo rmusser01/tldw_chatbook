@@ -29,7 +29,10 @@ def _as_str_list(value: Any) -> List[str]:
     if isinstance(value, str):
         return [value] if value.strip() else []
     if isinstance(value, list):
-        return [str(v) for v in value if str(v).strip()]
+        # Drop None (and blank) items BEFORE stringifying — otherwise a null in a
+        # keys array becomes the literal "None" (a phantom keyword), and a list of
+        # only nulls would slip past the empty-keys validation as ["None"].
+        return [str(v) for v in value if v is not None and str(v).strip()]
     return []
 
 

@@ -74,3 +74,53 @@ def test_empty_content_entry_raises():
 def test_non_dict_entry_raises():
     with pytest.raises(ValueError, match="Entry 1 is not an object"):
         normalize_world_book_import({"entries": ["not a dict"]})
+
+
+# --- whole-branch-review Minor coverage (M1 null-in-keys, M2 branch guards) ---
+
+def test_null_in_keys_list_is_dropped_not_stringified():
+    """A null inside a keys array is dropped, not turned into the literal "None"."""
+    e = normalize_world_book_import({"entries": [{"keys": ["Warden", None], "content": "c"}]})["entries"][0]
+    assert e["keys"] == ["Warden"]
+
+
+def test_keys_of_only_nulls_is_rejected():
+    """A keys list of only nulls has no real keys → rejected (not ["None"])."""
+    with pytest.raises(ValueError, match="Entry 1 has no keys"):
+        normalize_world_book_import({"entries": [{"keys": [None], "content": "c"}]})
+
+
+def test_bool_position_does_not_alias_to_int_position():
+    """bool is an int subclass; the isinstance(pos, bool) guard must keep
+    position True/False from aliasing to the int-position map (1/0)."""
+    e_true = normalize_world_book_import({"entries": [{"keys": ["k"], "content": "c", "position": True}]})["entries"][0]
+    e_false = normalize_world_book_import({"entries": [{"keys": ["k"], "content": "c", "position": False}]})["entries"][0]
+    assert e_true["position"] == "before_char" and e_false["position"] == "before_char"
+
+
+def test_unknown_int_position_defaults_before_char():
+    e = normalize_world_book_import({"entries": [{"keys": ["k"], "content": "c", "position": 7}]})["entries"][0]
+    assert e["position"] == "before_char"
+
+
+def test_bare_string_key_becomes_single_item_list():
+    e = normalize_world_book_import({"entries": [{"key": "Warden", "content": "c"}]})["entries"][0]
+    assert e["keys"] == ["Warden"]
+
+
+def test_non_dict_extensions_defaults_empty():
+    e = normalize_world_book_import({"entries": [{"keys": ["k"], "content": "c", "extensions": "oops"}]})["entries"][0]
+    assert e["extensions"] == {}
+
+
+def test_non_numeric_order_falls_back_to_index():
+    entries = normalize_world_book_import({"entries": [
+        {"keys": ["a"], "content": "c"},
+        {"keys": ["b"], "content": "c", "order": "abc"},
+    ]})["entries"]
+    assert entries[1]["insertion_order"] == 1
+
+
+def test_explicit_enabled_false_preserved():
+    e = normalize_world_book_import({"entries": [{"keys": ["k"], "content": "c", "enabled": False}]})["entries"][0]
+    assert e["enabled"] is False
