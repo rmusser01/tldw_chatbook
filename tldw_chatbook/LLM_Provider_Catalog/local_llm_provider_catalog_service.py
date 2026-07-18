@@ -47,6 +47,10 @@ _ENDPOINT_KEYS = ("api_base_url", "api_base", "base_url", "api_url", "endpoint")
 _DEFAULT_OPENAI_COMPATIBLE_ENDPOINTS = {
     "openai": "https://api.openai.com/v1",
     "openrouter": "https://openrouter.ai/api/v1",
+    "anthropic": "https://api.anthropic.com/v1",
+    "mistralai": "https://api.mistral.ai/v1",
+    "moonshot": "https://api.moonshot.ai/v1",
+    "zai": "https://api.z.ai/api/paas/v4",
 }
 _PLACEHOLDER_KEYS = frozenset(
     {
