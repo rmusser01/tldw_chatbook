@@ -2360,6 +2360,13 @@ ConsoleSystemPromptModal {
     text-style: underline bold;
 }
 
+.console-workspace-conversations-header {
+    height: auto;
+    min-height: 2;
+    border-top: solid $ds-column-line;
+    content-align: center middle;
+}
+
 .console-rail-section-body {
     height: auto;
     min-height: 0;

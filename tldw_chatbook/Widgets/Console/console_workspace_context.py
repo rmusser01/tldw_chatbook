@@ -597,12 +597,12 @@ class ConsoleWorkspaceContextTray(Vertical):
         section_controls_enabled = self.state.conversation_section is not None
         with Horizontal(
             id="console-workspace-conversations-header",
-            classes="console-workspace-conversations-header",
+            classes="console-rail-header console-workspace-conversations-header",
         ):
             title = self._static(
                 self._conversation_count_title(section),
                 id="console-workspace-conversations-title",
-                classes="destination-section",
+                classes="console-rail-section-title",
             )
             title.styles.width = "1fr"
             yield title
@@ -721,12 +721,12 @@ class ConsoleWorkspaceContextTray(Vertical):
 
         with Horizontal(
             id="console-workspace-conversations-header",
-            classes="console-workspace-conversations-header",
+            classes="console-rail-header console-workspace-conversations-header",
         ):
             title = self._static(
                 "Conversations",
                 id="console-workspace-conversations-title",
-                classes="destination-section",
+                classes="console-rail-section-title",
             )
             title.styles.width = "1fr"
             yield title
