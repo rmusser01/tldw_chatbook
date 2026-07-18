@@ -286,7 +286,7 @@ def build_console_workspace_state(
         return ConsoleWorkspaceContextState(
             heading="Convos & Workspaces",
             workspace_label="No workspace selected",
-            workspace_name="unavailable",
+            workspace_name="",
             scope_label=scope_label,
             new_workspace_enabled=False,
             authority_label="Authority: unavailable",
@@ -321,7 +321,7 @@ def build_console_workspace_state(
         return ConsoleWorkspaceContextState(
             heading="Convos & Workspaces",
             workspace_label="No workspace selected",
-            workspace_name="unavailable",
+            workspace_name="",
             scope_label=scope_label,
             new_workspace_enabled=False,
             authority_label="Authority: unavailable",

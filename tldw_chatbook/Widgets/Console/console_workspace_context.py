@@ -549,10 +549,7 @@ class ConsoleWorkspaceContextTray(Vertical):
         with Horizontal(
             id="console-workspace-action-row",
             classes="console-workspace-action-row",
-        ) as button_row:
-            button_row.styles.margin_left = 12
-            button_row.styles.height = "auto"
-            button_row.styles.min_height = 1
+        ):
             yield Button(
                 "Switch",
                 id="console-change-workspace",
