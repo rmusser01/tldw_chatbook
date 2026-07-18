@@ -2145,14 +2145,30 @@ class PersonasScreen(BaseAppScreen):
                 return
             body = json.dumps(data, indent=2, ensure_ascii=False)
             try:
-                await asyncio.to_thread(target.write_text, body, "utf-8")
-            except OSError as exc:
-                logger.opt(exception=True).warning("Could not write the world-book export file.")
+                validated = validate_path_simple(str(target))
+            except (ValueError, OSError) as exc:
+                logger.opt(exception=True).warning(f"Rejected world-book export path {target}.")
                 self._notify(f"Export failed: {exc}", "error")
                 return
-            self._notify(f"Exported to {target}", "information")
+            # Atomic write: temp file + replace, so an interruption can't leave a
+            # truncated/corrupt export (mirrors the dictionary export flow).
+            temp = validated.parent / f".{validated.name}.tmp"
+            try:
+                await asyncio.to_thread(temp.write_text, body, "utf-8")
+                await asyncio.to_thread(temp.replace, validated)
+            except OSError as exc:
+                logger.opt(exception=True).warning(f"Could not write world-book export to {validated}.")
+                try:
+                    temp.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                self._notify(f"Export failed: {exc}", "error")
+                return
+            self._notify(f"Exported to {validated}", "information")
         except Exception as exc:
-            logger.opt(exception=True).error("Unexpected error exporting the world book.")
+            logger.opt(exception=True).error(
+                f"Unexpected error exporting world book {self.state.selected_entity_id}."
+            )
             self._notify(f"Export failed: {exc}", "error")
         finally:
             self._io_dialog_active = False

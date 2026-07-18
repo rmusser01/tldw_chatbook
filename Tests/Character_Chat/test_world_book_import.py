@@ -131,3 +131,33 @@ def test_null_content_is_rejected_not_stringified():
     #701 high-severity finding, parallel to the null-in-keys trap."""
     with pytest.raises(ValueError, match="Entry 1 has no content"):
         normalize_world_book_import({"entries": [{"keys": ["k"], "content": None}]})
+
+
+# --- Qodo #701 finding 4: robust boolean coercion for loosely-typed files ---
+
+def _b(**kw):
+    return normalize_world_book_import({"entries": [{"keys": ["k"], "content": "c", **kw}]})["entries"][0]
+
+
+def test_string_false_booleans_are_not_truthy():
+    """bool("false") is True in Python — the coercer must map string booleans."""
+    e = _b(selective="false", case_sensitive="false", enabled="false")
+    assert e["selective"] is False and e["case_sensitive"] is False and e["enabled"] is False
+
+
+def test_string_true_booleans_map_true():
+    e = _b(selective="true", caseSensitive="TRUE")
+    assert e["selective"] is True and e["case_sensitive"] is True
+
+
+def test_null_enabled_defaults_true():
+    assert _b(enabled=None)["enabled"] is True
+
+
+def test_string_disable_false_means_enabled():
+    """SillyTavern `disable: "false"` (string) must mean enabled=True."""
+    assert _b(disable="false")["enabled"] is True
+
+
+def test_disable_true_flag_disables_when_no_enabled():
+    assert _b(disable=True)["enabled"] is False

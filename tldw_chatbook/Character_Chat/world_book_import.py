@@ -22,6 +22,34 @@ def _coerce_int(value: Any, default: int) -> int:
         return default
 
 
+_TRUE_STRINGS = {"true", "1", "yes", "on"}
+_FALSE_STRINGS = {"false", "0", "no", "off"}
+
+
+def _coerce_bool(value: Any, default: bool) -> bool:
+    """Best-effort bool coercion for loosely-typed/hand-edited import files.
+
+    Plain ``bool(value)`` is wrong here: ``bool("false")`` is ``True`` and
+    ``bool(None)`` is ``False``, so a string boolean or an explicit null would
+    silently change an entry's matching behavior. ``None`` returns ``default``;
+    recognized string booleans map by value; unknown strings return ``default``.
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in _TRUE_STRINGS:
+            return True
+        if token in _FALSE_STRINGS:
+            return False
+        return default
+    return default
+
+
 def _as_str_list(value: Any) -> List[str]:
     """Coerce a keys-like field to a list of non-blank strings."""
     if value is None:
@@ -66,6 +94,16 @@ def _normalize_entry(entry: Any, index: int) -> Dict[str, Any]:
     raw_secondary = entry.get("secondary_keys")
     if raw_secondary is None:
         raw_secondary = entry.get("keysecondary")
+    raw_case = entry.get("case_sensitive")
+    if raw_case is None:
+        raw_case = entry.get("caseSensitive")
+    # enabled: an explicit value wins (null → default enabled); otherwise fall
+    # back to the (inverted) SillyTavern ``disable`` flag.
+    raw_enabled = entry.get("enabled")
+    if raw_enabled is not None:
+        enabled = _coerce_bool(raw_enabled, True)
+    else:
+        enabled = not _coerce_bool(entry.get("disable"), False)
     extensions = entry.get("extensions")
     return {
         "keys": keys,
@@ -75,9 +113,9 @@ def _normalize_entry(entry: Any, index: int) -> Dict[str, Any]:
             entry.get("insertion_order", entry.get("order", index)), index
         ),
         "position": _normalize_position(entry.get("position")),
-        "selective": bool(entry.get("selective", False)),
-        "case_sensitive": bool(entry.get("case_sensitive", entry.get("caseSensitive", False))),
-        "enabled": bool(entry.get("enabled", not entry.get("disable", False))),
+        "selective": _coerce_bool(entry.get("selective"), False),
+        "case_sensitive": _coerce_bool(raw_case, False),
+        "enabled": enabled,
         "priority": _coerce_int(entry.get("priority", 0), 0),
         "extensions": extensions if isinstance(extensions, dict) else {},
     }
