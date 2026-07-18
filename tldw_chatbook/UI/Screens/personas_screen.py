@@ -23,6 +23,7 @@ from ...Character_Chat.Character_Chat_Lib import (
     export_character_card_to_png,
     validate_character_book,
 )
+from ...Character_Chat.world_book_import import normalize_world_book_import
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...DB.ChaChaNotes_DB import ConflictError
 from ...tldw_api import PersonaProfileCreate, PersonaProfileUpdate
@@ -155,6 +156,7 @@ PERSONAS_AVATAR_IMAGE_SUFFIX_COPY = "PNG, JPG, JPEG, WEBP, or GIF"
 PERSONAS_AVATAR_MAX_BYTES = 5 * 1024 * 1024
 PERSONAS_AVATAR_MAX_SIZE_COPY = "5 MB"
 PERSONAS_DICTIONARY_IMPORT_MAX_BYTES = 10 * 1024 * 1024
+PERSONAS_WORLDBOOK_IMPORT_MAX_BYTES = 10 * 1024 * 1024
 
 # 80-column terminals need a tighter three-pane split than the default
 # 2:4:2 workbench minimums. Keep this screen-owned so a later rail-collapse
@@ -2476,6 +2478,8 @@ class PersonasScreen(BaseAppScreen):
                 await self._run_guarded(self._open_import_dialog)
             elif self.state.active_mode == "dictionaries":
                 await self._run_guarded(self._open_dictionary_import_dialog)
+            elif self.state.active_mode == "lore":
+                await self._run_guarded(self._open_lore_import_dialog)
         elif message.action == "duplicate":
             if self.state.active_mode == "dictionaries":
                 await self._run_guarded(self._duplicate_selected_dictionary)
@@ -3024,6 +3028,102 @@ class PersonasScreen(BaseAppScreen):
             self._notify("Character already existed; selected it.", "information")
         else:
             self._notify("Character imported.", "information")
+
+    async def _open_lore_import_dialog(self) -> None:
+        """Continuation for the guarded lore-import action."""
+        if self._io_dialog_active:
+            logger.debug("Import/export dialog already active; ignoring import request.")
+            return
+        self._io_dialog_active = True
+        self.run_worker(self._lore_import_dialog_worker(), group="personas-io")
+
+    async def _lore_import_dialog_worker(self) -> None:
+        """Show the import file picker and hand the chosen path off to import."""
+        from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
+
+        try:
+            picker = EnhancedFileOpen(
+                title="Import World Book",
+                filters=Filters(
+                    ("World books (JSON)", lambda p: p.suffix.lower() == ".json"),
+                    ("All Files", lambda p: True),
+                ),
+                context="lore_import",
+            )
+            try:
+                file_path = await self.app.push_screen_wait(picker)
+            except Exception:
+                logger.opt(exception=True).warning("Could not show the world-book import dialog.")
+                return
+            if file_path:
+                await self._import_world_book_from_path(str(file_path))
+        except Exception as exc:
+            logger.opt(exception=True).error("Unexpected error in the world-book import worker.")
+            self._notify(f"Import failed: {exc}", "error")
+        finally:
+            self._io_dialog_active = False
+
+    async def _import_world_book_from_path(self, path: str) -> None:
+        """Validate + normalize a world-book file and import it; rename on clash.
+
+        Args:
+            path: Filesystem path to the ``.json`` file chosen via the picker.
+        """
+        manager = self._lore_manager()
+        if manager is None:
+            self._notify("Lore is not configured: the database is unavailable.", "error")
+            return
+        try:
+            source = validate_path_simple(path, require_exists=True)
+        except (ValueError, OSError) as exc:
+            logger.opt(exception=True).warning(f"Rejected world-book import path {path}.")
+            self._notify(f"Import failed: {exc}", "error")
+            return
+        try:
+            if source.stat().st_size > PERSONAS_WORLDBOOK_IMPORT_MAX_BYTES:
+                self._notify(
+                    f"Import failed: file is larger than "
+                    f"{PERSONAS_WORLDBOOK_IMPORT_MAX_BYTES // (1024 * 1024)} MB.",
+                    "error",
+                )
+                return
+        except OSError as exc:
+            self._notify(f"Import failed: {exc}", "error")
+            return
+        try:
+            text = await asyncio.to_thread(source.read_text, "utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.opt(exception=True).warning(f"Could not read world-book file {path}.")
+            self._notify(f"Import failed: {exc}", "error")
+            return
+        try:
+            parsed = json.loads(text)
+        except (json.JSONDecodeError, RecursionError, ValueError) as exc:
+            self._notify(f"Import failed: not valid JSON ({exc})", "error")
+            return
+        try:
+            data = normalize_world_book_import(parsed)
+        except ValueError as exc:
+            self._notify(f"Import failed: {exc}", "error")
+            return
+        base = str(data.get("name") or "Imported world book")
+        name = self._unique_lore_name(base)
+        try:
+            new_id = await asyncio.to_thread(manager.import_world_book, data, name_override=name)
+        except ConflictError:
+            self._notify("A lore book with that name already exists.", "error")
+            return
+        except Exception as exc:
+            logger.opt(exception=True).warning(f"World-book import failed for {path}.")
+            self._notify(f"Import failed: {exc}", "error")
+            return
+        if self.state.active_mode != "lore":
+            self._notify(f"Imported '{name}' — open Lore to see it.", "information")
+            return
+        await self._render_lore_rows(query="")
+        await self._select_lore_entry(str(new_id), name)
+        suffix = " Renamed to avoid a name clash." if name != base else ""
+        self._notify(f"Imported '{name}'.{suffix}", "information")
 
     async def _open_dictionary_import_dialog(self) -> None:
         """Continuation for the guarded dictionaries-import action."""

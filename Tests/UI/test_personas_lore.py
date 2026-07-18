@@ -759,3 +759,123 @@ async def test_export_selected_lore_book_writes_json_file(
         payload = _json.loads(target.read_text("utf-8"))
         assert payload["name"] == "Blackreach"
         assert any(e["keys"] == ["Warden"] for e in payload["entries"])
+
+
+@pytest.mark.asyncio
+async def test_import_world_book_from_file_creates_book_and_entries(
+    mock_app_instance, stub_characters_lore, lore_db, seeded_lore_book, tmp_path
+):
+    """_import_world_book_from_path imports a tldw-shaped file, preserving priority
+    and matching fields."""
+    import json as _json
+    mock_app_instance.chachanotes_db = lore_db
+    app = LorePersonasTestApp(mock_app_instance)
+    payload = {"name": "Imported Realm", "description": "", "scan_depth": 3,
+               "token_budget": 500, "recursive_scanning": False,
+               "entries": [{"keys": ["Sword"], "content": "a blade", "priority": 55,
+                            "selective": True, "secondary_keys": ["hilt"],
+                            "case_sensitive": True, "insertion_order": 0,
+                            "position": "before_char", "enabled": True}]}
+    f = tmp_path / "realm.json"
+    f.write_text(_json.dumps(payload), "utf-8")
+    async with app.run_test(size=(200, 60)) as pilot:
+        screen = await _enter_lore(pilot)
+        await _select_first_lore(pilot, screen)
+        await screen._import_world_book_from_path(str(f))
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        manager = WorldBookManager(lore_db)
+        books = manager.list_world_books(True)
+        realm = next(b for b in books if b["name"] == "Imported Realm")
+        entries = manager.get_world_book_entries(realm["id"])
+        assert len(entries) == 1
+        e = entries[0]
+        assert e["keys"] == ["Sword"] and e["priority"] == 55
+        assert e["selective"] is True and e["secondary_keys"] == ["hilt"] and e["case_sensitive"] is True
+
+
+@pytest.mark.asyncio
+async def test_import_sillytavern_world_info_object_form(
+    mock_app_instance, stub_characters_lore, lore_db, seeded_lore_book, tmp_path
+):
+    """A SillyTavern World Info object-form file imports with fields remapped."""
+    import json as _json
+    mock_app_instance.chachanotes_db = lore_db
+    app = LorePersonasTestApp(mock_app_instance)
+    payload = {"name": "ST Book",
+               "entries": {"0": {"key": ["Dragon"], "keysecondary": [], "content": "a wyrm",
+                                 "order": 3, "position": 0, "disable": False}}}
+    f = tmp_path / "st.json"
+    f.write_text(_json.dumps(payload), "utf-8")
+    async with app.run_test(size=(200, 60)) as pilot:
+        screen = await _enter_lore(pilot)
+        await _select_first_lore(pilot, screen)
+        await screen._import_world_book_from_path(str(f))
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        manager = WorldBookManager(lore_db)
+        book = next(b for b in manager.list_world_books(True) if b["name"] == "ST Book")
+        e = manager.get_world_book_entries(book["id"])[0]
+        assert e["keys"] == ["Dragon"] and e["content"] == "a wyrm" and e["insertion_order"] == 3
+
+
+@pytest.mark.asyncio
+async def test_import_malformed_world_book_creates_no_book(
+    mock_app_instance, stub_characters_lore, lore_db, seeded_lore_book, tmp_path
+):
+    """A file whose entry has no keys is rejected up front — no partial book."""
+    import json as _json
+    mock_app_instance.chachanotes_db = lore_db
+    app = LorePersonasTestApp(mock_app_instance)
+    payload = {"name": "Bad Book", "entries": [{"keys": [], "content": "x"}]}
+    f = tmp_path / "bad.json"
+    f.write_text(_json.dumps(payload), "utf-8")
+    async with app.run_test(size=(200, 60)) as pilot:
+        screen = await _enter_lore(pilot)
+        await _select_first_lore(pilot, screen)
+        await screen._import_world_book_from_path(str(f))
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        manager = WorldBookManager(lore_db)
+        assert all(b["name"] != "Bad Book" for b in manager.list_world_books(True))
+
+
+@pytest.mark.asyncio
+async def test_import_name_collision_renames(
+    mock_app_instance, stub_characters_lore, lore_db, seeded_lore_book, tmp_path
+):
+    """Importing a book whose name clashes with an existing one imports under a
+    unique name."""
+    import json as _json
+    mock_app_instance.chachanotes_db = lore_db
+    app = LorePersonasTestApp(mock_app_instance)
+    payload = {"name": "Blackreach",  # same as the seeded book
+               "entries": [{"keys": ["Echo"], "content": "a sound"}]}
+    f = tmp_path / "dup.json"
+    f.write_text(_json.dumps(payload), "utf-8")
+    async with app.run_test(size=(200, 60)) as pilot:
+        screen = await _enter_lore(pilot)
+        await _select_first_lore(pilot, screen)
+        await screen._import_world_book_from_path(str(f))
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        manager = WorldBookManager(lore_db)
+        names = [b["name"] for b in manager.list_world_books(True)]
+        assert "Blackreach" in names
+        assert any(n != "Blackreach" and n.startswith("Blackreach") for n in names)
+
+
+@pytest.mark.asyncio
+async def test_library_import_button_visible_in_lore_mode(
+    mock_app_instance, stub_characters_lore, lore_db, seeded_lore_book
+):
+    """The library Import button is displayed in lore mode (un-gated)."""
+    mock_app_instance.chachanotes_db = lore_db
+    app = LorePersonasTestApp(mock_app_instance)
+    async with app.run_test(size=(200, 60)) as pilot:
+        screen = await _enter_lore(pilot)
+        assert screen.query_one("#personas-library-import", Button).display is True
