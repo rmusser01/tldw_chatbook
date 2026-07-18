@@ -1007,7 +1007,7 @@ async def test_console_left_rail_splits_staged_context_from_workspace_context() 
         new_conversation = console.query_one("#console-new-workspace-conversation", Button)
         assert new_conversation.disabled is False
         text = _visible_text(console)
-        assert "Staged Context" in text
+        assert "Sources" in text
         # The workspace context tray no longer renders its own heading; the
         # "Session" rail-section header labels this section instead.
         assert "Session" in text
