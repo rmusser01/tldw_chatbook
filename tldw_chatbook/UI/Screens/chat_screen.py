@@ -86,8 +86,8 @@ from ...Chat.console_session_settings import (
     ConsoleSettingsContextEstimate,
     ConsoleSettingsReadiness,
     ConsoleSettingsSummaryState,
+    _summary_row_value,
     build_console_context_estimate,
-    build_console_model_section_lines,
     build_console_rail_system_line,
     build_default_console_session_settings,
     build_console_settings_readiness,
@@ -1952,12 +1952,51 @@ class ChatScreen(BaseAppScreen):
             pass
         else:
             summary.sync_state(summary_state)
-        model_line1, model_line2 = build_console_model_section_lines(summary_state)
+        provider_value = _summary_row_value(summary_state.provider_row) or "—"
+        model_value = _summary_row_value(summary_state.model_row) or "—"
+        temperature_match = re.search(
+            r"T ([\d.]+)", summary_state.sampling_row or ""
+        )
+        temperature_value = (
+            temperature_match.group(1) if temperature_match else "—"
+        )
+        max_tokens_match = re.search(
+            r"max_tokens (\d+)", summary_state.sampling_row or ""
+        )
+        max_tokens_value = max_tokens_match.group(1) if max_tokens_match else "—"
+        readiness = (summary_state.readiness_label or "").strip()
+
         try:
-            self.query_one("#console-model-section-line1", Static).update(model_line1)
-            self.query_one("#console-model-section-line2", Static).update(model_line2)
+            self.query_one(
+                "#console-model-section-provider .console-model-section-value",
+                Static,
+            ).update(provider_value)
+            self.query_one(
+                "#console-model-section-model .console-model-section-value", Static
+            ).update(model_value)
+            self.query_one(
+                "#console-model-section-temperature .console-model-section-value",
+                Static,
+            ).update(temperature_value)
+            self.query_one(
+                "#console-model-section-max-tokens .console-model-section-value",
+                Static,
+            ).update(max_tokens_value)
         except (NoMatches, QueryError):
             pass
+
+        try:
+            recovery = self.query_one("#console-model-section-recovery", Static)
+        except (NoMatches, QueryError):
+            if readiness and readiness != "Ready":
+                self.refresh(recompose=True)
+        else:
+            if readiness and readiness != "Ready":
+                recovery.update(readiness)
+                recovery.styles.display = "block"
+            else:
+                recovery.styles.display = "none"
+
         self._sync_console_rail_system_line()
         self._sync_console_agent_section()
 
@@ -6728,30 +6767,94 @@ class ChatScreen(BaseAppScreen):
                         if not rail_state.model_open:
                             model_body.styles.display = "none"
                         with model_body:
-                            model_line1, model_line2 = build_console_model_section_lines(
-                                self._build_console_settings_summary_state()
+                            summary_state = self._build_console_settings_summary_state()
+                            provider_value = _summary_row_value(
+                                summary_state.provider_row
+                            ) or "—"
+                            model_value = _summary_row_value(
+                                summary_state.model_row
+                            ) or "—"
+                            temperature_match = re.search(
+                                r"T ([\d.]+)", summary_state.sampling_row or ""
                             )
-                            line1 = Static(
-                                model_line1,
-                                id="console-model-section-line1",
+                            temperature_value = (
+                                temperature_match.group(1)
+                                if temperature_match
+                                else "—"
+                            )
+                            max_tokens_match = re.search(
+                                r"max_tokens (\d+)", summary_state.sampling_row or ""
+                            )
+                            max_tokens_value = (
+                                max_tokens_match.group(1) if max_tokens_match else "—"
+                            )
+
+                            with Horizontal(
+                                id="console-model-section-provider",
                                 classes="console-model-section-line",
-                                markup=False,
-                            )
-                            # The rail line is clipped to one row; without
-                            # nowrap a long model token word-wraps onto the
-                            # hidden second row and vanishes ("llama_cpp / ").
-                            line1.styles.text_wrap = "nowrap"
-                            line1.styles.text_overflow = "ellipsis"
-                            yield line1
-                            line2 = Static(
-                                model_line2,
-                                id="console-model-section-line2",
+                            ):
+                                yield Static(
+                                    "Provider",
+                                    classes="console-model-section-label",
+                                    markup=False,
+                                )
+                                yield Static(
+                                    provider_value,
+                                    classes="console-model-section-value",
+                                    markup=False,
+                                )
+                            with Horizontal(
+                                id="console-model-section-model",
                                 classes="console-model-section-line",
-                                markup=False,
-                            )
-                            line2.styles.text_wrap = "nowrap"
-                            line2.styles.text_overflow = "ellipsis"
-                            yield line2
+                            ):
+                                yield Static(
+                                    "Model",
+                                    classes="console-model-section-label",
+                                    markup=False,
+                                )
+                                yield Static(
+                                    model_value,
+                                    classes="console-model-section-value",
+                                    markup=False,
+                                )
+                            with Horizontal(
+                                id="console-model-section-temperature",
+                                classes="console-model-section-line",
+                            ):
+                                yield Static(
+                                    "Temperature",
+                                    classes="console-model-section-label",
+                                    markup=False,
+                                )
+                                yield Static(
+                                    temperature_value,
+                                    classes="console-model-section-value",
+                                    markup=False,
+                                )
+                            with Horizontal(
+                                id="console-model-section-max-tokens",
+                                classes="console-model-section-line",
+                            ):
+                                yield Static(
+                                    "Max tokens",
+                                    classes="console-model-section-label",
+                                    markup=False,
+                                )
+                                yield Static(
+                                    max_tokens_value,
+                                    classes="console-model-section-value",
+                                    markup=False,
+                                )
+
+                            readiness = (summary_state.readiness_label or "").strip()
+                            if readiness and readiness != "Ready":
+                                yield Static(
+                                    readiness,
+                                    id="console-model-section-recovery",
+                                    classes="console-model-section-recovery",
+                                    markup=False,
+                                )
+
                             system_line_text, system_line_dim = (
                                 self._console_rail_system_line_state()
                             )

@@ -2374,8 +2374,36 @@ ConsoleSystemPromptModal {
 }
 
 .console-model-section-line {
-    height: 1;
+    height: auto;
+    min-height: 1;
+}
+
+.console-model-section-label {
+    width: 12;
+    min-width: 12;
     color: $ds-text-muted;
+}
+
+.console-model-section-value {
+    width: 1fr;
+    min-width: 10;
+    color: $ds-text-primary;
+}
+
+#console-model-section-provider .console-model-section-value,
+#console-model-section-model .console-model-section-value {
+    text-wrap: wrap;
+    max-height: 3;
+    overflow: hidden;
+}
+
+#console-model-section-temperature .console-model-section-value,
+#console-model-section-max-tokens .console-model-section-value {
+    text-wrap: nowrap;
+}
+
+#console-model-section-recovery {
+    color: $ds-status-blocked;
 }
 
 .console-agent-section-line {
