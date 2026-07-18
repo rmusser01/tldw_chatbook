@@ -3092,6 +3092,47 @@ ConsoleSystemPromptModal {
     height: auto;
 }
 
+.console-staged-context-header {
+    height: auto;
+    min-height: 1;
+}
+
+#console-staged-context-title {
+    width: 1fr;
+    text-style: bold;
+}
+
+#console-staged-context-count {
+    width: auto;
+    text-align: right;
+    color: $ds-text-muted;
+}
+
+.console-staged-source-row {
+    height: auto;
+    min-height: 2;
+    margin: 1 0 0 0;
+}
+
+.console-staged-source-name {
+    text-wrap: wrap;
+    max-height: 2;
+    overflow: hidden;
+}
+
+.console-staged-source-status {
+    height: 1;
+    color: $ds-text-muted;
+}
+
+.console-staged-source-status.ready { color: $ds-status-ready; }
+.console-staged-source-status.running { color: $ds-status-running; }
+.console-staged-source-status.blocked { color: $ds-status-blocked; }
+
+#console-staged-context-empty {
+    color: $ds-text-muted;
+}
+
 .console-compact-model-bar {
     width: auto;
     min-width: 0;
