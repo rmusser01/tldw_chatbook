@@ -71,6 +71,13 @@ async def test_rail_section_header_sync_open_flips_toggle():
         assert toggle.tooltip == "Collapse Details"
 
 
+def test_section_header_allows_border_height():
+    header = ConsoleRailSectionHeader("Session", section_id="session", open=True)
+    # Inline height constraints should be gone so CSS can set min-height 2.
+    assert header.styles.height is None or header.styles.height.value != 1
+    assert header.styles.max_height is None
+
+
 def test_console_glyph_constants():
     from tldw_chatbook.Chat.console_glyphs import (
         GLYPH_ACTIVE, GLYPH_CLOSE, GLYPH_COLLAPSED, GLYPH_COLLAPSE_LEFT,

@@ -34,9 +34,6 @@ class ConsoleRailSectionHeader(Horizontal):
         self.title = title
         self.section_id = section_id
         self.open = open
-        self.styles.height = 1
-        self.styles.min_height = 1
-        self.styles.max_height = 1
 
     def compose(self) -> ComposeResult:
         """Render the section title and collapse/expand toggle button.

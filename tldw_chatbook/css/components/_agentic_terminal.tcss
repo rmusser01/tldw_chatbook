@@ -2337,18 +2337,27 @@ ConsoleSystemPromptModal {
 }
 
 .console-rail-section-header {
-    height: 1;
-    margin-top: 1;
+    height: auto;
+    min-height: 2;
+    border-top: solid $ds-column-line;
+    content-align: center middle;
 }
 
 .console-rail-section-title {
     width: 1fr;
     text-style: bold;
+    color: $ds-text-primary;
 }
 
 .console-rail-section-toggle {
     width: 3;
     min-width: 3;
+    text-style: bold;
+}
+
+.console-rail-section-toggle:focus {
+    background: $ds-action-focus 30%;
+    text-style: underline bold;
 }
 
 .console-rail-section-body {
