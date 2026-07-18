@@ -6664,7 +6664,7 @@ class ChatScreen(BaseAppScreen):
                         # Titled distinctly from the "Context" (staged sources)
                         # rail section below so no two rail titles collide.
                         rail_label = Static(
-                            "Session & Context",
+                            "Console context",
                             id="console-context-rail-title",
                             classes="console-rail-title",
                         )
@@ -6676,7 +6676,7 @@ class ChatScreen(BaseAppScreen):
                             classes="console-rail-collapse-button",
                             compact=True,
                         )
-                        collapse_button.tooltip = "Collapse Session & Context rail"
+                        collapse_button.tooltip = "Collapse Console context rail"
                         collapse_button.styles.width = 3
                         collapse_button.styles.min_width = 3
                         collapse_button.styles.max_width = 3

@@ -2881,6 +2881,10 @@ ConsoleSystemPromptModal {
     color: $ds-text-primary;
 }
 
+.console-workspace-empty-copy {
+    color: $ds-text-muted;
+}
+
 .console-workspace-action-row {
     height: auto;
     min-height: 1;
