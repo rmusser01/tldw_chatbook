@@ -879,3 +879,41 @@ async def test_library_import_button_visible_in_lore_mode(
     async with app.run_test(size=(200, 60)) as pilot:
         screen = await _enter_lore(pilot)
         assert screen.query_one("#personas-library-import", Button).display is True
+
+
+@pytest.mark.asyncio
+async def test_export_then_import_round_trip_preserves_entries(
+    mock_app_instance, stub_characters_lore, lore_db, seeded_lore_book, tmp_path, monkeypatch
+):
+    """Export the seeded book to a file, then import that file — the new book's
+    entry matches the original (keys/content preserved through export→import)."""
+    mock_app_instance.chachanotes_db = lore_db
+    app = LorePersonasTestApp(mock_app_instance)
+    manager = WorldBookManager(lore_db)
+    # Give the seeded entry non-default matching fields to prove they survive.
+    entry = manager.get_world_book_entries(seeded_lore_book["book_id"])[0]
+    manager.update_world_book_entry(entry["id"], priority=70, selective=True,
+                                    secondary_keys=["oath"], case_sensitive=True)
+    target = tmp_path / "roundtrip.json"
+    async with app.run_test(size=(200, 60)) as pilot:
+        screen = await _enter_lore(pilot)
+        await _select_first_lore(pilot, screen)
+
+        async def _fake_save(picker):
+            return target
+
+        monkeypatch.setattr(app, "push_screen_wait", _fake_save)
+        screen.post_message(LoreBookExportRequested())
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        assert target.exists()
+        await screen._import_world_book_from_path(str(target))
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+    books = manager.list_world_books(True)
+    imported = next(b for b in books if b["name"] != "Blackreach" and b["name"].startswith("Blackreach"))
+    e = manager.get_world_book_entries(imported["id"])[0]
+    assert e["keys"] == ["Warden"] and e["priority"] == 70
+    assert e["selective"] is True and e["secondary_keys"] == ["oath"] and e["case_sensitive"] is True
