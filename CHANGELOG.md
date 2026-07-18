@@ -9,6 +9,16 @@ and this project adheres to Some kind of Versioning
 
 ### Added
 - Initial features pending documentation
+- UX efficiency cycle (critique follow-up, ADR-016): the Console composer is now a real
+  editable text field with a movable caret (arrows, Home/End, Ctrl+W, mid-draft
+  insertion, Shift+Enter newline); destination hotkeys ctrl+1..9,0 jump to the first ten
+  shell destinations with matching index labels in the nav; the nav scrolls the active
+  destination into view and docks the "More: Ctrl+P" hint outside the scroll area; Console
+  readiness chips are keyboard-focusable (focus reveals the full ellipsized label) and the
+  Approvals chip plus inspector "Review approval" button now focus the pending approval
+  card; F1 shows truthful BINDINGS-generated help on every screen; Lab gains a
+  Models | Speech | Evals mode strip, and the "lab" route id resolves correctly, making
+  the inline Evals workbench reachable for the first time.
 - Lab destination in the shell nav (ADR-015): Models (`llm`), Speech (`stts`), and Evals
   now have a home in the 12-destination rail between ACP and Settings. (Rebase note:
   upstream's retirement of the Skills destination into Library is adopted.)

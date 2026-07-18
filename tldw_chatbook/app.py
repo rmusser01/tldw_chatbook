@@ -220,6 +220,7 @@ from tldw_chatbook.config import get_chachanotes_db_path, settings, get_chachano
 from .UI.Navigation.main_navigation import NavigateToScreen
 from .UI.Navigation.screen_registry import resolve_screen_target
 from .UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
+from .UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpState
 from .UI.Screens.media_runtime_state import MediaRuntimeState
 from .UI.Screens.study_scope_models import StudyScopeContext
 # Ingest UI has been rebuilt to use an internal TabbedContent (local/remote)
@@ -496,6 +497,23 @@ def _navigate_via_screen(
     app.notify(success_message, severity="information")
 
 
+def _bindings_to_shortcuts(bindings: Any) -> tuple[tuple[str, str], ...]:
+    """Flatten BINDINGS entries into (key, description) pairs for help display.
+
+    Accepts both Binding objects and the legacy tuple form so any screen's
+    BINDINGS can be rendered as truthful shortcut help.
+    """
+    pairs: list[tuple[str, str]] = []
+    for entry in bindings or ():
+        if isinstance(entry, Binding):
+            pairs.append((entry.key, entry.description))
+        elif isinstance(entry, (tuple, list)) and entry:
+            key = str(entry[0])
+            description = str(entry[2]) if len(entry) > 2 else ""
+            pairs.append((key, description))
+    return tuple(pairs)
+
+
 class TabNavigationProvider(Provider):
     """Provider for tab navigation commands."""
 
@@ -679,7 +697,6 @@ class LLMProviderProvider(Provider):
         
         provider_commands = [
             ("LLM Provider Management: Show Current Provider", None, "Display currently selected LLM provider"),
-            ("LLM Provider Management: Test API Connection", None, "Test connection to current LLM provider"),
         ]
         
         # Add provider switching commands
@@ -720,15 +737,14 @@ class LLMProviderProvider(Provider):
         """Handle LLM provider commands."""
         try:
             if provider_id is None or "show_current" in command:
-                # Show current provider
-                current = getattr(self.app, 'current_provider', 'Unknown')
+                # Show current provider (the app-level chat provider reactive)
+                current = getattr(self.app, 'chat_api_provider_value', None) or 'Unknown'
                 self.app.notify(f"Current LLM provider: {current}", severity="information")
-            elif "test" in command.lower():
-                # Test API connection (placeholder)
-                self.app.notify("API connection test initiated", severity="information")
             else:
-                # Switch provider (placeholder - would need to integrate with actual provider switching logic)
-                self.app.notify(f"Provider switch to {provider_id} requested", severity="information")
+                # Switch provider for real: same reactive the Settings screen and
+                # Console model popover drive, whose watcher refreshes model selects.
+                self.app.chat_api_provider_value = provider_id
+                self.app.notify(f"Switched LLM provider to {provider_id}", severity="information")
         except Exception as e:
             self.app.notify(f"Failed to execute LLM command: {e}", severity="error")
 
@@ -747,11 +763,8 @@ class QuickActionsProvider(Provider):
             ("Quick Actions: New Chat Conversation", "new_chat", "Start a new chat conversation"),
             ("Quick Actions: New Character Chat", "new_character", "Start a new character-based conversation"),
             ("Quick Actions: New Note", "new_note", "Create a new note"),
-            ("Quick Actions: Clear Current Chat", "clear_chat", "Clear the current chat conversation"),
-            ("Quick Actions: Export Chat as Markdown", "export_chat", "Export current chat to markdown file"),
             ("Quick Actions: Import Media File", "import_media", "Import a new media file for processing"),
             ("Quick Actions: Search All Content", "search_all", "Search across all content"),
-            ("Quick Actions: Refresh Database", "refresh_db", "Refresh database connections"),
         ]
         
         for command_text, action_id, help_text in quick_actions:
@@ -798,8 +811,6 @@ class QuickActionsProvider(Provider):
                 _navigate_via_screen(self.app, TAB_SEARCH, "Opened Search/RAG")
             elif action_id == "import_media":
                 _navigate_via_screen(self.app, TAB_INGEST, "Opened Import/Export for media import")
-            else:
-                self.app.notify(f"Quick action '{action_id}' initiated", severity="information")
         except Exception as e:
             self.app.notify(f"Failed to execute quick action: {e}", severity="error")
 
@@ -816,12 +827,6 @@ class SettingsProvider(Provider):
         
         settings_commands = [
             ("Settings & Preferences: Open Config File", "open_config", "Open the configuration file for editing"),
-            ("Settings & Preferences: Reload Configuration", "reload_config", "Reload configuration from file"),
-            ("Settings & Preferences: Toggle Streaming Mode", "toggle_streaming", "Toggle LLM streaming mode on/off"),
-            ("Settings & Preferences: Set Temperature to Low (0.1)", "temp_low", "Set LLM temperature to 0.1 for focused responses"),
-            ("Settings & Preferences: Set Temperature to Medium (0.7)", "temp_med", "Set LLM temperature to 0.7 for balanced responses"),
-            ("Settings & Preferences: Set Temperature to High (1.0)", "temp_high", "Set LLM temperature to 1.0 for creative responses"),
-            ("Settings & Preferences: Reset to Default Settings", "reset_defaults", "Reset all settings to default values"),
             ("Settings & Preferences: Show Database Stats", "db_stats", "Show database size and statistics"),
             ("Settings & Preferences: Open Settings Tab", "open_settings", "Navigate to Tools & Settings tab"),
         ]
@@ -841,7 +846,6 @@ class SettingsProvider(Provider):
             ("Settings & Preferences: Open Settings Tab", "open_settings", "Navigate to Tools & Settings tab"),
             ("Settings & Preferences: Open Config File", "open_config", "Open the configuration file for editing"),
             ("Settings & Preferences: Show Database Stats", "db_stats", "Show database size and statistics"),
-            ("Settings & Preferences: Toggle Streaming Mode", "toggle_streaming", "Toggle LLM streaming mode on/off"),
         ]
         
         for command_text, setting_id, help_text in popular_settings:
@@ -860,16 +864,8 @@ class SettingsProvider(Provider):
             elif setting_id == "open_config":
                 from .config import DEFAULT_CONFIG_PATH
                 self.app.notify(f"Config file location: {DEFAULT_CONFIG_PATH}", severity="information")
-            elif setting_id == "reload_config":
-                self.app.notify("Configuration reload requested", severity="information")
             elif setting_id == "db_stats":
-                self.app.notify("Database statistics display requested", severity="information")
-            elif setting_id.startswith("temp_"):
-                temp_map = {"temp_low": "0.1", "temp_med": "0.7", "temp_high": "1.0"}
-                temp_value = temp_map.get(setting_id, "0.7")
-                self.app.notify(f"Temperature set to {temp_value}", severity="information")
-            else:
-                self.app.notify(f"Settings action '{setting_id}' initiated", severity="information")
+                _navigate_via_screen(self.app, TAB_STATS, "Opened Statistics")
         except Exception as e:
             self.app.notify(f"Failed to execute settings command: {e}", severity="error")
 
@@ -887,11 +883,6 @@ class CharacterProvider(Provider):
         character_commands = [
             ("Character/Persona Management: Create New Character", "new_character", "Create a new character or persona"),
             ("Character/Persona Management: Show All Characters", "list_characters", "Display all available characters"),
-            ("Character/Persona Management: Switch Character", "switch_character", "Switch to a different character"),
-            ("Character/Persona Management: Edit Current Character", "edit_character", "Edit the current character settings"),
-            ("Character/Persona Management: Delete Character", "delete_character", "Delete a character (with confirmation)"),
-            ("Character/Persona Management: Import Character", "import_character", "Import character from file"),
-            ("Character/Persona Management: Export Character", "export_character", "Export character to file"),
             ("Character/Persona Management: Open Character Tab", "open_character_tab", "Navigate to Character Chat tab"),
         ]
         
@@ -910,7 +901,6 @@ class CharacterProvider(Provider):
             ("Character/Persona Management: Open Character Tab", "open_character_tab", "Navigate to Character Chat tab"),
             ("Character/Persona Management: Create New Character", "new_character", "Create a new character or persona"),
             ("Character/Persona Management: Show All Characters", "list_characters", "Display all available characters"),
-            ("Character/Persona Management: Switch Character", "switch_character", "Switch to a different character"),
         ]
         
         for command_text, action_id, help_text in popular_character_actions:
@@ -930,8 +920,6 @@ class CharacterProvider(Provider):
                 _navigate_via_screen(self.app, TAB_PERSONAS, "Opened Personas to create a character")
             elif action_id == "list_characters":
                 _navigate_via_screen(self.app, TAB_PERSONAS, "Opened Personas to list characters")
-            else:
-                self.app.notify(f"Character action '{action_id}' requested", severity="information")
         except Exception as e:
             self.app.notify(f"Failed to execute character action: {e}", severity="error")
 
@@ -948,13 +936,8 @@ class MediaProvider(Provider):
         
         media_commands = [
             ("Media & Content: Open Media Library", "open_media", "Navigate to media library"),
-            ("Media & Content: Recent Media Files", "recent_media", "Show recently added media files"),
             ("Media & Content: Search Transcripts", "search_transcripts", "Search through media transcripts"),
-            ("Media & Content: Show Ingested Content", "show_ingested", "Display all ingested content"),
             ("Media & Content: Import New Media", "import_new", "Import new media file"),
-            ("Media & Content: Open Media Database", "open_db", "View media database contents"),
-            ("Media & Content: Refresh Media Library", "refresh_media", "Refresh media library"),
-            ("Media & Content: Export Media List", "export_list", "Export media list to file"),
         ]
         
         for command_text, action_id, help_text in media_commands:
@@ -972,7 +955,6 @@ class MediaProvider(Provider):
             ("Media & Content: Open Media Library", "open_media", "Navigate to media library"),
             ("Media & Content: Import New Media", "import_new", "Import new media file"),
             ("Media & Content: Search Transcripts", "search_transcripts", "Search through media transcripts"),
-            ("Media & Content: Recent Media Files", "recent_media", "Show recently added media files"),
         ]
         
         for command_text, action_id, help_text in popular_media_actions:
@@ -992,8 +974,6 @@ class MediaProvider(Provider):
                 _navigate_via_screen(self.app, TAB_INGEST, "Opened Import/Export for media import")
             elif action_id == "search_transcripts":
                 _navigate_via_screen(self.app, TAB_SEARCH, "Opened Search/RAG for transcript search")
-            else:
-                self.app.notify(f"Media action '{action_id}' requested", severity="information")
         except Exception as e:
             self.app.notify(f"Failed to execute media action: {e}", severity="error")
 
@@ -1011,12 +991,7 @@ class DeveloperProvider(Provider):
         dev_commands = [
             ("Developer/Debug Commands: Show App Info", "app_info", "Display application version and build info"),
             ("Developer/Debug Commands: Open Log File", "open_logs", "Navigate to application logs"),
-            ("Developer/Debug Commands: Clear Cache", "clear_cache", "Clear application cache"),
             ("Developer/Debug Commands: Show Keybindings", "show_keys", "Display all keyboard shortcuts"),
-            ("Developer/Debug Commands: Debug Mode Toggle", "toggle_debug", "Toggle debug mode on/off"),
-            ("Developer/Debug Commands: Memory Usage", "memory_usage", "Show current memory usage"),
-            ("Developer/Debug Commands: Database Integrity Check", "db_check", "Check database integrity"),
-            ("Developer/Debug Commands: Export Debug Info", "export_debug", "Export debug information to file"),
         ]
         
         for command_text, action_id, help_text in dev_commands:
@@ -1052,13 +1027,21 @@ class DeveloperProvider(Provider):
             elif action_id == "app_info":
                 self.app.notify("tldw_chatbook - TUI for LLM interactions", severity="information")
             elif action_id == "show_keys":
-                self.app.notify("Keybindings: Ctrl+Q (quit), Ctrl+P (palette)", severity="information")
-            elif action_id == "clear_cache":
-                self.app.notify("Cache clear requested", severity="information")
-            else:
-                self.app.notify(f"Developer action '{action_id}' initiated", severity="information")
+                self.show_keybindings()
         except Exception as e:
             self.app.notify(f"Failed to execute developer action: {e}", severity="error")
+
+    def show_keybindings(self) -> None:
+        """Show a generated keybindings panel built from the app's BINDINGS."""
+        try:
+            state = WorkbenchHelpState(
+                route_id="keybindings",
+                title="App Keybindings",
+                shortcuts=_bindings_to_shortcuts(getattr(self.app, "BINDINGS", ())),
+            )
+            self.app.push_screen(WorkbenchHelpPanel(state))
+        except Exception as e:
+            self.app.notify(f"Failed to show keybindings: {e}", severity="error")
 
 
 # --- Placeholder Window for Lazy Loading ---
@@ -2198,11 +2181,26 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     TITLE = "tldw chatbook"
     # CSS file path
     CSS_PATH = str(Path(__file__).parent / "css/tldw_cli_modular.tcss")
+    # Shell destination hotkey layer: Ctrl+1..Ctrl+9 then Ctrl+0, zipped against
+    # SHELL_DESTINATION_ORDER. Destinations beyond the key list stay unbound.
+    SHELL_DESTINATION_HOTKEYS: tuple[str, ...] = tuple(
+        f"ctrl+{digit}" for digit in "1234567890"
+    )
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit App", show=True),
         Binding("ctrl+p", "command_palette", "Palette Menu", show=True),
         Binding("f1", "show_workbench_help", "Help", show=True),
         Binding("f6", "focus_next_workbench_pane", "Next Pane", show=True),
+    ] + [
+        Binding(
+            key,
+            f"shell_destination({index})",
+            f"Go to {destination.accessible_label}",
+            show=False,
+        )
+        for index, (key, destination) in enumerate(
+            zip(SHELL_DESTINATION_HOTKEYS, SHELL_DESTINATION_ORDER)
+        )
     ]
     COMMANDS = App.COMMANDS | {
         ThemeProvider,
@@ -8034,17 +8032,50 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             )
     
     async def action_show_workbench_help(self) -> None:
-        """Delegate contextual help to the active Workbench screen."""
+        """Delegate contextual help to the active Workbench screen.
+
+        Screens without a custom handler get a generic help panel generated
+        from their own BINDINGS (falling back to the app-level bindings when
+        the screen declares none), so F1 always shows truthful help.
+        """
         handler = getattr(self.screen, "action_show_workbench_help", None)
         if callable(handler):
             result = handler()
             if inspect.isawaitable(result):
                 await result
             return
-        self.notify(
-            "No contextual help is available for this screen.",
-            severity="information",
+        self._show_generic_screen_help()
+
+    def _show_generic_screen_help(self) -> None:
+        """Show a help panel generated from the active screen's BINDINGS."""
+        screen = self.screen
+        shortcuts = _bindings_to_shortcuts(getattr(screen, "BINDINGS", ()))
+        if not shortcuts:
+            shortcuts = _bindings_to_shortcuts(getattr(type(self), "BINDINGS", ()))
+        screen_name = type(screen).__name__
+        state = WorkbenchHelpState(
+            route_id=str(getattr(self, "current_tab", "") or screen_name),
+            title=f"{screen_name} Shortcuts",
+            shortcuts=shortcuts,
         )
+        self.push_screen(WorkbenchHelpPanel(state))
+
+    def action_shell_destination(self, index: int | str) -> None:
+        """Navigate to the shell destination at ``index`` (Ctrl+1..9, Ctrl+0 layer).
+
+        Args:
+            index: Zero-based destination index. Textual binding action arguments
+                are passed as strings, so this is accepted as either an ``int``
+                (direct calls/tests) or ``str`` (hotkey bindings) and coerced.
+        """
+        try:
+            idx = int(index)
+        except (ValueError, TypeError):
+            return
+        if idx < 0 or idx >= len(SHELL_DESTINATION_ORDER):
+            return
+        destination = SHELL_DESTINATION_ORDER[idx]
+        self.post_message(NavigateToScreen(destination.primary_route))
 
     async def action_focus_next_workbench_pane(self) -> None:
         """Delegate pane focus cycling to the active Workbench screen."""

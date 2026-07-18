@@ -91,6 +91,104 @@ async def test_help_panel_renders_body_and_close_button():
 
 
 @pytest.mark.asyncio
+async def test_help_panel_escape_dismisses():
+    app = _WorkbenchHelpPanelApp()
+
+    async with app.run_test(size=(80, 20)) as pilot:
+        app.push_screen(
+            WorkbenchHelpPanel(
+                WorkbenchHelpState(
+                    route_id="chat",
+                    title="Console",
+                    shortcuts=(("F1", "help"),),
+                )
+            )
+        )
+        await pilot.pause()
+        assert len(app.screen_stack) == 2
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert len(app.screen_stack) == 1
+
+
+@pytest.mark.asyncio
+async def test_generic_help_fallback_lists_screen_bindings():
+    """Screens without a custom handler get help generated from their BINDINGS."""
+    from textual.binding import Binding
+
+    from tldw_chatbook import app as app_module
+
+    class BareScreen:
+        BINDINGS = [
+            Binding("ctrl+s", "send", "Send message"),
+            ("ctrl+n", "new_note", "New note"),
+        ]
+
+    class FakeApp:
+        # Bind the real fallback builder so the action's self-call resolves.
+        _show_generic_screen_help = app_module.TldwCli._show_generic_screen_help
+
+        def __init__(self) -> None:
+            self.screen = BareScreen()
+            self.current_tab = "library"
+            self.pushed: list = []
+
+        def push_screen(self, panel) -> None:
+            self.pushed.append(panel)
+
+        def notify(self, *_args, **_kwargs) -> None:
+            raise AssertionError("generic fallback must not toast the dead message")
+
+    fake_app = FakeApp()
+
+    await app_module.TldwCli.action_show_workbench_help(fake_app)
+
+    assert len(fake_app.pushed) == 1
+    panel = fake_app.pushed[0]
+    assert isinstance(panel, WorkbenchHelpPanel)
+    assert panel.state.route_id == "library"
+    assert ("ctrl+s", "Send message") in panel.state.shortcuts
+    assert ("ctrl+n", "New note") in panel.state.shortcuts
+
+
+@pytest.mark.asyncio
+async def test_generic_help_fallback_uses_app_bindings_when_screen_has_none():
+    """A screen with no BINDINGS still gets truthful help from the app layer."""
+    from textual.binding import Binding
+
+    from tldw_chatbook import app as app_module
+
+    class BareScreen:
+        BINDINGS: list = []
+
+    class FakeApp:
+        BINDINGS = [Binding("ctrl+q", "quit", "Quit App")]
+        # Bind the real fallback builder so the action's self-call resolves.
+        _show_generic_screen_help = app_module.TldwCli._show_generic_screen_help
+
+        def __init__(self) -> None:
+            self.screen = BareScreen()
+            self.current_tab = ""
+            self.pushed: list = []
+
+        def push_screen(self, panel) -> None:
+            self.pushed.append(panel)
+
+        def notify(self, *_args, **_kwargs) -> None:
+            raise AssertionError("generic fallback must not toast the dead message")
+
+    fake_app = FakeApp()
+
+    await app_module.TldwCli.action_show_workbench_help(fake_app)
+
+    assert len(fake_app.pushed) == 1
+    panel = fake_app.pushed[0]
+    assert ("ctrl+q", "Quit App") in panel.state.shortcuts
+
+
+@pytest.mark.asyncio
 async def test_app_workbench_delegation_awaits_async_screen_actions():
     from tldw_chatbook import app as app_module
 

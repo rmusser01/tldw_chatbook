@@ -8553,7 +8553,10 @@ class ChatScreen(BaseAppScreen):
             composer.clear_draft()
         elif composer.draft_text():
             # Appending onto an existing draft must never mash the two
-            # payloads together with no boundary between them.
+            # payloads together with no boundary between them. The composer
+            # caret is editable now, so seek the end first to keep this an
+            # append rather than a mid-draft splice.
+            composer.move_cursor_end()
             composer.insert_text("\n")
         composer.insert_text_as_paste(text)
         return True
@@ -9287,6 +9290,9 @@ class ChatScreen(BaseAppScreen):
                     "Nothing to insert from this file.", severity="warning"
                 )
                 return
+            # Attach appends to the draft: seek the editable caret to the end
+            # so file content never splices into the middle of a draft.
+            composer.move_cursor_end()
             composer.insert_file_segment(
                 attachment.text_content, f"📄 {attachment.label}"
             )
@@ -9384,15 +9390,31 @@ class ChatScreen(BaseAppScreen):
 
     @on(Button.Pressed, f"#{CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID}")
     def handle_console_inspector_review_approval(self, event: Button.Pressed) -> None:
-        """Keep approval review reachable from the Console inspector seam."""
+        """Focus the pending approval card from the Console inspector seam."""
         event.stop()
         if self._console_pending_approval_count() <= 0:
             self.app_instance.notify(CONSOLE_INSPECTOR_NO_APPROVAL_REASON, severity="warning")
             return
-        self.app_instance.notify(
-            "Approval review is available from the active Console task context.",
-            severity="information",
+        card = next(
+            (candidate for candidate in self.query("#chat-approval-card") if candidate.display),
+            None,
         )
+        if card is None:
+            self.app_instance.notify(CONSOLE_INSPECTOR_NO_APPROVAL_REASON, severity="warning")
+            return
+        try:
+            card.scroll_visible(animate=False)
+        except Exception:
+            pass
+        try:
+            batch_visible = card.query_one("#approval-batch-body").display
+        except Exception:
+            batch_visible = False
+        target_id = "#approval-submit" if batch_visible else "#approval-allow-once"
+        try:
+            card.query_one(target_id, Button).focus()
+        except Exception:
+            pass
 
     @on(Button.Pressed, f"#{CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_ID}")
     def handle_console_inspector_review_tool_call(self, event: Button.Pressed) -> None:
@@ -10416,9 +10438,48 @@ class ChatScreen(BaseAppScreen):
             event.stop()
             event.prevent_default()
             return
-        if event.key in {"backspace", "ctrl+h", "delete"}:
+        if event.key in {"backspace", "ctrl+h"}:
             composer.delete_left()
             self._sync_console_workbench_actions_from_draft()
+            event.stop()
+            event.prevent_default()
+            return
+        if event.key == "delete":
+            composer.delete_right()
+            self._sync_console_workbench_actions_from_draft()
+            event.stop()
+            event.prevent_default()
+            return
+        if event.key == "left":
+            composer.move_cursor_left()
+            event.stop()
+            event.prevent_default()
+            return
+        if event.key == "right":
+            composer.move_cursor_right()
+            event.stop()
+            event.prevent_default()
+            return
+        if event.key == "home":
+            composer.move_cursor_home()
+            event.stop()
+            event.prevent_default()
+            return
+        if event.key == "end":
+            composer.move_cursor_end()
+            event.stop()
+            event.prevent_default()
+            return
+        if event.key == "ctrl+w":
+            composer.delete_word_left()
+            self._sync_console_workbench_actions_from_draft()
+            event.stop()
+            event.prevent_default()
+            return
+        if event.key == "shift+enter":
+            composer.insert_text("\n")
+            self._sync_console_workbench_actions_from_draft()
+            self._dismiss_console_guidance()
             event.stop()
             event.prevent_default()
             return

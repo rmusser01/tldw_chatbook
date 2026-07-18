@@ -8,6 +8,7 @@ from importlib import import_module
 from loguru import logger
 
 from tldw_chatbook.Constants import TAB_CCP, TAB_LLM, TAB_MCP, TAB_SUBSCRIPTIONS
+from .shell_destinations import resolve_shell_route
 
 
 @dataclass(frozen=True)
@@ -157,10 +158,30 @@ def registered_screen_aliases() -> tuple[str, ...]:
 
 
 def resolve_screen_target(target: str) -> tuple[str, str, type | None]:
-    """Resolve a navigation target to a screen route without importing unrelated screens."""
+    """Resolve a navigation target to a screen route without importing unrelated screens.
+
+    Resolution order: explicit screen aliases, then direct screen routes,
+    then the shell destination model. The last leg covers destination ids
+    that are not themselves screen routes (``"lab"`` -> ``"llm"``,
+    ``"console"`` -> ``"chat"``) and legacy route ids the destination model
+    folds onto a primary route (e.g. ``"characters"`` -> ``"personas"``).
+    Unknown targets keep the ``(target, target, None)`` miss shape so the
+    navigation handler logs and stays on the current screen.
+
+    Args:
+        target: The requested route id or alias.
+
+    Returns:
+        A tuple of ``(screen_name, canonical_tab, screen_class)``.
+        ``screen_class`` is ``None`` when the target cannot be resolved.
+    """
 
     route_id = _SCREEN_ALIASES.get(target, target)
     route = _SCREEN_ROUTES.get(route_id)
     if route is None:
-        return route_id, route_id, None
+        canonical_route = resolve_shell_route(route_id).canonical_route
+        route_id = _SCREEN_ALIASES.get(canonical_route, canonical_route)
+        route = _SCREEN_ROUTES.get(route_id)
+        if route is None:
+            return route_id, route_id, None
     return route.screen_name, route.canonical_tab, route.load_screen_class()

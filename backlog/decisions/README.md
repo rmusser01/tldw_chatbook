@@ -18,6 +18,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-010](010-console-conversation-local-marks.md) | Accepted | Keep Console conversation stars as durable local-only marks outside conversation metadata, sync, server payloads, and chat metadata mirror reports. |
 | [ADR-011](011-chatbook-workbench-ui-system.md) | Accepted | Adopt a shared Textual-native Workbench UI System with stable composition, explicit state, visible workflow controls, responsiveness gates, and route-owner migration policy. |
 | [ADR-013](013-media-search-plain-text-fts-boundary.md) | Accepted | Keep raw media search text separate from optional preformatted FTS MATCH expressions across the local media-reading boundary. |
+| [ADR-016](016-palette-liveness-and-hotkey-layer.md) | Accepted | Palette commands must be live (notify-only commands deleted or wired); Ctrl+N destination hotkey layer zipped from `SHELL_DESTINATION_ORDER`; generic BINDINGS-driven F1 help. |
 
 ## Historical Decision Material
 

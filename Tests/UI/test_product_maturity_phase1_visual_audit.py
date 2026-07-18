@@ -128,6 +128,10 @@ def _has_visual_chrome(app: "TldwCli") -> bool:
     if not nav_bars or not list(app.screen.query("#screen-content")):
         return False
     nav_buttons = tuple(button.id for button in nav_bars[0].query(Button))
+    # The docked overflow hint mounts a tick after the nav strip; treat the
+    # chrome as incomplete until it is present too.
+    if len(app.screen.query("#nav-overflow-hint")) != 1:
+        return False
     return nav_buttons == tuple(f"nav-{destination_id}" for destination_id in TOP_LEVEL_DESTINATION_IDS)
 
 

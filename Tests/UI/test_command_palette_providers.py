@@ -484,11 +484,22 @@ class TestQuickActionsProvider:
         async for hit in quick_actions_provider.search("quick"):
             hits.append(hit)
         
-        assert len(hits) == 8  # All actions defined in search method
+        assert len(hits) == 5  # All actions defined in search method
         action_texts = [hit.text for hit in hits]
         assert any("New Chat Conversation" in text for text in action_texts)
-        assert any("Export Chat" in text for text in action_texts)
         assert any("Import Media" in text for text in action_texts)
+    
+    @pytest.mark.asyncio
+    async def test_search_excludes_unwired_actions(self, quick_actions_provider):
+        """Placebo actions (clear/export chat, refresh db) were removed, not half-wired."""
+        hits = []
+        async for hit in quick_actions_provider.search("quick"):
+            hits.append(hit)
+        
+        action_texts = [hit.text for hit in hits]
+        assert not any("Clear Current Chat" in text for text in action_texts)
+        assert not any("Export Chat" in text for text in action_texts)
+        assert not any("Refresh Database" in text for text in action_texts)
     
     def test_execute_new_chat_action(self, quick_actions_provider):
         """Test new chat action execution."""
@@ -566,21 +577,31 @@ class TestLLMProviderProvider:
         assert any("Anthropic" in name for name in provider_names)
     
     def test_show_current_provider(self, llm_provider):
-        """Test showing current provider."""
-        llm_provider.app.current_provider = "OpenAI"
+        """Test showing current provider reads the live chat provider reactive."""
+        llm_provider.app.chat_api_provider_value = "OpenAI"
         llm_provider.handle_llm_command(None, "show_current")
         
         llm_provider.app.notify.assert_called_once()
         call_args = llm_provider.app.notify.call_args[0]
         assert "Current LLM provider: OpenAI" in call_args[0]
     
-    def test_provider_switch_request(self, llm_provider):
-        """Test provider switch request."""
+    def test_provider_switch_sets_chat_provider_reactive(self, llm_provider):
+        """Switch commands set the same reactive the Settings screen drives."""
         llm_provider.handle_llm_command("Anthropic", "switch_Anthropic")
         
+        assert llm_provider.app.chat_api_provider_value == "Anthropic"
         llm_provider.app.notify.assert_called_once()
         call_args = llm_provider.app.notify.call_args[0]
-        assert "Provider switch to Anthropic requested" in call_args[0]
+        assert "Switched LLM provider to Anthropic" in call_args[0]
+    
+    @pytest.mark.asyncio
+    async def test_search_excludes_placeholder_test_connection(self, llm_provider):
+        """The notify-only 'Test API Connection' command was removed."""
+        hits = []
+        async for hit in llm_provider.search("test"):
+            hits.append(hit)
+        
+        assert not any("Test API Connection" in hit.text for hit in hits)
 
 
 #######################################################################################################################
@@ -612,7 +633,7 @@ class TestSettingsProvider:
         async for hit in settings_provider.discover():
             hits.append(hit)
         
-        assert len(hits) == 4  # Popular settings defined in discover method
+        assert len(hits) == 3  # Popular settings defined in discover method
         setting_names = [hit.text for hit in hits]
         assert any("Open Settings Tab" in name for name in setting_names)
         assert any("Open Config File" in name for name in setting_names)
@@ -636,18 +657,158 @@ class TestSettingsProvider:
             call_args = settings_provider.app.notify.call_args[0]
             assert "Config file location" in call_args[0]
     
-    @pytest.mark.parametrize("temp_setting,expected_temp", [
-        ("temp_low", "0.1"),
-        ("temp_med", "0.7"), 
-        ("temp_high", "1.0"),
-    ])
-    def test_temperature_settings(self, settings_provider, temp_setting, expected_temp):
-        """Test temperature setting commands."""
-        settings_provider.handle_setting(temp_setting)
-        
+    def test_db_stats_navigates_to_stats_screen(self, settings_provider):
+        """Show Database Stats routes to the live statistics screen."""
+        settings_provider.handle_setting("db_stats")
+
+        settings_provider.app.post_message.assert_called_once()
+        message = settings_provider.app.post_message.call_args.args[0]
+        assert isinstance(message, NavigateToScreen)
+        assert message.screen_name == TAB_STATS
         settings_provider.app.notify.assert_called_once()
-        call_args = settings_provider.app.notify.call_args[0]
-        assert f"Temperature set to {expected_temp}" in call_args[0]
+    
+    @pytest.mark.asyncio
+    async def test_search_excludes_unwired_settings(self, settings_provider):
+        """Notify-only settings commands (temperature, streaming, reload, reset) were removed."""
+        hits = []
+        async for hit in settings_provider.search("settings"):
+            hits.append(hit)
+        
+        setting_texts = [hit.text for hit in hits]
+        assert not any("Temperature" in text for text in setting_texts)
+        assert not any("Streaming" in text for text in setting_texts)
+        assert not any("Reload" in text for text in setting_texts)
+        assert not any("Reset" in text for text in setting_texts)
+
+
+#######################################################################################################################
+#
+# --- MediaProvider / CharacterProvider / DeveloperProvider Tests ---
+
+@requires_imports
+class TestMediaProvider:
+    """Test suite for MediaProvider functionality."""
+    
+    @pytest.fixture
+    def media_provider(self, mock_app):
+        """Create a MediaProvider instance with mock app."""
+        mock_screen = MagicMock()
+        mock_screen.app = mock_app
+        provider = MediaProvider(screen=mock_screen)
+        mock_matcher = MagicMock()
+        mock_matcher.match = MagicMock(return_value=1.0)
+        mock_matcher.highlight = MagicMock(side_effect=lambda x: x)
+        provider.matcher = MagicMock(return_value=mock_matcher)
+        return provider
+    
+    @pytest.mark.asyncio
+    async def test_search_shows_only_wired_actions(self, media_provider):
+        """Media palette only lists commands that navigate somewhere real."""
+        hits = []
+        async for hit in media_provider.search("media"):
+            hits.append(hit)
+        
+        assert len(hits) == 3
+        media_texts = [hit.text for hit in hits]
+        assert any("Open Media Library" in text for text in media_texts)
+        assert any("Import New Media" in text for text in media_texts)
+        assert any("Search Transcripts" in text for text in media_texts)
+        # Placebo commands were deleted rather than half-wired.
+        assert not any("Recent Media" in text for text in media_texts)
+        assert not any("Refresh" in text for text in media_texts)
+        assert not any("Export" in text for text in media_texts)
+    
+    def test_open_media_navigates(self, media_provider):
+        media_provider.handle_media_action("open_media")
+
+        message = media_provider.app.post_message.call_args.args[0]
+        assert isinstance(message, NavigateToScreen)
+        assert message.screen_name == TAB_MEDIA
+
+
+@requires_imports
+class TestCharacterProvider:
+    """Test suite for CharacterProvider functionality."""
+    
+    @pytest.fixture
+    def character_provider(self, mock_app):
+        """Create a CharacterProvider instance with mock app."""
+        mock_screen = MagicMock()
+        mock_screen.app = mock_app
+        provider = CharacterProvider(screen=mock_screen)
+        mock_matcher = MagicMock()
+        mock_matcher.match = MagicMock(return_value=1.0)
+        mock_matcher.highlight = MagicMock(side_effect=lambda x: x)
+        provider.matcher = MagicMock(return_value=mock_matcher)
+        return provider
+    
+    @pytest.mark.asyncio
+    async def test_search_excludes_unwired_character_actions(self, character_provider):
+        """Character commands needing in-screen state (edit/delete/import/export) were removed."""
+        hits = []
+        async for hit in character_provider.search("character"):
+            hits.append(hit)
+        
+        assert len(hits) == 3
+        character_texts = [hit.text for hit in hits]
+        assert not any("Edit" in text for text in character_texts)
+        assert not any("Delete" in text for text in character_texts)
+        assert not any("Import" in text for text in character_texts)
+        assert not any("Export" in text for text in character_texts)
+        assert not any("Switch Character" in text for text in character_texts)
+
+
+@requires_imports
+class TestDeveloperProvider:
+    """Test suite for DeveloperProvider functionality."""
+    
+    @pytest.fixture
+    def developer_provider(self, mock_app):
+        """Create a DeveloperProvider instance with mock app."""
+        mock_screen = MagicMock()
+        mock_screen.app = mock_app
+        provider = DeveloperProvider(screen=mock_screen)
+        mock_matcher = MagicMock()
+        mock_matcher.match = MagicMock(return_value=1.0)
+        mock_matcher.highlight = MagicMock(side_effect=lambda x: x)
+        provider.matcher = MagicMock(return_value=mock_matcher)
+        return provider
+    
+    @pytest.mark.asyncio
+    async def test_search_shows_only_wired_actions(self, developer_provider):
+        """Developer palette only lists live commands."""
+        hits = []
+        async for hit in developer_provider.search("debug"):
+            hits.append(hit)
+        
+        assert len(hits) == 3
+        dev_texts = [hit.text for hit in hits]
+        assert not any("Clear Cache" in text for text in dev_texts)
+        assert not any("Debug Mode" in text for text in dev_texts)
+        assert not any("Memory Usage" in text for text in dev_texts)
+        assert not any("Integrity" in text for text in dev_texts)
+        assert not any("Export Debug" in text for text in dev_texts)
+    
+    def test_show_keybindings_pushes_generated_panel(self, developer_provider):
+        """Show Keybindings opens a panel generated from the app's BINDINGS."""
+        from textual.binding import Binding
+        from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
+
+        developer_provider.app.BINDINGS = [
+            Binding("ctrl+q", "quit", "Quit App", show=True),
+            Binding("ctrl+p", "command_palette", "Palette Menu", show=True),
+        ]
+        developer_provider.handle_dev_action("show_keys")
+
+        developer_provider.app.push_screen.assert_called_once()
+        panel = developer_provider.app.push_screen.call_args.args[0]
+        assert isinstance(panel, WorkbenchHelpPanel)
+        assert panel.state.title == "App Keybindings"
+        assert ("ctrl+q", "Quit App") in panel.state.shortcuts
+        assert ("ctrl+p", "Palette Menu") in panel.state.shortcuts
+        rendered = panel.state.render_text()
+        assert "ctrl+q" in rendered
+        assert "Quit App" in rendered
 
 
 #######################################################################################################################

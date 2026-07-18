@@ -10,6 +10,7 @@ from ..Evals.navigation import EvalNavigationScreen, NavigateToEvalScreen
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Workbench.workbench_state import WorkbenchHeaderState
 from ..Workbench.workbench_widgets import DestinationHeader
+from .lab_mode_strip import LabModeStrip
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -49,6 +50,7 @@ class EvalsScreen(BaseAppScreen):
             ),
             id="evals-destination-header",
         )
+        yield LabModeStrip(active_route="evals", id="lab-mode-strip")
         yield EvalsWindowV3(self.app_instance, id="evals-window")
 
     def action_evals_back(self) -> None:

@@ -12,6 +12,7 @@ from textual.widgets import Button, Static
 
 from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
+from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -19,6 +20,7 @@ EVIDENCE = Path("Docs/superpowers/qa/product-maturity/phase-1/2026-05-05-phase-1
 TRACKER = Path("Docs/superpowers/trackers/product-maturity-roadmap.md")
 PHASE_1_README = Path("Docs/superpowers/qa/product-maturity/phase-1/README.md")
 TASK = Path("backlog/tasks/task-8.2 - Product-Maturity-Phase-1.2-Clean-First-Run-Launch-And-Configuration-Walkthrough.md")
+TOP_LEVEL_DESTINATION_IDS = tuple(destination.destination_id for destination in SHELL_DESTINATION_ORDER)
 LOCAL_PATH_PREFIXES = (
     "/Users/",
     "/home/",
@@ -102,7 +104,12 @@ async def test_clean_first_run_launches_home_and_exposes_setup_orientation(
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "home" and app.screen.__class__.__name__ == "HomeScreen",
+                # Nav strip + docked hint mount a tick after the screen swap;
+                # wait for the full chrome before asserting/clicking.
+                lambda: app.current_tab == "home"
+                and app.screen.__class__.__name__ == "HomeScreen"
+                and len(app.screen.query(".nav-button")) == len(TOP_LEVEL_DESTINATION_IDS)
+                and len(app.screen.query("#nav-overflow-hint")) == 1,
             )
 
             nav_buttons = list(app.screen.query(MainNavigationBar).first().query(Button))
@@ -173,7 +180,12 @@ async def test_clean_first_run_home_survives_supported_terminal_sizes(
         async with app.run_test(size=size) as pilot:
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "home" and app.screen.__class__.__name__ == "HomeScreen",
+                # Nav strip + docked hint mount a tick after the screen swap;
+                # wait for the full chrome before asserting.
+                lambda: app.current_tab == "home"
+                and app.screen.__class__.__name__ == "HomeScreen"
+                and len(app.screen.query(".nav-button")) == len(TOP_LEVEL_DESTINATION_IDS)
+                and len(app.screen.query("#nav-overflow-hint")) == 1,
             )
 
             primary_action = app.screen.query_one("#home-primary-action", Button)
