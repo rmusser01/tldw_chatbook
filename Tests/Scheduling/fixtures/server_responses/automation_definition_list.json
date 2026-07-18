@@ -106,7 +106,8 @@
       },
       "config": {},
       "visibility_policy": {
-        "scope": "private"
+        "scope": "private",
+        "shared_with": []
       },
       "notification_policy": {
         "on_success": "silent",

@@ -1,6 +1,6 @@
 # tldw_server Automation-Definition API Contract
 
-> Audited from `/Users/macbook-dev/Documents/GitHub/tldw_server2/tldw_Server_API/app/api/v1/endpoints/scheduled_tasks_control_plane.py` and `.../schemas/scheduled_tasks_automation_schemas.py`.
+> Audited from `tldw_server2/tldw_Server_API/app/api/v1/endpoints/scheduled_tasks_control_plane.py` and `tldw_server2/tldw_Server_API/app/api/v1/schemas/scheduled_tasks_automation_schemas.py`.
 > All routes are mounted under `/api/v1/scheduled-tasks`.
 
 ## Capabilities

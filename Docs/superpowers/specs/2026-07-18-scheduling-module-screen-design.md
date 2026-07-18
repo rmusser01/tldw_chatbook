@@ -758,7 +758,7 @@ Sub-tasks:
 2. Forms: reminder create/edit, automation definition create with preview.
 3. Inspector with lifecycle actions, conflict card, sync status.
 4. Update `UI/Navigation/screen_registry.py` to route `"schedules"` to the new module/class; deprecate `UI/Screens/schedules_screen.py`.
-5. TCSS file, bundle registration (`css/main.tcss` + `build_css.sh`), and mounted regression tests + screenshots.
+5. TCSS file (`tldw_chatbook/css/features/_scheduling.tcss`), bundle registration in `css/build_css.py` via `CSS_MODULES`, regenerate with `build_css.sh`, and mounted regression tests + screenshots.
 6. Regression checklist:
    - Preserve reading-digest fallback Console launch.
    - Preserve active-work adapter Console follow.
