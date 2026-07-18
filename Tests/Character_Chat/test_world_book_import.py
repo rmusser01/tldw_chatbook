@@ -124,3 +124,10 @@ def test_non_numeric_order_falls_back_to_index():
 def test_explicit_enabled_false_preserved():
     e = normalize_world_book_import({"entries": [{"keys": ["k"], "content": "c", "enabled": False}]})["entries"][0]
     assert e["enabled"] is False
+
+
+def test_null_content_is_rejected_not_stringified():
+    """Explicit null content must raise (not become the literal "None") — Gemini
+    #701 high-severity finding, parallel to the null-in-keys trap."""
+    with pytest.raises(ValueError, match="Entry 1 has no content"):
+        normalize_world_book_import({"entries": [{"keys": ["k"], "content": None}]})

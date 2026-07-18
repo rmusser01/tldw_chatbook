@@ -57,7 +57,10 @@ def _normalize_entry(entry: Any, index: int) -> Dict[str, Any]:
     keys = _as_str_list(raw_keys)
     if not keys:
         raise ValueError(f"Entry {index + 1} has no keys.")
-    content = str(entry.get("content", ""))
+    # Explicit null content must be treated as empty (→ ValueError), not
+    # stringified to the literal "None" (the same null-stringify trap as keys).
+    raw_content = entry.get("content")
+    content = str(raw_content) if raw_content is not None else ""
     if not content.strip():
         raise ValueError(f"Entry {index + 1} has no content.")
     raw_secondary = entry.get("secondary_keys")
