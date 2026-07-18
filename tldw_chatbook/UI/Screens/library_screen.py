@@ -166,6 +166,7 @@ from ...Third_Party.textual_fspicker import FileOpen, FileSave
 from ...Utils.input_validation import sanitize_string, validate_text_input, validate_url
 from ...Utils.path_validation import validate_path_simple
 from ...Workspaces import LibraryWorkspaceDepthState, build_library_workspace_depth_state
+from ...Workspaces.registry_service import next_local_workspace_identity
 from ...Widgets.Console.console_rail_section import (
     CONSOLE_RAIL_SECTION_TOGGLE_PREFIX,
     ConsoleRailSectionHeader,
@@ -2743,20 +2744,12 @@ class LibraryScreen(BaseAppScreen):
     def _next_local_workspace_identity(self) -> tuple[str, str]:
         """Return a collision-free local workspace id and display name."""
         registry_service = getattr(self.app_instance, "workspace_registry_service", None)
-        existing_workspaces = (
-            tuple(registry_service.list_workspaces(include_archived=True))
-            if registry_service is not None
-            else ()
-        )
-        existing_ids = {workspace.workspace_id for workspace in existing_workspaces}
-        existing_names = {workspace.name for workspace in existing_workspaces}
-        index = 1
-        while True:
-            workspace_id = f"workspace-local-{index}"
-            workspace_name = f"Workspace {index}"
-            if workspace_id not in existing_ids and workspace_name not in existing_names:
-                return workspace_id, workspace_name
-            index += 1
+        if registry_service is None:
+            # Preserve the original behavior when the registry is unavailable by
+            # falling back to a deterministic identity that mirrors the shared
+            # helper's first candidate.
+            return "workspace-local-1", "Workspace 1"
+        return next_local_workspace_identity(registry_service)
 
     def _library_workspace_depth_state(
         self,
