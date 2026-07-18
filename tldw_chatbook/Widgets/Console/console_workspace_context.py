@@ -149,8 +149,8 @@ class ConsoleWorkspaceStatusPair(Horizontal):
             classes="console-workspace-status-label",
             markup=False,
         )
-        label_widget.styles.width = 10
-        label_widget.styles.min_width = 10
+        label_widget.styles.width = 12
+        label_widget.styles.min_width = 12
         yield label_widget
 
         value_widget = Static(
@@ -536,24 +536,50 @@ class ConsoleWorkspaceContextTray(Vertical):
                 id="console-workspace-context-title",
                 classes="destination-section",
             )
-        yield self._static(
-            self._workspace_selector_label(),
+
+        workspace_value = self.state.workspace_name or self._workspace_selector_label()
+        yield ConsoleWorkspaceStatusPair(
+            "Workspace",
+            workspace_value,
+            label_id="console-active-workspace-label",
+            value_id="console-active-workspace-value",
             id="console-active-workspace",
-            classes="console-workspace-status-row console-workspace-selector-row",
         )
-        if self.state.change_workspace_enabled:
-            yield Button(
-                "Change workspace",
-                id="console-change-workspace",
-                classes="console-workspace-action",
-                compact=True,
-            )
-            if self.state.change_workspace_recovery:
-                yield self._static(
-                    self.state.change_workspace_recovery,
-                    id="console-change-workspace-recovery",
-                    classes="console-workspace-recovery",
-                )
+
+        button_row = Horizontal(
+            id="console-workspace-action-row",
+            classes="console-workspace-action-row",
+        )
+        button_row.styles.margin_left = 12
+        change_button = Button(
+            "Switch",
+            id="console-change-workspace",
+            classes="console-workspace-action",
+            compact=True,
+            disabled=not self.state.change_workspace_enabled,
+        )
+        new_button = Button(
+            "New",
+            id="console-new-workspace",
+            classes="console-workspace-action",
+            compact=True,
+            disabled=not self.state.new_workspace_enabled,
+        )
+        button_row.styles.height = "auto"
+        button_row.styles.min_height = 1
+        with button_row:
+            yield change_button
+            yield new_button
+
+        scope_value = self.state.scope_label or ""
+        yield ConsoleWorkspaceStatusPair(
+            "Scope",
+            scope_value,
+            label_id="console-active-scope-label",
+            value_id="console-active-scope-value",
+            id="console-active-scope",
+        )
+
         if self.state.recovery_copy:
             yield self._static(
                 self.state.recovery_copy,

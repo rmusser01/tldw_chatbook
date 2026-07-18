@@ -2846,10 +2846,16 @@ ConsoleSystemPromptModal {
     color: $ds-text-primary;
 }
 
+.console-workspace-action-row {
+    height: auto;
+    min-height: 1;
+    margin: 0 0 0 12;
+}
+
 .console-workspace-action {
     height: 1;
     min-height: 1;
-    margin: 0 0 1 0;
+    margin: 0 1 0 0;
 }
 
 #console-transcript-empty-state,

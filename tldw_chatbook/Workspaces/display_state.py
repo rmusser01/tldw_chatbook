@@ -205,6 +205,9 @@ class ConsoleWorkspaceContextState:
     new_conversation_enabled: bool
     new_conversation_recovery: str
     recovery_copy: str
+    workspace_name: str = ""
+    scope_label: str = ""
+    new_workspace_enabled: bool = False
     server_readiness_label: str = "Server: local fallback"
     server_readiness_detail: str = (
         "Local registry is authoritative. No background sync is running."
@@ -277,11 +280,15 @@ def build_console_workspace_state(
         Renderable Console workspace context state.
     """
 
+    scope_label = str(current_conversation or "")
     if registry_service is None:
         acp_state = _acp_handoff_state(acp_handoff_state)
         return ConsoleWorkspaceContextState(
             heading="Convos & Workspaces",
             workspace_label="No workspace selected",
+            workspace_name="unavailable",
+            scope_label=scope_label,
+            new_workspace_enabled=False,
             authority_label="Authority: unavailable",
             sync_label="Sync: unavailable",
             runtime_label="Runtime: unavailable",
@@ -314,6 +321,9 @@ def build_console_workspace_state(
         return ConsoleWorkspaceContextState(
             heading="Convos & Workspaces",
             workspace_label="No workspace selected",
+            workspace_name="unavailable",
+            scope_label=scope_label,
+            new_workspace_enabled=False,
             authority_label="Authority: unavailable",
             sync_label="Sync: unavailable",
             runtime_label="Runtime: unavailable",
@@ -343,6 +353,9 @@ def build_console_workspace_state(
         return ConsoleWorkspaceContextState(
             heading="Convos & Workspaces",
             workspace_label="Workspace: Local Default",
+            workspace_name="Local Default",
+            scope_label=scope_label,
+            new_workspace_enabled=True,
             authority_label="Authority: local registry ready",
             sync_label="Sync: not configured",
             runtime_label="Runtime: none",
@@ -385,6 +398,9 @@ def build_console_workspace_state(
     return ConsoleWorkspaceContextState(
         heading="Convos & Workspaces",
         workspace_label=f"Workspace: {active_workspace.name}",
+        workspace_name=active_workspace.name,
+        scope_label=scope_label,
+        new_workspace_enabled=True,
         authority_label=f"Authority: {active_workspace.authority.value}",
         sync_label=_workspace_sync_label(active_workspace),
         runtime_label=(
