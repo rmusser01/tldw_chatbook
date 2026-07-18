@@ -546,30 +546,27 @@ class ConsoleWorkspaceContextTray(Vertical):
             id="console-active-workspace",
         )
 
-        button_row = Horizontal(
+        with Horizontal(
             id="console-workspace-action-row",
             classes="console-workspace-action-row",
-        )
-        button_row.styles.margin_left = 12
-        change_button = Button(
-            "Switch",
-            id="console-change-workspace",
-            classes="console-workspace-action",
-            compact=True,
-            disabled=not self.state.change_workspace_enabled,
-        )
-        new_button = Button(
-            "New",
-            id="console-new-workspace",
-            classes="console-workspace-action",
-            compact=True,
-            disabled=not self.state.new_workspace_enabled,
-        )
-        button_row.styles.height = "auto"
-        button_row.styles.min_height = 1
-        with button_row:
-            yield change_button
-            yield new_button
+        ) as button_row:
+            button_row.styles.margin_left = 12
+            button_row.styles.height = "auto"
+            button_row.styles.min_height = 1
+            yield Button(
+                "Switch",
+                id="console-change-workspace",
+                classes="console-workspace-action",
+                compact=True,
+                disabled=not self.state.change_workspace_enabled,
+            )
+            yield Button(
+                "New",
+                id="console-new-workspace",
+                classes="console-workspace-action",
+                compact=True,
+                disabled=not self.state.new_workspace_enabled,
+            )
 
         scope_value = self.state.scope_label or ""
         yield ConsoleWorkspaceStatusPair(

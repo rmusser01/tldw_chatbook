@@ -255,6 +255,10 @@ from ...Workspaces.display_state import (
     build_console_workspace_state,
     console_workspace_conversation_result_copy,
 )
+from ...Workspaces.registry_service import (
+    WorkspaceRegistryServiceError,
+    next_local_workspace_identity,
+)
 from ...Workspaces import (
     CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
     ConsoleConversationBrowserInputRow,
@@ -1263,8 +1267,40 @@ class ChatScreen(BaseAppScreen):
             ),
             callback=_apply_workspace_switch,
         )
-    
-    
+
+    @on(Button.Pressed, "#console-new-workspace")
+    def on_console_new_workspace(self, event: Button.Pressed) -> None:
+        """Create a new local workspace from the Console rail and activate it."""
+        event.stop()
+        registry_service = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry_service is None:
+            self.app_instance.notify(
+                "Workspace service is not ready.", severity="warning"
+            )
+            return
+        try:
+            workspace_id, workspace_name = next_local_workspace_identity(registry_service)
+            registry_service.create_workspace(
+                workspace_id=workspace_id,
+                name=workspace_name,
+                description="Local workspace created from Console.",
+            )
+            registry_service.set_active_workspace(workspace_id)
+        except WorkspaceRegistryServiceError:
+            logger.opt(exception=True).warning("Unable to create Console workspace")
+            self.app_instance.notify("Workspace could not be created.", severity="error")
+            return
+        except Exception:
+            logger.opt(exception=True).warning("Unexpected error creating Console workspace")
+            self.app_instance.notify("Workspace could not be created.", severity="error")
+            return
+        self._sync_console_chat_core_state()
+        self._activate_console_session_for_workspace(workspace_id)
+        self._sync_console_workspace_context()
+        self.run_worker(
+            self._sync_native_console_chat_ui(), exclusive=True, group="console-sync"
+        )
+
     # Reactive property for sidebar state persistence
     sidebar_state = reactive({}, layout=False)
     
