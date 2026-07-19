@@ -16,6 +16,7 @@ from tldw_chatbook.Scheduling.models import (
 )
 from tldw_chatbook.UI.Screens.scheduling.forms.reminder_form import ReminderForm
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import SchedulesWorkbench
+from tldw_chatbook.UI.Screens.scheduling.sync_status_widget import SyncStatusWidget
 from tldw_chatbook.UI.Screens.scheduling.task_detail import (
     TaskDetail,
     TaskInspector,
@@ -820,3 +821,45 @@ def test_sync_failed_event():
     msg = SyncFailed("server:1", error="timeout")
     assert msg.owner_id == "server:1"
     assert msg.error == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_sync_status_widget_renders_mode_and_timestamps():
+    app = WorkbenchTestApp()
+    async with app.run_test() as pilot:
+        widget = SyncStatusWidget(
+            current_owner="server:example.com",
+            server_available=True,
+        )
+        await pilot.app.mount(widget)
+        await pilot.pause()
+
+        local_btn = widget.query_one("#scheduling-owner-local", Button)
+        server_btn = widget.query_one("#scheduling-owner-server", Button)
+        assert local_btn.variant != "primary"
+        assert server_btn.variant == "primary"
+
+        widget.update_status(
+            last_pull_at="2026-07-19T10:00:00+00:00",
+            last_push_at="2026-07-19T10:05:00+00:00",
+            sync_errors=[],
+        )
+        await pilot.pause()
+        pull = widget.query_one("#scheduling-last-pull", Static)
+        push = widget.query_one("#scheduling-last-push", Static)
+        assert "Last pull" in pull.visual.plain
+        assert "Last push" in push.visual.plain
+
+
+@pytest.mark.asyncio
+async def test_sync_status_widget_disables_server_button_when_unavailable():
+    app = WorkbenchTestApp()
+    async with app.run_test() as pilot:
+        widget = SyncStatusWidget(
+            current_owner="local",
+            server_available=False,
+        )
+        await pilot.app.mount(widget)
+        await pilot.pause()
+        server_btn = widget.query_one("#scheduling-owner-server", Button)
+        assert server_btn.disabled
