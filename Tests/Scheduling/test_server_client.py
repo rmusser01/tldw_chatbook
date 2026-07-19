@@ -1,10 +1,7 @@
 import pytest
 
-from tldw_chatbook.Scheduling.services import (
-    SchedulingServerClient,
-    ServerUnavailableError,
-)
 from tldw_chatbook.Scheduling.services.server_client import (
+    SchedulingServerClient,
     ServerClientConfig,
     ServerClientError,
     ServerClientNotFoundError,
