@@ -68,7 +68,8 @@ class InspectorPane(Vertical):
                 yield Button("Check now", id="inspector-check-now-button", variant="primary")
             if entity_type in ("source", "run"):
                 yield Button("Stage in Console", id="inspector-stage-console-button")
-            yield Button("Delete", id="inspector-delete-button", variant="error")
+            if entity_type in ("source", "run", "rule"):
+                yield Button("Delete", id="inspector-delete-button", variant="error")
 
     @staticmethod
     def _entity_type(entity: dict[str, Any]) -> str:

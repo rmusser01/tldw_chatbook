@@ -35,6 +35,12 @@ from ..Watchlists_Modules.inspector_pane import (
 from ..Watchlists_Modules.items_pane import ItemSelected, ItemsPane, RefreshItemsRequested
 from ..Watchlists_Modules.opml_dialogs import OpmlExportDialog, OpmlImportDialog
 from ..Watchlists_Modules.overview_pane import OverviewPane
+from ..Watchlists_Modules.rules_pane import (
+    RefreshRulesRequested,
+    RuleSelected,
+    RulesPane,
+    SaveRuleRequested,
+)
 from ..Watchlists_Modules.runs_pane import CancelRunRequested, RerunRunRequested, RunsPane, RunSelected
 from ..Watchlists_Modules.sources_pane import (
     CreateSourceRequested,
@@ -408,7 +414,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     elif self.active_section == "items":
                         yield ItemsPane(id="watchlists-items-pane")
                     elif self.active_section == "rules":
-                        yield Static("Alert rules pane not implemented yet.", id="watchlists-rules-pane")
+                        yield RulesPane(id="watchlists-rules-pane")
                 yield self._column_divider("watchlists-detail-inspector-divider")
                 with Vertical(
                     id="watchlists-inspector-pane",
@@ -483,6 +489,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self.refresh(recompose=True)
         if self.active_section == "items":
             self.run_worker(self._load_items(), exclusive=True)
+        elif self.active_section == "rules":
+            self.run_worker(self._load_rules(), exclusive=True)
 
     def watch_runtime_backend(self) -> None:
         if not self.is_mounted:
@@ -778,6 +786,53 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         event.stop()
         self.run_worker(self._load_items(), exclusive=True)
 
+    async def _load_rules(self) -> None:
+        notify = getattr(self.app_instance, "notify", None)
+        try:
+            rules = await self._controller.list_alert_rules(
+                runtime_backend=self.runtime_backend,
+            )
+            if self.is_mounted:
+                try:
+                    rules_pane = self.query_one("#watchlists-rules-pane", RulesPane)
+                    rules_pane.rules = rules
+                except Exception:
+                    pass
+        except Exception:
+            logger.opt(exception=True).debug("Failed to load alert rules.")
+            if callable(notify):
+                notify("Failed to load alert rules.", severity="error")
+
+    @on(RuleSelected)
+    def handle_rule_selected(self, event: RuleSelected) -> None:
+        event.stop()
+        self.selected_entity = event.rule
+
+    @on(RefreshRulesRequested)
+    def handle_refresh_rules_requested(self, event: RefreshRulesRequested) -> None:
+        event.stop()
+        self.run_worker(self._load_rules(), exclusive=True)
+
+    @on(SaveRuleRequested)
+    def handle_save_rule_requested(self, event: SaveRuleRequested) -> None:
+        event.stop()
+        self.run_worker(self._save_rule(event.payload), exclusive=True)
+
+    async def _save_rule(self, payload: dict[str, Any]) -> None:
+        notify = getattr(self.app_instance, "notify", None)
+        try:
+            await self._controller.save_alert_rule(
+                runtime_backend=self.runtime_backend,
+                payload=payload,
+            )
+            if callable(notify):
+                notify("Alert rule saved.", severity="information")
+        except Exception:
+            logger.opt(exception=True).debug("Failed to save alert rule.")
+            if callable(notify):
+                notify("Failed to save alert rule.", severity="error")
+        self.run_worker(self._load_rules(), exclusive=True)
+
     @on(DeleteRequested)
     def handle_delete_requested(self, event: DeleteRequested) -> None:
         event.stop()
@@ -789,6 +844,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self.run_worker(self._delete_source(entity.get("id")), exclusive=True)
         elif entity_type == "run":
             self.run_worker(self._delete_run(entity.get("id")), exclusive=True)
+        elif entity_type == "rule":
+            self.run_worker(self._delete_rule(entity.get("id")), exclusive=True)
 
     async def _delete_source(self, source_id: Any) -> None:
         try:
@@ -824,3 +881,21 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify("Failed to delete run.", severity="error")
+        self._refresh_local_wc_snapshot()
+
+    async def _delete_rule(self, rule_id: Any) -> None:
+        try:
+            await self._controller.delete_alert_rule(
+                runtime_backend=self.runtime_backend,
+                rule_id=rule_id,
+            )
+            self.selected_entity = None
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Alert rule deleted.", severity="information")
+        except Exception:
+            logger.opt(exception=True).debug("Failed to delete alert rule.")
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Failed to delete alert rule.", severity="error")
+        self.run_worker(self._load_rules(), exclusive=True)
