@@ -13,7 +13,7 @@ import uuid
 from contextlib import closing
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Optional, Union, cast
 
 from loguru import logger
 
@@ -213,6 +213,23 @@ class ScheduledTasksDB(BaseDB):
                     ) from exc
         return result
 
+    @classmethod
+    def _rows_to_dicts(
+        cls,
+        rows: list[sqlite3.Row],
+        json_fields: Optional[set[str]] = None,
+    ) -> list[dict[str, Any]]:
+        """Convert a list of sqlite3.Row objects to plain dictionaries.
+
+        ``rows`` is expected to come from ``cursor.fetchall()`` and therefore
+        never contains ``None``. The cast reflects that guarantee while keeping
+        ``_row_to_dict`` usable for ``fetchone()`` results.
+        """
+        return [
+            cast(dict[str, Any], cls._row_to_dict(row, json_fields=json_fields))
+            for row in rows
+        ]
+
     @staticmethod
     def _to_json(value: Any) -> Optional[str]:
         """Serialize a value to a JSON string.``None`` returns ``None``."""
@@ -334,10 +351,9 @@ class ScheduledTasksDB(BaseDB):
                 f"SELECT * FROM reminder_tasks {where_clause} ORDER BY created_at",
                 params,
             )
-            return [
-                self._row_to_dict(row, json_fields=self._REMINDER_JSON_FIELDS)
-                for row in cursor.fetchall()
-            ]
+            return self._rows_to_dicts(
+                cursor.fetchall(), json_fields=self._REMINDER_JSON_FIELDS
+            )
 
     def update_reminder_task(self, task_id: str, **kwargs: Any) -> bool:
         """Update reminder task fields. Returns True if a row was changed."""
@@ -396,10 +412,9 @@ class ScheduledTasksDB(BaseDB):
                 """,
                 (now_iso,),
             )
-            return [
-                self._row_to_dict(row, json_fields=self._REMINDER_JSON_FIELDS)
-                for row in cursor.fetchall()
-            ]
+            return self._rows_to_dicts(
+                cursor.fetchall(), json_fields=self._REMINDER_JSON_FIELDS
+            )
 
     # ------------------------------------------------------------------
     # Automation definitions
@@ -495,10 +510,9 @@ class ScheduledTasksDB(BaseDB):
                 f"SELECT * FROM automation_definitions {where_clause} ORDER BY created_at",
                 params,
             )
-            return [
-                self._row_to_dict(row, json_fields=self._AUTOMATION_JSON_FIELDS)
-                for row in cursor.fetchall()
-            ]
+            return self._rows_to_dicts(
+                cursor.fetchall(), json_fields=self._AUTOMATION_JSON_FIELDS
+            )
 
     def update_automation_definition(self, definition_id: str, **kwargs: Any) -> bool:
         """Update automation-definition fields. Returns True if a row changed.
@@ -803,10 +817,7 @@ class ScheduledTasksDB(BaseDB):
                 """,
                 params,
             )
-            return [
-                self._row_to_dict(row, json_fields={"payload"})
-                for row in cursor.fetchall()
-            ]
+            return self._rows_to_dicts(cursor.fetchall(), json_fields={"payload"})
 
     def delete_pending_mutation(self, mutation_id: int) -> None:
         """Delete a pending mutation by its row id."""
@@ -876,7 +887,7 @@ class ScheduledTasksDB(BaseDB):
                 """,
                 params,
             )
-            return [self._row_to_dict(row) for row in cursor.fetchall()]
+            return self._rows_to_dicts(cursor.fetchall())
 
     def get_tombstone(
         self,
@@ -974,10 +985,9 @@ class ScheduledTasksDB(BaseDB):
                 """,
                 params,
             )
-            return [
-                self._row_to_dict(row, json_fields={"server_state", "local_state"})
-                for row in cursor.fetchall()
-            ]
+            return self._rows_to_dicts(
+                cursor.fetchall(), json_fields={"server_state", "local_state"}
+            )
 
     def get_conflict_by_id(self, conflict_id: str) -> Optional[dict[str, Any]]:
         """Fetch a single conflict row by id."""
