@@ -1,4 +1,7 @@
-"""Agentic terminal CSS token regressions."""
+"""Agentic terminal CSS token regressions.
+
+Schedules pane border styling now lives in features/_scheduling.tcss; this
+module only asserts the remaining combined rules (workflows / acp panes)."""
 
 from __future__ import annotations
 
@@ -13,17 +16,14 @@ GENERATED_CSS = REPO_ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
 
 PANE_BORDER_RULES = (
     (
-        "#schedules-list-pane",
         "#workflows-list-pane",
         "#acp-list-pane",
     ),
     (
-        "#schedules-detail-pane",
         "#workflows-detail-pane",
         "#acp-detail-pane",
     ),
     (
-        "#schedules-inspector-pane",
         "#workflows-inspector-pane",
         "#acp-inspector-pane",
     ),
