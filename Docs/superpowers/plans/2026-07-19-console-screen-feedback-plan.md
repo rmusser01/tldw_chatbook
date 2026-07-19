@@ -354,16 +354,18 @@ def _finalize_agent_cancelled(
     assistant_message_id: str,
     session_id: str,
 ) -> ConsoleSubmitResult:
-    # Preserve existing semantics: RUN_CANCELLED is terminal with status "stopped"
-    # and visible copy "Response stopped." (the spec's "failed" wording is relaxed
-    # here to avoid changing long-established stop/cancel UX).
-    try:
-        stopped = self._mark_stream_stopped(
-            assistant_message_id, visible_copy="Response stopped.")
-    except KeyError:
-        # Placeholder gone; treat as a stopped session.
-        return self._session_closed_result()
-    return ConsoleSubmitResult(True, True, stopped.content)
+    visible_copy = "Response stopped/cancelled."
+    placeholder = self._ensure_assistant_placeholder(assistant_message_id, session_id)
+    if placeholder is None:
+        message = self.store.append_message(
+            session_id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content=visible_copy,
+        )
+        failed = self.store.mark_message_failed(message.id)
+        return ConsoleSubmitResult(True, True, failed.content)
+    failed = self.store.mark_message_failed(assistant_message_id)
+    return ConsoleSubmitResult(True, True, failed.content)
 
 
 def _finalize_agent_success(
@@ -465,7 +467,7 @@ async def test_finalize_agent_reply_error_marks_failed():
 
 
 @pytest.mark.asyncio
-async def test_finalize_agent_reply_cancelled_marks_stopped():
+async def test_finalize_agent_reply_cancelled_marks_failed():
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
     session = store.ensure_session(title="Chat 1")
@@ -476,7 +478,8 @@ async def test_finalize_agent_reply_cancelled_marks_stopped():
     result = controller._finalize_agent_reply(assistant.id, session.id, outcome, variant_mode=False)
 
     updated = store.get_message(assistant.id)
-    assert updated.status == "stopped"
+    assert updated.status == "failed"
+    assert "stopped" in updated.content.lower() or "cancelled" in updated.content.lower()
     assert result.accepted is True
 
 
@@ -997,14 +1000,12 @@ class ConsoleContextModal(ModalScreen[None]):
 
     def __init__(
         self,
-        snapshot: ConsoleContextSnapshot,
         snapshot_factory: Callable[[], Awaitable[ConsoleContextSnapshot]],
         *,
         token_estimate: int | None = None,
         in_progress: bool = False,
     ) -> None:
         super().__init__()
-        self.snapshot = snapshot
         self._snapshot_factory = snapshot_factory
         self.token_estimate = token_estimate
         self.in_progress = in_progress
@@ -1029,7 +1030,7 @@ class ConsoleContextModal(ModalScreen[None]):
                 yield Button("Close", id="console-context-close")
 
     def on_mount(self) -> None:
-        self._render()
+        self.run_worker(self._load_snapshot, exclusive=True)
 
     def watch_snapshot(self) -> None:
         self._render()
@@ -1221,19 +1222,12 @@ async def action_view_chat_context(self) -> None:
             staged_sources=staged_sources,
         )
 
-    try:
-        snapshot = await _factory()
-    except Exception as exc:
-        self.notify(f"Could not build context snapshot: {exc}", severity="error")
-        return
-
-    token_estimate = self._estimate_tokens(snapshot.next_send_payload)
+    token_estimate = self._estimate_tokens({"draft": draft})
     in_progress = controller.run_state.status in (
         ConsoleRunStatus.STREAMING,
         ConsoleRunStatus.AGENT_RUNNING,
     )
     self.push_screen(ConsoleContextModal(
-        snapshot,
         _factory,
         token_estimate=token_estimate,
         in_progress=in_progress,
@@ -1299,7 +1293,7 @@ class ModalHarness(App):
         yield Static("background")
 
     def on_mount(self) -> None:
-        self.push_screen(ConsoleContextModal(SNAPSHOT, _snapshot_factory, token_estimate=42))
+        self.push_screen(ConsoleContextModal(_snapshot_factory, token_estimate=42))
 
 
 @pytest.mark.asyncio
@@ -1326,7 +1320,7 @@ async def test_context_modal_renders_tabs():
 async def test_context_modal_empty_state():
     app = ModalHarness()
     app._push_empty = lambda: app.push_screen(
-        ConsoleContextModal(EMPTY_SNAPSHOT, _empty_factory)
+        ConsoleContextModal(_empty_factory)
     )
 
     async with app.run_test(size=(100, 40)) as pilot:
@@ -1342,7 +1336,7 @@ async def test_context_modal_empty_state():
 async def test_context_modal_in_progress_warning():
     app = ModalHarness()
     app._push_in_progress = lambda: app.push_screen(
-        ConsoleContextModal(SNAPSHOT, _snapshot_factory, in_progress=True)
+        ConsoleContextModal(_snapshot_factory, in_progress=True)
     )
 
     async with app.run_test(size=(100, 40)) as pilot:
