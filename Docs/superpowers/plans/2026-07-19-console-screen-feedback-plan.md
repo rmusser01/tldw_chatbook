@@ -24,6 +24,7 @@
 | `Tests/Chat/test_console_chat_controller.py` | Tests for agent finalization and context snapshot. |
 | `Tests/Chat/test_console_agent_bridge.py` | Bridge-level tests for `ConsoleAgentBridge.run_reply()`. |
 | `Tests/UI/test_console_context_modal.py` | Tests for the context viewer modal. |
+| `Tests/UI/test_chat_screen_context_modal.py` | Tests that `ChatScreen` keybinding and command palette open the modal. |
 
 ---
 
@@ -1185,7 +1186,8 @@ Create `Tests/UI/test_console_context_modal.py`:
 ```python
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Static, TextArea
+from textual.containers import Vertical
+from textual.widgets import Collapsible, Label, Static, TextArea
 
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
@@ -1203,9 +1205,15 @@ SNAPSHOT = ConsoleContextSnapshot(
     next_send_payload={"model": "gpt-4", "messages": [{"role": "user", "content": "Hello"}]},
 )
 
+EMPTY_SNAPSHOT = ConsoleContextSnapshot(current_messages=[], next_send_payload={})
+
 
 async def _snapshot_factory() -> ConsoleContextSnapshot:
     return SNAPSHOT
+
+
+async def _empty_factory() -> ConsoleContextSnapshot:
+    return EMPTY_SNAPSHOT
 
 
 class ModalHarness(App):
@@ -1227,13 +1235,49 @@ async def test_context_modal_renders_tabs():
         assert "Chat Context" in header_text
         assert "42 tokens" in header_text
 
-        # In rendered mode, current context is shown inside collapsibles under a Vertical.
         current_container = modal.query_one("#console-context-current-body", Vertical)
-        assert "Hello" in current_container.display_text
+        text_areas = current_container.query(TextArea)
+        assert any("Hello" in ta.text for ta in text_areas)
 
         next_container = modal.query_one("#console-context-next-send-body", Vertical)
-        assert "gpt-4" in next_container.display_text
+        labels = list(next_container.query(Label))
+        assert any("gpt-4" in str(label.renderable) for label in labels)
+
+
+@pytest.mark.asyncio
+async def test_context_modal_empty_state():
+    app = ModalHarness()
+    app._push_empty = lambda: app.push_screen(
+        ConsoleContextModal(EMPTY_SNAPSHOT, _empty_factory)
+    )
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        app._push_empty()
+        await pilot.pause()
+        modal = app.screen
+        current_container = modal.query_one("#console-context-current-body", Vertical)
+        labels = list(current_container.query(Label))
+        assert any("No conversation context" in str(label.renderable) for label in labels)
+
+
+@pytest.mark.asyncio
+async def test_context_modal_in_progress_warning():
+    app = ModalHarness()
+    app._push_in_progress = lambda: app.push_screen(
+        ConsoleContextModal(SNAPSHOT, _snapshot_factory, in_progress=True)
+    )
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        app._push_in_progress()
+        await pilot.pause()
+        modal = app.screen
+        warning = modal.query_one("#console-context-warning", Static)
+        assert "in progress" in str(warning.renderable)
+        refresh_button = modal.query_one("#console-context-refresh", Button)
+        assert refresh_button.disabled
 ```
+
+> The `query` method requires Textual 0.41+. If unavailable, use `query_one` with a descendant selector.
 
 Run:
 
@@ -1243,10 +1287,84 @@ pytest Tests/UI/test_console_context_modal.py -v
 
 Expected: PASS.
 
-### Step 4.4: Commit
+### Step 4.4: Add ChatScreen wiring tests
+
+Create `Tests/UI/test_chat_screen_context_modal.py`:
+
+```python
+import pytest
+from textual.app import App, ComposeResult
+
+from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+
+class ChatScreenHarness(App):
+    def compose(self) -> ComposeResult:
+        yield ChatScreen()
+
+
+@pytest.mark.asyncio
+async def test_chat_screen_keybinding_opens_context_modal():
+    app = ChatScreenHarness()
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        # Ensure an active session and a message exist.
+        screen = app.screen
+        controller = screen._controller
+        session = controller.store.ensure_session(title="Test")
+        controller.store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="Hello",
+        )
+        await pilot.pause()
+
+        await pilot.press("ctrl+shift+p")
+        await pilot.pause()
+
+        assert isinstance(app.screen, ConsoleContextModal)
+
+
+@pytest.mark.asyncio
+async def test_chat_screen_command_palette_opens_context_modal():
+    app = ChatScreenHarness()
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = app.screen
+        controller = screen._controller
+        session = controller.store.ensure_session(title="Test")
+        controller.store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="Hello",
+        )
+        await pilot.pause()
+
+        # Open command palette and select the context command.
+        await pilot.press("ctrl+backslash")
+        await pilot.pause()
+        await pilot.press("Console: View chat context")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, ConsoleContextModal)
+```
+
+> Adjust the command palette key (`ctrl+backslash`) to the actual binding used by the project.
+
+Run:
 
 ```bash
-git add tldw_chatbook/Widgets/Console/console_context_modal.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/UI/console_command_provider.py Tests/UI/test_console_context_modal.py
+pytest Tests/UI/test_chat_screen_context_modal.py -v
+```
+
+Expected: PASS.
+
+### Step 4.5: Commit
+
+```bash
+git add tldw_chatbook/Widgets/Console/console_context_modal.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/UI/console_command_provider.py Tests/UI/test_console_context_modal.py Tests/UI/test_chat_screen_context_modal.py
 git commit -m "feat(console): add context viewer modal and keybinding"
 ```
 
@@ -1257,7 +1375,7 @@ git commit -m "feat(console): add context viewer modal and keybinding"
 ### Step 5.1: Run the full console test suites
 
 ```bash
-pytest Tests/UI/test_console_native_transcript.py Tests/UI/test_console_context_modal.py Tests/Chat/test_console_chat_controller.py Tests/Chat/test_console_agent_bridge.py -v
+pytest Tests/UI/test_console_native_transcript.py Tests/UI/test_console_context_modal.py Tests/UI/test_chat_screen_context_modal.py Tests/Chat/test_console_chat_controller.py Tests/Chat/test_console_agent_bridge.py -v
 ```
 
 Expected: all PASS.
@@ -1272,7 +1390,7 @@ Expected: all PASS.
 ### Step 5.3: Final commit
 
 ```bash
-git add Tests/UI/test_console_native_transcript.py Tests/UI/test_console_context_modal.py Tests/Chat/test_console_chat_controller.py Tests/Chat/test_console_agent_bridge.py
+git add Tests/UI/test_console_native_transcript.py Tests/UI/test_console_context_modal.py Tests/UI/test_chat_screen_context_modal.py Tests/Chat/test_console_chat_controller.py Tests/Chat/test_console_agent_bridge.py
 git commit -m "test(console): add integration tests and smoke checklist for console feedback"
 ```
 
