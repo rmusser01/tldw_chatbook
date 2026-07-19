@@ -48,6 +48,26 @@ from tldw_chatbook.Widgets.destination_workbench import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _default_advanced_open(monkeypatch):
+    """Task 5 (MCP Hub Phase 6): same rationale as test_mcp_workbench.py's
+    fixture of the same name -- the MCP destination mounts a nested
+    `MCPInspector`, whose `compose()` reads `mcp.hub_state.advanced_open`
+    AND the new `mcp.hub_state.advanced_visible` opt-in via
+    `mcp_inspector.get_cli_setting` at mount time. Without this, every MCP
+    parity test here would hit the developer's real config
+    (non-deterministic) and -- with `advanced_visible` defaulting False --
+    `_assert_advanced_run_reachable()`'s `#mcp-adv-*` queries would find the
+    opt-in reveal Button instead of the composed Advanced pane. The blanket
+    True answers both keys (visible + expanded), matching the pre-Task-5
+    layout these geometry assertions were written against.
+    """
+    import tldw_chatbook.UI.MCP_Modules.mcp_inspector as mcp_inspector_module
+
+    monkeypatch.setattr(mcp_inspector_module, "get_cli_setting", lambda *a, **k: True)
+    monkeypatch.setattr(mcp_inspector_module, "save_setting_to_cli_config", lambda *a, **k: True)
+
+
 def _region(widget):
     region = widget.region
     return region.x, region.y, region.width, region.height

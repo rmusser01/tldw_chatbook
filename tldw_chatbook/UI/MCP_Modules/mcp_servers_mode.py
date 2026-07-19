@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from rich.markup import escape as escape_markup
@@ -35,9 +36,7 @@ _MUTATIONS_GATED_TOOLTIP = "Requires team, org, or system-admin scope."
 # different source/table entirely), so the button is gated off there rather
 # than silently landing writes nobody looking at this screen would see.
 _IMPORT_GATED_TOOLTIP = "Import creates LOCAL server profiles — switch Source to Local."
-_IMPORT_LOCAL_TOOLTIP = (
-    "Import servers from a Claude-Desktop-style mcpServers JSON file or paste."
-)
+_IMPORT_LOCAL_TOOLTIP = "Import servers from a Claude-Desktop-style mcpServers JSON file or paste."
 
 _TABLE_COLUMNS = ("Name", "Transport", "Status", "Tools", "Auth", "Scope")
 # Task 11: the Local source never has a meaningful Scope (built-in is
@@ -59,6 +58,46 @@ _CALLOUT_CAP = 4
 # source of truth instead of duplicating it.
 def _readiness_kind(state: ReadinessState) -> str:
     return STATE_CSS_CLASSES[state].removeprefix("mcp-status-")
+
+
+def _count_display(value: int | None) -> str:
+    """"—" for an unreported count, else the plain integer as a string.
+
+    Mirrors `update_overview()`'s own inline `"—" if snap.tool_count is
+    None else str(snap.tool_count)` ternary for the overview table's Tools
+    cell -- pulled out to a shared helper now that `_detail_text()`'s
+    server-source branch (Task 5, MCP Hub Phase 6) needs the identical
+    "unreported vs. zero" distinction for resource/prompt counts too.
+    """
+    return "—" if value is None else str(value)
+
+
+def _named_items_text(items: Any, *, key: str) -> str:
+    """"{count}: {comma-joined names}" for a Servers-mode detail line, or
+    the literal "none" when there's nothing to show (Task 5, MCP Hub Phase
+    6 -- see `_detail_text()`'s local-source Tools/Resources/Prompts
+    lines).
+
+    Defensive reads: a missing/malformed `discovery_snapshot` field (not a
+    list at all) is treated as empty rather than raising; a non-Mapping
+    entry within an otherwise-list field falls back to `str(item)` instead
+    of assuming `.get()` exists. `key` is tried first (`"uri"` for
+    resources, `"name"` for tools/prompts), falling back to whichever of
+    `name`/`uri` the entry actually carries, then a literal `"?"` -- mirrors
+    the pre-Task-5 inline join this replaces.
+    """
+    if not isinstance(items, list) or not items:
+        return "none"
+    names: list[str] = []
+    for item in items[:8]:
+        if isinstance(item, Mapping):
+            names.append(str(item.get(key) or item.get("name") or item.get("uri") or "?"))
+        else:
+            names.append(str(item))
+    text = ", ".join(names)
+    if len(items) > 8:
+        text += f", … +{len(items) - 8} more"
+    return f"{len(items)}: {text}"
 
 
 # Task 10: the built-in detail view's Checkbox ids -> the `[mcp]` config key
@@ -234,17 +273,9 @@ class MCPServersMode(Vertical):
             # the sentence Static stays plain (`ds-status-badge` only).
             with Horizontal(id="mcp-overview-summary-row"):
                 yield Static(
-                    "",
-                    id="mcp-overview-summary-glyph",
-                    classes="ds-status-badge",
-                    markup=False,
+                    "", id="mcp-overview-summary-glyph", classes="ds-status-badge", markup=False,
                 )
-                yield Static(
-                    "",
-                    id="mcp-overview-summary",
-                    classes="ds-status-badge",
-                    markup=False,
-                )
+                yield Static("", id="mcp-overview-summary", classes="ds-status-badge", markup=False)
             table = DataTable(id="mcp-servers-table")
             table.cursor_type = "row"
             yield table
@@ -259,16 +290,11 @@ class MCPServersMode(Vertical):
                     tooltip="Return to the overview table.",
                 )
                 yield Static(
-                    "",
-                    id="mcp-detail-title",
-                    classes="destination-section",
-                    markup=False,
+                    "", id="mcp-detail-title", classes="destination-section", markup=False
                 )
             yield Horizontal(id="mcp-detail-toolbar", classes="ds-toolbar")
             with VerticalScroll(id="mcp-detail-scroll"):
-                yield Static(
-                    "", id="mcp-detail-body", classes="ds-field-row", markup=False
-                )
+                yield Static("", id="mcp-detail-body", classes="ds-field-row", markup=False)
                 yield Vertical(id="mcp-detail-builtin-toggles")
                 yield Button(
                     "Copy client config",
@@ -545,9 +571,7 @@ class MCPServersMode(Vertical):
         self._callout_keys = [snap.server_key for snap in visible]
         callout_widgets: list[Widget] = [
             Button(
-                escape_markup(
-                    f"{STATE_GLYPHS[snap.state]} {snap.label}: {snap.message}"
-                ),
+                escape_markup(f"{STATE_GLYPHS[snap.state]} {snap.label}: {snap.message}"),
                 id=f"mcp-callout-{index}",
                 classes="mcp-callout console-action-subdued",
                 compact=True,
@@ -805,9 +829,7 @@ class MCPServersMode(Vertical):
         if widgets:
             await container.mount_all(widgets)
 
-    def _detail_text(
-        self, snapshot: ReadinessSnapshot, *, mutations_available: bool = False
-    ) -> str:
+    def _detail_text(self, snapshot: ReadinessSnapshot, *, mutations_available: bool = False) -> str:
         detail = snapshot.detail or {}
         lines: list[str] = [snapshot.message, ""]
         if snapshot.source == "server" and isinstance(detail.get("raw"), dict):
@@ -821,14 +843,22 @@ class MCPServersMode(Vertical):
             lines.append(f"Transport · {snapshot.transport}")
             lines.append(f"Enabled · {'yes' if raw.get('enabled', True) else 'no'}")
             lines.append(f"Credentials · {snapshot.auth_display}")
+            # Task 5 (MCP Hub Phase 6, §14 Advanced-opt-in compensation):
+            # server-source records show resource/prompt COUNTS only --
+            # straight off the snapshot fields `server_external_record_
+            # readiness()` derives from the record's own reported counts (or
+            # raw lists), the same existing payload the overview table's
+            # Tools column already reads. No names/URIs: the server owns
+            # those, and the read-only listing lives on the LOCAL discovery
+            # snapshot below; test-read/test-get remain via opt-in Advanced.
+            lines.append(f"Resources · {_count_display(snapshot.resource_count)}")
+            lines.append(f"Prompts · {_count_display(snapshot.prompt_count)}")
             if not mutations_available:
                 lines.append("")
                 lines.append(_MUTATIONS_GATED_TOOLTIP)
         elif snapshot.source == "local":
             args = redact_args([str(a) for a in detail.get("args") or []])
-            lines.append(
-                f"Command · {detail.get('command') or '—'} {' '.join(args)}".rstrip()
-            )
+            lines.append(f"Command · {detail.get('command') or '—'} {' '.join(args)}".rstrip())
             placeholders = detail.get("env_placeholders") or {}
             missing = set(detail.get("missing_env") or [])
             for env_key, raw in placeholders.items():
@@ -842,19 +872,34 @@ class MCPServersMode(Vertical):
                 is_missing = bool(names) and names[0] in missing
                 marker = "missing" if is_missing else "set"
                 lines.append(f"Env · {env_key} ({marker})")
+            # Task 5 (MCP Hub Phase 6, §14 Advanced-opt-in compensation):
+            # resources and prompts get their own compact, always-present
+            # lines here -- with Advanced now opt-in (see mcp_inspector.py),
+            # this detail body is the only place a user sees a local
+            # server's resource URIs or prompt names without deliberately
+            # revealing the legacy runner. Tools keeps the same "Kind · N:
+            # names" shape it always had; `_named_items_text()` now backs
+            # all three uniformly (defensive reads, explicit "none" empty
+            # copy) rather than duplicating the join/truncate logic per kind.
             discovery = detail.get("discovery_snapshot") or {}
-            for kind in ("tools", "resources", "prompts"):
-                items = discovery.get(kind) or []
-                names = ", ".join(
-                    str(item.get("name") or item.get("uri") or "?")
-                    for item in items[:8]
-                )
-                suffix = f": {names}" if names else ""
-                lines.append(f"{kind.title()} · {len(items)}{suffix}")
+            lines.append(f"Tools · {_named_items_text(discovery.get('tools'), key='name')}")
+            lines.append("")
+            lines.append(f"Resources · {_named_items_text(discovery.get('resources'), key='uri')}")
+            lines.append(f"Prompts · {_named_items_text(discovery.get('prompts'), key='name')}")
         elif snapshot.source == "server":
             base_url = str(detail.get("base_url") or "")
             lines.append(f"Base URL · {redact_url(base_url) if base_url else '—'}")
             lines.append(f"Auth · {snapshot.auth_display}")
+            # Task 5 (MCP Hub Phase 6): server-source records don't carry a
+            # local discovery_snapshot to list names/URIs from -- counts
+            # only, straight off the snapshot's own tool_count/
+            # resource_count/prompt_count fields (the same "existing
+            # payload" tool_count already reads for the overview table's
+            # Tools column; server_external_record_readiness() populates
+            # resource_count/prompt_count the identical record.get(...)-or-
+            # len(list) way).
+            lines.append(f"Resources · {_count_display(snapshot.resource_count)}")
+            lines.append(f"Prompts · {_count_display(snapshot.prompt_count)}")
             lines.append("External server records: see Advanced ▸ External Servers.")
         else:  # builtin
             lines.append("Runs over stdio when an MCP client launches it:")
@@ -923,9 +968,7 @@ class MCPServersMode(Vertical):
             event.stop()
             snippet = ""
             if self._detail_snapshot is not None:
-                snippet = str(
-                    (self._detail_snapshot.detail or {}).get("client_snippet") or ""
-                )
+                snippet = str((self._detail_snapshot.detail or {}).get("client_snippet") or "")
             if snippet:
                 self.app.copy_to_clipboard(snippet)
                 self.app.notify("Client config copied to clipboard.")
@@ -946,9 +989,7 @@ class MCPServersMode(Vertical):
         if button_id == "mcp-detail-disconnect":
             event.stop()
             if self._detail_snapshot is not None:
-                self.post_message(
-                    self.DisconnectRequested(self._detail_snapshot.server_key)
-                )
+                self.post_message(self.DisconnectRequested(self._detail_snapshot.server_key))
             return
         if button_id == "mcp-detail-delete":
             event.stop()
@@ -965,7 +1006,5 @@ class MCPServersMode(Vertical):
             self._delete_armed = False
             await self._rebuild_detail_toolbar()
             if self._detail_snapshot is not None:
-                self.post_message(
-                    self.DeleteConfirmed(self._detail_snapshot.server_key)
-                )
+                self.post_message(self.DeleteConfirmed(self._detail_snapshot.server_key))
             return

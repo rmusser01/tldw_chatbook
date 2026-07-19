@@ -4,6 +4,7 @@ import asyncio
 import inspect
 import logging
 import time
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
@@ -12,19 +13,22 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button, Select, Static
 
 from Tests.UI.test_screen_navigation import _build_test_app
-from Tests.UI.test_unified_mcp_panel import FakeUnifiedMCPService
 from tldw_chatbook.ACP_Interop.runtime_session import ACPRuntimeSessionState
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, HomeDashboardInput
 from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
-from tldw_chatbook.MCP.unified_control_models import ConfiguredServerTarget
-from tldw_chatbook.runtime_policy.types import PolicyDeniedError
+from tldw_chatbook.MCP.unified_control_models import (
+    ConfiguredServerTarget,
+    SectionCapabilityFlags,
+    ServerAccessContext,
+    UnifiedMCPContext,
+)
+from tldw_chatbook.runtime_policy.types import PolicyDeniedError, RuntimeSourceState
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
 from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCPRail
 from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
 from tldw_chatbook.UI.MCP_Modules.mcp_tools_mode import MCPToolsMode
 from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCPWorkbench
-from tldw_chatbook.UI.MCP_Modules.unified_mcp_panel import UnifiedMCPPanel
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.UI.Screens.artifacts_screen import ArtifactsScreen
 from tldw_chatbook.UI.Screens.acp_screen import ACPScreen
@@ -2404,9 +2408,11 @@ async def test_mcp_destination_embeds_mcp_workbench():
     """MCP screen now hosts the rail/canvas/inspector workbench, not the legacy panel.
 
     Realigned from the retired `test_mcp_destination_embeds_unified_mcp_management_panel`
-    (Task 8 replaced the embedded `UnifiedMCPPanel` with `MCPWorkbench`). Same product
-    intent — the MCP destination embeds its management surface directly, with no
-    "open elsewhere" escape hatch and no "not embedded" placeholder copy.
+    (Task 8 replaced the embedded `UnifiedMCPPanel` with `MCPWorkbench`; Task 5 of MCP
+    Hub Phase 6 deleted `UnifiedMCPPanel` itself, so there is no longer a class to query
+    for absence -- the module simply doesn't exist). Same product intent — the MCP
+    destination embeds its management surface directly, with no "open elsewhere" escape
+    hatch and no "not embedded" placeholder copy.
     """
     app = _build_test_app()
     host = DestinationHarness(app, "mcp")
@@ -2420,7 +2426,6 @@ async def test_mcp_destination_embeds_mcp_workbench():
         assert screen.query_one("#mcp-hub-rail", MCPRail)
         assert screen.query_one("#mcp-hub-canvas")
         assert screen.query_one("#mcp-hub-inspector", MCPInspector)
-        assert not screen.query(UnifiedMCPPanel)
         assert not screen.query("#mcp-open-management")
         assert (
             "Unified MCP management is not embedded in this shell yet."
@@ -2471,6 +2476,143 @@ async def test_mcp_destination_labels_server_first_workbench_columns():
             "Manage MCP servers, scoped tools, permissions, and audit readiness."
             in text
         )
+
+
+class FakeUnifiedMCPService:
+    """Ported from the retired `test_unified_mcp_panel.py` (deleted along with
+    `UnifiedMCPPanel`/`unified_mcp_sections.py` in MCP Hub Phase 6 Task 5) --
+    this is the only test in the suite that still needs it, to drive
+    `MCPWorkbench`'s `unified_mcp_service`-backed source/scope/section
+    tracking for `test_mcp_destination_restores_unified_mcp_view_state_after_
+    mount` below. Kept local to this one test rather than resurrecting a
+    shared fixture module for a single caller.
+    """
+
+    def __init__(self, target_store: ConfiguredServerTargetStore) -> None:
+        self.target_store = target_store
+        self.context = UnifiedMCPContext(selected_source="local", selected_section="overview")
+        self.action_calls: list[tuple[str, dict]] = []
+        self.runtime_state_override_calls = 0
+
+    async def load_context(self) -> UnifiedMCPContext:
+        return self.context
+
+    async def select_source(self, source: str) -> UnifiedMCPContext:
+        normalized_source = "server" if source == "server" else "local"
+        self.context = replace(self.context, selected_source=normalized_source)
+        if normalized_source == "server" and self.context.selected_active_server_id is None:
+            default_target = self.target_store.resolve_active_target()
+            if default_target is not None:
+                return await self.select_server_target(default_target.server_id)
+        return self.context
+
+    async def select_server_target(self, server_id: str) -> UnifiedMCPContext:
+        target = self.target_store.resolve_active_target(server_id)
+        if target is None:
+            raise KeyError(server_id)
+        context = ServerAccessContext(
+            server_id=target.server_id,
+            selected_scope="personal",
+            selected_scope_ref=None,
+            selected_section=self.context.selected_section or "overview",
+            can_use_personal_scope=True,
+            manageable_team_ids=(21,),
+            manageable_org_ids=(11,),
+            can_use_system_admin_scope=True,
+            section_capabilities=SectionCapabilityFlags(
+                overview=True,
+                inventory=True,
+                catalogs=True,
+                external_servers=True,
+                governance=True,
+                advanced=True,
+            ),
+        )
+        per_server_state = dict(self.context.per_server_state)
+        per_server_state[target.server_id] = context
+        self.context = replace(
+            self.context,
+            selected_source="server",
+            selected_active_server_id=target.server_id,
+            selected_scope=context.selected_scope,
+            selected_scope_ref=context.selected_scope_ref,
+            selected_section=context.selected_section,
+            per_server_state=per_server_state,
+        )
+        return self.context
+
+    async def select_scope(self, scope: str | None, scope_ref: str | None = None) -> UnifiedMCPContext:
+        server_id = self.context.selected_active_server_id
+        if server_id is None:
+            return self.context
+        if scope == "team" and scope_ref is None:
+            scope_ref = "21"
+        elif scope == "org" and scope_ref is None:
+            scope_ref = "11"
+        else:
+            scope_ref = None if scope in {None, "personal", "system_admin"} else scope_ref
+        context = replace(
+            self.context.per_server_state[server_id],
+            selected_scope=scope or "personal",
+            selected_scope_ref=scope_ref,
+        )
+        per_server_state = dict(self.context.per_server_state)
+        per_server_state[server_id] = context
+        self.context = replace(
+            self.context,
+            selected_scope=context.selected_scope,
+            selected_scope_ref=context.selected_scope_ref,
+            per_server_state=per_server_state,
+        )
+        return self.context
+
+    async def select_section(self, section: str | None) -> UnifiedMCPContext:
+        server_id = self.context.selected_active_server_id
+        if server_id is None:
+            self.context = replace(self.context, selected_section=section or "overview")
+            return self.context
+        context = replace(
+            self.context.per_server_state[server_id],
+            selected_section=section or "overview",
+        )
+        per_server_state = dict(self.context.per_server_state)
+        per_server_state[server_id] = context
+        self.context = replace(
+            self.context,
+            selected_section=context.selected_section,
+            per_server_state=per_server_state,
+        )
+        return self.context
+
+    async def load_section(self, section: str | None = None) -> dict:
+        effective_section = section or self.context.selected_section or "overview"
+        return {
+            "source": self.context.selected_source,
+            "section": effective_section,
+            "server_id": self.context.selected_active_server_id,
+            "scope": self.context.selected_scope,
+            "scope_ref": self.context.selected_scope_ref,
+        }
+
+    def available_actions(self) -> list[dict]:
+        return []
+
+    def runtime_state_override(self) -> RuntimeSourceState:
+        self.runtime_state_override_calls += 1
+        if self.context.selected_source == "server":
+            return RuntimeSourceState(
+                active_source="server",
+                active_server_id=self.context.selected_active_server_id,
+                server_configured=True,
+                server_reachability="reachable",
+                server_auth_state="authenticated",
+                last_known_server_label=self.context.selected_active_server_id,
+            )
+        return RuntimeSourceState(active_source="local")
+
+    async def run_action(self, action_name: str, payload: dict) -> dict:
+        self.action_calls.append((action_name, dict(payload)))
+        return {"ok": True, "action": action_name, **dict(payload)}
 
 
 @pytest.mark.asyncio

@@ -23,31 +23,52 @@ from tldw_chatbook.MCP.readiness import (
 )
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
 
-_BUNDLED_CSS_PATH = str(
-    Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
-)
+_BUNDLED_CSS_PATH = str(Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss")
+
+
+def _fake_get_cli_setting(**overrides: Any):
+    """Key-aware `get_cli_setting(section, key=None, default=None)` fake.
+
+    Task 5 (MCP Hub Phase 6): `MCPInspector.compose()` now reads TWO
+    `mcp.hub_state` keys -- the pre-existing `advanced_open` (collapsed
+    vs. expanded) and the new `advanced_visible` (composed at all, vs. the
+    opt-in reveal Button). A blanket `lambda *a, **k: True/False` (the
+    pre-Task-5 shape every fixture/test below used) can no longer express
+    "expanded but hidden" or "collapsed but visible" -- it answers both
+    keys identically. `overrides` maps a KEY name to the value that key
+    should resolve to; any key not in `overrides` falls back to the
+    caller's own `default` argument, exactly like the real
+    `get_cli_setting`.
+    """
+    def _fake(section: str, key: str | None = None, default: Any = None) -> Any:
+        if key in overrides:
+            return overrides[key]
+        return default
+
+    return _fake
 
 
 @pytest.fixture(autouse=True)
 def _default_advanced_open(monkeypatch):
-    """T12: keep the Advanced disclosure expanded, and never touch the real
-    user config file, for every test in this module that isn't specifically
-    exercising the collapsed-by-default / persistence behavior itself.
+    """T12/Task 5: keep the Advanced disclosure expanded AND visible, and
+    never touch the real user config file, for every test in this module
+    that isn't specifically exercising the collapsed-by-default /
+    hidden-by-default / persistence behavior itself.
 
-    `MCPInspector.compose()` reads `mcp.hub_state.advanced_open` via this
-    module's `get_cli_setting` at mount time; without this fixture every
-    test here would hit the developer's real `~/.config/tldw_cli/config.toml`
-    (non-deterministic) and the pre-T12 tests that `pilot.click` into the
-    Advanced pane (e.g. `test_advanced_runner_runs_action_with_template_
-    payload`) would fail outright once collapsed-by-default lands, since a
-    collapsed `Collapsible`'s contents are `display: none` (not clickable).
-    Individual tests below override this locally via their own
-    `monkeypatch.setattr(...)` call, which wins over this fixture's.
+    `MCPInspector.compose()` reads `mcp.hub_state.advanced_open` and
+    `mcp.hub_state.advanced_visible` via this module's `get_cli_setting` at
+    mount time; without this fixture every test here would hit the
+    developer's real `~/.config/tldw_cli/config.toml` (non-deterministic)
+    and would see the opt-in reveal Button instead of the composed
+    Collapsible its `#mcp-adv-*` queries assume exist. Individual tests
+    below override this locally via their own `monkeypatch.setattr(...)`
+    call, which wins over this fixture's.
     """
-    monkeypatch.setattr(mcp_inspector_module, "get_cli_setting", lambda *a, **k: True)
     monkeypatch.setattr(
-        mcp_inspector_module, "save_setting_to_cli_config", lambda *a, **k: True
+        mcp_inspector_module, "get_cli_setting",
+        _fake_get_cli_setting(advanced_open=True, advanced_visible=True),
     )
+    monkeypatch.setattr(mcp_inspector_module, "save_setting_to_cli_config", lambda *a, **k: True)
 
 
 class FakeAdvService:
@@ -83,9 +104,7 @@ class InspectorApp(App):
 
     def on_mount(self) -> None:
         inspector = self.query_one(MCPInspector)
-        inspector.set_service_context(
-            self.service, [("Overview", "overview"), ("Inventory", "inventory")]
-        )
+        inspector.set_service_context(self.service, [("Overview", "overview"), ("Inventory", "inventory")])
 
     def on_mcp_inspector_hub_action_requested(self, event) -> None:
         self.events.append(event)
@@ -102,11 +121,8 @@ class InspectorApp(App):
 
 def _stale_snap() -> ReadinessSnapshot:
     return ReadinessSnapshot(
-        server_key="local:docs",
-        label="docs",
-        source="local",
-        state=ReadinessState.STALE,
-        reasons=(ReasonCode.RUNTIME_UNAVAILABLE,),
+        server_key="local:docs", label="docs", source="local",
+        state=ReadinessState.STALE, reasons=(ReasonCode.RUNTIME_UNAVAILABLE,),
         message="2 tools discovered; not currently connected.",
     )
 
@@ -120,24 +136,17 @@ def _stale_server_snap() -> ReadinessSnapshot:
     keeps those actions disabled, pointed at Advanced instead.
     """
     return ReadinessSnapshot(
-        server_key="server:main/docs",
-        label="docs",
-        source="server",
-        state=ReadinessState.STALE,
-        reasons=(ReasonCode.RUNTIME_UNAVAILABLE,),
+        server_key="server:main/docs", label="docs", source="server",
+        state=ReadinessState.STALE, reasons=(ReasonCode.RUNTIME_UNAVAILABLE,),
         message="2 tools discovered; not currently connected.",
     )
 
 
 def _ready_snap() -> ReadinessSnapshot:
     return ReadinessSnapshot(
-        server_key="local:notes",
-        label="notes",
-        source="local",
-        state=ReadinessState.READY,
-        reasons=(),
-        message="Connected — 4 tools available.",
-        tool_count=4,
+        server_key="local:notes", label="notes", source="local",
+        state=ReadinessState.READY, reasons=(),
+        message="Connected — 4 tools available.", tool_count=4,
     )
 
 
@@ -240,6 +249,36 @@ async def test_disabled_action_buttons_stay_legible_with_bundled_css():
         assert connect_button.tooltip
 
 
+@pytest.mark.asyncio
+async def test_advanced_reveal_button_renders_with_bundled_css(monkeypatch):
+    """Task 5 (MCP Hub Phase 6): real-bundle harness assertion for the
+    opt-in reveal button -- under the actual app stylesheet (not a bare
+    test App's Textual defaults) the button must actually render (non-zero
+    region, displayed) with its tooltip, and pressing it must mount the
+    Advanced collapsible without any bundle-rule surprise (e.g. a
+    `display: none` ancestor rule swallowing it)."""
+    monkeypatch.setattr(
+        mcp_inspector_module, "get_cli_setting",
+        _fake_get_cli_setting(advanced_visible=False),
+    )
+    monkeypatch.setattr(mcp_inspector_module, "save_setting_to_cli_config", lambda *a, **k: True)
+    app = InspectorAppWithBundledCSS()
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.pause()
+        assert not app.query("#mcp-adv-collapsible")
+        reveal = app.query_one("#mcp-inspector-advanced-reveal", Button)
+        assert reveal.display
+        assert reveal.region.width > 0 and reveal.region.height > 0
+        assert reveal.tooltip == "Show the legacy control-plane action runner."
+
+        await pilot.click("#mcp-inspector-advanced-reveal")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert app.query_one("#mcp-adv-collapsible", Collapsible)
+        assert not app.query("#mcp-inspector-advanced-reveal")
+
+
 # -- A3: inspector action stack is left-aligned -------------------------------
 
 
@@ -266,12 +305,8 @@ async def test_inspector_action_buttons_are_left_aligned_with_bundled_css():
         # The lone Cancel button shown during an in-flight (CHECKING)
         # lifecycle op carries the same class (T5) -- must resolve the same.
         checking_snap = ReadinessSnapshot(
-            server_key="local:docs",
-            label="docs",
-            source="local",
-            state=ReadinessState.CHECKING,
-            reasons=(),
-            message="Connecting…",
+            server_key="local:docs", label="docs", source="local",
+            state=ReadinessState.CHECKING, reasons=(), message="Connecting…",
         )
         await inspector.update_readiness(checking_snap)
         await pilot.pause()
@@ -321,11 +356,8 @@ async def test_readiness_message_ready_state_without_tool_count_omits_count():
     async with app.run_test() as pilot:
         inspector = app.query_one(MCPInspector)
         snap = ReadinessSnapshot(
-            server_key="builtin:tldw_chatbook",
-            label="tldw_chatbook (built-in)",
-            source="builtin",
-            state=ReadinessState.READY,
-            reasons=(),
+            server_key="builtin:tldw_chatbook", label="tldw_chatbook (built-in)",
+            source="builtin", state=ReadinessState.READY, reasons=(),
             message="Served over stdio when an MCP client launches chatbook.",
         )
         await inspector.update_readiness(snap)
@@ -381,8 +413,7 @@ async def test_second_update_readiness_does_not_duplicate_action_ids():
         assert len(ids) == len(set(ids)), f"duplicate action button ids: {ids}"
 
         expected_ids = {
-            f"mcp-inspector-action-{action.value}"
-            for action in _ready_snap().allowed_actions
+            f"mcp-inspector-action-{action.value}" for action in _ready_snap().allowed_actions
         }
         assert set(ids) == expected_ids, (
             f"actions container should hold exactly the second snapshot's "
@@ -417,9 +448,7 @@ async def test_advanced_runner_reports_invalid_json_without_crashing():
         await pilot.click("#mcp-adv-run")
         await pilot.pause()
         assert app.service.action_calls == []
-        assert "Invalid JSON" in str(
-            app.query_one("#mcp-adv-result", Static).renderable
-        )
+        assert "Invalid JSON" in str(app.query_one("#mcp-adv-result", Static).renderable)
 
 
 class GatedAdvService(FakeAdvService):
@@ -604,6 +633,57 @@ async def test_advanced_actions_zero_descriptor_section_resets_payload_to_empty_
         assert payload.text == "{}"
 
 
+@pytest.mark.asyncio
+async def test_protected_actions_reachable_after_reveal(monkeypatch):
+    """Task 5 (MCP Hub Phase 6): the six protected actions this task's brief
+    calls out by name (governance_rule.save/preview/delete, runtime.access.
+    preview, resource.read, prompt.get) must stay reachable once a user
+    OPTS IN via the reveal Button -- not just when `advanced_visible` is
+    already True at mount (every other test in this module, via the
+    autouse fixture). `governance_rule.save` (this probe, reusing
+    `SectionAwareInspectorApp`'s governance-section fake -- see
+    `test_advanced_actions_follow_section_changes` above) stands in for all
+    six: nothing about action rendering/selection/running changed, only
+    whether the pane composes at all.
+
+    `on_mount()` calls `set_service_context()` BEFORE the Collapsible
+    exists (Advanced starts hidden here) -- this also pins that the
+    DOM-tolerant guard in `set_service_context()` doesn't crash, and that
+    `_reveal_advanced()`'s replay actually binds the recorded context.
+    """
+    monkeypatch.setattr(
+        mcp_inspector_module, "get_cli_setting",
+        _fake_get_cli_setting(advanced_visible=False, advanced_open=True),
+    )
+    app = SectionAwareInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.pause()
+        assert not app.query("#mcp-adv-collapsible")
+
+        await pilot.click("#mcp-inspector-advanced-reveal")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        # _reveal_advanced() itself is a worker that, partway through,
+        # schedules a SECOND worker (set_service_context()'s own
+        # _load_advanced_section() reload) -- wait once more so that
+        # nested worker is also flushed before the test tears the app
+        # down (otherwise its coroutine can be torn down mid-flight,
+        # producing a harmless but noisy "never awaited" warning).
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert not app.query("#mcp-inspector-advanced-reveal")
+
+        section_select = app.query_one("#mcp-adv-section-select", Select)
+        section_select.value = "governance"
+        await pilot.pause()
+        await pilot.pause()
+
+        action_select = app.query_one("#mcp-adv-action-select", Select)
+        assert action_select.value == "governance_rule.save"
+        assert not action_select.disabled
+
+
 class OverlappingActionsService:
     """Two sections that share one action name (by design, not by accident)
     -- used to prove the action re-derivation preserves selection instead of
@@ -619,33 +699,15 @@ class OverlappingActionsService:
     def available_actions(self):
         if self.section == "alpha":
             return [
-                {
-                    "name": "action.a",
-                    "label": "Action A",
-                    "action_id": "a",
-                    "payload_template": "{}",
-                },
-                {
-                    "name": "action.shared",
-                    "label": "Shared Action",
-                    "action_id": "shared",
-                    "payload_template": '{"x":1}',
-                },
+                {"name": "action.a", "label": "Action A", "action_id": "a", "payload_template": "{}"},
+                {"name": "action.shared", "label": "Shared Action", "action_id": "shared",
+                 "payload_template": '{"x":1}'},
             ]
         if self.section == "beta":
             return [
-                {
-                    "name": "action.shared",
-                    "label": "Shared Action",
-                    "action_id": "shared",
-                    "payload_template": '{"x":1}',
-                },
-                {
-                    "name": "action.b",
-                    "label": "Action B",
-                    "action_id": "b",
-                    "payload_template": "{}",
-                },
+                {"name": "action.shared", "label": "Shared Action", "action_id": "shared",
+                 "payload_template": '{"x":1}'},
+                {"name": "action.b", "label": "Action B", "action_id": "b", "payload_template": "{}"},
             ]
         return []
 
@@ -717,12 +779,8 @@ async def test_concurrent_refreshes_serialize_and_last_writer_wins():
         inspector = app.query_one(MCPInspector)
         first = _stale_snap()
         second = ReadinessSnapshot(
-            server_key="local:web",
-            label="web",
-            source="local",
-            state=ReadinessState.READY,
-            reasons=(),
-            message="Connected.",
+            server_key="local:web", label="web", source="local",
+            state=ReadinessState.READY, reasons=(), message="Connected.",
         )
         await asyncio.gather(
             inspector.update_readiness(first),
@@ -756,7 +814,10 @@ async def test_zero_descriptor_sections_show_guidance_hint():
 @pytest.mark.asyncio
 async def test_advanced_collapsible_starts_collapsed_by_default(monkeypatch):
     """No persisted preference (fresh install) -> collapsed on mount."""
-    monkeypatch.setattr(mcp_inspector_module, "get_cli_setting", lambda *a, **k: False)
+    monkeypatch.setattr(
+        mcp_inspector_module, "get_cli_setting",
+        _fake_get_cli_setting(advanced_open=False, advanced_visible=True),
+    )
     app = InspectorApp()
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -766,7 +827,10 @@ async def test_advanced_collapsible_starts_collapsed_by_default(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_advanced_collapsible_starts_expanded_when_persisted_open(monkeypatch):
-    monkeypatch.setattr(mcp_inspector_module, "get_cli_setting", lambda *a, **k: True)
+    monkeypatch.setattr(
+        mcp_inspector_module, "get_cli_setting",
+        _fake_get_cli_setting(advanced_open=True, advanced_visible=True),
+    )
     app = InspectorApp()
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -779,7 +843,10 @@ async def test_advanced_collapsible_toggle_persists_state(monkeypatch):
     """Expanding the disclosure must persist `advanced_open=True` via
     `save_setting_to_cli_config("mcp.hub_state", "advanced_open", True)`,
     per the task interface's exact call-signature contract."""
-    monkeypatch.setattr(mcp_inspector_module, "get_cli_setting", lambda *a, **k: False)
+    monkeypatch.setattr(
+        mcp_inspector_module, "get_cli_setting",
+        _fake_get_cli_setting(advanced_open=False, advanced_visible=True),
+    )
     save_calls: list[tuple[str, str, Any]] = []
 
     def fake_save(section, key, value):
@@ -812,7 +879,10 @@ async def test_mount_with_persisted_open_does_not_write_config(monkeypatch):
     disk). Mounting with the preference already open must therefore produce
     ZERO save calls; only a real toggle afterwards persists -- exactly once.
     """
-    monkeypatch.setattr(mcp_inspector_module, "get_cli_setting", lambda *a, **k: True)
+    monkeypatch.setattr(
+        mcp_inspector_module, "get_cli_setting",
+        _fake_get_cli_setting(advanced_open=True, advanced_visible=True),
+    )
     save_calls: list[tuple[str, str, Any]] = []
 
     def fake_save(section, key, value):
@@ -839,7 +909,10 @@ async def test_mount_with_persisted_open_does_not_write_config(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_advanced_collapsible_recollapse_persists_false(monkeypatch):
-    monkeypatch.setattr(mcp_inspector_module, "get_cli_setting", lambda *a, **k: True)
+    monkeypatch.setattr(
+        mcp_inspector_module, "get_cli_setting",
+        _fake_get_cli_setting(advanced_open=True, advanced_visible=True),
+    )
     save_calls: list[tuple[str, str, Any]] = []
 
     def fake_save(section, key, value):
@@ -861,6 +934,121 @@ async def test_advanced_collapsible_recollapse_persists_false(monkeypatch):
         assert ("mcp.hub_state", "advanced_open", False) in save_calls
 
 
+# -- Task 5 (MCP Hub Phase 6): Advanced opt-in gate --------------------------
+
+
+@pytest.mark.asyncio
+async def test_advanced_hidden_by_default_composes_reveal_button_not_collapsible(monkeypatch):
+    """No persisted `advanced_visible` (fresh install) -> the Collapsible
+    is not composed at all; a reveal Button stands in for it."""
+    monkeypatch.setattr(
+        mcp_inspector_module, "get_cli_setting",
+        _fake_get_cli_setting(advanced_visible=False),
+    )
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert not app.query("#mcp-adv-collapsible")
+        reveal = app.query_one("#mcp-inspector-advanced-reveal", Button)
+        assert reveal.tooltip == "Show the legacy control-plane action runner."
+
+
+@pytest.mark.asyncio
+async def test_advanced_visible_true_at_mount_skips_reveal_button(monkeypatch):
+    """A persisted `advanced_visible=True` (a returning opted-in user) ->
+    the Collapsible composes immediately; no reveal Button is rendered."""
+    monkeypatch.setattr(
+        mcp_inspector_module, "get_cli_setting",
+        _fake_get_cli_setting(advanced_visible=True, advanced_open=True),
+    )
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.query_one("#mcp-adv-collapsible", Collapsible)
+        assert not app.query("#mcp-inspector-advanced-reveal")
+
+
+@pytest.mark.asyncio
+async def test_advanced_reveal_button_persists_setting_and_mounts_collapsible(monkeypatch):
+    """Pressing the reveal Button must persist
+    `save_setting_to_cli_config("mcp.hub_state", "advanced_visible", True)`
+    and mount the Collapsible in its place -- the button itself is removed
+    (not merely disabled), since it has nothing left to do this session."""
+    monkeypatch.setattr(
+        mcp_inspector_module, "get_cli_setting",
+        _fake_get_cli_setting(advanced_visible=False),
+    )
+    save_calls: list[tuple[str, str, Any]] = []
+
+    def fake_save(section, key, value):
+        save_calls.append((section, key, value))
+        return True
+
+    monkeypatch.setattr(mcp_inspector_module, "save_setting_to_cli_config", fake_save)
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert not app.query("#mcp-adv-collapsible")
+
+        await pilot.click("#mcp-inspector-advanced-reveal")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        # _reveal_advanced() itself is a worker that, partway through,
+        # schedules a SECOND worker (set_service_context()'s own
+        # _load_advanced_section() reload) -- wait once more so that
+        # nested worker is also flushed before the test tears the app
+        # down (otherwise its coroutine can be torn down mid-flight,
+        # producing a harmless but noisy "never awaited" warning).
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert ("mcp.hub_state", "advanced_visible", True) in save_calls
+        assert app.query_one("#mcp-adv-collapsible", Collapsible)
+        assert not app.query("#mcp-inspector-advanced-reveal")
+
+
+@pytest.mark.asyncio
+async def test_advanced_reveal_replays_recorded_service_context(monkeypatch):
+    """`set_service_context()` may be called while Advanced is still
+    hidden (the workbench rebinds unconditionally on every reload/source
+    switch/selection change) -- that call must not crash on the missing
+    `#mcp-adv-*` widgets, and once the user reveals Advanced, the freshly
+    mounted panel must bind to whatever was last recorded (source="server",
+    a named target) rather than opening on the local-control-plane default.
+    """
+    monkeypatch.setattr(
+        mcp_inspector_module, "get_cli_setting",
+        _fake_get_cli_setting(advanced_visible=False, advanced_open=True),
+    )
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        inspector = app.query_one(MCPInspector)
+        # Recorded while hidden -- must not raise (NoMatches on #mcp-adv-*).
+        inspector.set_service_context(
+            app.service, [("Overview", "overview")],
+            source="server", target_label="Main Server",
+        )
+        await pilot.pause()
+
+        await pilot.click("#mcp-inspector-advanced-reveal")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        # _reveal_advanced() itself is a worker that, partway through,
+        # schedules a SECOND worker (set_service_context()'s own
+        # _load_advanced_section() reload) -- wait once more so that
+        # nested worker is also flushed before the test tears the app
+        # down (otherwise its coroutine can be torn down mid-flight,
+        # producing a harmless but noisy "never awaited" warning).
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        label = app.query_one("#mcp-adv-object", Static)
+        assert str(label.renderable) == "Showing: server Main Server"
+
+
 @pytest.mark.asyncio
 async def test_advanced_object_label_defaults_to_local_control_plane():
     app = InspectorApp()
@@ -877,10 +1065,8 @@ async def test_advanced_object_label_reflects_server_source_and_target():
         await pilot.pause()
         inspector = app.query_one(MCPInspector)
         inspector.set_service_context(
-            app.service,
-            [("Overview", "overview")],
-            source="server",
-            target_label="Main Server",
+            app.service, [("Overview", "overview")],
+            source="server", target_label="Main Server",
         )
         await pilot.pause()
         label = app.query_one("#mcp-adv-object", Static)
@@ -903,10 +1089,8 @@ async def test_advanced_content_cleared_synchronously_on_rebind():
 
         inspector = app.query_one(MCPInspector)
         inspector.set_service_context(
-            app.service,
-            [("Overview", "overview")],
-            source="server",
-            target_label="Other Server",
+            app.service, [("Overview", "overview")],
+            source="server", target_label="Other Server",
         )
         # No pilot.pause() here: the clear must be visible before the
         # reload worker this call schedules has had any chance to run.
@@ -948,13 +1132,9 @@ async def test_show_tool_renders_executable_tool_with_test_button():
         name_text = str(app.query_one("#mcp-inspector-tool-name", Static).renderable)
         assert "search" in name_text
         assert "docs" in name_text
-        description = str(
-            app.query_one("#mcp-inspector-tool-description", Static).renderable
-        )
+        description = str(app.query_one("#mcp-inspector-tool-description", Static).renderable)
         assert description == "Search the docs."
-        schema_line = str(
-            app.query_one("#mcp-inspector-tool-schema", Static).renderable
-        )
+        schema_line = str(app.query_one("#mcp-inspector-tool-schema", Static).renderable)
         assert schema_line == "Parameters: form"
         test_button = app.query_one("#mcp-inspector-test-tool", Button)
         assert test_button.tooltip == "Run this tool with test arguments."
@@ -969,9 +1149,7 @@ async def test_show_tool_raw_schema_reports_raw_json_availability():
         inspector = app.query_one(MCPInspector)
         await inspector.show_tool(_tool(name="fetch", input_schema=None))
         await pilot.pause()
-        schema_line = str(
-            app.query_one("#mcp-inspector-tool-schema", Static).renderable
-        )
+        schema_line = str(app.query_one("#mcp-inspector-tool-schema", Static).renderable)
         assert schema_line == "Parameters: raw JSON"
 
 
@@ -996,9 +1174,7 @@ async def test_show_tool_non_executable_shows_phase4_note_not_test_button():
         )
         await pilot.pause()
         note = app.query_one("#mcp-inspector-tool-phase-note", Static)
-        assert (
-            str(note.renderable) == "Testing server-source tools isn't available yet."
-        )
+        assert str(note.renderable) == "Testing server-source tools isn't available yet."
         assert not list(app.query("#mcp-inspector-test-tool"))
 
 
@@ -1063,9 +1239,7 @@ async def test_test_run_posts_tool_test_requested_with_collected_arguments():
         app.query_one("#mcp-schema-field-0", Input).value = "hello"
         await pilot.click("#mcp-inspector-test-run")
         await pilot.pause()
-        events = [
-            e for e in app.events if isinstance(e, MCPInspector.ToolTestRequested)
-        ]
+        events = [e for e in app.events if isinstance(e, MCPInspector.ToolTestRequested)]
         assert len(events) == 1
         assert events[0].server_key == tool.server_key
         assert events[0].tool_name == tool.name
@@ -1085,9 +1259,7 @@ async def test_test_run_value_error_shows_message_and_does_not_post():
         # required "query" field left empty
         await pilot.click("#mcp-inspector-test-run")
         await pilot.pause()
-        events = [
-            e for e in app.events if isinstance(e, MCPInspector.ToolTestRequested)
-        ]
+        events = [e for e in app.events if isinstance(e, MCPInspector.ToolTestRequested)]
         assert events == []
         result = app.query_one("#mcp-inspector-test-result", Static)
         assert "required" in str(result.renderable)
@@ -1107,9 +1279,7 @@ async def test_raw_mode_tool_test_panel_shows_raw_textarea():
         raw_area.text = '{"url": "https://example.test"}'
         await pilot.click("#mcp-inspector-test-run")
         await pilot.pause()
-        events = [
-            e for e in app.events if isinstance(e, MCPInspector.ToolTestRequested)
-        ]
+        events = [e for e in app.events if isinstance(e, MCPInspector.ToolTestRequested)]
         assert len(events) == 1
         assert events[0].arguments == {"url": "https://example.test"}
 
@@ -1128,11 +1298,8 @@ async def test_show_tool_result_ok_renders_status_line_and_reenables_run():
         await pilot.click("#mcp-inspector-test-run")
         await pilot.pause()
         inspector.show_tool_result(
-            server_key=tool.server_key,
-            tool_name=tool.name,
-            ok=True,
-            text='{"ok": true}',
-            duration_ms=123,
+            server_key=tool.server_key, tool_name=tool.name, ok=True,
+            text='{"ok": true}', duration_ms=123,
         )
         await pilot.pause()
         result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
@@ -1152,11 +1319,8 @@ async def test_show_tool_result_failed_renders_status_line():
         await pilot.click("#mcp-inspector-test-tool")
         await pilot.pause()
         inspector.show_tool_result(
-            server_key=tool.server_key,
-            tool_name=tool.name,
-            ok=False,
-            text="boom",
-            duration_ms=45,
+            server_key=tool.server_key, tool_name=tool.name, ok=False,
+            text="boom", duration_ms=45,
         )
         await pilot.pause()
         result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
@@ -1184,11 +1348,8 @@ async def test_show_tool_result_for_a_different_tool_is_dropped():
 
         # Tool A's late result arrives under B's server_key/tool_name mismatch.
         inspector.show_tool_result(
-            server_key="local:docs",
-            tool_name="search",
-            ok=True,
-            text="A's payload",
-            duration_ms=10,
+            server_key="local:docs", tool_name="search", ok=True,
+            text="A's payload", duration_ms=10,
         )
         await pilot.pause()
 
@@ -1214,11 +1375,8 @@ async def test_show_tool_result_same_name_different_server_is_dropped():
         await pilot.pause()
 
         inspector.show_tool_result(
-            server_key="local:notes",
-            tool_name="search",
-            ok=True,
-            text="wrong server's payload",
-            duration_ms=5,
+            server_key="local:notes", tool_name="search", ok=True,
+            text="wrong server's payload", duration_ms=5,
         )
         await pilot.pause()
 
@@ -1243,11 +1401,8 @@ async def test_show_tool_result_same_tool_is_not_dropped():
         await pilot.pause()
 
         inspector.show_tool_result(
-            server_key="local:docs",
-            tool_name="search",
-            ok=True,
-            text="matching payload",
-            duration_ms=7,
+            server_key="local:docs", tool_name="search", ok=True,
+            text="matching payload", duration_ms=7,
         )
         await pilot.pause()
 
@@ -1298,9 +1453,7 @@ async def test_require_confirm_arms_button_with_confirm_label_and_tooltip():
         run_button = app.query_one("#mcp-inspector-test-run", Button)
         assert str(run_button.label) == "Confirm run"
         assert run_button.variant == "primary"
-        assert (
-            run_button.tooltip == "Ask is set for this tool — press again to run once."
-        )
+        assert run_button.tooltip == "Ask is set for this tool — press again to run once."
         assert run_button.disabled is False
         assert inspector.test_run_armed is True
         # UX batch item 6: the generic armed explainer is ALWAYS shown once
@@ -1367,9 +1520,7 @@ async def test_disarm_test_run_reverts_button_and_clears_notice():
         await pilot.pause()
         await pilot.click("#mcp-inspector-test-tool")
         await pilot.pause()
-        inspector.require_confirm(
-            "Definition changed since you allowed it — review in Permissions."
-        )
+        inspector.require_confirm("Definition changed since you allowed it — review in Permissions.")
         await pilot.pause()
 
         inspector.disarm_test_run()
@@ -1378,10 +1529,7 @@ async def test_disarm_test_run_reverts_button_and_clears_notice():
         run_button = app.query_one("#mcp-inspector-test-run", Button)
         assert str(run_button.label) == "Run"
         assert run_button.variant == "default"
-        assert (
-            run_button.tooltip
-            == "Send these arguments to the tool and show the result."
-        )
+        assert run_button.tooltip == "Send these arguments to the tool and show the result."
         assert inspector.test_run_armed is False
         notice = app.query_one("#mcp-inspector-test-arm-notice", Static)
         assert str(notice.renderable) == ""
@@ -1492,9 +1640,7 @@ async def test_confirming_press_reposts_tool_test_requested():
         await pilot.click("#mcp-inspector-test-run")
         await pilot.pause()
 
-        events = [
-            e for e in app.events if isinstance(e, MCPInspector.ToolTestRequested)
-        ]
+        events = [e for e in app.events if isinstance(e, MCPInspector.ToolTestRequested)]
         assert len(events) == 1
         assert events[0].server_key == tool.server_key
         assert events[0].tool_name == tool.name
@@ -1519,9 +1665,7 @@ async def test_show_tool_with_effective_appends_permission_block():
         await pilot.pause()
         container = app.query_one("#mcp-inspector-permission")
         assert container.display is True
-        origin = str(
-            app.query_one("#mcp-inspector-permission-origin", Static).renderable
-        )
+        origin = str(app.query_one("#mcp-inspector-permission-origin", Static).renderable)
         assert origin == "Inherited from the server default."
         assert not list(app.query("#mcp-inspector-reallow"))
         assert not list(app.query("#mcp-inspector-permission-notice"))
@@ -1566,9 +1710,7 @@ async def test_show_permission_origin_sentence_tool_override():
             _tool(), EffectiveToolState(state="allow", origin="tool_override")
         )
         await pilot.pause()
-        origin = str(
-            app.query_one("#mcp-inspector-permission-origin", Static).renderable
-        )
+        origin = str(app.query_one("#mcp-inspector-permission-origin", Static).renderable)
         assert origin == "From this tool's override."
 
 
@@ -1581,9 +1723,7 @@ async def test_show_permission_origin_sentence_server_default():
             _tool(), EffectiveToolState(state="ask", origin="server_default")
         )
         await pilot.pause()
-        origin = str(
-            app.query_one("#mcp-inspector-permission-origin", Static).renderable
-        )
+        origin = str(app.query_one("#mcp-inspector-permission-origin", Static).renderable)
         assert origin == "Inherited from the server default."
 
 
@@ -1596,9 +1736,7 @@ async def test_show_permission_origin_sentence_global_default():
             _tool(), EffectiveToolState(state="ask", origin="global_default")
         )
         await pilot.pause()
-        origin = str(
-            app.query_one("#mcp-inspector-permission-origin", Static).renderable
-        )
+        origin = str(app.query_one("#mcp-inspector-permission-origin", Static).renderable)
         assert origin == "Inherited from the global default."
 
 
@@ -1616,9 +1754,7 @@ async def test_show_permission_origin_sentence_falls_back_for_unrecognized_origi
             _tool(), EffectiveToolState(state="deny", origin="gate_error")
         )
         await pilot.pause()
-        origin = str(
-            app.query_one("#mcp-inspector-permission-origin", Static).renderable
-        )
+        origin = str(app.query_one("#mcp-inspector-permission-origin", Static).renderable)
         assert origin == "Permission state could not be resolved."
 
 
@@ -1999,9 +2135,7 @@ async def test_show_permission_config_changed_shows_notice_and_reallow_button():
             ),
         )
         await pilot.pause()
-        notice = str(
-            app.query_one("#mcp-inspector-permission-notice", Static).renderable
-        )
+        notice = str(app.query_one("#mcp-inspector-permission-notice", Static).renderable)
         assert notice == "Definition changed since you allowed it."
         reallow = app.query_one("#mcp-inspector-reallow", Button)
         assert reallow.tooltip == "Store the new definition hash and allow again."
@@ -2017,16 +2151,13 @@ async def test_show_permission_risk_floored_shows_notice_without_reallow_button(
         inspector = app.query_one(MCPInspector)
         await inspector.show_permission(
             _tool(),
-            EffectiveToolState(state="ask", origin="server_default", risk_floored=True),
+            EffectiveToolState(
+                state="ask", origin="server_default", risk_floored=True
+            ),
         )
         await pilot.pause()
-        notice = str(
-            app.query_one("#mcp-inspector-permission-notice", Static).renderable
-        )
-        assert (
-            notice
-            == "High-risk tool — asks even though the inherited default is Allow."
-        )
+        notice = str(app.query_one("#mcp-inspector-permission-notice", Static).renderable)
+        assert notice == "High-risk tool — asks even though the inherited default is Allow."
         assert not list(app.query("#mcp-inspector-reallow"))
 
 
@@ -2087,10 +2218,7 @@ async def test_reallow_button_press_posts_reallow_requested_with_server_key_and_
         inspector = app.query_one(MCPInspector)
         tool = _tool(server_key="local:docs", name="search")
         await inspector.show_permission(
-            tool,
-            EffectiveToolState(
-                state="ask", origin="tool_override", config_changed=True
-            ),
+            tool, EffectiveToolState(state="ask", origin="tool_override", config_changed=True)
         )
         await pilot.pause()
         await pilot.click("#mcp-inspector-reallow")
@@ -2110,13 +2238,11 @@ async def test_second_show_permission_back_to_back_does_not_duplicate_ids():
     async with app.run_test(size=(100, 60)) as pilot:
         inspector = app.query_one(MCPInspector)
         await inspector.show_permission(
-            _tool(name="search"),
-            EffectiveToolState(state="allow", origin="tool_override"),
+            _tool(name="search"), EffectiveToolState(state="allow", origin="tool_override")
         )
         # No pilot.pause() here on purpose.
         await inspector.show_permission(
-            _tool(name="fetch"),
-            EffectiveToolState(state="ask", origin="global_default"),
+            _tool(name="fetch"), EffectiveToolState(state="ask", origin="global_default")
         )
         await pilot.pause()
         origins = list(app.query("#mcp-inspector-permission-origin"))
@@ -2164,9 +2290,7 @@ async def test_show_permission_standalone_renders_tool_identity_first():
             EffectiveToolState(state="allow", origin="tool_override"),
         )
         await pilot.pause()
-        identity = str(
-            app.query_one("#mcp-inspector-permission-tool", Static).renderable
-        )
+        identity = str(app.query_one("#mcp-inspector-permission-tool", Static).renderable)
         assert identity == "search — docs"
 
 
@@ -2184,9 +2308,7 @@ async def test_show_tool_with_effective_also_renders_tool_identity():
             effective=EffectiveToolState(state="ask", origin="server_default"),
         )
         await pilot.pause()
-        identity = str(
-            app.query_one("#mcp-inspector-permission-tool", Static).renderable
-        )
+        identity = str(app.query_one("#mcp-inspector-permission-tool", Static).renderable)
         assert identity == "fetch — docs"
 
 
@@ -2204,11 +2326,8 @@ async def test_show_tool_result_sub_second_uses_ms_granularity():
         await pilot.click("#mcp-inspector-test-tool")
         await pilot.pause()
         inspector.show_tool_result(
-            server_key=tool.server_key,
-            tool_name=tool.name,
-            ok=True,
-            text="{}",
-            duration_ms=999,
+            server_key=tool.server_key, tool_name=tool.name, ok=True,
+            text="{}", duration_ms=999,
         )
         await pilot.pause()
         result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
@@ -2226,11 +2345,8 @@ async def test_show_tool_result_seconds_tier_uses_one_decimal():
         await pilot.click("#mcp-inspector-test-tool")
         await pilot.pause()
         inspector.show_tool_result(
-            server_key=tool.server_key,
-            tool_name=tool.name,
-            ok=False,
-            text="boom",
-            duration_ms=45_300,
+            server_key=tool.server_key, tool_name=tool.name, ok=False,
+            text="boom", duration_ms=45_300,
         )
         await pilot.pause()
         result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
@@ -2248,11 +2364,8 @@ async def test_show_tool_result_minute_tier_uses_minutes_and_seconds():
         await pilot.click("#mcp-inspector-test-tool")
         await pilot.pause()
         inspector.show_tool_result(
-            server_key=tool.server_key,
-            tool_name=tool.name,
-            ok=True,
-            text="{}",
-            duration_ms=125_000,
+            server_key=tool.server_key, tool_name=tool.name, ok=True,
+            text="{}", duration_ms=125_000,
         )
         await pilot.pause()
         result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
@@ -2274,11 +2387,8 @@ async def test_show_tool_result_blocked_renders_not_run_status_line():
         await pilot.click("#mcp-inspector-test-tool")
         await pilot.pause()
         inspector.show_tool_result(
-            server_key=tool.server_key,
-            tool_name=tool.name,
-            ok=False,
-            text="Blocked — this tool is set to Off in Permissions.",
-            duration_ms=0,
+            server_key=tool.server_key, tool_name=tool.name, ok=False,
+            text="Blocked — this tool is set to Off in Permissions.", duration_ms=0,
             blocked=True,
         )
         await pilot.pause()

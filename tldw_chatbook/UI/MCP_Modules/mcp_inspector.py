@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Mapping
+from functools import partial
 from typing import Any
 
 from loguru import logger
@@ -28,7 +29,6 @@ from tldw_chatbook.MCP.readiness import (
 from tldw_chatbook.MCP.redaction import redact_mapping
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import tool_state_kind
 from tldw_chatbook.UI.MCP_Modules.mcp_schema_form import MCPSchemaForm, parse_schema
-from tldw_chatbook.UI.MCP_Modules.unified_mcp_sections import render_unified_mcp_section
 
 # Actions that have first-class UI in every source. Everything else renders
 # disabled and points at the Advanced runner below (capability preserved).
@@ -346,6 +346,39 @@ def _is_blank(value: Any) -> bool:
     return value is Select.BLANK or value is Select.NULL
 
 
+def _render_section_payload(section: str, payload: Any) -> str:
+    """Render one Advanced-pane section's raw payload for `#mcp-adv-content`.
+
+    Task 5 (MCP Hub Phase 6): replaces the import of `unified_mcp_sections.
+    render_unified_mcp_section()` -- that module (and its one bespoke text
+    formatter per section: overview/inventory/external_servers/governance/
+    advanced) is deleted along with the legacy `UnifiedMCPPanel` it was
+    written for. Advanced is an opt-in escape hatch now (see the reveal
+    button below), not the primary view a user is expected to read prose
+    summaries in -- a single generic JSON dump of whatever the service
+    returned is enough, and doesn't require maintaining a second per-section
+    renderer in lockstep with the service's payload shapes.
+
+    `#mcp-adv-content` is always mounted with `markup=False` (both at
+    initial `compose()` and in `_build_advanced_collapsible()`'s reveal-time
+    build below), so this function only needs to produce a plain string --
+    it does not itself need to escape Rich markup.
+
+    `section` is accepted but not otherwise used -- kept in the signature
+    so a future caller can prefix a section header without changing every
+    call site again. `default=str` covers any payload value that isn't
+    natively JSON-serializable (an enum, a raw exception, ...); the
+    `TypeError` fallback covers a payload that isn't JSON-serializable at
+    all (e.g. a raw non-Mapping object), which should not happen for a
+    service-returned dict but must never crash the Advanced pane either
+    way.
+    """
+    try:
+        return json.dumps(payload, indent=2, sort_keys=True, default=str)
+    except TypeError:
+        return str(payload)
+
+
 class MCPInspector(Vertical):
     """Right-pane inspector: what is selected, why, what can I do."""
 
@@ -595,6 +628,17 @@ class MCPInspector(Vertical):
         # agrees with what a fresh mount would show.
         self._advanced_source: str = "local"
         self._advanced_target_label: str | None = None
+        # Task 5 (MCP Hub Phase 6): whether the Advanced collapsible has
+        # ever been composed/mounted this session -- gates both `compose()`
+        # (mount-time: renders the Collapsible when a persisted
+        # `mcp.hub_state.advanced_visible` opt-in is True, the reveal
+        # Button otherwise) and `set_service_context()` (skips touching
+        # `#mcp-adv-*` widgets while they don't exist; see that method).
+        # Set for real in `compose()`/`_reveal_advanced()`; False here is
+        # just the pre-mount default so an out-of-order `set_service_
+        # context()` call (there is none today, but nothing prevents one)
+        # degrades to "state recorded, DOM untouched" rather than crashing.
+        self._advanced_visible: bool = False
         # T12 review fix: the collapsed state this widget last knew about --
         # set to the constructed value in compose(), updated only by the
         # Toggled handler. Used to drop the spurious mount-time Toggled that
@@ -688,38 +732,123 @@ class MCPInspector(Vertical):
         # `show_finding()` -- hidden (display: none, see DEFAULT_CSS) until
         # an Audit-mode Findings-table row is selected.
         yield Vertical(id="mcp-inspector-finding")
-        # T12: default collapsed unless the user has previously opened it --
-        # per-user GLOBAL preference (Console rail section-preference
-        # precedent), NOT per-server. `get_cli_setting` reads the real user
-        # config in a bare test App; tests monkeypatch this module's
-        # `get_cli_setting` name for determinism (see test_mcp_inspector.py).
+        # Task 5 (MCP Hub Phase 6): the Advanced (legacy control plane)
+        # runner is opt-in now -- `mcp.hub_state.advanced_visible` (default
+        # False) gates whether the Collapsible composes at all. False (the
+        # common case, and every fresh install) renders a small reveal
+        # Button instead; pressing it flips the setting and mounts the
+        # SAME widget tree this branch would have composed, via
+        # `_reveal_advanced()` below. True (a user who has already opted
+        # in during a previous session) composes the collapsible
+        # immediately, exactly as every phase before this one did.
+        # `get_cli_setting` reads the real user config in a bare test App;
+        # tests monkeypatch this module's `get_cli_setting` name for
+        # determinism (see test_mcp_inspector.py).
+        self._advanced_visible = bool(get_cli_setting("mcp.hub_state", "advanced_visible", False))
+        if self._advanced_visible:
+            yield self._build_advanced_collapsible()
+        else:
+            yield Button(
+                "Advanced…",
+                id="mcp-inspector-advanced-reveal",
+                classes="console-action-subdued",
+                compact=True,
+                tooltip="Show the legacy control-plane action runner.",
+            )
+
+    def _build_advanced_collapsible(self) -> Collapsible:
+        """Construct the Advanced (legacy control plane) Collapsible tree.
+
+        Shared by `compose()` (`advanced_visible=True` at mount) and
+        `_reveal_advanced()` (the opt-in reveal Button's handler) -- the
+        exact same widget tree either way, built directly (not via
+        `compose()`'s `with Collapsible(...): yield ...` context-manager
+        idiom, which only works from inside a `compose()` generator) so
+        there is exactly one place this tree can drift from itself.
+
+        T12: default collapsed unless the user has previously opened it --
+        per-user GLOBAL preference (Console rail section-preference
+        precedent), NOT per-server.
+        """
         persisted_open = bool(get_cli_setting("mcp.hub_state", "advanced_open", False))
         self._advanced_last_collapsed = not persisted_open
-        with Collapsible(
-            title="Advanced (legacy control plane)",
-            collapsed=not persisted_open,
-            id="mcp-adv-collapsible",
-        ):
-            yield Static(self._advanced_object_label(), id="mcp-adv-object", markup=False)
-            with VerticalScroll(id="mcp-adv-scroll"):
-                yield Label("Section", classes="form-label")
-                yield Select(self._sections, id="mcp-adv-section-select", allow_blank=False,
-                             value="overview")
-                yield Static("", id="mcp-adv-content", classes="ds-field-row", markup=False)
-                yield Label("Action", classes="form-label")
-                yield Select([("No actions available", Select.BLANK)], id="mcp-adv-action-select",
-                             value=Select.BLANK)
+        return Collapsible(
+            Static(self._advanced_object_label(), id="mcp-adv-object", markup=False),
+            VerticalScroll(
+                Label("Section", classes="form-label"),
+                Select(self._sections, id="mcp-adv-section-select", allow_blank=False,
+                       value=self._sections[0][1]),
+                Static("", id="mcp-adv-content", classes="ds-field-row", markup=False),
+                Label("Action", classes="form-label"),
+                Select([("No actions available", Select.BLANK)], id="mcp-adv-action-select",
+                       value=Select.BLANK),
                 # Task 4: guidance shown only while the section above has zero
                 # runnable action descriptors (see `_refresh_advanced_actions`),
                 # so a user landing on e.g. Overview isn't left staring at a
                 # disabled "No actions available" select with no next step.
-                yield Static("", id="mcp-adv-empty-hint", classes="ds-field-row", markup=False)
-                yield Label("Payload (JSON)", classes="form-label")
-                yield TextArea("{}", id="mcp-adv-payload")
-                yield Button("Run Action", id="mcp-adv-run", classes="console-action-primary",
-                             compact=True,
-                             tooltip="Run the selected legacy control-plane action with this JSON payload.")
-                yield Static("", id="mcp-adv-result", classes="ds-field-row", markup=False)
+                Static("", id="mcp-adv-empty-hint", classes="ds-field-row", markup=False),
+                Label("Payload (JSON)", classes="form-label"),
+                TextArea("{}", id="mcp-adv-payload"),
+                Button("Run Action", id="mcp-adv-run", classes="console-action-primary",
+                       compact=True,
+                       tooltip="Run the selected legacy control-plane action with this JSON payload."),
+                Static("", id="mcp-adv-result", classes="ds-field-row", markup=False),
+                id="mcp-adv-scroll",
+            ),
+            title="Advanced (legacy control plane)",
+            collapsed=not persisted_open,
+            id="mcp-adv-collapsible",
+        )
+
+    async def _reveal_advanced(self) -> None:
+        """Opt into the Advanced control-plane runner (Task 5, MCP Hub Phase 6).
+
+        The reveal Button's press handler (see `on_button_pressed` below).
+        Persists `mcp.hub_state.advanced_visible=True` (thread-offloaded,
+        same pattern as `_persist_advanced_open()` below) so a future mount
+        composes the collapsible directly instead of the reveal Button --
+        this is a one-way opt-in for the session (and, once persisted,
+        every session after): a fresh screen mount is the only way to hide
+        it again.
+
+        Semantics for the button itself: it is REMOVED (not merely
+        disabled) once revealed -- there is nothing left for it to do this
+        session, and leaving a disabled "Advanced…" button sitting above
+        the now-visible panel it used to gate would read as broken, not
+        opted-in.
+
+        `set_service_context()` may already have been called while
+        Advanced was hidden (the workbench rebinds on every `reload()`/
+        source switch/selection change, unconditionally) -- that call
+        already recorded `self._service`/`self._sections`/
+        `self._advanced_source`/`self._advanced_target_label` even though
+        it could not touch the (not yet mounted) `#mcp-adv-*` widgets. Once
+        the collapsible exists, replay `set_service_context()` with that
+        same recorded state so the freshly mounted widgets bind to
+        whatever object is actually selected right now instead of opening
+        blank -- reusing that method's own population logic rather than
+        duplicating it here.
+        """
+        if self._advanced_visible:
+            return
+        self._advanced_visible = True
+        try:
+            await asyncio.to_thread(
+                save_setting_to_cli_config, "mcp.hub_state", "advanced_visible", True
+            )
+        except Exception as exc:
+            logger.warning(f"MCP advanced-visible preference save failed: {exc}")
+        try:
+            reveal_button = self.query_one("#mcp-inspector-advanced-reveal", Button)
+        except NoMatches:
+            pass
+        else:
+            await reveal_button.remove()
+        await self.mount(self._build_advanced_collapsible())
+        self.set_service_context(
+            self._service, self._sections,
+            source=self._advanced_source, target_label=self._advanced_target_label,
+        )
 
     # -- T12: Advanced disclosure open/collapsed persistence -----------------
 
@@ -1599,11 +1728,23 @@ class MCPInspector(Vertical):
         resolves) so a rebind can never leave a previous object's rendered
         dump on screen, even for one frame (UX-inputs acceptance: "reopening
         never shows a previous object's facts").
+
+        Task 5 (MCP Hub Phase 6): the workbench calls this UNCONDITIONALLY
+        on every `reload()`/source switch/selection change -- including
+        while Advanced is still hidden behind the opt-in reveal Button (see
+        `compose()`), when none of the `#mcp-adv-*` widgets this method
+        used to assume exist have been mounted at all. The context fields
+        (`_service`/`_sections`/`_advanced_source`/`_advanced_target_label`)
+        are always recorded regardless -- `_reveal_advanced()` replays this
+        same call once the collapsible is mounted, so the widgets end up
+        bound to whatever was last recorded rather than opening blank.
         """
         self._service = service
         self._sections = sections or [("Overview", "overview")]
         self._advanced_source = source
         self._advanced_target_label = target_label
+        if not self._advanced_visible:
+            return
         self.query_one("#mcp-adv-object", Static).update(self._advanced_object_label())
         self.query_one("#mcp-adv-content", Static).update("")
         section_select = self.query_one("#mcp-adv-section-select", Select)
@@ -1611,7 +1752,14 @@ class MCPInspector(Vertical):
             section_select.set_options(self._sections)
             section_select.value = self._sections[0][1]
         self._refresh_advanced_actions()
-        self.run_worker(self._load_advanced_section(self._sections[0][1]),
+        # Task 5: a CALLABLE, not a pre-created coroutine -- `exclusive=True`
+        # cancels any not-yet-started worker in this group, and a cancelled
+        # pre-created coroutine that never ran emits a noisy "coroutine was
+        # never awaited" RuntimeWarning. This matters on the reveal path,
+        # where this schedule and the freshly-mounted section Select's own
+        # mount-echo Changed (whose handler schedules the same group) land
+        # back to back; a callable the worker never invoked leaks nothing.
+        self.run_worker(partial(self._load_advanced_section, self._sections[0][1]),
                         group="mcp-adv-section", exclusive=True)
 
     def _refresh_advanced_actions(self) -> None:
@@ -1688,7 +1836,7 @@ class MCPInspector(Vertical):
             return
         payload = await self._service.load_section(section)
         self.query_one("#mcp-adv-content", Static).update(
-            render_unified_mcp_section(section, payload)
+            _render_section_payload(section, payload)
         )
         # C2: available_actions() is section-dependent (mirrors the legacy
         # panel, unified_mcp_panel.py). `load_section()` above is what
@@ -1702,7 +1850,9 @@ class MCPInspector(Vertical):
         select_id = event.select.id or ""
         if select_id == "mcp-adv-section-select":
             event.stop()
-            self.run_worker(self._load_advanced_section(str(event.value)),
+            # Callable, not coroutine -- same rationale as
+            # `set_service_context()`'s own schedule for this group.
+            self.run_worker(partial(self._load_advanced_section, str(event.value)),
                             group="mcp-adv-section", exclusive=True)
         elif select_id == "mcp-adv-action-select":
             event.stop()
@@ -1713,6 +1863,10 @@ class MCPInspector(Vertical):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""
+        if button_id == "mcp-inspector-advanced-reveal":
+            event.stop()
+            self.run_worker(self._reveal_advanced(), group="mcp-adv-reveal", exclusive=True)
+            return
         if button_id == "mcp-adv-run":
             event.stop()
             self.run_worker(self._run_advanced_action(), group="mcp-adv-run", exclusive=True)

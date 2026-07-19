@@ -505,6 +505,17 @@ def server_external_record_readiness(
     tool_count = record.get("tool_count")
     if tool_count is None and isinstance(record.get("tools"), list):
         tool_count = len(record["tools"])
+    # Task 5 (MCP Hub Phase 6): resource_count/prompt_count follow the exact
+    # same "reported count, else derive from a raw list" fallback as
+    # tool_count just above -- the servers-mode detail panel's server-source
+    # branch (mcp_servers_mode.py's _detail_text()) reads these to show
+    # "counts only" now that Advanced (the old way to see this) is opt-in.
+    resource_count = record.get("resource_count")
+    if resource_count is None and isinstance(record.get("resources"), list):
+        resource_count = len(record["resources"])
+    prompt_count = record.get("prompt_count")
+    if prompt_count is None and isinstance(record.get("prompts"), list):
+        prompt_count = len(record["prompts"])
 
     return ReadinessSnapshot(
         server_key=f"server:{server_id}/{external_id}",
@@ -514,6 +525,8 @@ def server_external_record_readiness(
         reasons=reasons,
         message=message,
         tool_count=tool_count if isinstance(tool_count, int) else None,
+        resource_count=resource_count if isinstance(resource_count, int) else None,
+        prompt_count=prompt_count if isinstance(prompt_count, int) else None,
         transport=str(record.get("transport") or "stdio"),
         auth_display=str(record.get("credential_state") or "—"),
         scope_display=str(record.get("owner_scope_type") or "—"),

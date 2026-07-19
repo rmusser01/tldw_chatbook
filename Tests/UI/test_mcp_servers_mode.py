@@ -493,6 +493,97 @@ async def test_detail_renders_redacted_config_and_builtin_snippet():
         assert app.query_one("#mcp-servers-overview").display
 
 
+# -- Task 5 (MCP Hub Phase 6): resources/prompts read-only listing -----------
+
+
+@pytest.mark.asyncio
+async def test_local_detail_lists_resources_and_prompts_from_discovery_snapshot():
+    """§14 compensation for Advanced leaving the default view: the local
+    detail body lists resource URIs and prompt names from the LOCAL
+    discovery snapshot -- read-only, no interactions."""
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        local = _snap(
+            "local:docs", "docs",
+            detail={
+                "command": "python",
+                "args": [],
+                "env_placeholders": {},
+                "missing_env": [],
+                "discovery_snapshot": {
+                    "tools": [{"name": "search"}],
+                    "resources": [{"uri": "note://123"}, {"uri": "note://456"}],
+                    "prompts": [{"name": "summarize_conversation"}],
+                },
+            },
+        )
+        await canvas.show_detail(local)
+        await pilot.pause()
+        body = str(app.query_one("#mcp-detail-body", Static).renderable)
+        assert "Resources · 2: note://123, note://456" in body
+        assert "Prompts · 1: summarize_conversation" in body
+        assert "Tools · 1: search" in body
+
+
+@pytest.mark.asyncio
+async def test_local_detail_resources_prompts_empty_copy_is_none():
+    """Empty (or absent) discovery lists render the literal "none" -- not a
+    bare zero, and never a crash on a malformed snapshot shape."""
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        local = _snap(
+            "local:docs", "docs",
+            detail={
+                "command": "python",
+                "args": [],
+                "env_placeholders": {},
+                "missing_env": [],
+                # resources absent entirely; prompts present but malformed
+                # (not a list) -- both must degrade to "none".
+                "discovery_snapshot": {"tools": [], "prompts": "corrupt"},
+            },
+        )
+        await canvas.show_detail(local)
+        await pilot.pause()
+        body = str(app.query_one("#mcp-detail-body", Static).renderable)
+        assert "Tools · none" in body
+        assert "Resources · none" in body
+        assert "Prompts · none" in body
+
+
+@pytest.mark.asyncio
+async def test_server_external_record_detail_shows_resource_prompt_counts_only():
+    """Server-source external records show COUNTS only (from the snapshot's
+    own resource_count/prompt_count fields, derived from the existing
+    payload) -- no names/URIs, which the server owns."""
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        snap = _snap(
+            "server:main/docs", "docs",
+            resource_count=3, prompt_count=0,
+            detail={"raw": {"server_id": "docs", "enabled": True}},
+        )
+        await canvas.show_detail(snap)
+        await pilot.pause()
+        body = str(app.query_one("#mcp-detail-body", Static).renderable)
+        assert "Resources · 3" in body
+        assert "Prompts · 0" in body
+
+        # Unreported counts render "—" (unknown), never a fake zero.
+        bare = _snap(
+            "server:main/other", "other",
+            detail={"raw": {"server_id": "other", "enabled": True}},
+        )
+        await canvas.show_detail(bare)
+        await pilot.pause()
+        body = str(app.query_one("#mcp-detail-body", Static).renderable)
+        assert "Resources · —" in body
+        assert "Prompts · —" in body
+
+
 @pytest.mark.asyncio
 async def test_builtin_detail_no_longer_dumps_raw_expose_flags_in_body_text():
     """A3c (carried forward from Task 6): the builtin detail body must not
@@ -1198,11 +1289,21 @@ async def test_detail_scroll_focus_is_quiet_not_the_generic_outline_with_bundled
 
 
 @pytest.mark.asyncio
-async def test_adv_scroll_focus_is_quiet_not_the_generic_outline_with_bundled_css():
+async def test_adv_scroll_focus_is_quiet_not_the_generic_outline_with_bundled_css(monkeypatch):
     """Same contract as the detail-scroll test above, for the Advanced
-    collapsible's `#mcp-adv-scroll` in mcp_inspector.py."""
+    collapsible's `#mcp-adv-scroll` in mcp_inspector.py.
+
+    Task 5 (MCP Hub Phase 6): the Advanced collapsible is opt-in now
+    (`mcp.hub_state.advanced_visible`, default False) -- monkeypatch the
+    inspector module's `get_cli_setting` so it composes at mount (and never
+    reads the developer's real config), mirroring test_mcp_inspector.py's
+    own autouse fixture.
+    """
+    import tldw_chatbook.UI.MCP_Modules.mcp_inspector as mcp_inspector_module
     from textual.widgets import Collapsible
 
+    monkeypatch.setattr(mcp_inspector_module, "get_cli_setting", lambda *a, **k: True)
+    monkeypatch.setattr(mcp_inspector_module, "save_setting_to_cli_config", lambda *a, **k: True)
     app = InspectorAppWithBundledCSS()
     async with app.run_test(size=(120, 40)) as pilot:
         collapsible = app.query_one("#mcp-adv-collapsible", Collapsible)
