@@ -3,7 +3,7 @@
 ## Branch / commit under test
 
 - Branch: `feature/scheduling-module-screen`
-- Commit: `4e1a71ff` (`fix(scheduling): address UX polish review feedback`)
+- Commit: `5ba331c3` (`fix(scheduling): address UX polish review feedback`)
 - Previous commits in this phase:
   - `9afdd539` — `feat(scheduling): UX polish for Schedules workbench`
   - `c18439b0` — `feat(scheduling): route schedules destination to new workbench`
@@ -56,7 +56,7 @@ The final `SchedulesWorkbench` addresses the baseline defects and adds a senior 
 - **Inspector cleanup**: Duplicate status/next-run lines removed; focus is on sync state (`version 0 (local)` / `version N (server <id>)`), last run, owner, and a conflict card.
 - **TCSS updates**: Badge, header, empty-state, lifecycle-row, and follow-button styles added.
 
-## UX polish fixes (`4e1a71ff`)
+## UX polish fixes (`5ba331c3`)
 
 This follow-up commit addresses blocking code-quality issues found in the UX polish review:
 
