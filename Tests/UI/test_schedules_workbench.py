@@ -435,7 +435,7 @@ async def test_delete_confirmation_runs_delete_requested_flow():
         pilot.app.screen.dismiss(True)
         await pilot.pause()
         # Wait for the delete worker and the follow-up refresh.
-        await pilot.app.screen.load_tasks()
+        await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
         assert pilot.app.scheduling_service.deleted_ids == ["task-1"]
@@ -489,7 +489,7 @@ async def test_workbench_deletes_task_and_notifies_on_success():
         pilot.app.screen.post_message(DeleteTaskRequested(task))
         await pilot.pause()
         # Wait for the exclusive delete worker to finish and refresh.
-        await pilot.app.screen.load_tasks()
+        await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
         assert pilot.app.scheduling_service.deleted_ids == ["task-1"]
@@ -510,7 +510,7 @@ async def test_workbench_notifies_on_delete_failure():
         pilot.app.screen.post_message(DeleteTaskRequested(task))
         await pilot.pause()
         # Wait for the exclusive delete worker to finish.
-        await pilot.app.screen.load_tasks()
+        await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
         assert pilot.app.scheduling_service.deleted_ids == []

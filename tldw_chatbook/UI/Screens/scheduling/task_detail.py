@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Label, Static
+from textual.widgets import Button, Static
 from rich.text import Text
 
 from ....Scheduling.events import DeleteTaskRequested
@@ -332,31 +332,6 @@ class TaskDetail(Vertical):
 
 class TaskInspector(Vertical):
     """Render sync, conflict, and last-run metadata for a task."""
-
-    DEFAULT_CSS = """
-    #scheduling-inspector-metadata {
-        height: auto;
-    }
-
-    #scheduling-inspector-metadata Horizontal {
-        height: auto;
-        width: 100%;
-        padding: 0;
-        margin: 0;
-    }
-
-    .scheduling-inspector-label {
-        color: $text-muted;
-        padding: 0 1 0 0;
-        width: 10;
-    }
-
-    .scheduling-inspector-value {
-        color: $text;
-        width: 1fr;
-        height: auto;
-    }
-    """
 
     def compose(self) -> ComposeResult:
         yield Static("Inspector", id="scheduling-task-inspector-header")
