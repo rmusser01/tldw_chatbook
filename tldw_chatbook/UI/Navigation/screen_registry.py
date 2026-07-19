@@ -62,7 +62,12 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
         "tldw_chatbook.UI.Screens.watchlists_collections_screen",
         "WatchlistsCollectionsScreen",
     ),
-    "schedules": ScreenRoute("schedules", "schedules", "tldw_chatbook.UI.Screens.schedules_screen", "SchedulesScreen"),
+    "schedules": ScreenRoute(
+        "schedules",
+        "schedules",
+        "tldw_chatbook.UI.Screens.scheduling.schedules_workbench",
+        "SchedulesWorkbench",
+    ),
     "workflows": ScreenRoute("workflows", "workflows", "tldw_chatbook.UI.Screens.workflows_screen", "WorkflowsScreen"),
     "mcp": ScreenRoute("mcp", TAB_MCP, "tldw_chatbook.UI.Screens.mcp_screen", "MCPScreen"),
     "acp": ScreenRoute("acp", "acp", "tldw_chatbook.UI.Screens.acp_screen", "ACPScreen"),
