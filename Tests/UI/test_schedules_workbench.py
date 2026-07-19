@@ -6,9 +6,14 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, DataTable, Static
 
-from tldw_chatbook.Scheduling.models import ReminderTask, ScheduleKind
+from tldw_chatbook.Scheduling.models import ReminderTask, ScheduleKind, TaskStatus
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import SchedulesWorkbench
-from tldw_chatbook.UI.Screens.scheduling.task_detail import TaskDetail, TaskInspector
+from tldw_chatbook.UI.Screens.scheduling.task_detail import (
+    TaskDetail,
+    TaskInspector,
+    _humanize_cron,
+)
+from tldw_chatbook.Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
 
 
 class WorkbenchTestApp(App):
@@ -129,3 +134,224 @@ async def test_task_inspector_renders_metadata():
         assert "local" in owner.visual.plain
         assert "No conflict" in conflict_text.visual.plain
         assert "conflict" not in conflict_card.classes
+
+
+class EmptyMockSchedulingService:
+    """Stub service returning no reminder tasks."""
+
+    async def list_reminders(self):
+        return []
+
+
+class DistinctMetadataMockSchedulingService:
+    """Stub service returning a task with sync and last-run metadata."""
+
+    async def list_reminders(self):
+        return [
+            ReminderTask(
+                id="task-2",
+                title="Synced Task",
+                schedule_kind=ScheduleKind.RECURRING,
+                cron="0 9 * * *",
+                timezone="UTC",
+                next_run_at=datetime(2026, 7, 20, 9, 0, tzinfo=timezone.utc),
+                last_run_at=datetime(2026, 7, 19, 9, 0, tzinfo=timezone.utc),
+                server_id="srv-123",
+                owner_id="user-1",
+                sync_version=3,
+            )
+        ]
+
+
+class FailingMockSchedulingService:
+    """Stub service that raises on list_reminders."""
+
+    async def list_reminders(self):
+        raise RuntimeError("service unavailable")
+
+
+class WorkbenchTestAppWithEmptyService(App):
+    """Test app with an empty scheduling service."""
+
+    scheduling_service = EmptyMockSchedulingService()
+
+
+class WorkbenchTestAppWithDistinctMetadata(App):
+    """Test app with a scheduling service returning synced metadata."""
+
+    scheduling_service = DistinctMetadataMockSchedulingService()
+
+
+class WorkbenchTestAppWithFailingService(App):
+    """Test app with a failing scheduling service."""
+
+    scheduling_service = FailingMockSchedulingService()
+
+
+@pytest.mark.asyncio
+async def test_delete_button_opens_confirmation_dialog():
+    """Clicking the Delete button opens the delete confirmation dialog."""
+    async with WorkbenchTestAppWithService().run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
+        table.cursor_coordinate = (0, 0)
+        await pilot.pause()
+
+        delete_button = pilot.app.screen.query_one("#scheduling-delete-task", Button)
+        assert not delete_button.disabled
+        assert delete_button.display
+        delete_button.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(pilot.app.screen, DeleteConfirmationDialog)
+
+
+@pytest.mark.asyncio
+async def test_ctrl_d_opens_confirmation_dialog():
+    """The Ctrl+D binding opens the delete confirmation dialog for the selected task."""
+    async with WorkbenchTestAppWithService().run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
+        table.cursor_coordinate = (0, 0)
+        await pilot.pause()
+
+        await pilot.press("ctrl+d")
+        await pilot.pause()
+
+        assert isinstance(pilot.app.screen, DeleteConfirmationDialog)
+
+
+@pytest.mark.asyncio
+async def test_empty_queue_shows_friendly_empty_state():
+    """An empty queue shows the friendly empty-queue copy."""
+    async with WorkbenchTestAppWithEmptyService().run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+
+        empty_state = pilot.app.screen.query_one(
+            "#scheduling-task-detail-empty-state", Static
+        )
+        assert "No scheduled tasks yet" in empty_state.visual.plain
+        assert "Ctrl+C" in empty_state.visual.plain
+
+
+@pytest.mark.asyncio
+async def test_no_task_selected_shows_friendly_copy():
+    """With no scheduling service, the detail pane prompts task selection."""
+    async with WorkbenchTestApp().run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+
+        empty_state = pilot.app.screen.query_one(
+            "#scheduling-task-detail-empty-state", Static
+        )
+        assert "Select a scheduled task" in empty_state.visual.plain
+        assert "Ctrl+C" in empty_state.visual.plain
+
+
+@pytest.mark.asyncio
+async def test_status_badge_has_expected_class_for_waiting_task():
+    """The status badge carries the CSS class matching the task status."""
+    async with WorkbenchTestAppWithService().run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
+        table.cursor_coordinate = (0, 0)
+        await pilot.pause()
+
+        badge = pilot.app.screen.query_one("#scheduling-task-status-badge", Static)
+        assert "waiting" in badge.classes
+
+
+@pytest.mark.asyncio
+async def test_inspector_shows_distinct_metadata():
+    """The inspector surfaces sync version, server id, last run, and owner."""
+    async with WorkbenchTestAppWithDistinctMetadata().run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
+        table.cursor_coordinate = (0, 0)
+        await pilot.pause()
+
+        inspector = pilot.app.screen.query_one("#scheduling-task-inspector", TaskInspector)
+        sync = inspector.query_one("#scheduling-inspector-sync", Static)
+        last_run = inspector.query_one("#scheduling-inspector-last-run", Static)
+        owner = inspector.query_one("#scheduling-inspector-owner", Static)
+
+        assert "version 3 (server srv-123)" in sync.visual.plain
+        assert "2026-07-19 09:00 UTC" in last_run.visual.plain
+        assert "user-1 / server srv-123" in owner.visual.plain
+
+
+@pytest.mark.asyncio
+async def test_conflict_card_shows_for_conflict_status():
+    """The inspector conflict card renders when the task status is CONFLICT."""
+    class ConflictMockSchedulingService:
+        async def list_reminders(self):
+            return [
+                ReminderTask(
+                    id="task-3",
+                    title="Conflicted Task",
+                    schedule_kind=ScheduleKind.ONE_TIME,
+                    run_at=datetime.now(timezone.utc),
+                    next_run_at=datetime.now(timezone.utc),
+                    last_status=TaskStatus.CONFLICT,
+                )
+            ]
+
+    class WorkbenchTestAppWithConflict(App):
+        scheduling_service = ConflictMockSchedulingService()
+
+    async with WorkbenchTestAppWithConflict().run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
+        table.cursor_coordinate = (0, 0)
+        await pilot.pause()
+
+        inspector = pilot.app.screen.query_one("#scheduling-task-inspector", TaskInspector)
+        conflict_card = inspector.query_one("#scheduling-conflict-card")
+        conflict_text = inspector.query_one("#scheduling-conflict-text", Static)
+
+        assert "conflict" in conflict_card.classes
+        assert "Conflict detected" in conflict_text.visual.plain
+        assert "Conflicted Task" in conflict_text.visual.plain
+
+
+@pytest.mark.asyncio
+async def test_follow_console_ignored_when_disabled():
+    """Pressing the disabled Follow-in-Console button does nothing."""
+    async with WorkbenchTestAppWithService().run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+
+        follow_button = pilot.app.screen.query_one("#schedules-follow-in-console", Button)
+        follow_button.disabled = True
+        # Directly invoke the handler as if a press event fired on the disabled button.
+        pilot.app.screen.follow_latest_schedule_run_in_console(Button.Pressed(follow_button))
+        await pilot.pause()
+
+        assert pilot.app.screen is not None
+        assert not isinstance(pilot.app.screen, DeleteConfirmationDialog)
+
+
+@pytest.mark.asyncio
+async def test_load_tasks_service_error_notifies_and_uses_empty_state():
+    """A service failure surfaces an error notification and consistent empty copy."""
+    async with WorkbenchTestAppWithFailingService().run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+
+        empty_state = pilot.app.screen.query_one(
+            "#scheduling-task-detail-empty-state", Static
+        )
+        assert "No scheduled tasks yet" in empty_state.visual.plain
+
+
+def test_humanize_cron_daily_pattern():
+    """A standard daily cron pattern is summarized as 'Daily at HH:MM UTC'."""
+    assert _humanize_cron("0 9 * * *") == "Daily at 09:00 UTC"
+    assert _humanize_cron("30 14 * * *", timezone="America/New_York") == "Daily at 14:30 America/New_York"

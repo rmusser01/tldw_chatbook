@@ -96,7 +96,13 @@ class SchedulesWorkbench(BaseAppScreen):
             tasks = await service.list_reminders()
         except Exception:  # noqa: BLE001
             logger.exception("Failed to load reminders")
-            self.query_one("#scheduling-task-detail", TaskDetail).set_task(None)
+            self.app_instance.notify(
+                "Could not load reminders. Check the scheduling service and retry.",
+                severity="error",
+            )
+            self.query_one("#scheduling-task-detail", TaskDetail).set_task(
+                None, queue_empty=not self._tasks
+            )
             self.query_one("#scheduling-task-inspector", TaskInspector).set_task(None)
             return
 
@@ -264,7 +270,7 @@ class SchedulesWorkbench(BaseAppScreen):
             try:
                 await service.delete_reminder(event.task.id)
             except Exception:  # noqa: BLE001
-                logger.exception(f"Failed to delete reminder {event.task.id}")
+                logger.exception("Failed to delete reminder {}", event.task.id)
                 self.app_instance.notify(
                     f"Failed to delete '{event.task.title}'.",
                     severity="error",
@@ -282,6 +288,8 @@ class SchedulesWorkbench(BaseAppScreen):
     def follow_latest_schedule_run_in_console(self, event: Button.Pressed) -> None:
         """Hand off the active schedule run or digest output to the Console."""
         event.stop()
+        if event.button.disabled:
+            return
         target_id = self._latest_console_follow_item_id
         if target_id:
             open_active_item_in_console = getattr(self.app_instance, "open_active_home_item_in_console", None)
@@ -329,8 +337,8 @@ class SchedulesWorkbench(BaseAppScreen):
         logger.debug("action_pause_resume invoked")
 
     def action_delete(self) -> None:
-        """Delete the selected schedule (stub for later tasks)."""
-        logger.debug("action_delete invoked")
+        """Delete the selected schedule after confirmation."""
+        self.query_one("#scheduling-task-detail", TaskDetail)._request_delete()
 
     def action_sync_now(self) -> None:
         """Sync schedule state now (stub for later tasks)."""

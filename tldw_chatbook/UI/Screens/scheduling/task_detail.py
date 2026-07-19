@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Static
 from rich.text import Text
 
 from ....Scheduling.events import DeleteTaskRequested
 from ....Scheduling.models import ReminderTask, ScheduleKind, TaskStatus
+from ....Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
 from ..destination_recovery import DestinationRecoveryState
 
 
@@ -162,68 +162,6 @@ def status_badge_class(status: TaskStatus) -> str:
     return _STATUS_BADGE_CLASSES.get(status, "waiting")
 
 
-class DeleteTaskModal(ModalScreen[bool]):
-    """Confirmation modal shown before deleting a scheduled task."""
-
-    DEFAULT_CSS = """
-    DeleteTaskModal {
-        align: center middle;
-    }
-
-    DeleteTaskModal > Vertical {
-        width: 70;
-        height: auto;
-        max-height: 30;
-        background: $surface;
-        border: thick $error;
-        padding: 1 2;
-    }
-
-    .delete-modal-title {
-        text-style: bold;
-        text-align: center;
-        padding: 1 0;
-    }
-
-    .delete-modal-body {
-        padding: 1 0;
-        text-align: center;
-    }
-
-    .delete-modal-actions {
-        align: center middle;
-        height: auto;
-        padding: 1 0;
-    }
-
-    .delete-modal-actions Button {
-        margin: 0 1;
-    }
-    """
-
-    def __init__(self, task_title: str) -> None:
-        super().__init__()
-        self.task_title = task_title
-
-    def compose(self) -> ComposeResult:
-        with Vertical():
-            yield Label("Delete scheduled task?", classes="delete-modal-title")
-            yield Label(
-                f"Are you sure you want to delete '{self.task_title}'? This cannot be undone.",
-                classes="delete-modal-body",
-            )
-            with Horizontal(classes="delete-modal-actions"):
-                yield Button("Delete", variant="error", id="delete-task-confirm")
-                yield Button("Cancel", id="delete-task-cancel")
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Confirm or cancel the deletion."""
-        if event.button.id == "delete-task-confirm":
-            self.dismiss(True)
-        else:
-            self.dismiss(False)
-
-
 class TaskDetail(Vertical):
     """Render the selected reminder task's core details and actions."""
 
@@ -273,44 +211,6 @@ class TaskDetail(Vertical):
         color: $text-muted;
         text-align: center;
         padding: 2 1;
-    }
-
-    #scheduling-task-status-badge {
-        width: auto;
-        height: 1;
-        padding: 0 1;
-        text-style: bold;
-        color: $text;
-        border: none;
-        text-align: center;
-    }
-
-    #scheduling-task-status-badge.waiting {
-        background: $primary;
-    }
-
-    #scheduling-task-status-badge.running,
-    #scheduling-task-status-badge.completed,
-    #scheduling-task-status-badge.found-results {
-        background: $success;
-    }
-
-    #scheduling-task-status-badge.paused,
-    #scheduling-task-status-badge.needs-attention,
-    #scheduling-task-status-badge.missed {
-        background: $warning;
-        color: $text;
-    }
-
-    #scheduling-task-status-badge.blocked,
-    #scheduling-task-status-badge.conflict {
-        background: $error;
-    }
-
-    #scheduling-task-status-badge.disabled,
-    #scheduling-task-status-badge.archived {
-        background: $surface-darken-1;
-        color: $text-muted;
     }
     """
 
@@ -393,7 +293,11 @@ class TaskDetail(Vertical):
         if self._current_task is None:
             return
         self.app.push_screen(
-            DeleteTaskModal(self._current_task.title),
+            DeleteConfirmationDialog(
+                item_type="Scheduled task",
+                item_name=self._current_task.title,
+                permanent=True,
+            ),
             callback=self._on_delete_confirmed,
         )
 

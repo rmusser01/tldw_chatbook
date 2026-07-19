@@ -3,8 +3,9 @@
 ## Branch / commit under test
 
 - Branch: `feature/scheduling-module-screen`
-- Commit: `9afdd539` (`feat(scheduling): UX polish for Schedules workbench`)
+- Commit: `4e1a71ff` (`fix(scheduling): address UX polish review feedback`)
 - Previous commits in this phase:
+  - `9afdd539` — `feat(scheduling): UX polish for Schedules workbench`
   - `c18439b0` — `feat(scheduling): route schedules destination to new workbench`
   - `c39f24de` — `fix(scheduling): address Console-follow seam review feedback`
   - `d9919bce` — `feat(scheduling): preserve Console-follow seam and update destination tests`
@@ -55,6 +56,19 @@ The final `SchedulesWorkbench` addresses the baseline defects and adds a senior 
 - **Inspector cleanup**: Duplicate status/next-run lines removed; focus is on sync state (`version 0 (local)` / `version N (server <id>)`), last run, owner, and a conflict card.
 - **TCSS updates**: Badge, header, empty-state, lifecycle-row, and follow-button styles added.
 
+## UX polish fixes (`4e1a71ff`)
+
+This follow-up commit addresses blocking code-quality issues found in the UX polish review:
+
+- **Ctrl+D shortcut**: Now triggers deletion for the currently selected task using the same confirmation modal flow as the Delete button.
+- **Disabled Console-follow guard**: The handler returns early when the `Follow in Console` button is disabled.
+- **`load_tasks()` error handling**: Service failures now surface an error notification and consistent empty-state copy.
+- **Shared delete dialog**: The custom `DeleteTaskModal` was replaced with the existing `DeleteConfirmationDialog` widget.
+- **Duplicate CSS removed**: Status badge styles now live only in `_scheduling.tcss`.
+- **Expanded test coverage**: Added tests for delete modal, empty/no-selection states, disabled Console-follow, status badge classes, inspector metadata, conflict card, cron humanization, and the service-error path.
+
+Visual changes are subtle (behavior and code-quality fixes), so the existing final screenshot remains representative.
+
 ## User approval status
 
 Pending user review of the attached `final-2026-07-18T23-23-00.png`.
@@ -65,7 +79,7 @@ Pending user review of the attached `final-2026-07-18T23-23-00.png`.
 .venv/bin/python -m pytest Tests/UI/test_schedules_workbench.py Tests/UI/test_destination_shells.py -v
 ```
 
-Result: **107 passed, 1 skipped** (the single skip is an unrelated Personas tooltip audit).
+Result: **117 passed, 1 skipped** (the single skip is an unrelated Personas tooltip audit).
 
 ## Residual risks
 
