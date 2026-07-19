@@ -795,3 +795,33 @@ async def test_use_local_on_server_deletion_clears_server_id_and_requeues_create
     pending = db.get_pending_mutations("server:1")
     assert len(pending) == 1
     assert pending[0]["payload"]["action"] == "create"
+
+
+@pytest.mark.asyncio
+async def test_pull_does_not_push_mutations_or_tombstones(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_reminder_task(
+        owner_id="server:1",
+        server_id="srv-1",
+        title="Local",
+        schedule_kind="one_time",
+    )
+    db.record_pending_mutation(
+        local_id,
+        "reminder_task",
+        "server:1",
+        {"action": "update", "fields": {"title": "Updated"}, "idempotency_key": "ik"},
+    )
+    db.record_tombstone("deleted-local-id", "reminder_task", "server:1")
+
+    server_client = AsyncMock()
+    server_client.list_reminders.return_value = {"items": []}
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+    await engine.pull()
+
+    server_client.update_reminder.assert_not_awaited()
+    server_client.delete_reminder.assert_not_awaited()
+    pending = db.get_pending_mutations("server:1")
+    assert len(pending) == 1
+    tombstones = db.get_tombstones("server:1", primitive="reminder_task")
+    assert len(tombstones) == 1
