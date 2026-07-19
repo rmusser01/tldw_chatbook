@@ -53,7 +53,9 @@ class WatchlistCheckHandler:
         self.subscriptions_db = subscriptions_db
         self.feed_monitor = feed_monitor if feed_monitor is not None else FeedMonitor()
         self.url_monitor = (
-            url_monitor if url_monitor is not None else URLMonitor(db=subscriptions_db)
+            url_monitor
+            if url_monitor is not None
+            else URLMonitor(db=subscriptions_db, persist_snapshots=not shadow_mode)
         )
         self.shadow_mode = shadow_mode
 

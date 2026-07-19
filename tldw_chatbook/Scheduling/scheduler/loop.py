@@ -55,12 +55,13 @@ class SchedulerLoop:
         due = self.queue.pop_due(now)
         for task in due:
             task_type = task.get("type", "reminder")
+            task_id = task.get("id")
             handler = self.handlers.get(task_type)
             if handler is None:
                 logger.warning(
                     "No handler registered for task type {task_type}; skipping task {task_id}",
                     task_type=task_type,
-                    task_id=task.get("id"),
+                    task_id=task_id,
                 )
                 continue
             try:
@@ -69,7 +70,23 @@ class SchedulerLoop:
                 logger.exception(
                     "{task_type} handler failed for task {task_id}",
                     task_type=task_type,
-                    task_id=task.get("id"),
+                    task_id=task_id,
+                )
+                if task_type == "reminder" and task_id:
+                    await asyncio.to_thread(
+                        self.db.mark_reminder_dispatched,
+                        task_id,
+                        now,
+                        False,
+                    )
+                continue
+
+            if task_type == "reminder" and task_id:
+                await asyncio.to_thread(
+                    self.db.mark_reminder_dispatched,
+                    task_id,
+                    now,
+                    True,
                 )
 
     def stop(self) -> None:

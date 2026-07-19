@@ -4075,7 +4075,9 @@ class TldwCli(
             poll_interval=get_cli_setting(
                 "scheduling", "scheduler_poll_interval_seconds", 30
             ),
-            watchlist_projection=watchlist_projection,
+            watchlist_projection=(
+                watchlist_projection if watchlist_handler is not None else None
+            ),
         )
         self.notifications_scope_service = NotificationsScopeService(
             local_service=self.client_notifications_service,

@@ -619,17 +619,26 @@ class FeedMonitor:
 class URLMonitor:
     """Monitor URLs for changes."""
 
-    def __init__(self, db: SubscriptionsDB, rate_limiter: RateLimiter = None):
+    def __init__(
+        self,
+        db: SubscriptionsDB,
+        rate_limiter: RateLimiter = None,
+        *,
+        persist_snapshots: bool = True,
+    ):
         """
         Initialize URL monitor.
 
         Args:
             db: Subscriptions database instance
             rate_limiter: Rate limiter instance
+            persist_snapshots: When ``False``, fetched snapshots are compared but
+                not written to ``url_snapshots``. Useful for shadow/dry-run mode.
         """
         self.db = db
         self.rate_limiter = rate_limiter or RateLimiter()
         self.circuit_breakers = {}
+        self.persist_snapshots = persist_snapshots
 
     async def check_url(self, subscription: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
@@ -806,6 +815,8 @@ class URLMonitor:
         content_hash: str = None,
     ) -> None:
         """Store a URL snapshot."""
+        if not self.persist_snapshots:
+            return
         if not content_hash:
             content_hash = ContentExtractor.calculate_content_hash(content["text"])
 

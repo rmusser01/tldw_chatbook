@@ -34,6 +34,20 @@ _LOCAL_ONLY_FIELDS = {
     "sync_version",
 }
 
+# Fields accepted by ServerNotificationsService.create_reminder().
+_REMINDER_SERVER_CREATE_FIELDS = {
+    "title",
+    "body",
+    "schedule_kind",
+    "run_at",
+    "cron",
+    "timezone",
+    "enabled",
+    "link_type",
+    "link_id",
+    "link_url",
+}
+
 
 class SchedulingService:
     """Facade for scheduling CRUD and sync operations.
@@ -70,11 +84,24 @@ class SchedulingService:
         locally and a pending mutation is recorded so the sync engine can push it
         later.
         """
+        task = ReminderTask(**payload)
+        server_payload = self._server_create_payload(task)
+        db_fields = task.model_dump(
+            exclude={
+                "id",
+                "server_id",
+                "owner_id",
+                "created_at",
+                "updated_at",
+                "sync_version",
+            }
+        )
+
         use_server = self._use_server()
         if use_server:
             assert self.server_client is not None
             try:
-                response = await self.server_client.create_reminder(**payload)
+                response = await self.server_client.create_reminder(**server_payload)
                 return await self._persist_server_reminder_response(response)
             except ServerUnavailableError:
                 logger.warning(
@@ -85,13 +112,13 @@ class SchedulingService:
                     f"Server create_reminder failed for {self.owner_id}: {exc}"
                 )
 
-        task_id = self.db.create_reminder_task(owner_id=self.owner_id, **payload)
+        task_id = self.db.create_reminder_task(owner_id=self.owner_id, **db_fields)
         if use_server:
             self.db.record_pending_mutation(
                 task_id,
                 _REMINDER_PRIMITIVE,
                 self.owner_id,
-                {"action": "create", "fields": dict(payload)},
+                {"action": "create", "fields": server_payload},
             )
 
         row = self.db.get_reminder_task(task_id)
@@ -143,7 +170,8 @@ class SchedulingService:
                         server_id, **payload
                     )
                 else:
-                    merged_payload = self._merge_update_payload(row, payload)
+                    merged_task = ReminderTask(**{**row, **payload})
+                    merged_payload = self._server_create_payload(merged_task)
                     response = await self.server_client.create_reminder(
                         **merged_payload
                     )
@@ -259,20 +287,24 @@ class SchedulingService:
 
         return local
 
-    def _merge_update_payload(
-        self, row: dict[str, Any], payload: dict[str, Any]
+    def _server_create_payload(
+        self,
+        task: ReminderTask,
     ) -> dict[str, Any]:
-        """Merge an existing local row with an update payload for server create.
+        """Build the payload for ``ServerNotificationsService.create_reminder``.
 
-        Local-only fields are excluded and the payload overrides existing values.
+        Only server-accepted fields are included, and datetimes are serialized to
+        ISO-8601 strings so the server client receives the expected types.
         """
-        merged = {
-            key: value
-            for key, value in row.items()
-            if key not in _LOCAL_ONLY_FIELDS and value is not None
-        }
-        merged.update(payload)
-        return merged
+        payload: dict[str, Any] = {}
+        for field in _REMINDER_SERVER_CREATE_FIELDS:
+            value = getattr(task, field)
+            if value is None:
+                continue
+            if isinstance(value, datetime):
+                value = value.isoformat()
+            payload[field] = value
+        return payload
 
     async def _persist_server_reminder_response(
         self,

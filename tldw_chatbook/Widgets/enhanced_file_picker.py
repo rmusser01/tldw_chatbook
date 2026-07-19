@@ -26,7 +26,7 @@ from ..Third_Party.textual_fspicker.file_dialog import BaseFileDialog
 from ..Third_Party.textual_fspicker.parts import DirectoryNavigation
 from ..Third_Party.textual_fspicker.parts.directory_navigation import DirectoryEntry
 from ..Third_Party.textual_fspicker.path_maker import MakePath
-from ..Third_Party.textual_fspicker.safe_tests import is_dir, is_file, is_symlink
+from ..Third_Party.textual_fspicker.safe_tests import is_dir
 from ..Utils.path_validation import validate_path_simple
 from ..config import get_cli_setting, save_setting_to_cli_config
 

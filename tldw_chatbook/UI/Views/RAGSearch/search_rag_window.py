@@ -127,19 +127,9 @@ try:
         perform_plain_rag_search, perform_full_rag_pipeline, perform_hybrid_rag_search
     )
     RAG_EVENTS_AVAILABLE = True
-    
-    # Try to import pipeline integration
-    try:
-        from ....RAG_Search.pipeline_integration import get_pipeline_manager
-        PIPELINE_INTEGRATION_AVAILABLE = True
-    except ImportError:
-        logger.info("Pipeline integration not available")
-        PIPELINE_INTEGRATION_AVAILABLE = False
-        
 except ImportError as e:
     logger.warning(f"RAG event handlers not available: {e}")
     RAG_EVENTS_AVAILABLE = False
-    PIPELINE_INTEGRATION_AVAILABLE = False
     # Create placeholder functions
     async def perform_plain_rag_search(*args, **kwargs):
         raise ImportError("RAG search not available - missing dependencies")

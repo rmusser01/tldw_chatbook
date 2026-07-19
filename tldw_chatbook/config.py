@@ -4484,7 +4484,7 @@ def get_scheduled_tasks_db_path() -> Path:
     if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(
         "scheduled_tasks_db_path"
     ):
-        return Path(custom_path).expanduser().resolve()
+        return validate_path_simple(custom_path)
     return get_user_data_dir() / "tldw_chatbook_scheduled_tasks.db"
 
 

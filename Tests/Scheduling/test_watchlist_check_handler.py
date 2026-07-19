@@ -271,7 +271,7 @@ async def test_default_monitors_are_constructed():
         assert handler.feed_monitor is feed_cls.return_value
         assert handler.url_monitor is url_cls.return_value
         feed_cls.assert_called_once_with()
-        url_cls.assert_called_once_with(db=db)
+        url_cls.assert_called_once_with(db=db, persist_snapshots=True)
 
 
 @pytest.mark.asyncio

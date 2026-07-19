@@ -10,14 +10,17 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
-from contextlib import closing
-from datetime import date, datetime, timezone
+from contextlib import closing, contextmanager
+from datetime import date, datetime, timezone, tzinfo
 from pathlib import Path
-from typing import Any, Optional, Union, cast
+from typing import Any, Iterator, Optional, Union, cast
+from zoneinfo import ZoneInfo
 
+from croniter import croniter
 from loguru import logger
 
 from tldw_chatbook.DB.base_db import BaseDB
+from tldw_chatbook.DB.sql_validation import validate_identifier
 
 
 class ScheduledTasksDB(BaseDB):
@@ -144,6 +147,22 @@ class ScheduledTasksDB(BaseDB):
             row = cursor.fetchone()
             return int(row[0]) if row else 0
 
+    @contextmanager
+    def transaction(self) -> Iterator[sqlite3.Connection]:
+        """Run a block inside a SQLite transaction.
+
+        Commits on clean exit and rolls back on any exception.
+        """
+        conn = self._get_connection()
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
@@ -257,6 +276,13 @@ class ScheduledTasksDB(BaseDB):
             if key not in allowed_columns:
                 raise ValueError(f"Unknown {label} field: {key!r}")
 
+    @staticmethod
+    def _validate_sql_identifiers(identifiers: list[str]) -> None:
+        """Validate column/table identifiers before interpolating them into SQL."""
+        for identifier in identifiers:
+            if not validate_identifier(identifier):
+                raise ValueError(f"Invalid SQL identifier: {identifier!r}")
+
     # ------------------------------------------------------------------
     # Reminder tasks
     # ------------------------------------------------------------------
@@ -286,15 +312,15 @@ class ScheduledTasksDB(BaseDB):
             else:
                 fields[key] = value
 
+        self._validate_sql_identifiers(list(fields.keys()))
         columns = ", ".join(fields.keys())
         placeholders = ", ".join(["?"] * len(fields))
 
-        with closing(self._get_connection()) as conn:
+        with self.transaction() as conn:
             conn.execute(
                 f"INSERT INTO reminder_tasks ({columns}) VALUES ({placeholders})",
                 list(fields.values()),
             )
-            conn.commit()
 
         logger.debug(f"Created reminder task {task_id} for owner {owner_id}")
         return task_id
@@ -379,23 +405,22 @@ class ScheduledTasksDB(BaseDB):
         if not updates:
             return False
 
+        self._validate_sql_identifiers([key.split(" ", 1)[0] for key in updates])
         updates.append("updated_at = ?")
         params.append(self._to_utc_iso(datetime.now(timezone.utc)))
         params.append(task_id)
 
-        with closing(self._get_connection()) as conn:
+        with self.transaction() as conn:
             cursor = conn.execute(
                 f"UPDATE reminder_tasks SET {', '.join(updates)} WHERE id = ?",
                 params,
             )
-            conn.commit()
             return cursor.rowcount > 0
 
     def delete_reminder_task(self, task_id: str) -> bool:
         """Delete a reminder task by local id."""
-        with closing(self._get_connection()) as conn:
+        with self.transaction() as conn:
             cursor = conn.execute("DELETE FROM reminder_tasks WHERE id = ?", (task_id,))
-            conn.commit()
             return cursor.rowcount > 0
 
     def reminders_due_before(self, now: datetime) -> list[dict[str, Any]]:
@@ -415,6 +440,48 @@ class ScheduledTasksDB(BaseDB):
             return self._rows_to_dicts(
                 cursor.fetchall(), json_fields=self._REMINDER_JSON_FIELDS
             )
+
+    def mark_reminder_dispatched(
+        self,
+        task_id: str,
+        now: datetime,
+        success: bool = True,
+    ) -> None:
+        """Update a reminder after dispatch so it is not immediately redispatched.
+
+        For ``one_time`` reminders the task is disabled and ``next_run_at`` is
+        cleared. For ``recurring`` reminders the next occurrence is computed from
+        the stored cron expression and timezone.
+        """
+        row = self.get_reminder_task(task_id)
+        if row is None:
+            return
+
+        fields: dict[str, Any] = {
+            "last_run_at": now,
+            "last_status": "completed" if success else "missed",
+            "updated_at": now,
+        }
+
+        schedule_kind = row.get("schedule_kind")
+        if schedule_kind == "one_time":
+            fields["enabled"] = False
+            fields["next_run_at"] = None
+        elif schedule_kind == "recurring":
+            cron_expr = row.get("cron")
+            tz_name = row.get("timezone") or "UTC"
+            next_run: datetime | None = None
+            if cron_expr:
+                try:
+                    tz: tzinfo = ZoneInfo(tz_name)
+                except Exception:
+                    tz = timezone.utc
+                base = now.astimezone(tz)
+                next_run = croniter(cron_expr, base).get_next(datetime)
+                next_run = next_run.astimezone(timezone.utc)
+            fields["next_run_at"] = next_run
+
+        self.update_reminder_task(task_id, **fields)
 
     # ------------------------------------------------------------------
     # Automation definitions
@@ -458,15 +525,15 @@ class ScheduledTasksDB(BaseDB):
             else:
                 fields[key] = value
 
+        self._validate_sql_identifiers(list(fields.keys()))
         columns = ", ".join(fields.keys())
         placeholders = ", ".join(["?"] * len(fields))
 
-        with closing(self._get_connection()) as conn:
+        with self.transaction() as conn:
             conn.execute(
                 f"INSERT INTO automation_definitions ({columns}) VALUES ({placeholders})",
                 list(fields.values()),
             )
-            conn.commit()
 
         logger.debug(
             f"Created automation definition {definition_id} for owner {owner_id}"
@@ -547,26 +614,25 @@ class ScheduledTasksDB(BaseDB):
         if not updates:
             return False
 
+        self._validate_sql_identifiers([key.split(" ", 1)[0] for key in updates])
         updates.append("version = version + 1")
         updates.append("updated_at = ?")
         params.append(self._to_utc_iso(datetime.now(timezone.utc)))
         params.append(definition_id)
 
-        with closing(self._get_connection()) as conn:
+        with self.transaction() as conn:
             cursor = conn.execute(
                 f"UPDATE automation_definitions SET {', '.join(updates)} WHERE id = ?",
                 params,
             )
-            conn.commit()
             return cursor.rowcount > 0
 
     def delete_automation_definition(self, definition_id: str) -> bool:
         """Delete an automation definition by local id."""
-        with closing(self._get_connection()) as conn:
+        with self.transaction() as conn:
             cursor = conn.execute(
                 "DELETE FROM automation_definitions WHERE id = ?", (definition_id,)
             )
-            conn.commit()
             return cursor.rowcount > 0
 
     def log_automation_audit_event(
@@ -608,15 +674,15 @@ class ScheduledTasksDB(BaseDB):
             else:
                 fields[key] = value
 
+        self._validate_sql_identifiers(list(fields.keys()))
         columns = ", ".join(fields.keys())
         placeholders = ", ".join(["?"] * len(fields))
 
-        with closing(self._get_connection()) as conn:
+        with self.transaction() as conn:
             conn.execute(
                 f"INSERT INTO automation_audit_events ({columns}) VALUES ({placeholders})",
                 list(fields.values()),
             )
-            conn.commit()
 
         logger.debug(
             f"Created automation audit event {event_id} for definition {definition_id}"
@@ -676,7 +742,7 @@ class ScheduledTasksDB(BaseDB):
     ) -> None:
         """Create or replace the mapping between a local and server record."""
         now = datetime.now(timezone.utc)
-        with closing(self._get_connection()) as conn:
+        with self.transaction() as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO sync_mapping
@@ -685,7 +751,6 @@ class ScheduledTasksDB(BaseDB):
                 """,
                 (local_id, server_id, primitive, owner_id, self._to_utc_iso(now)),
             )
-            conn.commit()
 
     def delete_sync_mapping(
         self,
@@ -694,7 +759,7 @@ class ScheduledTasksDB(BaseDB):
         owner_id: str,
     ) -> None:
         """Remove the sync mapping for a local record."""
-        with closing(self._get_connection()) as conn:
+        with self.transaction() as conn:
             conn.execute(
                 """
                 DELETE FROM sync_mapping
@@ -702,7 +767,6 @@ class ScheduledTasksDB(BaseDB):
                 """,
                 (local_id, primitive, owner_id),
             )
-            conn.commit()
 
     def get_sync_state(self, owner_id: str) -> Optional[dict[str, Any]]:
         """Fetch the sync state row for ``owner_id``, or ``None`` if absent."""
@@ -737,11 +801,13 @@ class ScheduledTasksDB(BaseDB):
             else:
                 fields[key] = value
 
+        self._validate_sql_identifiers(list(fields.keys()))
         columns = ", ".join(fields.keys())
         placeholders = ", ".join(["?"] * len(fields))
         updates = [f"{key} = excluded.{key}" for key in fields if key != "owner_id"]
+        self._validate_sql_identifiers([key.split(" ", 1)[0] for key in updates])
 
-        with closing(self._get_connection()) as conn:
+        with self.transaction() as conn:
             conn.execute(
                 f"""
                 INSERT INTO sync_state ({columns}) VALUES ({placeholders})
@@ -749,7 +815,6 @@ class ScheduledTasksDB(BaseDB):
                 """,
                 list(fields.values()),
             )
-            conn.commit()
 
     # ------------------------------------------------------------------
     # Pending mutations
@@ -778,7 +843,7 @@ class ScheduledTasksDB(BaseDB):
             stored_payload["idempotency_key"] = str(uuid.uuid4())
 
         now = datetime.now(timezone.utc)
-        with closing(self._get_connection()) as conn:
+        with self.transaction() as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO pending_mutations
@@ -793,7 +858,6 @@ class ScheduledTasksDB(BaseDB):
                     self._to_utc_iso(now),
                 ),
             )
-            conn.commit()
 
     def get_pending_mutations(
         self,
@@ -821,9 +885,8 @@ class ScheduledTasksDB(BaseDB):
 
     def delete_pending_mutation(self, mutation_id: int) -> None:
         """Delete a pending mutation by its row id."""
-        with closing(self._get_connection()) as conn:
+        with self.transaction() as conn:
             conn.execute("DELETE FROM pending_mutations WHERE id = ?", (mutation_id,))
-            conn.commit()
 
     def delete_pending_mutation_for_record(
         self,
@@ -832,7 +895,7 @@ class ScheduledTasksDB(BaseDB):
         owner_id: str,
     ) -> None:
         """Delete any pending mutation matching a local record identifier."""
-        with closing(self._get_connection()) as conn:
+        with self.transaction() as conn:
             conn.execute(
                 """
                 DELETE FROM pending_mutations
@@ -840,7 +903,6 @@ class ScheduledTasksDB(BaseDB):
                 """,
                 (local_id, primitive, owner_id),
             )
-            conn.commit()
 
     # ------------------------------------------------------------------
     # Tombstones
@@ -854,7 +916,7 @@ class ScheduledTasksDB(BaseDB):
     ) -> None:
         """Record that a local record was deleted and the delete must be pushed."""
         now = datetime.now(timezone.utc)
-        with closing(self._get_connection()) as conn:
+        with self.transaction() as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO sync_tombstones
@@ -863,7 +925,6 @@ class ScheduledTasksDB(BaseDB):
                 """,
                 (local_id, primitive, owner_id, self._to_utc_iso(now)),
             )
-            conn.commit()
 
     def get_tombstones(
         self,
@@ -913,7 +974,7 @@ class ScheduledTasksDB(BaseDB):
         owner_id: str,
     ) -> None:
         """Remove a tombstone after its delete has been pushed to the server."""
-        with closing(self._get_connection()) as conn:
+        with self.transaction() as conn:
             conn.execute(
                 """
                 DELETE FROM sync_tombstones
@@ -921,7 +982,6 @@ class ScheduledTasksDB(BaseDB):
                 """,
                 (local_id, primitive, owner_id),
             )
-            conn.commit()
 
     # ------------------------------------------------------------------
     # Conflicts
@@ -941,7 +1001,7 @@ class ScheduledTasksDB(BaseDB):
         """
         conflict_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc)
-        with closing(self._get_connection()) as conn:
+        with self.transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO sync_conflicts
@@ -960,7 +1020,6 @@ class ScheduledTasksDB(BaseDB):
                     self._to_utc_iso(now),
                 ),
             )
-            conn.commit()
         return conflict_id
 
     def get_conflicts(
@@ -1010,7 +1069,7 @@ class ScheduledTasksDB(BaseDB):
         Returns ``True`` if a row was updated.
         """
         now = datetime.now(timezone.utc)
-        with closing(self._get_connection()) as conn:
+        with self.transaction() as conn:
             cursor = conn.execute(
                 """
                 UPDATE sync_conflicts
@@ -1019,7 +1078,6 @@ class ScheduledTasksDB(BaseDB):
                 """,
                 (self._to_utc_iso(now), resolution, conflict_id),
             )
-            conn.commit()
             return cursor.rowcount > 0
 
     def increment_conflict_retry_count(self, conflict_id: str) -> bool:
