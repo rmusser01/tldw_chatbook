@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from croniter import croniter
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
-from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Select, Static, TextArea
 
@@ -68,8 +70,6 @@ class ReminderForm(ModalScreen):
     }
     """
 
-    task: reactive[ReminderTask | None] = reactive(None)
-
     def __init__(self, task: ReminderTask | None = None) -> None:
         """Initialize the form.
 
@@ -77,7 +77,7 @@ class ReminderForm(ModalScreen):
             task: Existing reminder to edit, or ``None`` to create a new one.
         """
         super().__init__()
-        self.task = task
+        self._reminder_task = task
 
     def action_dismiss(self) -> None:
         """Dismiss the modal when the Escape key is pressed."""
@@ -87,7 +87,7 @@ class ReminderForm(ModalScreen):
         """Build the form layout."""
         with Container():
             yield Label(
-                "Edit Reminder" if self.task else "Create Reminder",
+                "Edit Reminder" if self._reminder_task else "Create Reminder",
                 classes="form-title",
             )
 
@@ -106,20 +106,23 @@ class ReminderForm(ModalScreen):
                     id="reminder-kind",
                 )
 
-                yield Label("Run At (ISO-8601):", classes="form-label")
-                yield Input(
-                    placeholder="2026-07-20T14:00:00+00:00",
-                    id="reminder-run-at",
-                )
+                with Vertical(id="reminder-run-at-group"):
+                    yield Label("Run At (ISO-8601):", classes="form-label")
+                    yield Input(
+                        placeholder="2026-07-20T14:00:00+00:00",
+                        id="reminder-run-at",
+                    )
 
-                yield Label("Cron Expression:", classes="form-label")
-                yield Input(placeholder="0 9 * * 1", id="reminder-cron")
+                with Vertical(id="reminder-cron-group"):
+                    yield Label("Cron Expression:", classes="form-label")
+                    yield Input(placeholder="0 9 * * 1", id="reminder-cron")
 
-                yield Label("Timezone:", classes="form-label")
-                yield Input(
-                    placeholder=_DEFAULT_TIMEZONE,
-                    id="reminder-timezone",
-                )
+                with Vertical(id="reminder-timezone-group"):
+                    yield Label("Timezone:", classes="form-label")
+                    yield Input(
+                        placeholder=_DEFAULT_TIMEZONE,
+                        id="reminder-timezone",
+                    )
 
                 yield Static("", id="reminder-errors", classes="error-text")
 
@@ -129,49 +132,43 @@ class ReminderForm(ModalScreen):
 
     def on_mount(self) -> None:
         """Prefill the form when editing an existing reminder."""
-        if self.task is None:
+        if self._reminder_task is None:
             self.query_one("#reminder-timezone", Input).value = _DEFAULT_TIMEZONE
+            self._update_schedule_field_visibility(ScheduleKind.ONE_TIME.value)
             return
 
-        self.query_one("#reminder-title", Input).value = self.task.title
-        body = self.task.body or ""
+        self.query_one("#reminder-title", Input).value = self._reminder_task.title
+        body = self._reminder_task.body or ""
         self.query_one("#reminder-body", TextArea).text = body
-        self.query_one("#reminder-kind", Select).value = self.task.schedule_kind.value
-        if self.task.run_at is not None:
-            self.query_one("#reminder-run-at", Input).value = self.task.run_at.isoformat()
-        if self.task.cron is not None:
-            self.query_one("#reminder-cron", Input).value = self.task.cron
-        if self.task.timezone is not None:
-            self.query_one("#reminder-timezone", Input).value = self.task.timezone
-        self._update_schedule_field_visibility(self.task.schedule_kind.value)
+        self.query_one("#reminder-kind", Select).value = self._reminder_task.schedule_kind.value
+        if self._reminder_task.run_at is not None:
+            self.query_one("#reminder-run-at", Input).value = self._reminder_task.run_at.isoformat()
+        if self._reminder_task.cron is not None:
+            self.query_one("#reminder-cron", Input).value = self._reminder_task.cron
+        if self._reminder_task.timezone is not None:
+            self.query_one("#reminder-timezone", Input).value = self._reminder_task.timezone
+        else:
+            self.query_one("#reminder-timezone", Input).value = _DEFAULT_TIMEZONE
+        self._update_schedule_field_visibility(self._reminder_task.schedule_kind.value)
 
     def on_select_changed(self, event: Select.Changed) -> None:
-        """Show/hide schedule fields based on the selected schedule kind."""
+        """Show/hide schedule field groups based on the selected schedule kind."""
         if event.select.id == "reminder-kind":
             self._update_schedule_field_visibility(str(event.value))
 
     def _update_schedule_field_visibility(self, kind: str) -> None:
-        """Toggle which schedule inputs are visible."""
-        run_at_label = self.query_one("#reminder-run-at").parent
-        cron_label = self.query_one("#reminder-cron").parent
-        tz_label = self.query_one("#reminder-timezone").parent
-        # Labels are siblings before the input in the same Vertical; toggling the
-        # input's parent Horizontal would hide label+input if they were grouped.
-        # Since they are not grouped, we toggle the input widget directly and
-        # leave the label visible for clarity.
-        run_at_input = self.query_one("#reminder-run-at", Input)
-        cron_input = self.query_one("#reminder-cron", Input)
-        tz_input = self.query_one("#reminder-timezone", Input)
+        """Toggle which schedule input groups are visible."""
+        run_at_group = self.query_one("#reminder-run-at-group", Vertical)
+        cron_group = self.query_one("#reminder-cron-group", Vertical)
+        tz_group = self.query_one("#reminder-timezone-group", Vertical)
         if kind == ScheduleKind.ONE_TIME.value:
-            run_at_input.display = True
-            cron_input.display = False
-            tz_input.display = False
+            run_at_group.display = True
+            cron_group.display = False
+            tz_group.display = False
         else:
-            run_at_input.display = False
-            cron_input.display = True
-            tz_input.display = True
-        # Avoid unused variable warnings for label containers.
-        _ = (run_at_label, cron_label, tz_label)
+            run_at_group.display = False
+            cron_group.display = True
+            tz_group.display = True
 
     @staticmethod
     def _schedule_options() -> list[tuple[str, str]]:
@@ -202,14 +199,28 @@ class ReminderForm(ModalScreen):
         if not title:
             errors.append("Title is required")
 
+        parsed_run_at: datetime | None = None
         if schedule_kind == ScheduleKind.ONE_TIME.value:
             if not run_at:
                 errors.append("Run At is required for one-time reminders")
+            else:
+                try:
+                    parsed_run_at = datetime.fromisoformat(run_at)
+                except ValueError:
+                    errors.append("Run At must be a valid ISO-8601 datetime")
         elif schedule_kind == ScheduleKind.RECURRING.value:
             if not cron:
                 errors.append("Cron expression is required for recurring reminders")
+            elif not croniter.is_valid(cron):
+                errors.append("Cron expression is invalid")
+
             if not timezone:
                 errors.append("Timezone is required for recurring reminders")
+            else:
+                try:
+                    ZoneInfo(timezone)
+                except ZoneInfoNotFoundError:
+                    errors.append(f"Unknown timezone: {timezone}")
 
         if errors:
             error_widget.update("\n".join(errors))
@@ -223,14 +234,17 @@ class ReminderForm(ModalScreen):
             "schedule_kind": schedule_kind,
         }
         if schedule_kind == ScheduleKind.ONE_TIME.value:
-            form_data["run_at"] = run_at
+            form_data["run_at"] = parsed_run_at
+            form_data["cron"] = None
+            form_data["timezone"] = None
         else:
+            form_data["run_at"] = None
             form_data["cron"] = cron
             form_data["timezone"] = timezone
 
-        if self.task is not None:
+        if self._reminder_task is not None:
             # Preserve the current enabled state when editing.
-            form_data["enabled"] = self.task.enabled
+            form_data["enabled"] = self._reminder_task.enabled
 
-        self.post_message(ReminderFormSubmitted(form_data, task_id=self.task.id if self.task else None))
+        self.post_message(ReminderFormSubmitted(form_data, task_id=self._reminder_task.id if self._reminder_task else None))
         self.dismiss(form_data)

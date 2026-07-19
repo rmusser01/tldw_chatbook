@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 from textual.app import App
+from textual.containers import Horizontal
 from textual.widgets import Button, DataTable, Input, Static
 
 from tldw_chatbook.Scheduling.events import DeleteTaskRequested
@@ -72,7 +73,9 @@ class MockSchedulingService:
 class WorkbenchTestAppWithService(App):
     """Test app with a mock scheduling service."""
 
-    scheduling_service = MockSchedulingService()
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.scheduling_service = MockSchedulingService()
 
 
 class MockSchedulingServiceWithWatchlist:
@@ -500,6 +503,23 @@ async def test_inspector_shows_read_only_projection_for_watchlist():
         assert "local (read-only projection)" in sync.visual.plain
         assert "-" == last_run.visual.plain.strip()
         assert "local" in owner.visual.plain
+
+
+@pytest.mark.asyncio
+async def test_watchlist_task_hides_lifecycle_actions():
+    """Watchlist projections do not expose reminder lifecycle buttons."""
+    async with WorkbenchTestAppWithMixedService().run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+
+        table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
+        table.cursor_coordinate = (1, 0)
+        pilot.app.screen._update_detail_for_index(1)
+        await pilot.pause()
+
+        detail = pilot.app.screen.query_one("#scheduling-task-detail", TaskDetail)
+        lifecycle = detail.query_one("#scheduling-task-detail-lifecycle", Horizontal)
+        assert lifecycle.display is False
 
 
 def test_humanize_cron_daily_pattern():

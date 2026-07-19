@@ -10,11 +10,13 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
+from croniter import croniter
 from loguru import logger
 
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
-from tldw_chatbook.Scheduling.models import ReminderTask, ScheduledTask
+from tldw_chatbook.Scheduling.models import ReminderTask, ScheduleKind, ScheduledTask
 from tldw_chatbook.Scheduling.services.server_client import (
     SchedulingServerClient,
     ServerUnavailableError,
@@ -85,6 +87,7 @@ class SchedulingService:
         later.
         """
         task = ReminderTask(**payload)
+        task.next_run_at = self._compute_next_run_at(task)
         server_payload = self._server_create_payload(task)
         db_fields = task.model_dump(
             exclude={
@@ -186,6 +189,21 @@ class SchedulingService:
                 logger.exception(
                     f"Server update_reminder failed for {task_id} ({self.owner_id}): {exc}"
                 )
+
+        # Local path: compute next_run_at and clear stale schedule fields
+        # when the schedule is being changed.
+        if any(key in payload for key in ("schedule_kind", "run_at", "cron", "timezone")):
+            row_task = self._row_to_reminder(row)
+            merged_data = row_task.model_dump()
+            merged_data.update(payload)
+            merged_task = ReminderTask(**merged_data)
+            payload = dict(payload)
+            if merged_task.schedule_kind == ScheduleKind.ONE_TIME:
+                payload["cron"] = None
+                payload["timezone"] = None
+            elif merged_task.schedule_kind == ScheduleKind.RECURRING:
+                payload["run_at"] = None
+            payload["next_run_at"] = self._compute_next_run_at(merged_task)
 
         self.db.update_reminder_task(task_id, **payload)
         if use_server:
@@ -344,6 +362,26 @@ class SchedulingService:
         row = self.db.get_reminder_task(task_id)
         assert row is not None
         return self._row_to_reminder(row)
+
+    def _compute_next_run_at(self, task: ReminderTask) -> datetime | None:
+        """Compute the next scheduled run time for a reminder task.
+
+        For one-time schedules the ``run_at`` value is returned directly. For
+        recurring schedules the next cron occurrence after the current time in
+        the task's timezone is computed and returned as UTC.
+        """
+        if task.schedule_kind == ScheduleKind.ONE_TIME:
+            return task.run_at
+
+        if task.schedule_kind == ScheduleKind.RECURRING:
+            if not task.cron or not task.timezone:
+                return None
+            tz = ZoneInfo(task.timezone)
+            now = datetime.now(tz)
+            next_run = croniter(task.cron, now).get_next(datetime)
+            return next_run.astimezone(timezone.utc)
+
+        return None
 
     @staticmethod
     def _row_to_reminder(row: dict[str, Any]) -> ReminderTask:

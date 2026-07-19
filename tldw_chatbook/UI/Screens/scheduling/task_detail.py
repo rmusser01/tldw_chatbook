@@ -414,7 +414,7 @@ class TaskDetail(Vertical):
 
         empty_state.display = False
         metadata.display = True
-        lifecycle.display = True
+        lifecycle.display = isinstance(task, ReminderTask)
 
         self._update_static("scheduling-task-detail-title", task.title)
         self._update_static("scheduling-task-detail-type", _task_type_label(task))
