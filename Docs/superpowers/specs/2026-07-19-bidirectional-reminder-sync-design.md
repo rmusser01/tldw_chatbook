@@ -153,12 +153,12 @@ User presses Ctrl+S
             ├─► Capture current owner_id
             ├─► Disable owner switcher
             ├─► await scheduling_service.sync_now(owner_id)
-            ├─► Post SyncCompleted(owner_id, conflict_count)
-            ├─► Re-enable owner switcher
+            ├─► Post SyncCompleted(owner_id, conflict_count) or SyncFailed(owner_id, error)
+            ├─► Re-enable owner switcher (success or failure)
             └─► Refresh task list + conflicts tab
 ```
 
-On failure, post `SyncFailed(owner_id, error)` and surface the error.
+On failure, post `SyncFailed(owner_id, error)` and surface the error; the owner switcher is always re-enabled in a `finally` block.
 
 ### Owner switch flow
 
@@ -283,4 +283,4 @@ SyncEngine.sync_now(owner_id)
 
 - **Owner identity interim fallback**: using URL-derived `active_server_id` as the server owner collides multi-account usage on the same server. ADR-018 must document this fallback and the migration path to `"server:<user_id>"` once the server exposes an account endpoint.
 - **Create duplication without server idempotency / crash window**: by design, `create_reminder` is not retried. Additionally, a crash between successful network create and Phase 2 commit can leave a pending `create` mutation queued, causing the next sync to create a duplicate server record. ADR-018 must document this accepted trade-off. A future upgrade can add per-push persistent staging or server-side idempotency to close the window.
-- **ADR-018 missing**: `backlog/decisions/018-local-server-hybrid-scheduled-tasks.md` should be created as part of this work. It should record: server-wins default, local-only idempotency keys, the owner-id/runtime-source mapping, the network-then-transaction boundary, the create-no-retry decision, and the crash-window trade-off.
+- **ADR-018 needs update**: `backlog/decisions/018-local-server-hybrid-scheduled-tasks.md` exists but must be updated as part of this work to record: local-only idempotency keys, the interim URL-derived owner-id/runtime-source mapping and migration path to `"server:<user_id>"`, the network-then-transaction boundary, the create-no-retry decision, and the crash-window trade-off.

@@ -39,6 +39,40 @@ tldw_chatbook already has server-side reminder endpoints (`/api/v1/tasks`) expos
 - Console-follow and screenshot QA behavior from the existing `SchedulesScreen` must be preserved.
 - Phase 5 will require its own ADR for watchlist scheduler migration, including rollback plan and dual-run validation.
 
+## TASK-299.2 Addendum: Bidirectional Reminder Sync
+
+The following decisions were made during TASK-299.2 and are recorded here so they survive the implementation plan.
+
+### Idempotency keys are local-only
+
+`ServerNotificationsService.create_reminder()` and `update_reminder()` do not yet accept an `idempotency_key` argument. Therefore `SchedulingServerClient` must strip any `idempotency_key` from the payload before forwarding to the service. The key remains in `pending_mutations.payload` for local deduplication and for future server-side idempotency support.
+
+### `create_reminder` is not retried
+
+Because idempotency keys are not forwarded to the server, retrying a transient timeout or 5xx on `create_reminder` could duplicate the server record. `SchedulingServerClient` retries transient failures for `list_reminders`, `update_reminder`, and `delete_reminder`, but **not** for `create_reminder`. A failed create leaves the pending mutation queued and stops the push phase.
+
+### Network-then-transaction sync boundary
+
+`SyncEngine.sync_now(owner_id)` performs all server calls in Phase 1 with **no** SQLite transaction held. Phase 2 opens a single `ScheduledTasksDB.transaction()` and atomically persists: pulled inserts/updates, conflict records, staged push outcomes (server_id → local_id mappings and pending-mutation deletions), tombstone cleanup, and `sync_state`. This prevents holding the SQLite connection across async HTTP I/O while still giving each sync attempt a single logical commit boundary.
+
+### Crash-window trade-off
+
+A crash after a successful network `create` but before the Phase 2 commit can leave the pending `create` mutation in the queue. Because the local row has no `server_id` yet, the next sync may create a duplicate server record. This is an accepted trade-off for TASK-299.2. A future upgrade can eliminate the window by adding per-push persistent staging or server-side idempotency.
+
+### Owner identity interim fallback
+
+Until the server exposes an account/principal endpoint (e.g., `/api/v1/me`), the server owner id is `"server:<active_server_id>"` where `active_server_id` is derived from the configured API URL by `runtime_policy.bootstrap.derive_configured_server_binding()`. This is an interim fallback that collides for multiple accounts on the same server. When an account endpoint becomes available, the owner id should become `"server:<user_id>"` and existing `sync_state`, `sync_mapping`, and `pending_mutations` rows must be migrated.
+
+### Runtime-source mapping
+
+The workbench owner switcher maps:
+- `"local"` → `SchedulingService.set_owner("local")` and `set_authoritative_runtime_source(app, "local")`.
+- `"server:<active_server_id>"` → `SchedulingService.set_owner("server:<active_server_id>")` and `set_authoritative_runtime_source(app, "server")`.
+
+### Conflict resolution
+
+Server-wins remains the default. Conflicts are surfaced in a dedicated workbench tab. "Use server" applies the server state (or deletes the local row for server-deletion). "Use local" re-queues the original pending mutation, preserving action, fields, and idempotency_key. For server-deletion conflicts, "Use local" clears the stale `server_id` and `sync_mapping` before re-queuing a `create` mutation.
+
 ## Links
 
 - [Design spec](../../Docs/superpowers/specs/2026-07-18-scheduling-module-screen-design.md)
