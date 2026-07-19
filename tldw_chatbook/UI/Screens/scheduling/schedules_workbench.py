@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from loguru import logger
+from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Static
+from textual.widgets import DataTable, Static
 
 from ...Navigation.base_app_screen import BaseAppScreen
+from ....Scheduling.models import ReminderTask
 
 
 logger = logger.bind(module="SchedulesWorkbench")
@@ -36,14 +38,16 @@ class SchedulesWorkbench(BaseAppScreen):
     def __init__(self, app_instance, screen_name: str = "schedules", **kwargs):
         super().__init__(app_instance, screen_name, **kwargs)
         self._scheduling_service = getattr(app_instance, "scheduling_service", None)
+        self._tasks: list[ReminderTask] = []
 
     def compose_content(self) -> ComposeResult:
         """Build the three-pane scheduling workbench layout."""
         with Horizontal(id="scheduling-workbench"):
             with Vertical(id="scheduling-list-pane"):
-                yield Static("Schedule Queue")
+                yield Static("Schedule Queue", id="scheduling-list-title")
+                yield DataTable(id="scheduling-task-table")
             with Vertical(id="scheduling-detail-pane"):
-                yield Static("Run Detail")
+                yield Static("Run Detail", id="scheduling-detail-content")
             with Vertical(id="scheduling-inspector-pane"):
                 yield Static("Status Inspector")
 
@@ -60,6 +64,78 @@ class SchedulesWorkbench(BaseAppScreen):
     def on_mount(self) -> None:
         super().on_mount()
         self._register_footer_shortcuts()
+        table = self.query_one("#scheduling-task-table", DataTable)
+        table.add_columns("Title", "Kind", "Status", "Next Run")
+        self.run_worker(self.load_tasks, exclusive=True)
+
+    async def load_tasks(self) -> None:
+        """Fetch reminders from the scheduling service and populate the table."""
+        service = self._scheduling_service
+        if service is None:
+            logger.debug("No scheduling_service available; cannot load tasks")
+            return
+
+        try:
+            tasks = await service.list_reminders()
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to load reminders")
+            self._update_detail_content("Could not load tasks.")
+            return
+
+        self._tasks = list(tasks)
+
+        def _format_next_run(task: ReminderTask) -> str:
+            if task.next_run_at is None:
+                return "-"
+            return task.next_run_at.strftime("%Y-%m-%d %H:%M")
+
+        rows: list[tuple[str, str, str, str]] = [
+            (
+                task.title,
+                task.schedule_kind.value,
+                task.last_status.value,
+                _format_next_run(task),
+            )
+            for task in self._tasks
+        ]
+
+        table = self.query_one("#scheduling-task-table", DataTable)
+        table.clear()
+        for row in rows:
+            table.add_row(*row)
+
+        if rows:
+            self._update_detail_for_index(0)
+        else:
+            self._update_detail_content("No tasks scheduled.")
+
+    @on(DataTable.RowHighlighted)
+    def _on_task_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        """Update the detail pane when the user highlights a task row."""
+        self._update_detail_for_index(event.cursor_row)
+
+    def _update_detail_for_index(self, index: int) -> None:
+        """Render task details in the detail pane."""
+        if not (0 <= index < len(self._tasks)):
+            self._update_detail_content("No task selected.")
+            return
+
+        task = self._tasks[index]
+        lines = [
+            f"Title: {task.title}",
+            f"Kind: {task.schedule_kind.value}",
+            f"Status: {task.last_status.value}",
+        ]
+        if task.next_run_at is not None:
+            lines.append(f"Next Run: {task.next_run_at.strftime('%Y-%m-%d %H:%M')}")
+        else:
+            lines.append("Next Run: -")
+        self._update_detail_content("\n".join(lines))
+
+    def _update_detail_content(self, content: str) -> None:
+        """Set the detail pane content Static."""
+        detail = self.query_one("#scheduling-detail-content", Static)
+        detail.update(content)
 
     def action_create_reminder(self) -> None:
         """Create a new reminder (stub for Task 4.4+)."""
