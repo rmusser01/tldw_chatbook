@@ -4,14 +4,18 @@ from __future__ import annotations
 
 from typing import Any
 
+from tldw_chatbook.Notifications.notification_dispatch_service import (
+    NotificationDispatchService,
+)
+
 
 class ReminderHandler:
     """Dispatch a reminder notification for a scheduled task."""
 
-    def __init__(self, dispatch_service: Any) -> None:
+    def __init__(self, dispatch_service: NotificationDispatchService) -> None:
         self.dispatch_service = dispatch_service
 
-    async def handle(self, task: dict) -> None:
+    async def handle(self, task: dict[str, Any]) -> None:
         """Dispatch a reminder notification.
 
         Args:
