@@ -56,8 +56,10 @@ class SyncEngine:
         self.server_client = server_client
         self.owner_id = owner_id
 
-    async def sync_now(self) -> None:
-        """Orchestrate a full sync: pull, push mutations, push tombstones."""
+    async def sync_now(self, owner_id: str | None = None) -> None:
+        """Orchestrate a full sync for the given owner (defaults to current owner)."""
+        if owner_id is not None:
+            self.owner_id = owner_id
         await self.pull()
         await self._push()
         await self._push_tombstones()

@@ -503,6 +503,18 @@ async def test_sync_now_passes_owner_id_to_engine(db):
     engine.sync_now.assert_awaited_once_with("server:example.com")
 
 
+@pytest.mark.asyncio
+async def test_sync_now_defaults_to_current_owner(db):
+    engine = MagicMock()
+    engine.sync_now = AsyncMock()
+    svc = SchedulingService(db=db, runtime_source="local")
+    svc.sync_engine = engine
+
+    await svc.sync_now()
+
+    engine.sync_now.assert_awaited_once_with("local")
+
+
 def test_server_client_is_always_present(db):
     svc = SchedulingService(db=db, runtime_source="local", server_client=None)
     assert isinstance(svc.server_client, SchedulingServerClient)
