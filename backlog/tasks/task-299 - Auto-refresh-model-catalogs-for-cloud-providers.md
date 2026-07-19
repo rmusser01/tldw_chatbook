@@ -1,5 +1,5 @@
 ---
-id: TASK-226
+id: TASK-299
 title: Auto-refresh model catalogs for cloud providers
 status: In Progress
 assignee: []
@@ -12,7 +12,7 @@ dependencies: []
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Refresh model lists for OpenRouter, Moonshot, Z.AI, OpenAI, Anthropic, and Mistral on app startup via the LLM_Provider_Catalog discovery pipeline. Disk-backed TTL cache feeds selectors (capped merge + search picker); per-provider opt-in write-through appends new models to [providers]. Amends ADR-002; see ADR-014 and Docs/superpowers/specs/2026-07-17-model-catalog-auto-refresh-design.md.
+Refresh model lists for OpenRouter, Moonshot, Z.AI, OpenAI, Anthropic, and Mistral on app startup via the LLM_Provider_Catalog discovery pipeline. Disk-backed TTL cache feeds selectors (capped merge + search picker); per-provider opt-in write-through appends new models to [providers]. Amends ADR-002; see ADR-019 and Docs/superpowers/specs/2026-07-17-model-catalog-auto-refresh-design.md.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -24,7 +24,7 @@ Refresh model lists for OpenRouter, Moonshot, Z.AI, OpenAI, Anthropic, and Mistr
 - [ ] #5 Global toggle off / opt-out / no key / fresh cache each skip fetching
 - [ ] #6 Failures degrade to cached models with at most one notification
 - [ ] #7 Anthropic uses x-api-key + pagination; Z.AI ships config defaults
-- [ ] #8 ADR-014 linked; tests pass
+- [ ] #8 ADR-019 linked; tests pass
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -32,6 +32,6 @@ Refresh model lists for OpenRouter, Moonshot, Z.AI, OpenAI, Anthropic, and Mistr
 <!-- SECTION:PLAN:BEGIN -->
 Implementation plan: Docs/superpowers/plans/2026-07-17-model-catalog-auto-refresh.md
 ADR required: yes
-ADR path: backlog/decisions/014-automatic-model-catalog-refresh.md (amends ADR-002)
+ADR path: backlog/decisions/019-automatic-model-catalog-refresh.md (amends ADR-002)
 Reason: amends ADR-002 explicit-persistence-only stance for opt-in write-through
 <!-- SECTION:PLAN:END -->

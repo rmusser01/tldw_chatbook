@@ -1,4 +1,4 @@
-"""Settings contract for automatic model catalog refresh (ADR-014)."""
+"""Settings contract for automatic model catalog refresh (ADR-019)."""
 
 from __future__ import annotations
 

@@ -1,8 +1,8 @@
-# ADR-014: Automatic model catalog refresh for cloud providers
+# ADR-019: Automatic model catalog refresh for cloud providers
 
 Status: Accepted
 Date: 2026-07-17
-Related Task: [backlog/tasks/task-226 - Auto-refresh-model-catalogs-for-cloud-providers.md](../tasks/task-226%20-%20Auto-refresh-model-catalogs-for-cloud-providers.md)
+Related Task: [backlog/tasks/task-299 - Auto-refresh-model-catalogs-for-cloud-providers.md](../tasks/task-299%20-%20Auto-refresh-model-catalogs-for-cloud-providers.md)
 Supersedes: N/A (amends ADR-002)
 
 ## Decision

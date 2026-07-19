@@ -2305,7 +2305,7 @@ local_transformers = ["None"]
 local_mlx_lm = ["None"]
 
 [model_catalog]
-# Automatic model-list refresh for cloud providers (ADR-014).
+# Automatic model-list refresh for cloud providers (ADR-019).
 auto_refresh_enabled = true
 stale_after_hours = 24 # 0 = refetch every launch
 auto_refresh_disabled = [] # exact [providers] keys to opt out, e.g. ["ZAI"]
