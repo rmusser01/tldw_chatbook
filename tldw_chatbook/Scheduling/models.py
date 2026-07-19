@@ -59,6 +59,21 @@ class AutomationFamily(str, Enum):
     AGENT_TASK = "agent_task"
 
 
+class ScheduledTask(BaseModel):
+    """Lightweight read-only task projection used for lists and watchlist jobs."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    title: str
+    type: str
+    status: TaskStatus
+    schedule_summary: str | None = None
+    next_run_at: datetime | None = None
+    owner_id: str = "local"
+    source: str | None = None
+
+
 class ReminderTask(BaseModel):
     """Local or synced reminder task."""
 
