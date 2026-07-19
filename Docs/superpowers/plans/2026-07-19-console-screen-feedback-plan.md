@@ -578,18 +578,52 @@ logger.info(
 )
 ```
 
-In `ConsoleAgentBridge.run_reply`, add at entry and exit:
+In `ConsoleAgentBridge.run_reply`, add at entry and exit, and wrap the tool-invocation closure so each tool call is logged:
 
 ```python
+from loguru import logger
+
 logger.info(
     "console_agent_bridge_run",
     conversation_id=conversation_id,
     model=model,
     allowed_tools_count=len(allowed_tools),
 )
+
+# If the bridge builds an invoke_tool closure for AgentService.run_turn,
+# wrap it to log each tool invocation:
+original_invoke_tool = invoke_tool
+
+def logged_invoke_tool(tool_call):
+    logger.info(
+        "console_agent_tool_call",
+        tool_name=getattr(tool_call, "name", "unknown"),
+        tool_id=getattr(tool_call, "id", "unknown"),
+    )
+    result = original_invoke_tool(tool_call)
+    logger.info(
+        "console_agent_tool_result",
+        tool_name=getattr(tool_call, "name", "unknown"),
+        success=getattr(result, "success", True),
+    )
+    return result
+
+# Pass logged_invoke_tool to AgentService.run_turn in place of invoke_tool.
 ```
 
-Per-turn/per-tool logging requires hooks inside `AgentService.run_turn` or the agent runtime. The runtime does not currently expose such hooks, so per-turn/per-tool logs are deferred to a future runtime/bridge refactor. The start/end logs are sufficient to diagnose the reported turn-control issue.
+After `AgentService.run_turn()` returns, log each step in the outcome:
+
+```python
+for i, step in enumerate(outcome.steps):
+    logger.info(
+        "console_agent_step",
+        step_index=i,
+        step_kind=getattr(step, "kind", "unknown"),
+        step_summary=getattr(step, "summary", "")[:200],
+    )
+```
+
+> The exact `AgentStep` shape is in `tldw_chatbook/Agents/agent_models.py`. Adjust attribute access (`step.kind`, `step.summary`, etc.) to match the actual fields.
 
 Run the existing controller tests:
 
@@ -886,6 +920,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
@@ -1005,9 +1040,9 @@ class ConsoleContextModal(ModalScreen[None]):
             container.mount(Label("No conversation context."))
             return container
         for msg in self.snapshot.current_messages:
-            with container:
-                with Collapsible(title=f"[{msg.role}] {msg.status}", collapsed=True):
-                    yield TextArea(msg.content, read_only=True)
+            collapsible = Collapsible(title=f"[{msg.role}] {msg.status}", collapsed=True)
+            collapsible.mount(TextArea(msg.content, read_only=True))
+            container.mount(collapsible)
         return container
 
     def _build_next_send_view(self) -> Vertical:
@@ -1023,27 +1058,35 @@ class ConsoleContextModal(ModalScreen[None]):
 
         if self.raw_json:
             container.mount(TextArea(text, read_only=True))
-        else:
-            with container:
-                with Collapsible(title="Model", collapsed=False):
-                    yield Label(str(payload.get("model", "unknown")))
-                with Collapsible(title="System", collapsed=True):
-                    yield TextArea(
-                        self._json_block(payload.get("system")),
-                        read_only=True,
-                    )
-                with Collapsible(title="Messages", collapsed=False):
-                    for i, msg in enumerate(payload.get("messages", [])):
-                        with Collapsible(title=f"Message {i}", collapsed=True):
-                            yield TextArea(self._json_block(msg), read_only=True)
-                tools = payload.get("tools")
-                if tools:
-                    with Collapsible(title="Tools", collapsed=True):
-                        yield TextArea(self._json_block(tools), read_only=True)
-                staged = payload.get("staged_sources")
-                if staged:
-                    with Collapsible(title="Staged Sources", collapsed=True):
-                        yield TextArea(self._json_block(staged), read_only=True)
+            return container
+
+        model_collapsible = Collapsible(title="Model", collapsed=False)
+        model_collapsible.mount(Label(str(payload.get("model", "unknown"))))
+        container.mount(model_collapsible)
+
+        system_collapsible = Collapsible(title="System", collapsed=True)
+        system_collapsible.mount(TextArea(self._json_block(payload.get("system")), read_only=True))
+        container.mount(system_collapsible)
+
+        messages_collapsible = Collapsible(title="Messages", collapsed=False)
+        for i, msg in enumerate(payload.get("messages", [])):
+            msg_collapsible = Collapsible(title=f"Message {i}", collapsed=True)
+            msg_collapsible.mount(TextArea(self._json_block(msg), read_only=True))
+            messages_collapsible.mount(msg_collapsible)
+        container.mount(messages_collapsible)
+
+        tools = payload.get("tools")
+        if tools:
+            tools_collapsible = Collapsible(title="Tools", collapsed=True)
+            tools_collapsible.mount(TextArea(self._json_block(tools), read_only=True))
+            container.mount(tools_collapsible)
+
+        staged = payload.get("staged_sources")
+        if staged:
+            staged_collapsible = Collapsible(title="Staged Sources", collapsed=True)
+            staged_collapsible.mount(TextArea(self._json_block(staged), read_only=True))
+            container.mount(staged_collapsible)
+
         return container
 
     def _format_next_send_text(self) -> str:
@@ -1148,7 +1191,12 @@ async def action_view_chat_context(self) -> None:
             staged_sources=staged_sources,
         )
 
-    snapshot = await _factory()
+    try:
+        snapshot = await _factory()
+    except Exception as exc:
+        self.notify(f"Could not build context snapshot: {exc}", severity="error")
+        return
+
     token_estimate = self._estimate_tokens(snapshot.next_send_payload)
     in_progress = controller.run_state.status in (
         ConsoleRunStatus.STREAMING,
@@ -1187,7 +1235,7 @@ Create `Tests/UI/test_console_context_modal.py`:
 import pytest
 from textual.app import App, ComposeResult
 from textual.containers import Vertical
-from textual.widgets import Collapsible, Label, Static, TextArea
+from textual.widgets import Button, Collapsible, Label, Static, TextArea
 
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
@@ -1297,6 +1345,7 @@ from textual.app import App, ComposeResult
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.Widgets.Console.console_context_modal import ConsoleContextModal
 
 
 class ChatScreenHarness(App):
