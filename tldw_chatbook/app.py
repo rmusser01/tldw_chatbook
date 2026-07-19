@@ -75,6 +75,7 @@ from .config import (
     get_prompts_db_path,
     get_notifications_db_path,
     get_research_db_path,
+    get_scheduled_tasks_db_path,
     get_subscriptions_db_path,
     get_user_data_dir,
     get_workspaces_db_path,
@@ -199,6 +200,11 @@ from .Research_Interop import (
     ResearchScopeService,
     ServerResearchService,
 )
+from .Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+from .Scheduling.services.scheduling_service import SchedulingService
+from .Scheduling.services.server_client import SchedulingServerClient
+from .Scheduling.scheduler.loop import SchedulerLoop
+from .Scheduling.scheduler.handlers.reminder_handler import ReminderHandler
 from .ACP_Interop.runtime_process import ACPRuntimeProcessManager
 from .ACP_Interop.runtime_session import ACPRuntimeSessionState
 from .DB.ChaChaNotes_DB import CharactersRAGDBError, ConflictError
@@ -3451,6 +3457,22 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             store=self.client_notifications_db,
             policy_enforcer=self.service_policy_enforcer,
         )
+        server_client = None
+        if self.server_notifications_service is not None:
+            server_client = SchedulingServerClient(self.server_notifications_service)
+
+        self.scheduling_service = SchedulingService(
+            db=ScheduledTasksDB(get_scheduled_tasks_db_path()),
+            server_client=server_client,
+            runtime_source="local",
+        )
+        self.scheduler_loop = SchedulerLoop(
+            self.scheduling_service.db,
+            handlers={
+                "reminder": ReminderHandler(dispatch_service=self.notification_dispatch_service),
+            },
+            poll_interval=get_cli_setting("scheduling", "scheduler_poll_interval_seconds", 30),
+        )
         self.notifications_scope_service = NotificationsScopeService(
             local_service=self.client_notifications_service,
             server_service=self.server_notifications_service,
@@ -5745,7 +5767,14 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         log_histogram("app_on_mount_duration_seconds", mount_duration,
                      documentation="Total time for on_mount() method")
         self.loguru_logger.info(f"on_mount completed in {mount_duration:.3f} seconds")
-        
+
+        # Start the background scheduler loop for reminders and scheduled tasks.
+        self.scheduler_worker = self.run_worker(
+            self.scheduler_loop.run(),
+            exclusive=True,
+            group="scheduling",
+        )
+
         # Check if this is the first run (config was just created)
         config_data = self.app_config
         if config_data.get("_first_run", False):
@@ -6359,6 +6388,14 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                     self.loguru_logger.info("Auto-sync manager stopped")
                 except Exception as e:
                     self.loguru_logger.error(f"Error stopping auto-sync manager: {e}")
+
+            # Stop the background scheduler loop cleanly.
+            if self.scheduler_loop:
+                self.scheduler_loop.stop()
+            if self.scheduler_worker:
+                await self.scheduler_worker.wait(timeout=5)
+                if not self.scheduler_worker.is_finished:
+                    self.scheduler_worker.cancel()
 
             # Disconnect local MCP client sessions (P5-T6), if any were ever
             # established this run.
