@@ -1000,12 +1000,14 @@ class ConsoleContextModal(ModalScreen[None]):
 
     def __init__(
         self,
+        snapshot: ConsoleContextSnapshot,
         snapshot_factory: Callable[[], Awaitable[ConsoleContextSnapshot]],
         *,
         token_estimate: int | None = None,
         in_progress: bool = False,
     ) -> None:
         super().__init__()
+        self.snapshot = snapshot
         self._snapshot_factory = snapshot_factory
         self.token_estimate = token_estimate
         self.in_progress = in_progress
@@ -1026,6 +1028,7 @@ class ConsoleContextModal(ModalScreen[None]):
                 yield Checkbox("Raw JSON", id="console-context-raw")
                 yield Button("Refresh", id="console-context-refresh", disabled=self.in_progress)
                 yield Button("Copy JSON", id="console-context-copy")
+                yield Button("Save to File", id="console-context-save")
                 yield Button("Close", id="console-context-close")
 
     def on_mount(self) -> None:
@@ -1209,6 +1212,7 @@ async def action_view_chat_context(self) -> None:
         self.notify("No active conversation.", severity="warning")
         return
 
+    session = controller.store.session(session_id)
     composer = self.query_one("#console-native-composer", ConsoleComposerBar)
     draft = composer.value if composer else ""
     staged_sources = controller.store.workspace_context.allowed_sources
@@ -1292,7 +1296,7 @@ class ModalHarness(App):
         yield Static("background")
 
     def on_mount(self) -> None:
-        self.push_screen(ConsoleContextModal(_snapshot_factory, token_estimate=42))
+        self.push_screen(ConsoleContextModal(SNAPSHOT, _snapshot_factory, token_estimate=42))
 
 
 @pytest.mark.asyncio
