@@ -2,8 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
+import random
 from dataclasses import dataclass
 from typing import Any
+
+try:
+    import httpx
+except ImportError:  # pragma: no cover
+    httpx = None  # type: ignore[assignment]
+
+try:
+    from tldw_chatbook.runtime_policy.types import PolicyDeniedError
+except ImportError:  # pragma: no cover
+    PolicyDeniedError = None  # type: ignore[assignment,misc]
 
 
 class ServerClientError(Exception):
@@ -46,98 +58,102 @@ class SchedulingServerClient:
     failures.
     """
 
-    def __init__(self, notifications_service: Any | None = None) -> None:
-        """Initialize the client.
+    def __init__(
+        self,
+        notifications_service: Any | None = None,
+        config: ServerClientConfig | None = None,
+    ) -> None:
+        self.notifications_service = notifications_service
+        self.config = config or ServerClientConfig()
 
-        Args:
-            notifications_service: Service that implements the reminder CRUD
-                contract, or ``None`` if no scheduling server is connected.
-        """
+    def set_notifications_service(self, notifications_service: Any | None) -> None:
+        """Inject or refresh the underlying notifications service."""
         self.notifications_service = notifications_service
 
     def _is_available(self) -> bool:
-        """Return whether a notifications service is available."""
         return self.notifications_service is not None
 
-    async def create_reminder(self, **payload: Any) -> dict[str, Any]:
-        """Create a new reminder.
+    @staticmethod
+    def _strip_local_only_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
+        """Remove kwargs that the server service does not accept."""
+        return {k: v for k, v in kwargs.items() if k != "idempotency_key"}
 
-        Args:
-            **payload: Reminder fields to pass to the notifications service.
-
-        Returns:
-            The created reminder as returned by the service.
-
-        Raises:
-            ServerUnavailableError: If no scheduling server is connected.
-        """
+    async def _call_with_retry(
+        self,
+        method_name: str,
+        *args: Any,
+        retry: bool = True,
+        is_read: bool = False,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         service = self.notifications_service
         if service is None:
             raise ServerUnavailableError("server not available")
-        return await service.create_reminder(**payload)
+
+        kwargs = self._strip_local_only_kwargs(kwargs)
+        method = getattr(service, method_name)
+        timeout = self.config.timeout if is_read else self.config.timeout * 3
+        last_error: Exception | None = None
+        error_cls: type[ServerClientError] = ServerClientError
+
+        attempts = self.config.max_retries + 1 if retry else 1
+        for attempt in range(attempts):
+            try:
+                coro = method(*args, **kwargs)
+                return await asyncio.wait_for(coro, timeout=timeout)
+            except PolicyDeniedError as exc:
+                raise ServerClientValidationError(str(exc)) from exc
+            except ServerClientNotFoundError:
+                raise
+            except ServerClientValidationError:
+                raise
+            except ServerClientServerError as exc:
+                last_error = exc
+                error_cls = ServerClientServerError
+            except ServerClientTimeoutError as exc:
+                last_error = exc
+                error_cls = ServerClientTimeoutError
+            except asyncio.TimeoutError as exc:
+                last_error = exc
+                error_cls = ServerClientTimeoutError
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                status = getattr(exc, "status_code", None)
+                if status == 404:
+                    raise ServerClientNotFoundError(str(exc)) from exc
+                if status is not None and 400 <= status < 500:
+                    raise ServerClientValidationError(str(exc)) from exc
+                if status is not None and 500 <= status < 600:
+                    error_cls = ServerClientServerError
+                elif httpx is not None and isinstance(exc, httpx.TimeoutException):
+                    error_cls = ServerClientTimeoutError
+                elif httpx is not None and isinstance(
+                    exc, (httpx.ConnectError, httpx.NetworkError)
+                ):
+                    error_cls = ServerClientServerError
+                else:
+                    error_cls = ServerClientError
+
+            if not retry or attempt == attempts - 1:
+                raise error_cls(str(last_error)) from last_error
+
+            delay = self.config.retry_delay * (2**attempt)
+            delay += random.uniform(0, delay * 0.1)
+            await asyncio.sleep(delay)
+
+        raise ServerClientError("unexpected end of retry loop")
+
+    async def create_reminder(self, **payload: Any) -> dict[str, Any]:
+        return await self._call_with_retry("create_reminder", retry=False, **payload)
 
     async def update_reminder(self, task_id: str, **payload: Any) -> dict[str, Any]:
-        """Update an existing reminder.
-
-        Args:
-            task_id: Identifier of the reminder to update.
-            **payload: Reminder fields to update.
-
-        Returns:
-            The updated reminder as returned by the service.
-
-        Raises:
-            ServerUnavailableError: If no scheduling server is connected.
-        """
-        service = self.notifications_service
-        if service is None:
-            raise ServerUnavailableError("server not available")
-        return await service.update_reminder(task_id, **payload)
+        return await self._call_with_retry("update_reminder", task_id, **payload)
 
     async def delete_reminder(self, task_id: str) -> dict[str, Any]:
-        """Delete a reminder.
-
-        Args:
-            task_id: Identifier of the reminder to delete.
-
-        Returns:
-            The service response after deletion.
-
-        Raises:
-            ServerUnavailableError: If no scheduling server is connected.
-        """
-        service = self.notifications_service
-        if service is None:
-            raise ServerUnavailableError("server not available")
-        return await service.delete_reminder(task_id)
+        return await self._call_with_retry("delete_reminder", task_id)
 
     async def list_reminders(self) -> dict[str, Any]:
-        """List all reminders.
-
-        Returns:
-            The service response containing the reminder list.
-
-        Raises:
-            ServerUnavailableError: If no scheduling server is connected.
-        """
-        service = self.notifications_service
-        if service is None:
-            raise ServerUnavailableError("server not available")
-        return await service.list_reminders()
+        return await self._call_with_retry("list_reminders", is_read=True)
 
     async def get_reminder(self, task_id: str) -> dict[str, Any]:
-        """Fetch a single reminder.
-
-        Args:
-            task_id: Identifier of the reminder to retrieve.
-
-        Returns:
-            The requested reminder as returned by the service.
-
-        Raises:
-            ServerUnavailableError: If no scheduling server is connected.
-        """
-        service = self.notifications_service
-        if service is None:
-            raise ServerUnavailableError("server not available")
-        return await service.get_reminder(task_id)
+        return await self._call_with_retry("get_reminder", task_id, is_read=True)
