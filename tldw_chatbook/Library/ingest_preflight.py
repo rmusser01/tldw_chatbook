@@ -7,38 +7,13 @@ estimated size, tooling warnings, and any errors that would prevent ingestion.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 from tldw_chatbook.Library.ingest_capabilities import get_tooling_warnings, get_type_group
+from tldw_chatbook.Library.ingest_types import PreflightResult
 from tldw_chatbook.Local_Ingestion.local_file_ingestion import is_http_url
-
-
-@dataclass(frozen=True)
-class PreflightResult:
-    """Result of a pre-flight ingestion analysis.
-
-    Args:
-        type_groups: Mapping from capability group (``pdf``, ``audio_video``,
-            ``ebook``, ``generic``) to the paths or URLs assigned to that group.
-        warnings: Tooling availability warnings from
-            ``get_tooling_warnings``.
-        errors: Human-readable errors that would prevent ingestion.
-        total_size: Sum of file sizes in bytes; ``0`` for URLs where the size
-            is not known from the probe.
-        truncated: ``True`` when a directory scan reached ``scan_limit``.
-        total_files: Number of files discovered (``1`` for a reachable URL).
-    """
-
-    type_groups: dict[str, list[str]]
-    warnings: list[dict[str, Any]]
-    errors: list[str]
-    total_size: int
-    truncated: bool
-    total_files: int
 
 
 def _safe_size(path: Path) -> int:

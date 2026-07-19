@@ -9,12 +9,12 @@ from urllib.error import HTTPError, URLError
 import pytest
 
 from tldw_chatbook.Library.ingest_preflight import (
-    PreflightResult,
     _collect_files,
     _probe_url,
     _safe_size,
     analyze_path,
 )
+from tldw_chatbook.Library.ingest_types import PreflightResult
 from tldw_chatbook.Local_Ingestion.local_file_ingestion import is_http_url
 
 

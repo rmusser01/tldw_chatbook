@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+from tldw_chatbook.Library.ingest_types import PreflightResult
 from tldw_chatbook.Library.library_ingest_jobs import IngestJobState, LibraryIngestJob
 from tldw_chatbook.Library.library_ingest_state import (
     INGEST_UNAVAILABLE_COPY,
     MEDIA_DB_UNAVAILABLE_COPY,
     SERVER_QUIET_LINE_COPY,
     LibraryIngestFormState,
+    _human_size,
+    build_estimate_line,
     build_library_ingest_state,
+    build_type_breakdown_line,
+    build_warning_lines,
     clamp_chunk_size,
     parse_keywords,
 )
@@ -529,3 +534,262 @@ def test_clamp_chunk_size_clamps_above_maximum():
 def test_clamp_chunk_size_defaults_on_garbage_input():
     assert clamp_chunk_size("not a number") == 500
     assert clamp_chunk_size("") == 500
+
+
+# --- Task 7: extended form state, pre-flight summary, recent jobs ----------
+
+
+def test_form_state_has_new_preflight_fields():
+    preflight = PreflightResult(
+        type_groups={"pdf": ["/tmp/a.pdf"]},
+        warnings=[],
+        errors=[],
+        total_size=1024,
+        truncated=False,
+        total_files=1,
+    )
+    form = LibraryIngestFormState(
+        expanded_type_groups={"pdf"},
+        type_options={"pdf": {"ocr": True}},
+        preflight=preflight,
+        preflight_checking=True,
+    )
+    assert form.expanded_type_groups == {"pdf"}
+    assert form.type_options == {"pdf": {"ocr": True}}
+    assert form.preflight is preflight
+    assert form.preflight_checking is True
+
+
+def test_form_state_defaults_are_sensible():
+    form = LibraryIngestFormState()
+    assert form.expanded_type_groups == set()
+    assert form.type_options == {}
+    assert form.preflight is None
+    assert form.preflight_checking is False
+
+
+# --- build_type_breakdown_line ---------------------------------------------
+
+
+def test_build_type_breakdown_line_empty():
+    assert build_type_breakdown_line({}) == ""
+
+
+def test_build_type_breakdown_line_single_group_single_file():
+    line = build_type_breakdown_line({"pdf": ["/tmp/a.pdf"]})
+    assert line == "1 PDF document"
+
+
+def test_build_type_breakdown_line_multiple_groups_and_counts():
+    line = build_type_breakdown_line(
+        {
+            "pdf": ["/tmp/a.pdf", "/tmp/b.pdf"],
+            "audio_video": ["/tmp/c.mp3"],
+            "generic": ["/tmp/d.txt", "/tmp/e.txt", "/tmp/f.txt"],
+        }
+    )
+    assert line == "2 PDF documents, 1 audio/video file, 3 plain text files"
+
+
+def test_build_type_breakdown_line_unknown_group_uses_key():
+    line = build_type_breakdown_line({"weird": ["/tmp/x.foo"]})
+    assert line == "1 weird"
+
+
+# --- build_estimate_line ---------------------------------------------------
+
+
+def test_build_estimate_line_zero_files():
+    assert build_estimate_line(0, 0, False) == "0 files"
+
+
+def test_build_estimate_line_single_file_bytes():
+    assert build_estimate_line(1, 512, False) == "1 file · 512 B"
+
+
+def test_build_estimate_line_multiple_files_human_size():
+    assert build_estimate_line(5, 1536, False) == "5 files · 1.5 KB"
+
+
+def test_build_estimate_line_appends_truncated_note():
+    line = build_estimate_line(1000, 1024 * 1024, True)
+    assert line.startswith("1000 files · 1.0 MB")
+    assert "more files not shown" in line
+
+
+# --- build_warning_lines ---------------------------------------------------
+
+
+def test_build_warning_lines_empty():
+    assert build_warning_lines([]) == []
+
+
+def test_build_warning_lines_label_and_hint():
+    warnings = [{"label": "PDF processing", "hint": "PyMuPDF is not installed."}]
+    assert build_warning_lines(warnings) == ["PDF processing: PyMuPDF is not installed."]
+
+
+def test_build_warning_lines_falls_back_to_hint_only():
+    warnings = [{"hint": "Something is missing."}]
+    assert build_warning_lines(warnings) == ["Something is missing."]
+
+
+def test_build_warning_lines_label_only():
+    warnings = [{"label": "PDF processing"}]
+    assert build_warning_lines(warnings) == ["PDF processing"]
+
+
+def test_build_warning_lines_empty_dict():
+    warnings = [{}]
+    assert build_warning_lines(warnings) == ["{}"]
+
+
+def test_build_warning_lines_ignores_command_key():
+    warnings = [{"label": "PDF", "hint": "missing", "command": "pip install x"}]
+    assert build_warning_lines(warnings) == ["PDF: missing"]
+
+
+# --- _human_size -----------------------------------------------------------
+
+
+def test_human_size_tb_midrange():
+    assert _human_size(1024 ** 4 * 512) == "512.0 TB"
+
+
+def test_human_size_pb_boundary():
+    # 1024**5 bytes == 1 PB; the original bug reported the value in TB while
+    # labeling it PB. After the fix it must read "1.0 PB".
+    assert _human_size(1024 ** 5) == "1.0 PB"
+    assert _human_size(1024 ** 6) == "1024.0 PB"
+
+
+# --- canvas state pre-flight fields ----------------------------------------
+
+
+def test_canvas_state_preflight_fields_populated_from_parameter():
+    preflight = PreflightResult(
+        type_groups={"pdf": ["/tmp/a.pdf", "/tmp/b.pdf"]},
+        warnings=[{"label": "PDF", "hint": "missing"}],
+        errors=["Path not found"],
+        total_size=2048,
+        truncated=False,
+        total_files=2,
+    )
+    state = build_library_ingest_state((), form=LibraryIngestFormState(), preflight=preflight)
+    assert state.type_breakdown_line == "2 PDF documents"
+    assert state.estimate_line == "2 files · 2.0 KB"
+    assert state.warning_lines == ["PDF: missing"]
+    assert state.errors == ["Path not found"]
+    assert state.type_groups == ["pdf"]
+    assert state.unsupported_files == []
+    assert state.preflight_checking is False
+
+
+def test_canvas_state_preflight_fields_fallback_to_form():
+    preflight = PreflightResult(
+        type_groups={"generic": ["/tmp/a.txt"]},
+        warnings=[],
+        errors=[],
+        total_size=100,
+        truncated=False,
+        total_files=1,
+    )
+    form = LibraryIngestFormState(preflight=preflight, preflight_checking=True)
+    state = build_library_ingest_state((), form=form)
+    assert state.type_breakdown_line == "1 plain text file"
+    assert state.preflight_checking is True
+
+
+def test_canvas_state_preflight_parameter_overrides_form():
+    form_preflight = PreflightResult(
+        type_groups={"generic": ["/tmp/form.txt"]},
+        warnings=[],
+        errors=[],
+        total_size=100,
+        truncated=False,
+        total_files=1,
+    )
+    param_preflight = PreflightResult(
+        type_groups={"pdf": ["/tmp/param.pdf"]},
+        warnings=[],
+        errors=[],
+        total_size=200,
+        truncated=False,
+        total_files=1,
+    )
+    form = LibraryIngestFormState(preflight=form_preflight)
+    state = build_library_ingest_state(
+        (), form=form, preflight=param_preflight
+    )
+    assert state.type_breakdown_line == "1 PDF document"
+
+
+def test_canvas_state_preflight_checking_parameter_overrides_form():
+    form = LibraryIngestFormState(preflight_checking=True)
+    state = build_library_ingest_state(
+        (), form=form, preflight_checking=False
+    )
+    # Explicit ``False`` parameter wins over form flag.
+    assert state.preflight_checking is False
+
+
+def test_canvas_state_separates_unsupported_files():
+    preflight = PreflightResult(
+        type_groups={
+            "pdf": ["/tmp/a.pdf"],
+            "unsupported": ["/tmp/b.xyz", "/tmp/c.abc"],
+        },
+        warnings=[],
+        errors=[],
+        total_size=0,
+        truncated=False,
+        total_files=3,
+    )
+    state = build_library_ingest_state((), form=LibraryIngestFormState(), preflight=preflight)
+    assert state.type_groups == ["pdf"]
+    assert state.type_breakdown_line == "1 PDF document"
+    assert state.unsupported_files == ["/tmp/b.xyz", "/tmp/c.abc"]
+
+
+def test_canvas_state_preflight_none_gives_empty_summary():
+    state = build_library_ingest_state((), form=LibraryIngestFormState())
+    assert state.type_breakdown_line == ""
+    assert state.estimate_line == ""
+    assert state.warning_lines == []
+    assert state.errors == []
+    assert state.type_groups == []
+    assert state.unsupported_files == []
+
+
+def test_canvas_state_expanded_type_groups_copied_from_form():
+    form = LibraryIngestFormState(expanded_type_groups={"audio_video", "ebook"})
+    state = build_library_ingest_state((), form=form)
+    assert state.expanded_type_groups == {"audio_video", "ebook"}
+
+
+# --- recent_jobs -----------------------------------------------------------
+
+
+def test_recent_jobs_includes_done_and_failed():
+    done = _job(job_id="ingest-job-1", state=IngestJobState.DONE, started_at=1.0, finished_at=2.0, media_id=1)
+    failed = _job(job_id="ingest-job-2", state=IngestJobState.FAILED, started_at=1.0, finished_at=2.0, error="boom")
+    queued = _job(job_id="ingest-job-3", state=IngestJobState.QUEUED)
+    state = build_library_ingest_state(
+        (done, failed, queued), form=LibraryIngestFormState()
+    )
+    assert [j.job_id for j in state.recent_jobs] == ["ingest-job-1", "ingest-job-2"]
+
+
+def test_recent_jobs_limits_to_ten():
+    jobs = tuple(
+        _job(
+            job_id=f"ingest-job-{i}",
+            state=IngestJobState.DONE,
+            started_at=1.0,
+            finished_at=2.0,
+            media_id=i,
+        )
+        for i in range(15)
+    )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
+    assert len(state.recent_jobs) == 10
