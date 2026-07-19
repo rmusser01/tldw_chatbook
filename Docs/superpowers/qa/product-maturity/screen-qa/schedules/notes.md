@@ -3,8 +3,9 @@
 ## Branch / commit under test
 
 - Branch: `feature/scheduling-module-screen`
-- Commit: `63d8a553` (`fix(scheduling): address code-quality review blockers for UX polish`)
+- Commit: `1204e8b3` (`fix(scheduling): remove remaining TaskInspector CSS duplication and test race`)
 - Previous commits in this phase:
+  - `63d8a553` — `fix(scheduling): address code-quality review blockers for UX polish`
   - `2967ff49` — `fix(scheduling): address residual UX polish upgrades`
   - `5ba331c3` — `fix(scheduling): address UX polish review feedback`
   - `9afdd539` — `feat(scheduling): UX polish for Schedules workbench`
@@ -89,6 +90,14 @@ This commit addresses blocking issues raised by a code-quality review of the wor
 - **Async console-follow refresh**: `_refresh_console_context` is now a plain async helper awaited by `load_tasks`. It handles both sync and async service methods (`build_dashboard_input`, `list_reading_digest_outputs`) so it no longer silently receives coroutines inside a `thread=True` worker.
 - **Duplicate CSS removed**: Styles for headers, lifecycle rows, follow button, empty state, and conflict card were removed from `TaskDetail.DEFAULT_CSS` and `TaskInspector.DEFAULT_CSS`; they now live only in `_scheduling.tcss`.
 - **Delete end-to-end tests**: Added tests for the confirmation → `DeleteTaskRequested` → `delete_reminder` success path and the delete-reminder failure path.
+
+## Final CSS/test cleanup (`1204e8b3`)
+
+This commit addresses the last code-quality review finding:
+
+- **Remove `TaskInspector.DEFAULT_CSS`**: All inspector styles (metadata, labels, values, conflict card) now live exclusively in `_scheduling.tcss`.
+- **Remove unused import**: `Label` is no longer imported in `task_detail.py`.
+- **Robust delete tests**: Delete-flow tests now use `pilot.app.workers.wait_for_complete()` instead of racing the background worker with an explicit `load_tasks()` call.
 
 ## User approval status
 
