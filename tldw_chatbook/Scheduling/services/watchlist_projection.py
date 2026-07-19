@@ -55,10 +55,12 @@ def _build_schedule_summary(check_frequency: int | None) -> str | None:
 
 def _resolve_status(row: dict[str, Any]) -> TaskStatus:
     """Map a subscription row to the unified task status enum."""
-    if not row.get("is_active") or row.get("is_paused"):
+    if not row.get("is_active"):
+        return TaskStatus.DISABLED
+    if row.get("is_paused"):
         return TaskStatus.PAUSED
-    if row.get("last_checked") is not None:
-        return TaskStatus.FOUND_RESULTS
+    if row.get("last_error") and not row.get("last_successful_check"):
+        return TaskStatus.NEEDS_ATTENTION
     return TaskStatus.WAITING
 
 
@@ -70,7 +72,7 @@ class WatchlistProjection:
 
     def list_jobs(self, owner_id: str = "local") -> list[ScheduledTask]:
         """Read subscriptions from Subscriptions_DB and project them as scheduled tasks."""
-        rows = self.subscriptions_db.get_all_subscriptions()
+        rows = self.subscriptions_db.get_all_subscriptions(include_inactive=True)
         return [self._to_scheduled_task(row, owner_id) for row in rows]
 
     def _to_scheduled_task(self, row: dict[str, Any], owner_id: str) -> ScheduledTask:
