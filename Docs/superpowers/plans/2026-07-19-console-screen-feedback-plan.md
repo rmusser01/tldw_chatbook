@@ -310,9 +310,16 @@ Expected: FAIL (`KeyError` or `_session_closed_result`).
 
 ### Step 2.5: Implement placeholder-missing fallback
 
-Refactor `_finalize_agent_reply` to delegate terminal handling to helpers. Replace the body after the stopped/cancelled guard with:
+Refactor `_finalize_agent_reply` to delegate terminal handling to helpers. Keep the existing stopped/cancelled guard intact, then delegate:
 
 ```python
+# Keep the existing task-227 guard unchanged:
+if current.status == "stopped" or (cancel_event is not None and cancel_event.is_set()):
+    self._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.STOPPED, "Response stopped.")
+    )
+    return ConsoleSubmitResult(True, True, current.content)
+
 if outcome.status == RUN_CANCELLED:
     return self._finalize_agent_cancelled(assistant_message_id, session_id)
 
@@ -364,21 +371,26 @@ def _finalize_agent_success(
     *,
     variant_mode: bool,
 ) -> ConsoleSubmitResult:
+    from tldw_chatbook.Agents.agent_models import RUN_DONE
+
     placeholder = self._ensure_assistant_placeholder(assistant_message_id, session_id)
     if placeholder is None:
         runtime_message = self._find_runtime_written_assistant(session_id)
         if runtime_message is not None:
-            if not runtime_message.content and outcome.final_text:
-                runtime_message.content = outcome.final_text
+            if not runtime_message.content:
+                runtime_message.content = outcome.final_text or "No response was generated."
+            runtime_message.status = "complete"
             self._set_run_state(ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."))
             return ConsoleSubmitResult(True, True, runtime_message.content)
+        content = outcome.final_text or "No response was generated."
         message = self.store.append_message(
             session_id,
             role=ConsoleMessageRole.ASSISTANT,
-            content=outcome.final_text,
+            content=content,
         )
+        completed = self.store.mark_message_complete(message.id)
         self._set_run_state(ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."))
-        return ConsoleSubmitResult(True, True, message.content)
+        return ConsoleSubmitResult(True, True, completed.content)
 
     completed = self._complete_agent_message(
         assistant_message_id, variant_mode=variant_mode, outcome=outcome
@@ -408,11 +420,11 @@ def _finalize_agent_failure(
             session_id,
             role=ConsoleMessageRole.ASSISTANT,
             content=visible_copy,
-            status="failed",
         )
+        failed = self.store.mark_message_failed(message.id)
         self._append_failure_system_row(session_id, visible_copy)
         self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
-        return ConsoleSubmitResult(True, True, message.content)
+        return ConsoleSubmitResult(True, True, failed.content)
 
     failed = self.store.mark_message_failed(assistant_message_id)
     self._append_failure_system_row(session_id, visible_copy)
@@ -1172,17 +1184,16 @@ from tldw_chatbook.Widgets.Console.console_context_modal import ConsoleContextMo
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 
 async def action_view_chat_context(self) -> None:
-    controller = self._controller
+    controller = self._console_chat_controller
     session_id = controller.store.active_session_id
     if not session_id:
         self.notify("No active conversation.", severity="warning")
         return
 
-    session = controller.store.session(session_id)
     composer = self.query_one("#console-native-composer", ConsoleComposerBar)
     draft = composer.value if composer else ""
-    staged_sources = session.workspace_context.allowed_sources if session else []
-    attachments = controller.store.pending_attachments(session_id) if session else []
+    staged_sources = controller.store.workspace_context.allowed_sources
+    attachments = controller.store.pending_attachments(session_id)
 
     async def _factory() -> ConsoleContextSnapshot:
         return await controller.build_context_snapshot(
@@ -1360,7 +1371,7 @@ async def test_chat_screen_keybinding_opens_context_modal():
     async with app.run_test(size=(120, 40)) as pilot:
         # Ensure an active session and a message exist.
         screen = app.screen
-        controller = screen._controller
+        controller = screen._console_chat_controller
         session = controller.store.ensure_session(title="Test")
         controller.store.append_message(
             session.id,
@@ -1381,7 +1392,7 @@ async def test_chat_screen_command_palette_opens_context_modal():
 
     async with app.run_test(size=(120, 40)) as pilot:
         screen = app.screen
-        controller = screen._controller
+        controller = screen._console_chat_controller
         session = controller.store.ensure_session(title="Test")
         controller.store.append_message(
             session.id,
