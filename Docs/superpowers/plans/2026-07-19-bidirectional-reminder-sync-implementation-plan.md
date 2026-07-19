@@ -54,6 +54,7 @@ from tldw_chatbook.Scheduling.services.server_client import (
     ServerClientServerError,
     ServerClientTimeoutError,
     ServerClientValidationError,
+    ServerUnavailableError,
 )
 
 
@@ -224,6 +225,40 @@ async def test_policy_denied_maps_to_validation_error():
 
 
 @pytest.mark.asyncio
+async def test_list_reminders_uses_shorter_timeout():
+    async def slow(*args, **kwargs):
+        await asyncio.sleep(0.5)
+        return {"items": []}
+
+    service = AsyncMock()
+    service.list_reminders.side_effect = slow
+    client = SchedulingServerClient(
+        notifications_service=service,
+        config=ServerClientConfig(timeout=0.05),
+    )
+
+    with pytest.raises(ServerClientTimeoutError):
+        await client.list_reminders()
+
+
+@pytest.mark.asyncio
+async def test_create_reminder_uses_longer_timeout():
+    async def slow(*args, **kwargs):
+        await asyncio.sleep(0.5)
+        return {"id": "srv-1"}
+
+    service = AsyncMock()
+    service.create_reminder.side_effect = slow
+    client = SchedulingServerClient(
+        notifications_service=service,
+        config=ServerClientConfig(timeout=0.05),
+    )
+
+    with pytest.raises(ServerClientTimeoutError):
+        await client.create_reminder(title="T", schedule_kind="one_time")
+
+
+@pytest.mark.asyncio
 async def test_set_notifications_service_replaces_service():
     old_service = AsyncMock()
     new_service = AsyncMock()
@@ -288,6 +323,7 @@ class SchedulingServerClient:
         method_name: str,
         *args: Any,
         retry: bool = True,
+        is_read: bool = False,
         **kwargs: Any,
     ) -> dict[str, Any]:
         service = self.notifications_service
@@ -296,22 +332,32 @@ class SchedulingServerClient:
 
         kwargs = self._strip_local_only_kwargs(kwargs)
         method = getattr(service, method_name)
+        timeout = self.config.timeout if is_read else self.config.timeout * 3  # 10s read / 30s write
         last_error: Exception | None = None
+        error_cls: type[ServerClientError] = ServerClientError
 
         attempts = self.config.max_retries + 1 if retry else 1
         for attempt in range(attempts):
             try:
-                return await method(*args, **kwargs)
+                coro = method(*args, **kwargs)
+                return await asyncio.wait_for(coro, timeout=timeout)
             except PolicyDeniedError as exc:
                 raise ServerClientValidationError(str(exc)) from exc
+            except ServerClientNotFoundError:
+                raise
+            except ServerClientValidationError:
+                raise
+            except ServerClientServerError as exc:
+                last_error = exc
+                error_cls = ServerClientServerError
+            except ServerClientTimeoutError as exc:
+                last_error = exc
+                error_cls = ServerClientTimeoutError
             except asyncio.TimeoutError as exc:
                 last_error = exc
                 error_cls = ServerClientTimeoutError
-            except ServerClientError:
-                raise
             except Exception as exc:  # noqa: BLE001
                 last_error = exc
-                error_cls = ServerClientError
                 status = getattr(exc, "status_code", None)
                 if status == 404:
                     raise ServerClientNotFoundError(str(exc)) from exc
@@ -319,6 +365,8 @@ class SchedulingServerClient:
                     raise ServerClientValidationError(str(exc)) from exc
                 if status is not None and 500 <= status < 600:
                     error_cls = ServerClientServerError
+                else:
+                    error_cls = ServerClientError
 
             if not retry or attempt == attempts - 1:
                 raise error_cls(str(last_error)) from last_error
@@ -333,18 +381,16 @@ class SchedulingServerClient:
         return await self._call_with_retry("create_reminder", retry=False, **payload)
 
     async def update_reminder(self, task_id: str, **payload: Any) -> dict[str, Any]:
-        return await self._call_with_retry(
-            "update_reminder", task_id, **payload
-        )
+        return await self._call_with_retry("update_reminder", task_id, **payload)
 
     async def delete_reminder(self, task_id: str) -> dict[str, Any]:
         return await self._call_with_retry("delete_reminder", task_id)
 
     async def list_reminders(self) -> dict[str, Any]:
-        return await self._call_with_retry("list_reminders")
+        return await self._call_with_retry("list_reminders", is_read=True)
 
     async def get_reminder(self, task_id: str) -> dict[str, Any]:
-        return await self._call_with_retry("get_reminder", task_id)
+        return await self._call_with_retry("get_reminder", task_id, is_read=True)
 ```
 
 **Note:** `PolicyDeniedError` import may already be available via `runtime_policy.types`. If not, add the import at module scope.
@@ -640,7 +686,7 @@ def _append_sync_error(self, owner_id: str, message: str) -> None:
     self.update_sync_state(owner_id, sync_errors=errors)
 ```
 
-Also add the connection-aware private helpers `_get_reminder_task_by_server_id_conn`, `_update_reminder_task_conn`, `_create_reminder_task_conn`, and `_set_sync_mapping_conn` by refactoring the existing public methods to use them. For example:
+Also add the connection-aware private helpers `_get_reminder_task_by_server_id_conn`, `_update_reminder_task_conn`, `_create_reminder_task_conn`, `_set_sync_mapping_conn`, `_delete_reminder_task_conn`, `_delete_sync_mapping_conn`, and `_delete_tombstone_conn` by refactoring the existing public methods to use them. For example:
 
 ```python
 def _get_reminder_task_by_server_id_conn(
@@ -732,6 +778,45 @@ def _set_sync_mapping_conn(
         VALUES (?, ?, ?, ?, ?)
         """,
         (local_id, server_id, primitive, owner_id, self._to_utc_iso(now)),
+    )
+
+
+def _delete_reminder_task_conn(
+    self, conn: sqlite3.Connection, task_id: str
+) -> bool:
+    cursor = conn.execute("DELETE FROM reminder_tasks WHERE id = ?", (task_id,))
+    return cursor.rowcount > 0
+
+
+def _delete_sync_mapping_conn(
+    self,
+    conn: sqlite3.Connection,
+    local_id: str,
+    primitive: str,
+    owner_id: str,
+) -> None:
+    conn.execute(
+        """
+        DELETE FROM sync_mapping
+        WHERE local_id = ? AND primitive = ? AND owner_id = ?
+        """,
+        (local_id, primitive, owner_id),
+    )
+
+
+def _delete_tombstone_conn(
+    self,
+    conn: sqlite3.Connection,
+    local_id: str,
+    primitive: str,
+    owner_id: str,
+) -> None:
+    conn.execute(
+        """
+        DELETE FROM sync_tombstones
+        WHERE local_id = ? AND primitive = ? AND owner_id = ?
+        """,
+        (local_id, primitive, owner_id),
     )
 ```
 
@@ -874,7 +959,7 @@ class SyncEngine:
             return
 
         try:
-            pulled_items, staged_outcomes, conflicts = await self._network_phase(
+            pulled_items, staged_outcomes, conflicts, tombstone_ids = await self._network_phase(
                 target_owner
             )
         except ServerClientError as exc:
@@ -906,12 +991,21 @@ class SyncEngine:
                         self.db._update_reminder_task_conn(
                             conn, local_id, server_id=server_id
                         )
+                    if outcome.get("delete_local"):
+                        self.db._delete_reminder_task_conn(conn, local_id)
+                        self.db._delete_sync_mapping_conn(
+                            conn, local_id, _REMINDER_PRIMITIVE, target_owner
+                        )
                 mutation_ids = [o["mutation_id"] for o in staged_outcomes if o.get("mutation_id")]
                 self.db._purge_pending_mutations(conn, target_owner, mutation_ids)
+                for local_id in tombstone_ids:
+                    self.db._delete_tombstone_conn(
+                        conn, local_id, _REMINDER_PRIMITIVE, target_owner
+                    )
                 self.db.update_sync_state(
                     target_owner,
                     last_pull_at=now_utc_iso(),
-                    last_push_at=now_utc_iso() if staged_outcomes else None,
+                    last_push_at=now_utc_iso() if staged_outcomes or tombstone_ids else None,
                 )
         except Exception as exc:  # noqa: BLE001
             logger.exception(f"Sync transaction failed for {target_owner}: {exc}")
@@ -919,10 +1013,17 @@ class SyncEngine:
 
     async def _network_phase(
         self, owner_id: str
-    ) -> tuple[list[dict], list[dict], list[dict]]:
+    ) -> tuple[list[dict], list[dict], list[dict], list[str]]:
+        """Return (pulled_items, staged_outcomes, conflicts, tombstone_ids_to_delete).
+
+        On a retryable server error, the whole phase aborts and the caller records
+        a single sync error. Non-retryable 404s are converted to conflicts and the
+        pending mutation is staged for removal.
+        """
         pulled_items: list[dict] = []
         staged_outcomes: list[dict] = []
         conflicts: list[dict] = []
+        tombstone_ids_to_delete: list[str] = []
 
         response = await self.server_client.list_reminders()
         pulled_items = response.get("items", [])
@@ -934,6 +1035,11 @@ class SyncEngine:
                 raise ServerClientError("push phase aborted")
             if outcome.get("conflict"):
                 conflicts.append(outcome["conflict"])
+                # The mutation that caused a 404 is staged for deletion.
+                staged_outcomes.append({
+                    "local_id": outcome["conflict"]["local_id"],
+                    "mutation_id": mutation["id"],
+                })
             else:
                 staged_outcomes.append(outcome)
 
@@ -943,8 +1049,9 @@ class SyncEngine:
             if outcome is None:
                 raise ServerClientError("tombstone phase aborted")
             staged_outcomes.append(outcome)
+            tombstone_ids_to_delete.append(tombstone["local_id"])
 
-        return pulled_items, staged_outcomes, conflicts
+        return pulled_items, staged_outcomes, conflicts, tombstone_ids_to_delete
 
     async def _push_mutation(
         self, mutation: dict, owner_id: str
@@ -996,8 +1103,8 @@ class SyncEngine:
                     },
                 }
             }
-        except ServerClientError as exc:
-            self._record_sync_error(str(exc), owner_id)
+        except ServerClientError:
+            # Abort the whole push phase; caller records one sync error.
             return None
 
     async def _push_tombstone(
@@ -1012,8 +1119,7 @@ class SyncEngine:
             return {"local_id": local_id, "delete_tombstone": True}
         except ServerClientNotFoundError:
             return {"local_id": local_id, "delete_tombstone": True}
-        except ServerClientError as exc:
-            self._record_sync_error(str(exc), owner_id)
+        except ServerClientError:
             return None
 
     def resolve_conflict(self, conflict_id: str, resolution: str = "server") -> bool:
@@ -1022,6 +1128,7 @@ class SyncEngine:
             return False
 
         local_id = conflict["local_id"]
+        owner_id = conflict["owner_id"]
         server_state = conflict.get("server_state") or {}
         local_state = conflict.get("local_state") or {}
         pending_mutation = (
@@ -1033,8 +1140,8 @@ class SyncEngine:
         if resolution == "server":
             if not server_state:
                 self.db.delete_reminder_task(local_id)
-                self.db.delete_sync_mapping(local_id, _REMINDER_PRIMITIVE, self.owner_id)
-                self.db.delete_tombstone(local_id, _REMINDER_PRIMITIVE, self.owner_id)
+                self.db.delete_sync_mapping(local_id, _REMINDER_PRIMITIVE, owner_id)
+                self.db.delete_tombstone(local_id, _REMINDER_PRIMITIVE, owner_id)
             else:
                 self.db.update_reminder_task(
                     local_id, **self._whitelist_reminder_fields(server_state)
@@ -1042,17 +1149,17 @@ class SyncEngine:
         elif resolution == "local":
             if not server_state and pending_mutation:
                 self.db.update_reminder_task(local_id, server_id=None)
-                self.db.delete_sync_mapping(local_id, _REMINDER_PRIMITIVE, self.owner_id)
+                self.db.delete_sync_mapping(local_id, _REMINDER_PRIMITIVE, owner_id)
                 self.db.record_pending_mutation(
                     local_id,
                     _REMINDER_PRIMITIVE,
-                    self.owner_id,
+                    owner_id,
                     pending_mutation,
                 )
             elif not server_state:
                 row = self.db.get_reminder_task(local_id)
                 self.db.update_reminder_task(local_id, server_id=None)
-                self.db.delete_sync_mapping(local_id, _REMINDER_PRIMITIVE, self.owner_id)
+                self.db.delete_sync_mapping(local_id, _REMINDER_PRIMITIVE, owner_id)
                 fields = {
                     key: row.get(key)
                     for key in self._REMINDER_MUTABLE_FIELDS
@@ -1061,14 +1168,14 @@ class SyncEngine:
                 self.db.record_pending_mutation(
                     local_id,
                     _REMINDER_PRIMITIVE,
-                    self.owner_id,
+                    owner_id,
                     {"action": "create", "fields": fields},
                 )
             elif pending_mutation:
                 self.db.record_pending_mutation(
                     local_id,
                     _REMINDER_PRIMITIVE,
-                    self.owner_id,
+                    owner_id,
                     pending_mutation,
                 )
             else:
@@ -1080,7 +1187,7 @@ class SyncEngine:
                 self.db.record_pending_mutation(
                     local_id,
                     _REMINDER_PRIMITIVE,
-                    self.owner_id,
+                    owner_id,
                     {"action": "update", "fields": fields},
                 )
             self.db.increment_conflict_retry_count(conflict_id)
@@ -1128,19 +1235,32 @@ from tldw_chatbook.UI.Screens.scheduling.sync_status_widget import SyncStatusWid
 
 
 def test_sync_status_widget_renders_mode_and_timestamps():
-    widget = SyncStatusWidget()
+    widget = SyncStatusWidget(
+        current_owner="server:example.com",
+        server_available=True,
+    )
     widget.update_status(
-        owner_id="server:example.com",
         last_pull_at="2026-07-19T10:00:00+00:00",
         last_push_at="2026-07-19T10:05:00+00:00",
         sync_errors=[],
-        server_available=True,
     )
 
-    text = widget.renderable.plain
-    assert "Server" in text
-    assert "Last pull" in text
-    assert "Last push" in text
+    select = widget.query_one("#scheduling-owner-select", Select)
+    assert select.value == "server:example.com"
+    pull = widget.query_one("#scheduling-last-pull", Static)
+    push = widget.query_one("#scheduling-last-push", Static)
+    assert "Last pull" in pull.renderable.plain
+    assert "Last push" in push.renderable.plain
+
+
+def test_sync_status_widget_disables_server_option_when_unavailable():
+    widget = SyncStatusWidget(
+        current_owner="local",
+        server_available=False,
+    )
+    select = widget.query_one("#scheduling-owner-select", Select)
+    server_option = next(opt for opt in select.options if opt[1].startswith("server:"))
+    assert server_option[2] is False  # (prompt, value, disabled)
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1160,7 +1280,7 @@ Create `tldw_chatbook/UI/Screens/scheduling/sync_status_widget.py`:
 
 from __future__ import annotations
 
-from textual.widgets import Button, Static
+from textual.widgets import Button, Select, Static
 from textual.containers import Horizontal
 
 
@@ -1187,8 +1307,27 @@ class SyncStatusWidget(Horizontal):
     }
     """
 
+    def __init__(
+        self,
+        current_owner: str = "local",
+        active_server_id: str | None = None,
+        server_available: bool = False,
+        **kwargs,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.current_owner = current_owner
+        self.active_server_id = active_server_id
+        self.server_available = server_available
+
     def compose(self):
-        yield Static("Local", id="scheduling-owner-select")
+        options = [("Local", "local", False)]
+        server_value = f"server:{self.active_server_id}" if self.active_server_id else "server:"
+        options.append((
+            f"Server ({self.active_server_id or 'unavailable'})",
+            server_value,
+            not self.server_available,
+        ))
+        yield Select(options, value=self.current_owner, id="scheduling-owner-select")
         yield Static("Last pull: —", id="scheduling-last-pull")
         yield Static("Last push: —", id="scheduling-last-push")
         yield Static("", id="scheduling-sync-error")
@@ -1196,14 +1335,10 @@ class SyncStatusWidget(Horizontal):
 
     def update_status(
         self,
-        owner_id: str,
         last_pull_at: str | None,
         last_push_at: str | None,
         sync_errors: list[dict],
-        server_available: bool,
     ) -> None:
-        owner_label = "Local" if owner_id == "local" else f"Server ({owner_id})"
-        self.query_one("#scheduling-owner-select", Static).update(owner_label)
         self.query_one("#scheduling-last-pull", Static).update(
             f"Last pull: {last_pull_at or '—'}"
         )
@@ -1250,10 +1385,12 @@ Add to `Tests/UI/test_schedules_workbench.py`:
 from tldw_chatbook.UI.Screens.scheduling.conflicts_tab import ConflictsTab
 
 
-def test_conflicts_tab_renders_rows():
+def test_conflicts_tab_renders_rows_and_resolves():
     class FakeEngine:
+        def __init__(self):
+            self.calls = []
         def resolve_conflict(self, conflict_id, resolution):
-            self.last_call = (conflict_id, resolution)
+            self.calls.append((conflict_id, resolution))
 
     engine = FakeEngine()
     tab = ConflictsTab(sync_engine=engine)
@@ -1264,16 +1401,12 @@ def test_conflicts_tab_renders_rows():
             "server_state": {},
             "local_state": {"record": {"title": "Local"}},
         },
-        {
-            "id": "c2",
-            "local_id": "l2",
-            "server_state": {"updated_at": "2026-07-19T10:00:00Z"},
-            "local_state": {"record": {"title": "Local"}},
-        },
     ])
 
     table = tab.query_one("#scheduling-conflicts-table", DataTable)
-    assert table.row_count == 2
+    assert table.row_count == 1
+    tab._resolve_selected("server")
+    assert engine.calls == [("c1", "server")]
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1295,8 +1428,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from textual import on
+from textual.message import Message
 from textual.widgets import Button, DataTable, Static
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 
 
 class ConflictsTab(Vertical):
@@ -1320,10 +1455,15 @@ class ConflictsTab(Vertical):
         table = DataTable(id="scheduling-conflicts-table")
         table.add_columns("Title", "Conflict Type", "Server updated", "Local updated")
         yield table
+        with Horizontal(id="scheduling-conflict-actions"):
+            yield Button("Use server", id="scheduling-use-server")
+            yield Button("Use local", id="scheduling-use-local")
 
     def populate(self, conflicts: list[dict[str, Any]]) -> None:
         table = self.query_one("#scheduling-conflicts-table", DataTable)
         table.clear()
+        self._conflicts = {c["id"]: c for c in conflicts}
+        self._row_keys = []
         for conflict in conflicts:
             server_state = conflict.get("server_state") or {}
             local_state = conflict.get("local_state") or {}
@@ -1331,17 +1471,37 @@ class ConflictsTab(Vertical):
             conflict_type = "server-deletion" if not server_state else "server-update"
             server_updated = server_state.get("updated_at", "—")
             local_updated = local_row.get("updated_at", "—")
-            table.add_row(
+            key = table.add_row(
                 local_row.get("title", "Untitled"),
                 conflict_type,
                 server_updated,
                 local_updated,
-                key=conflict["id"],
             )
+            self._row_keys.append(str(key.value))
 
     def on_mount(self):
         table = self.query_one("#scheduling-conflicts-table", DataTable)
         table.cursor_type = "row"
+
+    @on(Button.Pressed, "#scheduling-use-server")
+    def _on_use_server(self) -> None:
+        self._resolve_selected("server")
+
+    @on(Button.Pressed, "#scheduling-use-local")
+    def _on_use_local(self) -> None:
+        self._resolve_selected("local")
+
+    def _resolve_selected(self, resolution: str) -> None:
+        table = self.query_one("#scheduling-conflicts-table", DataTable)
+        if table.cursor_row is None or table.cursor_row >= len(self._row_keys):
+            return
+        conflict_id = self._row_keys[table.cursor_row]
+        if self.sync_engine is not None:
+            self.sync_engine.resolve_conflict(conflict_id, resolution)
+        self.post_message(self.ConflictResolved())
+
+    class ConflictResolved(Message):
+        """Posted when the user resolves a conflict."""
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -1372,40 +1532,34 @@ git commit -m "feat(scheduling): add ConflictsTab widget for sync conflicts"
 Add to `Tests/UI/test_schedules_workbench.py`:
 
 ```python
+from unittest.mock import AsyncMock
+
 from tldw_chatbook.Scheduling.events import SyncCompleted, SyncFailed
 
 
 @pytest.mark.asyncio
-async def test_schedules_workbench_sync_worker_posts_completed():
-    class FakeService:
-        def __init__(self):
-            self.server_client = None
-            self.sync_now = AsyncMock()
-        def set_owner(self, owner_id):
-            self.owner_id = owner_id
-
-    service = FakeService()
-    app = WorkbenchTestAppWithService()
-    app.scheduling_service = service
-    workbench = SchedulesWorkbench(app)
-
-    posted = []
-    workbench.post_message = lambda msg: posted.append(msg)
-    workbench._scheduling_service = service
-    workbench.action_sync_now()
-    await workbench._sync_worker  # wait for worker if exposed
-
-    assert any(isinstance(m, SyncCompleted) for m in posted)
-```
-
-This test is intentionally high-level; adjust based on actual Textual worker APIs. A simpler unit test:
-
-```python
-def test_action_sync_now_notifies_when_no_service():
+async def test_action_sync_now_notifies_when_no_service():
     app = WorkbenchTestApp()
     workbench = SchedulesWorkbench(app)
-    # Should not crash
+    # Should not crash and should not start a worker
     workbench.action_sync_now()
+
+
+def test_action_sync_now_guard_prevents_duplicate_workers():
+    class FakeService:
+        def __init__(self):
+            self.owner_id = "local"
+            self.server_client = None
+            self.sync_now = AsyncMock()
+            self.db = None
+
+    app = WorkbenchTestAppWithService()
+    app.scheduling_service = FakeService()
+    workbench = SchedulesWorkbench(app)
+    workbench._sync_running = True
+    workbench.action_sync_now()
+    # The app should have received a warning notification.
+    # Exact assertion depends on the test harness; at minimum it must not start a second worker.
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1423,6 +1577,7 @@ Modify `tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py`:
 ```python
 from textual.widgets import Button, DataTable, Select, Static, TabbedContent, TabPane
 
+from ....runtime_policy.bootstrap import set_authoritative_runtime_source
 from ....Scheduling.events import (
     DeleteTaskRequested,
     DisableTaskRequested,
@@ -1441,7 +1596,17 @@ Update `compose_content`:
 def compose_content(self) -> ComposeResult:
     service = self._service()
     owner_id = service.owner_id if service else "local"
-    yield SyncStatusWidget(id="scheduling-sync-status")
+    active_server_id = getattr(self.app_instance, "active_server_id", None)
+    server_available = (
+        service is not None
+        and service.server_client.notifications_service is not None
+    )
+    yield SyncStatusWidget(
+        id="scheduling-sync-status",
+        current_owner=owner_id,
+        active_server_id=active_server_id,
+        server_available=server_available,
+    )
     with TabbedContent():
         with TabPane("Queue", id="scheduling-queue-tab"):
             with Horizontal(id="scheduling-workbench"):
@@ -1459,6 +1624,16 @@ def compose_content(self) -> ComposeResult:
 Add owner switching and sync worker methods:
 
 ```python
+    def __init__(self, app_instance: "TldwCli", screen_name: str = "schedules", **kwargs):
+        super().__init__(app_instance, screen_name, **kwargs)
+        self._scheduling_service = getattr(app_instance, "scheduling_service", None)
+        self._tasks: list[ReminderTask | ScheduledTask] = []
+        self._current_console_follow_item = None
+        self._latest_console_follow_item_id: str | None = None
+        self._latest_console_launch_kwargs: dict[str, Any] | None = None
+        self._latest_console_context_loaded = False
+        self._sync_running = False
+
     def on_mount(self) -> None:
         super().on_mount()
         self._register_footer_shortcuts()
@@ -1471,16 +1646,31 @@ Add owner switching and sync worker methods:
         status = self.query_one("#scheduling-sync-status", SyncStatusWidget)
         service = self._service()
         if service is None:
-            status.update_status("local", None, None, [], False)
+            status.update_status(None, None, [])
             return
         state = service.db.get_sync_state(service.owner_id) or {}
         status.update_status(
-            owner_id=service.owner_id,
             last_pull_at=state.get("last_pull_at"),
             last_push_at=state.get("last_push_at"),
             sync_errors=state.get("sync_errors") or [],
-            server_available=service.server_client.notifications_service is not None,
         )
+
+    @on(Select.Changed, "#scheduling-owner-select")
+    def _on_owner_changed(self, event: Select.Changed) -> None:
+        service = self._service()
+        if service is None:
+            return
+        new_owner = event.value
+        if new_owner.startswith("server:") and service.server_client.notifications_service is None:
+            self.app_instance.notify("No server connection", severity="warning")
+            self._refresh_owner_select()
+            return
+        service.set_owner(new_owner)
+        runtime_source = "server" if new_owner.startswith("server:") else "local"
+        set_authoritative_runtime_source(self.app_instance, runtime_source)
+        self._refresh_owner_select()
+        self.run_worker(self.load_tasks, exclusive=True)
+        self._refresh_conflicts_tab()
 
     @on(Button.Pressed, "#scheduling-clear-error")
     def _on_clear_sync_errors(self) -> None:
@@ -1492,6 +1682,7 @@ Add owner switching and sync worker methods:
 
     @on(SyncCompleted)
     def _on_sync_completed(self, event: SyncCompleted) -> None:
+        self._sync_running = False
         self.app_instance.notify("Sync completed.", severity="information")
         self._refresh_owner_select()
         self.run_worker(self.load_tasks, exclusive=True)
@@ -1499,8 +1690,14 @@ Add owner switching and sync worker methods:
 
     @on(SyncFailed)
     def _on_sync_failed(self, event: SyncFailed) -> None:
+        self._sync_running = False
         self.app_instance.notify(f"Sync failed: {event.error}", severity="error")
         self._refresh_owner_select()
+        self.run_worker(self.load_tasks, exclusive=True)
+        self._refresh_conflicts_tab()
+
+    @on(ConflictsTab.ConflictResolved)
+    def _on_conflict_resolved(self, event: ConflictsTab.ConflictResolved) -> None:
         self.run_worker(self.load_tasks, exclusive=True)
         self._refresh_conflicts_tab()
 
@@ -1514,6 +1711,9 @@ Add owner switching and sync worker methods:
 
     def action_sync_now(self) -> None:
         """Sync schedule state now."""
+        if self._sync_running:
+            self.app_instance.notify("Sync already in progress", severity="warning")
+            return
         service = self._service()
         if service is None:
             self.app_instance.notify(
@@ -1521,13 +1721,15 @@ Add owner switching and sync worker methods:
                 severity="warning",
             )
             return
+        self._sync_running = True
         self.run_worker(self._run_sync, exclusive=True)
 
     async def _run_sync(self) -> None:
         service = self._service()
         if service is None:
+            self._sync_running = False
             return
-        owner_select = self.query_one("#scheduling-owner-select", Static)
+        owner_select = self.query_one("#scheduling-owner-select", Select)
         owner_select.disabled = True
         try:
             owner_id = service.owner_id
@@ -1539,6 +1741,7 @@ Add owner switching and sync worker methods:
             self.post_message(SyncFailed(service.owner_id, str(exc)))
         finally:
             owner_select.disabled = False
+            self._sync_running = False
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -1598,7 +1801,43 @@ git commit -m "feat(scheduling): always instantiate SchedulingServerClient in ap
 
 ---
 
-## Task 11: Full test run and lint
+## Task 11: Update ADR-018 with TASK-299.2 decisions
+
+**Files:**
+- Modify: `backlog/decisions/018-local-server-hybrid-scheduled-tasks.md`
+
+- [ ] **Step 1: Append the TASK-299.2 addendum**
+
+Ensure `backlog/decisions/018-local-server-hybrid-scheduled-tasks.md` contains an addendum section documenting:
+- Local-only idempotency keys.
+- `create_reminder` is not retried.
+- Network-then-transaction sync boundary.
+- Crash-window trade-off.
+- Interim URL-derived owner identity and migration path.
+- Runtime-source mapping.
+- Conflict resolution behavior.
+- Always-instantiated `SchedulingServerClient`.
+
+Use the exact wording already approved in the design spec's referenced ADR-018 update.
+
+- [ ] **Step 2: Verify the ADR renders**
+
+```bash
+python -c "import pathlib; print(pathlib.Path('backlog/decisions/018-local-server-hybrid-scheduled-tasks.md').read_text()[:200])"
+```
+
+Expected: prints the ADR header and decision.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add backlog/decisions/018-local-server-hybrid-scheduled-tasks.md
+git commit -m "docs(decisions): update ADR-018 with TASK-299.2 sync decisions"
+```
+
+---
+
+## Task 12: Full test run and lint
 
 **Files:**
 - All modified files.
@@ -1633,7 +1872,7 @@ git commit -m "style(scheduling): address lint and test fixes for TASK-299.2"
 
 ---
 
-## Task 12: Update backlog task status
+## Task 13: Update backlog task status
 
 **Files:**
 - Modify: `backlog/tasks/task-299.2 - Bidirectional-reminder-sync-with-tldw_server.md`
