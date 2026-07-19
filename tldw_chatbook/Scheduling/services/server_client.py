@@ -12,10 +12,7 @@ try:
 except ImportError:  # pragma: no cover
     httpx = None  # type: ignore[assignment]
 
-try:
-    from tldw_chatbook.runtime_policy.types import PolicyDeniedError
-except ImportError:  # pragma: no cover
-    PolicyDeniedError = None  # type: ignore[assignment,misc]
+from tldw_chatbook.runtime_policy.types import PolicyDeniedError
 
 
 class ServerClientError(Exception):
@@ -44,6 +41,8 @@ class ServerClientServerError(ServerClientError):
 
 @dataclass(slots=True)
 class ServerClientConfig:
+    """Configuration for the scheduling server client."""
+
     timeout: float = 10.0
     max_retries: int = 3
     retry_delay: float = 1.0
@@ -63,19 +62,36 @@ class SchedulingServerClient:
         notifications_service: Any | None = None,
         config: ServerClientConfig | None = None,
     ) -> None:
+        """Initialize the client.
+
+        Args:
+            notifications_service: Service that implements the reminder CRUD
+                contract, or ``None`` if no scheduling server is connected.
+            config: Client configuration. Defaults to a new
+                :class:`ServerClientConfig` instance.
+        """
         self.notifications_service = notifications_service
         self.config = config or ServerClientConfig()
 
     def set_notifications_service(self, notifications_service: Any | None) -> None:
-        """Inject or refresh the underlying notifications service."""
-        self.notifications_service = notifications_service
+        """Inject or refresh the underlying notifications service.
 
-    def _is_available(self) -> bool:
-        return self.notifications_service is not None
+        Args:
+            notifications_service: The service to use for future reminder
+                operations, or ``None`` to disconnect the server.
+        """
+        self.notifications_service = notifications_service
 
     @staticmethod
     def _strip_local_only_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
-        """Remove kwargs that the server service does not accept."""
+        """Remove kwargs that are only meaningful to the local scheduler.
+
+        Args:
+            kwargs: Keyword arguments destined for the notifications service.
+
+        Returns:
+            A copy of ``kwargs`` with local-only keys removed.
+        """
         return {k: v for k, v in kwargs.items() if k != "idempotency_key"}
 
     async def _call_with_retry(
@@ -86,6 +102,30 @@ class SchedulingServerClient:
         is_read: bool = False,
         **kwargs: Any,
     ) -> dict[str, Any]:
+        """Call a notifications-service method with retries and error mapping.
+
+        Args:
+            method_name: Name of the method to invoke on the injected service.
+            *args: Positional arguments for the service method.
+            retry: Whether to retry on retriable failures. Defaults to ``True``.
+            is_read: Whether this is a read operation, which uses a shorter
+                timeout. Defaults to ``False``.
+            **kwargs: Keyword arguments for the service method.
+
+        Returns:
+            The dictionary returned by the service method.
+
+        Raises:
+            ServerUnavailableError: If no notifications service is configured.
+            ServerClientNotFoundError: If the server reports the task was not found.
+            ServerClientValidationError: If the request is rejected by policy or
+                the server returns a client error.
+            ServerClientServerError: If the server returns a server error and
+                retries are exhausted.
+            ServerClientTimeoutError: If the request times out and retries are
+                exhausted.
+            ServerClientError: For other failures after retries are exhausted.
+        """
         service = self.notifications_service
         if service is None:
             raise ServerUnavailableError("server not available")
@@ -119,6 +159,8 @@ class SchedulingServerClient:
             except Exception as exc:  # noqa: BLE001
                 last_error = exc
                 status = getattr(exc, "status_code", None)
+                if httpx is not None and isinstance(exc, httpx.HTTPStatusError):
+                    status = getattr(exc.response, "status_code", None)
                 if status == 404:
                     raise ServerClientNotFoundError(str(exc)) from exc
                 if status is not None and 400 <= status < 500:
@@ -144,16 +186,91 @@ class SchedulingServerClient:
         raise ServerClientError("unexpected end of retry loop")
 
     async def create_reminder(self, **payload: Any) -> dict[str, Any]:
+        """Create a new reminder.
+
+        Args:
+            **payload: Reminder fields to pass to the notifications service.
+
+        Returns:
+            The created reminder as returned by the service.
+
+        Raises:
+            ServerUnavailableError: If no scheduling server is connected.
+            ServerClientValidationError: If the request is rejected locally or by
+                the server.
+            ServerClientTimeoutError: If the request times out.
+        """
         return await self._call_with_retry("create_reminder", retry=False, **payload)
 
     async def update_reminder(self, task_id: str, **payload: Any) -> dict[str, Any]:
+        """Update an existing reminder.
+
+        Args:
+            task_id: Identifier of the reminder to update.
+            **payload: Reminder fields to update.
+
+        Returns:
+            The updated reminder as returned by the service.
+
+        Raises:
+            ServerUnavailableError: If no scheduling server is connected.
+            ServerClientNotFoundError: If the reminder does not exist server-side.
+            ServerClientValidationError: If the request is rejected locally or by
+                the server.
+            ServerClientServerError: If the server returns a server error after
+                retries are exhausted.
+            ServerClientTimeoutError: If the request times out after retries.
+        """
         return await self._call_with_retry("update_reminder", task_id, **payload)
 
     async def delete_reminder(self, task_id: str) -> dict[str, Any]:
+        """Delete a reminder.
+
+        Args:
+            task_id: Identifier of the reminder to delete.
+
+        Returns:
+            The service response after deletion.
+
+        Raises:
+            ServerUnavailableError: If no scheduling server is connected.
+            ServerClientNotFoundError: If the reminder does not exist server-side.
+            ServerClientValidationError: If the request is rejected locally or by
+                the server.
+            ServerClientServerError: If the server returns a server error after
+                retries are exhausted.
+            ServerClientTimeoutError: If the request times out after retries.
+        """
         return await self._call_with_retry("delete_reminder", task_id)
 
     async def list_reminders(self) -> dict[str, Any]:
+        """List all reminders.
+
+        Returns:
+            The service response containing the reminder list.
+
+        Raises:
+            ServerUnavailableError: If no scheduling server is connected.
+            ServerClientServerError: If the server returns a server error after
+                retries are exhausted.
+            ServerClientTimeoutError: If the request times out after retries.
+        """
         return await self._call_with_retry("list_reminders", is_read=True)
 
     async def get_reminder(self, task_id: str) -> dict[str, Any]:
+        """Fetch a single reminder.
+
+        Args:
+            task_id: Identifier of the reminder to retrieve.
+
+        Returns:
+            The requested reminder as returned by the service.
+
+        Raises:
+            ServerUnavailableError: If no scheduling server is connected.
+            ServerClientNotFoundError: If the reminder does not exist server-side.
+            ServerClientServerError: If the server returns a server error after
+                retries are exhausted.
+            ServerClientTimeoutError: If the request times out after retries.
+        """
         return await self._call_with_retry("get_reminder", task_id, is_read=True)
