@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 # 3rd-party Libraries
 from loguru import logger
 from textual.css.query import QueryError
+from textual.widgets import Button
 
 # Local Imports
 from ..UI.MediaIngestWindowRebuilt import MediaIngestWindowRebuilt as IngestWindow

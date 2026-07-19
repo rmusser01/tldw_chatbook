@@ -4,8 +4,11 @@ Handles keyword matching and injection of world info entries into conversations.
 """
 
 import re
-from typing import Dict, List, Any, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Any, Optional, Tuple
 from loguru import logger
+
+if TYPE_CHECKING:
+    from .world_info_diagnostics import WorldBookScanDiagnostics
 
 
 def _coerce_int(value: Any, default: int = 0) -> int:

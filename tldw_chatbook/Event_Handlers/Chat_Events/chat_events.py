@@ -2035,7 +2035,7 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
             
         # Check streaming checkbox to override provider setting for regeneration
         try:
-            streaming_checkbox_regen = current_screen.query_one("#chat-streaming-enabled-checkbox", Checkbox)
+            streaming_checkbox_regen = app.screen.query_one("#chat-streaming-enabled-checkbox", Checkbox)
             streaming_override_regen = streaming_checkbox_regen.value
             if streaming_override_regen != should_stream_regen:
                 loguru_logger.info(f"Streaming override for REGENERATION: checkbox={streaming_override_regen}, provider default={should_stream_regen}")
@@ -4344,7 +4344,7 @@ async def handle_continue_response_button_pressed(app: 'TldwCli', event: Button.
     
     # Check streaming checkbox to override even for continuation
     try:
-        streaming_checkbox_cont = current_screen.query_one("#chat-streaming-enabled-checkbox", Checkbox)
+        streaming_checkbox_cont = app.screen.query_one("#chat-streaming-enabled-checkbox", Checkbox)
         streaming_override_cont = streaming_checkbox_cont.value
         if not streaming_override_cont:
             loguru_logger.info("Streaming override for CONTINUATION: checkbox=False, overriding default continuation streaming")

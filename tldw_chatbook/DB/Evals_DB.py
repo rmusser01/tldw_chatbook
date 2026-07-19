@@ -27,8 +27,11 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Dict, Optional, Any, Union, Tuple
+from typing import TYPE_CHECKING, List, Dict, Optional, Any, Union, Tuple
 from loguru import logger
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Evals.ab_testing import ABTestResult
 
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 

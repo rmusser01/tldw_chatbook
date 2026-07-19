@@ -459,19 +459,21 @@ class STTSEventHandler:
         except Exception as e:
             logger.error(f"TTS generation failed: {e}")
             if playground:
+                exc = e
+
                 def handle_error():
                     log = playground.query_one("#tts-generation-log", RichLog)
-                    log.write(f"[bold red]✗ Generation failed: {e}[/bold red]")
-                    
+                    log.write(f"[bold red]✗ Generation failed: {exc}[/bold red]")
+
                     # Call the widget's completion method
                     if hasattr(playground, '_generation_complete'):
                         playground._generation_complete(False)
-                
+
                 if hasattr(playground, 'call_from_thread'):
                     playground.call_from_thread(handle_error)
                 else:
                     handle_error()
-                
+
             from rich.markup import escape
             self.app.notify(f"TTS generation failed: {escape(str(e))}", severity="error")
         finally:
