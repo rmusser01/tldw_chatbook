@@ -437,6 +437,7 @@ class SubscriptionsDB(BaseDB):
                 "custom_headers",
                 "rate_limit_config",
                 "auto_pause_threshold",
+                "is_active",
             ]
 
             for field in allowed_fields:
