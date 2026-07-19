@@ -1,6 +1,8 @@
-"""Tests for ScheduledTasksDB reminder CRUD operations."""
+"""Tests for ScheduledTasksDB CRUD operations."""
 
+import json
 import tempfile
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -308,3 +310,206 @@ def test_to_utc_iso_rejects_invalid_types(db: ScheduledTasksDB) -> None:
 def test_to_utc_iso_rejects_invalid_string(db: ScheduledTasksDB) -> None:
     with pytest.raises(ValueError, match="Invalid ISO-8601"):
         db._to_utc_iso("not-a-datetime")
+
+
+# ----------------------------------------------------------------------
+# Automation definitions
+# ----------------------------------------------------------------------
+
+
+def test_create_and_get_automation_definition(db: ScheduledTasksDB) -> None:
+    schedule = {"kind": "cron", "expression": "0 9 * * *", "timezone": "UTC"}
+    input_data = {"question": "What did you work on today?"}
+    config = {"model": "gpt-4"}
+    visibility = {"scope": "private"}
+    notification = {"notify_on_run": True}
+    approval = {"required": False}
+
+    def_id = db.create_automation_definition(
+        owner_id="local",
+        family="recurring_question",
+        name="Daily standup question",
+        description="Asks a daily question",
+        schedule=schedule,
+        input=input_data,
+        config=config,
+        visibility_policy=visibility,
+        notification_policy=notification,
+        approval_policy=approval,
+    )
+
+    assert def_id
+    row = db.get_automation_definition(def_id)
+    assert row is not None
+    assert row["id"] == def_id
+    assert row["owner_id"] == "local"
+    assert row["family"] == "recurring_question"
+    assert row["name"] == "Daily standup question"
+    assert row["description"] == "Asks a daily question"
+    assert row["lifecycle"] == "configured"
+    assert row["health"] == "execution_unavailable"
+    assert row["version"] == 1
+    assert row["schedule"] == schedule
+    assert row["input"] == input_data
+    assert row["config"] == config
+    assert row["visibility_policy"] == visibility
+    assert row["notification_policy"] == notification
+    assert row["approval_policy"] == approval
+    assert row["created_at"]
+    assert row["updated_at"]
+
+
+def test_create_automation_definition_rejects_unknown_kwargs(db: ScheduledTasksDB) -> None:
+    with pytest.raises(ValueError, match="Unknown automation definition field"):
+        db.create_automation_definition(
+            owner_id="local",
+            family="recurring_question",
+            name="Bad field",
+            not_a_field="nope",
+        )
+
+
+def test_create_automation_definition_rejects_reserved_id(db: ScheduledTasksDB) -> None:
+    with pytest.raises(ValueError, match="reserved"):
+        db.create_automation_definition(
+            owner_id="local",
+            family="recurring_question",
+            name="Reserved id",
+            id="custom-id",
+        )
+
+
+def test_update_automation_definition_rejects_unknown_kwargs(db: ScheduledTasksDB) -> None:
+    def_id = db.create_automation_definition(
+        owner_id="local", family="recurring_question", name="Original"
+    )
+
+    with pytest.raises(ValueError, match="Unknown automation definition field"):
+        db.update_automation_definition(def_id, not_a_field="nope")
+
+
+def test_list_automation_definitions_filters(db: ScheduledTasksDB) -> None:
+    q1 = db.create_automation_definition(
+        owner_id="local", family="recurring_question", name="Q1"
+    )
+    a1 = db.create_automation_definition(
+        owner_id="local", family="agent_task", name="A1", lifecycle="paused"
+    )
+    q2 = db.create_automation_definition(
+        owner_id="server:user-1", family="recurring_question", name="Q2"
+    )
+    a2 = db.create_automation_definition(
+        owner_id="local", family="agent_task", name="A2", lifecycle="archived"
+    )
+
+    all_defs = db.list_automation_definitions()
+    assert len(all_defs) == 4
+
+    local = db.list_automation_definitions(owner_id="local")
+    assert len(local) == 3
+
+    configured = db.list_automation_definitions(lifecycle="configured")
+    assert len(configured) == 2
+
+    agent = db.list_automation_definitions(family="agent_task")
+    assert len(agent) == 2
+
+    filtered = db.list_automation_definitions(
+        owner_id="local", lifecycle="configured", family="recurring_question"
+    )
+    assert len(filtered) == 1
+    assert filtered[0]["id"] == q1
+
+    paused_agent = db.list_automation_definitions(
+        owner_id="local", lifecycle="paused", family="agent_task"
+    )
+    assert len(paused_agent) == 1
+    assert paused_agent[0]["id"] == a1
+
+
+def test_update_automation_definition(db: ScheduledTasksDB) -> None:
+    schedule = {"kind": "cron", "expression": "0 9 * * *"}
+    def_id = db.create_automation_definition(
+        owner_id="local",
+        family="recurring_question",
+        name="Original",
+        schedule=schedule,
+    )
+
+    new_schedule = {"kind": "cron", "expression": "0 10 * * *"}
+    updated = db.update_automation_definition(
+        def_id,
+        name="Updated",
+        description="New description",
+        lifecycle="paused",
+        health="execution_unavailable",
+        schedule=new_schedule,
+    )
+    assert updated is True
+
+    row = db.get_automation_definition(def_id)
+    assert row is not None
+    assert row["name"] == "Updated"
+    assert row["description"] == "New description"
+    assert row["lifecycle"] == "paused"
+    assert row["schedule"] == new_schedule
+    assert row["updated_at"] is not None
+    assert row["updated_at"] >= row["created_at"]
+
+    not_found = db.update_automation_definition("does-not-exist", name="Nope")
+    assert not_found is False
+
+
+def test_delete_automation_definition(db: ScheduledTasksDB) -> None:
+    def_id = db.create_automation_definition(
+        owner_id="local", family="recurring_question", name="To delete"
+    )
+
+    assert db.get_automation_definition(def_id) is not None
+    deleted = db.delete_automation_definition(def_id)
+    assert deleted is True
+    assert db.get_automation_definition(def_id) is None
+
+    not_found = db.delete_automation_definition("does-not-exist")
+    assert not_found is False
+
+
+def test_automation_audit_event_logging(db: ScheduledTasksDB) -> None:
+    def_id = db.create_automation_definition(
+        owner_id="local", family="recurring_question", name="Audited"
+    )
+
+    before = {"lifecycle": "configured"}
+    after = {"lifecycle": "paused"}
+
+    event_id = db.log_automation_audit_event(
+        definition_id=def_id,
+        owner_id="local",
+        event_type="lifecycle_change",
+        actor="user:1",
+        summary="Paused automation definition",
+        before=before,
+        after=after,
+        request_id="req-1",
+        idempotency_key="idem-1",
+    )
+
+    assert event_id
+
+    with closing(db._get_connection()) as conn:
+        cursor = conn.execute(
+            "SELECT * FROM automation_audit_events WHERE id = ?", (event_id,)
+        )
+        row = cursor.fetchone()
+
+    assert row is not None
+    assert row["definition_id"] == def_id
+    assert row["owner_id"] == "local"
+    assert row["event_type"] == "lifecycle_change"
+    assert row["actor"] == "user:1"
+    assert row["summary"] == "Paused automation definition"
+    assert json.loads(row["before"]) == before
+    assert json.loads(row["after"]) == after
+    assert row["request_id"] == "req-1"
+    assert row["idempotency_key"] == "idem-1"
+    assert row["created_at"]

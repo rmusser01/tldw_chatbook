@@ -7,6 +7,7 @@ events, and sync helpers.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import uuid
 from contextlib import closing
@@ -48,6 +49,55 @@ class ScheduledTasksDB(BaseDB):
         "sync_version",
     }
 
+    _AUTOMATION_DEFINITION_COLUMNS = {
+        "id",
+        "server_id",
+        "owner_id",
+        "family",
+        "name",
+        "description",
+        "lifecycle",
+        "health",
+        "schedule",
+        "input",
+        "config",
+        "visibility_policy",
+        "notification_policy",
+        "approval_policy",
+        "version",
+        "preview_id",
+        "created_by",
+        "updated_by",
+        "created_at",
+        "updated_at",
+        "archived_at",
+    }
+
+    _AUTOMATION_AUDIT_EVENT_COLUMNS = {
+        "id",
+        "definition_id",
+        "owner_id",
+        "event_type",
+        "actor",
+        "summary",
+        "before",
+        "after",
+        "request_id",
+        "idempotency_key",
+        "created_at",
+    }
+
+    _JSON_FIELDS = {
+        "schedule",
+        "input",
+        "config",
+        "visibility_policy",
+        "notification_policy",
+        "approval_policy",
+        "before",
+        "after",
+    }
+
     _DATETIME_FIELDS = {
         "run_at",
         "next_run_at",
@@ -55,6 +105,9 @@ class ScheduledTasksDB(BaseDB):
         "missed_at",
         "created_at",
         "updated_at",
+        "archived_at",
+        "expires_at",
+        "consumed_at",
     }
 
     _RESERVED_FIELDS = {"id"}
@@ -122,14 +175,38 @@ class ScheduledTasksDB(BaseDB):
         )
 
     @classmethod
-    def _row_to_dict(cls, row: Optional[sqlite3.Row]) -> Optional[dict[str, Any]]:
-        """Convert a sqlite3.Row to a plain dictionary with booleans restored."""
+    def _row_to_dict(
+        cls,
+        row: Optional[sqlite3.Row],
+        parse_json: bool = True,
+    ) -> Optional[dict[str, Any]]:
+        """Convert a sqlite3.Row to a plain dictionary.
+
+        Booleans are restored for ``enabled`` columns and JSON fields are
+        parsed when ``parse_json`` is True.
+        """
         if row is None:
             return None
         result: dict[str, Any] = dict(row)
         if "enabled" in result:
             result["enabled"] = bool(result["enabled"])
+        if parse_json:
+            for key in cls._JSON_FIELDS:
+                if key in result and result[key] is not None:
+                    try:
+                        result[key] = json.loads(result[key])
+                    except json.JSONDecodeError as exc:
+                        raise ValueError(
+                            f"Invalid JSON in field {key!r}: {result[key]!r}"
+                        ) from exc
         return result
+
+    @staticmethod
+    def _to_json(value: Any) -> Optional[str]:
+        """Serialize a value to a JSON string.``None`` returns ``None``."""
+        if value is None:
+            return None
+        return json.dumps(value)
 
     @classmethod
     def _validate_reminder_kwargs(cls, kwargs: dict[str, Any]) -> None:
@@ -139,6 +216,24 @@ class ScheduledTasksDB(BaseDB):
                 raise ValueError(f"Field {key!r} is reserved and cannot be set via kwargs")
             if key not in cls._REMINDER_TASK_COLUMNS:
                 raise ValueError(f"Unknown reminder task field: {key!r}")
+
+    @classmethod
+    def _validate_automation_kwargs(cls, kwargs: dict[str, Any]) -> None:
+        """Validate automation-definition kwargs; raises ValueError on bad keys."""
+        for key in kwargs:
+            if key in cls._RESERVED_FIELDS:
+                raise ValueError(f"Field {key!r} is reserved and cannot be set via kwargs")
+            if key not in cls._AUTOMATION_DEFINITION_COLUMNS:
+                raise ValueError(f"Unknown automation definition field: {key!r}")
+
+    @classmethod
+    def _validate_audit_kwargs(cls, kwargs: dict[str, Any]) -> None:
+        """Validate automation-audit-event kwargs; raises ValueError on bad keys."""
+        for key in kwargs:
+            if key in cls._RESERVED_FIELDS:
+                raise ValueError(f"Field {key!r} is reserved and cannot be set via kwargs")
+            if key not in cls._AUTOMATION_AUDIT_EVENT_COLUMNS:
+                raise ValueError(f"Unknown automation audit event field: {key!r}")
 
     # ------------------------------------------------------------------
     # Reminder tasks
@@ -279,3 +374,188 @@ class ScheduledTasksDB(BaseDB):
                 (now_iso,),
             )
             return [self._row_to_dict(row) for row in cursor.fetchall()]
+
+    # ------------------------------------------------------------------
+    # Automation definitions
+    # ------------------------------------------------------------------
+
+    def create_automation_definition(
+        self, owner_id: str, family: str, name: str, **kwargs: Any
+    ) -> str:
+        """Create an automation definition and return its generated local UUID.
+
+        Defaults ``lifecycle`` to ``configured`` and ``health`` to
+        ``execution_unavailable`` when not provided. JSON fields are serialized
+        and datetime fields are converted to UTC ISO-8601 strings.
+        """
+        self._validate_automation_kwargs(kwargs)
+
+        definition_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc)
+
+        fields: dict[str, Any] = {
+            "id": definition_id,
+            "owner_id": owner_id,
+            "family": family,
+            "name": name,
+            "lifecycle": "configured",
+            "health": "execution_unavailable",
+            "version": 1,
+            "created_at": self._to_utc_iso(now),
+            "updated_at": self._to_utc_iso(now),
+        }
+
+        for key, value in kwargs.items():
+            if value is None and key in ("lifecycle", "health"):
+                continue
+            if key in self._JSON_FIELDS:
+                fields[key] = self._to_json(value)
+            elif key in self._DATETIME_FIELDS:
+                fields[key] = self._to_utc_iso(value)
+            else:
+                fields[key] = value
+
+        columns = ", ".join(fields.keys())
+        placeholders = ", ".join(["?"] * len(fields))
+
+        with closing(self._get_connection()) as conn:
+            conn.execute(
+                f"INSERT INTO automation_definitions ({columns}) VALUES ({placeholders})",
+                list(fields.values()),
+            )
+            conn.commit()
+
+        logger.debug(f"Created automation definition {definition_id} for owner {owner_id}")
+        return definition_id
+
+    def get_automation_definition(self, definition_id: str) -> dict | None:
+        """Fetch an automation definition by local id."""
+        with closing(self._get_connection()) as conn:
+            cursor = conn.execute(
+                "SELECT * FROM automation_definitions WHERE id = ?", (definition_id,)
+            )
+            return self._row_to_dict(cursor.fetchone(), parse_json=True)
+
+    def list_automation_definitions(
+        self,
+        owner_id: str | None = None,
+        lifecycle: str | None = None,
+        family: str | None = None,
+    ) -> list[dict]:
+        """List automation definitions with optional filters."""
+        conditions: list[str] = []
+        params: list[Any] = []
+
+        if owner_id is not None:
+            conditions.append("owner_id = ?")
+            params.append(owner_id)
+        if lifecycle is not None:
+            conditions.append("lifecycle = ?")
+            params.append(lifecycle)
+        if family is not None:
+            conditions.append("family = ?")
+            params.append(family)
+
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+        with closing(self._get_connection()) as conn:
+            cursor = conn.execute(
+                f"SELECT * FROM automation_definitions {where_clause} ORDER BY created_at",
+                params,
+            )
+            return [self._row_to_dict(row, parse_json=True) for row in cursor.fetchall()]
+
+    def update_automation_definition(self, definition_id: str, **kwargs: Any) -> bool:
+        """Update automation-definition fields. Returns True if a row changed."""
+        if not kwargs:
+            return False
+
+        self._validate_automation_kwargs(kwargs)
+
+        updates: list[str] = []
+        params: list[Any] = []
+
+        for key, value in kwargs.items():
+            if key in self._JSON_FIELDS:
+                updates.append(f"{key} = ?")
+                params.append(self._to_json(value))
+            elif key in self._DATETIME_FIELDS:
+                updates.append(f"{key} = ?")
+                params.append(self._to_utc_iso(value))
+            else:
+                updates.append(f"{key} = ?")
+                params.append(value)
+
+        if not updates:
+            return False
+
+        updates.append("updated_at = ?")
+        params.append(self._to_utc_iso(datetime.now(timezone.utc)))
+        params.append(definition_id)
+
+        with closing(self._get_connection()) as conn:
+            cursor = conn.execute(
+                f"UPDATE automation_definitions SET {', '.join(updates)} WHERE id = ?",
+                params,
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def delete_automation_definition(self, definition_id: str) -> bool:
+        """Delete an automation definition by local id."""
+        with closing(self._get_connection()) as conn:
+            cursor = conn.execute(
+                "DELETE FROM automation_definitions WHERE id = ?", (definition_id,)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def log_automation_audit_event(
+        self,
+        definition_id: str,
+        owner_id: str,
+        event_type: str,
+        actor: str,
+        summary: str,
+        **kwargs: Any,
+    ) -> str:
+        """Log an audit event for an automation definition.
+
+        JSON fields (``before``, ``after``) are serialized; datetime fields are
+        stored as UTC ISO-8601 strings.
+        """
+        self._validate_audit_kwargs(kwargs)
+
+        event_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc)
+
+        fields: dict[str, Any] = {
+            "id": event_id,
+            "definition_id": definition_id,
+            "owner_id": owner_id,
+            "event_type": event_type,
+            "actor": actor,
+            "summary": summary,
+            "created_at": self._to_utc_iso(now),
+        }
+
+        for key, value in kwargs.items():
+            if key in self._JSON_FIELDS:
+                fields[key] = self._to_json(value)
+            elif key in self._DATETIME_FIELDS:
+                fields[key] = self._to_utc_iso(value)
+            else:
+                fields[key] = value
+
+        columns = ", ".join(fields.keys())
+        placeholders = ", ".join(["?"] * len(fields))
+
+        with closing(self._get_connection()) as conn:
+            conn.execute(
+                f"INSERT INTO automation_audit_events ({columns}) VALUES ({placeholders})",
+                list(fields.values()),
+            )
+            conn.commit()
+
+        logger.debug(f"Created automation audit event {event_id} for definition {definition_id}")
+        return event_id
