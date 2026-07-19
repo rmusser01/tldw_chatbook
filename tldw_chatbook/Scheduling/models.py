@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
+from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class TaskStatus(str, Enum):
@@ -61,6 +62,8 @@ class AutomationFamily(str, Enum):
 class ReminderTask(BaseModel):
     """Local or synced reminder task."""
 
+    model_config = ConfigDict(extra="forbid")
+
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     server_id: str | None = None
     owner_id: str = "local"
@@ -78,13 +81,27 @@ class ReminderTask(BaseModel):
     link_type: str | None = None
     link_id: str | None = None
     link_url: str | None = None
-    created_at: datetime = Field(default_factory=datetime.now)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime | None = None
     sync_version: int = 0
+
+    @model_validator(mode="after")
+    def _validate_schedule_fields(self) -> "ReminderTask":
+        if self.schedule_kind == ScheduleKind.ONE_TIME:
+            if self.run_at is None:
+                raise ValueError("run_at is required for one_time schedules")
+        elif self.schedule_kind == ScheduleKind.RECURRING:
+            if self.cron is None:
+                raise ValueError("cron is required for recurring schedules")
+            if self.timezone is None:
+                raise ValueError("timezone is required for recurring schedules")
+        return self
 
 
 class AutomationDefinition(BaseModel):
     """Automation definition with lifecycle, health, and policy fields."""
+
+    model_config = ConfigDict(extra="forbid")
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     server_id: str | None = None
@@ -94,17 +111,17 @@ class AutomationDefinition(BaseModel):
     description: str | None = None
     lifecycle: Lifecycle = Lifecycle.CONFIGURED
     health: Health = Health.EXECUTION_UNAVAILABLE
-    schedule: dict | None = None
-    input: dict | None = None
-    config: dict | None = None
-    visibility_policy: dict | None = None
-    notification_policy: dict | None = None
-    approval_policy: dict | None = None
+    schedule: dict[str, Any] | None = None
+    input: dict[str, Any] | None = None
+    config: dict[str, Any] | None = None
+    visibility_policy: dict[str, Any] | None = None
+    notification_policy: dict[str, Any] | None = None
+    approval_policy: dict[str, Any] | None = None
     version: int = 1
     preview_id: str | None = None
     created_by: str | None = None
     updated_by: str | None = None
-    created_at: datetime = Field(default_factory=datetime.now)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime | None = None
     archived_at: datetime | None = None
 
@@ -121,6 +138,8 @@ class PreviewStatus(str, Enum):
 class AutomationPreview(BaseModel):
     """Automation preview before committing to a definition."""
 
+    model_config = ConfigDict(extra="forbid")
+
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     owner_id: str = "local"
     mode: str | None = None
@@ -129,15 +148,15 @@ class AutomationPreview(BaseModel):
     definition_version: int | None = None
     status: PreviewStatus = PreviewStatus.VALID
     payload_hash: str | None = None
-    normalized_config: dict | None = None
-    validation_errors: list | None = None
-    warnings: list | None = None
-    visibility_policy: dict | None = None
-    schedule_preview: dict | None = None
-    redaction_policy: dict | None = None
+    normalized_config: dict[str, Any] | None = None
+    validation_errors: list[str] | None = None
+    warnings: list[str] | None = None
+    visibility_policy: dict[str, Any] | None = None
+    schedule_preview: dict[str, Any] | None = None
+    redaction_policy: dict[str, Any] | None = None
     expires_at: datetime | None = None
     created_by: str | None = None
-    created_at: datetime = Field(default_factory=datetime.now)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     consumed_at: datetime | None = None
     created_definition_id: str | None = None
 
@@ -145,14 +164,16 @@ class AutomationPreview(BaseModel):
 class AutomationAuditEvent(BaseModel):
     """Audit event recording changes to an automation definition."""
 
+    model_config = ConfigDict(extra="forbid")
+
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     definition_id: str
     owner_id: str = "local"
     event_type: str
     actor: str
     summary: str
-    before: dict | None = None
-    after: dict | None = None
+    before: dict[str, Any] | None = None
+    after: dict[str, Any] | None = None
     request_id: str | None = None
     idempotency_key: str | None = None
-    created_at: datetime = Field(default_factory=datetime.now)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
