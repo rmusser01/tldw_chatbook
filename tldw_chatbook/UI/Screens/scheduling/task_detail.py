@@ -56,10 +56,10 @@ _STATUS_BADGE_CLASSES: dict[TaskStatus, str] = {
     TaskStatus.NEEDS_ATTENTION: "needs-attention",
     TaskStatus.BLOCKED: "blocked",
     TaskStatus.DISABLED: "disabled",
-    TaskStatus.ARCHIVED: "disabled",
-    TaskStatus.COMPLETED: "running",
-    TaskStatus.FOUND_RESULTS: "running",
-    TaskStatus.MISSED: "needs-attention",
+    TaskStatus.ARCHIVED: "archived",
+    TaskStatus.COMPLETED: "completed",
+    TaskStatus.FOUND_RESULTS: "found-results",
+    TaskStatus.MISSED: "missed",
     TaskStatus.CONFLICT: "conflict",
 }
 
@@ -286,9 +286,9 @@ class TaskDetail(Vertical):
         elif button_id == "scheduling-disable-task":
             self.log.debug("Disable task requested (not yet implemented)")
         elif button_id == "scheduling-delete-task":
-            self._request_delete()
+            self.request_delete()
 
-    def _request_delete(self) -> None:
+    def request_delete(self) -> None:
         """Open the delete confirmation modal for the current task."""
         if self._current_task is None:
             return

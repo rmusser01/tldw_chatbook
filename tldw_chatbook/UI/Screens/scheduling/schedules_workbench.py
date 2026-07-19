@@ -100,8 +100,11 @@ class SchedulesWorkbench(BaseAppScreen):
                 "Could not load reminders. Check the scheduling service and retry.",
                 severity="error",
             )
+            self._tasks = []
+            table = self.query_one("#scheduling-task-table", DataTable)
+            table.clear()
             self.query_one("#scheduling-task-detail", TaskDetail).set_task(
-                None, queue_empty=not self._tasks
+                None, queue_empty=True
             )
             self.query_one("#scheduling-task-inspector", TaskInspector).set_task(None)
             return
@@ -338,7 +341,7 @@ class SchedulesWorkbench(BaseAppScreen):
 
     def action_delete(self) -> None:
         """Delete the selected schedule after confirmation."""
-        self.query_one("#scheduling-task-detail", TaskDetail)._request_delete()
+        self.query_one("#scheduling-task-detail", TaskDetail).request_delete()
 
     def action_sync_now(self) -> None:
         """Sync schedule state now (stub for later tasks)."""

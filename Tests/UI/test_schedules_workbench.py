@@ -11,6 +11,7 @@ from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import SchedulesWor
 from tldw_chatbook.UI.Screens.scheduling.task_detail import (
     TaskDetail,
     TaskInspector,
+    _STATUS_BADGE_CLASSES,
     _humanize_cron,
 )
 from tldw_chatbook.Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
@@ -355,3 +356,59 @@ def test_humanize_cron_daily_pattern():
     """A standard daily cron pattern is summarized as 'Daily at HH:MM UTC'."""
     assert _humanize_cron("0 9 * * *") == "Daily at 09:00 UTC"
     assert _humanize_cron("30 14 * * *", timezone="America/New_York") == "Daily at 14:30 America/New_York"
+
+
+def test_status_badge_classes_use_dedicated_css():
+    """Each status maps to a dedicated CSS class so the TCSS can style it independently."""
+    assert _STATUS_BADGE_CLASSES[TaskStatus.COMPLETED] == "completed"
+    assert _STATUS_BADGE_CLASSES[TaskStatus.FOUND_RESULTS] == "found-results"
+    assert _STATUS_BADGE_CLASSES[TaskStatus.ARCHIVED] == "archived"
+    assert _STATUS_BADGE_CLASSES[TaskStatus.MISSED] == "missed"
+
+
+class ToggleFailingMockSchedulingService:
+    """Stub service that succeeds once, then fails on subsequent calls."""
+
+    def __init__(self):
+        self._calls = 0
+
+    async def list_reminders(self):
+        self._calls += 1
+        if self._calls > 1:
+            raise RuntimeError("service unavailable")
+        return [
+            ReminderTask(
+                id="task-1",
+                title="Morning digest",
+                schedule_kind=ScheduleKind.RECURRING,
+                cron="0 9 * * *",
+                timezone="UTC",
+                next_run_at=datetime(2026, 7, 20, 9, 0, tzinfo=timezone.utc),
+            )
+        ]
+
+
+class WorkbenchTestAppWithToggleFailingService(App):
+    """Test app whose service succeeds on first load, then fails."""
+
+    scheduling_service = ToggleFailingMockSchedulingService()
+
+
+@pytest.mark.asyncio
+async def test_load_tasks_service_error_clears_stale_rows():
+    """A service failure after data was loaded clears the table and internal task list."""
+    async with WorkbenchTestAppWithToggleFailingService().run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+
+        table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
+        assert table.row_count == 1
+
+        await pilot.app.screen.load_tasks()
+        await pilot.pause()
+
+        assert table.row_count == 0
+        empty_state = pilot.app.screen.query_one(
+            "#scheduling-task-detail-empty-state", Static
+        )
+        assert "No scheduled tasks yet" in empty_state.visual.plain
