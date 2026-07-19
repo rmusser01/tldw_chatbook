@@ -2,11 +2,39 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 
-class ServerUnavailableError(Exception):
+class ServerClientError(Exception):
+    """Base class for all server-client failures."""
+
+
+class ServerUnavailableError(ServerClientError):
     """Raised when the server client is invoked while no server is connected."""
+
+
+class ServerClientTimeoutError(ServerClientError):
+    """Request to the server timed out."""
+
+
+class ServerClientNotFoundError(ServerClientError):
+    """Server returned 404; the task was deleted server-side."""
+
+
+class ServerClientValidationError(ServerClientError):
+    """Server returned 4xx other than 404, or a local policy denied the action."""
+
+
+class ServerClientServerError(ServerClientError):
+    """Server returned 5xx."""
+
+
+@dataclass(slots=True)
+class ServerClientConfig:
+    timeout: float = 10.0
+    max_retries: int = 3
+    retry_delay: float = 1.0
 
 
 class SchedulingServerClient:

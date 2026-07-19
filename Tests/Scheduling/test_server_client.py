@@ -4,6 +4,15 @@ from tldw_chatbook.Scheduling.services import (
     SchedulingServerClient,
     ServerUnavailableError,
 )
+from tldw_chatbook.Scheduling.services.server_client import (
+    ServerClientConfig,
+    ServerClientError,
+    ServerClientNotFoundError,
+    ServerClientServerError,
+    ServerClientTimeoutError,
+    ServerClientValidationError,
+    ServerUnavailableError,
+)
 
 
 class FakeNotificationsService:
@@ -111,3 +120,18 @@ async def test_unavailable_client_raises_server_unavailable_error(
     method = getattr(client, method_name)
     with pytest.raises(ServerUnavailableError, match="server not available"):
         await method(*args, **kwargs)
+
+
+def test_exception_hierarchy():
+    assert issubclass(ServerClientNotFoundError, ServerClientError)
+    assert issubclass(ServerClientServerError, ServerClientError)
+    assert issubclass(ServerClientTimeoutError, ServerClientError)
+    assert issubclass(ServerClientValidationError, ServerClientError)
+    assert issubclass(ServerUnavailableError, ServerClientError)
+
+
+def test_server_client_config_defaults():
+    cfg = ServerClientConfig()
+    assert cfg.timeout == 10.0
+    assert cfg.max_retries == 3
+    assert cfg.retry_delay == 1.0
