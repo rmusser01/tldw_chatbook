@@ -5,8 +5,13 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from loguru import logger
+
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
-from tldw_chatbook.Scheduling.services.server_client import SchedulingServerClient
+from tldw_chatbook.Scheduling.services.server_client import (
+    SchedulingServerClient,
+    ServerUnavailableError,
+)
 
 
 def now_utc_iso() -> str:
@@ -32,12 +37,28 @@ class SyncEngine:
         self.server_client = server_client
         self.owner_id = owner_id
 
+    async def pull(self) -> None:
+        """Public entry point to pull server reminders for the current owner."""
+        await self._pull()
+
     async def _pull(self) -> None:
         """Pull server reminders for the current owner and insert/update local cache."""
         if self.server_client is None:
             return
 
-        response = await self.server_client.list_reminders()
+        try:
+            response = await self.server_client.list_reminders()
+        except ServerUnavailableError as exc:
+            logger.warning(
+                f"Server unavailable during sync pull for {self.owner_id}: {exc}"
+            )
+            self._record_sync_error(str(exc))
+            return
+        except Exception as exc:  # noqa: BLE001 - sync must never crash the app
+            logger.exception(f"Sync pull failed for {self.owner_id}: {exc}")
+            self._record_sync_error(str(exc))
+            return
+
         items = response.get("items", [])
 
         for server_item in items:
@@ -45,7 +66,7 @@ class SyncEngine:
             if not server_id:
                 continue
 
-            normalized = self._normalize_reminder(server_item)
+            normalized = self._whitelist_reminder_fields(server_item)
             mapping = self.db.get_sync_mapping_by_server_id(
                 server_id, "reminder_task", self.owner_id
             )
@@ -54,48 +75,67 @@ class SyncEngine:
                 local_id = mapping["local_id"]
                 self.db.update_reminder_task(local_id, **normalized)
             else:
-                local_id = self.db.create_reminder_task(
-                    owner_id=self.owner_id,
-                    server_id=server_id,
-                    **normalized,
+                existing = self.db.get_reminder_task_by_server_id(
+                    self.owner_id, server_id
                 )
-                self.db.set_sync_mapping(
-                    local_id, server_id, "reminder_task", self.owner_id
-                )
+                if existing:
+                    local_id = existing["id"]
+                    self.db.update_reminder_task(local_id, **normalized)
+                    self.db.set_sync_mapping(
+                        local_id, server_id, "reminder_task", self.owner_id
+                    )
+                else:
+                    local_id = self.db.create_reminder_task(
+                        owner_id=self.owner_id,
+                        server_id=server_id,
+                        **normalized,
+                    )
+                    self.db.set_sync_mapping(
+                        local_id, server_id, "reminder_task", self.owner_id
+                    )
 
         self.db.update_sync_state(self.owner_id, last_pull_at=now_utc_iso())
 
-    def _normalize_reminder(self, server_item: dict[str, Any]) -> dict[str, Any]:
-        """Convert server reminder fields to local DB column names.
+    def _record_sync_error(self, message: str) -> None:
+        """Store a sync error for the current owner."""
+        self.db.update_sync_state(
+            self.owner_id,
+            sync_errors=[{"message": message, "timestamp": now_utc_iso()}],
+        )
 
-        Known fields are mapped directly; unknown fields are dropped. Required
-        local fields that are missing from the server payload receive sensible
-        defaults so that partially-populated server records can still be cached.
+    def _whitelist_reminder_fields(self, server_item: dict[str, Any]) -> dict[str, Any]:
+        """Return a dict of local reminder-task fields from a server payload.
+
+        Only known fields are copied; unknown fields are dropped. Missing
+        required local fields receive safe defaults so that partially-populated
+        server records can still be cached.
         """
-        field_map = {
-            "title": "title",
-            "body": "body",
-            "schedule_kind": "schedule_kind",
-            "run_at": "run_at",
-            "cron": "cron",
-            "timezone": "timezone",
-            "enabled": "enabled",
-            "last_run_at": "last_run_at",
-            "next_run_at": "next_run_at",
-            "last_status": "last_status",
-            "link_type": "link_type",
-            "link_id": "link_id",
-            "link_url": "link_url",
-            "created_at": "created_at",
-            "updated_at": "updated_at",
+        local_fields = (
+            "title",
+            "body",
+            "schedule_kind",
+            "run_at",
+            "cron",
+            "timezone",
+            "enabled",
+            "last_run_at",
+            "next_run_at",
+            "last_status",
+            "link_type",
+            "link_id",
+            "link_url",
+            "created_at",
+            "updated_at",
+        )
+
+        result: dict[str, Any] = {
+            local_key: server_item[local_key]
+            for local_key in local_fields
+            if local_key in server_item
         }
 
-        result: dict[str, Any] = {}
-        for server_key, local_key in field_map.items():
-            if server_key in server_item:
-                result[local_key] = server_item[server_key]
-
-        # Provide defaults for required local fields when the server omits them.
+        if not result.get("title"):
+            result["title"] = "Untitled reminder"
         if "schedule_kind" not in result:
             result["schedule_kind"] = "one_time"
 

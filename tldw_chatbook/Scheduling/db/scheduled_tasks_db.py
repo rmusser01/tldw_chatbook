@@ -284,6 +284,21 @@ class ScheduledTasksDB(BaseDB):
             )
             return self._row_to_dict(cursor.fetchone(), json_fields=self._REMINDER_JSON_FIELDS)
 
+    def get_reminder_task_by_server_id(
+        self,
+        owner_id: str,
+        server_id: str,
+    ) -> Optional[dict[str, Any]]:
+        """Fetch a reminder task by owner and server-side identifier."""
+        with closing(self._get_connection()) as conn:
+            cursor = conn.execute(
+                "SELECT * FROM reminder_tasks WHERE owner_id = ? AND server_id = ?",
+                (owner_id, server_id),
+            )
+            return self._row_to_dict(
+                cursor.fetchone(), json_fields=self._REMINDER_JSON_FIELDS
+            )
+
     def list_reminder_tasks(
         self,
         owner_id: Optional[str] = None,
