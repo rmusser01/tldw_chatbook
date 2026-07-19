@@ -1537,6 +1537,7 @@ log_max_bytes = 10485760 # 10 MB
 log_backup_count = 5
 
 [database]
+# scheduled_tasks_db_path = "/custom/path.db"  # optional override
 # Path to the ChaChaNotes (Character, Chat, Notes) database.
 chachanotes_db_path = "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db"
 # Path to the Prompts database.
@@ -1556,6 +1557,15 @@ USER_DB_BASE_DIR = "~/.local/share/tldw_cli/"
 # Database integrity checking
 check_integrity_on_startup = false  # Enable/disable automatic integrity checks on startup
 integrity_check_timeout = 30  # Maximum seconds to wait for integrity check
+
+[scheduling]
+# Background sync and scheduler defaults for the scheduling module.
+sync_interval_seconds = 300
+sync_retry_max_attempts = 10
+sync_retry_max_delay_seconds = 300
+sync_retry_jitter = true
+scheduler_poll_interval_seconds = 30
+reminder_catchup_hours = 24
 
 [media_cleanup]
 # Media cleanup settings for automatic hard deletion of soft-deleted items
@@ -3663,6 +3673,12 @@ def get_writing_db_path() -> Path:
         user_dir = get_user_data_dir()
         db_path = user_dir / "tldw_chatbook_writing.db"
     return db_path
+
+def get_scheduled_tasks_db_path() -> Path:
+    custom_path = get_cli_setting("database", "scheduled_tasks_db_path", None)
+    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get("scheduled_tasks_db_path"):
+        return Path(custom_path).expanduser().resolve()
+    return get_user_data_dir() / "tldw_chatbook_scheduled_tasks.db"
 
 def get_cli_log_file_path() -> Path:
     # Use user-specific folder for logs
