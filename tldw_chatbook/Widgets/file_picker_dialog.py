@@ -18,21 +18,29 @@ subclass of ``EnhancedFileOpen`` or ``EnhancedFileSave`` so there is only one
 screen on the stack and no duplicated Cancel/Select buttons.
 """
 
-from pathlib import Path
-from typing import Optional, Callable
 from fnmatch import fnmatch
+from pathlib import Path
+from typing import Callable, Optional
+
+from loguru import logger
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
 from textual.widgets import Button, Label, Static
-from loguru import logger
 
 from ..Third_Party.textual_fspicker import Filters
 from .enhanced_file_picker import EnhancedFileOpen, EnhancedFileSave
 
 
 def create_filter(patterns: str) -> Callable[[Path], bool]:
-    """Create a case-insensitive filter function from semicolon-separated globs."""
+    """Create a case-insensitive filter function from semicolon-separated globs.
+
+    Args:
+        patterns: Semicolon-separated glob patterns (e.g. ``"*.yaml;*.json"``).
+
+    Returns:
+        A callable that returns ``True`` when a file name matches any pattern.
+    """
     pattern_list = [p.strip().lower() for p in patterns.split(";") if p.strip()]
 
     def filter_func(path: Path) -> bool:

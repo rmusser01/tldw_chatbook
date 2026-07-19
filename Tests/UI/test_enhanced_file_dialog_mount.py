@@ -467,6 +467,24 @@ async def test_directory_change_updates_breadcrumbs_and_bookmark_button(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_legacy_list_filters_are_normalized(tmp_path):
+    """A list of glob strings can be passed as ``filters`` without crashing."""
+    dialog = EnhancedFileOpen(
+        location=str(tmp_path),
+        title="Test Legacy Filters",
+        filters=["*.zip"],
+        context="test_legacy_filters",
+    )
+    app = _DialogHost(dialog)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        # The dialog should mount and expose the filter Select.
+        select = dialog.query_one("#file-filter")
+        assert select is not None
+
+
+@pytest.mark.asyncio
 async def test_open_must_exist_rejects_missing_file(tmp_path):
     """EnhancedFileOpen with must_exist=True refuses a non-existent filename."""
     dialog = EnhancedFileOpen(

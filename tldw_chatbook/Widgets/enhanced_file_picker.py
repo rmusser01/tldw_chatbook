@@ -1,31 +1,33 @@
 # enhanced_file_picker.py
 # Enhanced file picker with keyboard shortcuts, recent files, breadcrumbs, bookmarks, and search
 
-import sys
-from pathlib import Path
-from typing import List, Optional, Dict, Any, Union
-from datetime import datetime
 import os
+import sys
+from datetime import datetime
+from fnmatch import fnmatch
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+
+from loguru import logger
+from rich.console import RenderableType
+from rich.table import Table
 from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.timer import Timer
-
-from textual.widgets import Button, Label, ListView, ListItem, Input, Static
-from textual.reactive import reactive
 from textual.message import Message
-from loguru import logger
-from rich.table import Table
-from rich.console import RenderableType
+from textual.reactive import reactive
+from textual.timer import Timer
+from textual.widgets import Button, Input, Label, ListItem, ListView, Static
 
 from ..Third_Party.textual_fspicker import Filters
-from ..Third_Party.textual_fspicker.file_dialog import BaseFileDialog
 from ..Third_Party.textual_fspicker.base_dialog import FileSystemPickerScreen
+from ..Third_Party.textual_fspicker.file_dialog import BaseFileDialog
 from ..Third_Party.textual_fspicker.parts import DirectoryNavigation
 from ..Third_Party.textual_fspicker.parts.directory_navigation import DirectoryEntry
-from ..Third_Party.textual_fspicker.safe_tests import is_dir, is_file, is_symlink
 from ..Third_Party.textual_fspicker.path_maker import MakePath
+from ..Third_Party.textual_fspicker.safe_tests import is_dir, is_file, is_symlink
+from ..Utils.path_validation import validate_path_simple
 from ..config import get_cli_setting, save_setting_to_cli_config
 
 
@@ -381,6 +383,28 @@ class DirectorySearch(Horizontal):
         search_input = self.query_one("#search-input", Input)
         search_input.value = ""
         self.post_message(self.SearchChanged(""))
+
+
+def _make_glob_filter(patterns: Union[str, List[str], Tuple[str, ...]]) -> Callable[[Path], bool]:
+    """Build a case-insensitive path filter from glob patterns.
+
+    Args:
+        patterns: One or more glob patterns. A semicolon-separated string or an
+            iterable of strings is accepted.
+
+    Returns:
+        A callable that returns ``True`` when a path matches any pattern.
+    """
+    if isinstance(patterns, str):
+        pattern_list = [p.strip().lower() for p in patterns.split(";") if p.strip()]
+    else:
+        pattern_list = [p.strip().lower() for p in patterns if p and isinstance(p, str)]
+
+    def filter_func(path: Path) -> bool:
+        name = path.name.lower()
+        return any(fnmatch(name, pattern) for pattern in pattern_list)
+
+    return filter_func
 
 
 def _human_readable_size(size: int) -> str:
@@ -882,7 +906,7 @@ class EnhancedFileDialog(BaseFileDialog):
     BINDINGS = [
         Binding("ctrl+b", "toggle_bookmarks", "Show bookmarks"),
         Binding("question_mark", "toggle_hints", "Toggle shortcuts"),
-        *[Binding(str(n), f"jump_bookmark_{n}", f"Bookmark {n}", show=False) for n in range(1, 10)],
+        *[Binding(str(n), f"jump_bookmark('{n}')", f"Bookmark {n}", show=False) for n in range(1, 10)],
     ]
 
     show_bookmarks = reactive(False)
@@ -913,7 +937,7 @@ class EnhancedFileDialog(BaseFileDialog):
         select_button: str = "",
         cancel_button: str = "",
         *,
-        filters: Optional[Filters] = None,
+        filters: Optional[Union[Filters, List[str], Tuple[str, ...]]] = None,
         default_file: Optional[Union[str, Path]] = None,
         context: str = "default",
         multi_select: bool = False,
@@ -923,6 +947,9 @@ class EnhancedFileDialog(BaseFileDialog):
     ):
         # ``BaseFileDialog`` does not accept Textual screen kwargs such as
         # ``id`` or ``classes``; apply them manually after the base init.
+        # Normalize legacy list/tuple filters to a Filters instance so the
+        # dialog can safely read ``self.filters.selections`` during compose.
+        filters = self._normalize_filters(filters)
         super().__init__(
             location,
             title,
@@ -931,6 +958,9 @@ class EnhancedFileDialog(BaseFileDialog):
             filters=filters,
             default_file=default_file,
         )
+        # The base class stores filters internally as ``_filters``; expose the
+        # normalized value as ``self.filters`` for the input bar and callers.
+        self.filters = filters
         if id is not None:
             self.id = id
         if classes is not None:
@@ -945,6 +975,26 @@ class EnhancedFileDialog(BaseFileDialog):
         self._last_directory = self._get_last_directory()
         if self._last_directory is not None:
             self._location = self._last_directory
+
+    @staticmethod
+    def _normalize_filters(
+        filters: Optional[Union[Filters, List[str], Tuple[str, ...]]]
+    ) -> Optional[Filters]:
+        """Convert legacy list/tuple filters into a ``Filters`` instance.
+
+        Args:
+            filters: A ``Filters`` collection, an iterable of glob strings, or
+                ``None``.
+
+        Returns:
+            A ``Filters`` instance or ``None``.
+        """
+        if filters is None or isinstance(filters, Filters):
+            return filters
+        patterns = list(filters)
+        if not patterns:
+            return None
+        return Filters(("Filtered files", _make_glob_filter(patterns)))
 
     def _get_last_directory(self) -> Optional[Path]:
         """Get the last used directory for this context"""
@@ -1232,19 +1282,19 @@ class EnhancedFileDialog(BaseFileDialog):
 
         # If it looks like the user is typing in some sort of home
         # directory path...
-        if file_name.value.startswith("~"):
-            # ...let's simply expand and go with that.
-            try:
+        try:
+            if file_name.value.startswith("~"):
+                # ...let's simply expand and go with that.
                 chosen = MakePath.of(file_name.value).expanduser().resolve()
-            except RuntimeError as error:
-                self._set_error(str(error))
-                return
-        else:
-            # It's not a home directory path, so let's combine with the
-            # location of the directory navigator widget.
-            chosen = (
-                self.query_one(DirectoryNavigation).location / file_name.value
-            ).resolve()
+            else:
+                # It's not a home directory path, so let's combine with the
+                # location of the directory navigator widget.
+                chosen = (
+                    self.query_one(DirectoryNavigation).location / file_name.value
+                ).resolve()
+        except (RuntimeError, OSError) as error:
+            self._set_error(str(error))
+            return
 
         # If it's a directory, approach it like it's the user simply
         # doing a "cd".
@@ -1303,16 +1353,16 @@ class EnhancedFileDialog(BaseFileDialog):
             self._confirm_multi_select()
             return
 
-        if file_name.value.startswith("~"):
-            try:
+        try:
+            if file_name.value.startswith("~"):
                 chosen = MakePath.of(file_name.value).expanduser().resolve()
-            except RuntimeError as error:
-                self._set_error(str(error))
-                return
-        else:
-            chosen = (
-                self.query_one(DirectoryNavigation).location / file_name.value
-            ).resolve()
+            else:
+                chosen = (
+                    self.query_one(DirectoryNavigation).location / file_name.value
+                ).resolve()
+        except (RuntimeError, OSError) as error:
+            self._set_error(str(error))
+            return
 
         if self._should_return(chosen):
             self._toggle_path_selection(chosen)
@@ -1409,6 +1459,7 @@ class EnhancedFileDialog(BaseFileDialog):
 
                 btn = Button(label, variant="default", classes="breadcrumb-btn")
                 btn.tooltip = str(partial_path)
+                btn.data = partial_path
                 breadcrumb_container.mount(btn)
 
                 if position < len(visible_indices) - 1:
@@ -1417,6 +1468,16 @@ class EnhancedFileDialog(BaseFileDialog):
                     )
         except Exception:
             pass
+
+    @on(Button.Pressed, ".breadcrumb-btn")
+    def _on_breadcrumb_click(self, event: Button.Pressed) -> None:
+        """Navigate to the directory represented by a breadcrumb button."""
+        path = getattr(event.button, "data", None)
+        if isinstance(path, Path) and path.exists():
+            try:
+                self.query_one(SearchableDirectoryNavigation).location = path
+            except Exception:
+                pass
 
     def _load_recent_locations(self) -> None:
         """Populate the recent locations list from persistent storage."""
@@ -1571,41 +1632,24 @@ class EnhancedFileDialog(BaseFileDialog):
 
         bookmarks = self.bookmarks_manager.get_bookmarks()
         if 0 <= index < len(bookmarks):
-            path = Path(bookmarks[index]["path"])
-            if path.exists():
-                dir_nav = self.query_one(SearchableDirectoryNavigation)
-                dir_nav.location = path
-                self._update_bookmark_button_state(path)
-                self.notify(f"Jumped to: {bookmarks[index]['name']}", timeout=1)
-            else:
-                self.notify(f"Path no longer exists: {path}", severity="warning")
+            raw_path = bookmarks[index]["path"]
+            try:
+                path = validate_path_simple(raw_path, require_exists=True)
+            except ValueError as exc:
+                self.notify(f"Invalid bookmark path: {exc}", severity="warning")
+                return
+            dir_nav = self.query_one(SearchableDirectoryNavigation)
+            dir_nav.location = path
+            self._update_bookmark_button_state(path)
+            self.notify(f"Jumped to: {bookmarks[index]['name']}", timeout=1)
 
-    def action_jump_bookmark_1(self) -> None:
-        self._jump_to_bookmark(0)
-
-    def action_jump_bookmark_2(self) -> None:
-        self._jump_to_bookmark(1)
-
-    def action_jump_bookmark_3(self) -> None:
-        self._jump_to_bookmark(2)
-
-    def action_jump_bookmark_4(self) -> None:
-        self._jump_to_bookmark(3)
-
-    def action_jump_bookmark_5(self) -> None:
-        self._jump_to_bookmark(4)
-
-    def action_jump_bookmark_6(self) -> None:
-        self._jump_to_bookmark(5)
-
-    def action_jump_bookmark_7(self) -> None:
-        self._jump_to_bookmark(6)
-
-    def action_jump_bookmark_8(self) -> None:
-        self._jump_to_bookmark(7)
-
-    def action_jump_bookmark_9(self) -> None:
-        self._jump_to_bookmark(8)
+    def action_jump_bookmark(self, index: str) -> None:
+        """Jump to the bookmark at the 1-based index supplied by the binding."""
+        try:
+            idx = int(index) - 1
+        except ValueError:
+            return
+        self._jump_to_bookmark(idx)
 
     def _set_error(self, message: str = "") -> None:
         """Show or clear the dedicated error line.
@@ -1742,7 +1786,7 @@ class EnhancedFileOpen(EnhancedFileDialog):
         location: Union[str, Path] = ".",
         title: str = "Open File",
         *,
-        filters: Optional[Filters] = None,
+        filters: Optional[Union[Filters, List[str], Tuple[str, ...]]] = None,
         must_exist: bool = True,
         multi_select: bool = False,
         context: str = "file_open",
@@ -1764,7 +1808,6 @@ class EnhancedFileOpen(EnhancedFileDialog):
             classes=classes,
             name=name,
         )
-        self.filters = filters
         self.must_exist = must_exist
         self.multi_select = multi_select
 
@@ -1798,7 +1841,7 @@ class EnhancedFileSave(EnhancedFileDialog):
         location: Union[str, Path] = ".",
         title: str = "Save File",
         *,
-        filters: Optional[Filters] = None,
+        filters: Optional[Union[Filters, List[str], Tuple[str, ...]]] = None,
         default_filename: str = "",
         context: str = "file_save",
         select_button: str = "Save",
@@ -1819,7 +1862,6 @@ class EnhancedFileSave(EnhancedFileDialog):
             classes=classes,
             name=name,
         )
-        self.filters = filters
         self.default_filename = default_filename
 
     def _input_bar(self) -> ComposeResult:
