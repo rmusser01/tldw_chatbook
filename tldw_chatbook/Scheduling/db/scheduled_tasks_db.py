@@ -87,13 +87,18 @@ class ScheduledTasksDB(BaseDB):
         "created_at",
     }
 
-    _JSON_FIELDS = {
+    _REMINDER_JSON_FIELDS: set[str] = set()
+
+    _AUTOMATION_JSON_FIELDS = {
         "schedule",
         "input",
         "config",
         "visibility_policy",
         "notification_policy",
         "approval_policy",
+    }
+
+    _AUDIT_JSON_FIELDS = {
         "before",
         "after",
     }
@@ -178,27 +183,26 @@ class ScheduledTasksDB(BaseDB):
     def _row_to_dict(
         cls,
         row: Optional[sqlite3.Row],
-        parse_json: bool = True,
+        json_fields: Optional[set[str]] = None,
     ) -> Optional[dict[str, Any]]:
         """Convert a sqlite3.Row to a plain dictionary.
 
-        Booleans are restored for ``enabled`` columns and JSON fields are
-        parsed when ``parse_json`` is True.
+        Booleans are restored for ``enabled`` columns and JSON fields listed in
+        ``json_fields`` are parsed back into Python values.
         """
         if row is None:
             return None
         result: dict[str, Any] = dict(row)
         if "enabled" in result:
             result["enabled"] = bool(result["enabled"])
-        if parse_json:
-            for key in cls._JSON_FIELDS:
-                if key in result and result[key] is not None:
-                    try:
-                        result[key] = json.loads(result[key])
-                    except json.JSONDecodeError as exc:
-                        raise ValueError(
-                            f"Invalid JSON in field {key!r}: {result[key]!r}"
-                        ) from exc
+        for key in json_fields or set():
+            if key in result and result[key] is not None:
+                try:
+                    result[key] = json.loads(result[key])
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        f"Invalid JSON in field {key!r}: {result[key]!r}"
+                    ) from exc
         return result
 
     @staticmethod
@@ -209,31 +213,22 @@ class ScheduledTasksDB(BaseDB):
         return json.dumps(value)
 
     @classmethod
-    def _validate_reminder_kwargs(cls, kwargs: dict[str, Any]) -> None:
-        """Validate kwargs for create/update; raises ValueError on bad keys."""
-        for key in kwargs:
-            if key in cls._RESERVED_FIELDS:
-                raise ValueError(f"Field {key!r} is reserved and cannot be set via kwargs")
-            if key not in cls._REMINDER_TASK_COLUMNS:
-                raise ValueError(f"Unknown reminder task field: {key!r}")
+    def _validate_kwargs(
+        cls,
+        kwargs: dict[str, Any],
+        allowed_columns: set[str],
+        label: str,
+    ) -> None:
+        """Validate kwargs against an allowed column set.
 
-    @classmethod
-    def _validate_automation_kwargs(cls, kwargs: dict[str, Any]) -> None:
-        """Validate automation-definition kwargs; raises ValueError on bad keys."""
+        Raises:
+            ValueError: If a reserved field or an unknown field is present.
+        """
         for key in kwargs:
             if key in cls._RESERVED_FIELDS:
                 raise ValueError(f"Field {key!r} is reserved and cannot be set via kwargs")
-            if key not in cls._AUTOMATION_DEFINITION_COLUMNS:
-                raise ValueError(f"Unknown automation definition field: {key!r}")
-
-    @classmethod
-    def _validate_audit_kwargs(cls, kwargs: dict[str, Any]) -> None:
-        """Validate automation-audit-event kwargs; raises ValueError on bad keys."""
-        for key in kwargs:
-            if key in cls._RESERVED_FIELDS:
-                raise ValueError(f"Field {key!r} is reserved and cannot be set via kwargs")
-            if key not in cls._AUTOMATION_AUDIT_EVENT_COLUMNS:
-                raise ValueError(f"Unknown automation audit event field: {key!r}")
+            if key not in allowed_columns:
+                raise ValueError(f"Unknown {label} field: {key!r}")
 
     # ------------------------------------------------------------------
     # Reminder tasks
@@ -243,7 +238,7 @@ class ScheduledTasksDB(BaseDB):
         self, owner_id: str, title: str, **kwargs: Any
     ) -> str:
         """Create a reminder task and return its generated local UUID."""
-        self._validate_reminder_kwargs(kwargs)
+        self._validate_kwargs(kwargs, self._REMINDER_TASK_COLUMNS, "reminder task")
 
         task_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc)
@@ -285,7 +280,7 @@ class ScheduledTasksDB(BaseDB):
             cursor = conn.execute(
                 "SELECT * FROM reminder_tasks WHERE id = ?", (task_id,)
             )
-            return self._row_to_dict(cursor.fetchone())
+            return self._row_to_dict(cursor.fetchone(), json_fields=self._REMINDER_JSON_FIELDS)
 
     def list_reminder_tasks(
         self,
@@ -314,14 +309,17 @@ class ScheduledTasksDB(BaseDB):
                 f"SELECT * FROM reminder_tasks {where_clause} ORDER BY created_at",
                 params,
             )
-            return [self._row_to_dict(row) for row in cursor.fetchall()]
+            return [
+                self._row_to_dict(row, json_fields=self._REMINDER_JSON_FIELDS)
+                for row in cursor.fetchall()
+            ]
 
     def update_reminder_task(self, task_id: str, **kwargs: Any) -> bool:
         """Update reminder task fields. Returns True if a row was changed."""
         if not kwargs:
             return False
 
-        self._validate_reminder_kwargs(kwargs)
+        self._validate_kwargs(kwargs, self._REMINDER_TASK_COLUMNS, "reminder task")
 
         updates: list[str] = []
         params: list[Any] = []
@@ -373,7 +371,10 @@ class ScheduledTasksDB(BaseDB):
                 """,
                 (now_iso,),
             )
-            return [self._row_to_dict(row) for row in cursor.fetchall()]
+            return [
+                self._row_to_dict(row, json_fields=self._REMINDER_JSON_FIELDS)
+                for row in cursor.fetchall()
+            ]
 
     # ------------------------------------------------------------------
     # Automation definitions
@@ -388,7 +389,9 @@ class ScheduledTasksDB(BaseDB):
         ``execution_unavailable`` when not provided. JSON fields are serialized
         and datetime fields are converted to UTC ISO-8601 strings.
         """
-        self._validate_automation_kwargs(kwargs)
+        self._validate_kwargs(
+            kwargs, self._AUTOMATION_DEFINITION_COLUMNS, "automation definition"
+        )
 
         definition_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc)
@@ -408,7 +411,7 @@ class ScheduledTasksDB(BaseDB):
         for key, value in kwargs.items():
             if value is None and key in ("lifecycle", "health"):
                 continue
-            if key in self._JSON_FIELDS:
+            if key in self._AUTOMATION_JSON_FIELDS:
                 fields[key] = self._to_json(value)
             elif key in self._DATETIME_FIELDS:
                 fields[key] = self._to_utc_iso(value)
@@ -428,20 +431,22 @@ class ScheduledTasksDB(BaseDB):
         logger.debug(f"Created automation definition {definition_id} for owner {owner_id}")
         return definition_id
 
-    def get_automation_definition(self, definition_id: str) -> dict | None:
+    def get_automation_definition(self, definition_id: str) -> Optional[dict[str, Any]]:
         """Fetch an automation definition by local id."""
         with closing(self._get_connection()) as conn:
             cursor = conn.execute(
                 "SELECT * FROM automation_definitions WHERE id = ?", (definition_id,)
             )
-            return self._row_to_dict(cursor.fetchone(), parse_json=True)
+            return self._row_to_dict(
+                cursor.fetchone(), json_fields=self._AUTOMATION_JSON_FIELDS
+            )
 
     def list_automation_definitions(
         self,
-        owner_id: str | None = None,
-        lifecycle: str | None = None,
-        family: str | None = None,
-    ) -> list[dict]:
+        owner_id: Optional[str] = None,
+        lifecycle: Optional[str] = None,
+        family: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
         """List automation definitions with optional filters."""
         conditions: list[str] = []
         params: list[Any] = []
@@ -463,20 +468,32 @@ class ScheduledTasksDB(BaseDB):
                 f"SELECT * FROM automation_definitions {where_clause} ORDER BY created_at",
                 params,
             )
-            return [self._row_to_dict(row, parse_json=True) for row in cursor.fetchall()]
+            return [
+                self._row_to_dict(row, json_fields=self._AUTOMATION_JSON_FIELDS)
+                for row in cursor.fetchall()
+            ]
 
     def update_automation_definition(self, definition_id: str, **kwargs: Any) -> bool:
-        """Update automation-definition fields. Returns True if a row changed."""
+        """Update automation-definition fields. Returns True if a row changed.
+
+        The ``version`` column is automatically incremented for optimistic
+        locking; any ``version`` value supplied in kwargs is ignored.
+        """
         if not kwargs:
             return False
 
-        self._validate_automation_kwargs(kwargs)
+        self._validate_kwargs(
+            kwargs, self._AUTOMATION_DEFINITION_COLUMNS, "automation definition"
+        )
 
         updates: list[str] = []
         params: list[Any] = []
 
         for key, value in kwargs.items():
-            if key in self._JSON_FIELDS:
+            if key == "version":
+                # version is auto-incremented below; ignore user-supplied value
+                continue
+            if key in self._AUTOMATION_JSON_FIELDS:
                 updates.append(f"{key} = ?")
                 params.append(self._to_json(value))
             elif key in self._DATETIME_FIELDS:
@@ -489,6 +506,7 @@ class ScheduledTasksDB(BaseDB):
         if not updates:
             return False
 
+        updates.append("version = version + 1")
         updates.append("updated_at = ?")
         params.append(self._to_utc_iso(datetime.now(timezone.utc)))
         params.append(definition_id)
@@ -524,7 +542,9 @@ class ScheduledTasksDB(BaseDB):
         JSON fields (``before``, ``after``) are serialized; datetime fields are
         stored as UTC ISO-8601 strings.
         """
-        self._validate_audit_kwargs(kwargs)
+        self._validate_kwargs(
+            kwargs, self._AUTOMATION_AUDIT_EVENT_COLUMNS, "automation audit event"
+        )
 
         event_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc)
@@ -540,7 +560,7 @@ class ScheduledTasksDB(BaseDB):
         }
 
         for key, value in kwargs.items():
-            if key in self._JSON_FIELDS:
+            if key in self._AUDIT_JSON_FIELDS:
                 fields[key] = self._to_json(value)
             elif key in self._DATETIME_FIELDS:
                 fields[key] = self._to_utc_iso(value)

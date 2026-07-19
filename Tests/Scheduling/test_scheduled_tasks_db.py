@@ -359,6 +359,21 @@ def test_create_and_get_automation_definition(db: ScheduledTasksDB) -> None:
     assert row["updated_at"]
 
 
+def test_create_automation_definition_defaults_none_lifecycle_health(db: ScheduledTasksDB) -> None:
+    def_id = db.create_automation_definition(
+        owner_id="local",
+        family="recurring_question",
+        name="Defaults on None",
+        lifecycle=None,
+        health=None,
+    )
+
+    row = db.get_automation_definition(def_id)
+    assert row is not None
+    assert row["lifecycle"] == "configured"
+    assert row["health"] == "execution_unavailable"
+
+
 def test_create_automation_definition_rejects_unknown_kwargs(db: ScheduledTasksDB) -> None:
     with pytest.raises(ValueError, match="Unknown automation definition field"):
         db.create_automation_definition(
@@ -453,11 +468,20 @@ def test_update_automation_definition(db: ScheduledTasksDB) -> None:
     assert row["description"] == "New description"
     assert row["lifecycle"] == "paused"
     assert row["schedule"] == new_schedule
+    assert row["version"] == 2
     assert row["updated_at"] is not None
     assert row["updated_at"] >= row["created_at"]
 
     not_found = db.update_automation_definition("does-not-exist", name="Nope")
     assert not_found is False
+
+
+def test_update_automation_definition_empty_kwargs_returns_false(db: ScheduledTasksDB) -> None:
+    def_id = db.create_automation_definition(
+        owner_id="local", family="recurring_question", name="Original"
+    )
+
+    assert db.update_automation_definition(def_id) is False
 
 
 def test_delete_automation_definition(db: ScheduledTasksDB) -> None:
@@ -513,3 +537,35 @@ def test_automation_audit_event_logging(db: ScheduledTasksDB) -> None:
     assert row["request_id"] == "req-1"
     assert row["idempotency_key"] == "idem-1"
     assert row["created_at"]
+
+
+def test_log_automation_audit_event_rejects_unknown_kwargs(db: ScheduledTasksDB) -> None:
+    def_id = db.create_automation_definition(
+        owner_id="local", family="recurring_question", name="Audited"
+    )
+
+    with pytest.raises(ValueError, match="Unknown automation audit event field"):
+        db.log_automation_audit_event(
+            definition_id=def_id,
+            owner_id="local",
+            event_type="lifecycle_change",
+            actor="user:1",
+            summary="Bad field",
+            not_a_field="nope",
+        )
+
+
+def test_log_automation_audit_event_rejects_reserved_id(db: ScheduledTasksDB) -> None:
+    def_id = db.create_automation_definition(
+        owner_id="local", family="recurring_question", name="Audited"
+    )
+
+    with pytest.raises(ValueError, match="reserved"):
+        db.log_automation_audit_event(
+            definition_id=def_id,
+            owner_id="local",
+            event_type="lifecycle_change",
+            actor="user:1",
+            summary="Reserved id",
+            id="custom-id",
+        )
