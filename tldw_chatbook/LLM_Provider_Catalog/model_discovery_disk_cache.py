@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -36,6 +37,7 @@ class ModelCatalogDiskStore:
     """JSON store mirroring ModelDiscoveryCache entries plus fetched_at.
 
     Stores model IDs and timestamps only — never credentials or headers.
+    Not thread-safe; assumes a single writer (one startup refresh worker).
     """
 
     def __init__(self, path: Path) -> None:
@@ -57,6 +59,7 @@ class ModelCatalogDiskStore:
         """Return True when the entry is missing or older than the threshold.
 
         A threshold of 0 (or less) means always-stale: refetch every launch.
+        A future-dated fetched_at (clock skew) also counts as stale.
         """
         if stale_after_hours <= 0:
             return True
@@ -66,13 +69,14 @@ class ModelCatalogDiskStore:
         current = now or _utc_now()
         if current.tzinfo is None:
             current = current.replace(tzinfo=UTC)
-        return (current - fetched).total_seconds() >= stale_after_hours * 3600
+        age_seconds = (current - fetched).total_seconds()
+        return age_seconds < 0 or age_seconds >= stale_after_hours * 3600
 
     def record(
         self,
         provider_list_key: str,
         endpoint_fingerprint: str,
-        model_ids,
+        model_ids: Iterable[str],
         *,
         fetched_at: datetime | None = None,
     ) -> None:
@@ -81,6 +85,7 @@ class ModelCatalogDiskStore:
         stamp = fetched_at or _utc_now()
         if stamp.tzinfo is None:
             stamp = stamp.replace(tzinfo=UTC)
+        stamp = stamp.astimezone(UTC)
         self._fetched_at[key] = stamp
 
     def prune(self, keep_provider_list_keys: set[str]) -> None:
@@ -142,7 +147,11 @@ class ModelCatalogDiskStore:
             self._fetched_at[key] = fetched
 
     def save(self) -> None:
-        """Atomically write the store (temp file + rename)."""
+        """Atomically write the store (pid-scoped temp file + rename).
+
+        Raises:
+            OSError: if the write or rename fails (a leftover .tmp file may remain).
+        """
         entries: dict[str, dict] = {}
         for key, model_ids in self._model_ids.items():
             fetched = self._fetched_at.get(key)
@@ -156,6 +165,6 @@ class ModelCatalogDiskStore:
             }
         payload = {"version": CACHE_VERSION, "entries": entries}
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = self.path.with_name(self.path.name + ".tmp")
+        tmp_path = self.path.with_name(f"{self.path.name}.{os.getpid()}.tmp")
         tmp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         os.replace(tmp_path, self.path)

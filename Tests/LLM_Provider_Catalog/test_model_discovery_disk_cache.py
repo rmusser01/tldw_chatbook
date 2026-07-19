@@ -1,4 +1,6 @@
+import os
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_cache import ModelDiscoveryCache
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_disk_cache import (
@@ -61,3 +63,46 @@ def test_disk_store_holds_no_credentials(tmp_path):
     store.save()
     raw = (tmp_path / "model_catalog_cache.json").read_text(encoding="utf-8")
     assert "api_key" not in raw and "Authorization" not in raw and "x-api-key" not in raw
+
+
+def test_save_uses_pid_scoped_temp_name(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    store.record("OpenAI", "fp", ["gpt-a"])
+    captured = {}
+    real_replace = os.replace
+
+    def fake_replace(src, dst):
+        captured["src"] = Path(src)
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", fake_replace)
+    store.save()
+    assert captured["src"].name == f"model_catalog_cache.json.{os.getpid()}.tmp"
+    assert (tmp_path / "model_catalog_cache.json").exists()
+
+
+def test_future_dated_fetched_at_is_stale(tmp_path):
+    store = _store(tmp_path)
+    now = datetime(2026, 7, 17, 12, 0, tzinfo=UTC)
+    store.record("OpenAI", "fp", ["gpt-a"], fetched_at=now + timedelta(days=7))
+    assert store.is_stale("OpenAI", "fp", stale_after_hours=24, now=now) is True
+
+
+def test_empty_model_list_round_trips_with_timestamp(tmp_path):
+    store = _store(tmp_path)
+    stamp = datetime(2026, 7, 17, 12, 0, tzinfo=UTC)
+    store.record("OpenAI", "fp", [], fetched_at=stamp)
+    store.save()
+
+    cache = ModelDiscoveryCache()
+    reloaded = _store(tmp_path)
+    reloaded.load_into(cache)
+    assert reloaded.fetched_at("OpenAI", "fp") == stamp
+    assert cache.list() == ()
+
+
+def test_save_creates_missing_parent_directories(tmp_path):
+    store = ModelCatalogDiskStore(tmp_path / "nested" / "deeper" / "model_catalog_cache.json")
+    store.record("OpenAI", "fp", ["gpt-a"])
+    store.save()
+    assert (tmp_path / "nested" / "deeper" / "model_catalog_cache.json").exists()
