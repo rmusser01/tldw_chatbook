@@ -13,6 +13,7 @@ from tldw_chatbook.Chat.console_provider_support import (
     supported_console_provider_readiness_keys,
 )
 from tldw_chatbook.Chat.console_provider_endpoints import (
+    URL_BASED_PROVIDER_KEYS,
     first_configured_endpoint,
     generic_endpoint_differs,
     normalize_generic_endpoint_for_compare,
