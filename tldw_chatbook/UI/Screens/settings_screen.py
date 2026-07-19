@@ -107,6 +107,7 @@ from .settings_config_models import (
     SettingsDraft,
     SettingsOwnershipRecord,
 )
+from ...Widgets.settings_splash_screen_viewer import SettingsSplashScreenViewer
 from ...Widgets.settings_theme_editor import SettingsThemeEditor
 from .settings_appearance_defaults import (
     SettingsAppearanceDefaults,
@@ -5730,7 +5731,7 @@ class SettingsScreen(BaseAppScreen):
             ("Focused setting", "Appearance defaults"),
             (
                 "Purpose",
-                "Configure global visual defaults without replacing Customize.",
+                "Configure global visual defaults without replacing the Theme editor.",
             ),
             ("Saved as", "general, web_server, and appearance config sections"),
             ("Validation", "preview safely, then save or revert"),
@@ -5831,7 +5832,7 @@ class SettingsScreen(BaseAppScreen):
                 ("Affected config", "theme, density, font size, and motion defaults"),
                 (
                     "Recovery",
-                    "open Customize for full theme editing; use Settings for persisted defaults",
+                    "open Theme for full theme editing; use Settings for persisted defaults",
                 ),
                 ("Boundary", "visual preferences do not change runtime or data access"),
             ),
@@ -7187,7 +7188,7 @@ class SettingsScreen(BaseAppScreen):
             yield SettingsThemeEditor(id="settings-theme-editor")
         elif category is SettingsCategoryId.SPLASH_SCREEN:
             yield Static("Splash Screen", classes="destination-section settings-column-title")
-            yield Static("Splash Screen settings will be added here.", classes="settings-focus-card")
+            yield SettingsSplashScreenViewer(id="settings-splash-screen-viewer")
         elif category is SettingsCategoryId.STORAGE:
             values = self._storage_setting_values()
             try:
@@ -7708,9 +7709,9 @@ class SettingsScreen(BaseAppScreen):
         )
         if summary.category is SettingsCategoryId.OVERVIEW:
             yield Button(
-                "Open Customize",
+                "Open Theme",
                 id="settings-open-appearance",
-                tooltip="Open the dedicated Customize theme editor.",
+                tooltip="Open the dedicated Theme editor.",
             )
 
     def compose_content(self) -> ComposeResult:

@@ -222,6 +222,21 @@ def _is_effectively_displayed(widget) -> bool:
     return True
 
 
+async def _click_settings_category(screen, pilot, category_id: str) -> None:
+    """Click a settings sidebar category, scrolling it into view first."""
+    selector = f"#settings-category-{category_id}"
+    await _wait_for_selector(screen, pilot, selector)
+    try:
+        category_list = screen.query_one("#settings-category-list")
+        category_list.scroll_to_widget(
+            screen.query_one(selector), animate=False, immediate=True
+        )
+        await pilot.pause()
+    except Exception:
+        pass
+    await pilot.click(selector)
+
+
 class StaticArtifactsChatbookService:
     def __init__(self, chatbooks):
         self.chatbooks = tuple(chatbooks)
@@ -1634,7 +1649,7 @@ async def test_settings_dirty_category_status_has_visual_marker_class():
 
     async with host.run_test(size=(140, 42)) as pilot:
         screen = _active_destination_screen(host)
-        await pilot.click("#settings-category-console-behavior")
+        await _click_settings_category(screen, pilot, "console-behavior")
         await pilot.click("#settings-console-collapse-large-pastes-toggle")
         status = screen.query_one("#settings-category-console-behavior-status")
 
@@ -1649,7 +1664,7 @@ async def test_settings_advanced_config_controls_use_action_and_status_rows():
 
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
-        await pilot.click("#settings-category-advanced-config")
+        await _click_settings_category(screen, pilot, "advanced-config")
         await _wait_for_selector(screen, pilot, "#settings-advanced-config-editor")
 
         actions = screen.query_one("#settings-advanced-config-actions")
@@ -1927,7 +1942,9 @@ VISIBLE_FOCUS_TARGETS = {
     "mcp": {"mcp-rail-row-0", "mcp-adv-run"},
     "acp": {"acp-follow-in-console", "acp-launch-agent"},
     "skills": {"skills-import-skill", "skills-attach-to-console"},
-    "settings": {"settings-open-appearance"},
+    # Theme and Splash Screen are now first-class sidebar categories, so the
+    # primary tab-focusable actions on Settings are the category rail buttons.
+    "settings": {"settings-category-overview", "settings-category-providers-models"},
 }
 
 
