@@ -8,17 +8,19 @@ server identity (``server:<user_id>``).
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from loguru import logger
 
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
-from tldw_chatbook.Scheduling.models import ReminderTask
+from tldw_chatbook.Scheduling.models import ReminderTask, ScheduledTask
 from tldw_chatbook.Scheduling.services.server_client import (
     SchedulingServerClient,
     ServerUnavailableError,
 )
 from tldw_chatbook.Scheduling.services.sync_engine import SyncEngine
+from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProjection
 
 _REMINDER_PRIMITIVE = "reminder_task"
 
@@ -47,11 +49,13 @@ class SchedulingService:
         db: ScheduledTasksDB,
         server_client: SchedulingServerClient | None = None,
         runtime_source: str = "local",
+        watchlist_projection: WatchlistProjection | None = None,
     ) -> None:
         self.db = db
         self.server_client = server_client
         self.runtime_source = runtime_source
         self.owner_id = runtime_source
+        self.watchlist_projection = watchlist_projection
         self.sync_engine = SyncEngine(db, server_client, self.owner_id)
 
     def set_owner(self, owner_id: str) -> None:
@@ -68,6 +72,7 @@ class SchedulingService:
         """
         use_server = self._use_server()
         if use_server:
+            assert self.server_client is not None
             try:
                 response = await self.server_client.create_reminder(**payload)
                 return await self._persist_server_reminder_response(response)
@@ -90,12 +95,22 @@ class SchedulingService:
             )
 
         row = self.db.get_reminder_task(task_id)
+        assert row is not None
         return self._row_to_reminder(row)
 
     async def list_reminders(self) -> list[ReminderTask]:
         """Return reminders for the current owner from the local cache."""
         rows = self.db.list_reminder_tasks(owner_id=self.owner_id)
         return [self._row_to_reminder(row) for row in rows]
+
+    async def list_tasks(self) -> list[ReminderTask | ScheduledTask]:
+        """Return reminders plus watchlist projections for the current owner."""
+        tasks: list[ReminderTask | ScheduledTask] = list(await self.list_reminders())
+        if self.watchlist_projection is not None:
+            tasks.extend(self.watchlist_projection.list_jobs(owner_id=self.owner_id))
+        # Sort by next_run_at (None sorts last)
+        tasks.sort(key=lambda t: t.next_run_at or datetime.max.replace(tzinfo=timezone.utc))
+        return tasks
 
     async def get_reminder(self, task_id: str) -> ReminderTask | None:
         """Fetch a single reminder by local id."""
@@ -118,6 +133,7 @@ class SchedulingService:
 
         use_server = self._use_server()
         if use_server:
+            assert self.server_client is not None
             server_id = row.get("server_id")
             try:
                 if server_id:
@@ -151,6 +167,7 @@ class SchedulingService:
             )
 
         row = self.db.get_reminder_task(task_id)
+        assert row is not None
         return self._row_to_reminder(row)
 
     async def delete_reminder(self, task_id: str) -> bool:
@@ -165,6 +182,7 @@ class SchedulingService:
 
         use_server = self._use_server()
         if use_server:
+            assert self.server_client is not None
             server_id = row.get("server_id")
             try:
                 if server_id:
@@ -294,6 +312,7 @@ class SchedulingService:
         )
 
         row = self.db.get_reminder_task(task_id)
+        assert row is not None
         return self._row_to_reminder(row)
 
     @staticmethod

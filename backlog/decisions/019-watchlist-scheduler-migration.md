@@ -1,6 +1,6 @@
 # ADR-019: Migrate watchlist checks to the unified Scheduling scheduler
 
-Status: Proposed
+Status: Accepted
 Date: 2026-07-19
 Related Task: TASK-299
 Supersedes: N/A
@@ -15,7 +15,8 @@ Migrate watchlist/subscription check execution from `Subscriptions/scheduler.py`
   - Old scheduler remains the execution authority by default.
   - New handler runs side-by-side in "shadow" mode, executing the same checks but not mutating subscription state.
   - Metrics and logs from both paths are compared before promoting the new handler to authoritative mode.
-- Once validated, the new handler becomes authoritative; the old `SubscriptionScheduler` is deprecated and removed in a follow-up release.
+- Once validated, the new handler becomes authoritative and the old `SubscriptionScheduler` is deprecated.
+- Removal of the old scheduler is deferred to a follow-up release after dual-run validation has completed and parity metrics meet the promotion threshold.
 - A runtime toggle allows instant rollback to the old scheduler without a code deploy.
 
 ## Context
@@ -47,6 +48,7 @@ ADR-018 already decided that watchlist jobs would remain read-only projections f
 - The feature flag lives in config (`[scheduling] watchlist_checks_enabled = false`) and is read at scheduler startup. Changing it requires an app restart.
 - Dual-run metrics must include: checks executed, successes, failures, latency, and result parity (old vs new) per subscription.
 - Old scheduler code is retained during validation but marked deprecated. Removal is gated on dual-run parity metrics and a minimum bake time.
+- The old scheduler is now deprecated in code (`Subscriptions/scheduler.py`, `Subscriptions/textual_scheduler_worker.py`) with `DeprecationWarning`s and docstring notices, but it remains functional for the dual-run validation period.
 - Console-follow and screenshot QA behavior for watchlists must continue to work unchanged; only the execution backend moves.
 
 ## Rollback plan

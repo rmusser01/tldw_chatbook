@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from typing import Any
+
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Static
-from rich.text import Text
 
 from ....Scheduling.events import DeleteTaskRequested
-from ....Scheduling.models import ReminderTask, ScheduleKind, TaskStatus
+from ....Scheduling.models import ReminderTask, ScheduledTask, ScheduleKind, TaskStatus
 from ....Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
 from ..destination_recovery import DestinationRecoveryState
 
@@ -97,16 +99,20 @@ def _format_timezone(dt) -> str:
     return dt.tzname() or "UTC"
 
 
-def _format_next_run(task: ReminderTask | None) -> str:
+def _format_next_run(task: ReminderTask | ScheduledTask | None) -> str:
     """Format a task's next run time with timezone."""
     if task is None or task.next_run_at is None:
         return "-"
     return f"{task.next_run_at.strftime('%Y-%m-%d %H:%M')} {_format_timezone(task.next_run_at)}"
 
 
-def _format_last_run(task: ReminderTask | None) -> str:
-    """Format a task's last run time, or 'Never run'."""
-    if task is None or task.last_run_at is None:
+def _format_last_run(task: ReminderTask | ScheduledTask | None) -> str:
+    """Format a task's last run time, or 'Never run' / '-' for projections."""
+    if task is None:
+        return "Never run"
+    if isinstance(task, ScheduledTask):
+        return "-"
+    if task.last_run_at is None:
         return "Never run"
     return f"{task.last_run_at.strftime('%Y-%m-%d %H:%M')} {_format_timezone(task.last_run_at)}"
 
@@ -150,6 +156,47 @@ def _humanize_schedule(task: ReminderTask) -> str:
     return _humanize_cron(task.cron, task.timezone)
 
 
+def _task_status(task: ReminderTask | ScheduledTask) -> TaskStatus:
+    """Return the current status for either a reminder or a projected task."""
+    if isinstance(task, ReminderTask):
+        return task.last_status
+    return task.status
+
+
+def _task_type_label(task: ReminderTask | ScheduledTask) -> str:
+    """Return a readable type label for the task."""
+    if isinstance(task, ReminderTask):
+        return _humanize_schedule_kind(task.schedule_kind)
+    return task.type.replace("_", " ").title()
+
+
+def _task_schedule_label(task: ReminderTask | ScheduledTask) -> str:
+    """Return a human-readable schedule summary for the task."""
+    if isinstance(task, ReminderTask):
+        return _humanize_schedule(task)
+    return task.schedule_summary or "-"
+
+
+def _task_sync_label(task: ReminderTask | ScheduledTask) -> str:
+    """Return a sync description for the task."""
+    if isinstance(task, ReminderTask):
+        sync_status = f"version {task.sync_version}"
+        if task.server_id:
+            sync_status += f" (server {task.server_id})"
+        else:
+            sync_status += " (local)"
+        return sync_status
+    return "local (read-only projection)"
+
+
+def _task_owner_label(task: ReminderTask | ScheduledTask) -> str:
+    """Return an owner label for the task."""
+    owner = task.owner_id or "local"
+    if isinstance(task, ReminderTask) and task.server_id:
+        owner += f" / server {task.server_id}"
+    return owner
+
+
 def status_badge_text(status: TaskStatus) -> Text:
     """Return a styled Rich Text badge for use in a DataTable cell."""
     label = _humanize_status(status)
@@ -190,7 +237,7 @@ class TaskDetail(Vertical):
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self._current_task: ReminderTask | None = None
+        self._current_task: ReminderTask | ScheduledTask | None = None
 
     def compose(self) -> ComposeResult:
         yield Static("Task Detail", id="scheduling-task-detail-header")
@@ -256,9 +303,9 @@ class TaskDetail(Vertical):
         }:
             event.stop()
         if button_id == "scheduling-enable-task":
-            self.log.debug("Enable task requested (not yet implemented)")
+            self.app.notify("Not yet available", severity="warning")
         elif button_id == "scheduling-disable-task":
-            self.log.debug("Disable task requested (not yet implemented)")
+            self.app.notify("Not yet available", severity="warning")
         elif button_id == "scheduling-delete-task":
             self.request_delete()
 
@@ -275,17 +322,19 @@ class TaskDetail(Vertical):
             callback=self._on_delete_confirmed,
         )
 
-    def _on_delete_confirmed(self, confirmed: bool) -> None:
+    def _on_delete_confirmed(self, confirmed: Any | None) -> None:
         """Post a delete request when the user confirms the modal."""
-        if confirmed and self._current_task is not None:
+        if confirmed and isinstance(self._current_task, ReminderTask):
             self.post_message(DeleteTaskRequested(self._current_task))
 
-    def set_task(self, task: ReminderTask | None, *, queue_empty: bool = False) -> None:
+    def set_task(
+        self, task: ReminderTask | ScheduledTask | None, *, queue_empty: bool = False
+    ) -> None:
         """Update the detail view for the given task (or clear it)."""
         self._current_task = task
         metadata = self.query_one("#scheduling-task-detail-metadata", Vertical)
         lifecycle = self.query_one("#scheduling-task-detail-lifecycle", Horizontal)
-        follow_button = self.query_one("#schedules-follow-in-console", Button)
+        self.query_one("#schedules-follow-in-console", Button)
         empty_state = self.query_one("#scheduling-task-detail-empty-state", Static)
 
         if task is None:
@@ -305,14 +354,15 @@ class TaskDetail(Vertical):
         lifecycle.display = True
 
         self._update_static("scheduling-task-detail-title", task.title)
-        self._update_static("scheduling-task-detail-type", _humanize_schedule_kind(task.schedule_kind))
-        self._update_static("scheduling-task-detail-schedule", _humanize_schedule(task))
+        self._update_static("scheduling-task-detail-type", _task_type_label(task))
+        self._update_static("scheduling-task-detail-schedule", _task_schedule_label(task))
         self._update_static("scheduling-task-detail-next-run", _format_next_run(task))
 
+        status = _task_status(task)
         badge = self.query_one("#scheduling-task-status-badge", Static)
-        badge.update(_humanize_status(task.last_status))
+        badge.update(_humanize_status(status))
         badge.remove_class(*_STATUS_BADGE_CLASSES.values())
-        badge.add_class(status_badge_class(task.last_status))
+        badge.add_class(status_badge_class(status))
 
     def set_follow_available(self, available: bool) -> None:
         """Enable or disable the Console-follow button and set its tooltip."""
@@ -353,7 +403,7 @@ class TaskInspector(Vertical):
             id="scheduling-conflict-card",
         )
 
-    def set_task(self, task: ReminderTask | None) -> None:
+    def set_task(self, task: ReminderTask | ScheduledTask | None) -> None:
         """Update the inspector view for the given task (or clear it)."""
         if task is None:
             self._update_static("scheduling-inspector-sync", "-")
@@ -362,26 +412,16 @@ class TaskInspector(Vertical):
             self._update_conflict_card(None)
             return
 
-        sync_status = f"version {task.sync_version}"
-        if task.server_id:
-            sync_status += f" (server {task.server_id})"
-        else:
-            sync_status += " (local)"
-
-        owner = task.owner_id or "local"
-        if task.server_id:
-            owner += f" / server {task.server_id}"
-
-        self._update_static("scheduling-inspector-sync", sync_status)
+        self._update_static("scheduling-inspector-sync", _task_sync_label(task))
         self._update_static("scheduling-inspector-last-run", _format_last_run(task))
-        self._update_static("scheduling-inspector-owner", owner)
+        self._update_static("scheduling-inspector-owner", _task_owner_label(task))
         self._update_conflict_card(task)
 
-    def _update_conflict_card(self, task: ReminderTask | None) -> None:
+    def _update_conflict_card(self, task: ReminderTask | ScheduledTask | None) -> None:
         """Update the conflict card for the current task state."""
         card = self.query_one("#scheduling-conflict-card", Vertical)
         text = self.query_one("#scheduling-conflict-text", Static)
-        if task is not None and task.last_status == TaskStatus.CONFLICT:
+        if task is not None and _task_status(task) == TaskStatus.CONFLICT:
             text.update(f"Conflict detected\n{task.title}")
             card.add_class("conflict")
         else:

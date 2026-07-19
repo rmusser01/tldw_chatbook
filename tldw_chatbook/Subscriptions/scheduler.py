@@ -12,6 +12,7 @@
 import asyncio
 import heapq
 import time
+import warnings
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Set, Tuple, Callable, Any
 from dataclasses import dataclass, field
@@ -26,6 +27,12 @@ from ..DB.Subscriptions_DB import SubscriptionsDB
 from ..Metrics.metrics_logger import log_histogram, log_counter, log_gauge
 from .monitoring_engine import FeedMonitor, URLMonitor, RateLimiter
 from .security import SecurityValidator
+
+warnings.warn(
+    "SubscriptionScheduler is deprecated; watchlist checks are migrating to the unified Scheduling scheduler (ADR-019).",
+    DeprecationWarning,
+    stacklevel=2,
+)
 #
 ########################################################################################################################
 #
@@ -205,7 +212,13 @@ class UpdatePattern:
 
 
 class SubscriptionScheduler:
-    """Main scheduler for subscription checking."""
+    """Main scheduler for subscription checking.
+
+    .. deprecated::
+        SubscriptionScheduler is deprecated. Watchlist checks are migrating to
+        the unified Scheduling scheduler; use
+        :class:`tldw_chatbook.Scheduling.scheduler.loop.SchedulerLoop` instead.
+    """
     
     def __init__(self, db: SubscriptionsDB, max_concurrent: int = 10):
         """
@@ -483,7 +496,13 @@ class SubscriptionScheduler:
 
 
 class TextualSchedulerWorker(Worker):
-    """Textual worker for running the scheduler in the background."""
+    """Textual worker for running the scheduler in the background.
+
+    .. deprecated::
+        TextualSchedulerWorker is deprecated. Watchlist checks are migrating to
+        the unified Scheduling scheduler; use
+        :class:`tldw_chatbook.Scheduling.scheduler.loop.SchedulerLoop` instead.
+    """
     
     def __init__(self, scheduler: SubscriptionScheduler):
         """

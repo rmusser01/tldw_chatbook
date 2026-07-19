@@ -1,12 +1,15 @@
 """Tests for SchedulingService local/server routing and offline behavior."""
 
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import AsyncMock
 
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
-from tldw_chatbook.Scheduling.models import ReminderTask
+from tldw_chatbook.Scheduling.models import ReminderTask, ScheduledTask, TaskStatus
 from tldw_chatbook.Scheduling.services import SchedulingService
 from tldw_chatbook.Scheduling.services.server_client import ServerUnavailableError
+from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProjection
 
 
 @pytest.fixture
@@ -385,3 +388,57 @@ async def test_set_owner_propagates_to_sync_engine(db):
 
     assert svc.owner_id == "server:42"
     assert svc.sync_engine.owner_id == "server:42"
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_includes_watchlist_projection(db):
+    """list_tasks merges reminders with watchlist projections and sorts by next_run_at."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    await svc.create_reminder(_reminder_payload("Reminder"))
+
+    projection = MagicMock(spec=WatchlistProjection)
+    projection.list_jobs.return_value = [
+        ScheduledTask(
+            id="watchlist:1",
+            title="Watchlist Job",
+            type="watchlist_job",
+            status=TaskStatus.WAITING,
+            next_run_at=datetime(2026, 7, 20, 13, 0, tzinfo=timezone.utc),
+            owner_id="local",
+        )
+    ]
+    svc.watchlist_projection = projection
+
+    tasks = await svc.list_tasks()
+
+    assert len(tasks) == 2
+    assert tasks[0].title == "Watchlist Job"
+    assert tasks[1].title == "Reminder"
+    projection.list_jobs.assert_called_once_with(owner_id="local")
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_without_projection_returns_only_reminders(db):
+    """list_tasks returns only local reminders when no projection is configured."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    reminder = await svc.create_reminder(_reminder_payload("Reminder"))
+
+    tasks = await svc.list_tasks()
+
+    assert len(tasks) == 1
+    assert isinstance(tasks[0], ReminderTask)
+    assert tasks[0].id == reminder.id
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_filters_watchlist_by_owner(db):
+    """list_tasks passes the current owner_id to the watchlist projection."""
+    svc = SchedulingService(db=db, runtime_source="server:1")
+    projection = MagicMock(spec=WatchlistProjection)
+    projection.list_jobs.return_value = []
+    svc.watchlist_projection = projection
+
+    tasks = await svc.list_tasks()
+
+    assert tasks == []
+    projection.list_jobs.assert_called_once_with(owner_id="server:1")

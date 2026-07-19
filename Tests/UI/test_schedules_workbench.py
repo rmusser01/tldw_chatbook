@@ -7,7 +7,7 @@ from textual.app import App
 from textual.widgets import Button, DataTable, Static
 
 from tldw_chatbook.Scheduling.events import DeleteTaskRequested
-from tldw_chatbook.Scheduling.models import ReminderTask, ScheduleKind, TaskStatus
+from tldw_chatbook.Scheduling.models import ReminderTask, ScheduledTask, ScheduleKind, TaskStatus
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import SchedulesWorkbench
 from tldw_chatbook.UI.Screens.scheduling.task_detail import (
     TaskDetail,
@@ -38,11 +38,49 @@ class MockSchedulingService:
             )
         ]
 
+    async def list_tasks(self):
+        return await self.list_reminders()
+
 
 class WorkbenchTestAppWithService(App):
     """Test app with a mock scheduling service."""
 
     scheduling_service = MockSchedulingService()
+
+
+class MockSchedulingServiceWithWatchlist:
+    """Stub service returning one reminder and one watchlist projection."""
+
+    async def list_reminders(self):
+        return [
+            ReminderTask(
+                id="task-1",
+                title="Reminder",
+                schedule_kind=ScheduleKind.ONE_TIME,
+                run_at=datetime(2026, 7, 20, 10, 0, tzinfo=timezone.utc),
+                next_run_at=datetime(2026, 7, 20, 10, 0, tzinfo=timezone.utc),
+            )
+        ]
+
+    async def list_tasks(self):
+        reminder_tasks = await self.list_reminders()
+        return reminder_tasks + [
+            ScheduledTask(
+                id="watchlist:1",
+                title="Watchlist Title",
+                type="watchlist_job",
+                status=TaskStatus.WAITING,
+                schedule_summary="Every 1h",
+                next_run_at=datetime(2026, 7, 20, 11, 0, tzinfo=timezone.utc),
+                owner_id="local",
+            )
+        ]
+
+
+class WorkbenchTestAppWithMixedService(App):
+    """Test app with a mixed reminder + watchlist scheduling service."""
+
+    scheduling_service = MockSchedulingServiceWithWatchlist()
 
 
 @pytest.mark.asyncio
@@ -144,6 +182,9 @@ class EmptyMockSchedulingService:
     async def list_reminders(self):
         return []
 
+    async def list_tasks(self):
+        return await self.list_reminders()
+
 
 class DistinctMetadataMockSchedulingService:
     """Stub service returning a task with sync and last-run metadata."""
@@ -164,11 +205,17 @@ class DistinctMetadataMockSchedulingService:
             )
         ]
 
+    async def list_tasks(self):
+        return await self.list_reminders()
+
 
 class FailingMockSchedulingService:
     """Stub service that raises on list_reminders."""
 
     async def list_reminders(self):
+        raise RuntimeError("service unavailable")
+
+    async def list_tasks(self):
         raise RuntimeError("service unavailable")
 
 
@@ -304,6 +351,9 @@ async def test_conflict_card_shows_for_conflict_status():
                 )
             ]
 
+        async def list_tasks(self):
+            return await self.list_reminders()
+
     class WorkbenchTestAppWithConflict(App):
         scheduling_service = ConflictMockSchedulingService()
 
@@ -353,6 +403,65 @@ async def test_load_tasks_service_error_notifies_and_uses_empty_state():
         assert "No scheduled tasks yet" in empty_state.visual.plain
 
 
+@pytest.mark.asyncio
+async def test_workbench_renders_watchlist_job_row():
+    """The workbench renders both reminders and watchlist projection rows."""
+    async with WorkbenchTestAppWithMixedService().run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+
+        table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
+        assert table.row_count == 2
+
+        watchlist_row = table.get_row_at(1)
+        assert "Watchlist Title" in str(watchlist_row[0])
+        assert "Watchlist Job" in str(watchlist_row[1])
+        assert "Waiting" in str(watchlist_row[2])
+        assert "2026-07-20 11:00 UTC" in str(watchlist_row[3])
+
+
+@pytest.mark.asyncio
+async def test_select_watchlist_task_updates_detail():
+    """Selecting a watchlist row updates the detail pane with projection metadata."""
+    async with WorkbenchTestAppWithMixedService().run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+
+        table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
+        table.cursor_coordinate = (1, 0)
+        pilot.app.screen._update_detail_for_index(1)
+        await pilot.pause()
+
+        detail = pilot.app.screen.query_one("#scheduling-task-detail", TaskDetail)
+        type_label = detail.query_one("#scheduling-task-detail-type", Static)
+        schedule = detail.query_one("#scheduling-task-detail-schedule", Static)
+
+        assert "Watchlist Job" in type_label.visual.plain
+        assert "Every 1h" in schedule.visual.plain
+
+
+@pytest.mark.asyncio
+async def test_inspector_shows_read_only_projection_for_watchlist():
+    """The inspector surfaces the read-only projection state for watchlist jobs."""
+    async with WorkbenchTestAppWithMixedService().run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+
+        table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
+        table.cursor_coordinate = (1, 0)
+        pilot.app.screen._update_detail_for_index(1)
+        await pilot.pause()
+
+        inspector = pilot.app.screen.query_one("#scheduling-task-inspector", TaskInspector)
+        sync = inspector.query_one("#scheduling-inspector-sync", Static)
+        last_run = inspector.query_one("#scheduling-inspector-last-run", Static)
+        owner = inspector.query_one("#scheduling-inspector-owner", Static)
+
+        assert "local (read-only projection)" in sync.visual.plain
+        assert "-" == last_run.visual.plain.strip()
+        assert "local" in owner.visual.plain
+
+
 def test_humanize_cron_daily_pattern():
     """A standard daily cron pattern is summarized as 'Daily at HH:MM UTC'."""
     assert _humanize_cron("0 9 * * *") == "Daily at 09:00 UTC"
@@ -388,6 +497,9 @@ class ToggleFailingMockSchedulingService:
             )
         ]
 
+    async def list_tasks(self):
+        return await self.list_reminders()
+
 
 class WorkbenchTestAppWithToggleFailingService(App):
     """Test app whose service succeeds on first load, then fails."""
@@ -416,6 +528,45 @@ async def test_load_tasks_service_error_clears_stale_rows():
 
 
 
+class RecordingMockSchedulingService:
+    """Stub service that records delete calls and their arguments."""
+
+    def __init__(self, fail_delete: bool = False):
+        self.deleted_ids: list[str] = []
+        self.fail_delete = fail_delete
+        self._deleted = False
+
+    async def list_reminders(self):
+        if self._deleted:
+            return []
+        return [
+            ReminderTask(
+                id="task-1",
+                title="Test",
+                schedule_kind=ScheduleKind.ONE_TIME,
+                run_at=datetime.now(timezone.utc),
+                next_run_at=datetime.now(timezone.utc),
+            )
+        ]
+
+    async def list_tasks(self):
+        return await self.list_reminders()
+
+    async def delete_reminder(self, task_id: str) -> None:
+        if self.fail_delete:
+            raise RuntimeError("delete failed")
+        self.deleted_ids.append(task_id)
+        self._deleted = True
+
+
+class WorkbenchTestAppWithRecordingService(App):
+    """Test app with a recording scheduling service."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.scheduling_service = RecordingMockSchedulingService()
+
+
 @pytest.mark.asyncio
 async def test_delete_confirmation_runs_delete_requested_flow():
     """Confirming the delete dialog triggers the full DeleteTaskRequested flow."""
@@ -439,42 +590,6 @@ async def test_delete_confirmation_runs_delete_requested_flow():
         await pilot.pause()
 
         assert pilot.app.scheduling_service.deleted_ids == ["task-1"]
-
-
-class RecordingMockSchedulingService:
-    """Stub service that records delete calls and their arguments."""
-
-    def __init__(self, fail_delete: bool = False):
-        self.deleted_ids: list[str] = []
-        self.fail_delete = fail_delete
-        self._deleted = False
-
-    async def list_reminders(self):
-        if self._deleted:
-            return []
-        return [
-            ReminderTask(
-                id="task-1",
-                title="Test",
-                schedule_kind=ScheduleKind.ONE_TIME,
-                run_at=datetime.now(timezone.utc),
-                next_run_at=datetime.now(timezone.utc),
-            )
-        ]
-
-    async def delete_reminder(self, task_id: str) -> None:
-        if self.fail_delete:
-            raise RuntimeError("delete failed")
-        self.deleted_ids.append(task_id)
-        self._deleted = True
-
-
-class WorkbenchTestAppWithRecordingService(App):
-    """Test app with a recording scheduling service."""
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.scheduling_service = RecordingMockSchedulingService()
 
 
 @pytest.mark.asyncio
@@ -516,3 +631,47 @@ async def test_workbench_notifies_on_delete_failure():
         assert pilot.app.scheduling_service.deleted_ids == []
         table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
         assert table.row_count == 1
+
+
+@pytest.mark.asyncio
+async def test_unimplemented_action_bindings_notify_user():
+    """Stub action bindings notify the user instead of silently doing nothing."""
+    async with WorkbenchTestAppWithService().run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+
+        for action in (
+            pilot.app.screen.action_create_reminder,
+            pilot.app.screen.action_run_now,
+            pilot.app.screen.action_pause_resume,
+            pilot.app.screen.action_sync_now,
+        ):
+            action()
+            await pilot.pause()
+
+        assert len(pilot.app._notifications) == 4
+        for notification in pilot.app._notifications:
+            assert notification.message == "Not yet available"
+            assert notification.severity == "warning"
+
+
+@pytest.mark.asyncio
+async def test_unimplemented_enable_disable_buttons_notify_user():
+    """Enable/Disable buttons notify the user instead of silently doing nothing."""
+    async with WorkbenchTestAppWithService().run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+
+        detail = pilot.app.screen.query_one("#scheduling-task-detail", TaskDetail)
+        enable_button = detail.query_one("#scheduling-enable-task", Button)
+        disable_button = detail.query_one("#scheduling-disable-task", Button)
+
+        detail.on_button_pressed(Button.Pressed(enable_button))
+        await pilot.pause()
+        detail.on_button_pressed(Button.Pressed(disable_button))
+        await pilot.pause()
+
+        assert len(pilot.app._notifications) == 2
+        for notification in pilot.app._notifications:
+            assert notification.message == "Not yet available"
+            assert notification.severity == "warning"

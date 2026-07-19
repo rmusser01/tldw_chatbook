@@ -9,6 +9,7 @@ import asyncio
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List, Callable
 import json
+import warnings
 #
 # Third-Party Imports
 from textual import work
@@ -39,6 +40,12 @@ from ..Event_Handlers.subscription_events import (
     BriefingGenerated
 )
 from ..Metrics.metrics_logger import log_histogram, log_counter, log_gauge
+
+warnings.warn(
+    "SubscriptionSchedulerWorker is deprecated; watchlist checks are migrating to the unified Scheduling scheduler (ADR-019).",
+    DeprecationWarning,
+    stacklevel=2,
+)
 #
 ########################################################################################################################
 #
@@ -49,15 +56,20 @@ from ..Metrics.metrics_logger import log_histogram, log_counter, log_gauge
 class SubscriptionSchedulerWorker:
     """
     Manager for running subscription checks in the background.
-    
+
     This class:
     - Manages the subscription scheduler lifecycle
     - Handles scheduled checks asynchronously
     - Posts events to update the UI
     - Manages concurrent check limits
-    
+
     Note: This is not a Textual Worker subclass, but rather a manager
     that creates workers as needed.
+
+    .. deprecated::
+        SubscriptionSchedulerWorker is deprecated. Watchlist checks are
+        migrating to the unified Scheduling scheduler; use
+        :class:`tldw_chatbook.Scheduling.scheduler.loop.SchedulerLoop` instead.
     """
     
     def __init__(self, 

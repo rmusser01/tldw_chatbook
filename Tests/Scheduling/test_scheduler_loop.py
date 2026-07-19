@@ -7,8 +7,10 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+from tldw_chatbook.Scheduling.models import ScheduledTask, TaskStatus
 from tldw_chatbook.Scheduling.scheduler.loop import SchedulerLoop
 from tldw_chatbook.Scheduling.scheduler.queue import PriorityQueue
+from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProjection
 
 
 @pytest.fixture
@@ -148,6 +150,27 @@ async def test_scheduler_run_stop_lifecycle(db):
     handler.assert_awaited()
 
 
+@pytest.mark.asyncio
+async def test_scheduler_periodically_reloads_queue(db):
+    _create_reminder(db, "Initial", "2026-01-01T00:00:00+00:00")
+    handler = AsyncMock()
+    loop = SchedulerLoop(
+        db,
+        handlers={"reminder": handler},
+        poll_interval=0.001,
+        clock=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+        queue_reload_interval_ticks=2,
+    )
+
+    with patch.object(loop.queue, "load") as mock_load:
+        task = asyncio.create_task(loop.run())
+        await asyncio.sleep(0.01)
+        loop.stop()
+        await asyncio.wait_for(task, timeout=1.0)
+
+    assert mock_load.call_count >= 2
+
+
 # ---------------------------------------------------------------------------
 # PriorityQueue tests
 # ---------------------------------------------------------------------------
@@ -211,3 +234,156 @@ def test_queue_pop_due_skips_items_without_next_run_at(db):
     assert len(due) == 1
     assert due[0]["title"] == "Due"
     assert len(queue) == 0
+
+
+class _FakeWatchlistProjection(WatchlistProjection):
+    """Projection stub that returns canned jobs without touching SubscriptionsDB."""
+
+    def __init__(self, jobs):
+        # Bypass the base-class __init__ which expects a SubscriptionsDB.
+        self._jobs = jobs
+
+    def list_jobs(self, owner_id: str = "local") -> list[ScheduledTask]:
+        return list(self._jobs)
+
+
+@pytest.mark.asyncio
+async def test_tick_dispatches_reminder_by_default_type(db):
+    _create_reminder(db, "Untyped", "2026-01-01T00:00:00+00:00")
+    handler = AsyncMock()
+    loop = SchedulerLoop(
+        db,
+        handlers={"reminder": handler},
+        clock=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    loop.queue.load()
+    await loop.tick()
+    handler.assert_awaited_once()
+    assert handler.await_args.args[0].get("type") is None
+
+
+@pytest.mark.asyncio
+async def test_tick_dispatches_watchlist_job(db):
+    projection = _FakeWatchlistProjection([
+        ScheduledTask(
+            id="watchlist:42",
+            title="My Feed",
+            type="watchlist_job",
+            status=TaskStatus.WAITING,
+            next_run_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        ),
+    ])
+    reminder_handler = AsyncMock()
+    watchlist_handler = AsyncMock()
+    loop = SchedulerLoop(
+        db,
+        handlers={
+            "reminder": reminder_handler,
+            "watchlist_job": watchlist_handler,
+        },
+        clock=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+        watchlist_projection=projection,
+    )
+    loop.queue.load()
+    await loop.tick()
+    reminder_handler.assert_not_awaited()
+    watchlist_handler.assert_awaited_once()
+    assert watchlist_handler.await_args.args[0]["id"] == "watchlist:42"
+
+
+@pytest.mark.asyncio
+async def test_tick_skips_unregistered_task_type(db):
+    projection = _FakeWatchlistProjection([
+        ScheduledTask(
+            id="watchlist:7",
+            title="Unknown",
+            type="unknown_job",
+            status=TaskStatus.WAITING,
+            next_run_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        ),
+    ])
+    watchlist_handler = AsyncMock()
+    loop = SchedulerLoop(
+        db,
+        handlers={"watchlist_job": watchlist_handler},
+        clock=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+        watchlist_projection=projection,
+    )
+    loop.queue.load()
+    await loop.tick()
+    watchlist_handler.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_tick_logs_handler_exception_with_task_type(db):
+    _create_reminder(db, "Boom", "2026-01-01T00:00:00+00:00")
+    handler = AsyncMock(side_effect=Exception("boom"))
+    loop = SchedulerLoop(
+        db,
+        handlers={"reminder": handler},
+        clock=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    loop.queue.load()
+
+    with patch("tldw_chatbook.Scheduling.scheduler.loop.logger") as mock_logger:
+        await loop.tick()
+
+    handler.assert_awaited_once()
+    mock_logger.exception.assert_called_once()
+    message = mock_logger.exception.call_args.args[0]
+    kwargs = mock_logger.exception.call_args.kwargs
+    assert "{task_type}" in message
+    assert kwargs.get("task_type") == "reminder"
+    assert kwargs.get("task_id") is not None
+
+
+def test_queue_loads_watchlist_projection(db):
+    projection = _FakeWatchlistProjection([
+        ScheduledTask(
+            id="watchlist:1",
+            title="Feed A",
+            type="watchlist_job",
+            status=TaskStatus.WAITING,
+            next_run_at=datetime(2026, 1, 1, 0, 0, 1, tzinfo=timezone.utc),
+        ),
+        ScheduledTask(
+            id="watchlist:2",
+            title="Feed B",
+            type="watchlist_job",
+            status=TaskStatus.WAITING,
+            next_run_at=datetime(2026, 1, 1, 0, 0, 2, tzinfo=timezone.utc),
+        ),
+    ])
+    queue = PriorityQueue(db, watchlist_projection=projection)
+    queue.load()
+
+    now = datetime(2026, 1, 1, 0, 0, 5, tzinfo=timezone.utc)
+    due = queue.pop_due(now)
+    assert len(due) == 2
+    ids = {item["id"] for item in due}
+    assert ids == {"watchlist:1", "watchlist:2"}
+    assert len(queue) == 0
+
+
+def test_queue_ignores_watchlist_jobs_without_next_run(db):
+    projection = _FakeWatchlistProjection([
+        ScheduledTask(
+            id="watchlist:1",
+            title="Has Run",
+            type="watchlist_job",
+            status=TaskStatus.WAITING,
+            next_run_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        ),
+        ScheduledTask(
+            id="watchlist:2",
+            title="No Run",
+            type="watchlist_job",
+            status=TaskStatus.WAITING,
+            next_run_at=None,
+        ),
+    ])
+    queue = PriorityQueue(db, watchlist_projection=projection)
+    queue.load()
+
+    assert len(queue) == 1
+    assert queue.peek()["id"] == "watchlist:1"

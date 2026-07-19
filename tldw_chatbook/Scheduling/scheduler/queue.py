@@ -10,25 +10,40 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Optional
 
+from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProjection
+
+_FUTURE_SORT_KEY = "9999-12-31T23:59:59+00:00"
+_DEFAULT_OWNER_ID = "local"
+
 
 class PriorityQueue:
     """Simple in-memory task queue ordered by ``next_run_at``."""
 
-    def __init__(self, db: Any) -> None:
+    def __init__(
+        self,
+        db: Any,
+        watchlist_projection: WatchlistProjection | None = None,
+    ) -> None:
         self.db = db
+        self.watchlist_projection = watchlist_projection
         self._items: list[dict[str, Any]] = []
 
     @staticmethod
     def _sort_key(item: dict[str, Any]) -> str:
         """Return the sort key for a task, missing run times sort last."""
-        return item.get("next_run_at") or "9999-12-31T23:59:59+00:00"
+        return item.get("next_run_at") or _FUTURE_SORT_KEY
 
     def load(self, now: Optional[datetime] = None) -> None:
         """Rebuild the queue from the database.
 
-        Loads all enabled reminder tasks that have a ``next_run_at`` value. If
-        ``now`` is provided, only tasks scheduled at or before that time are
-        loaded; otherwise every future-enabled task is loaded.
+        When called without arguments, loads all future-enabled reminder tasks
+        that have a ``next_run_at`` value, appends any projected watchlist jobs
+        that have a ``next_run_at``, and sorts the combined list by
+        ``next_run_at``.
+
+        The ``now`` parameter is retained for back-compat and tests: when
+        provided, only reminder tasks scheduled at or before ``now`` are loaded;
+        watchlist projections are still appended unconditionally.
         """
         if now is None:
             self._items = self.db.list_reminder_tasks(enabled=True)
@@ -38,6 +53,12 @@ class PriorityQueue:
             ]
         else:
             self._items = self.db.reminders_due_before(now)
+
+        if self.watchlist_projection is not None:
+            for task in self.watchlist_projection.list_jobs(owner_id=_DEFAULT_OWNER_ID):
+                item = task.model_dump(mode="json")
+                if item.get("next_run_at"):
+                    self._items.append(item)
 
         self._items.sort(key=self._sort_key)
 

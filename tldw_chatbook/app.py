@@ -203,8 +203,10 @@ from .Research_Interop import (
 from .Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from .Scheduling.services.scheduling_service import SchedulingService
 from .Scheduling.services.server_client import SchedulingServerClient
-from .Scheduling.scheduler.loop import SchedulerLoop
+from .Scheduling.scheduler.loop import SchedulerLoop, Handler
 from .Scheduling.scheduler.handlers.reminder_handler import ReminderHandler
+from .Scheduling.scheduler.handlers.watchlist_check_handler import WatchlistCheckHandler
+from .Scheduling.services.watchlist_projection import WatchlistProjection
 from .ACP_Interop.runtime_process import ACPRuntimeProcessManager
 from .ACP_Interop.runtime_session import ACPRuntimeSessionState
 from .DB.ChaChaNotes_DB import CharactersRAGDBError, ConflictError
@@ -3461,17 +3463,37 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         if self.server_notifications_service is not None:
             server_client = SchedulingServerClient(self.server_notifications_service)
 
+        subscriptions_db = SubscriptionsDB(get_subscriptions_db_path(), CLI_APP_CLIENT_ID)
+        watchlist_projection = WatchlistProjection(subscriptions_db)
+
         self.scheduling_service = SchedulingService(
             db=ScheduledTasksDB(get_scheduled_tasks_db_path()),
             server_client=server_client,
             runtime_source="local",
+            watchlist_projection=watchlist_projection,
         )
+
+        watchlist_checks_enabled = get_cli_setting("scheduling", "watchlist_checks_enabled", False)
+        watchlist_checks_shadow = get_cli_setting("scheduling", "watchlist_checks_shadow", True)
+
+        watchlist_handler = None
+        if watchlist_checks_enabled:
+            watchlist_handler = WatchlistCheckHandler(
+                subscriptions_db=subscriptions_db,
+                shadow_mode=watchlist_checks_shadow,
+            )
+
+        handlers: dict[str, Handler] = {
+            "reminder": ReminderHandler(dispatch_service=self.notification_dispatch_service),
+        }
+        if watchlist_handler is not None:
+            handlers["watchlist_job"] = watchlist_handler
+
         self.scheduler_loop = SchedulerLoop(
             self.scheduling_service.db,
-            handlers={
-                "reminder": ReminderHandler(dispatch_service=self.notification_dispatch_service),
-            },
+            handlers=handlers,
             poll_interval=get_cli_setting("scheduling", "scheduler_poll_interval_seconds", 30),
+            watchlist_projection=watchlist_projection,
         )
         self.notifications_scope_service = NotificationsScopeService(
             local_service=self.client_notifications_service,

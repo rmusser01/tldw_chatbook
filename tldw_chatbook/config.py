@@ -1566,6 +1566,9 @@ sync_retry_max_delay_seconds = 300
 sync_retry_jitter = true
 scheduler_poll_interval_seconds = 30
 reminder_catchup_hours = 24
+# Feature flags for the watchlist-to-unified-scheduler migration (ADR-019).
+watchlist_checks_enabled = false  # Enable unified scheduler watchlist execution
+watchlist_checks_shadow = true    # Run new handler side-by-side without mutating Subscriptions_DB
 
 [media_cleanup]
 # Media cleanup settings for automatic hard deletion of soft-deleted items

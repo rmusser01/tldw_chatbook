@@ -16,17 +16,19 @@ from textual.widgets import Button, DataTable, Static
 
 from ...Navigation.base_app_screen import BaseAppScreen
 from ....Scheduling.events import DeleteTaskRequested
-from ....Scheduling.models import ReminderTask
+from ....Scheduling.models import ReminderTask, ScheduledTask
 from .task_detail import (
     SCHEDULES_EMPTY_CONSOLE_RECOVERY,
     TaskDetail,
     TaskInspector,
     _format_next_run,
-    _humanize_schedule_kind,
+    _task_status,
+    _task_type_label,
     status_badge_text,
 )
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Scheduling.services.scheduling_service import SchedulingService
     from tldw_chatbook.app import TldwCli
 
 
@@ -55,7 +57,7 @@ class SchedulesWorkbench(BaseAppScreen):
     def __init__(self, app_instance: "TldwCli", screen_name: str = "schedules", **kwargs):
         super().__init__(app_instance, screen_name, **kwargs)
         self._scheduling_service = getattr(app_instance, "scheduling_service", None)
-        self._tasks: list[ReminderTask] = []
+        self._tasks: list[ReminderTask | ScheduledTask] = []
         self._current_console_follow_item = None
         self._latest_console_follow_item_id: str | None = None
         self._latest_console_launch_kwargs: dict[str, Any] | None = None
@@ -72,7 +74,7 @@ class SchedulesWorkbench(BaseAppScreen):
             with Vertical(id="scheduling-inspector-pane"):
                 yield TaskInspector(id="scheduling-task-inspector")
 
-    def _service(self):
+    def _service(self) -> "SchedulingService | None":
         """Return the app's scheduling service, if available."""
         return self._scheduling_service
 
@@ -87,7 +89,7 @@ class SchedulesWorkbench(BaseAppScreen):
         self._register_footer_shortcuts()
         table = self.query_one("#scheduling-task-table", DataTable)
         table.add_columns("Title", "Type", "Status", "Next Run")
-        self.run_worker(self.load_tasks, exclusive=True)
+        self.run_worker(self.load_tasks, exclusive=True)  # type: ignore[arg-type]
 
     async def load_tasks(self) -> None:
         """Fetch reminders from the scheduling service and populate the table."""
@@ -98,11 +100,11 @@ class SchedulesWorkbench(BaseAppScreen):
             return
 
         try:
-            tasks = await service.list_reminders()
+            tasks = await service.list_tasks()
         except Exception:  # noqa: BLE001
-            logger.exception("Failed to load reminders")
+            logger.exception("Failed to load tasks")
             self.app_instance.notify(
-                "Could not load reminders. Check the scheduling service and retry.",
+                "Could not load tasks. Check the scheduling service and retry.",
                 severity="error",
             )
             self._tasks = []
@@ -120,8 +122,8 @@ class SchedulesWorkbench(BaseAppScreen):
         rows: list[tuple[str, str, Text, str]] = [
             (
                 task.title,
-                _humanize_schedule_kind(task.schedule_kind),
-                status_badge_text(task.last_status),
+                _task_type_label(task),
+                status_badge_text(_task_status(task)),
                 _format_next_run(task),
             )
             for task in self._tasks
@@ -245,7 +247,11 @@ class SchedulesWorkbench(BaseAppScreen):
             "action_label": "Open schedule output",
         }
 
-    def _apply_console_context(self, latest_console_item, latest_console_launch) -> None:
+    def _apply_console_context(
+        self,
+        latest_console_item: Any | None,
+        latest_console_launch: dict[str, Any] | None,
+    ) -> None:
         self._current_console_follow_item = latest_console_item
         self._latest_console_follow_item_id = (
             getattr(latest_console_item, "item_id", None)
@@ -292,7 +298,7 @@ class SchedulesWorkbench(BaseAppScreen):
                 )
             await self.load_tasks()
 
-        self.run_worker(_delete_and_refresh, exclusive=True)
+        self.run_worker(_delete_and_refresh, exclusive=True)  # type: ignore[arg-type]
 
     @on(Button.Pressed, "#schedules-follow-in-console")
     def follow_latest_schedule_run_in_console(self, event: Button.Pressed) -> None:
@@ -334,17 +340,15 @@ class SchedulesWorkbench(BaseAppScreen):
 
     def action_create_reminder(self) -> None:
         """Create a new reminder (stub for Task 4.4+)."""
-        logger.debug("action_create_reminder invoked")
-        if self._service() is None:
-            logger.debug("No scheduling_service available; create_reminder is a no-op")
+        self.app_instance.notify("Not yet available", severity="warning")
 
     def action_run_now(self) -> None:
         """Run the selected schedule immediately (stub for later tasks)."""
-        logger.debug("action_run_now invoked")
+        self.app_instance.notify("Not yet available", severity="warning")
 
     def action_pause_resume(self) -> None:
         """Pause or resume the selected schedule (stub for later tasks)."""
-        logger.debug("action_pause_resume invoked")
+        self.app_instance.notify("Not yet available", severity="warning")
 
     def action_delete(self) -> None:
         """Delete the selected schedule after confirmation."""
@@ -352,4 +356,4 @@ class SchedulesWorkbench(BaseAppScreen):
 
     def action_sync_now(self) -> None:
         """Sync schedule state now (stub for later tasks)."""
-        logger.debug("action_sync_now invoked")
+        self.app_instance.notify("Not yet available", severity="warning")
