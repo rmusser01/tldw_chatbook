@@ -18,12 +18,17 @@ class PriorityQueue:
         self.db = db
         self._items: list[dict[str, Any]] = []
 
+    @staticmethod
+    def _sort_key(item: dict[str, Any]) -> str:
+        """Return the sort key for a task, missing run times sort last."""
+        return item.get("next_run_at") or "9999-12-31T23:59:59+00:00"
+
     def load(self, now: Optional[datetime] = None) -> None:
         """Rebuild the queue from the database.
 
-        If ``now`` is provided, only tasks scheduled at or before that time are
-        loaded; otherwise all enabled tasks with a ``next_run_at`` value are
-        loaded.
+        Loads all enabled reminder tasks that have a ``next_run_at`` value. If
+        ``now`` is provided, only tasks scheduled at or before that time are
+        loaded; otherwise every future-enabled task is loaded.
         """
         if now is None:
             self._items = self.db.list_reminder_tasks(enabled=True)
@@ -34,12 +39,16 @@ class PriorityQueue:
         else:
             self._items = self.db.reminders_due_before(now)
 
-        self._items.sort(key=lambda item: item["next_run_at"])
+        self._items.sort(key=self._sort_key)
+
+    def reload(self) -> None:
+        """Explicitly rebuild the queue from the database."""
+        self.load()
 
     def push(self, item: dict[str, Any]) -> None:
         """Insert a task, keeping the list sorted by ``next_run_at``."""
         self._items.append(item)
-        self._items.sort(key=lambda item: item["next_run_at"])
+        self._items.sort(key=self._sort_key)
 
     def peek(self) -> Optional[dict[str, Any]]:
         """Return the next task without removing it."""
@@ -48,8 +57,19 @@ class PriorityQueue:
     def pop_due(self, now: datetime) -> list[dict[str, Any]]:
         """Remove and return all tasks scheduled at or before ``now``."""
         due: list[dict[str, Any]] = []
-        while self._items and self._items[0].get("next_run_at", "") <= now.isoformat():
-            due.append(self._items.pop(0))
+        while self._items:
+            run_at_str = self._items[0].get("next_run_at")
+            if not run_at_str:
+                # Tasks without a run time cannot be dispatched; discard them.
+                self._items.pop(0)
+                continue
+
+            run_at = datetime.fromisoformat(run_at_str)
+            if run_at <= now:
+                due.append(self._items.pop(0))
+            else:
+                break
+
         return due
 
     def __len__(self) -> int:
