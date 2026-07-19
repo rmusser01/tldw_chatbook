@@ -28,6 +28,29 @@ def test_catastrophic_patterns_rejected(pattern):
         validate_regex_pattern(pattern)
 
 
+@pytest.mark.parametrize("pattern", [
+    "((a+))+",       # nesting must not evade the nested-quantifier detector
+    "(?:(a+))+",     # non-capturing wrapper
+    "(((a+)))+",     # deeper nesting
+    "(a|a|a)+",      # N-way identical alternation (not just 2-way)
+    "(?:x|x)*",      # identical alternation behind a non-capturing group
+])
+def test_catastrophic_variants_rejected(pattern):
+    with pytest.raises(ValueError, match="too complex"):
+        validate_regex_pattern(pattern)
+
+
+@pytest.mark.parametrize("pattern", [
+    "(?P<name>x+)",     # inner quantifier but NOT externally quantified — safe
+    "(?:abc){2,5}",     # bounded outer quantifier — safe
+    r"(\d{3}-)+\d{4}",  # bounded inner quantifier — safe
+    "(a|b|c)+",         # distinct alternatives — safe
+    "(cat|dog)*",       # distinct alternatives — safe
+])
+def test_safe_variants_still_pass(pattern):
+    validate_regex_pattern(pattern)  # must not raise
+
+
 def test_regex_search_matches_case_insensitive():
     assert regex_search("w[ao]rden", "The WARDEN speaks", ignore_case=True) is True
     assert regex_search("w[ao]rden", "The WARDEN speaks", ignore_case=False) is False
