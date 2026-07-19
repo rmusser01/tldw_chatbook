@@ -530,6 +530,75 @@ async def test_console_transcript_click_rule_separator_preserves_selection():
 
 
 @pytest.mark.asyncio
+async def test_console_transcript_click_scrollbar_does_not_clear_selection():
+    app = MutableTranscriptHarness()
+    messages = [
+        ConsoleChatMessage(role=ConsoleMessageRole.USER, content=f"message {index}", id=f"m{index}")
+        for index in range(30)
+    ]
+
+    async with app.run_test(size=(40, 12)) as pilot:
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.set_messages(messages)
+        await transcript.refresh_messages()
+
+        transcript.select_message("m15")
+        await pilot.pause()
+        assert transcript.selected_message_id == "m15"
+
+        # Click the vertical scrollbar (rightmost two columns of the scroll view).
+        await pilot.click("#console-native-transcript", offset=(38, 5))
+        await pilot.pause()
+
+        assert transcript.selected_message_id == "m15"
+
+
+@pytest.mark.asyncio
+async def test_console_transcript_click_action_row_background_preserves_selection():
+    app = TranscriptHarness()
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        await pilot.click("#console-message-m2")
+        await pilot.pause()
+        assert "Save as..." in _visible_text(app)
+
+        # Click the action-row container background, not a button.
+        await pilot.click("#console-message-actions-m2", offset=(5, 15))
+        await pilot.pause()
+
+        assert "Save as..." in _visible_text(app)
+
+
+@pytest.mark.asyncio
+async def test_console_transcript_click_action_help_preserves_selection():
+    app = TranscriptHarness()
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        await pilot.click("#console-message-m2")
+        await pilot.pause()
+        assert "Save as..." in _visible_text(app)
+
+        await pilot.click(".console-transcript-action-guide")
+        await pilot.pause()
+
+        assert "Save as..." in _visible_text(app)
+
+
+@pytest.mark.asyncio
+async def test_console_transcript_click_empty_state_panel_preserves_selection():
+    app = EmptyTranscriptHarness()
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
+        assert transcript.selected_message_id is None
+
+        await pilot.click(".console-transcript-empty-panel")
+        await pilot.pause()
+
+        assert transcript.selected_message_id is None
+
+
+@pytest.mark.asyncio
 async def test_console_selected_message_uses_class_without_inline_frame():
     app = TranscriptHarness()
 

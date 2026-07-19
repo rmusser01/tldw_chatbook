@@ -383,6 +383,21 @@ class ConsoleTranscript(VerticalScroll):
     NEGATIVE_SPACE_CLASSES: frozenset[str] = frozenset()
     """Widget classes that should be treated as negative space for selection clearing."""
 
+    PROTECTED_CLICK_CLASSES: frozenset[str] = frozenset({
+        "console-transcript-action-row",
+        "console-transcript-action-guide",
+        "console-transcript-empty-panel",
+        "console-transcript-empty-body",
+        "console-transcript-empty-state",
+        # Textual scrollbars carry the generic system-widget class; ignore them
+        # defensively if a scrollbar click ever bubbles up to the transcript.
+        "-textual-system",
+        "vertical-scrollbar",
+        "horizontal-scrollbar",
+        "scrollbar",
+    })
+    """Widget classes that must keep the current selection active when clicked."""
+
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._messages: list[ConsoleChatMessage] = []
@@ -669,6 +684,11 @@ class ConsoleTranscript(VerticalScroll):
         selection active.
         """
         control = event.control
+        if control is not None and any(
+            control.has_class(class_name)
+            for class_name in self.PROTECTED_CLICK_CLASSES
+        ):
+            return
         if control is self or (
             control is not None
             and any(control.has_class(class_name) for class_name in self.NEGATIVE_SPACE_CLASSES)
