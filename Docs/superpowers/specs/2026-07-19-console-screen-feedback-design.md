@@ -59,10 +59,10 @@ The agent runtime (`AgentService.run_turn()` / `run_agent_loop()`) already suppo
 3. **Normalize all `RunOutcome` statuses:**
    - `RUN_DONE` with `final_text` → update placeholder content, mark `complete`.
    - `RUN_DONE` with empty `final_text` → update placeholder with a "No response was generated" note, mark `complete`. This fallback text is persisted as the assistant message content so retries/regenerations operate on a non-empty message.
-   - `RUN_ERROR` / `RUN_STUCK` (covers errors and budget/loop/max-steps failures) → mark placeholder `failed`, set `error_detail` from `RunOutcome`.
+   - `RUN_ERROR` / `RUN_STUCK` (covers errors and budget/loop/max-steps failures) → mark placeholder `failed`. Derive the visible error detail from the last failed step in `RunOutcome.steps` (mirroring the existing `_agent_failure_visible_copy` pattern).
    - `RUN_CANCELLED` → mark placeholder `failed` with a "stopped/cancelled" detail.
    - Unknown status → mark `failed`, log the full outcome.
-4. **Placeholder-missing fallback:** if the placeholder is missing when the run completes, check whether the runtime already wrote an assistant message. If so, update that message; otherwise log an error and append a new assistant message at the end using the next available turn ID.
+4. **Placeholder-missing fallback:** if the placeholder is missing when the run completes, check whether the runtime already wrote an assistant message. If so, update that message; otherwise log an error and append a new assistant message at the end with a fresh `turn_id` (e.g., a UUID).
 5. **Stop/cancel mid-run:** respect the existing `_stop_requested` / `_active_cancel_event` via the `should_cancel` closure. Finalize the placeholder with whatever partial result exists or a `stopped` status.
 6. **Diagnostics:** add structured `loguru` events at start, each model turn, each tool call, and final commit.
 
@@ -165,7 +165,7 @@ User Interaction
 **New/changed surfaces:**
 - `ConsoleChatController.build_context_snapshot(draft, attachments, staged_sources)` — async public method returning `ConsoleContextSnapshot`.
 - `ConsoleContextSnapshot` dataclass — `current_messages` + `next_send_payload`.
-- `ChatScreen.BINDINGS` + `ConsoleCommandProvider` — new **View chat context** entry.
+- `ChatScreen.BINDINGS` + `ConsoleCommandProvider` — new **Console: View chat context** entry.
 - `ConsoleTranscript` — internal click handler using existing selection API.
 
 ---
@@ -181,7 +181,7 @@ User Interaction
 
 ### Agent Turn-Control
 - Unhandled exception in worker thread → caught, logged, placeholder marked `failed`.
-- Placeholder missing at completion → check if runtime already wrote an assistant message; update it, or append a new assistant message at the end using `max(existing_turn_ids) + 1`.
+- Placeholder missing at completion → check if runtime already wrote an assistant message; update it, or append a new assistant message at the end with a fresh UUID `turn_id`.
 - Tool call outside allow-list → runtime handles refusal; controller commits final runtime result.
 - Stop/cancel during run → finalize placeholder with partial result or a "stopped/cancelled" status.
 - `RUN_DONE` with empty `final_text` → persisted fallback note "No response was generated" so retries/regenerations see a non-empty message.
