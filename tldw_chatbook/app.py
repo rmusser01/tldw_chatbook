@@ -377,6 +377,7 @@ from tldw_chatbook.LLM_Provider_Catalog import (  # noqa: E402
     LocalLLMProviderCatalogService,
     ServerLLMProviderCatalogService,
 )
+from tldw_chatbook.LLM_Provider_Catalog.model_auto_refresh import ModelCatalogRefreshed  # noqa: E402
 from tldw_chatbook.Media import (  # noqa: E402
     LocalMediaReadingService,
     MediaReadingScopeService,
@@ -4526,6 +4527,20 @@ class TldwCli(
             default_provider=get_cli_setting("chat_defaults", "provider", None),
             policy_enforcer=self.service_policy_enforcer,
         )
+        # ADR-019: load the disk-backed model catalog cache before selectors build.
+        try:
+            from tldw_chatbook.LLM_Provider_Catalog.model_discovery_disk_cache import (
+                ModelCatalogDiskStore,
+            )
+            self.model_catalog_disk_store = ModelCatalogDiskStore(
+                get_user_data_dir() / "model_catalog_cache.json"
+            )
+            self.model_catalog_disk_store.load_into(
+                self.local_llm_provider_catalog_service.discovery_cache
+            )
+        except Exception:
+            logger.opt(exception=True).error("Failed to load model catalog disk cache")
+            self.model_catalog_disk_store = None
         try:
             self.server_llm_provider_catalog_service = (
                 ServerLLMProviderCatalogService.from_config(
@@ -6884,6 +6899,55 @@ class TldwCli(
         config_data = self.app_config
         if config_data.get("_first_run", False):
             self.call_later(self._show_first_run_notification)
+
+        # ADR-019: non-blocking startup refresh of stale model catalogs.
+        self.run_worker(
+            self._refresh_model_catalogs(),
+            exclusive=True,
+            group="model-catalog-refresh",
+        )
+
+    async def _refresh_model_catalogs(self) -> None:
+        """ADR-019 startup auto-refresh; never blocks or crashes startup."""
+        try:
+            from tldw_chatbook.LLM_Provider_Catalog.model_auto_refresh import (
+                ModelCatalogRefreshed,
+                format_refresh_notification,
+            )
+            from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import (
+                load_model_catalog_settings,
+            )
+            if self.model_catalog_disk_store is None:
+                return
+            catalog_settings = load_model_catalog_settings(load_settings())
+            if not catalog_settings.auto_refresh_enabled:
+                return
+            report = await self.local_llm_provider_catalog_service.refresh_stale_configured_providers(
+                catalog_settings=catalog_settings,
+                disk_store=self.model_catalog_disk_store,
+                on_config_saved=self._init_providers_models,
+            )
+            refreshed = {
+                outcome.provider_list_key
+                for outcome in report.outcomes
+                if outcome.status in {"refreshed", "baseline"}
+            }
+            if refreshed:
+                self.post_message(ModelCatalogRefreshed(providers=refreshed))
+            message = format_refresh_notification(report)
+            if message:
+                self.notify(message, severity="information")
+        except Exception:
+            logger.opt(exception=True).error("Model catalog auto-refresh failed")
+
+    @on(ModelCatalogRefreshed)
+    async def on_model_catalog_refreshed(self, event: ModelCatalogRefreshed) -> None:
+        # Textual delivers App-posted messages to App handlers only; forward
+        # down to a mounted screen that exposes a refresh handler.
+        from tldw_chatbook.LLM_Provider_Catalog.model_auto_refresh import (
+            forward_model_catalog_refreshed,
+        )
+        await forward_model_catalog_refreshed(self, event)
 
     def _show_first_run_notification(self) -> None:
         """Show a notification to the user on first run."""
