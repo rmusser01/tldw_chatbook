@@ -289,74 +289,77 @@ class SubscriptionsDB(BaseDB):
             END;
             """)
             conn.commit()
+            self._ensure_watchlists_schema(conn)
 
-        self._ensure_watchlists_schema()
-
-    def _ensure_watchlists_schema(self):
+    def _ensure_watchlists_schema(self, conn=None):
         """Idempotent migration for watchlists screen schema additions."""
-        with closing(self._get_connection()) as conn:
-            cursor = conn.cursor()
+        if conn is None:
+            with closing(self._get_connection()) as conn:
+                self._ensure_watchlists_schema(conn)
+                return
 
-            # Add columns to subscription_items
-            items_cols = {row[1] for row in cursor.execute("PRAGMA table_info(subscription_items)")}
-            if "queued_for_briefing" not in items_cols:
-                cursor.execute("ALTER TABLE subscription_items ADD COLUMN queued_for_briefing BOOLEAN DEFAULT 0")
-            if "run_id" not in items_cols:
-                cursor.execute("ALTER TABLE subscription_items ADD COLUMN run_id INTEGER")
-            if "alert_matches" not in items_cols:
-                cursor.execute("ALTER TABLE subscription_items ADD COLUMN alert_matches TEXT")
+        cursor = conn.cursor()
 
-            # Add columns to subscription_filters
-            filters_cols = {row[1] for row in cursor.execute("PRAGMA table_info(subscription_filters)")}
-            if "priority" not in filters_cols:
-                cursor.execute("ALTER TABLE subscription_filters ADD COLUMN priority INTEGER DEFAULT 0")
-            if "is_include_required" not in filters_cols:
-                cursor.execute("ALTER TABLE subscription_filters ADD COLUMN is_include_required BOOLEAN DEFAULT 0")
+        # Add columns to subscription_items
+        items_cols = {row[1] for row in cursor.execute("PRAGMA table_info(subscription_items)")}
+        if "queued_for_briefing" not in items_cols:
+            cursor.execute("ALTER TABLE subscription_items ADD COLUMN queued_for_briefing BOOLEAN DEFAULT 0")
+        if "run_id" not in items_cols:
+            cursor.execute("ALTER TABLE subscription_items ADD COLUMN run_id INTEGER")
+        if "alert_matches" not in items_cols:
+            cursor.execute("ALTER TABLE subscription_items ADD COLUMN alert_matches TEXT")
 
-            # Widen CHECK constraint on subscription_filters.action.
-            # Must check for the literal action value 'include' rather than the
-            # bare substring, because the new column `is_include_required` would
-            # otherwise make the substring match and skip the migration.
-            existing_check = None
-            for row in cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='subscription_filters'"):
-                existing_check = row[0]
-            if existing_check and "'include'" not in existing_check:
-                cursor.execute("""
-                    CREATE TABLE subscription_filters_new (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        subscription_id INTEGER,
-                        name TEXT NOT NULL,
-                        is_active BOOLEAN DEFAULT 1,
-                        conditions TEXT NOT NULL,
-                        action TEXT NOT NULL CHECK(action IN ('auto_ingest','auto_ignore','tag','priority','notify','include','exclude','flag')),
-                        action_params TEXT,
-                        priority INTEGER DEFAULT 0,
-                        is_include_required BOOLEAN DEFAULT 0,
-                        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        FOREIGN KEY (subscription_id) REFERENCES subscriptions(id) ON DELETE CASCADE
-                    )
-                """)
-                cursor.execute("""
-                    INSERT INTO subscription_filters_new
-                        (id, subscription_id, name, is_active, conditions, action, action_params, priority, is_include_required, created_at, updated_at)
-                    SELECT id, subscription_id, name, is_active, conditions, action, action_params, priority, is_include_required, created_at, updated_at
-                    FROM subscription_filters
-                """)
-                cursor.execute("DROP TABLE subscription_filters")
-                cursor.execute("ALTER TABLE subscription_filters_new RENAME TO subscription_filters")
-                cursor.execute("""
-                    CREATE TRIGGER IF NOT EXISTS update_subscription_filters_timestamp
-                    AFTER UPDATE ON subscription_filters
-                    BEGIN
-                        UPDATE subscription_filters SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
-                    END
-                """)
+        # Add columns to subscription_filters
+        filters_cols = {row[1] for row in cursor.execute("PRAGMA table_info(subscription_filters)")}
+        if "priority" not in filters_cols:
+            cursor.execute("ALTER TABLE subscription_filters ADD COLUMN priority INTEGER DEFAULT 0")
+        if "is_include_required" not in filters_cols:
+            cursor.execute("ALTER TABLE subscription_filters ADD COLUMN is_include_required BOOLEAN DEFAULT 0")
 
-            # Indexes
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_subscription_items_run_id ON subscription_items(run_id)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_subscription_items_queued ON subscription_items(queued_for_briefing, status)")
-            conn.commit()
+        # Widen CHECK constraint on subscription_filters.action.
+        # Must check for the literal action value 'include' rather than the
+        # bare substring, because the new column `is_include_required` would
+        # otherwise make the substring match and skip the migration.
+        existing_check = None
+        for row in cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='subscription_filters'"):
+            existing_check = row[0]
+        if existing_check and "'include'" not in existing_check:
+            cursor.execute("""
+                CREATE TABLE subscription_filters_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    subscription_id INTEGER,
+                    name TEXT NOT NULL,
+                    is_active BOOLEAN DEFAULT 1,
+                    conditions TEXT NOT NULL,
+                    action TEXT NOT NULL CHECK(action IN ('auto_ingest','auto_ignore','tag','priority','notify','include','exclude','flag')),
+                    action_params TEXT,
+                    priority INTEGER DEFAULT 0,
+                    is_include_required BOOLEAN DEFAULT 0,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (subscription_id) REFERENCES subscriptions(id) ON DELETE CASCADE
+                )
+            """)
+            cursor.execute("""
+                INSERT INTO subscription_filters_new
+                    (id, subscription_id, name, is_active, conditions, action, action_params, priority, is_include_required, created_at, updated_at)
+                SELECT id, subscription_id, name, is_active, conditions, action, action_params, priority, is_include_required, created_at, updated_at
+                FROM subscription_filters
+            """)
+            cursor.execute("DROP TABLE subscription_filters")
+            cursor.execute("ALTER TABLE subscription_filters_new RENAME TO subscription_filters")
+            cursor.execute("""
+                CREATE TRIGGER IF NOT EXISTS update_subscription_filters_timestamp
+                AFTER UPDATE ON subscription_filters
+                BEGIN
+                    UPDATE subscription_filters SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+                END
+            """)
+
+        # Indexes
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_subscription_items_run_id ON subscription_items(run_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_subscription_items_queued ON subscription_items(queued_for_briefing, status)")
+        conn.commit()
 
     @property
     def conn(self):
