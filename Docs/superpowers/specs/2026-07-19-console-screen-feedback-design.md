@@ -71,7 +71,7 @@ The agent runtime (`AgentService.run_turn()` / `run_agent_loop()`) already suppo
 **New file:** `tldw_chatbook/Widgets/Console/console_context_modal.py`
 
 A new modal, opened from:
-- Command palette entry: **View chat context**.
+- Command palette entry: **Console: View chat context**.
 - Keybinding: `ctrl+shift+p` (avoids `ctrl+shift+c` terminal-copy and `f10` menu conflicts).
 
 The modal has two tabs.
@@ -96,7 +96,7 @@ async def build_context_snapshot(
     self,
     draft: str,
     attachments: Iterable[MessageAttachment] | None = None,
-    staged_sources: Iterable[StagedSource] | None = None,
+    staged_sources: Iterable[ConsoleStagedSource] | None = None,
 ) -> ConsoleContextSnapshot:
     ...
 ```
@@ -115,7 +115,7 @@ The snapshot includes:
 - Rendered view uses collapsible sections.
 - Toggle for raw JSON view.
 - Copy-to-clipboard and save-to-file actions.
-- Secrets redaction: values for keys matching `api_key`, `apikey`, `token`, `password`, `secret`, `bearer` are replaced with `"[redacted]"` in the rendered view. Raw JSON copy/save is allowed without extra confirmation because the snapshot is local-only.
+- Secrets redaction: values for keys whose names contain `api_key`, `apikey`, `token`, `password`, `secret`, or `bearer` are replaced with `"[redacted]"` in both the rendered view and the raw JSON view. Copy/save actions receive the redacted snapshot.
 - Refresh button to rebuild the snapshot.
 - Warning and disabled refresh while a response is in progress.
 - "Save to file" fallback if the rendered content exceeds 1 MiB.
@@ -181,10 +181,11 @@ User Interaction
 
 ### Agent Turn-Control
 - Unhandled exception in worker thread → caught, logged, placeholder marked `failed`.
-- Placeholder missing at completion → check if runtime already wrote an assistant message; update it, or append a new assistant message at the end using the next available turn ID.
+- Placeholder missing at completion → check if runtime already wrote an assistant message; update it, or append a new assistant message at the end using `max(existing_turn_ids) + 1`.
 - Tool call outside allow-list → runtime handles refusal; controller commits final runtime result.
 - Stop/cancel during run → finalize placeholder with partial result or a "stopped/cancelled" status.
 - `RUN_DONE` with empty `final_text` → persisted fallback note "No response was generated" so retries/regenerations see a non-empty message.
+- `RUN_SUPERSEDED` or any unknown status → treated as failed and logged for diagnosis.
 
 ### Context Viewer
 - Context build failure → show error message instead of crashing.
@@ -193,7 +194,7 @@ User Interaction
 - Response in progress → warn that snapshot may change; disable refresh.
 - Content exceeds 1 MiB → offer "Save to file" instead of rendering inline.
 - Image data → shown as `[image: <filename>, <size> bytes]` placeholders.
-- Secrets → redacted in rendered view for keys matching `api_key`, `apikey`, `token`, `password`, `secret`, `bearer`.
+- Secrets → redacted in both rendered and raw JSON views for keys whose names contain `api_key`, `apikey`, `token`, `password`, `secret`, or `bearer`.
 
 ---
 
@@ -230,7 +231,7 @@ User Interaction
 
 ---
 
-## 8. Open Questions
+## 8. Resolved Questions
 
 The following questions were resolved during the spec review and are recorded here for traceability:
 
@@ -242,7 +243,7 @@ The following questions were resolved during the spec review and are recorded he
 6. **MCP tool visibility:** Live MCP catalog composition is out of scope; only native tool schemas are shown, with a note when MCP is configured.
 7. **Keybinding:** `ctrl+shift+p` chosen to avoid terminal conflicts.
 8. **Token estimate:** Approximate word count × 1.3, replaced by tiktoken if available.
-9. **Secrets redaction:** Values for keys matching `api_key`, `apikey`, `token`, `password`, `secret`, `bearer` are redacted in the rendered view.
+9. **Secrets redaction:** Values for keys whose names contain `api_key`, `apikey`, `token`, `password`, `secret`, or `bearer` are redacted in both rendered and raw JSON views.
 
 ---
 
