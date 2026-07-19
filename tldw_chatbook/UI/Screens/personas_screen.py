@@ -1998,6 +1998,7 @@ class PersonasScreen(BaseAppScreen):
                 selective=payload.get("selective", False),
                 secondary_keys=payload.get("secondary_keys", []),
                 case_sensitive=payload.get("case_sensitive", False),
+                regex=payload.get("regex", False),
             ),
             "Could not add the entry",
         )

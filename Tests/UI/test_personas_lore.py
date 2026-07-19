@@ -186,6 +186,40 @@ async def test_secondary_keys_stored_even_when_not_selective():
 
 
 @pytest.mark.asyncio
+async def test_regex_switch_round_trips_through_form():
+    app = _DetailHost()
+    async with app.run_test(size=(140, 40)) as pilot:
+        widget = app.query_one(PersonasLoreDetailWidget)
+        widget.load_book({"id": 1, "name": "B", "description": "", "scan_depth": 3,
+                          "token_budget": 500, "recursive_scanning": False, "enabled": True})
+        app.query_one("#personas-lore-entry-keys", Input).value = "w[ao]rden"
+        app.query_one("#personas-lore-entry-content", TextArea).text = "grim jailer"
+        app.query_one("#personas-lore-entry-regex", Switch).value = True
+        await pilot.pause()
+        await pilot.click("#personas-lore-entry-add")
+        await pilot.pause()
+        assert app.posted[-1]["regex"] is True
+
+
+@pytest.mark.asyncio
+async def test_invalid_regex_pattern_blocks_save():
+    app = _DetailHost()
+    async with app.run_test(size=(140, 40)) as pilot:
+        widget = app.query_one(PersonasLoreDetailWidget)
+        widget.load_book({"id": 1, "name": "B", "description": "", "scan_depth": 3,
+                          "token_budget": 500, "recursive_scanning": False, "enabled": True})
+        app.query_one("#personas-lore-entry-keys", Input).value = "(a+)+"
+        app.query_one("#personas-lore-entry-content", TextArea).text = "x"
+        app.query_one("#personas-lore-entry-regex", Switch).value = True
+        await pilot.pause()
+        await pilot.click("#personas-lore-entry-add")
+        await pilot.pause()
+        assert not app.posted   # nothing posted
+        status = str(app.query_one("#personas-lore-status", Static).renderable)
+        assert "too complex" in status
+
+
+@pytest.mark.asyncio
 async def test_fill_form_populates_matching_controls():
     """Selecting a row fills the three controls; an entry with selective=False
     but stored secondary keys keeps its keys (fidelity) and shows them disabled."""
@@ -638,6 +672,28 @@ async def test_add_entry_persists_priority_through_real_screen_handler(
         entries = WorldBookManager(lore_db).get_world_book_entries(seeded_lore_book["book_id"])
         ghost = next(e for e in entries if e["keys"] == ["Ghost"])
         assert ghost["priority"] == 80
+
+
+@pytest.mark.asyncio
+async def test_add_entry_persists_regex_through_real_screen_handler(
+    mock_app_instance, stub_characters_lore, lore_db, seeded_lore_book
+):
+    mock_app_instance.chachanotes_db = lore_db
+    app = LorePersonasTestApp(mock_app_instance)
+    async with app.run_test(size=(200, 60)) as pilot:
+        screen = await _enter_lore(pilot)
+        await _select_first_lore(pilot, screen)
+        screen.query_one("#personas-lore-entry-keys", Input).value = "w[ao]rden"
+        screen.query_one("#personas-lore-entry-content", TextArea).text = "a pale spirit"
+        screen.query_one("#personas-lore-entry-regex", Switch).value = True
+        await pilot.pause()
+        await pilot.click("#personas-lore-entry-add")
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        entries = WorldBookManager(lore_db).get_world_book_entries(seeded_lore_book["book_id"])
+        added = next(e for e in entries if e["keys"] == ["w[ao]rden"])
+        assert added["regex"] is True
 
 
 @pytest.mark.asyncio
