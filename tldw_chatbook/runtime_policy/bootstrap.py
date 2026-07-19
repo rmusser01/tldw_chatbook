@@ -2,14 +2,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 from urllib.parse import urlsplit, urlunsplit
 
 from tldw_chatbook.config import DEFAULT_CONFIG_PATH, resolve_tldw_api_config
-from tldw_chatbook.tldw_api import TLDWAPIClient
 
 from .source_state import RuntimeSourceStateStore
 from .types import RuntimeSourceState
+
+if TYPE_CHECKING:
+    from tldw_chatbook.tldw_api import TLDWAPIClient
 
 DEFAULT_RUNTIME_POLICY_PATH = DEFAULT_CONFIG_PATH.parent / "runtime_policy.json"
 _VALID_RUNTIME_SOURCES = {"local", "server"}
@@ -38,6 +40,12 @@ def build_runtime_api_client(
     auth_token: str | None = None,
     auth_method: str | None = None,
 ) -> TLDWAPIClient:
+    # Deferred import: TLDWAPIClient's home module (tldw_api/client.py) eagerly
+    # imports the full ~54-submodule schema surface (~450ms). Importing it here,
+    # at actual client-construction time, keeps `import tldw_chatbook.app` from
+    # paying that cost in local-only sessions (task-285).
+    from tldw_chatbook.tldw_api import TLDWAPIClient
+
     api_config: dict[str, Any] = resolve_tldw_api_config(app_config)
 
     resolved_endpoint = str(

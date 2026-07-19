@@ -10,25 +10,6 @@ from typing import Any, Mapping
 
 from ..Chat.chat_conversation_service import ChatConversationService
 from .world_book_manager import WorldBookManager
-from ..tldw_api.character_persona_schemas import (
-    ChatSettingsUpdate,
-    CharacterChatSessionCreate,
-    CharacterChatSessionUpdate,
-    CharacterCreateRequest,
-    CharacterExemplarCreate,
-    CharacterExemplarSearchRequest,
-    CharacterExemplarSelectionDebugRequest,
-    CharacterExemplarUpdate,
-    CharacterUpdateRequest,
-    PersonaExemplarCreate,
-    PersonaExemplarImportRequest,
-    PersonaExemplarReviewRequest,
-    PersonaExemplarUpdate,
-    PersonaProfileCreate,
-    PersonaProfileUpdate,
-    PresetCreate,
-    PresetUpdate,
-)
 
 
 def _model_payload(value: Any, *, exclude_none: bool = True) -> dict[str, Any]:
@@ -396,6 +377,9 @@ class LocalCharacterPersonaService:
         return record
 
     def create_character(self, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.character_persona_schemas import CharacterCreateRequest
+
         payload = _model_payload(CharacterCreateRequest.model_validate(_model_payload(request_data)))
         character_id = self._require_db().add_character_card(payload)
         record = self.get_character(int(character_id))
@@ -410,6 +394,9 @@ class LocalCharacterPersonaService:
         *,
         expected_version: int,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.character_persona_schemas import CharacterUpdateRequest
+
         payload = _model_payload(
             CharacterUpdateRequest.model_validate(_model_payload(request_data, exclude_none=False))
         )
@@ -682,6 +669,9 @@ class LocalCharacterPersonaService:
         return self._persona_profile_view(self._find_persona_profile(persona_id))
 
     def create_persona_profile(self, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.character_persona_schemas import PersonaProfileCreate
+
         payload = _model_payload(PersonaProfileCreate.model_validate(_model_payload(request_data)))
         persona_id = str(payload.get("id") or f"local-persona-{uuid.uuid4().hex}")
         if any(str(record.get("id")) == persona_id and not record.get("deleted") for record in self._persona_profiles):
@@ -707,6 +697,9 @@ class LocalCharacterPersonaService:
         *,
         expected_version: int | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.character_persona_schemas import PersonaProfileUpdate
+
         record = self._find_persona_profile(persona_id)
         self._check_profile_version(record, expected_version, persona_id)
         request = PersonaProfileUpdate.model_validate(_model_payload(request_data))
@@ -767,6 +760,9 @@ class LocalCharacterPersonaService:
         return self._persona_exemplar_view(self._find_persona_exemplar(persona_id, exemplar_id))
 
     def create_persona_exemplar(self, persona_id: str, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.character_persona_schemas import PersonaExemplarCreate
+
         self._find_persona_profile(persona_id)
         payload = _model_payload(PersonaExemplarCreate.model_validate(_model_payload(request_data)))
         exemplar_id = str(payload.get("id") or f"local-exemplar-{uuid.uuid4().hex}")
@@ -794,6 +790,9 @@ class LocalCharacterPersonaService:
         return self._persona_exemplar_view(payload)
 
     def import_persona_exemplars(self, persona_id: str, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.character_persona_schemas import PersonaExemplarCreate, PersonaExemplarImportRequest
+
         self._find_persona_profile(persona_id)
         request = PersonaExemplarImportRequest.model_validate(_model_payload(request_data))
         lines = [line.strip() for line in request.transcript.splitlines() if line.strip()]
@@ -813,6 +812,9 @@ class LocalCharacterPersonaService:
         return {"persona_id": persona_id, "created": len(items), "items": items}
 
     def update_persona_exemplar(self, persona_id: str, exemplar_id: str, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.character_persona_schemas import PersonaExemplarUpdate
+
         self._find_persona_profile(persona_id)
         record = self._find_persona_exemplar(persona_id, exemplar_id)
         request = PersonaExemplarUpdate.model_validate(_model_payload(request_data))
@@ -824,6 +826,9 @@ class LocalCharacterPersonaService:
         return self._persona_exemplar_view(record)
 
     def review_persona_exemplar(self, persona_id: str, exemplar_id: str, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.character_persona_schemas import PersonaExemplarReviewRequest
+
         self._find_persona_profile(persona_id)
         record = self._find_persona_exemplar(persona_id, exemplar_id, include_deleted=True)
         request = PersonaExemplarReviewRequest.model_validate(_model_payload(request_data))
@@ -845,6 +850,9 @@ class LocalCharacterPersonaService:
         return {"status": "deleted", "persona_id": persona_id, "exemplar_id": exemplar_id}
 
     def search_character_exemplars(self, character_id: int, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.character_persona_schemas import CharacterExemplarSearchRequest
+
         self._require_character(character_id)
         request = CharacterExemplarSearchRequest.model_validate(_model_payload(request_data))
         query = str(request.query or "").strip().lower()
@@ -885,6 +893,9 @@ class LocalCharacterPersonaService:
         )
 
     def create_character_exemplar(self, character_id: int, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.character_persona_schemas import CharacterExemplarCreate
+
         self._require_character(character_id)
         payload = CharacterExemplarCreate.model_validate(_model_payload(request_data)).model_dump(
             mode="json",
@@ -906,6 +917,9 @@ class LocalCharacterPersonaService:
         return self._character_exemplar_view(payload)
 
     def update_character_exemplar(self, character_id: int, exemplar_id: str, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.character_persona_schemas import CharacterExemplarUpdate
+
         self._require_character(character_id)
         record = self._find_character_exemplar(character_id, exemplar_id)
         payload = CharacterExemplarUpdate.model_validate(_model_payload(request_data)).model_dump(
@@ -927,6 +941,12 @@ class LocalCharacterPersonaService:
         return {"status": "deleted", "character_id": int(character_id), "exemplar_id": exemplar_id}
 
     def select_character_exemplars_debug(self, character_id: int, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.character_persona_schemas import (
+            CharacterExemplarSearchRequest,
+            CharacterExemplarSelectionDebugRequest,
+        )
+
         self._require_character(character_id)
         request = CharacterExemplarSelectionDebugRequest.model_validate(_model_payload(request_data))
         search_result = self.search_character_exemplars(
@@ -951,6 +971,9 @@ class LocalCharacterPersonaService:
         }
 
     def create_character_chat_session(self, request_data: Any, **_: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.character_persona_schemas import CharacterChatSessionCreate
+
         payload = _model_payload(CharacterChatSessionCreate.model_validate(_model_payload(request_data)))
         assistant_kind = payload.get("assistant_kind")
         discovery_owner = "ccp_persona" if assistant_kind == "persona" else "ccp_character"
@@ -1051,6 +1074,9 @@ class LocalCharacterPersonaService:
         expected_version: int | None = None,
         **_: Any,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.character_persona_schemas import CharacterChatSessionUpdate
+
         current = self.get_character_chat_session(chat_id)
         if current is None:
             raise ValueError(f"Local character chat session '{chat_id}' was not found.")
@@ -1253,6 +1279,9 @@ class LocalCharacterPersonaService:
         return {"conversation_id": str(chat_id), "settings": settings, "source": "local"}
 
     def update_chat_settings(self, chat_id: str, request_data: Any, **_: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.character_persona_schemas import ChatSettingsUpdate
+
         self._require_chat_session(chat_id)
         request = ChatSettingsUpdate.model_validate(_model_payload(request_data, exclude_none=False))
         self._chat_settings[str(chat_id)] = dict(request.settings)
@@ -1459,6 +1488,9 @@ class LocalCharacterPersonaService:
         return {"presets": presets, "source": "local"}
 
     def create_chat_preset(self, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.character_persona_schemas import PresetCreate
+
         payload = PresetCreate.model_validate(_model_payload(request_data)).model_dump(mode="json")
         preset_id = str(payload["preset_id"])
         if preset_id == "default" or any(
@@ -1479,6 +1511,9 @@ class LocalCharacterPersonaService:
         return self._chat_preset_view(record)
 
     def update_chat_preset(self, preset_id: str, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.character_persona_schemas import PresetUpdate
+
         if str(preset_id) == "default":
             raise ValueError("local_builtin_chat_preset_read_only:default")
         record = self._find_chat_preset(preset_id)

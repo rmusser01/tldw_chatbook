@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 from types import SimpleNamespace
 
@@ -11,6 +12,7 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 from tldw_chatbook.Library.library_fts_query import build_fts_match_query, expand_keyword_term
+from tldw_chatbook.Library import library_local_rag_search_service as rag_service_module
 from tldw_chatbook.Library.library_local_rag_search_service import (
     LibraryLocalRagSearchService,
     _prompt_row,
@@ -404,9 +406,18 @@ async def test_all_seams_missing_returns_blocked_outcome():
     assert result.recovery_state.stable_selector == "library-rag-service-error"
 
 
-# (d) rag mode with _rag_service=None -> blocked outcome; next_action mentions switching to Search.
+# (d) AC #3 (task-249): rag mode without a runtime AND without embeddings deps
+# keeps the existing "RAG unavailable" recovery state routing to setup, and
+# never touches the shared-service factory (the deps gate short-circuits
+# before any heavy work).
 @pytest.mark.asyncio
-async def test_rag_mode_without_rag_service_returns_blocked_outcome():
+async def test_rag_mode_without_deps_returns_blocked_outcome_and_skips_factory(monkeypatch):
+    monkeypatch.setattr(rag_service_module, "embeddings_rag_deps_installed", lambda: False)
+
+    def _fail_factory(*args, **kwargs):
+        raise AssertionError("get_shared_rag_service must not run when deps are missing")
+
+    monkeypatch.setattr(rag_service_module, "get_shared_rag_service", _fail_factory)
     app = SimpleNamespace(_rag_service=None)
     service = LibraryLocalRagSearchService(app)
 
@@ -418,6 +429,7 @@ async def test_rag_mode_without_rag_service_returns_blocked_outcome():
     assert result.recovery_state.status_label == "RAG unavailable"
     assert "switch mode to Search" in result.recovery_state.next_action
     assert result.recovery_state.recovery_action == "Settings > RAG"
+    assert getattr(app, "_rag_service", None) is None
 
 
 # (e) scope filtering: scope=("notes",) never touches the media fake.
@@ -646,6 +658,252 @@ async def test_rag_mode_delegates_and_maps_results():
     assert row["provenance"]["source_type"] == "note"
 
 
+# --- task-249: rag mode initializes the RAG runtime lazily -----------------
+
+
+class FakeVectorStore:
+    """Mirrors the VectorStore stats seam used for empty-index detection."""
+
+    def __init__(self, stats=None, error: Exception | None = None):
+        self.stats = stats if stats is not None else {"count": 0}
+        self.error = error
+        self.calls = 0
+
+    def get_collection_stats(self):
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        return self.stats
+
+
+_SEMANTIC_RESULT = {
+    "id": "chunk-1",
+    "score": 0.87,
+    "document": "Rotate the credential immediately.",
+    "metadata": {"title": "Runbook", "source_id": "note-1", "source_type": "note"},
+}
+
+
+# AC #1: rag mode with deps installed and no app._rag_service initializes the
+# runtime through the shared factory instead of returning the RAG-unavailable
+# recovery state, and caches it on the app for subsequent queries/gates.
+@pytest.mark.asyncio
+async def test_rag_mode_lazily_initializes_shared_runtime(monkeypatch):
+    monkeypatch.setattr(rag_service_module, "embeddings_rag_deps_installed", lambda: True)
+    shared_service = FakeRagService(results=[_SEMANTIC_RESULT])
+    factory_calls = []
+
+    def _factory(*args, **kwargs):
+        factory_calls.append(1)
+        return shared_service
+
+    monkeypatch.setattr(rag_service_module, "get_shared_rag_service", _factory)
+    app = SimpleNamespace(_rag_service=None)
+    service = LibraryLocalRagSearchService(app)
+
+    result = await service.search("credential", ("notes",), "rag", top_k=5)
+
+    assert not isinstance(result, LibraryRagSearchOutcome)
+    assert result["runtime_backend"] == "rag-semantic"
+    assert result["results"][0]["source_id"] == "note-1"
+    assert factory_calls == [1]
+    assert app._rag_service is shared_service
+
+    # Second query reuses the cached runtime without re-resolving.
+    await service.search("credential", ("notes",), "rag", top_k=5)
+    assert factory_calls == [1]
+
+
+# A factory that cannot produce a service (e.g. construction failed even with
+# deps installed) still lands on the existing recovery state.
+@pytest.mark.asyncio
+async def test_rag_mode_factory_returning_none_yields_blocked_outcome(monkeypatch):
+    monkeypatch.setattr(rag_service_module, "embeddings_rag_deps_installed", lambda: True)
+    monkeypatch.setattr(rag_service_module, "get_shared_rag_service", lambda *a, **k: None)
+    app = SimpleNamespace(_rag_service=None)
+    service = LibraryLocalRagSearchService(app)
+
+    result = await service.search("credential", ("notes",), "rag", top_k=5)
+
+    assert isinstance(result, LibraryRagSearchOutcome)
+    assert result.status == "blocked"
+    assert result.recovery_state.status_label == "RAG unavailable"
+
+
+# PR #671 review (gemini): a factory that RAISES during first initialization
+# (model load failure, config error, DB corruption) must degrade to the same
+# RAG-unavailable recovery state -- not propagate. Without the guard the
+# exception would surface as run_library_rag_search's generic "Retrieval
+# failed / Retry" outcome, which is wrong for an init failure retrying cannot
+# fix (and non-UI callers of the service would see a raw exception).
+@pytest.mark.asyncio
+async def test_rag_mode_factory_raising_yields_blocked_outcome(monkeypatch):
+    monkeypatch.setattr(rag_service_module, "embeddings_rag_deps_installed", lambda: True)
+
+    def _exploding_factory(*args, **kwargs):
+        raise RuntimeError("embedding model load exploded")
+
+    monkeypatch.setattr(rag_service_module, "get_shared_rag_service", _exploding_factory)
+    app = SimpleNamespace(_rag_service=None)
+    service = LibraryLocalRagSearchService(app)
+
+    result = await service.search("credential", ("notes",), "rag", top_k=5)
+
+    assert isinstance(result, LibraryRagSearchOutcome)
+    assert result.status == "blocked"
+    assert result.recovery_state.status_label == "RAG unavailable"
+    assert getattr(app, "_rag_service", None) is None
+
+
+# An injected app._rag_service always wins: no deps probe, no factory call
+# (pre-task-249 behavior for every existing caller/test fake).
+@pytest.mark.asyncio
+async def test_rag_mode_prefers_existing_app_rag_service(monkeypatch):
+    def _fail_probe():
+        raise AssertionError("deps probe must not run when a runtime already exists")
+
+    monkeypatch.setattr(rag_service_module, "embeddings_rag_deps_installed", _fail_probe)
+    monkeypatch.setattr(rag_service_module, "get_shared_rag_service", _fail_probe)
+    injected = FakeRagService(results=[_SEMANTIC_RESULT])
+    app = SimpleNamespace(_rag_service=injected)
+    service = LibraryLocalRagSearchService(app)
+
+    result = await service.search("credential", ("notes",), "rag", top_k=5)
+
+    assert result["results"][0]["source_id"] == "note-1"
+    assert injected.calls
+
+
+# Race (task-249): two Library rag queries racing first-time initialization
+# must construct exactly one shared service. Uses the REAL
+# get_shared_rag_service (its process-wide lock is the guarantee) with a
+# slow, counting create_rag_service fake underneath.
+@pytest.mark.asyncio
+async def test_concurrent_rag_queries_initialize_one_shared_service(monkeypatch):
+    import threading
+    import time
+
+    from tldw_chatbook.RAG_Search import ingestion_indexing
+    from tldw_chatbook.RAG_Search import simplified as simplified_module
+
+    monkeypatch.setattr(rag_service_module, "embeddings_rag_deps_installed", lambda: True)
+    constructions = []
+    construction_lock = threading.Lock()
+
+    def _slow_create(profile_name=None, **kwargs):
+        with construction_lock:
+            constructions.append(profile_name)
+        time.sleep(0.05)
+        return FakeRagService(results=[_SEMANTIC_RESULT])
+
+    monkeypatch.setattr(simplified_module, "create_rag_service", _slow_create)
+    ingestion_indexing.reset_shared_rag_service()
+    try:
+        app = SimpleNamespace(_rag_service=None)
+        service = LibraryLocalRagSearchService(app)
+
+        first, second = await asyncio.gather(
+            service.search("credential", ("notes",), "rag", top_k=5),
+            service.search("credential rotation", ("notes",), "rag", top_k=5),
+        )
+
+        assert len(constructions) == 1
+        assert first["results"] and second["results"]
+        assert app._rag_service is ingestion_indexing.get_shared_rag_service()
+    finally:
+        ingestion_indexing.reset_shared_rag_service()
+
+
+# --- task-249 AC #4: empty semantic index is reported honestly -------------
+
+
+class FakeRagServiceWithStore(FakeRagService):
+    def __init__(self, results=None, stats=None, stats_error=None):
+        super().__init__(results=results)
+        self.vector_store = FakeVectorStore(stats=stats, error=stats_error)
+
+
+@pytest.mark.asyncio
+async def test_rag_mode_empty_index_returns_distinct_empty_outcome():
+    rag_service = FakeRagServiceWithStore(results=[], stats={"count": 0})
+    app = SimpleNamespace(_rag_service=rag_service)
+    service = LibraryLocalRagSearchService(app)
+
+    result = await service.search("credential", ("notes",), "rag", top_k=5)
+
+    assert isinstance(result, LibraryRagSearchOutcome)
+    assert result.status == "empty"
+    assert result.runtime_backend == "rag-semantic"
+    recovery = result.recovery_state
+    assert recovery is not None
+    assert recovery.status_label == "Index empty"
+    assert recovery.stable_selector == "library-rag-empty-state"
+    assert "semantic index has no content yet" in recovery.why
+    assert "backfill" in recovery.next_action
+
+
+# A populated index with zero matches stays a plain zero-results payload
+# (run_library_rag_search owns the generic "No results" recovery for it).
+@pytest.mark.asyncio
+async def test_rag_mode_zero_results_with_populated_index_stays_generic():
+    rag_service = FakeRagServiceWithStore(results=[], stats={"count": 12})
+    app = SimpleNamespace(_rag_service=rag_service)
+    service = LibraryLocalRagSearchService(app)
+
+    result = await service.search("credential", ("notes",), "rag", top_k=5)
+
+    assert not isinstance(result, LibraryRagSearchOutcome)
+    assert result == {"results": [], "runtime_backend": "rag-semantic"}
+
+
+# Stats that cannot be trusted (probe raised, error payload, or no
+# vector_store at all) must not claim an empty index.
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "rag_service",
+    [
+        FakeRagService(results=[]),
+        FakeRagServiceWithStore(results=[], stats_error=RuntimeError("stats exploded")),
+        FakeRagServiceWithStore(results=[], stats={"count": 0, "error": "collection lost"}),
+    ],
+    ids=["no-vector-store", "stats-raises", "stats-error-payload"],
+)
+async def test_rag_mode_unverifiable_stats_fall_back_to_generic_empty(rag_service):
+    app = SimpleNamespace(_rag_service=rag_service)
+    service = LibraryLocalRagSearchService(app)
+
+    result = await service.search("credential", ("notes",), "rag", top_k=5)
+
+    assert not isinstance(result, LibraryRagSearchOutcome)
+    assert result == {"results": [], "runtime_backend": "rag-semantic"}
+
+
+# Results that were only removed by scope post-filtering prove the index has
+# content -- the outcome must stay the generic zero-results payload without
+# probing the store.
+@pytest.mark.asyncio
+async def test_rag_mode_scope_filtered_to_zero_is_not_index_empty():
+    rag_service = FakeRagServiceWithStore(
+        results=[
+            {
+                "id": "media-chunk",
+                "score": 0.8,
+                "document": "Media evidence.",
+                "metadata": {"title": "Media doc", "source_id": "media-1", "source_type": "media"},
+            }
+        ],
+        stats={"count": 0},  # deliberately lying: it must never be consulted
+    )
+    app = SimpleNamespace(_rag_service=rag_service)
+    service = LibraryLocalRagSearchService(app)
+
+    result = await service.search("credential", ("notes",), "rag", top_k=5)
+
+    assert not isinstance(result, LibraryRagSearchOutcome)
+    assert result["results"] == []
+    assert rag_service.vector_store.calls == 0
+
+
 # (task-185) The keyword-search conversation row's secondary line pluralizes
 # its message count instead of the fixed "N messages" template.
 def test_conversation_row_secondary_line_pluralizes_message_count():
@@ -872,3 +1130,121 @@ async def test_prompts_deselected_yields_zero_prompt_rows(real_prompts_app):
 
     assert not isinstance(result, LibraryRagSearchOutcome)
     assert all(row["provenance"]["source_type"] != "prompt" for row in result["results"])
+
+
+# --- task-249 AC #2: real-runtime semantic results with citations -----------
+# Same pattern as Tests/RAG/test_ingestion_indexing.py: a real RAGService with
+# the deterministic mock embedding backend, published as the process-wide
+# shared service, queried end-to-end through run_library_rag_search.
+
+from tldw_chatbook.Utils.optional_deps import embeddings_rag_deps_installed as _deps_installed
+
+_DISTINCTIVE_CONTENT = (
+    "The zanzibar quokka manifesto describes how quokkas organise snorkeling "
+    "expeditions near flamingo lagoons. Zanzibar quokka snorkeling requires "
+    "specialised flamingo-approved equipment and a manifesto committee."
+)
+
+
+def _make_real_rag_service():
+    from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
+    from tldw_chatbook.RAG_Search.simplified.rag_service import RAGService
+
+    cfg = RAGConfig()
+    cfg.embedding.model = "mock"  # deterministic bag-of-words backend, offline
+    cfg.embedding.device = "cpu"
+    cfg.vector_store.type = "memory"
+    cfg.vector_store.persist_directory = None
+    cfg.chunking.chunk_size = 60
+    cfg.chunking.chunk_overlap = 10
+    cfg.search.enable_cache = False
+    return RAGService(cfg)
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not _deps_installed(), reason="embeddings_rag deps not installed")
+class TestLibraryRagAnswerRealRuntime:
+    @pytest.fixture(autouse=True)
+    def _isolated_shared_service(self):
+        from tldw_chatbook.RAG_Search import ingestion_indexing
+
+        ingestion_indexing.reset_shared_rag_service()
+        yield
+        ingestion_indexing.reset_shared_rag_service()
+
+    @pytest.mark.asyncio
+    async def test_rag_answer_returns_semantic_rows_with_citations(self):
+        """AC #1 + #2 end-to-end: an uninitialized app resolves the shared
+        runtime lazily, and indexed content comes back as evidence rows whose
+        citations survive normalization into LibraryRagResultRow."""
+        from tldw_chatbook.RAG_Search import ingestion_indexing
+
+        real_service = _make_real_rag_service()
+        await real_service.index_batch_optimized(
+            [
+                {
+                    "id": "media_9",
+                    "content": _DISTINCTIVE_CONTENT,
+                    "title": "Quokka Manifesto",
+                    "metadata": {
+                        "source_id": "9",
+                        "title": "Quokka Manifesto",
+                        "source_type": "media",
+                    },
+                }
+            ],
+            show_progress=False,
+        )
+        ingestion_indexing.set_shared_rag_service(real_service)
+
+        app = SimpleNamespace()  # no _rag_service attribute at all
+        app.library_rag_search_service = LibraryLocalRagSearchService(app)
+        request = LibraryRagSearchRequest(
+            query="zanzibar quokka snorkeling manifesto",
+            source_types=("notes", "media", "conversations"),
+            mode="rag",
+            top_k=3,
+            include_citations=True,
+        )
+
+        outcome = await run_library_rag_search(app, request)
+
+        assert outcome.status == "ready"
+        assert outcome.runtime_backend == "rag-semantic"
+        assert app._rag_service is real_service
+        row = outcome.results[0]
+        assert row.source_id == "9"
+        assert row.title == "Quokka Manifesto"
+        assert row.provenance.get("source_type") == "media"
+        assert row.score is not None
+        # Citations must serialize all the way into the evidence row.
+        assert row.citations, "semantic evidence row lost its citations"
+        assert row.citation_labels[0] == "Quokka Manifesto"
+        assert row.citations[0].source_id == "media_9"
+        assert row.citations[0].chunk_id
+        assert "1 citation" in row.citation_count_badge_label
+
+    @pytest.mark.asyncio
+    async def test_rag_answer_empty_real_store_reports_index_empty(self):
+        """AC #4 against the real vector-store stats API: an available
+        runtime over an empty store says so instead of a bare zero-results
+        state."""
+        from tldw_chatbook.RAG_Search import ingestion_indexing
+
+        ingestion_indexing.set_shared_rag_service(_make_real_rag_service())
+
+        app = SimpleNamespace()
+        app.library_rag_search_service = LibraryLocalRagSearchService(app)
+        request = LibraryRagSearchRequest(
+            query="zanzibar quokka snorkeling manifesto",
+            source_types=("notes", "media", "conversations"),
+            mode="rag",
+            top_k=3,
+        )
+
+        outcome = await run_library_rag_search(app, request)
+
+        assert outcome.status == "empty"
+        assert outcome.recovery_state is not None
+        assert outcome.recovery_state.status_label == "Index empty"
+        assert outcome.recovery_state.stable_selector == "library-rag-empty-state"

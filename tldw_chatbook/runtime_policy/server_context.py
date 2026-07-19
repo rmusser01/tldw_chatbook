@@ -3,11 +3,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
 from tldw_chatbook.MCP.unified_control_models import ConfiguredServerTarget
-from tldw_chatbook.tldw_api import TLDWAPIClient
+if TYPE_CHECKING:
+    from tldw_chatbook.tldw_api import TLDWAPIClient
 
 from .bootstrap import RuntimePolicyContext, build_runtime_api_client, derive_configured_server_binding
 from .server_credentials import (

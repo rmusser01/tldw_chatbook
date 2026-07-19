@@ -982,7 +982,7 @@ def _custom_policy_recovery_state(exc, *, unavailable_what, stable_selector, pol
         # of the generic "source material" phrasing artifacts/personas use.
         ("library", "#library-header-line", "content type"),
         ("artifacts", "#artifacts-title", "generated"),
-        ("personas", "#personas-title", "who the ai plays"),
+        ("personas", "#personas-header", "who the ai plays"),
     ],
 )
 @pytest.mark.asyncio
@@ -2445,7 +2445,9 @@ async def test_mcp_destination_permissions_and_tools_tooltips_are_current():
     """UX batch item 1: the Permissions/Tools mode chip tooltips used to say
     "(arrives in a later phase)" even after both modes shipped real canvases
     (`MCPPermissionsMode`/`MCPToolsMode`) -- stale copy that actively misled
-    the user about what pressing the chip would do."""
+    the user about what pressing the chip would do. T7 (MCP Hub Phase 5):
+    "audit" carried the same stale-copy defect until it shipped its own
+    real canvas (`MCPAuditMode`) -- same regression class, same fix."""
     app = _build_test_app()
     host = DestinationHarness(app, "mcp")
     async with host.run_test(size=(180, 50)) as pilot:
@@ -2453,10 +2455,15 @@ async def test_mcp_destination_permissions_and_tools_tooltips_are_current():
         screen = _active_destination_screen(host)
         tools_chip = screen.query_one("#mcp-mode-tools", Button)
         permissions_chip = screen.query_one("#mcp-mode-permissions", Button)
+        audit_chip = screen.query_one("#mcp-mode-audit", Button)
         assert tools_chip.tooltip == "Tools mode: browse and test scoped MCP tools."
         assert permissions_chip.tooltip == (
             "Permissions mode: set Allow / Ask / Off per tool. "
             "Space cycles the selected row."
+        )
+        assert "arrives in a later phase" not in str(audit_chip.tooltip).lower()
+        assert audit_chip.tooltip == (
+            "Audit mode: review MCP tool execution history and drill into a call's detail."
         )
 
 
@@ -2738,9 +2745,14 @@ async def test_mcp_destination_test_tool_binding_opens_panel_for_selected_tool_e
 
 class MCPFooterHarness(App):
     """Mirrors `test_console_workbench_contract.py`'s `ConsoleFooterHarness`
-    for the MCP destination: composes a real `AppFooterStatus` alongside the
-    pushed screen so `MCPScreen._register_footer_shortcuts()`'s
-    `self.app.query_one(AppFooterStatus)` resolves."""
+    for the MCP destination: composes an `AppFooterStatus` directly on the
+    App's own default screen, exactly like `TldwCli._create_main_ui_widgets`
+    does in the real app (id="app-footer-status"). Task-264: `MCPScreen`
+    (via `BaseAppScreen.compose()`) now mounts its OWN `AppFooterStatus`
+    too, and `MCPScreen._register_footer_shortcuts()` resolves that
+    screen-owned instance via `self.query_one(AppFooterStatus)` -- so this
+    harness's default-screen widget is only kept around to prove the
+    registration does NOT land there (see the assertions below)."""
 
     def __init__(self, app_instance):
         super().__init__()
@@ -2765,7 +2777,9 @@ async def test_mcp_destination_registers_footer_workbench_shortcuts():
     async with host.run_test(size=(120, 40)) as pilot:
         screen = host.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#mcp-shell")
-        footer = host.query_one(AppFooterStatus)
+        # task-264: the registration lands on the SCREEN's own footer, not
+        # the harness's default-screen stand-in.
+        footer = screen.query_one(AppFooterStatus)
 
         assert footer.shortcut_text == "1-4 mode | a add server | r refresh | t test tool | space cycle permission"
 
@@ -2784,7 +2798,9 @@ async def test_mcp_destination_footer_shortcuts_clear_and_restore_across_suspend
     async with host.run_test(size=(120, 40)) as pilot:
         screen = host.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#mcp-shell")
-        footer = host.query_one(AppFooterStatus)
+        # task-264: the registration lands on the SCREEN's own footer, not
+        # the harness's default-screen stand-in.
+        footer = screen.query_one(AppFooterStatus)
         assert footer.shortcut_text == "1-4 mode | a add server | r refresh | t test tool | space cycle permission"
 
         overlay = TextualScreen()

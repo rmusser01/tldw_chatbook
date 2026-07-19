@@ -48,6 +48,11 @@ class UnifiedMCPControlPlaneService:
         self.context = self.context_store.load() if self.context_store is not None else UnifiedMCPContext()
         self._execution_log: MCPExecutionLog | None = None
         self._permission_store: MCPPermissionStore | None = None
+        # Chat bridge (Phase 5): in-memory-only, app-run-lifetime session
+        # approvals. Never persisted -- a fresh process/instance starts
+        # empty, and `clear_session_approvals()` is the only other way
+        # entries leave this set.
+        self._session_approvals: set[tuple[str, str]] = set()
 
     @property
     def selected_source(self) -> str:
@@ -1911,6 +1916,8 @@ class UnifiedMCPControlPlaneService:
         error: str | None,
         arguments: dict[str, Any],
         result: Any,
+        initiator: str = "test",
+        decision: str = "allowed",
     ) -> None:
         # Recording is best-effort: it must never mask the tool result or
         # the tool error being propagated (Phase 2 masking lesson). N1: the
@@ -1918,8 +1925,15 @@ class UnifiedMCPControlPlaneService:
         # try too -- it can raise (e.g. `Path(store.path)` oddities), and
         # sitting outside would let that raise straight out of
         # `_record_tool_execution()` into the caller's own try/except
-        # around test_hub_tool()'s success/failure paths, masking the tool
-        # result exactly like an append() failure would.
+        # around test_hub_tool()'s / execute_hub_tool()'s success/failure
+        # paths, masking the tool result exactly like an append() failure
+        # would.
+        #
+        # `initiator`/`decision` default to "test"/"allowed" -- the values
+        # `test_hub_tool()` has always recorded -- so callers that don't
+        # pass them (there are none left in this module, but external
+        # callers via reflection/monkeypatching should not break) keep the
+        # original byte-compatible record shape.
         try:
             log = self.execution_log
             if log is None:
@@ -1927,7 +1941,8 @@ class UnifiedMCPControlPlaneService:
             record = build_record(
                 server_key=server_key,
                 tool_name=tool_name,
-                initiator="test",
+                initiator=initiator,
+                decision=decision,
                 ok=ok,
                 duration_ms=duration_ms,
                 error=error,
@@ -1955,6 +1970,94 @@ class UnifiedMCPControlPlaneService:
         except Exception as exc:
             logger.warning(f"MCP execution log record failed for {server_key}/{tool_name}: {exc}")
 
+    async def execute_hub_tool(
+        self,
+        server_key: str,
+        tool_name: str,
+        arguments: dict[str, Any] | None = None,
+        *,
+        initiator: str = "test",
+        decision: str = "allowed",
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        """Execute one tool call against a local or built-in server.
+
+        The shared execute seam for the Hub's Test Tool runner and the
+        Phase 5 chat bridge / agent-runtime ``MCPToolProvider``. Same
+        ``local:``/``builtin:`` routing and error semantics as the
+        original ``test_hub_tool()`` body this generalizes; callers
+        distinguish themselves via ``initiator``/``decision`` so the
+        execution-log record reflects who ran the tool and under what
+        permission decision. Every attempt — success, failure, or
+        timeout — is recorded to the execution log best-effort before the
+        result or error propagates.
+
+        Args:
+            server_key: Prefixed server key (``local:<profile_id>`` or
+                ``builtin:<id>``). Server-source keys are rejected until
+                Phase 4.
+            tool_name: Name of the tool to execute.
+            arguments: Tool arguments; defaults to an empty dict.
+            initiator: Who initiated the call, recorded on the execution
+                log (e.g. ``"test"`` for the Hub UI, ``"agent"`` for the
+                chat bridge).
+            decision: The permission decision under which the call ran
+                (e.g. ``"allowed"``, ``"approved"``), recorded on the
+                execution log.
+            timeout_seconds: Per-call timeout override; defaults to
+                :meth:`_tool_call_timeout` (``[mcp]
+                tool_call_timeout_seconds``) when omitted.
+
+        Returns:
+            The raw result payload from the underlying service call.
+
+        Raises:
+            ValueError: If ``server_key`` is not a local/builtin key.
+            RuntimeError: If the tool call fails or exceeds the
+                effective timeout.
+        """
+        normalized_key = str(server_key or "").strip()
+        normalized_tool_name = str(tool_name or "").strip()
+        normalized_arguments = dict(arguments or {})
+
+        if normalized_key.startswith("local:"):
+            profile_id = normalized_key.split(":", 1)[1]
+            coro = self.local_service.execute_external_tool(profile_id, normalized_tool_name, normalized_arguments)
+        elif normalized_key.startswith("builtin:"):
+            coro = self.local_service.execute_tool(normalized_tool_name, normalized_arguments)
+        else:
+            raise ValueError("Tool testing for server-source tools arrives in Phase 4.")
+
+        timeout = timeout_seconds if timeout_seconds is not None else self._tool_call_timeout()
+        started = time.monotonic()
+        try:
+            result = await asyncio.wait_for(coro, timeout=timeout)
+        except asyncio.TimeoutError:
+            duration_ms = int((time.monotonic() - started) * 1000)
+            message = f"Timed out after {timeout:.0f}s"
+            self._record_tool_execution(
+                normalized_key, normalized_tool_name, ok=False, duration_ms=duration_ms,
+                error=message, arguments=normalized_arguments, result=None,
+                initiator=initiator, decision=decision,
+            )
+            raise RuntimeError(message) from None
+        except Exception as exc:
+            duration_ms = int((time.monotonic() - started) * 1000)
+            self._record_tool_execution(
+                normalized_key, normalized_tool_name, ok=False, duration_ms=duration_ms,
+                error=str(exc), arguments=normalized_arguments, result=None,
+                initiator=initiator, decision=decision,
+            )
+            raise
+
+        duration_ms = int((time.monotonic() - started) * 1000)
+        self._record_tool_execution(
+            normalized_key, normalized_tool_name, ok=True, duration_ms=duration_ms,
+            error=None, arguments=normalized_arguments, result=result,
+            initiator=initiator, decision=decision,
+        )
+        return result
+
     async def test_hub_tool(
         self,
         server_key: str,
@@ -1963,10 +2066,13 @@ class UnifiedMCPControlPlaneService:
     ) -> dict[str, Any]:
         """Execute one tool test against a local or built-in server.
 
-        The shared execute seam for the Hub's Test Tool runner (and,
-        later, the Phase 5 chat bridge / agent MCPToolProvider). Every
-        attempt — success, failure, or timeout — is recorded to the
-        execution log best-effort before the result or error propagates.
+        Thin delegate to :meth:`execute_hub_tool` fixed to the Hub Test
+        Tool runner's semantics: ``initiator="test"``,
+        ``decision="allowed"``, and the lifecycle timeout
+        (``[mcp] hub_lifecycle_timeout_seconds`` via
+        :meth:`_lifecycle_timeout`) rather than the chat-bridge's
+        per-call timeout knob -- preserved unchanged so existing callers
+        and their pinned tests keep seeing identical behavior.
 
         Args:
             server_key: Prefixed server key (``local:<profile_id>`` or
@@ -1983,44 +2089,132 @@ class UnifiedMCPControlPlaneService:
             RuntimeError: If the tool call fails or exceeds the
                 configured lifecycle timeout.
         """
-        normalized_key = str(server_key or "").strip()
-        normalized_tool_name = str(tool_name or "").strip()
-        normalized_arguments = dict(arguments or {})
-
-        if normalized_key.startswith("local:"):
-            profile_id = normalized_key.split(":", 1)[1]
-            coro = self.local_service.execute_external_tool(profile_id, normalized_tool_name, normalized_arguments)
-        elif normalized_key.startswith("builtin:"):
-            coro = self.local_service.execute_tool(normalized_tool_name, normalized_arguments)
-        else:
-            raise ValueError("Tool testing for server-source tools arrives in Phase 4.")
-
-        timeout = self._lifecycle_timeout()
-        started = time.monotonic()
-        try:
-            result = await asyncio.wait_for(coro, timeout=timeout)
-        except asyncio.TimeoutError:
-            duration_ms = int((time.monotonic() - started) * 1000)
-            message = f"Timed out after {timeout:.0f}s"
-            self._record_tool_execution(
-                normalized_key, normalized_tool_name, ok=False, duration_ms=duration_ms,
-                error=message, arguments=normalized_arguments, result=None,
-            )
-            raise RuntimeError(message) from None
-        except Exception as exc:
-            duration_ms = int((time.monotonic() - started) * 1000)
-            self._record_tool_execution(
-                normalized_key, normalized_tool_name, ok=False, duration_ms=duration_ms,
-                error=str(exc), arguments=normalized_arguments, result=None,
-            )
-            raise
-
-        duration_ms = int((time.monotonic() - started) * 1000)
-        self._record_tool_execution(
-            normalized_key, normalized_tool_name, ok=True, duration_ms=duration_ms,
-            error=None, arguments=normalized_arguments, result=result,
+        return await self.execute_hub_tool(
+            server_key,
+            tool_name,
+            arguments,
+            initiator="test",
+            decision="allowed",
+            timeout_seconds=self._lifecycle_timeout(),
         )
-        return result
+
+    # ---- Chat bridge seam (Phase 5) -------------------------------------
+    # Timeout knobs, in-memory session approvals, and best-effort decision
+    # recording for tool calls that stop before execution (denied / timed
+    # out waiting for approval). Backs the chat bridge / agent-runtime
+    # MCPToolProvider (task-201); UI-free.
+
+    def _tool_call_timeout(self) -> float:
+        """Resolve the per-call tool execution timeout.
+
+        Mirrors :meth:`_lifecycle_timeout`'s config-read/fallback guard,
+        but reads a distinct config key: the Hub's Test Tool runner and
+        the chat bridge intentionally have independently tunable
+        timeouts.
+
+        Returns:
+            The configured ``[mcp] tool_call_timeout_seconds`` value in
+            seconds, falling back to ``60.0`` when unset or unparsable.
+        """
+        try:
+            return float(get_cli_setting("mcp", "tool_call_timeout_seconds", 60.0))
+        except (TypeError, ValueError):
+            return 60.0
+
+    def approval_timeout_seconds(self) -> float:
+        """Resolve how long the chat bridge waits for a human approval.
+
+        Mirrors :meth:`_lifecycle_timeout`'s config-read/fallback guard.
+
+        Returns:
+            The configured ``[mcp] approval_timeout_seconds`` value in
+            seconds, falling back to ``120.0`` when unset or unparsable.
+        """
+        try:
+            return float(get_cli_setting("mcp", "approval_timeout_seconds", 120.0))
+        except (TypeError, ValueError):
+            return 120.0
+
+    def approve_for_session(self, server_key: str, tool_name: str) -> None:
+        """Grant a session-scoped approval for one server/tool pair.
+
+        Session approvals are held in memory only, for the lifetime of
+        this service instance (an app-run singleton) -- they are never
+        persisted to disk and do not survive an app restart or a fresh
+        instance of this service.
+
+        Args:
+            server_key: Prefixed server key the tool belongs to.
+            tool_name: Name of the tool being approved.
+        """
+        self._session_approvals.add((server_key, tool_name))
+
+    def is_session_approved(self, server_key: str, tool_name: str) -> bool:
+        """Check whether a server/tool pair has a session-scoped approval.
+
+        Args:
+            server_key: Prefixed server key the tool belongs to.
+            tool_name: Name of the tool to check.
+
+        Returns:
+            ``True`` if :meth:`approve_for_session` was called for this
+            exact pair since the last :meth:`clear_session_approvals`
+            call (or since this service instance was constructed);
+            ``False`` otherwise. Always ``False`` on a fresh instance or
+            after an app restart -- the grant is not persisted.
+        """
+        return (server_key, tool_name) in self._session_approvals
+
+    def clear_session_approvals(self) -> None:
+        """Discard every in-memory session approval on this instance."""
+        self._session_approvals.clear()
+
+    def record_tool_decision(
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        decision: str,
+        initiator: str = "agent",
+        error: str | None = None,
+    ) -> None:
+        """Best-effort log a tool-call decision that never executed.
+
+        For approval outcomes that stop the call before the tool runs
+        (denied, timed out waiting for approval) so the execution log
+        keeps a complete decision trail even for calls that never
+        reached :meth:`execute_hub_tool`. Same never-raise contract as
+        :meth:`_record_tool_execution` -- and, per that method's N1
+        lesson, the ``self.execution_log`` property access happens
+        *inside* the try, since the property itself can raise.
+
+        Args:
+            server_key: Prefixed server key the tool belongs to.
+            tool_name: Name of the tool the decision applies to.
+            decision: Outcome of the decision (e.g. ``"denied"``,
+                ``"timeout"``).
+            initiator: Who/what produced the decision; defaults to
+                ``"agent"``.
+            error: Optional human-readable detail for the record.
+        """
+        try:
+            log = self.execution_log
+            if log is None:
+                return
+            record = build_record(
+                server_key=server_key,
+                tool_name=tool_name,
+                initiator=initiator,
+                decision=decision,
+                ok=False,
+                duration_ms=0,
+                error=error,
+            )
+            log.append(record)
+        except Exception as exc:
+            logger.warning(
+                f"MCP tool decision record failed for {server_key}/{tool_name}: {exc}"
+            )
 
     # ---- Typed permission methods (Phase 4) ----------------------------
     # Backs the Hub's Permissions mode: effective-state resolution (with

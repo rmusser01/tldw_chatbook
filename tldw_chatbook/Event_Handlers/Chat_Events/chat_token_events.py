@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 #
 # 3rd-Party Imports
 from loguru import logger
+from textual.app import ScreenStackError
 from textual.widgets import Input, Select
 from textual.css.query import QueryError
 #
@@ -21,6 +22,73 @@ if TYPE_CHECKING:
 ########################################################################################################################
 #
 # Functions:
+
+def _estimate_tokens_cached(
+    app: 'TldwCli',
+    chat_history: list,
+    *,
+    model: str,
+    provider: str,
+    max_tokens_response: int,
+    system_prompt: str,
+):
+    """Estimate token usage, reusing the last result when the inputs are unchanged.
+
+    task-261 dirty gate: the footer's 10 s interval timer re-ran the full
+    tokenizer over the entire visible history every tick even when nothing
+    had changed. A cheap signature over every input that influences the
+    estimate — settings plus message count and a per-message (role, content)
+    hash tuple — is compared against the previous tick's; on a match
+    the cached counts are returned without re-tokenizing. The cache lives on
+    the app instance (one live history per app), and the caller still
+    refreshes the footer widget every tick, so display behavior is
+    unchanged.
+
+    Args:
+        app: The running app instance the cache is stored on.
+        chat_history: Completed messages as ``{"role", "content"}`` dicts.
+        model: Model name the tokenizer estimate is computed for.
+        provider: Provider name the tokenizer estimate is computed for.
+        max_tokens_response: Reserved response-token budget.
+        system_prompt: System prompt text included in the estimate.
+
+    Returns:
+        The ``(used_tokens, total_limit, remaining)`` tuple from
+        ``estimate_remaining_tokens``.
+    """
+    signature = (
+        model,
+        provider,
+        max_tokens_response,
+        system_prompt,
+        len(chat_history),
+        # Per-message content hashes, not lengths: a same-length edit to an
+        # earlier message (or a role flip) must invalidate the cache too
+        # (PR #688 review). CPython caches str.__hash__ on the string object,
+        # so for an unchanged history this stays O(1) amortized per message.
+        tuple(
+            (hash(message.get("role", "")), hash(message.get("content", "")))
+            for message in chat_history
+        ),
+    )
+    cached = getattr(app, "_footer_token_estimate_cache", None)
+    if cached is not None and cached[0] == signature:
+        return cached[1]
+    result = estimate_remaining_tokens(
+        chat_history,
+        model=model,
+        provider=provider,
+        max_tokens_response=max_tokens_response,
+        system_prompt=system_prompt,
+    )
+    try:
+        app._footer_token_estimate_cache = (signature, result)
+    except Exception:
+        # A slot-restricted or frozen test double can refuse the attribute;
+        # caching is best-effort and never worth failing the update over.
+        logger.debug("Footer token-estimate cache not stored on app instance.")
+    return result
+
 
 async def update_chat_token_counter(app: 'TldwCli') -> None:
     """
@@ -64,16 +132,18 @@ async def update_chat_token_counter(app: 'TldwCli') -> None:
                         chat_history.append({"role": role_for_api, "content": content})
         except QueryError as e:
             logger.debug(f"Could not get chat messages for token counting: {e}")
-        
-        # Calculate tokens
-        used_tokens, total_limit, remaining = estimate_remaining_tokens(
+
+        # Calculate tokens (task-261: skips re-tokenizing when history and
+        # settings are unchanged since the last periodic tick).
+        used_tokens, total_limit, remaining = _estimate_tokens_cached(
+            app,
             chat_history,
             model=model,
             provider=provider,
             max_tokens_response=max_tokens_response,
             system_prompt=system_prompt
         )
-        
+
         # Use max_tokens_response as the display limit instead of model's total limit
         # This allows users to see how their conversation measures against their configured limit
         display_limit = max_tokens_response
@@ -97,13 +167,20 @@ async def update_chat_token_counter(app: 'TldwCli') -> None:
                 # Store for potential screen usage
                 app.current_token_count = (used_tokens, display_limit)
             else:
-                # Legacy tab mode - update footer directly
-                footer = app.query_one("AppFooterStatus")
+                # Legacy tab mode - update the active screen's footer directly.
+                # Resolved via `app.screen` rather than `app.query_one`
+                # because BaseAppScreen mounts a per-screen AppFooterStatus
+                # (task-264): the default screen's instance is occluded once
+                # any screen is pushed, and App.query_one only ever searches
+                # the default screen. ScreenStackError is caught alongside
+                # QueryError: this can run from interval timers that fire
+                # during shutdown, after the screen stack is drained.
+                footer = app.screen.query_one("AppFooterStatus")
                 from ...Utils.token_counter import format_token_display
                 display_text = format_token_display(used_tokens, display_limit)
                 footer.update_token_count(display_text)
                 logger.debug(f"Token count updated: {used_tokens}/{display_limit} (model limit: {total_limit})")
-        except QueryError as e:
+        except (QueryError, ScreenStackError) as e:
             logger.debug(f"Footer widget not found (may be in screen mode): {e}")
                 
     except Exception as e:
@@ -204,15 +281,17 @@ async def update_chat_token_counter_with_pending(app: 'TldwCli', pending_text: s
                 app.current_token_count = (used_tokens, display_limit)
                 app.token_count_pending = bool(pending_text)
             else:
-                # Legacy tab mode - update footer directly
-                footer = app.query_one("AppFooterStatus")
+                # Legacy tab mode - update the active screen's footer directly
+                # (see the analogous comment in update_chat_token_counter above;
+                # same task-264 active-screen resolution + shutdown guard).
+                footer = app.screen.query_one("AppFooterStatus")
                 from ...Utils.token_counter import format_token_display
                 display_text = format_token_display(used_tokens, display_limit)
                 # Add pending indicator
                 if pending_text:
                     display_text = display_text.replace("Tokens:", "Tokens (typing):")
                 footer.update_token_count(display_text)
-        except QueryError:
+        except (QueryError, ScreenStackError):
             logger.debug("Footer widget not found (may be in screen mode)")
                 
     except Exception as e:

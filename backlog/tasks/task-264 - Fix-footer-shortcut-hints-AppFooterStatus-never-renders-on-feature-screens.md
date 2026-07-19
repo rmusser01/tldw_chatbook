@@ -1,9 +1,11 @@
 ---
 id: TASK-264
 title: 'Fix footer shortcut hints: AppFooterStatus never renders on feature screens'
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-17 02:00'
+updated_date: '2026-07-17 15:03'
 labels:
   - ux
   - infrastructure
@@ -19,5 +21,19 @@ Live QA (MCP Hub Phase 4) found the footer shortcut-hint system is dead app-wide
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Registered workbench shortcut hints visibly render on every BaseAppScreen that registers them,MCP and Console hint sets verified live,Decision recorded: fix the AppFooterStatus mounting vs ship a per-screen hint strip
+- [x] #1 Registered workbench shortcut hints visibly render on every BaseAppScreen that registers them
+- [x] #2 MCP and Console hint sets verified live
+- [x] #3 Decision recorded: fix the AppFooterStatus mounting vs ship a per-screen hint strip
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Plan at Docs/superpowers/plans/2026-07-17-footer-shortcut-hints.md. DECISION (AC#3): per-screen AppFooterStatus mounted by BaseAppScreen (replacing its render-nothing Footer), fed by the unchanged registration API with screen-aware lookups — the single-global-strip repair is impossible under push_screen navigation (Textual screens are full-viewport; App.query_one resolves against the default screen by design) and the app-owned-chrome migration is explicitly deferred by the design contract. Console's four visible Footer bindings fold into CONSOLE_WORKBENCH_SHORTCUTS (Ctrl+K/Ctrl+T rendered; alt-hints stay functional unrendered). DB-size/word/token stat updaters become active-screen-aware with default-screen fallback.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Per-screen AppFooterStatus (AC#3 decision: the single-global-strip repair is impossible under push_screen navigation — App.query_one resolves the DEFAULT screen by design; full rationale in Docs/superpowers/plans/2026-07-17-footer-shortcut-hints.md). BaseAppScreen.compose() yields its own footer instance (id screen-footer-status) replacing the render-nothing Footer; callers are screen-aware (screens query their own instance; chat_token_events/app.py resolve the ACTIVE screen with default-screen fallback + ScreenStackError shutdown guard). AppFooterStatus ships DEFAULT_CSS for stylesheet-less harnesses (KEEP-IN-SYNC contract anchored to the live css/components/_widgets.tcss source; Constants.py css_content marked dead). Review fix wave: registrations persist on the screen (BaseAppScreen.register_footer_shortcuts/clear_footer_shortcuts, re-seeded during compose) because screen-level recompose replaces the footer — settings' recompose=True reactives, library/chat refresh(recompose=True) all wiped hints; Library ('u') and Settings ('s/r/t') now register the sets their retired Footer rendered. Console's Ctrl+K/Ctrl+T fold into CONSOLE_WORKBENCH_SHORTCUTS. Deterministic settle helpers fixed the settings-hub mount-storm flake (109 sites). Live evidence: Docs/superpowers/qa/footer-hints-2026-07/ (Console F6 set, MCP mode set, Library u, Settings s/r/t + recompose-survival, real served app 2050x1240). Tests: test_screen_footer_hints.py (6), footer-context contract unchanged, 393+282+494 regression passes. Commits fa443e29/e183ce68/a237c108/15fadd1e on claude/footer-hints-264.
+<!-- SECTION:NOTES:END -->

@@ -80,14 +80,35 @@ class RecentLocations:
 
 
 class BookmarksManager:
-    """Manages bookmarked directories for quick access"""
-    
+    """Manages bookmarked directories for quick access.
+
+    task-261: the constructor is I/O-free. It used to run five synchronous
+    ``Path.exists()`` probes (a stall hazard when $HOME dirs live on a cloud
+    mount) plus, on first run, a full TOML config write — on EVERY picker
+    construction. Default computation and the config load (including the
+    first-run defaults write) are now deferred to the first call that
+    actually needs bookmark data.
+    """
+
     def __init__(self, context: str = "default"):
+        """Initialize the manager without touching the filesystem or config.
+
+        Args:
+            context: Names the ``[filepicker] bookmarks_<context>`` config key
+                so different picker surfaces keep separate bookmark lists.
+        """
         self.context = context
-        self._bookmarks: List[Dict[str, Any]] = []
-        self._default_bookmarks = self._get_default_bookmarks()
-        self.load_from_config()
-    
+        # None = not loaded yet; load_from_config() always leaves a list.
+        self._bookmarks: Optional[List[Dict[str, Any]]] = None
+        self._default_bookmarks_cache: Optional[List[Dict[str, Any]]] = None
+
+    @property
+    def _default_bookmarks(self) -> List[Dict[str, Any]]:
+        """Platform default bookmarks, computed (with I/O) at most once."""
+        if self._default_bookmarks_cache is None:
+            self._default_bookmarks_cache = self._get_default_bookmarks()
+        return self._default_bookmarks_cache
+
     def _get_default_bookmarks(self) -> List[Dict[str, Any]]:
         """Get platform-specific default bookmarks"""
         home = Path.home()
@@ -97,15 +118,20 @@ class BookmarksManager:
             {"name": "Documents", "path": str(home / "Documents"), "icon": "📄"},
             {"name": "Downloads", "path": str(home / "Downloads"), "icon": "⬇️"},
         ]
-        
+
         # Add platform-specific paths
         if os.name == 'posix':  # Unix/Linux/Mac
             if (home / "Pictures").exists():
                 bookmarks.append({"name": "Pictures", "path": str(home / "Pictures"), "icon": "🖼️"})
-        
+
         # Filter out non-existent directories
         return [b for b in bookmarks if Path(b["path"]).exists()]
-    
+
+    def _ensure_loaded(self) -> None:
+        """Load bookmarks from config on first actual use (task-261)."""
+        if self._bookmarks is None:
+            self.load_from_config()
+
     def load_from_config(self):
         """Load bookmarks from config"""
         try:
@@ -121,48 +147,80 @@ class BookmarksManager:
         except Exception as e:
             logger.error(f"Failed to load bookmarks: {e}")
             self._bookmarks = self._default_bookmarks.copy()
-    
+
     def save_to_config(self):
         """Save bookmarks to config"""
+        if self._bookmarks is None:
+            # Never loaded, so there is nothing to persist -- and saving here
+            # would break the constructor's I/O-free guarantee (task-261).
+            return
         try:
             save_setting_to_cli_config("filepicker", f"bookmarks_{self.context}", self._bookmarks)
         except Exception as e:
             logger.error(f"Failed to save bookmarks: {e}")
-    
+
     def add(self, path: Path, name: Optional[str] = None, icon: str = "📁"):
-        """Add a bookmark"""
+        """Add a bookmark.
+
+        Args:
+            path: Directory to bookmark.
+            name: Display name; defaults to the path's basename.
+            icon: Emoji shown next to the bookmark.
+
+        Returns:
+            True if the bookmark was added, False if it already existed.
+        """
+        self._ensure_loaded()
         path_str = str(path.resolve())
-        
+
         # Check if already bookmarked
         if any(b.get("path") == path_str for b in self._bookmarks):
             return False
-        
+
         bookmark = {
             "name": name or path.name,
             "path": path_str,
             "icon": icon,
             "custom": True  # Mark as user-added
         }
-        
+
         self._bookmarks.append(bookmark)
         self.save_to_config()
         return True
-    
+
     def remove(self, path: Path):
-        """Remove a bookmark"""
+        """Remove a bookmark.
+
+        Args:
+            path: Bookmarked directory to remove.
+        """
+        self._ensure_loaded()
         path_str = str(path.resolve())
         self._bookmarks = [b for b in self._bookmarks if b.get("path") != path_str]
         self.save_to_config()
-    
+
     def is_bookmarked(self, path: Path) -> bool:
-        """Check if a path is bookmarked"""
+        """Check if a path is bookmarked.
+
+        Args:
+            path: Directory to look up.
+
+        Returns:
+            True if the path is currently bookmarked.
+        """
+        self._ensure_loaded()
         path_str = str(path.resolve())
         return any(b.get("path") == path_str for b in self._bookmarks)
-    
+
     def get_bookmarks(self) -> List[Dict[str, Any]]:
-        """Get all bookmarks"""
+        """Get all bookmarks.
+
+        Returns:
+            A copy of the current bookmark records.
+        """
+        self._ensure_loaded()
         return self._bookmarks.copy()
-    
+
     def reset_to_defaults(self):
         """Reset bookmarks to defaults"""
         self._bookmarks = self._default_bookmarks.copy()

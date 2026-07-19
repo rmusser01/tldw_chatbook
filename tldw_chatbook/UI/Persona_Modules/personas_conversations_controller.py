@@ -144,8 +144,8 @@ class PersonasConversationsController:
             view.set_title(self._open_conversation_title or "Conversation")
             await view.show_loading()
             screen._show_center(_CONVERSATION_VIEW_ID)
-            # Esc-back is available as soon as the view is open.
-            screen._register_footer_shortcuts()
+            # Sync header title and console actions for the open transcript.
+            screen._sync_title_and_console_actions()
         except QueryError:
             logger.warning("Conversation transcript widget is not mounted.")
         self.load_conversation_messages(
@@ -226,9 +226,10 @@ class PersonasConversationsController:
         view.set_title(self._open_conversation_title or "Conversation")
         await view.load_messages(messages, speaker_names=speaker_names)
         screen._show_center(_CONVERSATION_VIEW_ID)
-        # Esc-back availability changed; focus the transcript so arrow keys
-        # scroll it (the helper refuses to steal focus from active typing).
-        screen._register_footer_shortcuts()
+        # Sync header title and console actions for the loaded transcript;
+        # focus the transcript so arrow keys scroll it (the helper refuses to
+        # steal focus from active typing).
+        screen._sync_title_and_console_actions()
         screen.call_after_refresh(screen._focus_conversation_transcript)
 
     # ===== Conversation actions =====

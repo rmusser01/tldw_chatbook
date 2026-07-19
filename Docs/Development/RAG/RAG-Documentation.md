@@ -173,9 +173,15 @@ Search Mode: [Dropdown]
 
 **Configuration**:
 ```toml
-[AppRAGSearchConfig.rag.search]
-hybrid_alpha = 0.5  # Balance between semantic (0.0) and keyword (1.0)
+[AppRAGSearchConfig.rag.retriever]
+# Hybrid fusion alpha: weight of the vector/semantic leg in the RRF blend
+# (0 = FTS/keyword only, 1 = vector/semantic only). 0.7 = tldw_server default.
+hybrid_alpha = 0.7
 ```
+
+Hybrid results are fused with Reciprocal Rank Fusion (k=60) per leg, then
+blended: `final = (1 - alpha) * fts_rrf + alpha * vector_rrf`, matching the
+tldw_server reference design.
 
 ### Document Indexing
 

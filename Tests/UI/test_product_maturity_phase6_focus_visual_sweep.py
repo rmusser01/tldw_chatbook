@@ -51,8 +51,9 @@ DESTINATION_BODY_SELECTORS: dict[str, tuple[str, ...]] = {
     "watchlists_collections": ("#watchlists-collections-shell",),
     "schedules": ("#schedules-shell",),
     "workflows": ("#workflows-shell",),
-    "mcp": ("#mcp-shell", "#unified-mcp-panel"),
+    "mcp": ("#mcp-shell", "#mcp-hub-workbench"),
     "acp": ("#acp-shell",),
+    "lab": ("#llm-destination-header",),
     "settings": ("#settings-shell",),
 }
 BROKEN_TEXT_PATTERNS = (
@@ -139,6 +140,10 @@ def _visual_chrome_ready(app: TldwCli, destination_id: str) -> bool:
         nav_bar = app.screen.query_one(MainNavigationBar)
         nav_ids = tuple(button.id.removeprefix("nav-") for button in nav_bar.query(Button))
         if nav_ids != TOP_LEVEL_DESTINATION_IDS:
+            return False
+        # The docked overflow hint mounts a tick after the nav strip; treat
+        # the chrome as incomplete until it is present too.
+        if len(app.screen.query("#nav-overflow-hint")) != 1:
             return False
         if not nav_bar.query_one(f"#nav-{destination_id}", Button).has_class("is-active"):
             return False

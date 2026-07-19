@@ -249,6 +249,9 @@ class ProviderToolCalls:
 _PRESERVED_FRAGMENT_EXTRAS = frozenset({
     # Gemini 3 thought signatures — must round-trip verbatim (task-266).
     "google_thought_signature",
+    # Cohere v2 tool_plan text, echoed back on the request's assistant
+    # tool_calls turn (task-267).
+    "cohere_tool_plan",
 })
 
 

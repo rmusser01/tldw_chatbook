@@ -29,9 +29,9 @@ def main():
         nargs="?",
         default="all",
         choices=[
-            "all", "unit", "integration", "widgets", "windows",
-            "toast", "progress", "preferences", "templates", 
-            "activity", "performance", "coverage"
+            "all", "unit", "widgets", "windows",
+            "toast", "progress", "templates",
+            "activity", "coverage"
         ],
         help="Test suite to run"
     )
@@ -62,41 +62,31 @@ def main():
         cmd.append(str(test_dir))
     elif args.suite == "unit":
         cmd.extend([str(test_dir), "-m", "not integration"])
-    elif args.suite == "integration":
-        cmd.append(str(test_dir / "test_integration.py"))
     elif args.suite == "widgets":
         # Run all widget tests
         cmd.extend([
             str(test_dir / "test_toast_notifications.py"),
             str(test_dir / "test_detailed_progress.py"),
             str(test_dir / "test_activity_log.py"),
-            str(test_dir / "test_performance_metrics.py"),
         ])
     elif args.suite == "windows":
         # Run window tests
         cmd.extend([
-            str(test_dir / "test_model_preferences.py"),
             str(test_dir / "test_embedding_templates.py"),
-            str(test_dir / "test_integration.py"),
         ])
     elif args.suite == "toast":
         cmd.append(str(test_dir / "test_toast_notifications.py"))
     elif args.suite == "progress":
         cmd.append(str(test_dir / "test_detailed_progress.py"))
-    elif args.suite == "preferences":
-        cmd.append(str(test_dir / "test_model_preferences.py"))
     elif args.suite == "templates":
         cmd.append(str(test_dir / "test_embedding_templates.py"))
     elif args.suite == "activity":
         cmd.append(str(test_dir / "test_activity_log.py"))
-    elif args.suite == "performance":
-        cmd.append(str(test_dir / "test_performance_metrics.py"))
     elif args.suite == "coverage":
         # Run with coverage
         cmd.extend([
             "--cov=tldw_chatbook.UI",
             "--cov=tldw_chatbook.Widgets",
-            "--cov=tldw_chatbook.Utils.model_preferences",
             "--cov=tldw_chatbook.Utils.embedding_templates",
             "--cov-report=html",
             "--cov-report=term-missing",

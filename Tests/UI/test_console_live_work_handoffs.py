@@ -1777,3 +1777,127 @@ async def test_console_wc_live_work_action_button_routes_run_details():
     app.post_message.assert_called_once()
     assert app.post_message.call_args.args[0].screen_name == "subscriptions"
     app.notify.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# TASK-259: staging a Library Search/RAG launch must NOT recompose the whole
+# ChatScreen -- the pending-launch card and every launch-context reader are
+# refreshed with targeted widget updates instead.
+# ---------------------------------------------------------------------------
+
+
+def _library_rag_launch(status: str = "searching"):
+    ConsoleLiveWorkLaunch = _load_console_live_work_contract()
+    return ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title="Library Search/RAG retrieval",
+        payload={
+            "query": "vector fusion",
+            "source_scope": "media, notes, conversations",
+        },
+        status=status,
+        recovery="Retrieving Library Search/RAG evidence.",
+        action_label="Review evidence in Console",
+    )
+
+
+def _spy_screen_recompose(screen):
+    """Wrap ``screen.refresh`` recording any recompose=True calls."""
+    recompose_calls = []
+    original_refresh = screen.refresh
+
+    def spy_refresh(*args, **kwargs):
+        if kwargs.get("recompose"):
+            recompose_calls.append(kwargs)
+        return original_refresh(*args, **kwargs)
+
+    screen.refresh = spy_refresh
+    return recompose_calls
+
+
+@pytest.mark.asyncio
+async def test_stage_console_library_rag_launch_swaps_card_without_screen_recompose():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = _active_console_screen(host)
+        await _wait_for_selector(screen, pilot, "#console-live-work-source-readiness")
+        transcript_before = screen.query_one("#console-native-transcript")
+        composer_before = screen.query_one("#console-native-composer")
+        recompose_calls = _spy_screen_recompose(screen)
+
+        screen._stage_console_library_rag_launch(_library_rag_launch())
+        await pilot.pause()
+        await _wait_for_selector(screen, pilot, "#console-pending-launch-card")
+
+        assert recompose_calls == []
+        # A screen recompose would have replaced these widget instances.
+        assert screen.query_one("#console-native-transcript") is transcript_before
+        assert screen.query_one("#console-native-composer") is composer_before
+        assert len(screen.query("#console-live-work-source-readiness")) == 0
+        assert (
+            screen.query_one("#console-live-work-source").renderable
+            == "Source: Library Search/RAG"
+        )
+        assert (
+            screen.query_one("#console-live-work-status").renderable
+            == "Status: searching"
+        )
+        # Launch-context readers refreshed without recompose:
+        staged_tray = screen.query_one("#console-staged-context-tray")
+        assert not staged_tray.state.is_empty
+        inspector = screen.query_one("#console-run-inspector-state")
+        assert any(row.label == "Live work" for row in inspector.state.rows)
+
+
+@pytest.mark.asyncio
+async def test_stage_console_library_rag_launch_restage_replaces_single_card():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = _active_console_screen(host)
+        await _wait_for_selector(screen, pilot, "#console-live-work-source-readiness")
+        recompose_calls = _spy_screen_recompose(screen)
+
+        screen._stage_console_library_rag_launch(_library_rag_launch("searching"))
+        await pilot.pause()
+        await _wait_for_selector(screen, pilot, "#console-pending-launch-card")
+
+        screen._stage_console_library_rag_launch(_library_rag_launch("staged"))
+        await pilot.pause()
+        await pilot.pause()
+
+        assert recompose_calls == []
+        assert len(screen.query("#console-pending-launch-card")) == 1
+        assert (
+            screen.query_one("#console-live-work-status").renderable
+            == "Status: staged"
+        )
+
+
+@pytest.mark.asyncio
+async def test_stage_console_library_rag_launch_still_auto_opens_inspector():
+    """The blocked-outcome auto-open must survive the recompose removal."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = _active_console_screen(host)
+        await _wait_for_selector(screen, pilot, "#console-right-rail")
+
+        screen._set_console_rail_preference(right_open=False)
+        await pilot.pause()
+        assert screen.query_one("#console-right-rail").styles.display == "none"
+
+        # Mirrors `_apply_console_library_rag_search_outcome`'s blocked
+        # branch: flag set BEFORE staging (TASK-259 ordering).
+        screen._pending_console_launch_auto_open_inspector = True
+        screen._stage_console_library_rag_launch(_library_rag_launch("blocked"))
+        await pilot.pause()
+
+        assert screen.query_one("#console-right-rail").styles.display != "none"

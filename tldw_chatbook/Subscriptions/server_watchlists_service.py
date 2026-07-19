@@ -2,17 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    SourceCreateRequest,
-    SourceUpdateRequest,
-    TLDWAPIClient,
-    WatchlistAlertRuleCreateRequest,
-    WatchlistAlertRuleUpdateRequest,
-)
+if TYPE_CHECKING:
+    from ..tldw_api import TLDWAPIClient
 from .watchlist_normalizers import (
     normalize_server_delete_response,
     normalize_server_watchlist_source,
@@ -141,6 +136,9 @@ class ServerWatchlistsService:
         settings: Mapping[str, Any] | None = None,
         group_ids: Any = _UNSET,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SourceCreateRequest
+
         self._enforce(self._action_id("create"))
         if group_ids is not _UNSET:
             raise ValueError("Server watchlist group editing is deferred in this slice.")
@@ -168,6 +166,9 @@ class ServerWatchlistsService:
         existing_settings: Mapping[str, Any] | None = None,
         group_ids: Any = _UNSET,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SourceUpdateRequest
+
         self._enforce(self._action_id("update"))
         if group_ids is not _UNSET:
             raise ValueError("Server watchlist group editing is deferred in this slice.")
@@ -268,6 +269,9 @@ class ServerWatchlistsService:
         job_id: Any = None,
         severity: str = "warning",
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import WatchlistAlertRuleCreateRequest
+
         self._enforce(self._alert_rule_action_id("create"))
         request = WatchlistAlertRuleCreateRequest(
             name=name,
@@ -280,6 +284,9 @@ class ServerWatchlistsService:
         return normalize_watchlist_alert_rule("server", response)
 
     async def update_alert_rule(self, rule_id: Any, **fields: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import WatchlistAlertRuleUpdateRequest
+
         self._enforce(self._alert_rule_action_id("update"))
         payload: dict[str, Any] = {}
         for key in ("name", "enabled", "condition_type", "condition_value", "job_id", "severity"):

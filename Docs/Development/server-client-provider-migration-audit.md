@@ -71,7 +71,7 @@ These `from_config(...)` call sites continue to use public compatibility APIs, b
 
 | Module | Audit lines | Notes |
 | --- | ---: | --- |
-| `tldw_chatbook/app.py` | 1460 | App wiring compatibility adapter use. Semantic match: `self.server_rag_admin_service = ServerRAGAdminService.from_config(`. |
+| `tldw_chatbook/app.py` | 2708 | App wiring compatibility adapter use (lazy RAG-admin builder, task-254). Semantic match: `server_service = ServerRAGAdminService.from_config(`. |
 | `tldw_chatbook/app.py` | 1594 | App wiring compatibility adapter use. Semantic match: `self.server_writing_service = ServerWritingService.from_config(`. |
 | `tldw_chatbook/app.py` | 1647 | App wiring compatibility adapter use. Semantic match: `self.server_evaluation_service = ServerEvaluationsService.from_config(`. |
 | `tldw_chatbook/app.py` | 1689, 1699 | App wiring compatibility adapter uses. Semantic matches: `self.server_study_service = ServerStudyService.from_config(`, `self.server_quiz_service = ServerQuizService.from_config(`. |

@@ -69,7 +69,12 @@ async def test_nielsen_closeout_replays_core_heuristic_signals_in_running_app() 
         async with app.run_test(size=(180, 50)) as pilot:
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "home" and app.screen.__class__.__name__ == "HomeScreen",
+                # Nav strip + docked hint mount a tick after the screen swap;
+                # wait for the full chrome before asserting/clicking.
+                lambda: app.current_tab == "home"
+                and app.screen.__class__.__name__ == "HomeScreen"
+                and len(app.screen.query(".nav-button")) == len(EXPECTED_NAV)
+                and len(app.screen.query("#nav-overflow-hint")) == 1,
             )
 
             nav_buttons = list(app.screen.query("MainNavigationBar").first().query(Button))
@@ -111,8 +116,8 @@ async def test_nielsen_closeout_replays_core_heuristic_signals_in_running_app() 
             )
             library_text = _screen_text(app)
             assert "Library" in library_text
-            assert "Import/Export Sources" in library_text
-            assert "Search/RAG" in library_text
+            assert "Import / Export" in library_text
+            assert "Search / RAG" in library_text
 
             app.screen.query_one("#nav-settings", Button).press()
             await _wait_until(

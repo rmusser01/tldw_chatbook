@@ -1,10 +1,13 @@
 import pytest
+from unittest.mock import Mock
 from textual.app import App, ComposeResult
 from textual.containers import Vertical
+from textual.widgets import Static
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunState, ConsoleRunStatus
 from tldw_chatbook.Chat.console_display_state import (
+    CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
     ConsoleControlState,
     build_console_disabled_reason,
 )
@@ -17,6 +20,7 @@ from tldw_chatbook.UI.Screens.chat_screen import (
     CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
     ChatScreen,
 )
+from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Console.console_setup_modal import ConsoleSetupModal
@@ -36,6 +40,15 @@ class ConsoleHarness(App):
 
 
 class ConsoleFooterHarness(App):
+    """Composes an `AppFooterStatus` directly on the App's own default
+    screen, exactly like `TldwCli._create_main_ui_widgets` does in the real
+    app (id="app-footer-status"). Task-264: `ChatScreen` (via
+    `BaseAppScreen.compose()`) now mounts its OWN `AppFooterStatus` too, and
+    `ChatScreen._register_console_footer_shortcuts()` resolves that
+    screen-owned instance via `self.query_one(AppFooterStatus)` -- so this
+    harness's default-screen widget is only kept around to prove the
+    registration does NOT land there (see the assertions below)."""
+
     def __init__(self, app_instance):
         super().__init__()
         self.app_instance = app_instance
@@ -164,7 +177,7 @@ def _control_state() -> ConsoleControlState:
 
 
 @pytest.mark.asyncio
-async def test_console_workbench_header_seam_has_no_visible_layout_cost():
+async def test_console_workbench_header_is_the_visible_destination_identity():
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
@@ -173,12 +186,17 @@ async def test_console_workbench_header_seam_has_no_visible_layout_cost():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-shell")
 
+        # The DestinationHeader is the visible Console identity header; the
+        # mode strip and command strip remain hidden parity seams, and the
+        # legacy #console-title/#console-purpose compat statics stay hidden.
         header = console.query_one("#console-workbench-header")
-        assert not _is_displayed(header)
-        assert _style_scalar_value(header.styles.height) == 0
-        assert _style_scalar_value(header.styles.min_height) == 0
+        assert _is_displayed(header)
+        assert "Console" in _widget_text(console.query_one("#workbench-header-title", Static))
+        assert _widget_text(console.query_one("#workbench-header-subtitle", Static))
+        assert _widget_text(console.query_one("#workbench-header-status", Static))
         assert not _is_displayed(console.query_one("#console-workbench-mode-strip"))
         assert not _is_displayed(console.query_one("#console-workbench-command-strip"))
+        assert not _is_displayed(console.query_one("#console-title"))
         assert _is_displayed(console.query_one("#console-control-bar"))
 
 
@@ -260,6 +278,129 @@ async def test_console_counter_chips_dim_when_zero():
 
 
 @pytest.mark.asyncio
+async def test_console_control_chips_are_focusable_and_reveal_full_label_on_focus():
+    long_model = "very-long-local-model-name-for-ellipsis"
+    app = _build_test_app()
+    _configure_native_ready_console(app, model=long_model)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-control-bar")
+
+        chip_ids = (
+            "#console-provider-chip",
+            "#console-model-chip",
+            "#console-persona-chip",
+            "#console-rag-chip",
+            "#console-sources-chip",
+            "#console-tools-chip",
+            "#console-approvals-chip",
+        )
+        for chip_id in chip_ids:
+            chip = console.query_one(chip_id)
+            assert chip.can_focus, chip_id
+            chip.focus()
+            await pilot.pause()
+            assert chip.has_focus, chip_id
+
+        # Chips ellipsize at 22 cells; focus lifts the cap so the full label
+        # is reachable by keyboard (the tooltip carries the same full text).
+        model_chip = console.query_one("#console-model-chip")
+        assert long_model in str(model_chip.tooltip)
+        assert model_chip.region.width > 22
+
+
+@pytest.mark.asyncio
+async def test_console_approvals_chip_activation_focuses_pending_approval_card():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-control-bar")
+
+        console.set_task_resume_state(
+            TaskResumeState(
+                pending_approval={
+                    "summary": "Allow workspace write for chip test",
+                    "details": "Approvals chip activation must reach this card",
+                }
+            )
+        )
+        await pilot.pause(0.1)
+
+        chip = console.query_one("#console-approvals-chip")
+        chip.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+
+        focused = host.focused
+        assert getattr(focused, "id", None) == "approval-allow-once"
+
+
+@pytest.mark.asyncio
+async def test_console_approvals_chip_activation_focuses_batch_submit_button():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-control-bar")
+
+        console.set_task_resume_state(
+            TaskResumeState(
+                pending_approval={
+                    "calls": [
+                        {
+                            "llm_name": "mcp__srv__auth",
+                            "server_label": "Srv",
+                            "tool_name": "auth",
+                            "arguments": {},
+                        }
+                    ],
+                    "timeout_seconds": 30.0,
+                }
+            )
+        )
+        await pilot.pause(0.1)
+
+        chip = console.query_one("#console-approvals-chip")
+        chip.focus()
+        await pilot.pause()
+        await pilot.press("space")
+        await pilot.pause(0.1)
+
+        focused = host.focused
+        assert getattr(focused, "id", None) == "approval-submit"
+
+
+@pytest.mark.asyncio
+async def test_console_approvals_chip_activation_without_pending_approval_notifies():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-control-bar")
+
+        host.notify = Mock()
+        chip = console.query_one("#console-approvals-chip")
+        chip.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+
+        host.notify.assert_called_once()
+        assert CONSOLE_INSPECTOR_NO_APPROVAL_REASON in host.notify.call_args.args[0]
+        assert getattr(host.focused, "id", None) != "approval-allow-once"
+
+
+@pytest.mark.asyncio
 async def test_console_control_bar_exposes_compact_visible_actions():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -301,8 +442,8 @@ async def test_console_left_rail_orders_session_then_staged_context():
             if _is_displayed(child)
         )
 
-        assert visible_text.index("Conversations") < visible_text.index("Attach")
-        assert "No sources attached." in visible_text
+        assert visible_text.index("Conversations") < visible_text.index("Sources")
+        assert "Stage sources from Library" in visible_text
         assert "Chat 1" in visible_text
 
 
@@ -1117,16 +1258,26 @@ async def test_console_registers_footer_workbench_shortcuts():
     async with host.run_test(size=(120, 40)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-shell")
-        footer = host.query_one(AppFooterStatus)
+        # task-264: the registration lands on the SCREEN's own footer, not
+        # the harness's default-screen stand-in.
+        footer = console.query_one(AppFooterStatus)
 
         assert footer.shortcut_text == (
-            "F6 next pane | Shift+F6 previous pane | F1 help | Enter send | Ctrl+P palette"
+            "F6 next pane | Shift+F6 previous pane | F1 help | Enter send | "
+            "Ctrl+K switch session | Ctrl+T new tab | Ctrl+P palette"
         )
 
         await console.remove()
         await pilot.pause()
 
-        assert footer.shortcut_text == AppFooterStatus.DEFAULT_SHORTCUT_TEXT
+        # task-264: the context dies WITH the screen -- its footer is
+        # detached from the DOM along with it (Textual's `is_mounted` flag
+        # is stale after removal; `parent is None` is the reliable signal),
+        # so no stale console hints can leak to another surface. The
+        # harness's default-screen stand-in (never registered against)
+        # keeps the default shortcuts.
+        assert footer.parent is None
+        assert host.query_one(AppFooterStatus).shortcut_text == AppFooterStatus.DEFAULT_SHORTCUT_TEXT
 
 
 @pytest.mark.asyncio

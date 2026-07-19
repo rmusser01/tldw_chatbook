@@ -924,13 +924,13 @@ def summarize_with_cohere(api_key, input_data, custom_prompt_arg, temp=None, sys
         else:
             raise ValueError("Cohere: Invalid input data format")
 
-        cohere_model = get_cli_setting('cohere_api', 'model', 'command-r-plus')
+        # Aligned with config.py's cohere_api section default (the old
+        # inline 'command-r-plus' fallback disagreed with it) -- task-297.
+        cohere_model = get_cli_setting('cohere_api', 'model', 'command-a-03-2025')
 
         if temp is None:
             temp = 0.3
         temp = float(temp)
-        if system_message is None:
-            system_message = "You are a helpful AI assistant who does whatever the user requests."
 
         headers = {
             'accept': 'application/json',
@@ -941,13 +941,19 @@ def summarize_with_cohere(api_key, input_data, custom_prompt_arg, temp=None, sys
         cohere_prompt = f"{text} \n\n\n\n{custom_prompt_arg}"
         logging.debug(f"Cohere: Prompt being sent is {cohere_prompt}")
 
+        # Cohere v2 /chat (task-297): the last v1 /chat caller in the repo --
+        # chat_with_cohere migrated in task-267 (PR #690); v2 takes a
+        # messages array (system inline) instead of preamble/message, and
+        # the stream flag is named "stream".
+        messages = []
+        if str(system_message or "").strip():
+            messages.append({"role": "system", "content": system_message})
+        messages.append({"role": "user", "content": cohere_prompt})
         data = {
-            "preamble": system_message,
-            "message": cohere_prompt,
             "model": cohere_model,
-#            "connectors": [{"id": "web-search"}],
+            "messages": messages,
             "temperature": temp,
-            "streaming": streaming
+            "stream": streaming,
         }
 
         if streaming:
@@ -973,35 +979,74 @@ def summarize_with_cohere(api_key, input_data, custom_prompt_arg, temp=None, sys
             session.mount("https://", adapter)
             logging.debug("Cohere: Submitting streaming request to API endpoint")
             response = session.post(
-                'https://api.cohere.ai/v1/chat',
+                'https://api.cohere.com/v2/chat',
                 headers=headers,
                 json=data,
                 stream=True  # Enable response streaming
             )
-            response.raise_for_status()
+            if response.status_code != 200:
+                # Same pinned format as the non-streaming path -- the old
+                # raise_for_status() surfaced a bodyless HTTPError through
+                # the outer except with a different string (task-297 review).
+                logging.error(
+                    f"Cohere: API request failed with status code {response.status_code}: {response.text}")
+                return f"Cohere: API request failed: {response.text}"
 
             def stream_generator():
+                # v2 streams SSE "data: {...}" events discriminated by
+                # "type"; summary text arrives as content-delta events at
+                # delta.message.content.text (mirrors chat_with_cohere's
+                # live-gated v2 loop, task-267).
+                try:
+                    yield from _stream_events()
+                finally:
+                    # Deterministic close even if the consumer abandons the
+                    # generator mid-stream (Qodo #698-1; sibling parity).
+                    response.close()
+
+            def _stream_events():
                 for line in response.iter_lines():
-                    if line:
-                        decoded_line = line.decode('utf-8').strip()
-                        try:
-                            data_json = json.loads(decoded_line)
-                            if 'response' in data_json:
-                                chunk = data_json['response']
-                                yield chunk
-                            elif 'token' in data_json:
-                                # For token-based streaming (if applicable)
-                                chunk = data_json['token']
-                                yield chunk
-                            elif 'text' in data_json:
-                                # For text-based streaming
-                                chunk = data_json['text']
-                                yield chunk
-                            else:
-                                logging.debug(f"Cohere: Unhandled streaming data: {data_json}")
-                        except json.JSONDecodeError:
-                            logging.error(f"Cohere: Error decoding JSON from line: {decoded_line}")
-                            continue
+                    if not line:
+                        continue
+                    decoded_line = line.decode('utf-8').strip()
+                    # This request sends "accept: application/json", so the
+                    # LIVE v2 stream is raw JSON lines (no SSE framing) --
+                    # proven by the task-297 live smoke, where a strict
+                    # data:-only filter dropped every line. Handle both
+                    # framings: strip a data: prefix when present, skip
+                    # standalone event:/comment lines, parse bare JSON.
+                    if decoded_line.startswith("data:"):
+                        decoded_line = decoded_line[len("data:"):].strip()
+                    elif decoded_line.startswith("event:"):
+                        continue
+                    elif not decoded_line.startswith("{"):
+                        # SSE transports may interleave metadata/comment lines
+                        # (id:, retry:, ": keep-alive") -- harmless, so debug
+                        # not warning (Qodo #698-3).
+                        logging.debug(f"Cohere: Skipping non-JSON stream line: {decoded_line[:120]}")
+                        continue
+                    if not decoded_line or decoded_line == "[DONE]":
+                        continue
+                    try:
+                        event = json.loads(decoded_line)
+                    except json.JSONDecodeError:
+                        logging.error(f"Cohere: Error decoding JSON from line: {decoded_line}")
+                        continue
+                    if not isinstance(event, dict):
+                        # A JSON list/primitive line would crash .get() and
+                        # kill the generator (Gemini #698-1).
+                        logging.debug(f"Cohere: Skipping non-object stream event: {decoded_line[:120]}")
+                        continue
+                    if event.get("type") == "content-delta":
+                        chunk = (
+                            (((event.get("delta") or {}).get("message") or {})
+                             .get("content") or {})
+                            .get("text")
+                        )
+                        if chunk:
+                            yield chunk
+                    else:
+                        logging.debug(f"Cohere: Unhandled streaming event type: {event.get('type')}")
 
             return stream_generator()
         else:
@@ -1026,23 +1071,27 @@ def summarize_with_cohere(api_key, input_data, custom_prompt_arg, temp=None, sys
             session.mount("http://", adapter)
             session.mount("https://", adapter)
             logging.debug("Cohere: Submitting request to API endpoint")
-            response = session.post('https://api.cohere.ai/v1/chat', headers=headers, json=data)
-            response_data = response.json()
-            logging.debug(f"API Response Data: {response_data}")
+            response = session.post('https://api.cohere.com/v2/chat', headers=headers, json=data)
 
             if response.status_code == 200:
-                if 'text' in response_data:
-                    summary = response_data['text'].strip()
+                # json() only on success: a non-JSON error body (gateway/CDN
+                # HTML) would raise into the outer except and break the
+                # pinned failure format (Gemini/Qodo #698-2).
+                response_data = response.json()
+                logging.debug(f"API Response Data: {response_data}")
+                # v2 returns message.content as a parts array; concatenate
+                # the text parts (mirrors chat_with_cohere, task-267).
+                content_parts = (response_data.get('message') or {}).get('content') or []
+                summary = "".join(
+                    part.get('text') or ''
+                    for part in content_parts
+                    if isinstance(part, dict)
+                ).strip()
+                if summary:
                     logging.debug("Cohere: Summarization successful")
                     return summary
-                elif 'response' in response_data:
-                    # Adjust if the API returns 'response' field instead of 'text'
-                    summary = response_data['response'].strip()
-                    logging.debug("Cohere: Summarization successful")
-                    return summary
-                else:
-                    logging.error("Cohere: Expected data not found in API response.")
-                    return "Cohere: Expected data not found in API response."
+                logging.error("Cohere: Expected data not found in API response.")
+                return "Cohere: Expected data not found in API response."
             else:
                 logging.error(f"Cohere: API request failed with status code {response.status_code}: {response.text}")
                 return f"Cohere: API request failed: {response.text}"

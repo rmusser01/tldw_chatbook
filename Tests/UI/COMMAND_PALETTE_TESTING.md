@@ -104,7 +104,7 @@ python -m tldw_chatbook.app
 - Settings commands available
 - Config file path displayed
 - Tab switching to settings works
-- Temperature setting commands available
+- Database stats command opens the Statistics screen
 
 ### 5. Integration Testing
 

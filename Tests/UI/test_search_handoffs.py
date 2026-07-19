@@ -5,15 +5,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from textual.app import App, ComposeResult
-from textual.widgets import Button, Markdown
 
 from tldw_chatbook.runtime_policy.engine import PolicyEngine
 from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
-from tldw_chatbook.UI import SearchWindow as search_window_module
 from tldw_chatbook.UI.Views.RAGSearch import search_rag_window
-from tldw_chatbook.UI.SearchWindow import SearchWindow
 from tldw_chatbook.UI.Views.RAGSearch.search_rag_window import SearchRAGWindow
 from tldw_chatbook.UI.Views.RAGSearch.search_handoff import (
     build_library_rag_evidence_bundle,
@@ -416,117 +412,3 @@ async def test_search_rag_window_web_search_runs_bing_call_in_thread(tmp_path):
     to_thread.assert_awaited_once_with(search_bing, "agent handoff")
     assert results[0]["title"] == "Article"
     assert results[0]["metadata"]["url"] == "https://example.com"
-
-
-@pytest.mark.asyncio
-async def test_search_window_renders_dedicated_web_results_as_cards():
-    app = _search_app(runtime_backend="local")
-    window = SearchWindow(app_instance=app)
-    result = {
-        "title": "Article",
-        "content": "Snippet",
-        "source": "web",
-        "metadata": {"url": "https://example.com"},
-    }
-    window.web_search_results = [result]
-    result_container = Mock()
-    result_container.remove_children = AsyncMock()
-    result_container.mount = AsyncMock()
-    window.query_one = Mock(return_value=result_container)
-
-    await window._render_web_search_result_cards()
-
-    result_container.remove_children.assert_awaited_once()
-    mounted_card = result_container.mount.call_args.args[0]
-    assert isinstance(mounted_card, SearchResult)
-    assert mounted_card.result["title"] == "Article"
-
-
-def test_search_window_dedicated_web_result_handoff_routes_to_app():
-    app = _search_app(runtime_backend="local")
-    window = SearchWindow(app_instance=app)
-    event = SearchResult.UseInChatRequested(
-        0,
-        {
-            "title": "Article",
-            "content": "Snippet",
-            "source": "web",
-            "metadata": {"url": "https://example.com"},
-        },
-    )
-
-    window.handle_search_result_use_in_chat(event)
-
-    payload = app.open_chat_with_handoff.call_args.args[0]
-    assert payload.source == "search-web"
-    assert payload.metadata["url"] == "https://example.com"
-
-
-def test_search_window_dedicated_web_result_unavailable_explains_recovery():
-    app = _search_app(runtime_backend="local")
-    app.open_chat_with_handoff = None
-    window = SearchWindow(app_instance=app)
-    event = SearchResult.UseInChatRequested(
-        0,
-        {
-            "title": "Article",
-            "content": "Snippet",
-            "source": "web",
-            "metadata": {"url": "https://example.com"},
-        },
-    )
-
-    window.handle_search_result_use_in_chat(event)
-
-    message = app.notify.call_args.args[0]
-    assert "Use in Chat is unavailable" in message
-    assert "Open Chat" in message
-    assert "try again" in message
-    assert app.notify.call_args.kwargs["severity"] == "warning"
-
-
-def test_search_window_dedicated_web_result_policy_block_explains_recovery():
-    app = _search_app(runtime_backend="local")
-    app.runtime_policy = SimpleNamespace(state=RuntimeSourceState(active_source="local"))
-    app.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
-    window = SearchWindow(app_instance=app)
-    event = SearchResult.UseInChatRequested(
-        0,
-        {
-            "title": "Article",
-            "content": "Snippet",
-            "source": "web",
-            "metadata": {"url": "https://example.com"},
-        },
-    )
-
-    window.handle_search_result_use_in_chat(event)
-
-    app.open_chat_with_handoff.assert_not_called()
-    message = app.notify.call_args.args[0]
-    assert "research.search.providers.launch.server requires server mode" in message
-    assert "switch source" in message.lower()
-    assert app.notify.call_args.kwargs["severity"] == "warning"
-
-
-@pytest.mark.asyncio
-async def test_search_window_disabled_web_search_nav_explains_dependency_recovery(monkeypatch):
-    monkeypatch.setattr(search_window_module, "WEB_SEARCH_AVAILABLE", False)
-    app_instance = _search_app(runtime_backend="local")
-
-    class SearchWindowApp(App):
-        def compose(self) -> ComposeResult:
-            yield SearchWindow(app_instance=app_instance)
-
-    app = SearchWindowApp()
-    async with app.run_test(size=(140, 40)) as pilot:
-        await pilot.pause()
-
-        disabled_nav = app.query_one("#search-nav-web-search-disabled", Button)
-        disabled_message = app.query_one("#search-view-web-search Markdown", Markdown)
-
-        assert disabled_nav.disabled is True
-        assert "Web Search requires optional dependencies" in str(disabled_nav.tooltip)
-        assert 'pip install -e ".[websearch]"' in str(disabled_nav.tooltip)
-        assert "Web Search requires optional dependencies" in disabled_message.source
-        assert 'pip install -e ".[websearch]"' in disabled_message.source

@@ -3,8 +3,6 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, Callable
 
-from tldw_chatbook.tldw_api.exceptions import APIConnectionError, APIResponseError, AuthenticationError
-
 from .engine import PolicyEngine
 from .registry import CAPABILITY_REGISTRY
 from .types import PolicyDeniedError, RuntimeSourceState
@@ -65,6 +63,9 @@ class ServicePolicyEnforcer:
 
 
 def classify_backend_exception(error: Exception) -> str | None:
+    # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+    from tldw_chatbook.tldw_api.exceptions import APIConnectionError, APIResponseError, AuthenticationError
+
     if isinstance(error, AuthenticationError):
         if _contains_session_invalid_signal([str(error), getattr(error, "response_data", None)]):
             return "server_session_invalid"

@@ -127,10 +127,22 @@ class DBStatusManager:
     def _get_db_status_widget(self) -> Optional['AppFooterStatus']:
         """
         Get the database status widget from the app.
-        
+
+        Resolves the currently active screen's own ``AppFooterStatus`` first
+        (task-264: every ``BaseAppScreen`` mounts one), since the cached
+        ``_db_size_status_widget`` -- acquired once from the app's default
+        screen at startup -- is occluded as soon as any screen is pushed.
+        Falls back to that cache when there's no active-screen resolver
+        (e.g. lightweight test doubles) or no active-screen match.
+
         Returns:
             The AppFooterStatus widget if found, None otherwise
         """
+        resolver = getattr(self.app, '_active_footer_status', None)
+        if callable(resolver):
+            widget = resolver()
+            if widget is not None:
+                return widget
         if hasattr(self.app, '_db_size_status_widget'):
             return self.app._db_size_status_widget
         return None

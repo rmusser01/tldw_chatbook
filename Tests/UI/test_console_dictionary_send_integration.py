@@ -131,7 +131,8 @@ async def test_native_send_applies_conversation_dictionary_agent_branch(dictiona
         # runs unmodified against a real placeholder message.
         def _fake_run_reply(*, conversation_id, session_id, resolution, assistant_message_id,
                              model, session_system_prompt, agent_messages, should_cancel,
-                             supersede_previous=False):
+                             supersede_previous=False, mcp_provider=None,
+                             review_tool_calls=None):
             captured["agent_messages"] = [dict(m) for m in agent_messages]
             from tldw_chatbook.Agents.agent_models import RunOutcome, RUN_DONE
             store = screen._ensure_console_chat_store()

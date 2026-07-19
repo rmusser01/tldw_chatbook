@@ -11,8 +11,6 @@ import xml.etree.ElementTree as ET
 from typing import Any, Callable
 
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import WebSearchRequest
-from ..tldw_api.research_search_schemas import WEBSEARCH_ENGINE_ALIASES
 
 
 LOCAL_SUPPORTED_WEBSEARCH_ENGINES = {
@@ -239,6 +237,9 @@ class LocalResearchSearchService:
 
     @staticmethod
     def _normalize_engine(engine: str) -> str:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.research_search_schemas import WEBSEARCH_ENGINE_ALIASES
+
         return WEBSEARCH_ENGINE_ALIASES.get(str(engine).lower(), str(engine).lower())
 
     @staticmethod
@@ -264,6 +265,9 @@ class LocalResearchSearchService:
         aggregate: bool = False,
         **kwargs: Any,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import WebSearchRequest
+
         self._enforce("research.search.providers.launch.local")
         normalized_engine = self._normalize_engine(engine)
         if normalized_engine not in LOCAL_SUPPORTED_WEBSEARCH_ENGINES:

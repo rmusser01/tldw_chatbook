@@ -10,39 +10,6 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    KanbanBoardCreate,
-    KanbanBoardExportRequest,
-    KanbanBoardImportRequest,
-    KanbanBoardUpdate,
-    KanbanBulkArchiveCardsRequest,
-    KanbanBulkCardLinksRequest,
-    KanbanBulkDeleteCardsRequest,
-    KanbanBulkLabelCardsRequest,
-    KanbanBulkMoveCardsRequest,
-    KanbanCardCopyRequest,
-    KanbanCardCopyWithChecklistsRequest,
-    KanbanCardCreate,
-    KanbanCardLinkCreate,
-    KanbanCardSearchRequest,
-    KanbanCardMoveRequest,
-    KanbanCardUpdate,
-    KanbanChecklistCreate,
-    KanbanChecklistItemCreate,
-    KanbanChecklistItemReorderRequest,
-    KanbanChecklistItemUpdate,
-    KanbanChecklistReorderRequest,
-    KanbanChecklistUpdate,
-    KanbanCommentCreate,
-    KanbanCommentUpdate,
-    KanbanLabelCreate,
-    KanbanLabelUpdate,
-    KanbanListCreate,
-    KanbanListUpdate,
-    KanbanReorderRequest,
-    KanbanSearchRequest,
-    KanbanToggleAllChecklistItemsRequest,
-)
 from .local_kanban_db import initialize_schema, open_connection, transaction
 from .server_kanban_service import KANBAN_OPERATION_SPECS
 
@@ -318,6 +285,9 @@ class LocalKanbanService:
         return int(value)
 
     async def create_board(self, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanBoardCreate
+
         self._enforce(self._local_action_id("create_board"))
         request = KanbanBoardCreate(**dict(request_data or {}))
         now = self._now()
@@ -401,6 +371,9 @@ class LocalKanbanService:
         *,
         expected_version: int | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanBoardUpdate
+
         self._enforce(self._local_action_id("update_board"))
         request = KanbanBoardUpdate(**dict(request_data or {}))
         with self.transaction() as conn:
@@ -485,6 +458,9 @@ class LocalKanbanService:
             )
 
     async def create_list(self, board_id: int, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanListCreate
+
         self._enforce(self._local_action_id("create_list"))
         request = KanbanListCreate(**dict(request_data or {}))
         now = self._now()
@@ -540,6 +516,9 @@ class LocalKanbanService:
         *,
         expected_version: int | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanListUpdate
+
         self._enforce(self._local_action_id("update_list"))
         request = KanbanListUpdate(**dict(request_data or {}))
         with self.transaction() as conn:
@@ -609,6 +588,9 @@ class LocalKanbanService:
             )
 
     async def reorder_lists(self, board_id: int, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanReorderRequest
+
         self._enforce(self._local_action_id("reorder_lists"))
         request = KanbanReorderRequest(**dict(request_data or {}))
         with self.transaction() as conn:
@@ -625,6 +607,9 @@ class LocalKanbanService:
             return {"success": True, "message": None}
 
     async def create_card(self, list_id: int, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanCardCreate
+
         self._enforce(self._local_action_id("create_card"))
         request = KanbanCardCreate(**dict(request_data or {}))
         now = self._now()
@@ -701,6 +686,9 @@ class LocalKanbanService:
         *,
         expected_version: int | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanCardUpdate
+
         self._enforce(self._local_action_id("update_card"))
         request = KanbanCardUpdate(**dict(request_data or {}))
         with self.transaction() as conn:
@@ -746,6 +734,9 @@ class LocalKanbanService:
             )
 
     async def move_card(self, card_id: int, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanCardMoveRequest
+
         self._enforce(self._local_action_id("move_card"))
         request = KanbanCardMoveRequest(**dict(request_data or {}))
         now = self._now()
@@ -782,6 +773,9 @@ class LocalKanbanService:
             )
 
     async def copy_card(self, card_id: int, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanCardCopyRequest
+
         self._enforce(self._local_action_id("copy_card"))
         request = KanbanCardCopyRequest(**dict(request_data or {}))
         now = self._now()
@@ -887,6 +881,9 @@ class LocalKanbanService:
             )
 
     async def reorder_cards(self, list_id: int, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanReorderRequest
+
         self._enforce(self._local_action_id("reorder_cards"))
         request = KanbanReorderRequest(**dict(request_data or {}))
         with self.transaction() as conn:
@@ -995,6 +992,9 @@ class LocalKanbanService:
         return await self.export_board(board_id, kwargs)
 
     async def export_board(self, board_id: int, request_data: Any | None = None) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanBoardExportRequest
+
         self._enforce(self._local_action_id("export_board"))
         request = KanbanBoardExportRequest(**dict(request_data or {}))
         conn = self.connect()
@@ -1047,6 +1047,9 @@ class LocalKanbanService:
             conn.close()
 
     async def import_board(self, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanBoardImportRequest
+
         self._enforce(self._local_action_id("import_board"))
         request = KanbanBoardImportRequest(**dict(request_data or {}))
         data = request.data
@@ -1129,6 +1132,9 @@ class LocalKanbanService:
         }
 
     async def create_label(self, board_id: int, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanLabelCreate
+
         self._enforce(self._local_action_id("create_label"))
         request = KanbanLabelCreate(**dict(request_data or {}))
         now = self._now()
@@ -1164,6 +1170,9 @@ class LocalKanbanService:
             conn.close()
 
     async def update_label(self, label_id: int, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanLabelUpdate
+
         self._enforce(self._local_action_id("update_label"))
         request = KanbanLabelUpdate(**dict(request_data or {}))
         with self.transaction() as conn:
@@ -1224,6 +1233,9 @@ class LocalKanbanService:
             conn.close()
 
     async def create_checklist(self, card_id: int, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanChecklistCreate
+
         self._enforce(self._local_action_id("create_checklist"))
         request = KanbanChecklistCreate(**dict(request_data or {}))
         now = self._now()
@@ -1260,6 +1272,9 @@ class LocalKanbanService:
             conn.close()
 
     async def update_checklist(self, checklist_id: int, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanChecklistUpdate
+
         self._enforce(self._local_action_id("update_checklist"))
         request = KanbanChecklistUpdate(**dict(request_data or {}))
         with self.transaction() as conn:
@@ -1284,6 +1299,9 @@ class LocalKanbanService:
             return {"detail": "deleted"}
 
     async def reorder_checklists(self, card_id: int, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanChecklistReorderRequest
+
         self._enforce(self._local_action_id("reorder_checklists"))
         request = KanbanChecklistReorderRequest(**dict(request_data or {}))
         with self.transaction() as conn:
@@ -1294,6 +1312,9 @@ class LocalKanbanService:
             return {"success": True, "message": None}
 
     async def create_checklist_item(self, checklist_id: int, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanChecklistItemCreate
+
         self._enforce(self._local_action_id("create_checklist_item"))
         request = KanbanChecklistItemCreate(**dict(request_data or {}))
         now = self._now()
@@ -1335,6 +1356,9 @@ class LocalKanbanService:
             conn.close()
 
     async def update_checklist_item(self, item_id: int, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanChecklistItemUpdate
+
         self._enforce(self._local_action_id("update_checklist_item"))
         request = KanbanChecklistItemUpdate(**dict(request_data or {}))
         with self.transaction() as conn:
@@ -1366,6 +1390,9 @@ class LocalKanbanService:
             return {"detail": "deleted"}
 
     async def reorder_checklist_items(self, checklist_id: int, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanChecklistItemReorderRequest
+
         self._enforce(self._local_action_id("reorder_checklist_items"))
         request = KanbanChecklistItemReorderRequest(**dict(request_data or {}))
         with self.transaction() as conn:
@@ -1380,6 +1407,9 @@ class LocalKanbanService:
         return await self.update_checklist_item(item_id, {"checked": False})
 
     async def toggle_all_checklist_items(self, checklist_id: int, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanToggleAllChecklistItemsRequest
+
         self._enforce(self._local_action_id("toggle_all_checklist_items"))
         request = KanbanToggleAllChecklistItemsRequest(**dict(request_data or {}))
         now = self._now()
@@ -1403,6 +1433,9 @@ class LocalKanbanService:
         return checklists
 
     async def create_comment(self, card_id: int, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanCommentCreate
+
         self._enforce(self._local_action_id("create_comment"))
         request = KanbanCommentCreate(**dict(request_data or {}))
         now = self._now()
@@ -1445,6 +1478,9 @@ class LocalKanbanService:
             conn.close()
 
     async def update_comment(self, comment_id: int, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanCommentUpdate
+
         self._enforce(self._local_action_id("update_comment"))
         request = KanbanCommentUpdate(**dict(request_data or {}))
         with self.transaction() as conn:
@@ -1468,6 +1504,9 @@ class LocalKanbanService:
             )
 
     async def bulk_move_cards(self, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanBulkMoveCardsRequest
+
         self._enforce(self._local_action_id("bulk_move_cards"))
         request = KanbanBulkMoveCardsRequest(**dict(request_data or {}))
         cards = []
@@ -1476,6 +1515,9 @@ class LocalKanbanService:
         return {"success": True, "moved_count": len(cards), "cards": cards}
 
     async def bulk_archive_cards(self, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanBulkArchiveCardsRequest
+
         self._enforce(self._local_action_id("bulk_archive_cards"))
         request = KanbanBulkArchiveCardsRequest(**dict(request_data or {}))
         for card_id in request.card_ids:
@@ -1483,6 +1525,9 @@ class LocalKanbanService:
         return {"success": True, "archived_count": len(request.card_ids)}
 
     async def bulk_unarchive_cards(self, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanBulkArchiveCardsRequest
+
         self._enforce(self._local_action_id("bulk_unarchive_cards"))
         request = KanbanBulkArchiveCardsRequest(**dict(request_data or {}))
         for card_id in request.card_ids:
@@ -1490,6 +1535,9 @@ class LocalKanbanService:
         return {"success": True, "unarchived_count": len(request.card_ids)}
 
     async def bulk_delete_cards(self, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanBulkDeleteCardsRequest
+
         self._enforce(self._local_action_id("bulk_delete_cards"))
         request = KanbanBulkDeleteCardsRequest(**dict(request_data or {}))
         for card_id in request.card_ids:
@@ -1497,6 +1545,9 @@ class LocalKanbanService:
         return {"success": True, "deleted_count": len(request.card_ids)}
 
     async def bulk_label_cards(self, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanBulkLabelCardsRequest
+
         self._enforce(self._local_action_id("bulk_label_cards"))
         request = KanbanBulkLabelCardsRequest(**dict(request_data or {}))
         for card_id in request.card_ids:
@@ -1529,6 +1580,9 @@ class LocalKanbanService:
         return {"cards": cards, "pagination": self._pagination(limit=limit, offset=offset, total=total)}
 
     async def copy_card_with_checklists(self, card_id: int, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanCardCopyWithChecklistsRequest
+
         self._enforce(self._local_action_id("copy_card_with_checklists"))
         request = KanbanCardCopyWithChecklistsRequest(**dict(request_data or {}))
         copied = await self.copy_card(
@@ -1625,6 +1679,9 @@ class LocalKanbanService:
         }
 
     async def search_cards_basic(self, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanCardSearchRequest
+
         self._enforce(self._local_action_id("search_cards_basic"))
         request = KanbanCardSearchRequest(**dict(request_data or {}))
         cards, total = self._search_cards_raw(query=request.query, board_id=request.board_id, limit=request.limit, offset=request.offset)
@@ -1634,6 +1691,9 @@ class LocalKanbanService:
         return await self.search_cards_basic({"query": query or kwargs.get("q") or kwargs.get("query", ""), **kwargs})
 
     async def search_cards(self, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanSearchRequest
+
         self._enforce(self._local_action_id("search_cards"))
         request = KanbanSearchRequest(**dict(request_data or {}))
         effective_mode = "fts" if self.get_storage_status()["fts_available"] else "like"
@@ -1669,6 +1729,9 @@ class LocalKanbanService:
         }
 
     async def add_card_link(self, card_id: int, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanCardLinkCreate
+
         self._enforce(self._local_action_id("add_card_link"))
         request = KanbanCardLinkCreate(**dict(request_data or {}))
         now = self._now()
@@ -1732,6 +1795,9 @@ class LocalKanbanService:
             return {"detail": "removed"}
 
     async def bulk_add_card_links(self, card_id: int, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanBulkCardLinksRequest
+
         self._enforce(self._local_action_id("bulk_add_card_links"))
         request = KanbanBulkCardLinksRequest(**dict(request_data or {}))
         links = []
@@ -1745,6 +1811,9 @@ class LocalKanbanService:
         return {"added_count": len(links) - skipped, "skipped_count": skipped, "links": links}
 
     async def bulk_remove_card_links(self, card_id: int, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanBulkCardLinksRequest
+
         self._enforce(self._local_action_id("bulk_remove_card_links"))
         request = KanbanBulkCardLinksRequest(**dict(request_data or {}))
         removed = 0

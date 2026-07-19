@@ -446,6 +446,42 @@ async def test_enter_on_server_row_posts_row_selected_with_no_tool_name():
         assert events[0].tool_name is None
 
 
+# -- T7 (MCP Hub Phase 5): select_tool_row() external-drill entry point -----
+
+
+@pytest.mark.asyncio
+async def test_select_tool_row_moves_cursor_to_matching_tool_row():
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        rows = [
+            _global_row(),
+            _server_row(server_key="local:docs", server_label="docs"),
+            _tool_row(server_key="local:docs", server_label="docs", tool_name="fetch"),
+            _tool_row(server_key="local:docs", server_label="docs", tool_name="search"),
+        ]
+        await canvas.update_matrix(rows, kill_switch=False, preview="")
+        await pilot.pause()
+
+        found = canvas.select_tool_row("local:docs", "search")
+        await pilot.pause()
+        assert found is True
+        table = app.query_one("#mcp-perm-table", DataTable)
+        row_key, _ = table.coordinate_to_cell_key((table.cursor_row, 0))
+        assert row_key.value == "local:docs::search"
+
+
+@pytest.mark.asyncio
+async def test_select_tool_row_returns_false_for_tool_not_in_matrix():
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        await canvas.update_matrix([_global_row()], kill_switch=False, preview="")
+        await pilot.pause()
+        found = canvas.select_tool_row("local:docs", "gone")
+        assert found is False
+
+
 # -- preview ----------------------------------------------------------
 
 

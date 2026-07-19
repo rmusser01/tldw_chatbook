@@ -30,6 +30,7 @@ from .vector_store import (
 )
 from .citations import Citation, CitationType, merge_citations
 from .config import RAGConfig
+from ..fusion import reciprocal_rank_fusion, resolve_hybrid_alpha, DEFAULT_RRF_K
 from ..chunking_service import ChunkingService
 from .simple_cache import SimpleRAGCache, get_rag_cache
 from .db_connection_pool import get_connection_pool
@@ -732,10 +733,13 @@ class RAGService:
                             include_citations: bool = True,
                             score_threshold: float = 0.0) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
         """
-        Perform hybrid search combining semantic and keyword.
-        
-        Merges results from both search types, removing duplicates and
-        combining citations when the same chunk appears in both.
+        Perform hybrid search combining semantic (vector) and keyword (FTS5) legs.
+
+        The legs run in parallel and are fused with Reciprocal Rank Fusion
+        (k=60) plus an alpha-weighted blend of the per-leg RRF scores,
+        matching the tldw_server reference design. Alpha comes from
+        ``config.search.hybrid_alpha`` (0 = FTS only, 1 = vector only).
+        Citations are combined when the same chunk appears in both legs.
         """
         # Get results from both search types
         semantic_task = self._semantic_search(
@@ -744,78 +748,82 @@ class RAGService:
         keyword_task = self._keyword_search(
             query, top_k * SEARCH_RESULT_MULTIPLIER, filter_metadata, include_citations
         )
-        
+
         # Run both searches in parallel
         semantic_results, keyword_results = await asyncio.gather(
             semantic_task, keyword_task
         )
-        
-        if include_citations:
-            # Merge results with citations
-            return self._merge_results_with_citations(
-                semantic_results, keyword_results, top_k
-            )
-        else:
-            # Simple merging for basic results
-            return self._merge_basic_results(
-                semantic_results, keyword_results, top_k
-            )
-    
-    def _merge_results_with_citations(self,
-                                    semantic_results: List[SearchResultWithCitations],
-                                    keyword_results: List[SearchResultWithCitations],
-                                    top_k: int) -> List[SearchResultWithCitations]:
-        """Merge results while combining citations from both sources."""
-        merged = {}
-        
-        # Process semantic results
-        for result in semantic_results:
-            merged[result.id] = result
-        
-        # Merge keyword results
-        for result in keyword_results:
-            if result.id in merged:
-                # Combine citations from both
-                existing = merged[result.id]
-                # Merge citations, keeping highest confidence for duplicates
-                all_citations = existing.citations + result.citations
-                existing.citations = merge_citations([existing.citations, result.citations])
-                # Update score (weighted average based on number of citations)
-                total_citations = len(existing.citations) + len(result.citations)
-                if total_citations > 0:
-                    existing.score = (
-                        existing.score * len(existing.citations) + 
-                        result.score * len(result.citations)
-                    ) / total_citations
-            else:
-                merged[result.id] = result
-        
-        # Sort by score and return top-k
-        sorted_results = sorted(merged.values(), key=lambda x: x.score, reverse=True)
-        return sorted_results[:top_k]
-    
-    def _merge_basic_results(self,
-                           semantic_results: List[SearchResult],
-                           keyword_results: List[SearchResult],
-                           top_k: int) -> List[SearchResult]:
-        """Simple merging for basic results."""
-        # Use dict to track seen IDs and keep highest score
-        merged = {}
-        
-        for result in semantic_results:
-            merged[result.id] = result
-        
-        for result in keyword_results:
-            if result.id in merged:
-                # Keep the one with higher score
-                if result.score > merged[result.id].score:
-                    merged[result.id] = result
-            else:
-                merged[result.id] = result
-        
-        # Sort by score and return top-k
-        sorted_results = sorted(merged.values(), key=lambda x: x.score, reverse=True)
-        return sorted_results[:top_k]
+
+        return self._fuse_hybrid_results(
+            keyword_results=keyword_results,
+            semantic_results=semantic_results,
+            top_k=top_k,
+            alpha=self.config.search.hybrid_alpha,
+            include_citations=include_citations,
+        )
+
+    @staticmethod
+    def _fuse_hybrid_results(keyword_results: Union[List[SearchResult], List[SearchResultWithCitations]],
+                             semantic_results: Union[List[SearchResult], List[SearchResultWithCitations]],
+                             top_k: int,
+                             alpha: float,
+                             include_citations: bool = True) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
+        """Fuse the FTS (keyword) and vector (semantic) legs via RRF + alpha.
+
+        Rank-based fusion (server parity): each leg's returned ordering is
+        the ranking; the fused score replaces the leg scores. Leg provenance
+        (per-leg rank and RRF contribution) is stored in
+        ``metadata['hybrid_fusion']``. When a chunk appears in both legs its
+        citations are merged.
+
+        Args:
+            keyword_results: FTS/keyword leg, best first.
+            semantic_results: Vector/semantic leg, best first.
+            top_k: Maximum number of fused results to return.
+            alpha: Vector-leg weight (0 = FTS only, 1 = vector only).
+                Validated via resolve_hybrid_alpha: out-of-range/invalid
+                config values fall back to the 0.7 default, matching the
+                pipeline path.
+            include_citations: Whether results carry citations to merge.
+
+        Returns:
+            Fused results sorted by fused score descending.
+        """
+        # config.search.hybrid_alpha is not range-checked at load time
+        # (RAGConfig.validate() has no callers); resolve here so this path
+        # gets the same fallback semantics as the pipeline merge.
+        alpha = resolve_hybrid_alpha(alpha)
+        fused = reciprocal_rank_fusion(
+            keyword_results,
+            semantic_results,
+            key=lambda r: r.id,
+            alpha=alpha,
+            rrf_k=DEFAULT_RRF_K,
+            max_results=top_k,
+        )
+
+        results = []
+        for entry in fused:
+            result = entry.item
+            # Combine citations when the same chunk surfaced in both legs
+            if (include_citations
+                    and entry.fts_item is not None
+                    and entry.vector_item is not None
+                    and hasattr(result, 'citations')):
+                result.citations = merge_citations(
+                    [entry.fts_item.citations, entry.vector_item.citations]
+                )
+            result.score = entry.score
+            result.metadata = {
+                **(result.metadata or {}),
+                'hybrid_fusion': {
+                    **entry.provenance(),
+                    'alpha': alpha,
+                    'rrf_k': DEFAULT_RRF_K,
+                },
+            }
+            results.append(result)
+        return results
     
     # === Helper Methods ===
     

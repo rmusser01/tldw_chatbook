@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Mapping
 from typing import Any
 
 from loguru import logger
@@ -121,16 +122,27 @@ _RISK_FLOORED_NOTICE = "High-risk tool — asks even though the inherited defaul
 _REALLOW_TOOLTIP = "Store the new definition hash and allow again."
 
 
-def _format_duration_ms(duration_ms: int) -> str:
-    """Format a Test Tool run's duration for the result status line.
+def format_duration_ms(duration_ms: int) -> str:
+    """Format a duration in milliseconds for a status line or detail dump.
 
     Mirrors `library_ingest_state._format_elapsed()`'s granularity at the
     minute tier (integer minutes/seconds, "{m}m {s}s") but adds a finer,
-    millisecond-aware tier below it -- a Test Tool run is typically
-    sub-second, where a bare "0s" would say nothing useful:
+    millisecond-aware tier below it -- a Test Tool run or a Hub tool
+    execution is typically sub-second, where a bare "0s" would say nothing
+    useful:
       - under 1000ms: "{n}ms"
       - under 60s: "{s:.1f}s" (one decimal)
       - 60s or more: "{m}m {s}s" (integer minutes/seconds)
+
+    Module-level and public (T7, MCP Hub Phase 5) -- was `_format_duration_
+    ms`, private to this module and used only by `show_tool_result()`'s
+    status line below. `mcp_audit_mode.py`'s Duration column and
+    `show_audit_entry()`'s pretty-printed detail (both this same module's
+    Audit-mode support) need the identical formatting, so this is now the
+    shared home rather than a duplicate copy -- `mcp_audit_mode.py` has no
+    dependents of its own to make the natural home instead, mirroring the
+    rationale `mcp_permissions_mode.format_tool_state_label()` documents
+    for the same "no dependents -> natural shared home" choice.
     """
     if duration_ms < 1000:
         return f"{duration_ms}ms"
@@ -139,6 +151,70 @@ def _format_duration_ms(duration_ms: int) -> str:
         return f"{total_seconds:.1f}s"
     minutes, seconds = divmod(int(round(total_seconds)), 60)
     return f"{minutes}m {seconds}s"
+
+
+def _redacted_result_excerpt(result_excerpt: Any) -> Any:
+    """Redact `result_excerpt` for display in `show_audit_entry()`.
+
+    `result_excerpt` is always a caller-truncated STRING on the record
+    (`MCP/execution_log.py`'s `build_record()`/`ExecutionRecord`), never a
+    Mapping -- so `redact_mapping()` (Mapping-shaped input only) cannot be
+    applied to it directly the way it is to `arguments` just above. When
+    the string happens to be JSON-object-shaped text (the common shape: a
+    `json.dumps()` of a dict-shaped tool result, e.g.
+    `mcp_workbench.py`'s `_run_tool_test()`), parse it and redact the
+    parsed mapping, same as arguments, so a secret echoed back in a tool's
+    result string can't survive display even if some future write path
+    forgets to redact it first. Anything else -- not valid JSON, or valid
+    JSON that isn't an object (a bare string/number/list excerpt) -- is
+    returned unchanged: `show_audit_entry()`'s `markup=False` already
+    protects against Rich markup injection, and a dict-shaped result is
+    already redacted at write time too (defense in depth, not the only
+    layer).
+    """
+    if not isinstance(result_excerpt, str):
+        return result_excerpt
+    try:
+        parsed = json.loads(result_excerpt)
+    except (json.JSONDecodeError, ValueError):
+        return result_excerpt
+    return redact_mapping(parsed) if isinstance(parsed, Mapping) else result_excerpt
+
+
+def _finding_text(finding: Mapping[str, Any], *keys: str) -> str:
+    """Defensive raw-dict read for one finding field (T8, MCP Hub
+    Phase 5) -- mirrors `hub_tool_catalog.server_tools_from_inventory()`'s
+    own tolerant-of-missing-keys style: a finding comes straight off the
+    wire (a server-side product, versioned independently), so every field
+    is optional. Tries each key in order and returns the first non-blank
+    value found, `"—"` when none match -- `mcp_audit_mode.py`'s own
+    `_finding_field()` does the identical single-key version for the
+    Findings table; this module accepts multiple key aliases since the
+    exact remediation field name isn't pinned down by the wire contract
+    yet (see `_finding_remediation()` below).
+    """
+    for key in keys:
+        value = finding.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return "—"
+
+
+def _finding_remediation(finding: Mapping[str, Any]) -> str | None:
+    """The finding's suggested-remediation text, or `None` when absent.
+
+    Unlike `_finding_text()`'s columns (always rendered, `"—"` fallback),
+    remediation is shown only "when present" per the spec (task-8-brief.md)
+    -- an absent remediation is not an error, most findings simply won't
+    carry one. Two key aliases are checked defensively (`"remediation"`
+    and `"suggested_remediation"`) since the real wire field name isn't
+    pinned down by any client/schema in this codebase yet.
+    """
+    for key in ("remediation", "suggested_remediation"):
+        value = finding.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
 def _is_blank(value: Any) -> bool:
@@ -193,6 +269,34 @@ class MCPInspector(Vertical):
         height: auto;
         min-height: 0;
         display: none;
+    }
+    /* T7 (MCP Hub Phase 5): the audit-entry detail container, populated by
+    `show_audit_entry()` -- Audit mode's own row-selection entry point.
+    Same hidden-by-default discipline as `#mcp-inspector-tool`/
+    `#mcp-inspector-permission` above -- `show_audit_entry()`'s own display
+    toggle is what reveals it. */
+    #mcp-inspector-audit {
+        height: auto;
+        min-height: 0;
+        display: none;
+    }
+    /* T8 (MCP Hub Phase 5): the finding-detail container, populated by
+    `show_finding()` -- Audit mode's Findings sub-view row-selection entry
+    point. Same hidden-by-default discipline as `#mcp-inspector-audit`
+    above -- `show_finding()`'s own display toggle is what reveals it. */
+    #mcp-inspector-finding {
+        height: auto;
+        min-height: 0;
+        display: none;
+    }
+    /* Bounded, not `height: 1fr`/`auto` -- the pretty-printed JSON detail
+    (arguments/result excerpt included) can run long; a fixed height with
+    scroll keeps the rest of the inspector's layout stable regardless of
+    payload size. Mirrors `#mcp-adv-payload`'s own bounded-height precedent
+    just below. */
+    #mcp-inspector-audit-scroll {
+        height: 12;
+        min-height: 6;
     }
     /* T12: the Advanced block moved from a direct-child VerticalScroll to a
     Collapsible's body. Give the Collapsible itself the 1fr the scroll used
@@ -307,6 +411,31 @@ class MCPInspector(Vertical):
             self.server_key = server_key
             self.tool_name = tool_name
 
+    class AuditOpenToolRequested(Message, namespace="mcp_inspector"):
+        """Posted when the user presses "Open tool" (`#mcp-audit-open-tool`)
+        on an execution-log entry's detail view (`show_audit_entry()`).
+        `MCPWorkbench` resolves `(server_key, tool_name)` against
+        `_last_hub_tools` -- a tool that has since dropped out of the
+        catalog is a warning toast, never a crash; a resolved tool switches
+        to Tools mode and selects its row."""
+
+        def __init__(self, server_key: str, tool_name: str) -> None:
+            super().__init__()
+            self.server_key = server_key
+            self.tool_name = tool_name
+
+    class AuditAdjustPermissionRequested(Message, namespace="mcp_inspector"):
+        """Posted when the user presses "Adjust permission"
+        (`#mcp-audit-adjust-permission`) on an execution-log entry's detail
+        view. Same resolve-then-route contract as `AuditOpenToolRequested`,
+        but switches to Permissions mode and moves the matrix cursor to the
+        tool's row instead."""
+
+        def __init__(self, server_key: str, tool_name: str) -> None:
+            super().__init__()
+            self.server_key = server_key
+            self.tool_name = tool_name
+
     def __init__(self, **kwargs: Any) -> None:
         classes = kwargs.pop("classes", "")
         super().__init__(classes=f"ds-inspector {classes}".strip(), **kwargs)
@@ -346,6 +475,19 @@ class MCPInspector(Vertical):
         # know which tool's `(server_key, tool_name)` to post in
         # `ReallowRequested` without re-querying the workbench.
         self._current_permission_tool: HubTool | None = None
+        # T7 (MCP Hub Phase 5): the raw execution-log entry dict
+        # `#mcp-inspector-audit` currently describes, or `None` when
+        # hidden -- set by `show_audit_entry()`, the single writer. Read by
+        # the "Open tool"/"Adjust permission" button press handlers below
+        # to know which `(server_key, tool_name)` to post without
+        # re-querying the workbench.
+        self._current_audit_entry: dict[str, Any] | None = None
+        # T8 (MCP Hub Phase 5): the raw finding dict `#mcp-inspector-
+        # finding` currently describes, or `None` when hidden -- set by
+        # `show_finding()`, the single writer. No action buttons read this
+        # back (unlike `_current_audit_entry` above) -- the finding detail
+        # is read-only this phase (no client-side fix actions).
+        self._current_finding: dict[str, Any] | None = None
         # Task 5: True once `require_confirm()` has armed the Test Tool Run
         # button into a one-shot "Confirm run" control (the tool's gate
         # resolved to "ask" -- `MCPWorkbench` decides that, this pane only
@@ -383,6 +525,14 @@ class MCPInspector(Vertical):
         # keyword or the standalone `show_permission()`) -- hidden (display:
         # none, see DEFAULT_CSS) until a permission context is supplied.
         yield Vertical(id="mcp-inspector-permission")
+        # T7 (MCP Hub Phase 5): audit-entry detail container, populated by
+        # `show_audit_entry()` -- hidden (display: none, see DEFAULT_CSS)
+        # until an Audit-mode row is selected.
+        yield Vertical(id="mcp-inspector-audit")
+        # T8 (MCP Hub Phase 5): finding-detail container, populated by
+        # `show_finding()` -- hidden (display: none, see DEFAULT_CSS) until
+        # an Audit-mode Findings-table row is selected.
+        yield Vertical(id="mcp-inspector-finding")
         # T12: default collapsed unless the user has previously opened it --
         # per-user GLOBAL preference (Console rail section-preference
         # precedent), NOT per-server. `get_cli_setting` reads the real user
@@ -733,6 +883,142 @@ class MCPInspector(Vertical):
         async with self._refresh_lock:
             await self._render_permission_container(tool, effective)
 
+    async def show_audit_entry(self, entry: dict[str, Any] | None) -> None:
+        """Render `#mcp-inspector-audit` for one execution-log entry, or hide it.
+
+        Audit mode's own row-selection entry point
+        (`MCPWorkbench.on_mcp_audit_mode_entry_selected()`) -- standalone,
+        same `_refresh_lock` discipline as `show_permission()` above (never
+        folded into `show_tool()`'s single locked pass, since an audit-entry
+        selection never touches `#mcp-inspector-tool`/`#mcp-inspector-
+        permission`). `entry=None` (a stale/out-of-range selection, or a
+        mode switch via `MCPWorkbench._clear_tool_view()`) hides the
+        container instead of leaving a previous entry's facts on screen.
+
+        UX-B8: the whole detail (timestamp, tool identity, initiator,
+        decision, duration, error, arguments, and result excerpt) is one
+        `json.dumps(indent=2)` dump in a bounded scrollable block,
+        `markup=False` -- log fields are tool/server-derived free text that
+        must never be interpreted as Rich markup. Arguments are redacted
+        again here (`redact_mapping`) even though `MCPExecutionLog.append()`
+        already redacts on write -- defense in depth, mirroring
+        `mcp_workbench.py`'s `_redact_external_server_record()` rationale:
+        cheap insurance against a future write path that forgets to.
+
+        `result_excerpt`, unlike `arguments`, is always a caller-truncated
+        STRING on the record (`MCP/execution_log.py`'s `build_record()`),
+        so it cannot be redacted the same way. `_redacted_result_excerpt()`
+        below gives it the same defense-in-depth treatment where it can:
+        when the string parses as a JSON object, it is redacted like
+        arguments; otherwise (not JSON, or JSON that isn't an object) it is
+        rendered as-is, relying on write-time redaction of dict-shaped
+        results (`_run_tool_test()` / `_record_tool_execution()`) plus this
+        method's own `markup=False` for injection safety -- it is NOT
+        additionally redacted here.
+        """
+        async with self._refresh_lock:
+            container = self.query_one("#mcp-inspector-audit", Vertical)
+            await container.remove_children()
+            if entry is None:
+                container.display = False
+                self._current_audit_entry = None
+                return
+            container.display = True
+            self._current_audit_entry = entry
+            server_key = str(entry.get("server_key") or "")
+            tool_name = str(entry.get("tool_name") or "")
+            arguments = entry.get("arguments")
+            detail_payload = {
+                "ts": entry.get("ts"),
+                "tool": f"{server_key}::{tool_name}",
+                "initiator": entry.get("initiator"),
+                "decision": entry.get("decision"),
+                "ok": entry.get("ok"),
+                "duration": format_duration_ms(int(entry.get("duration_ms") or 0)),
+                "error": entry.get("error"),
+                "arguments": redact_mapping(arguments) if isinstance(arguments, Mapping) else arguments,
+                "result_excerpt": _redacted_result_excerpt(entry.get("result_excerpt")),
+            }
+            detail_text = json.dumps(detail_payload, indent=2, default=str)
+            widgets: list[Any] = [
+                Static(
+                    f"{tool_name} — {server_key}" if (tool_name or server_key) else "Execution detail",
+                    id="mcp-inspector-audit-name", classes="ds-field-row", markup=False,
+                ),
+                VerticalScroll(
+                    Static(detail_text, id="mcp-inspector-audit-detail", markup=False),
+                    id="mcp-inspector-audit-scroll",
+                ),
+                Button(
+                    "Open tool", id="mcp-audit-open-tool",
+                    classes="console-action-secondary", compact=True,
+                    tooltip="Switch to Tools mode and select this tool.",
+                ),
+                Button(
+                    "Adjust permission", id="mcp-audit-adjust-permission",
+                    classes="console-action-secondary", compact=True,
+                    tooltip="Switch to Permissions mode and select this tool's row.",
+                ),
+            ]
+            await container.mount_all(widgets)
+
+    async def show_finding(self, finding: dict[str, Any] | None) -> None:
+        """Render `#mcp-inspector-finding` for one Audit-mode Findings-table
+        row, or hide it (T8, MCP Hub Phase 5).
+
+        Findings-mode's own row-selection entry point (`MCPWorkbench.
+        on_mcp_audit_mode_finding_selected()`) -- standalone, same
+        `_refresh_lock` discipline as `show_permission()`/`show_audit_
+        entry()` (two selections back to back must not interleave their
+        remove/mount cycles into `DuplicateIds`). `finding=None` (a
+        stale/out-of-range selection, or a mode switch via `MCPWorkbench.
+        _clear_tool_view()`) hides the container instead of leaving a
+        previous finding's facts on screen.
+
+        Read-only: severity/type/message, plus a suggested-remediation
+        line only when the raw payload actually carries one -- no
+        client-side fix actions this phase (deferred; see task-8-brief.md),
+        so unlike `show_audit_entry()` this mounts no action buttons at
+        all. `markup=False` throughout -- finding fields are server-derived
+        free text that must never be interpreted as Rich markup.
+        """
+        async with self._refresh_lock:
+            container = self.query_one("#mcp-inspector-finding", Vertical)
+            await container.remove_children()
+            if finding is None:
+                container.display = False
+                self._current_finding = None
+                return
+            container.display = True
+            self._current_finding = finding
+            severity = _finding_text(finding, "severity")
+            finding_type = _finding_text(finding, "finding_type", "type")
+            message = _finding_text(finding, "message")
+            widgets: list[Any] = [
+                Static(
+                    f"Finding — {severity}",
+                    id="mcp-inspector-finding-name", classes="ds-field-row", markup=False,
+                ),
+                Static(
+                    f"Type: {finding_type}",
+                    id="mcp-inspector-finding-type", classes="ds-field-row", markup=False,
+                ),
+                Static(
+                    message,
+                    id="mcp-inspector-finding-message", classes="ds-field-row", markup=False,
+                ),
+            ]
+            remediation = _finding_remediation(finding)
+            if remediation:
+                widgets.append(
+                    Static(
+                        f"Suggested remediation: {remediation}",
+                        id="mcp-inspector-finding-remediation",
+                        classes="ds-field-row", markup=False,
+                    )
+                )
+            await container.mount_all(widgets)
+
     async def _mount_test_tool_panel(self) -> None:
         """Mount the schema-driven form + Run/Close/result panel, once.
 
@@ -995,7 +1281,7 @@ class MCPInspector(Vertical):
             status_line = "Blocked · not run"
         else:
             status = "OK" if ok else "Failed"
-            status_line = f"{status} · {_format_duration_ms(duration_ms)}"
+            status_line = f"{status} · {format_duration_ms(duration_ms)}"
         result_widget.update(f"{status_line}\n{text}")
         try:
             self.query_one("#mcp-inspector-test-run", Button).disabled = False
@@ -1178,6 +1464,26 @@ class MCPInspector(Vertical):
             tool = self._current_permission_tool
             if tool is not None:
                 self.post_message(self.ReallowRequested(tool.server_key, tool.name))
+            return
+        if button_id == "mcp-audit-open-tool":
+            event.stop()
+            entry = self._current_audit_entry
+            if entry is not None:
+                self.post_message(
+                    self.AuditOpenToolRequested(
+                        str(entry.get("server_key") or ""), str(entry.get("tool_name") or "")
+                    )
+                )
+            return
+        if button_id == "mcp-audit-adjust-permission":
+            event.stop()
+            entry = self._current_audit_entry
+            if entry is not None:
+                self.post_message(
+                    self.AuditAdjustPermissionRequested(
+                        str(entry.get("server_key") or ""), str(entry.get("tool_name") or "")
+                    )
+                )
             return
 
     async def _run_advanced_action(self) -> None:

@@ -21,6 +21,7 @@ from tldw_chatbook.MCP.permission_store import (
     resolve_effective_state,
 )
 from tldw_chatbook.MCP.unified_control_models import UnifiedMCPContext
+from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import MCPAuditMode
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import MCPPermissionsMode
 from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel, MCPProfileForm
@@ -446,11 +447,12 @@ async def test_mutations_panel_cancel_clears_selection_and_does_not_reopen_on_re
 
 
 @pytest.mark.asyncio
-async def test_mode_switch_shows_placeholder_canvases():
-    """T6: "permissions" no longer shows a phase placeholder -- it now hosts
-    the real `MCPPermissionsMode` canvas (see the Task 6 section below for
-    its own coverage). "audit" is the only mode still on the generic
-    placeholder path this test guards."""
+async def test_mode_switch_shows_audit_canvas():
+    """T7: "audit" was the last mode still on the generic phase-placeholder
+    path -- it now hosts the real `MCPAuditMode` canvas (see the Task 7
+    section below for its own coverage), same as tools (T5) and permissions
+    (T6) before it. There is no longer any mode left on the placeholder
+    path at all."""
     app = WorkbenchApp()
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -459,8 +461,7 @@ async def test_mode_switch_shows_placeholder_canvases():
         await pilot.pause()
         switcher = app.query_one(ContentSwitcher)
         assert switcher.current == "mcp-mode-canvas-audit"
-        placeholder = str(app.query_one("#mcp-mode-canvas-audit Static", Static).renderable)
-        assert "later phase" in placeholder.lower()
+        assert app.query_one("#mcp-mode-canvas-audit", MCPAuditMode) is not None
 
 
 @pytest.mark.asyncio
@@ -2380,29 +2381,16 @@ async def test_different_target_selection_rebinds_advanced_context():
         assert str(label.renderable) == "Showing: server Aux Server"
 
 
-@pytest.mark.asyncio
-async def test_mode_placeholder_canvases_use_info_callout_not_recovery_callout():
-    """UX-inputs #4: phase placeholders are informational, not an alarm
-    condition -- they must carry `.ds-info-callout`, never the orange-chrome
-    `.ds-recovery-callout` used for actionable problems elsewhere in the hub.
-    """
-    app = WorkbenchApp()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        for mode, spec in MCP_HUB_MODES.items():
-            # T5: "tools" now hosts the real `MCPToolsMode` canvas (see
-            # test_mcp_tools_mode.py for its own empty-state coverage), not
-            # a generic phase placeholder. T6: "permissions" now likewise
-            # hosts the real `MCPPermissionsMode` canvas (see
-            # test_mcp_permissions_mode.py and the Task 6 section below) --
-            # only "servers"/"tools"/"permissions" are real canvases at this
-            # point; "audit" remains the last phase placeholder.
-            if mode in ("servers", "tools", "permissions"):
-                continue
-            static = app.query_one(f"#mcp-mode-canvas-{mode} Static", Static)
-            assert "ds-info-callout" in static.classes, mode
-            assert "ds-recovery-callout" not in static.classes, mode
-            assert str(static.renderable) == spec["placeholder"]
+# UX-inputs #4's phase-placeholder styling test
+# (`test_mode_placeholder_canvases_use_info_callout_not_recovery_callout`,
+# `.ds-info-callout` vs `.ds-recovery-callout`) is retired along with T7:
+# "audit" was the last `MCP_HUB_MODES` entry still on the generic
+# phase-placeholder path (T5 shipped Tools, T6 shipped Permissions) --
+# every mode is now a real canvas, so the loop this test drove would `continue`
+# for all four and assert nothing. Mirrors the UX batch items 2+3 kill-switch
+# height-rule retirement in test_mcp_permissions_mode.py: a test that can no
+# longer exercise anything is worse than no test (it reads as coverage that
+# isn't there).
 
 
 # -- T5: Tools mode canvas registration + workbench-fed catalog -------------
@@ -4899,3 +4887,715 @@ async def test_permissions_mode_governance_profiles_not_list_renders_empty_secti
         assert section.display is True
         assert len(app.query(".mcp-perm-server-profile-row")) == 0
         assert app.query_one("#mcp-perm-table", DataTable)
+
+
+# -- T7 (MCP Hub Phase 5): Audit mode canvas + drill-through -----------------
+
+
+class FakeExecutionLog:
+    """Minimal `MCPExecutionLog`-shaped fake -- `read_recent(limit)` returns
+    (a copy of) whatever record list the test seeded, newest-first is the
+    CALLER's responsibility (the real log guarantees it; this fake just
+    hands back records verbatim, same "render whatever it's given" contract
+    `MCPAuditMode` itself follows)."""
+
+    def __init__(self, records: list[dict] | None = None) -> None:
+        self._records = list(records or [])
+        self.read_recent_calls: list[int] = []
+
+    def read_recent(self, limit: int = 200) -> list[dict]:
+        self.read_recent_calls.append(limit)
+        return list(self._records[:limit])
+
+
+def _audit_record(
+    *,
+    ts: str = "2026-07-16T21:22:00+00:00",
+    server_key: str = "local:docs",
+    tool_name: str = "search",
+    initiator: str = "test",
+    decision: str = "allowed",
+    ok: bool = True,
+    duration_ms: int = 42,
+    error: str | None = None,
+    arguments: dict | None = None,
+    result_excerpt: str | None = None,
+) -> dict:
+    return {
+        "ts": ts,
+        "server_key": server_key,
+        "tool_name": tool_name,
+        "initiator": initiator,
+        "decision": decision,
+        "ok": ok,
+        "duration_ms": duration_ms,
+        "error": error,
+        "arguments": arguments,
+        "result_excerpt": result_excerpt,
+    }
+
+
+class AuditHubService(ToolTestHubService):
+    """Reuses `ToolTestHubService`'s real docs::fetch/docs::search/
+    notes::list_notes catalog (so drill-through has real, resolvable
+    `HubTool`s to route to) and adds an `execution_log` attribute -- unlike
+    the real `UnifiedMCPControlPlaneService.execution_log` (a lazily
+    constructed property), a plain instance attribute is enough here: the
+    workbench's own read (`service.execution_log`) doesn't distinguish the
+    two."""
+
+    def __init__(self, records: list[dict] | None = None) -> None:
+        super().__init__()
+        self.execution_log = FakeExecutionLog(records)
+
+
+class AuditApp(App):
+    def __init__(self, records: list[dict] | None = None) -> None:
+        super().__init__()
+        self.unified_mcp_service = AuditHubService(records)
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+@pytest.mark.asyncio
+async def test_audit_mode_syncs_execution_log_entries_into_canvas():
+    app = AuditApp([_audit_record(tool_name="search"), _audit_record(tool_name="fetch")])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        service = app.unified_mcp_service
+        assert service.execution_log.read_recent_calls == [200]
+        workbench.set_mode("audit")
+        await pilot.pause()
+        table = app.query_one("#mcp-audit-table", DataTable)
+        assert table.row_count == 2
+        assert table.display is True
+        assert app.query_one("#mcp-audit-empty").display is False
+
+
+@pytest.mark.asyncio
+async def test_audit_mode_guarded_when_service_has_no_execution_log_attribute():
+    """The plain `FakeHubService` (default `WorkbenchApp`) has no
+    `execution_log` attribute at all -- `getattr`/attribute access raises
+    `AttributeError`, which `_sync_audit_mode()` must catch and render an
+    empty window rather than crash the whole `_sync_children()` pass."""
+    app = WorkbenchApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        assert workbench._last_audit_entries == []
+        workbench.set_mode("audit")
+        await pilot.pause()
+        assert app.query_one("#mcp-audit-empty").display is True
+        table = app.query_one("#mcp-audit-table", DataTable)
+        assert table.row_count == 0
+
+
+class RaisingExecutionLogHubService(FakeHubService):
+    """`execution_log` is a real PROPERTY that raises something other than
+    `AttributeError` -- `getattr(service, "execution_log", None)` alone
+    would NOT catch this (only `_sync_audit_mode()`'s explicit try/except
+    around the property access itself does); regression coverage for that
+    exact guard, mirroring `UnifiedMCPControlPlaneService.execution_log`'s
+    own documented N1 lesson (it too can raise, not just resolve to
+    `None`)."""
+
+    @property
+    def execution_log(self):
+        raise RuntimeError("boom")
+
+
+class RaisingExecutionLogApp(App):
+    def __init__(self) -> None:
+        super().__init__()
+        self.unified_mcp_service = RaisingExecutionLogHubService()
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+@pytest.mark.asyncio
+async def test_audit_mode_guarded_when_execution_log_property_raises():
+    app = RaisingExecutionLogApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()  # must not crash the whole app
+        workbench = app.query_one(MCPWorkbench)
+        assert workbench._last_audit_entries == []
+        workbench.set_mode("audit")
+        await pilot.pause()
+        assert app.query_one("#mcp-audit-empty").display is True
+
+
+async def _select_audit_mode_row(app: App, pilot, row: int) -> None:
+    table = app.query_one("#mcp-audit-table", DataTable)
+    table.focus()
+    table.move_cursor(row=row)
+    await pilot.pause()
+    await pilot.press("enter")
+    await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_audit_entry_selection_shows_pretty_printed_detail_in_inspector():
+    app = AuditApp(
+        [
+            _audit_record(
+                server_key="local:docs", tool_name="search", initiator="test",
+                decision="allowed", ok=True, duration_ms=1500,
+                arguments={"query": "hello"}, result_excerpt="3 results",
+            )
+        ]
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await _select_audit_mode_row(app, pilot, 0)
+
+        container = app.query_one("#mcp-inspector-audit")
+        assert container.display is True
+        name_text = str(app.query_one("#mcp-inspector-audit-name", Static).renderable)
+        assert name_text == "search — local:docs"
+        detail_text = str(app.query_one("#mcp-inspector-audit-detail", Static).renderable)
+        assert '"tool": "local:docs::search"' in detail_text
+        assert '"initiator": "test"' in detail_text
+        assert '"decision": "allowed"' in detail_text
+        assert '"duration": "1.5s"' in detail_text
+        assert '"query": "hello"' in detail_text
+        assert '"3 results"' in detail_text
+
+        open_tool_button = app.query_one("#mcp-audit-open-tool", Button)
+        adjust_permission_button = app.query_one("#mcp-audit-adjust-permission", Button)
+        assert open_tool_button.tooltip
+        assert adjust_permission_button.tooltip
+
+
+@pytest.mark.asyncio
+async def test_audit_entry_detail_redacts_arguments():
+    app = AuditApp(
+        [_audit_record(arguments={"api_key": "sk-super-secret", "query": "hello"})]
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await _select_audit_mode_row(app, pilot, 0)
+
+        detail_text = str(app.query_one("#mcp-inspector-audit-detail", Static).renderable)
+        assert "sk-super-secret" not in detail_text
+        assert '"query": "hello"' in detail_text
+
+
+@pytest.mark.asyncio
+async def test_audit_entry_detail_redacts_json_object_result_excerpt():
+    """Important fix: `result_excerpt` is a caller-truncated STRING (see
+    `MCP/execution_log.py`'s `build_record()`) -- when a tool's result is
+    itself JSON-object-shaped text, `show_audit_entry()` must parse it and
+    redact secret-looking keys the same way it already does for
+    `arguments`, not just pass the raw string through.
+    """
+    app = AuditApp(
+        [
+            _audit_record(
+                result_excerpt=json.dumps({"api_key": "sk-super-secret", "status": "ok"}),
+            )
+        ]
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await _select_audit_mode_row(app, pilot, 0)
+
+        detail_text = str(app.query_one("#mcp-inspector-audit-detail", Static).renderable)
+        assert "sk-super-secret" not in detail_text
+        assert '"status": "ok"' in detail_text
+
+
+@pytest.mark.asyncio
+async def test_switching_mode_away_from_audit_clears_entry_detail():
+    app = AuditApp([_audit_record()])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await _select_audit_mode_row(app, pilot, 0)
+        assert list(app.query("#mcp-inspector-audit-name"))
+
+        workbench.set_mode("servers")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert not list(app.query("#mcp-inspector-audit-name"))
+        assert app.query_one("#mcp-inspector-audit").display is False
+
+
+@pytest.mark.asyncio
+async def test_audit_open_tool_switches_to_tools_mode_selects_row_and_shows_detail():
+    app = AuditApp([_audit_record(server_key="local:docs", tool_name="search")])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await _select_audit_mode_row(app, pilot, 0)
+
+        await pilot.click("#mcp-audit-open-tool")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert workbench.active_mode == "tools"
+        name_text = str(app.query_one("#mcp-inspector-tool-name", Static).renderable)
+        assert "search" in name_text
+        tools_table = app.query_one("#mcp-tools-table", DataTable)
+        cursor_key, _ = tools_table.coordinate_to_cell_key((tools_table.cursor_row, 0))
+        assert cursor_key.value == "local:docs::search"
+
+        # Critical fix: the stale Audit-mode detail (with its own live
+        # drill buttons) must not survive the drill-through -- it used to
+        # rely on set_mode()'s _clear_tool_view() worker, which the SAME
+        # exclusive "mcp-tool-clear" dispatch above cancels before it ever
+        # runs (see _open_audit_tool()'s docstring).
+        assert app.query_one("#mcp-inspector-audit").display is False
+        assert not list(app.query("#mcp-audit-open-tool"))
+        assert not list(app.query("#mcp-audit-adjust-permission"))
+
+
+@pytest.mark.asyncio
+async def test_audit_open_tool_missing_tool_notifies_instead_of_crashing():
+    app = AuditApp([_audit_record(server_key="local:docs", tool_name="long_gone")])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        notifications = _capture_notifications(app)
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await _select_audit_mode_row(app, pilot, 0)
+
+        await pilot.click("#mcp-audit-open-tool")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert workbench.active_mode == "audit"
+        assert notifications
+        message, severity = notifications[-1]
+        assert message == "local:docs::long_gone: tool no longer available."
+        assert severity == "warning"
+
+
+# -- T8 (MCP Hub Phase 5): Audit mode Findings sub-view ----------------------
+#
+# Findings are a SERVER-SOURCE-ONLY concept: `_load_server_findings()`
+# fetches `load_section("advanced")` and reads its `governance_audit_
+# findings.items` list (the same payload key `unified_mcp_sections.
+# render_advanced_section()` already extracts, `MCP/server_unified_
+# service.py`'s `get_advanced()` ~:392), cached per `(source, target)`
+# exactly like `_load_server_governance_profiles()` (T11).
+
+
+class AuditFindingsHubService(AuditHubService):
+    """`AuditHubService` (T7's real docs::fetch/docs::search/notes::
+    list_notes catalog plus `execution_log`) with `context` pre-set to
+    SERVER source against one active target ("main") -- mirrors
+    `GovernanceCachingHubService`'s own constructor-set context, so a test
+    doesn't need a rail source-switch click just to exercise the
+    server-source-only findings fetch. `load_section("advanced")` returns a
+    canned `governance_audit_findings` envelope; every other section falls
+    through to `ToolTestHubService.load_section()` unchanged."""
+
+    def __init__(
+        self,
+        records: list[dict] | None = None,
+        *,
+        findings_items: list[dict] | None = None,
+    ) -> None:
+        super().__init__(records)
+        self.context = UnifiedMCPContext(
+            selected_source="server", selected_active_server_id="main"
+        )
+        self.advanced_fetch_calls = 0
+        self._findings_items = (
+            [
+                {
+                    "severity": "high",
+                    "finding_type": "orphaned_path_scope",
+                    "object_kind": "path_scope",
+                    "object_id": "5",
+                    "message": "Needs review",
+                    "remediation": "Remove the unused path scope.",
+                }
+            ]
+            if findings_items is None
+            else findings_items
+        )
+
+    async def load_section(self, section=None):
+        effective_section = section or self.context.selected_section or "overview"
+        if effective_section == "advanced":
+            self.advanced_fetch_calls += 1
+            return {
+                "server_id": "main",
+                "governance_audit_findings": {"items": list(self._findings_items)},
+            }
+        return await super().load_section(section)
+
+
+class AuditFindingsApp(App):
+    def __init__(
+        self,
+        records: list[dict] | None = None,
+        *,
+        findings_items: list[dict] | None = None,
+    ) -> None:
+        super().__init__()
+        self.unified_mcp_service = AuditFindingsHubService(
+            records, findings_items=findings_items
+        )
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+async def _select_findings_row(app: App, pilot, row: int) -> None:
+    table = app.query_one("#mcp-audit-findings-table", DataTable)
+    table.focus()
+    table.move_cursor(row=row)
+    await pilot.pause()
+    await pilot.press("enter")
+    await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_audit_mode_syncs_server_findings_into_findings_subview():
+    app = AuditFindingsApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        service = app.unified_mcp_service
+        assert service.advanced_fetch_calls == 1  # the mount-time full sync
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+
+        table = app.query_one("#mcp-audit-findings-table", DataTable)
+        assert table.row_count == 1
+        row = table.get_row_at(0)
+        assert [cell.plain for cell in row] == ["high", "orphaned_path_scope", "Needs review"]
+
+
+@pytest.mark.asyncio
+async def test_findings_fetch_cached_across_resyncs_under_same_source_target():
+    """T8, mirrors T11's own `test_space_press_resyncs_reuse_cached_
+    governance_profiles`: the findings listing is STATIC server-side data
+    -- a second full `_sync_children()` pass under the SAME `(source,
+    target)` identity must reuse the cache, not re-fetch."""
+    app = AuditFindingsApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        service = app.unified_mcp_service
+        assert service.advanced_fetch_calls == 1
+
+        await workbench.reload()
+        await pilot.pause()
+        assert service.advanced_fetch_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_local_source_never_fetches_findings_advanced_section():
+    app = WorkbenchApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+
+        table = app.query_one("#mcp-audit-findings-table", DataTable)
+        assert table.display is False
+        message = str(app.query_one("#mcp-audit-findings-empty-message", Static).renderable)
+        assert message == "Findings come from a tldw_server target."
+
+
+class RaisingAdvancedSectionHubService(AuditFindingsHubService):
+    """`load_section("advanced")` raises -- the guard in
+    `_load_server_findings()` must swallow it and leave the Findings table
+    absent with the fail-soft retry-hint copy rather than crashing."""
+
+    async def load_section(self, section=None):
+        effective_section = section or self.context.selected_section or "overview"
+        if effective_section == "advanced":
+            self.advanced_fetch_calls += 1
+            raise RuntimeError("advanced section backend unavailable")
+        return await super().load_section(section)
+
+
+class RaisingAdvancedSectionApp(App):
+    def __init__(self) -> None:
+        super().__init__()
+        self.unified_mcp_service = RaisingAdvancedSectionHubService()
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+@pytest.mark.asyncio
+async def test_findings_fetch_failure_is_fail_soft_not_a_crash():
+    app = RaisingAdvancedSectionApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()  # must not crash the whole app
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+
+        table = app.query_one("#mcp-audit-findings-table", DataTable)
+        assert table.display is False
+        message = str(app.query_one("#mcp-audit-findings-empty-message", Static).renderable)
+        assert message != "Findings come from a tldw_server target."
+        assert message
+
+
+@pytest.mark.asyncio
+async def test_finding_selection_shows_read_only_detail_with_remediation_in_inspector():
+    app = AuditFindingsApp(
+        findings_items=[
+            {
+                "severity": "high",
+                "finding_type": "orphaned_path_scope",
+                "message": "Needs review",
+                "remediation": "Remove the unused path scope.",
+            }
+        ]
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+        await _select_findings_row(app, pilot, 0)
+
+        container = app.query_one("#mcp-inspector-finding")
+        assert container.display is True
+        detail_text = "\n".join(
+            str(static.renderable) for static in container.query(Static)
+        )
+        assert "high" in detail_text
+        assert "orphaned_path_scope" in detail_text
+        assert "Needs review" in detail_text
+        assert "Remove the unused path scope." in detail_text
+        # No client-side fix actions this phase -- read-only detail only.
+        assert not list(container.query(Button))
+
+
+@pytest.mark.asyncio
+async def test_finding_selection_without_remediation_omits_remediation_line():
+    app = AuditFindingsApp(
+        findings_items=[{"severity": "low", "finding_type": "stale_binding", "message": "Check binding"}]
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+        await _select_findings_row(app, pilot, 0)
+
+        container = app.query_one("#mcp-inspector-finding")
+        detail_text = "\n".join(
+            str(static.renderable) for static in container.query(Static)
+        )
+        assert "remediation" not in detail_text.lower()
+
+
+@pytest.mark.asyncio
+async def test_switching_mode_away_from_audit_clears_finding_detail():
+    app = AuditFindingsApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+        await _select_findings_row(app, pilot, 0)
+        assert app.query_one("#mcp-inspector-finding").display is True
+
+        workbench.set_mode("servers")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert app.query_one("#mcp-inspector-finding").display is False
+
+
+@pytest.mark.asyncio
+async def test_audit_adjust_permission_switches_to_permissions_mode_and_selects_row():
+    app = AuditApp([_audit_record(server_key="local:docs", tool_name="search")])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await _select_audit_mode_row(app, pilot, 0)
+
+        await pilot.click("#mcp-audit-adjust-permission")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert workbench.active_mode == "permissions"
+        permission_text = str(app.query_one("#mcp-inspector-permission-tool", Static).renderable)
+        assert "search" in permission_text
+        perm_table = app.query_one("#mcp-perm-table", DataTable)
+        cursor_key, _ = perm_table.coordinate_to_cell_key((perm_table.cursor_row, 0))
+        assert cursor_key.value == "local:docs::search"
+
+        # Critical fix: same stale-audit-panel hazard as the "Open tool"
+        # drill above -- the previous audit-entry detail must not survive
+        # under the new Permissions detail.
+        assert app.query_one("#mcp-inspector-audit").display is False
+        assert not list(app.query("#mcp-audit-open-tool"))
+        assert not list(app.query("#mcp-audit-adjust-permission"))
+
+
+@pytest.mark.asyncio
+async def test_audit_adjust_permission_missing_tool_notifies_instead_of_crashing():
+    app = AuditApp([_audit_record(server_key="local:docs", tool_name="long_gone")])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        notifications = _capture_notifications(app)
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await _select_audit_mode_row(app, pilot, 0)
+
+        await pilot.click("#mcp-audit-adjust-permission")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert workbench.active_mode == "audit"
+        assert notifications
+        message, severity = notifications[-1]
+        assert message == "local:docs::long_gone: tool no longer available."
+        assert severity == "warning"
+
+
+# -- Critical fix (T8 review): sub-view toggle must clear the OTHER pane's --
+# inspector detail. `MCPAuditMode.on_button_pressed()` used to only flip
+# `self._sub_view` and re-render via `_apply_subview_display()` -- no
+# message ever reached the workbench, so a still-mounted `#mcp-inspector-
+# audit` (Executions selection, WITH its own live "Open tool"/"Adjust
+# permission" drill buttons) or `#mcp-inspector-finding` (Findings
+# selection) survived a toggle to the other sub-view. Selecting a row in
+# the newly-visible pane then left BOTH detail panels mounted and visible
+# at once. `MCPAuditMode.SubViewChanged` + `MCPWorkbench.on_mcp_audit_
+# mode_sub_view_changed()` close that gap.
+
+
+@pytest.mark.asyncio
+async def test_toggling_to_findings_subview_clears_stale_audit_entry_detail():
+    app = AuditFindingsApp([_audit_record(server_key="local:docs", tool_name="search")])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await _select_audit_mode_row(app, pilot, 0)
+        assert app.query_one("#mcp-inspector-audit").display is True
+
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert app.query_one("#mcp-inspector-audit").display is False
+        # The stale detail's own live drill buttons must not linger either
+        # -- same hazard `show_audit_entry(None)` already fixes for the
+        # Open-tool/Adjust-permission drill-through paths.
+        assert not list(app.query("#mcp-audit-open-tool"))
+        assert not list(app.query("#mcp-audit-adjust-permission"))
+
+
+@pytest.mark.asyncio
+async def test_toggling_to_executions_subview_clears_stale_finding_detail():
+    app = AuditFindingsApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+        await _select_findings_row(app, pilot, 0)
+        assert app.query_one("#mcp-inspector-finding").display is True
+
+        await pilot.click("#mcp-audit-subview-executions")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert app.query_one("#mcp-inspector-finding").display is False
+
+
+@pytest.mark.asyncio
+async def test_both_sub_view_selections_do_not_stack_visible_detail_panels():
+    """Reproduces the exact repro in the review finding: select an
+    execution row, toggle to Findings, select a finding row -- both
+    `#mcp-inspector-audit` and `#mcp-inspector-finding` must never be
+    visible at the same time."""
+    app = AuditFindingsApp([_audit_record(server_key="local:docs", tool_name="search")])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await _select_audit_mode_row(app, pilot, 0)
+        assert app.query_one("#mcp-inspector-audit").display is True
+
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        await _select_findings_row(app, pilot, 0)
+
+        assert app.query_one("#mcp-inspector-finding").display is True
+        assert app.query_one("#mcp-inspector-audit").display is False
+
+
+@pytest.mark.asyncio
+async def test_subview_selection_persists_across_reload_resync():
+    """Minor (cheap regression guard): `_sync_audit_mode()` re-pushes
+    `update_entries()`/`update_findings()` into `MCPAuditMode` on EVERY
+    `_sync_children()` pass (mirrors `_sync_tools_mode()`/`_sync_
+    permissions_mode()`), but neither of those touches `self._sub_view` --
+    a background `reload()` resync must not silently snap the visible
+    sub-view back to Executions."""
+    app = AuditFindingsApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+
+        await workbench.reload()
+        await pilot.pause()
+
+        assert app.query_one("#mcp-audit-findings-view", Vertical).display is True
+        assert app.query_one("#mcp-audit-executions-view", Vertical).display is False
+        assert app.query_one("#mcp-audit-subview-findings", Button).has_class("is-active")

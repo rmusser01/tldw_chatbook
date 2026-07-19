@@ -1,3 +1,4 @@
+import ast
 import json
 import re
 import subprocess
@@ -250,21 +251,48 @@ def test_service_backed_policy_destinations_use_async_workers_without_asyncio_ru
     # asyncio.run on the UI thread is banned. A worker-thread usage is
     # legitimate (no running loop there) but must carry an explicit
     # annotation AND appear in this allowlist with an exact count, so
-    # exceptions cannot proliferate silently.
+    # exceptions cannot proliferate silently. Only genuine call sites
+    # count: the AST walk skips prose mentions in comments/docstrings.
     allowed_annotated_asyncio_run = {
-        Path("tldw_chatbook/UI/Screens/library_screen.py"): 1,
+        Path("tldw_chatbook/UI/Screens/library_screen.py"): 3,
+    }
+    # @work(thread=True) is likewise a deliberate, reviewable exception on
+    # these service-backed screens (Library computes export counts, runs
+    # sync-body export service calls, and persists rail/search preferences
+    # on dedicated OS threads). Exact decorator counts per file keep new
+    # thread workers from slipping in silently; personas and skills stay
+    # on async workers only.
+    allowed_thread_workers = {
+        Path("tldw_chatbook/UI/Screens/library_screen.py"): 4,
     }
     for screen_path in screen_paths:
         source = _text(screen_path)
-        assert "thread=True" not in source, screen_path
+        thread_workers = sum(
+            1
+            for line in source.splitlines()
+            if line.lstrip().startswith("@work(thread=True")
+        )
+        assert thread_workers == allowed_thread_workers.get(screen_path, 0), (
+            screen_path,
+            thread_workers,
+        )
         annotated = 0
-        for line in source.splitlines():
-            if "asyncio.run" in line:
-                assert "policy-exception: worker-thread loop" in line, (
-                    screen_path,
-                    line.strip(),
-                )
-                annotated += 1
+        source_lines = source.splitlines()
+        for node in ast.walk(ast.parse(source)):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "run"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "asyncio"
+            ):
+                continue
+            call_line = source_lines[node.lineno - 1]
+            assert "policy-exception: worker-thread loop" in call_line, (
+                screen_path,
+                call_line.strip(),
+            )
+            annotated += 1
         assert annotated == allowed_annotated_asyncio_run.get(screen_path, 0), (
             screen_path,
             annotated,

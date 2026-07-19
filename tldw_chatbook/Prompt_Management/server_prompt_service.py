@@ -6,7 +6,6 @@ from typing import Any
 
 from tldw_chatbook.runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from tldw_chatbook.runtime_policy.types import PolicyDeniedError
-from tldw_chatbook.tldw_api.prompt_chatbook_schemas import PromptCreateRequest, PromptPreviewRequest
 
 
 class ServerPromptService:
@@ -96,6 +95,9 @@ class ServerPromptService:
         return await self._require_client().list_prompts(include_deleted=include_deleted)
 
     async def create_prompt(self, **kwargs: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api.prompt_chatbook_schemas import PromptCreateRequest
+
         self._enforce(self._action_id("create"))
         request_data = kwargs.get("request_data")
         if request_data is None:
@@ -105,6 +107,9 @@ class ServerPromptService:
         return await self._require_client().create_prompt(request_data)
 
     async def preview_prompt(self, **kwargs: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api.prompt_chatbook_schemas import PromptPreviewRequest
+
         self._enforce(self._action_id("preview"))
         request_data = kwargs.get("request_data")
         if request_data is None:
@@ -114,6 +119,9 @@ class ServerPromptService:
         return await self._require_client().preview_prompt(request_data)
 
     async def update_prompt(self, prompt_id: int | str, **kwargs: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api.prompt_chatbook_schemas import PromptCreateRequest
+
         self._enforce(self._action_id("update"))
         request_data = kwargs.get("request_data")
         if request_data is None:

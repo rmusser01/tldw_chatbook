@@ -51,25 +51,3 @@ FeatureNotAvailableDialog Button {
     margin: 0 1;
     min-width: 12;
 }
-
-/* Warning styles for disabled UI elements */
-.feature-disabled-warning {
-    color: $warning;
-    text-style: italic;
-    margin: 1;
-    text-align: center;
-}
-
-/* Overlay for disabled features */
-.feature-disabled-overlay {
-    background: $background 50%;
-    layer: overlay;
-    align: center middle;
-    padding: 2;
-}
-
-.feature-disabled-overlay Label {
-    color: $warning;
-    text-style: bold;
-    text-align: center;
-}

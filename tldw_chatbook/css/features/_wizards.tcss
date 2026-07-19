@@ -159,26 +159,6 @@
  * Content Type Selection
  * ======================================== */
 
-.wizard-step-title {
-    text-style: bold;
-    text-align: center;
-    margin-bottom: 1;
-}
-
-.wizard-step-subtitle {
-    text-align: center;
-    color: $text-muted;
-    margin-bottom: 2;
-}
-
-.content-type-grid {
-    layout: grid;
-    grid-size: 3 2;
-    grid-gutter: 2;
-    padding: 2;
-    margin-top: 2;
-    width: 100%;
-}
 
 .content-type-card {
     background: $panel;
@@ -198,11 +178,6 @@
     border: round $ds-focus-accent;
     color: $ds-focus-fg;
     text-style: bold underline;
-}
-
-.content-type-icon {
-    margin-bottom: 1;
-    text-align: center;
 }
 
 .content-type-title {
@@ -226,22 +201,6 @@
  * Content Selection
  * ======================================== */
 
-.smart-content-selector {
-    width: 100%;
-    height: 100%;
-}
-
-.selection-mode-set {
-    layout: horizontal;
-    margin-bottom: 2;
-    padding: 1;
-    background: $panel;
-    border: round $primary-darken-2;
-}
-
-.selection-mode-set RadioButton {
-    margin-right: 2;
-}
 
 .content-search-input {
     width: 100%;
@@ -252,28 +211,11 @@
     display: none;
 }
 
-.quick-selection-buttons {
-    layout: horizontal;
-    margin-bottom: 1;
-}
-
-.quick-selection-buttons Button {
-    margin-right: 1;
-    min-width: 12;
-}
 
 .preview-label {
     text-style: bold;
     margin-bottom: 1;
     color: $primary;
-}
-
-.content-list-container {
-    height: 25;
-    background: $surface;
-    border: round $primary-darken-2;
-    padding: 1;
-    overflow-y: auto;
 }
 
 .content-list {
@@ -291,33 +233,8 @@
     background: $panel 50%;
 }
 
-.content-item-row {
-    layout: horizontal;
-    align: left middle;
-}
 
-.content-item-checkbox {
-    margin-right: 1;
-}
 
-.content-item-icon {
-    margin-right: 1;
-    min-width: 3;
-    text-align: center;
-}
-
-.content-item-info {
-    width: 1fr;
-}
-
-.content-item-title {
-    text-style: bold;
-    margin-bottom: 0;
-}
-
-.content-item-subtitle {
-    color: $text-muted;
-}
 
 .placeholder-text {
     text-align: center;
@@ -456,17 +373,6 @@
  * Processing Step
  * ======================================== */
 
-.processing-container {
-    background: $panel;
-    border: round $primary;
-    padding: 2;
-    margin-bottom: 2;
-}
-
-.main-progress-bar {
-    height: 3;
-    margin-bottom: 2;
-}
 
 .progress-text {
     text-align: center;
@@ -495,21 +401,6 @@
     color: $text-muted;
 }
 
-.explanation-box {
-    background: $primary 10%;
-    border: round $primary;
-    padding: 2;
-}
-
-.explanation-title {
-    text-style: bold;
-    margin-bottom: 1;
-    color: $primary;
-}
-
-.explanation-text {
-    color: $text;
-}
 
 /* ========================================
  * Validation and Errors
@@ -532,15 +423,6 @@
 
 /* Progress bar animation removed - not supported in Textual */
 
-/* Loading state */
-.wizard-loading {
-    align: center middle;
-    height: 100%;
-}
-
-.wizard-loading LoadingIndicator {
-    margin-bottom: 2;
-}
 
 /* ========================================
  * Responsive adjustments
@@ -625,12 +507,6 @@ ExportOptionsStep .radio-option {
 
 ExportOptionsStep .checkbox-option {
     margin: 0 0 1 1;
-}
-
-ExportOptionsStep .compression-level {
-    margin-left: 3;
-    layout: horizontal;
-    height: 3;
 }
 
 /* Preview Confirm Step */

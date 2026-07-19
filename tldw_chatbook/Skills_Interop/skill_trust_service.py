@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ..tldw_api.skills_schemas import _normalize_skill_name as _normalize_api_skill_name
 from .skill_trust_crypto import (
     SkillTrustKeys,
     canonical_json,
@@ -538,6 +537,9 @@ class SkillTrustService:
         return scan_skill_directory(normalized_name, skill_dir)
 
     def _normalize_skill_name(self, skill_name: str) -> str:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.skills_schemas import _normalize_skill_name as _normalize_api_skill_name
+
         try:
             return _normalize_api_skill_name(skill_name)
         except (AttributeError, ValueError) as exc:

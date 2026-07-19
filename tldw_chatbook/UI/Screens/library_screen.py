@@ -166,6 +166,7 @@ from ...Third_Party.textual_fspicker import FileOpen, FileSave
 from ...Utils.input_validation import sanitize_string, validate_text_input, validate_url
 from ...Utils.path_validation import validate_path_simple
 from ...Workspaces import LibraryWorkspaceDepthState, build_library_workspace_depth_state
+from ...Workspaces.registry_service import next_local_workspace_identity
 from ...Widgets.Console.console_rail_section import (
     CONSOLE_RAIL_SECTION_TOGGLE_PREFIX,
     ConsoleRailSectionHeader,
@@ -652,6 +653,11 @@ class LibraryScreen(BaseAppScreen):
         ("u", "library_rag_use_in_console", "Use Library context in Console"),
     ]
 
+    #: Footer hint set — mirrors the show=True bindings the retired Textual
+    #: Footer used to render (task-264 review: per-screen AppFooterStatus
+    #: renders registered contexts, not bindings).
+    LIBRARY_SHORTCUTS = (("u", "use Library context in Console"),)
+
     # Baseline workbench geometry so the screen renders correctly even without
     # the app stylesheet (e.g. harness tests). The agentic-terminal TCSS uses
     # equal-specificity selectors and takes precedence when loaded.
@@ -1024,6 +1030,17 @@ class LibraryScreen(BaseAppScreen):
         # land in Task 5.
         self._library_export_cancel_event: threading.Event | None = None
 
+    def _register_footer_shortcuts(self) -> None:
+        """Register Library shortcuts via BaseAppScreen's persisting API.
+
+        Persistence matters here: the destination-switch failsafes call
+        ``screen.refresh(recompose=True)``, which replaces the footer widget;
+        the registration must survive that.
+        """
+        self.register_footer_shortcuts(
+            source="library", shortcuts=self.LIBRARY_SHORTCUTS
+        )
+
     def on_mount(self) -> None:
         """Populate the Library on entry, rendering instantly from cache.
 
@@ -1037,6 +1054,7 @@ class LibraryScreen(BaseAppScreen):
         loads (collections / note editor / media viewer) that
         ``apply_navigation_context`` could not run before mount.
         """
+        self._register_footer_shortcuts()
         super().on_mount()
         self.set_timer(
             LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS,
@@ -2726,20 +2744,12 @@ class LibraryScreen(BaseAppScreen):
     def _next_local_workspace_identity(self) -> tuple[str, str]:
         """Return a collision-free local workspace id and display name."""
         registry_service = getattr(self.app_instance, "workspace_registry_service", None)
-        existing_workspaces = (
-            tuple(registry_service.list_workspaces(include_archived=True))
-            if registry_service is not None
-            else ()
-        )
-        existing_ids = {workspace.workspace_id for workspace in existing_workspaces}
-        existing_names = {workspace.name for workspace in existing_workspaces}
-        index = 1
-        while True:
-            workspace_id = f"workspace-local-{index}"
-            workspace_name = f"Workspace {index}"
-            if workspace_id not in existing_ids and workspace_name not in existing_names:
-                return workspace_id, workspace_name
-            index += 1
+        if registry_service is None:
+            # Preserve the original behavior when the registry is unavailable by
+            # falling back to a deterministic identity that mirrors the shared
+            # helper's first candidate.
+            return "workspace-local-1", "Workspace 1"
+        return next_local_workspace_identity(registry_service)
 
     def _library_workspace_depth_state(
         self,
@@ -2863,9 +2873,14 @@ class LibraryScreen(BaseAppScreen):
             # Deliberately always ready: the UI path never imports torch (or
             # any other optional Search/RAG dependency), and the retrieval
             # service double-guards missing runtimes/indexes at call time.
+            # `provider_ready` joined that contract in task-249: rag mode now
+            # lazily initializes the shared RAG runtime at query time, and
+            # when embeddings support is missing the retrieval service itself
+            # returns the "RAG unavailable" recovery state routing to setup
+            # -- honest copy a disabled Run button could not carry.
             dependencies_ready=True,
             index_ready=True,
-            provider_ready=(getattr(self.app_instance, "_rag_service", None) is not None),
+            provider_ready=True,
             selected_source_types=selected_source_types,
             history=self._library_search_history,
             history_collapsed=self._library_rag_history_collapsed,
@@ -4358,9 +4373,11 @@ class LibraryScreen(BaseAppScreen):
         ``dependency_info``, ``registry_recorded``.
         """
         try:
-            export_result = asyncio.run(service.export_chatbook(
-                payload, progress_callback=progress_callback, cancel_check=cancel_check,
-            ))
+            export_result = asyncio.run(  # policy-exception: worker-thread loop
+                service.export_chatbook(
+                    payload, progress_callback=progress_callback, cancel_check=cancel_check,
+                )
+            )
         except Exception as exc:
             logger.opt(exception=True).warning("Library export service call failed.")
             return {
@@ -4386,7 +4403,7 @@ class LibraryScreen(BaseAppScreen):
         dependency_info = export_result.get("dependency_info") or {}
         registry_recorded = False
         try:
-            asyncio.run(
+            asyncio.run(  # policy-exception: worker-thread loop
                 service.create_chatbook(
                     name=name,
                     description=description,
@@ -6649,7 +6666,7 @@ class LibraryScreen(BaseAppScreen):
             self._apply_library_skills_import_outcome_from_exception(skill_name, exc)
             return
 
-        self._apply_library_skills_import_success()
+        self._apply_library_skills_import_success(skill_name)
 
     async def _import_library_skill_from_loose_file(
         self, file_path: Path, import_skill_file: Any,
@@ -6695,7 +6712,7 @@ class LibraryScreen(BaseAppScreen):
             return
 
         try:
-            await self._run_library_service_call(
+            record = await self._run_library_service_call(
                 import_skill_file,
                 data,
                 mode="local",
@@ -6710,13 +6727,31 @@ class LibraryScreen(BaseAppScreen):
             )
             return
 
-        self._apply_library_skills_import_success()
+        # Report the SERVICE-derived name, not the raw file stem: the
+        # service kebab-normalizes ("My Notes.md" -> "my-notes"), and the
+        # outcome line must match what the trust panel/list actually show
+        # (task-291 review).
+        stored_name = ""
+        if isinstance(record, dict):
+            stored_name = str(record.get("name") or "")
+        self._apply_library_skills_import_success(
+            self._safe_text(stored_name, max_length=64)
+            if stored_name
+            else self._safe_text(file_path.stem, max_length=64)
+        )
 
-    def _apply_library_skills_import_success(self) -> None:
-        """Report a successful single-skill import and refresh the rail/list."""
+    def _apply_library_skills_import_success(self, skill_name: str) -> None:
+        """Report a successful single-skill import and refresh the rail/list.
+
+        The imported skill's NAME is part of the outcome line (task-291):
+        the copy used to be byte-identical for every import, so a test (or
+        a user doing repeat imports) could not attribute the line to a
+        specific import -- a stale success from the previous skill read
+        exactly like a fresh one.
+        """
         self._library_skills_import_path = ""
         self._apply_library_skills_import_status(
-            "1 imported · re-review it in the trust panel"
+            f'Imported "{skill_name}" · re-review it in the trust panel'
         )
         self._refresh_local_source_snapshot()
 
@@ -11995,12 +12030,41 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Input.Changed, "#library-rag-query-input")
     async def update_library_rag_query(self, event: Input.Changed) -> None:
+        """Refresh the run gate/status region without rebuilding results/history.
+
+        B5 (task-284): unsubmitted query text affects the run gate
+        (enabled/disabled, quiet-line/recovery messaging) and the scope
+        summary/recovery widgets and inspector -- all cheap, bounded
+        refreshes -- but never the Evidence results list or Recent-searches
+        history (search runs on Submitted). This used to call the full
+        panel refresh unconditionally, which tears down and remounts
+        ~100+ widgets (every result row + every history row) on every
+        keystroke even though neither depends on the query text.
+
+        Resets only the in-flight/service-reported status
+        (`_reset_library_rag_in_flight_status`), not the landed results --
+        unlike a full reset, this can't desync the (deliberately untouched)
+        results widget from what `_library_rag_results` says it holds, so
+        clicking an already-visible evidence row keeps working while the
+        user types a new, not-yet-submitted query. Without resetting the
+        status at all, a query typed while a prior search is still
+        in-flight (or just failed) would leave the run gate stuck showing
+        "Searching..."/disabled forever, since that stale request's own
+        outcome gets discarded by `_apply_library_rag_search_outcome`'s
+        query mismatch guard once it lands. `_start_library_rag_query`
+        (Submit/Run) does its own full reset immediately before it
+        replaces the results/history widgets.
+
+        Args:
+            event: The Input.Changed event carrying the query field's
+                current text.
+        """
         event.stop()
         if event.value == self._library_rag_query:
             return
         self._library_rag_query = event.value
-        self._reset_library_rag_retrieval_state()
-        await self._refresh_search_rag_panel_state_widgets()
+        self._reset_library_rag_in_flight_status()
+        await self._refresh_search_rag_panel_state_widgets(include_results_and_history=False)
 
     @on(Input.Submitted, "#library-rag-query-input")
     async def submit_library_rag_query(self, event: Input.Submitted) -> None:
@@ -12027,6 +12091,21 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_retrieval_status = ""
         self._library_rag_recovery_state = None
         self._library_rag_selected_result_id = ""
+
+    def _reset_library_rag_in_flight_status(self) -> None:
+        """Un-stick the run gate without touching landed results (B5/task-284).
+
+        Narrower than `_reset_library_rag_retrieval_state`: clears only the
+        service-reported `retrieval_status`/`recovery_state` (the fields
+        that can otherwise pin the run gate at "Searching..."/disabled or a
+        stale failure/recovery message), leaving `_library_rag_results` and
+        `_library_rag_selected_result_id` exactly as they are. Used by the
+        query-edit path, which deliberately never touches the results/
+        history widgets -- resetting those fields there without also
+        rebuilding the widget would desync the two.
+        """
+        self._library_rag_retrieval_status = ""
+        self._library_rag_recovery_state = None
 
     @on(Button.Pressed, "#library-rag-run-query")
     async def run_library_rag_query(self, event: Button.Pressed) -> None:
@@ -12551,7 +12630,23 @@ class LibraryScreen(BaseAppScreen):
         self,
         *,
         force_history_collapse: bool = False,
+        include_results_and_history: bool = True,
     ) -> None:
+        """Refresh the Search/RAG panel's live widgets from current state.
+
+        Args:
+            force_history_collapse: Force the `Recent searches` collapsible
+                open/closed per `panel_state.history_collapsed` (only the
+                results-arrival transition passes True).
+            include_results_and_history: When False (B5/task-284), skip the
+                Evidence results list and Recent-searches history rebuilds
+                (each an awaited remove/mount of every row -- the ~100+
+                widget cost the audit measured). Used by the query-edit
+                path: unsubmitted query text never changes what those two
+                widgets show (search runs on Submitted), so callers that
+                DO need them (Submit/Run, evidence selection, outcome
+                application, scope/mode toggles) all pass the default True.
+        """
         if (
             self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH
             or not self.query("#library-search-rag-panel")
@@ -12577,6 +12672,10 @@ class LibraryScreen(BaseAppScreen):
             await scope_container.mount(child)
 
         self._refresh_library_rag_inspector(panel_state)
+
+        if not include_results_and_history:
+            return
+
         await self._refresh_library_rag_results_widgets(panel_state)
         await self._refresh_library_rag_history_widget(
             panel_state,

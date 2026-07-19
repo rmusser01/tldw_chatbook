@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Mapping
+from typing import Any, Mapping, TYPE_CHECKING
 
 from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
 from tldw_chatbook.Sync_Interop.sync_state import is_local_first_sync_profile_mode
@@ -14,7 +14,9 @@ from tldw_chatbook.Sync_Interop.validation import (
     validate_outgoing_envelope_scope,
     validate_pulled_response_scope,
 )
-from tldw_chatbook.tldw_api import SyncV2Envelope
+if TYPE_CHECKING:
+    from tldw_chatbook.tldw_api import SyncV2Envelope
+
 
 
 class LocalFirstSyncService:
@@ -64,6 +66,9 @@ class LocalFirstSyncService:
             Exception: Propagates server transport and local apply failures after recording
                 sync state.
         """
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api import SyncV2Envelope
+
 
         profile = self.state_repository.get_sync_v2_profile_state(
             server_profile_id=server_profile_id,
@@ -354,6 +359,9 @@ class LocalFirstSyncService:
 
     @staticmethod
     def _coerce_envelope(envelope: SyncV2Envelope | Mapping[str, Any]) -> SyncV2Envelope:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api import SyncV2Envelope
+
         if isinstance(envelope, SyncV2Envelope):
             return envelope
         return SyncV2Envelope.model_validate(envelope)

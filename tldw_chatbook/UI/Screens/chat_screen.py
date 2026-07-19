@@ -86,8 +86,8 @@ from ...Chat.console_session_settings import (
     ConsoleSettingsContextEstimate,
     ConsoleSettingsReadiness,
     ConsoleSettingsSummaryState,
+    _summary_row_value,
     build_console_context_estimate,
-    build_console_model_section_lines,
     build_console_rail_system_line,
     build_default_console_session_settings,
     build_console_settings_readiness,
@@ -137,6 +137,8 @@ from ...Chat.console_save_targets import (
     derive_console_save_title,
 )
 from ...Chat.console_live_work import (
+    PENDING_LAUNCH_CARD_ID,
+    SOURCE_READINESS_CARD_ID,
     ConsoleLiveWorkLaunch,
     ConsoleLiveWorkSourceReadinessState,
     ConsoleLiveWorkStatusCardState,
@@ -202,7 +204,7 @@ from ...UI.Workbench import (
 )
 from ...UI.Workbench.focus import WorkbenchFocusRegistry
 from ...state.ui_state import UIState
-from ...Widgets.AppFooterStatus import AppFooterStatus
+from ...Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
 from ...Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
 from ...Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 from ...Widgets.Console import (
@@ -252,6 +254,10 @@ from ...Workspaces.display_state import (
     ConsoleWorkspaceContextState,
     build_console_workspace_state,
     console_workspace_conversation_result_copy,
+)
+from ...Workspaces.registry_service import (
+    WorkspaceRegistryServiceError,
+    next_local_workspace_identity,
 )
 from ...Workspaces import (
     CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
@@ -369,6 +375,8 @@ CONSOLE_WORKBENCH_SHORTCUTS = (
     ("Shift+F6", "previous pane"),
     ("F1", "help"),
     ("Enter", "send"),
+    ("Ctrl+K", "switch session"),
+    ("Ctrl+T", "new tab"),
     ("Ctrl+P", "palette"),
 )
 def _is_empty_select_value(value: Any) -> bool:
@@ -543,13 +551,13 @@ class ChatScreen(BaseAppScreen):
         ),
         Binding("tab", "focus_next", "Focus Next", show=False),
         Binding("shift+tab", "focus_previous", "Focus Previous", show=False),
-        Binding("f1", "show_workbench_help", "Help", show=False),
-        Binding("f6", "focus_next_workbench_pane", "Next pane", show=False, priority=True),
+        Binding("f1", "show_workbench_help", "Help", show=True),
+        Binding("f6", "focus_next_workbench_pane", "Next pane", show=True, priority=True),
         Binding(
             "shift+f6",
             "focus_previous_workbench_pane",
             "Previous pane",
-            show=False,
+            show=True,
             priority=True,
         ),
         Binding("ctrl+k", "open_console_session_switcher", "Switch session", show=True),
@@ -979,24 +987,21 @@ class ChatScreen(BaseAppScreen):
                 return
 
     def _register_console_footer_shortcuts(self) -> None:
-        """Register Console Workbench shortcuts with the app footer if mounted."""
-        try:
-            footer = self.app.query_one(AppFooterStatus)
-        except QueryError:
-            return
-        set_shortcuts = getattr(footer, "set_workbench_shortcuts", None)
-        if callable(set_shortcuts):
-            set_shortcuts(source="console", shortcuts=CONSOLE_WORKBENCH_SHORTCUTS)
+        """Register Console Workbench shortcuts with this screen's own footer.
+
+        Routed through BaseAppScreen's persisting registration so the hints
+        survive any screen-level recompose, which replaces the footer widget.
+        (TASK-259: `_stage_console_library_rag_launch` no longer recomposes
+        the screen, but the fallback path and future recompose sources keep
+        this persisting registration load-bearing.)
+        """
+        self.register_footer_shortcuts(
+            source="console", shortcuts=CONSOLE_WORKBENCH_SHORTCUTS
+        )
 
     def _clear_console_footer_shortcuts(self) -> None:
-        """Clear Console Workbench shortcuts from the app footer if mounted."""
-        try:
-            footer = self.app.query_one(AppFooterStatus)
-        except QueryError:
-            return
-        clear_shortcuts = getattr(footer, "clear_shortcut_context", None)
-        if callable(clear_shortcuts):
-            clear_shortcuts(source="console")
+        """Clear Console Workbench shortcuts from this screen's own footer."""
+        self.clear_footer_shortcuts(source="console")
 
     def _open_console_session_rename_modal(self, session_id: str) -> None:
         """Open a modal for viewing and editing the active Console tab title."""
@@ -1262,8 +1267,40 @@ class ChatScreen(BaseAppScreen):
             ),
             callback=_apply_workspace_switch,
         )
-    
-    
+
+    @on(Button.Pressed, "#console-new-workspace")
+    def on_console_new_workspace(self, event: Button.Pressed) -> None:
+        """Create a new local workspace from the Console rail and activate it."""
+        event.stop()
+        registry_service = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry_service is None:
+            self.app_instance.notify(
+                "Workspace service is not ready.", severity="warning"
+            )
+            return
+        try:
+            workspace_id, workspace_name = next_local_workspace_identity(registry_service)
+            registry_service.create_workspace(
+                workspace_id=workspace_id,
+                name=workspace_name,
+                description="Local workspace created from Console.",
+            )
+            registry_service.set_active_workspace(workspace_id)
+        except WorkspaceRegistryServiceError:
+            logger.opt(exception=True).warning("Unable to create Console workspace")
+            self.app_instance.notify("Workspace could not be created.", severity="error")
+            return
+        except Exception:
+            logger.opt(exception=True).warning("Unexpected error creating Console workspace")
+            self.app_instance.notify("Workspace could not be created.", severity="error")
+            return
+        self._sync_console_chat_core_state()
+        self._activate_console_session_for_workspace(workspace_id)
+        self._sync_console_workspace_context()
+        self.run_worker(
+            self._sync_native_console_chat_ui(), exclusive=True, group="console-sync"
+        )
+
     # Reactive property for sidebar state persistence
     sidebar_state = reactive({}, layout=False)
     
@@ -1277,6 +1314,10 @@ class ChatScreen(BaseAppScreen):
         self._handoff_consumption_in_progress = False
         self._pending_console_launch_context: Optional[ConsoleLiveWorkLaunch] = None
         self._pending_console_launch_auto_open_inspector = False
+        # TASK-259: dedupe guard for the scheduled inspector-rail card swap
+        # (rapid searching->staged staging would otherwise remove+remount
+        # the card once per stage; each swap re-reads the current context).
+        self._console_live_work_card_swap_scheduled = False
         self._console_control_provider: Optional[Any] = None
         self._console_control_model: Optional[Any] = None
         self._console_library_rag_query = ""
@@ -1911,12 +1952,50 @@ class ChatScreen(BaseAppScreen):
             pass
         else:
             summary.sync_state(summary_state)
-        model_line1, model_line2 = build_console_model_section_lines(summary_state)
+        provider_value = _summary_row_value(summary_state.provider_row) or "—"
+        model_value = _summary_row_value(summary_state.model_row) or "—"
+        temperature_match = re.search(
+            r"T ([\d.]+)", summary_state.sampling_row or ""
+        )
+        temperature_value = (
+            temperature_match.group(1) if temperature_match else "—"
+        )
+        max_tokens_match = re.search(
+            r"max_tokens (\d+)", summary_state.sampling_row or ""
+        )
+        max_tokens_value = max_tokens_match.group(1) if max_tokens_match else "—"
+        readiness = (summary_state.readiness_label or "").strip()
+
         try:
-            self.query_one("#console-model-section-line1", Static).update(model_line1)
-            self.query_one("#console-model-section-line2", Static).update(model_line2)
+            self.query_one(
+                "#console-model-section-provider .console-model-section-value",
+                Static,
+            ).update(provider_value)
+            self.query_one(
+                "#console-model-section-model .console-model-section-value", Static
+            ).update(model_value)
+            self.query_one(
+                "#console-model-section-temperature .console-model-section-value",
+                Static,
+            ).update(temperature_value)
+            self.query_one(
+                "#console-model-section-max-tokens .console-model-section-value",
+                Static,
+            ).update(max_tokens_value)
         except (NoMatches, QueryError):
             pass
+
+        try:
+            recovery = self.query_one("#console-model-section-recovery", Static)
+        except (NoMatches, QueryError):
+            pass
+        else:
+            if readiness and readiness != "Ready":
+                recovery.update(readiness)
+                recovery.styles.display = "block"
+            else:
+                recovery.styles.display = "none"
+
         self._sync_console_rail_system_line()
         self._sync_console_agent_section()
 
@@ -2446,6 +2525,16 @@ class ChatScreen(BaseAppScreen):
             )
         self._console_chat_controller.on_submission_accepted = (
             self._on_console_submission_accepted
+        )
+        # MCP batch-approval bridge (task-5): `request_mcp_approvals` runs
+        # on the agent bridge's worker thread and needs both a
+        # `call_from_thread`-capable App handle and a UI-thread hook that
+        # pushes/clears the pending batch into this screen's task-resume
+        # state. `self.app_instance` IS the running `TldwCli` (an `App`
+        # subclass), so it already has `call_from_thread`.
+        self._console_chat_controller.app = self.app_instance
+        self._console_chat_controller.set_pending_approval = (
+            self._set_console_pending_approval
         )
         self._sync_console_chat_core_state()
         return self._console_chat_controller
@@ -3437,8 +3526,27 @@ class ChatScreen(BaseAppScreen):
                 if include_mode:
                     list_kwargs["mode"] = "local"
                 try:
-                    result = list_conversations(**list_kwargs)
-                    result = await result if inspect.isawaitable(result) else result
+                    if include_mode:
+                        # Routed through ChatConversationScopeService, which
+                        # already threads its own local-mode sync DB call
+                        # internally (B4/task-283) -- just await it.
+                        result = list_conversations(**list_kwargs)
+                        result = await result if inspect.isawaitable(result) else result
+                    else:
+                        # Raw ChatConversationService (scope_service.local_service
+                        # or app.local_chat_conversation_service): a plain sync
+                        # sqlite/FTS call that bypasses the scope service's own
+                        # threading. run_worker(coroutine) is not a thread, so
+                        # this used to block the event loop on every debounce
+                        # fire -- thread it directly, same is_memory_db guard as
+                        # ChatConversationScopeService._is_memory_backed (a
+                        # per-connection :memory: DB is only visible to the
+                        # thread that migrated it).
+                        db = getattr(service, "db", None)
+                        if bool(getattr(db, "is_memory_db", False)):
+                            result = list_conversations(**list_kwargs)
+                        else:
+                            result = await asyncio.to_thread(list_conversations, **list_kwargs)
                 except Exception as exc:
                     if (
                         isinstance(exc, ValueError)
@@ -5089,6 +5197,23 @@ class ChatScreen(BaseAppScreen):
     def _console_tool_count(self) -> int:
         return coerce_non_negative_int(getattr(self.app_instance, "console_tool_count", 0))
 
+    def _console_mcp_tool_count(self) -> Optional[int]:
+        """MCP catalog size for the run inspector's "MCP" row (P5-T6).
+
+        ``None`` (the default -- no seam wired) means "nothing to report":
+        no ``unified_mcp_service``, the kill switch is on, or this app
+        instance has not populated the hook yet -- ``ConsoleInspectorState.
+        from_values`` omits the "MCP" row entirely in that case, mirroring
+        ``_console_tool_count``'s own getattr-hook pattern above.
+        """
+        value = getattr(self.app_instance, "console_mcp_tool_count", None)
+        return None if value is None else coerce_non_negative_int(value)
+
+    def _console_mcp_not_connected_count(self) -> int:
+        return coerce_non_negative_int(
+            getattr(self.app_instance, "console_mcp_not_connected_count", 0)
+        )
+
     def _console_rag_source_status(
         self,
         pending_launch: Optional[ConsoleLiveWorkLaunch],
@@ -5183,6 +5308,8 @@ class ChatScreen(BaseAppScreen):
             ),
             tool_count=self._console_tool_count(),
             approval_count=self._console_pending_approval_count(),
+            mcp_tool_count=self._console_mcp_tool_count(),
+            mcp_not_connected_count=self._console_mcp_not_connected_count(),
             can_save_chatbook=can_save_chatbook,
         )
         setup_blocker_copy = self._console_provider_blocker_copy()
@@ -5570,24 +5697,52 @@ class ChatScreen(BaseAppScreen):
             severity="warning",
         )
 
-    def _render_console_live_work_status_card(self, launch: ConsoleLiveWorkLaunch) -> ComposeResult:
-        """Render a reusable live-work status card for Console launch context."""
+    def _build_console_live_work_status_card(
+        self, launch: ConsoleLiveWorkLaunch
+    ) -> Container:
+        """Build the mounted live-work status card for Console launch context.
+
+        Shared by compose-time rendering and the TASK-259 targeted card swap
+        in ``_apply_console_live_work_card_swap`` (which mounts the returned
+        container without recomposing the screen).
+
+        Args:
+            launch: Live-work launch metadata to display.
+
+        Returns:
+            The card container (id ``console-pending-launch-card``) with its
+            badge, optional primary action, and payload rows as children.
+        """
         card_state = ConsoleLiveWorkStatusCardState.from_launch(launch)
-        with Container(id=card_state.container_id, classes=card_state.container_classes):
-            yield Static(
+        children: list[Any] = [
+            Static(
                 card_state.badge_text,
                 id=card_state.badge_id,
                 classes=card_state.badge_classes,
             )
-            if card_state.primary_action is not None:
-                yield Button(
+        ]
+        if card_state.primary_action is not None:
+            children.append(
+                Button(
                     card_state.primary_action.label,
                     id=card_state.primary_action.widget_id,
                     classes=card_state.primary_action.classes,
                     variant="primary",
                 )
-            for row in card_state.rows:
-                yield Static(row.text, id=row.widget_id, classes=row.classes)
+            )
+        children.extend(
+            Static(row.text, id=row.widget_id, classes=row.classes)
+            for row in card_state.rows
+        )
+        return Container(
+            *children,
+            id=card_state.container_id,
+            classes=card_state.container_classes,
+        )
+
+    def _render_console_live_work_status_card(self, launch: ConsoleLiveWorkLaunch) -> ComposeResult:
+        """Render a reusable live-work status card for Console launch context."""
+        yield self._build_console_live_work_status_card(launch)
 
     def _console_library_rag_scope_label(self) -> str:
         return f"Scope: {', '.join(CONSOLE_LIBRARY_RAG_SOURCE_SCOPE)}"
@@ -5839,16 +5994,6 @@ class ChatScreen(BaseAppScreen):
             guidance_dismissed=self._console_guidance_dismissed,
         )
 
-    def _console_guidance_visible(self, blocker_copy: str | None = None) -> bool:
-        """Return whether first-run Console guidance should still be visible."""
-        if self._console_guidance_dismissed:
-            return False
-        if self._console_transcript_has_messages():
-            return False
-        if blocker_copy is None:
-            blocker_copy = self._console_provider_blocker_copy()
-        return not bool(blocker_copy)
-
     def _dismiss_console_guidance(self) -> None:
         """Hide first-run Console guidance after the user starts composing."""
         if self._console_guidance_dismissed:
@@ -5902,26 +6047,12 @@ class ChatScreen(BaseAppScreen):
     def _sync_console_transcript_guidance(self) -> None:
         """Refresh Console onboarding and provider recovery copy in place."""
         blocker_copy = self._console_provider_blocker_copy()
-        guidance_visible = self._console_guidance_visible(blocker_copy)
         action_label, _action_target, action_tooltip = self._console_provider_recovery_action()
         empty_action_label, empty_action_tooltip = self._console_empty_recovery_action_copy(
             blocker_copy,
             provider_action_label=action_label if blocker_copy else "",
             provider_action_tooltip=action_tooltip if blocker_copy else "",
         )
-        for selector, copy in (
-            ("#console-start-here", CONSOLE_START_HERE_COPY),
-            ("#console-action-hints", CONSOLE_ACTION_HINTS_COPY),
-        ):
-            try:
-                widget = self.query_one(selector, Static)
-            except QueryError:
-                continue
-            self._configure_console_copy_block(
-                widget,
-                copy,
-                visible=guidance_visible,
-            )
 
         card_state = self._build_console_setup_card_state()
         try:
@@ -6102,8 +6233,16 @@ class ChatScreen(BaseAppScreen):
         """Keep workspace context visually nested inside the framed left rail."""
         return "quiet"
 
-    def _render_console_live_work_source_readiness(self) -> ComposeResult:
-        """Render Console source readiness when no live-work item is staged."""
+    def _build_console_live_work_source_readiness_card(self) -> Container:
+        """Build the mounted source-readiness card shown without a launch.
+
+        Shared by compose-time rendering and the TASK-259 targeted card swap
+        (which mounts the returned container without recomposing the screen).
+
+        Returns:
+            The readiness container (id ``console-live-work-source-readiness``)
+            with title, Library RAG query controls, and per-source rows.
+        """
         acp_status = "not_configured"
         manager = getattr(self.app_instance, "acp_runtime_process_manager", None)
         snapshot = getattr(manager, "snapshot", None)
@@ -6112,36 +6251,48 @@ class ChatScreen(BaseAppScreen):
             if isinstance(raw_snapshot, dict):
                 acp_status = str(raw_snapshot.get("status") or acp_status)
         readiness = ConsoleLiveWorkSourceReadinessState.from_acp_runtime_status(acp_status)
-        container = Container(id=readiness.container_id, classes=readiness.container_classes)
-        container.styles.height = "auto"
-        container.styles.min_height = 0
-        with container:
-            yield Static(
+        query_ready = bool(
+            _sanitize_console_library_rag_query(self._console_library_rag_query)
+        )
+        children: list[Any] = [
+            Static(
                 readiness.title,
                 id=readiness.title_id,
                 classes=readiness.title_classes,
-            )
-            yield Static(
+            ),
+            Static(
                 self._console_library_rag_scope_label(),
                 id="console-library-rag-scope",
                 classes="destination-section console-library-rag-scope",
-            )
-            yield Input(
+            ),
+            Input(
                 value=self._console_library_rag_query,
                 placeholder="Ask Library sources before sending",
                 id="console-library-rag-query-input",
-            )
-            query_ready = bool(
-                _sanitize_console_library_rag_query(self._console_library_rag_query)
-            )
-            yield Button(
+            ),
+            Button(
                 "Run Library RAG",
                 id="console-run-library-rag",
                 disabled=not query_ready,
                 classes="destination-action-button console-library-rag-run",
-            )
-            for row in readiness.rows:
-                yield Static(row.text, id=row.widget_id, classes=row.classes)
+            ),
+        ]
+        children.extend(
+            Static(row.text, id=row.widget_id, classes=row.classes)
+            for row in readiness.rows
+        )
+        container = Container(
+            *children,
+            id=readiness.container_id,
+            classes=readiness.container_classes,
+        )
+        container.styles.height = "auto"
+        container.styles.min_height = 0
+        return container
+
+    def _render_console_live_work_source_readiness(self) -> ComposeResult:
+        """Render Console source readiness when no live-work item is staged."""
+        yield self._build_console_live_work_source_readiness_card()
 
     @on(Button.Pressed, "#console-live-work-primary-action")
     def handle_console_live_work_primary_action(self, event: Button.Pressed) -> None:
@@ -6210,8 +6361,127 @@ class ChatScreen(BaseAppScreen):
         self._execute_console_library_rag_search(request)
 
     def _stage_console_library_rag_launch(self, launch: ConsoleLiveWorkLaunch) -> None:
+        """Stage live-work launch context and refresh Console surfaces in place.
+
+        TASK-259: previously this recomposed the ENTIRE ChatScreen to show
+        one pending launch card. Now every mounted reader of
+        ``_pending_console_launch_context`` is refreshed with a targeted
+        update instead; the full recompose survives only as a fallback for
+        the never-composed case (Console shell not mounted yet).
+
+        Args:
+            launch: Live-work launch metadata to stage for Console.
+        """
         self._pending_console_launch_context = launch
-        self.refresh(recompose=True)
+        if not self._sync_console_pending_launch_surfaces():
+            self.refresh(recompose=True)
+
+    def _sync_console_pending_launch_surfaces(self) -> bool:
+        """Refresh every mounted reader of the pending launch context in place.
+
+        Reader audit (TASK-259) -- outputs of builders that read
+        ``_pending_console_launch_context`` and how each stays fresh here:
+
+        * ``_build_console_control_state`` -> control bar, Workbench header/
+          mode strip/command strip/recovery callout, hidden mode bar:
+          ``_sync_console_control_bar`` + ``_sync_console_mode_bar``.
+        * ``_build_console_inspector_state`` -> ``ConsoleRunInspector`` rows
+          and composer Chatbook action: pushed inside
+          ``_sync_console_control_bar``.
+        * ``_build_console_staged_context_state`` -> staged-context tray
+          (``_sync_console_staged_context_tray``), rail badges/summary and
+          the pending-launch inspector auto-open (both applied through the
+          rail-state build inside ``_sync_console_control_bar``), and the
+          settings context estimate (``_sync_console_settings_summary``).
+        * ``_current_console_workspace_context`` (staged sources include the
+          launch) -> workspace context + details trays:
+          ``_sync_console_workspace_context``.
+        * The pending-launch status card / source-readiness card in the
+          inspector rail: swapped via ``_apply_console_live_work_card_swap``.
+        * Remaining readers (``action_show_workbench_help``,
+          ``_sync_console_workbench_actions_from_draft``,
+          ``_console_send_blocked_reason``, the live-work/Chatbook button
+          handlers) build their state on demand at event time and cannot go
+          stale.
+
+        Returns:
+            True when the Console shell was mounted and synced; False when
+            the caller must fall back to a full recompose.
+        """
+        try:
+            self.query_one("#console-inspector-rail-body", VerticalScroll)
+        except QueryError:
+            return False
+        if not self._console_live_work_card_swap_scheduled:
+            self._console_live_work_card_swap_scheduled = True
+            self.call_later(self._apply_console_live_work_card_swap)
+        self._sync_console_staged_context_tray()
+        self._sync_console_control_bar()
+        self._sync_console_workspace_context()
+        self._sync_console_settings_summary()
+        self._sync_console_mode_bar()
+        return True
+
+    async def _apply_console_live_work_card_swap(self) -> None:
+        """Swap the inspector-rail live-work card to match the launch context.
+
+        Removes whichever of the pending-launch / source-readiness cards is
+        mounted, then mounts the card for the CURRENT context (re-read after
+        the awaits -- staging can happen again while a swap is in flight).
+        The scheduled flag stays set for the WHOLE swap, so a mid-swap
+        staging can never start a second, overlapping swap regardless of how
+        the caller reached the scheduler (PR #691 review); the tail re-check
+        below converges on the latest context instead.
+        """
+        swapped_context = None
+        swap_completed = False
+        try:
+            try:
+                rail_body = self.query_one(
+                    "#console-inspector-rail-body", VerticalScroll
+                )
+                anchor = self.query_one("#console-run-inspector", Vertical)
+            except QueryError:
+                return
+            for selector in (f"#{PENDING_LAUNCH_CARD_ID}", f"#{SOURCE_READINESS_CARD_ID}"):
+                try:
+                    stale_card = self.query_one(selector)
+                except QueryError:
+                    continue
+                await stale_card.remove()
+            launch = self._pending_console_launch_context
+            card = (
+                self._build_console_live_work_status_card(launch)
+                if launch is not None
+                else self._build_console_live_work_source_readiness_card()
+            )
+            await rail_body.mount(card, after=anchor)
+            swapped_context = launch
+            swap_completed = True
+        finally:
+            self._console_live_work_card_swap_scheduled = False
+        # Gate on completion: the rail-unmounted early return must NOT
+        # re-schedule, or a lingering context would loop this forever.
+        if swap_completed and self._pending_console_launch_context is not swapped_context:
+            # Staging changed the context after this swap's re-read; run one
+            # more swap so the mounted card converges on the latest context.
+            self._console_live_work_card_swap_scheduled = True
+            self.call_later(self._apply_console_live_work_card_swap)
+
+    def _sync_console_staged_context_tray(self) -> None:
+        """Refresh the mounted staged-context tray from the launch context."""
+        try:
+            tray = self.query_one(
+                "#console-staged-context-tray", ConsoleStagedContextTray
+            )
+        except QueryError:
+            return
+        state = self._build_console_staged_context_state(
+            self._pending_console_launch_context
+        )
+        tray.styles.min_height = 3 if state.is_empty else 4
+        tray.styles.max_height = 6 if state.is_empty else 10
+        tray.sync_state(state)
 
     @work(exclusive=True, group="console-library-rag-search")
     async def _execute_console_library_rag_search(self, request: LibraryRagSearchRequest) -> None:
@@ -6248,6 +6518,10 @@ class ChatScreen(BaseAppScreen):
             if recovery_state is not None
             else "Library Search/RAG did not return usable evidence."
         )
+        # TASK-259: set the auto-open flag BEFORE staging. Staging now syncs
+        # the rail state synchronously (no deferred screen recompose), so a
+        # flag set after the stage call would miss the rail-visibility pass.
+        self._pending_console_launch_auto_open_inspector = True
         self._stage_console_library_rag_launch(
             ConsoleLiveWorkLaunch.from_values(
                 source="Library Search/RAG",
@@ -6261,7 +6535,6 @@ class ChatScreen(BaseAppScreen):
                 action_label="Resolve Library RAG setup",
             )
         )
-        self._pending_console_launch_auto_open_inspector = True
         
     def compose_content(self) -> ComposeResult:
         """Compose the chat content."""
@@ -6285,12 +6558,14 @@ class ChatScreen(BaseAppScreen):
             f"density-{workbench_state.density}"
         )
         with Vertical(id="console-shell", classes=shell_classes):
-            yield self._hidden_console_workbench_widget(
-                DestinationHeader(
-                    workbench_state.header,
-                    id="console-workbench-header",
-                    classes="workbench-header",
-                )
+            # The destination identity header is the visible Console header;
+            # it stays live via _sync_console_workbench_state. The legacy
+            # #console-title/#console-purpose/#console-status-row compat
+            # statics below remain mounted but hidden for contract tests.
+            yield DestinationHeader(
+                workbench_state.header,
+                id="console-workbench-header",
+                classes="workbench-header",
             )
             yield self._hidden_console_workbench_widget(
                 ModeStrip(
@@ -6388,7 +6663,7 @@ class ChatScreen(BaseAppScreen):
                         # Titled distinctly from the "Context" (staged sources)
                         # rail section below so no two rail titles collide.
                         rail_label = Static(
-                            "Session & Context",
+                            "Console context",
                             id="console-context-rail-title",
                             classes="console-rail-title",
                         )
@@ -6400,7 +6675,7 @@ class ChatScreen(BaseAppScreen):
                             classes="console-rail-collapse-button",
                             compact=True,
                         )
-                        collapse_button.tooltip = "Collapse Session & Context rail"
+                        collapse_button.tooltip = "Collapse Console context rail"
                         collapse_button.styles.width = 3
                         collapse_button.styles.min_width = 3
                         collapse_button.styles.max_width = 3
@@ -6475,7 +6750,8 @@ class ChatScreen(BaseAppScreen):
                                 ),
                             )
 
-                        # Section 3: Model (compact settings summary).
+                        # Section 3: Model (provider/model readout lines plus a
+                        # Configure shortcut into the Console session settings).
                         yield ConsoleRailSectionHeader(
                             "Model",
                             section_id="model",
@@ -6490,30 +6766,95 @@ class ChatScreen(BaseAppScreen):
                         if not rail_state.model_open:
                             model_body.styles.display = "none"
                         with model_body:
-                            model_line1, model_line2 = build_console_model_section_lines(
-                                self._build_console_settings_summary_state()
+                            summary_state = self._build_console_settings_summary_state()
+                            provider_value = _summary_row_value(
+                                summary_state.provider_row
+                            ) or "—"
+                            model_value = _summary_row_value(
+                                summary_state.model_row
+                            ) or "—"
+                            temperature_match = re.search(
+                                r"T ([\d.]+)", summary_state.sampling_row or ""
                             )
-                            line1 = Static(
-                                model_line1,
-                                id="console-model-section-line1",
+                            temperature_value = (
+                                temperature_match.group(1)
+                                if temperature_match
+                                else "—"
+                            )
+                            max_tokens_match = re.search(
+                                r"max_tokens (\d+)", summary_state.sampling_row or ""
+                            )
+                            max_tokens_value = (
+                                max_tokens_match.group(1) if max_tokens_match else "—"
+                            )
+
+                            with Horizontal(
+                                id="console-model-section-provider",
                                 classes="console-model-section-line",
+                            ):
+                                yield Static(
+                                    "Provider",
+                                    classes="console-model-section-label",
+                                    markup=False,
+                                )
+                                yield Static(
+                                    provider_value,
+                                    classes="console-model-section-value",
+                                    markup=False,
+                                )
+                            with Horizontal(
+                                id="console-model-section-model",
+                                classes="console-model-section-line",
+                            ):
+                                yield Static(
+                                    "Model",
+                                    classes="console-model-section-label",
+                                    markup=False,
+                                )
+                                yield Static(
+                                    model_value,
+                                    classes="console-model-section-value",
+                                    markup=False,
+                                )
+                            with Horizontal(
+                                id="console-model-section-temperature",
+                                classes="console-model-section-line",
+                            ):
+                                yield Static(
+                                    "Temperature",
+                                    classes="console-model-section-label",
+                                    markup=False,
+                                )
+                                yield Static(
+                                    temperature_value,
+                                    classes="console-model-section-value",
+                                    markup=False,
+                                )
+                            with Horizontal(
+                                id="console-model-section-max-tokens",
+                                classes="console-model-section-line",
+                            ):
+                                yield Static(
+                                    "Max tokens",
+                                    classes="console-model-section-label",
+                                    markup=False,
+                                )
+                                yield Static(
+                                    max_tokens_value,
+                                    classes="console-model-section-value",
+                                    markup=False,
+                                )
+
+                            readiness = (summary_state.readiness_label or "").strip()
+                            recovery = Static(
+                                readiness or "",
+                                id="console-model-section-recovery",
+                                classes="console-model-section-recovery",
                                 markup=False,
                             )
-                            # The rail line is clipped to one row; without
-                            # nowrap a long model token word-wraps onto the
-                            # hidden second row and vanishes ("llama_cpp / ").
-                            line1.styles.text_wrap = "nowrap"
-                            line1.styles.text_overflow = "ellipsis"
-                            yield line1
-                            line2 = Static(
-                                model_line2,
-                                id="console-model-section-line2",
-                                classes="console-model-section-line",
-                                markup=False,
-                            )
-                            line2.styles.text_wrap = "nowrap"
-                            line2.styles.text_overflow = "ellipsis"
-                            yield line2
+                            recovery.styles.display = "none"
+                            yield recovery
+
                             system_line_text, system_line_dim = (
                                 self._console_rail_system_line_state()
                             )
@@ -6610,30 +6951,6 @@ class ChatScreen(BaseAppScreen):
                         top=False,
                     )
                     with transcript_region:
-                        provider_blocker_copy = self._console_provider_blocker_copy()
-                        guidance_visible = self._console_guidance_visible(provider_blocker_copy)
-                        start_here = Static(
-                            CONSOLE_START_HERE_COPY,
-                            id="console-start-here",
-                            classes="console-start-here",
-                        )
-                        self._configure_console_copy_block(
-                            start_here,
-                            CONSOLE_START_HERE_COPY,
-                            visible=guidance_visible,
-                        )
-                        yield start_here
-                        action_hints = Static(
-                            CONSOLE_ACTION_HINTS_COPY,
-                            id="console-action-hints",
-                            classes="console-action-hints",
-                        )
-                        self._configure_console_copy_block(
-                            action_hints,
-                            CONSOLE_ACTION_HINTS_COPY,
-                            visible=guidance_visible,
-                        )
-                        yield action_hints
                         yield self._ensure_console_session_surface()
 
                 right_rail = Vertical(
@@ -6750,8 +7067,7 @@ class ChatScreen(BaseAppScreen):
         """Run diagnostics when first mounted (only once)."""
         # Call parent's on_mount
         super().on_mount()
-        self._register_console_footer_shortcuts()
-        
+
         if not self._diagnostics_run and self.chat_window:
             self._diagnostics_run = True
             # Run diagnostic in the background for the legacy direct widget only.
@@ -6776,7 +7092,6 @@ class ChatScreen(BaseAppScreen):
 
     async def on_unmount(self) -> None:
         """Release Console-native resources owned by this screen."""
-        self._clear_console_footer_shortcuts()
         self._stop_console_transcript_sync_timer()
         controller = self._console_chat_controller
         if controller is not None:
@@ -7899,9 +8214,14 @@ class ChatScreen(BaseAppScreen):
             settings=self._default_console_session_settings(),
         )
         self._ensure_active_console_session_settings()
+        controller = getattr(self, "_console_chat_controller", None)
+        streaming_session_id = (
+            controller.streaming_session_id() if controller is not None else None
+        )
         await surface.sync_sessions(
             sessions=store.sessions(),
             active_session_id=store.active_session_id,
+            streaming_session_id=streaming_session_id,
         )
 
     async def _append_native_console_system_message(self, message: str) -> None:
@@ -8372,7 +8692,10 @@ class ChatScreen(BaseAppScreen):
             composer.clear_draft()
         elif composer.draft_text():
             # Appending onto an existing draft must never mash the two
-            # payloads together with no boundary between them.
+            # payloads together with no boundary between them. The composer
+            # caret is editable now, so seek the end first to keep this an
+            # append rather than a mid-draft splice.
+            composer.move_cursor_end()
             composer.insert_text("\n")
         composer.insert_text_as_paste(text)
         return True
@@ -9106,6 +9429,9 @@ class ChatScreen(BaseAppScreen):
                     "Nothing to insert from this file.", severity="warning"
                 )
                 return
+            # Attach appends to the draft: seek the editable caret to the end
+            # so file content never splices into the middle of a draft.
+            composer.move_cursor_end()
             composer.insert_file_segment(
                 attachment.text_content, f"📄 {attachment.label}"
             )
@@ -9203,15 +9529,31 @@ class ChatScreen(BaseAppScreen):
 
     @on(Button.Pressed, f"#{CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID}")
     def handle_console_inspector_review_approval(self, event: Button.Pressed) -> None:
-        """Keep approval review reachable from the Console inspector seam."""
+        """Focus the pending approval card from the Console inspector seam."""
         event.stop()
         if self._console_pending_approval_count() <= 0:
             self.app_instance.notify(CONSOLE_INSPECTOR_NO_APPROVAL_REASON, severity="warning")
             return
-        self.app_instance.notify(
-            "Approval review is available from the active Console task context.",
-            severity="information",
+        card = next(
+            (candidate for candidate in self.query("#chat-approval-card") if candidate.display),
+            None,
         )
+        if card is None:
+            self.app_instance.notify(CONSOLE_INSPECTOR_NO_APPROVAL_REASON, severity="warning")
+            return
+        try:
+            card.scroll_visible(animate=False)
+        except Exception:
+            pass
+        try:
+            batch_visible = card.query_one("#approval-batch-body").display
+        except Exception:
+            batch_visible = False
+        target_id = "#approval-submit" if batch_visible else "#approval-allow-once"
+        try:
+            card.query_one(target_id, Button).focus()
+        except Exception:
+            pass
 
     @on(Button.Pressed, f"#{CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_ID}")
     def handle_console_inspector_review_tool_call(self, event: Button.Pressed) -> None:
@@ -10235,9 +10577,48 @@ class ChatScreen(BaseAppScreen):
             event.stop()
             event.prevent_default()
             return
-        if event.key in {"backspace", "ctrl+h", "delete"}:
+        if event.key in {"backspace", "ctrl+h"}:
             composer.delete_left()
             self._sync_console_workbench_actions_from_draft()
+            event.stop()
+            event.prevent_default()
+            return
+        if event.key == "delete":
+            composer.delete_right()
+            self._sync_console_workbench_actions_from_draft()
+            event.stop()
+            event.prevent_default()
+            return
+        if event.key == "left":
+            composer.move_cursor_left()
+            event.stop()
+            event.prevent_default()
+            return
+        if event.key == "right":
+            composer.move_cursor_right()
+            event.stop()
+            event.prevent_default()
+            return
+        if event.key == "home":
+            composer.move_cursor_home()
+            event.stop()
+            event.prevent_default()
+            return
+        if event.key == "end":
+            composer.move_cursor_end()
+            event.stop()
+            event.prevent_default()
+            return
+        if event.key == "ctrl+w":
+            composer.delete_word_left()
+            self._sync_console_workbench_actions_from_draft()
+            event.stop()
+            event.prevent_default()
+            return
+        if event.key == "shift+enter":
+            composer.insert_text("\n")
+            self._sync_console_workbench_actions_from_draft()
+            self._dismiss_console_guidance()
             event.stop()
             event.prevent_default()
             return
@@ -11249,7 +11630,29 @@ class ChatScreen(BaseAppScreen):
 
         if self.chat_window:
             self.chat_window.sync_task_resume_state(self.chat_state.task_resume_state)
-    
+
+    def _set_console_pending_approval(self, approval: Dict[str, Any] | None) -> None:
+        """Set/clear the pending MCP approval batch, then sync the task cards.
+
+        UI-thread bridge target for ``ConsoleChatController.
+        request_mcp_approvals``, always invoked via ``app_instance.
+        call_from_thread`` from the controller's worker-thread approval
+        round (task-5). Mutates only ``pending_approval`` on the current
+        task-resume state via ``dataclasses.replace`` so an in-flight
+        resume summary/next-action is never clobbered by an approval round
+        starting or ending mid-turn.
+        """
+        current = self.chat_state.task_resume_state
+        self.set_task_resume_state(replace(current, pending_approval=approval))
+
+    @on(ChatApprovalCard.ApprovalDecided)
+    def handle_console_approval_decided(self, event: ChatApprovalCard.ApprovalDecided) -> None:
+        """Forward the user's batch decisions to the controller's waiting worker thread."""
+        event.stop()
+        controller = self._console_chat_controller
+        if controller is not None:
+            controller.resolve_pending_approval(event.decisions)
+
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """
         Handle button events at the screen level.

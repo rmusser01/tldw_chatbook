@@ -67,10 +67,7 @@ class ChatWindowEnhanced(Container):
     - Follows CSS separation of concerns
     - Implements proper worker thread safety
     """
-    
-    # Explicit CSS path declaration following best practices
-    CSS_PATH = "css/features/_chat.tcss"
-    
+
     BINDINGS = [
         ("ctrl+shift+left", "resize_sidebar_shrink", "Shrink sidebar"),
         ("ctrl+shift+right", "resize_sidebar_expand", "Expand sidebar"),

@@ -115,10 +115,15 @@ async def test_console_rail_system_line_click_opens_editor_modal():
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
-    async with host.run_test(size=(180, 48)) as pilot:
+    async with host.run_test(size=(180, 70)) as pilot:
         console = host.screen_stack[-1]
         baseline_depth = len(host.screen_stack)
         await _wait_for_selector(console, pilot, "#console-rail-system-line")
+
+        rail_body = console.query_one("#console-left-rail-body")
+        system_line = console.query_one("#console-rail-system-line")
+        rail_body.scroll_to_widget(system_line, animate=False)
+        await pilot.pause(0.1)
 
         await pilot.click("#console-rail-system-line")
         await pilot.pause(0.2)

@@ -21,8 +21,8 @@ def test_writing_screen_composes_writing_window():
 
     widgets = list(screen.compose_content())
 
-    assert len(widgets) == 1
-    assert isinstance(widgets[0], WritingWindow)
+    assert len(widgets) == 2  # destination header + writing window
+    assert isinstance(widgets[1], WritingWindow)
 
 
 def test_writing_screen_round_trips_window_state():
@@ -46,7 +46,7 @@ def test_writing_screen_applies_state_restored_before_compose():
     screen.restore_state({"source": "server"})
     widgets = list(screen.compose_content())
 
-    assert widgets[0].save_state() == {"source": "server"}
+    assert widgets[1].save_state() == {"source": "server"}
 
 
 class FakeWritingScopeService:

@@ -413,6 +413,7 @@ def test_lazy_screen_registry_resolves_visible_shell_destinations():
         "workflows": "WorkflowsScreen",
         "mcp": "MCPScreen",
         "acp": "ACPScreen",
+        "llm": "LLMScreen",
         "settings": "SettingsScreen",
     }
 
@@ -776,6 +777,64 @@ async def test_app_shutdown_helper_closes_server_context_provider_cached_client(
     assert provider.close_calls == 1
 
 
+@pytest.mark.asyncio
+async def test_app_shutdown_helper_disconnects_local_mcp_client_with_sessions():
+    class FakeMCPClient:
+        def __init__(self, sessions) -> None:
+            self.sessions = sessions
+            self.disconnect_calls = 0
+
+        async def disconnect_all(self) -> None:
+            self.disconnect_calls += 1
+
+    client = FakeMCPClient({"srv": object()})
+    app_like = SimpleNamespace(
+        local_mcp_control_service=SimpleNamespace(client=client)
+    )
+
+    await TldwCli._disconnect_local_mcp_client(app_like)
+
+    assert client.disconnect_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_app_shutdown_helper_skips_mcp_disconnect_when_no_sessions():
+    class FakeMCPClient:
+        def __init__(self, sessions) -> None:
+            self.sessions = sessions
+            self.disconnect_calls = 0
+
+        async def disconnect_all(self) -> None:
+            self.disconnect_calls += 1
+
+    client = FakeMCPClient({})
+    app_like = SimpleNamespace(
+        local_mcp_control_service=SimpleNamespace(client=client)
+    )
+
+    await TldwCli._disconnect_local_mcp_client(app_like)
+
+    assert client.disconnect_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_app_shutdown_helper_skips_mcp_disconnect_when_client_never_connected():
+    """`LocalMCPControlService.client` stays `None` until a profile is
+    actually connected -- must be a no-op, not an AttributeError."""
+    app_like = SimpleNamespace(
+        local_mcp_control_service=SimpleNamespace(client=None)
+    )
+
+    await TldwCli._disconnect_local_mcp_client(app_like)  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_app_shutdown_helper_skips_mcp_disconnect_when_service_missing():
+    app_like = SimpleNamespace()
+
+    await TldwCli._disconnect_local_mcp_client(app_like)  # must not raise
+
+
 def test_app_wires_local_and_server_skills_services():
     app = _build_test_app()
 
@@ -929,9 +988,9 @@ def test_media_screen_uses_shared_runtime_state():
 
     widgets = list(screen.compose_content())
 
-    assert len(widgets) == 1
+    assert len(widgets) == 2  # destination header + media window
     assert screen.media_runtime_state is app.media_runtime_state
-    assert screen.media_window is widgets[0]
+    assert screen.media_window is widgets[1]
     assert screen.media_window.runtime_state is app.media_runtime_state
 
 
@@ -945,38 +1004,6 @@ def test_media_ingest_screen_uses_shared_runtime_state():
     assert screen.media_runtime_state is app.media_runtime_state
     assert screen.media_ingest_window is widgets[0]
     assert screen.media_ingest_window.runtime_state is app.media_runtime_state
-
-
-@pytest.mark.asyncio
-async def test_tab_links_emit_navigation_messages():
-    from tldw_chatbook.UI.Tab_Links import TabLinks
-
-    messages_received = []
-
-    class TestApp(App):
-        def compose(self):
-            yield TabLinks(tab_ids=ALL_TABS, initial_active_tab="chat")
-
-        @on(NavigateToScreen)
-        def capture_navigation(self, message: NavigateToScreen) -> None:
-            messages_received.append(message)
-
-    app = TestApp()
-
-    async with app.run_test() as pilot:
-        tab_links = pilot.app.query_one(TabLinks)
-        media_link = tab_links.query_one("#tab-link-media")
-
-        original_get_widget_at = tab_links.app.get_widget_at
-        tab_links.app.get_widget_at = lambda _x, _y: (media_link, None)
-        try:
-            await tab_links.on_click(SimpleNamespace(screen_x=0, screen_y=0))
-            await pilot.pause(0.05)
-        finally:
-            tab_links.app.get_widget_at = original_get_widget_at
-
-    assert len(messages_received) == 1
-    assert messages_received[0].screen_name == "media"
 
 
 @pytest.mark.asyncio
@@ -1030,16 +1057,17 @@ def test_screen_lifecycle_methods():
 @pytest.mark.asyncio
 async def test_main_navigation_copy_and_order():
     expected_button_order = [
-        ("nav-home", "Home"),
-        ("nav-console", "Console"),
-        ("nav-library", "Library"),
-        ("nav-artifacts", "Artifacts"),
-        ("nav-personas", "Personas"),
-        ("nav-watchlists_collections", "Watchlists"),
-        ("nav-schedules", "Schedules"),
-        ("nav-workflows", "Workflows"),
-        ("nav-mcp", "MCP"),
-        ("nav-acp", "ACP"),
+        ("nav-home", "1 Home"),
+        ("nav-console", "2 Console"),
+        ("nav-library", "3 Library"),
+        ("nav-artifacts", "4 Artifacts"),
+        ("nav-personas", "5 Personas"),
+        ("nav-watchlists_collections", "6 Watchlists"),
+        ("nav-schedules", "7 Schedules"),
+        ("nav-workflows", "8 Workflows"),
+        ("nav-mcp", "9 MCP"),
+        ("nav-acp", "0 ACP"),
+        ("nav-lab", "Lab"),
         ("nav-settings", "Settings"),
     ]
 
@@ -1056,7 +1084,7 @@ async def test_main_navigation_copy_and_order():
         actual_button_order = [(button.id, str(button.label).strip()) for button in nav_buttons]
 
         assert actual_button_order == expected_button_order
-        assert str(app.query_one("#nav-console", Button).label).strip() == "Console"
+        assert str(app.query_one("#nav-console", Button).label).strip() == "2 Console"
         assert nav_buttons[0].id == "nav-home"
         assert nav_buttons[1].id == "nav-console"
         assert nav_buttons[-1].id == "nav-settings"

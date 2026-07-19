@@ -140,7 +140,7 @@ class CharactersRAGDB:
         is_memory_db (bool): True if the database is in-memory.
         db_path_str (str): String representation of the database path for SQLite connection.
     """
-    _CURRENT_SCHEMA_VERSION = 20  # Adds per-conversation metadata (P1e).
+    _CURRENT_SCHEMA_VERSION = 21  # Adds world_book_entries.priority (P2c).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -148,6 +148,11 @@ class CharactersRAGDB:
     _ALLOWED_PERSONA_MEMORY_MODES = ("read_only", "read_write")
     _ALLOWED_CONVERSATION_CHARACTER_SCOPES = ("all", "character", "generic")
     _ALLOWED_SCOPE_TYPES = ("global", "workspace")
+    # task-261: how long a thread-local connection may sit unused before the
+    # next `get_connection()` re-verifies it with a `SELECT 1` liveness ping.
+    # Within this window the ping is skipped (it used to run on every call,
+    # ~doubling raw statement counts on query-heavy paths).
+    _LIVENESS_PING_IDLE_SECONDS = 30.0
 
     _FULL_SCHEMA_SQL_V4 = """
 /*───────────────────────────────────────────────────────────────
@@ -1199,6 +1204,7 @@ CREATE TABLE IF NOT EXISTS world_book_entries(
   enabled         BOOLEAN  DEFAULT 1,
   position        TEXT     DEFAULT 'before_char', -- before_char, after_char, at_start, at_end
   insertion_order INTEGER  DEFAULT 0,
+  priority        INTEGER  DEFAULT 0,
   selective       BOOLEAN  DEFAULT 0,
   secondary_keys  TEXT,    -- JSON array of secondary keywords
   case_sensitive  BOOLEAN  DEFAULT 0,
@@ -1346,14 +1352,14 @@ END;
 CREATE TRIGGER world_book_entries_sync_create
 AFTER INSERT ON world_book_entries BEGIN
   INSERT INTO sync_log(entity, entity_id, operation, timestamp, client_id, version, payload)
-  VALUES('world_book_entries', CAST(NEW.id AS TEXT), 'create', NEW.last_modified, 
+  VALUES('world_book_entries', CAST(NEW.id AS TEXT), 'create', NEW.last_modified,
          (SELECT client_id FROM world_books WHERE id = NEW.world_book_id), 1,
          json_object('id', NEW.id, 'world_book_id', NEW.world_book_id, 'keys', NEW.keys,
                      'content', NEW.content, 'enabled', NEW.enabled, 'position', NEW.position,
-                     'insertion_order', NEW.insertion_order, 'selective', NEW.selective,
-                     'secondary_keys', NEW.secondary_keys, 'case_sensitive', NEW.case_sensitive,
-                     'extensions', NEW.extensions, 'created_at', NEW.created_at,
-                     'last_modified', NEW.last_modified));
+                     'insertion_order', NEW.insertion_order, 'priority', NEW.priority,
+                     'selective', NEW.selective, 'secondary_keys', NEW.secondary_keys,
+                     'case_sensitive', NEW.case_sensitive, 'extensions', NEW.extensions,
+                     'created_at', NEW.created_at, 'last_modified', NEW.last_modified));
 END;
 
 CREATE TRIGGER world_book_entries_sync_update
@@ -1363,6 +1369,7 @@ WHEN OLD.keys IS NOT NEW.keys OR
      OLD.enabled IS NOT NEW.enabled OR
      OLD.position IS NOT NEW.position OR
      OLD.insertion_order IS NOT NEW.insertion_order OR
+     OLD.priority IS NOT NEW.priority OR
      OLD.selective IS NOT NEW.selective OR
      OLD.secondary_keys IS NOT NEW.secondary_keys OR
      OLD.case_sensitive IS NOT NEW.case_sensitive OR
@@ -1373,10 +1380,10 @@ BEGIN
          (SELECT client_id FROM world_books WHERE id = NEW.world_book_id), 1,
          json_object('id', NEW.id, 'world_book_id', NEW.world_book_id, 'keys', NEW.keys,
                      'content', NEW.content, 'enabled', NEW.enabled, 'position', NEW.position,
-                     'insertion_order', NEW.insertion_order, 'selective', NEW.selective,
-                     'secondary_keys', NEW.secondary_keys, 'case_sensitive', NEW.case_sensitive,
-                     'extensions', NEW.extensions, 'created_at', NEW.created_at,
-                     'last_modified', NEW.last_modified));
+                     'insertion_order', NEW.insertion_order, 'priority', NEW.priority,
+                     'selective', NEW.selective, 'secondary_keys', NEW.secondary_keys,
+                     'case_sensitive', NEW.case_sensitive, 'extensions', NEW.extensions,
+                     'created_at', NEW.created_at, 'last_modified', NEW.last_modified));
 END;
 
 CREATE TRIGGER world_book_entries_sync_delete
@@ -2332,6 +2339,55 @@ UPDATE db_schema_version
 """
 
     # Keep this runner SQL aligned with
+    # tldw_chatbook/DB/migrations/chachanotes_v20_to_v21_world_book_entry_priority.sql.
+    _MIGRATE_V20_TO_V21_SQL = """
+DROP TRIGGER IF EXISTS world_book_entries_sync_create;
+DROP TRIGGER IF EXISTS world_book_entries_sync_update;
+
+CREATE TRIGGER world_book_entries_sync_create
+AFTER INSERT ON world_book_entries BEGIN
+  INSERT INTO sync_log(entity, entity_id, operation, timestamp, client_id, version, payload)
+  VALUES('world_book_entries', CAST(NEW.id AS TEXT), 'create', NEW.last_modified,
+         (SELECT client_id FROM world_books WHERE id = NEW.world_book_id), 1,
+         json_object('id', NEW.id, 'world_book_id', NEW.world_book_id, 'keys', NEW.keys,
+                     'content', NEW.content, 'enabled', NEW.enabled, 'position', NEW.position,
+                     'insertion_order', NEW.insertion_order, 'priority', NEW.priority,
+                     'selective', NEW.selective, 'secondary_keys', NEW.secondary_keys,
+                     'case_sensitive', NEW.case_sensitive, 'extensions', NEW.extensions,
+                     'created_at', NEW.created_at, 'last_modified', NEW.last_modified));
+END;
+
+CREATE TRIGGER world_book_entries_sync_update
+AFTER UPDATE ON world_book_entries
+WHEN OLD.keys IS NOT NEW.keys OR
+     OLD.content IS NOT NEW.content OR
+     OLD.enabled IS NOT NEW.enabled OR
+     OLD.position IS NOT NEW.position OR
+     OLD.insertion_order IS NOT NEW.insertion_order OR
+     OLD.priority IS NOT NEW.priority OR
+     OLD.selective IS NOT NEW.selective OR
+     OLD.secondary_keys IS NOT NEW.secondary_keys OR
+     OLD.case_sensitive IS NOT NEW.case_sensitive OR
+     OLD.extensions IS NOT NEW.extensions
+BEGIN
+  INSERT INTO sync_log(entity, entity_id, operation, timestamp, client_id, version, payload)
+  VALUES('world_book_entries', CAST(NEW.id AS TEXT), 'update', NEW.last_modified,
+         (SELECT client_id FROM world_books WHERE id = NEW.world_book_id), 1,
+         json_object('id', NEW.id, 'world_book_id', NEW.world_book_id, 'keys', NEW.keys,
+                     'content', NEW.content, 'enabled', NEW.enabled, 'position', NEW.position,
+                     'insertion_order', NEW.insertion_order, 'priority', NEW.priority,
+                     'selective', NEW.selective, 'secondary_keys', NEW.secondary_keys,
+                     'case_sensitive', NEW.case_sensitive, 'extensions', NEW.extensions,
+                     'created_at', NEW.created_at, 'last_modified', NEW.last_modified));
+END;
+
+UPDATE db_schema_version
+   SET version = 21
+ WHERE schema_name = 'rag_char_chat_schema'
+   AND version = 20;
+"""
+
+    # Keep this runner SQL aligned with
     # tldw_chatbook/DB/migrations/chachanotes_v18_to_v19_message_attachments.sql.
     _MIGRATE_V18_TO_V19_SQL = """
 CREATE TABLE IF NOT EXISTS message_attachments(
@@ -2423,6 +2479,15 @@ UPDATE db_schema_version
         Enables WAL mode for file-based databases and sets PRAGMA foreign_keys=ON.
         Sets a timeout for database operations.
 
+        task-261: the ``SELECT 1`` liveness ping used to run on EVERY call,
+        roughly doubling the raw statement count for query-heavy paths. It is
+        now gated behind an idle threshold (``_LIVENESS_PING_IDLE_SECONDS``):
+        connections here are thread-local and long-lived, and
+        ``close_connection()`` always clears the thread-local reference, so a
+        recently-used connection is known-good without a ping. A connection
+        idle past the threshold still gets the full ping + transparent-reopen
+        treatment.
+
         Returns:
             A thread-local sqlite3.Connection object.
 
@@ -2431,17 +2496,19 @@ UPDATE db_schema_version
         """
         conn = getattr(self._local, 'conn', None)
         if conn:
-            try:
-                conn.execute("SELECT 1")  # Check if connection is still alive
-            except (sqlite3.ProgrammingError, sqlite3.OperationalError):
-                logger.warning(
-                    f"Thread-local connection for {self.db_path_str} was closed or became unusable. Reopening.")
+            last_used = getattr(self._local, 'conn_last_used', None)
+            if last_used is None or (time.monotonic() - last_used) >= self._LIVENESS_PING_IDLE_SECONDS:
                 try:
-                    conn.close()
-                except sqlite3.Error:
-                    # Ignore connection close errors - connection may already be closed
-                    pass
-                conn = None
+                    conn.execute("SELECT 1")  # Check if connection is still alive
+                except (sqlite3.ProgrammingError, sqlite3.OperationalError):
+                    logger.warning(
+                        f"Thread-local connection for {self.db_path_str} was closed or became unusable. Reopening.")
+                    try:
+                        conn.close()
+                    except sqlite3.Error:
+                        # Ignore connection close errors - connection may already be closed
+                        pass
+                    conn = None
 
         if not conn:
             try:
@@ -2463,6 +2530,7 @@ UPDATE db_schema_version
                 logger.opt(exception=True).error(f"Failed to connect to database {self.db_path_str}: {e}")
                 self._local.conn = None
                 raise CharactersRAGDBError(f"Failed to connect to database '{self.db_path_str}': {e}") from e
+        self._local.conn_last_used = time.monotonic()
         return self._local.conn
 
     def get_connection(self) -> sqlite3.Connection:
@@ -3287,6 +3355,42 @@ UPDATE db_schema_version
             logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V19→V20] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V19 to V20 for '{self._SCHEMA_NAME}': {e}") from e
 
+    def _migrate_from_v20_to_v21(self, conn: sqlite3.Connection):
+        """
+        Migrates the database schema from version 20 to version 21.
+
+        This migration adds a ``priority`` column to ``world_book_entries``
+        (entry injection priority / budget-survival weight), and redefines
+        the ``world_book_entries_sync_*`` triggers so edits to the new
+        column are reflected in ``sync_log``.
+        """
+        logger.info(f"Migrating schema from V20 to V21 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        try:
+            # Idempotent column add: SQLite has no ``ADD COLUMN IF NOT EXISTS``, so
+            # skip the ALTER when a replayed/partial migration already left the
+            # column in place (mirrors the v19->v20 ``metadata`` column guard).
+            existing_columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(world_book_entries)").fetchall()
+            }
+            if "priority" not in existing_columns:
+                conn.execute("ALTER TABLE world_book_entries ADD COLUMN priority INTEGER DEFAULT 0")
+            conn.executescript(self._MIGRATE_V20_TO_V21_SQL)
+            logger.debug(f"[{self._SCHEMA_NAME} V20→V21] Migration script executed.")
+
+            final_version = self._get_db_version(conn)
+            if final_version != 21:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V20→V21] Migration version check failed. Expected 21, got: {final_version}"
+                )
+
+            logger.info(f"[{self._SCHEMA_NAME} V20→V21] Migration completed successfully for DB: {self.db_path_str}.")
+        except sqlite3.Error as e:
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V20→V21] Migration failed: {e}")
+            raise SchemaError(f"Migration from V20 to V21 failed for '{self._SCHEMA_NAME}': {e}") from e
+        except Exception as e:
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V20→V21] Unexpected error during migration: {e}")
+            raise SchemaError(f"Unexpected error migrating from V20 to V21 for '{self._SCHEMA_NAME}': {e}") from e
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -3404,6 +3508,7 @@ UPDATE db_schema_version
                     17: self._migrate_from_v17_to_v18,
                     18: self._migrate_from_v18_to_v19,
                     19: self._migrate_from_v19_to_v20,
+                    20: self._migrate_from_v20_to_v21,
                 }
 
                 if current_db_version == 0:
@@ -5887,20 +5992,40 @@ UPDATE db_schema_version
         return result
 
     def get_messages_for_conversation(self, conversation_id: str, limit: int = 100, offset: int = 0,
-                                      order_by_timestamp: str = "ASC") -> List[Dict[str, Any]]:
-        """
-        Lists messages for a specific conversation.
-        Returns non-deleted messages, ordered by `timestamp` according to `order_by_timestamp`.
-        Crucially, it also ensures the parent conversation is not soft-deleted.
+                                      order_by_timestamp: str = "ASC",
+                                      include_image_data: bool = True) -> List[Dict[str, Any]]:
+        """Lists non-deleted messages for a non-deleted conversation.
+
+        Ordered by ``timestamp`` according to ``order_by_timestamp``. The
+        JOIN also ensures the parent conversation is not soft-deleted.
+
+        Args:
+            conversation_id: Conversation UUID to fetch messages for.
+            limit: Maximum number of messages to return.
+            offset: Number of messages to skip (pagination).
+            order_by_timestamp: "ASC" or "DESC".
+            include_image_data: When False, the ``image_data`` BLOB column is
+                returned as None (key still present) so text-only callers --
+                snippet builders, mindmaps -- skip the BLOB I/O (task-260).
+                ``image_mime_type`` is always returned, so callers can still
+                tell an image exists.
+
+        Returns:
+            A list of message dicts in the requested order.
+
+        Raises:
+            InputError: If ``order_by_timestamp`` is not "ASC"/"DESC".
+            CharactersRAGDBError: For database errors.
         """
         if order_by_timestamp.upper() not in ["ASC", "DESC"]:
             raise InputError("order_by_timestamp must be 'ASC' or 'DESC'.")
 
-        # The new query joins with conversations to check its 'deleted' status.
+        image_col = "m.image_data" if include_image_data else "NULL AS image_data"
+        # The query joins with conversations to check its 'deleted' status.
         # Now includes variant fields for message variant support
         query = f"""
             SELECT m.id, m.conversation_id, m.parent_message_id, m.sender, m.content, 
-                   m.image_data, m.image_mime_type, m.timestamp, m.ranking, 
+                   {image_col}, m.image_mime_type, m.timestamp, m.ranking, 
                    m.last_modified, m.version, m.client_id, m.deleted, m.feedback, m.role,
                    m.variant_of, m.variant_number, m.is_selected_variant, m.total_variants
             FROM messages m
@@ -5919,7 +6044,8 @@ UPDATE db_schema_version
             raise
 
     def get_messages_for_conversations_batch(self, conversation_ids: List[str], limit_per_conversation: int = 100,
-                                           order_by_timestamp: str = "ASC") -> Dict[str, List[Dict[str, Any]]]:
+                                           order_by_timestamp: str = "ASC",
+                                           include_image_data: bool = True) -> Dict[str, List[Dict[str, Any]]]:
         """
         Batch fetch messages for multiple conversations to avoid N+1 queries.
         
@@ -5927,9 +6053,17 @@ UPDATE db_schema_version
             conversation_ids: List of conversation IDs to fetch messages for
             limit_per_conversation: Maximum messages per conversation
             order_by_timestamp: Order by timestamp ASC or DESC
+            include_image_data: When False, the ``image_data`` BLOB column is
+                returned as None (key still present) so text-only callers skip
+                the BLOB I/O (task-260). ``image_mime_type`` is always
+                returned.
             
         Returns:
             Dictionary mapping conversation_id to list of messages
+            
+        Raises:
+            InputError: If ``order_by_timestamp`` is not "ASC"/"DESC".
+            CharactersRAGDBError: For database errors.
         """
         if not conversation_ids:
             return {}
@@ -5937,12 +6071,13 @@ UPDATE db_schema_version
         if order_by_timestamp.upper() not in ["ASC", "DESC"]:
             raise InputError("order_by_timestamp must be 'ASC' or 'DESC'.")
         
+        image_col = "m.image_data" if include_image_data else "NULL AS image_data"
         # Use ROW_NUMBER() window function to limit messages per conversation
         placeholders = ','.join('?' * len(conversation_ids))
         query = f"""
             WITH ranked_messages AS (
                 SELECT m.id, m.conversation_id, m.parent_message_id, m.sender, m.content, 
-                       m.image_data, m.image_mime_type, m.timestamp, m.ranking, 
+                       {image_col}, m.image_mime_type, m.timestamp, m.ranking, 
                        m.last_modified, m.version, m.client_id, m.deleted, m.feedback, m.role,
                        ROW_NUMBER() OVER (PARTITION BY m.conversation_id ORDER BY m.timestamp {order_by_timestamp}) as row_num
                 FROM messages m

@@ -103,7 +103,7 @@ def test_open_chat_with_handoff_refuses_when_tabs_disabled():
 
 
 def test_open_chat_with_handoff_blocked_message_defaults_to_use_in_chat():
-    """Legacy callers (MediaWindow_v2, search_rag_window, SearchWindow, the
+    """Legacy callers (MediaWindow_v2, search_rag_window, the
     standalone Notes tab, Study/Skills/Watchlists/Personas screens) don't
     pass ``action_label`` and must keep seeing today's exact wording -- the
     shared ``open_chat_with_handoff`` blocked-tabs gate is reachable from

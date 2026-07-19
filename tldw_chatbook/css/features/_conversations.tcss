@@ -34,28 +34,6 @@
     display: none !important;
 }
 
-/* Sidebar toggle button */
-.ccp-sidebar-toggle-button {
-    width: 3;
-    height: 100%;
-    min-width: 3;
-    border: none;
-    background: $surface-darken-1;
-    color: $text;
-    dock: left;
-}
-
-.ccp-sidebar-toggle-button:hover {
-    background: $surface;
-}
-
-/* --- Content Area Styling --- */
-.ccp-content-area {
-    width: 1fr; /* Takes remaining space after sidebar */
-    height: 100%;
-    padding: 1;
-    overflow-y: auto;
-}
 
 /* --- View Areas within Content --- */
 .ccp-view-area {

@@ -51,6 +51,10 @@ class PipelineContext(TypedDict, total=False):
     sources: Dict[str, bool]
     params: Dict[str, Any]
     results: List[SearchResult]  # Current results
+    # Per-leg availability states collected during execution, e.g. the
+    # semantic leg's unavailable/empty-index reasons (task-250). Keyed by
+    # leg name (see semantic_availability.SEMANTIC_DIAGNOSTICS_KEY).
+    diagnostics: Dict[str, Any]
 
 
 @dataclass

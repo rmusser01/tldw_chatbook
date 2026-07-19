@@ -85,7 +85,9 @@ class MindmapIntegration:
         
         # Add messages if requested
         if include_messages:
-            messages = self.db.get_messages_for_conversation(conversation_id, limit=max_messages)
+            messages = self.db.get_messages_for_conversation(
+                conversation_id, limit=max_messages, include_image_data=False
+            )
             
             if messages:
                 messages_node = Node(

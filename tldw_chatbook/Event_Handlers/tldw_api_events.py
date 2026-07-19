@@ -3,6 +3,8 @@
 # TLDW API form handling and submission event handlers
 #
 # Imports
+from __future__ import annotations
+
 import json
 from os import getenv
 from typing import TYPE_CHECKING, Optional, List, Any, Dict, Union
@@ -18,17 +20,20 @@ from ..Constants import ALL_TLDW_API_OPTION_CONTAINERS
 from ..UI.MediaIngestWindowRebuilt import MediaIngestWindowRebuilt as IngestWindow
 from ..config import get_cli_setting
 from ..runtime_policy.bootstrap import build_runtime_api_client
-from ..tldw_api import (
-    ProcessVideoRequest, ProcessAudioRequest,
-    APIConnectionError, APIRequestError, APIResponseError, AuthenticationError,
-    MediaItemProcessResult, ProcessedMediaWikiPage, BatchMediaProcessResponse,
-    ProcessPDFRequest, ProcessEbookRequest, ProcessDocumentRequest,
-    ProcessXMLRequest, ProcessMediaWikiRequest, ProcessPlaintextRequest,
-    BatchProcessXMLResponse
-)
 
 if TYPE_CHECKING:
     from ..app import TldwCli
+    from ..tldw_api import (
+        MediaItemProcessResult,
+        ProcessAudioRequest,
+        ProcessDocumentRequest,
+        ProcessEbookRequest,
+        ProcessMediaWikiRequest,
+        ProcessPDFRequest,
+        ProcessPlaintextRequest,
+        ProcessVideoRequest,
+        ProcessXMLRequest,
+    )
 
 # --- TLDW API Form Handlers ---
 async def handle_tldw_api_auth_method_changed(app: 'TldwCli', event: Union[Select.Changed, str]) -> None:
@@ -210,6 +215,9 @@ def _collect_common_form_data(app: 'TldwCli', media_type: str) -> Dict[str, Any]
 
 def _collect_video_specific_data(app: 'TldwCli', common_data: Dict[str, Any], media_type: str) -> ProcessVideoRequest:
     """Collects video-specific data from the form."""
+    # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+    from ..tldw_api import ProcessVideoRequest
+
     try:
         diarize = app.query_one(f"#tldw-api-diarize-{media_type}", Checkbox).value
         transcription_model = app.query_one(f"#tldw-api-transcription-model-{media_type}", Select).value
@@ -244,6 +252,9 @@ def _collect_video_specific_data(app: 'TldwCli', common_data: Dict[str, Any], me
 
 def _collect_audio_specific_data(app: 'TldwCli', common_data: Dict[str, Any], media_type: str) -> ProcessAudioRequest:
     """Collects audio-specific data from the form."""
+    # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+    from ..tldw_api import ProcessAudioRequest
+
     try:
         diarize = app.query_one(f"#tldw-api-diarize-{media_type}", Checkbox).value
         transcription_model = app.query_one(f"#tldw-api-transcription-model-{media_type}", Select).value
@@ -278,6 +289,9 @@ def _collect_audio_specific_data(app: 'TldwCli', common_data: Dict[str, Any], me
 
 def _collect_pdf_specific_data(app: 'TldwCli', common_data: Dict[str, Any], media_type: str) -> ProcessPDFRequest:
     """Collects PDF-specific data from the form."""
+    # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+    from ..tldw_api import ProcessPDFRequest
+
     return ProcessPDFRequest(
         urls=common_data.get("urls"),
         custom_prompt=common_data.get("custom_prompt"),
@@ -295,6 +309,9 @@ def _collect_pdf_specific_data(app: 'TldwCli', common_data: Dict[str, Any], medi
 
 def _collect_ebook_specific_data(app: 'TldwCli', common_data: Dict[str, Any], media_type: str) -> ProcessEbookRequest:
     """Collects e-book specific data from the form."""
+    # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+    from ..tldw_api import ProcessEbookRequest
+
     return ProcessEbookRequest(
         urls=common_data.get("urls"),
         custom_prompt=common_data.get("custom_prompt"),
@@ -312,6 +329,9 @@ def _collect_ebook_specific_data(app: 'TldwCli', common_data: Dict[str, Any], me
 
 def _collect_document_specific_data(app: 'TldwCli', common_data: Dict[str, Any], media_type: str) -> ProcessDocumentRequest:
     """Collects document-specific data from the form."""
+    # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+    from ..tldw_api import ProcessDocumentRequest
+
     return ProcessDocumentRequest(
         urls=common_data.get("urls"),
         custom_prompt=common_data.get("custom_prompt"),
@@ -329,6 +349,9 @@ def _collect_document_specific_data(app: 'TldwCli', common_data: Dict[str, Any],
 
 def _collect_plaintext_specific_data(app: 'TldwCli', common_data: Dict[str, Any], media_type: str) -> ProcessPlaintextRequest:
     """Collects plaintext-specific data from the form."""
+    # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+    from ..tldw_api import ProcessPlaintextRequest
+
     return ProcessPlaintextRequest(
         urls=common_data.get("urls"),
         custom_prompt=common_data.get("custom_prompt"),
@@ -346,6 +369,9 @@ def _collect_plaintext_specific_data(app: 'TldwCli', common_data: Dict[str, Any]
 
 def _collect_xml_specific_data(app: 'TldwCli', common_api_data: Dict[str, Any], media_type: str) -> ProcessXMLRequest:
     """Collects XML-specific data from the form."""
+    # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+    from ..tldw_api import ProcessXMLRequest
+
     try:
         # Parse per_segment_summary
         per_segment_summary_input = app.query_one(f"#tldw-api-per-segment-summary-{media_type}", Input)
@@ -375,6 +401,9 @@ def _collect_xml_specific_data(app: 'TldwCli', common_api_data: Dict[str, Any], 
 
 def _collect_mediawiki_specific_data(app: 'TldwCli', common_api_data: Dict[str, Any], media_type: str) -> ProcessMediaWikiRequest:
     """Collects MediaWiki-specific data from the form."""
+    # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+    from ..tldw_api import ProcessMediaWikiRequest
+
     try:
         namespaces_val = app.query_one(f"#tldw-api-namespaces-{media_type}", Input).value.strip()
         namespaces_list = None
@@ -618,6 +647,14 @@ async def handle_tldw_api_submit_button_pressed(app: 'TldwCli', event: Button.Pr
 
     def on_worker_success(response_data: Any):
         # Query the specific UI elements for this tab
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import (
+            BatchMediaProcessResponse,
+            BatchProcessXMLResponse,
+            MediaItemProcessResult,
+            ProcessedMediaWikiPage,
+        )
+
         try:
             current_loading_indicator = app.query_one(f"#tldw-api-loading-indicator-{selected_media_type}", LoadingIndicator)
             current_loading_indicator.display = False
@@ -798,6 +835,9 @@ async def handle_tldw_api_submit_button_pressed(app: 'TldwCli', event: Button.Pr
         app.notify(notify_msg, severity="information" if error_count == 0 and processed_count > 0 else "warning", timeout=6)
 
     def on_worker_failure(error: Exception):
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import APIConnectionError, APIRequestError, APIResponseError, AuthenticationError
+
         try:
             current_loading_indicator = app.query_one(f"#tldw-api-loading-indicator-{selected_media_type}", LoadingIndicator)
             current_loading_indicator.display = False

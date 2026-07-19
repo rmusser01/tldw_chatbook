@@ -123,6 +123,11 @@ class FakeRAGService:
             for d in documents
         ]
 
+    async def search(self, *args, **kwargs):
+        """Search seam: the shared-service resolver only accepts runtimes
+        with a callable ``search`` (task-250 availability validation)."""
+        return []
+
 
 @pytest.fixture
 def fake_service():

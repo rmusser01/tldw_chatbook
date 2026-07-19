@@ -118,12 +118,6 @@ ChatbooksWindow {
     padding: 2;
 }
 
-/* Templates text */
-.templates-text {
-    color: $text;
-    padding: 2;
-}
-
 /* Chatbook details */
 .chatbook-details {
     layout: vertical;

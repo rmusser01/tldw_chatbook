@@ -185,14 +185,6 @@ Switch:focus {
     margin: 1 0;
 }
 
-.form-label-primary {
-    text-style: bold;
-    color: $primary;
-    margin-bottom: 1;
-    border-bottom: solid $primary;
-    padding-bottom: 1;
-}
-
 /* Responsive metadata columns */
 .metadata-row {
     layout: horizontal;

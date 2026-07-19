@@ -18,6 +18,60 @@ from ..UI.Navigation.shortcut_context import ShortcutAction, ShortcutContext
 class AppFooterStatus(Widget):
     DEFAULT_SHORTCUT_TEXT = "Ctrl+Q quit | Ctrl+P palette"
 
+    # task-264: this widget used to be mounted exactly once, directly by
+    # `TldwCli.compose()` -- which always loads the app's full CSS bundle
+    # (`Constants.py`'s `AppFooterStatus { ... }` type-selector rule below),
+    # so the layout this widget needs to actually look like a footer (docked
+    # to the bottom, 1 row tall, children arranged left/right) never had to
+    # be self-contained. Now that `BaseAppScreen.compose()` mounts one of
+    # these on every screen, it can be exercised by lightweight test
+    # harnesses (or, in principle, any future host) that never load that
+    # bundle. Without SOME baked-in layout, the un-styled `Widget` defaults
+    # (block layout, unconstrained height) let its children -- notably the
+    # empty ``#footer-spacer`` -- balloon to cover most of the screen and
+    # silently swallow clicks meant for whatever's actually on screen.
+    # Mirroring Textual's own built-in `Footer` widget (which ships its own
+    # `DEFAULT_CSS` for exactly this reason), this repeats a SUBSET of the
+    # bundle's rules -- the core layout ones -- so they always apply, with
+    # or without that bundle loaded. The bundle carries extras (word/token
+    # count ids, per-child heights) and wins by origin when both are
+    # present.
+    # KEEP IN SYNC with the live bundle source
+    # css/components/_widgets.tcss ("Window Footer Widget" block, built
+    # into tldw_cli_modular.tcss -- NOT Constants.py's css_content, which
+    # has no consumers): DEFAULT_CSS covers stylesheet-less harnesses; the
+    # app bundle wins by origin in production. A bundle-only edit would
+    # silently diverge harness geometry from production (task-264 review).
+    DEFAULT_CSS = """
+    AppFooterStatus {
+        dock: bottom;
+        height: 1;
+        background: $primary-background-darken-1;
+        width: 100%;
+        layout: horizontal;
+        padding: 0 1;
+    }
+
+    AppFooterStatus #footer-key-quit {
+        width: auto;
+        padding: 0 1;
+        color: $text-muted;
+        dock: left;
+    }
+
+    AppFooterStatus #footer-spacer {
+        width: 1fr;
+    }
+
+    AppFooterStatus #internal-db-size-indicator {
+        width: auto;
+        color: $text-muted;
+        dock: right;
+        padding: 0 1;
+        margin-left: 2;
+    }
+    """
+
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._shortcut_text = self.DEFAULT_SHORTCUT_TEXT

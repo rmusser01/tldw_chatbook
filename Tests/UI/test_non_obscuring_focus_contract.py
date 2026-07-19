@@ -209,17 +209,10 @@ def assert_stable_solid_border_geometry(base: str, focus: str) -> None:
 
 
 def assert_embeddings_focus_and_active_contracts(text: str) -> None:
-    for selector in (
-        ".embeddings-nav-button:focus",
-        ".embeddings-toggle-button-enhanced:focus",
-    ):
-        block = css_block(text, selector)
-        assert_non_obscuring_focus(block)
-        assert "$ds-focus-bg" in block or "$ds-surface-raised" in block
-        assert "$primary" not in block
-        assert "$accent" not in block
-
-    for selector in (".embeddings-nav-button.-active", ".filter-button.active"):
+    # The legacy embeddings nav/toggle/list-item selectors were removed with
+    # the unreachable SearchWindow stack (task-253); the activity-log filter
+    # button is the surviving selected-state contract in _embeddings.tcss.
+    for selector in (".filter-button.active",):
         block = css_block(text, selector)
         assert "outline: heavy" not in block
         assert "$primary" not in block
@@ -227,14 +220,6 @@ def assert_embeddings_focus_and_active_contracts(text: str) -> None:
         assert "background: $ds-focus-bg;" in block
         assert "color: $ds-focus-fg;" in block
         assert "text-style: bold underline;" in block
-
-    for selector in (
-        "#embeddings-model-list ModelListItem.-highlight",
-        "#embeddings-collection-list CollectionListItem.-highlight",
-    ):
-        block = css_block(text, selector)
-        assert_readable_selected_state_contract(block)
-        assert_no_dominant_selected_geometry(block)
 
     for selector in (
         ".embeddings-list-item.-selected",
@@ -1232,14 +1217,6 @@ def test_feature_navigation_active_and_dropdown_focus_states_follow_contracts():
         css_block(tools_text, ".tools-nav-pane .ts-nav-button.active-nav")
     )
 
-    search_text = SEARCH_RAG.read_text(encoding="utf-8")
-    assert_feature_nav_active_contract(
-        css_block(
-            search_text,
-            ".search-nav-pane .search-nav-button.-active-search-sub-view",
-        )
-    )
-
 
 @pytest.mark.unit
 def test_tab_dropdown_option_hover_uses_neutral_readable_surface():
@@ -1259,11 +1236,9 @@ def test_tab_dropdown_option_hover_uses_neutral_readable_surface():
     ("path", "selector"),
     (
         (MEDIA, ".media-nav-pane .media-nav-button:hover"),
-        (SEARCH_RAG, ".search-nav-pane .search-nav-button:hover"),
         (LLM_MANAGEMENT, ".llm-nav-pane .llm-nav-button:hover"),
         (TOOLS_SETTINGS, ".tools-nav-pane .ts-nav-button:hover"),
         (INGEST, ".ingest-nav-pane .ingest-nav-button:hover"),
-        (EMBEDDINGS, ".embeddings-nav-button:hover"),
         (CODING, ".coding-nav-button:hover"),
     ),
 )
@@ -1280,21 +1255,6 @@ def test_feature_navigation_hover_states_use_neutral_readable_surface(
     assert bundled_blocks, f"tldw_cli_modular.tcss is missing {selector}"
     assert len(bundled_blocks) == 1, f"tldw_cli_modular.tcss should define exactly one {selector}"
     assert_native_row_hover_state_contract(bundled_blocks[0])
-
-
-@pytest.mark.unit
-def test_search_navigation_disabled_hover_keeps_disabled_palette():
-    for label, text in (
-        ("features/_search-rag.tcss", SEARCH_RAG.read_text(encoding="utf-8")),
-        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
-    ):
-        blocks = css_blocks(text, ".search-nav-pane .search-nav-button:disabled:hover")
-        assert blocks, f"{label} is missing disabled search nav hover"
-        assert len(blocks) == 1, f"{label} should define exactly one disabled search nav hover"
-        block = blocks[0]
-        assert "background: $surface-darken-1;" in block
-        assert "color: $text-disabled;" in block
-        assert "text-style: none;" in block
 
 
 def test_customize_window_default_css_nav_active_state_follows_contract():
@@ -1316,12 +1276,6 @@ def test_bundled_feature_navigation_states_match_source_contracts():
     )
     assert_feature_nav_active_contract(
         css_block(text, ".tools-nav-pane .ts-nav-button.active-nav")
-    )
-    assert_feature_nav_active_contract(
-        css_block(
-            text,
-            ".search-nav-pane .search-nav-button.-active-search-sub-view",
-        )
     )
 
 

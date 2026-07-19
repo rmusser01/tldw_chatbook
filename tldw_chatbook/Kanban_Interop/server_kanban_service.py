@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
@@ -39,8 +39,9 @@ from ..tldw_api import (
     KanbanReorderRequest,
     KanbanSearchRequest,
     KanbanToggleAllChecklistItemsRequest,
-    TLDWAPIClient,
 )
+if TYPE_CHECKING:
+    from ..tldw_api import TLDWAPIClient
 
 
 @dataclass(frozen=True, slots=True)

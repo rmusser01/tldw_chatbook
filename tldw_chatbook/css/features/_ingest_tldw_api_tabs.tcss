@@ -27,13 +27,6 @@
     color: $text;
 }
 
-.back-button {
-    margin: 1 0;
-    dock: top;
-    width: auto;
-    align: left middle;
-}
-
 #tldw-api-tabs {
     height: 100%;
     margin: 0;

@@ -576,11 +576,6 @@ TabbedContent Underline {
     height: 10;
 }
 
-.loading-spinner {
-    color: $primary;
-    text-style: bold;
-}
-
 /* Reset button styling */
 .reset-button {
     width: auto;

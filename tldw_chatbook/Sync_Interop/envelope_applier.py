@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from tldw_chatbook.Sync_Interop.domain_adapters import (
     ChatSyncAdapter,
@@ -12,7 +12,9 @@ from tldw_chatbook.Sync_Interop.domain_adapters import (
     WorkspacesSyncAdapter,
 )
 from tldw_chatbook.Sync_Interop.domain_adapters.notes_m1 import NotesM1SyncAdapter
-from tldw_chatbook.tldw_api import SyncV2Envelope
+if TYPE_CHECKING:
+    from tldw_chatbook.tldw_api import SyncV2Envelope
+
 
 
 class SyncEnvelopeApplier:

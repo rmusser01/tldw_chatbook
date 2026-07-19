@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    ConnectorSourceCreateRequest,
-    ConnectorSourcePatchRequest,
-    TLDWAPIClient,
-)
+if TYPE_CHECKING:
+    from ..tldw_api import TLDWAPIClient
 
 
 class ServerConnectorsService:
@@ -163,6 +160,9 @@ class ServerConnectorsService:
         path: str | None = None,
         options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ConnectorSourceCreateRequest
+
         self._enforce("connectors.sources.create.server")
         request = ConnectorSourceCreateRequest(
             account_id=account_id,
@@ -185,6 +185,9 @@ class ServerConnectorsService:
         enabled: bool | None = None,
         options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ConnectorSourcePatchRequest
+
         self._enforce("connectors.sources.update.server")
         request = ConnectorSourcePatchRequest(enabled=enabled, options=options)
         return self._dump(await self._require_client().update_connector_source(int(source_id), request))

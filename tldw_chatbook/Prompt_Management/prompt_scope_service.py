@@ -5,18 +5,14 @@ from __future__ import annotations
 import inspect
 import sqlite3
 from enum import Enum
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from ..runtime_policy.bootstrap import (
     build_runtime_api_client_provider_from_config,
     derive_configured_server_binding,
 )
-from ..tldw_api import (
-    PromptCollectionCreateRequest,
-    PromptCollectionUpdateRequest,
-    PromptCreateRequest,
-    TLDWAPIClient,
-)
+if TYPE_CHECKING:
+    from ..tldw_api import PromptCreateRequest, TLDWAPIClient
 from .prompt_normalizers import (
     normalize_prompt_collection_list,
     normalize_prompt_collection_record,
@@ -58,6 +54,9 @@ def _payload_from_fields(
 
 
 def _prompt_create_request_from_payload(payload: dict[str, Any]) -> PromptCreateRequest:
+    # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+    from ..tldw_api import PromptCreateRequest
+
     if not payload.get("name"):
         raise ValueError("Prompt name is required for server prompt saves.")
     return PromptCreateRequest(**payload)
@@ -142,6 +141,9 @@ class ServerPromptService:
         return await self._require_client().restore_prompt_version(prompt_identifier, version)
 
     async def create_prompt_collection(self, payload: dict[str, Any]) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import PromptCollectionCreateRequest
+
         return await self._require_client().create_prompt_collection(PromptCollectionCreateRequest(**payload))
 
     async def list_prompt_collections(self, *, limit: int = 200, offset: int = 0) -> Any:
@@ -151,6 +153,9 @@ class ServerPromptService:
         return await self._require_client().get_prompt_collection(collection_id)
 
     async def update_prompt_collection(self, collection_id: int, payload: dict[str, Any]) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import PromptCollectionUpdateRequest
+
         return await self._require_client().update_prompt_collection(
             collection_id,
             PromptCollectionUpdateRequest(**payload),

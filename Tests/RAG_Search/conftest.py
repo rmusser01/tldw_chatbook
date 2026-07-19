@@ -437,7 +437,7 @@ def legacy_config():
 
 @pytest.fixture
 def nested_config(legacy_config):
-    """Configuration with nested structure (like in ChromaDBManager)"""
+    """Configuration with the nested COMPREHENSIVE_CONFIG_RAW wrapper shape."""
     return {
         "COMPREHENSIVE_CONFIG_RAW": {
             "embedding_config": legacy_config

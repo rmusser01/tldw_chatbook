@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
+import time
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from html import escape as html_escape
@@ -62,6 +64,13 @@ _HOME_INGEST_JOB_ACTIVE_STATES = frozenset(
         IngestJobState.FAILED,
     }
 )
+# B3 (task-282): short cross-visit TTL cache for the three sync
+# seam queries build_dashboard_input used to run inline on every compose,
+# triage sync, and rail click. Small enough that Home's "every visit
+# re-reads the real seams" contract still holds -- a stale window of a few
+# seconds is invisible to a human clicking around, but collapses bursts of
+# calls (rapid rail clicks, back-to-back triage syncs) onto one real query.
+_ACTIVE_WORK_CACHE_TTL_SECONDS = 3.0
 _HOME_RECENT_WORK_LIMIT = 8
 _MAX_CHATBOOK_ARTIFACT_PREVIEW_CHARS = 1000
 _MAX_CHATBOOK_FILE_PATH_CHARS = 2000
@@ -218,6 +227,14 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         self._chatbook_artifact_snapshot: tuple[Mapping[str, Any], ...] = ()
         self._chatbook_artifact_snapshot_lock = RLock()
         self._flashcards_due_count: int = 0
+        # B3 (task-282): cache for the watchlist-run/notification/server-event
+        # seam queries. This adapter instance lives on the app (not the
+        # per-visit HomeScreen), so unlike HomeScreen's own
+        # ``_home_content_snapshot`` (explicitly per-instance/per-visit by
+        # contract), this cache is intentionally cross-visit.
+        self._active_work_cache_lock = RLock()
+        self._active_work_cache: dict[str, Any] | None = None
+        self._active_work_cache_at: float = 0.0
 
     def refresh_flashcards_due_snapshot(self) -> None:
         """Refresh the cached due-flashcards count off the Home compose path.
@@ -275,11 +292,12 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
             providers_models=providers_models,
             has_recent_work=has_recent_work,
         )
-        runs = self._watchlist_run_snapshot()
+        fields = self._active_work_fields()
+        runs = fields["runs"]
         return replace(
             dashboard_input,
-            notification_count=self._unread_notification_count(),
-            **self._server_event_status_fields(),
+            notification_count=fields["notification_count"],
+            **fields["server_event_fields"],
             active_work_items=tuple(
                 [
                     *self._local_watchlist_run_items(runs),
@@ -460,6 +478,132 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                 else "Observe or refresh server events from the active server."
             ),
         }
+
+    def _compute_active_work_fields(self) -> dict[str, Any]:
+        """Run the three sync seam queries this adapter is built around.
+
+        Isolated as its own leaf (B3/task-282) so it can run either inline
+        (``_active_work_fields``'s cold-cache fallback, since
+        ``build_dashboard_input`` must stay synchronous -- Home's
+        ``compose_content`` is a plain generator and cannot await) or via
+        ``asyncio.to_thread`` from ``refresh_active_work_cache_async``.
+        """
+        runs = self._watchlist_run_snapshot()
+        return {
+            "runs": runs,
+            "notification_count": self._unread_notification_count(),
+            "server_event_fields": self._server_event_status_fields(),
+        }
+
+    def _active_work_fields(self) -> dict[str, Any]:
+        """Return the cached active-work fields, computing inline if stale.
+
+        This is the synchronous path ``build_dashboard_input`` always used
+        to pay directly on every call. With the cache, a cold/stale read
+        still blocks (compose_content cannot await), but Home's on-mount
+        worker (``HomeScreen._refresh_home_active_work_cache``) keeps this
+        warm off the event loop via ``refresh_active_work_cache_async``, so
+        in practice most calls -- including the "no cross-visit cache"
+        complaint from the audit, since this adapter outlives any single
+        HomeScreen instance -- hit the cache instead of the DB/services.
+        """
+        with self._active_work_cache_lock:
+            cached = self._active_work_cache
+            fresh = (
+                cached is not None
+                and (time.monotonic() - self._active_work_cache_at)
+                < _ACTIVE_WORK_CACHE_TTL_SECONDS
+            )
+            if fresh:
+                return cached
+        fields = self._compute_active_work_fields()
+        self._store_active_work_cache(fields)
+        return fields
+
+    def _store_active_work_cache(self, fields: dict[str, Any]) -> None:
+        with self._active_work_cache_lock:
+            self._active_work_cache = fields
+            self._active_work_cache_at = time.monotonic()
+
+    def invalidate_active_work_cache(self) -> None:
+        """Force the next read to recompute.
+
+        Wired to Home's triage-action controls (approve/reject/pause/
+        resume/retry, ``TldwCli._handle_home_control_action``) so an action
+        that changes watchlist-run or notification state is not masked by
+        a stale cache for up to the TTL window.
+        """
+        with self._active_work_cache_lock:
+            self._active_work_cache = None
+            self._active_work_cache_at = 0.0
+
+    def _active_work_seams_confirmed_file_backed(self) -> bool:
+        """True only when every present sqlite seam is positively file-backed.
+
+        ``ClientNotificationsDB`` (the ``notification_service``'s backing
+        store, also reused as ``server_event_service.local_service`` in
+        this app's wiring) caches a single sqlite connection for
+        ``:memory:`` paths rather than opening thread-local ones like
+        ChaChaNotes does -- sqlite defaults to ``check_same_thread=True``,
+        so calling it from a background thread would raise, not silently
+        read an empty DB. Threading is therefore allowed only when each
+        seam that exists exposes ``store.is_memory_db`` as False; a
+        missing store/attribute (an unrecognized service shape, e.g. a
+        test double) counts as unconfirmed and keeps the compute inline,
+        so don't-thread really is the fallback for unknown shapes
+        (PR #683 review).
+        """
+        seams = []
+        if self.notification_service is not None:
+            seams.append(getattr(self.notification_service, "store", None))
+        server_event_local = getattr(self.server_event_service, "local_service", None)
+        if server_event_local is not None:
+            seams.append(getattr(server_event_local, "store", None))
+        for store in seams:
+            is_memory = getattr(store, "is_memory_db", None)
+            if is_memory is None or bool(is_memory):
+                return False
+        return True
+
+    async def refresh_active_work_cache_async(self) -> bool:
+        """Warm/refresh the active-work cache off the event loop.
+
+        Called from ``HomeScreen._refresh_home_active_work_cache`` (an
+        async worker started on mount, mirroring
+        ``HomeScreen._home_content_seam_call``'s ``asyncio.to_thread``
+        pattern). Degrades to an inline (still off the caller's awaiting
+        coroutine, but not off *this* thread) computation unless every
+        backing seam is positively confirmed file-backed -- a
+        per-connection ``:memory:`` store or an unrecognized service
+        shape both stay inline.
+
+        No-ops when the cache is already fresh: Home's compose path
+        cold-computes (and stores) the fields moments before the on-mount
+        worker runs, so recomputing here would double the mount-time cost
+        -- and in the memory-backed case that recompute runs on the event
+        loop, where it measurably delayed Home's initial child mount
+        (caught by the core-usability smoke gate during task-282
+        verification).
+
+        Returns:
+            True when the cache was actually refreshed (caller should
+            re-sync the triage surface), False when it was already fresh
+            and nothing changed.
+        """
+        with self._active_work_cache_lock:
+            fresh = (
+                self._active_work_cache is not None
+                and (time.monotonic() - self._active_work_cache_at)
+                < _ACTIVE_WORK_CACHE_TTL_SECONDS
+            )
+        if fresh:
+            return False
+        if self._active_work_seams_confirmed_file_backed():
+            fields = await asyncio.to_thread(self._compute_active_work_fields)
+        else:
+            fields = self._compute_active_work_fields()
+        self._store_active_work_cache(fields)
+        return True
 
     def _watchlist_run_snapshot(self) -> list[Any]:
         """Fetch the watchlist run snapshot once per dashboard build."""

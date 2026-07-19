@@ -14,9 +14,9 @@ from typing import Any
 from loguru import logger
 from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container, Horizontal
 from textual.message import Message
-from textual.widgets import ContentSwitcher, Static
+from textual.widgets import ContentSwitcher
 from textual.worker import Worker
 
 from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
@@ -39,6 +39,7 @@ from tldw_chatbook.MCP.readiness import (
     server_target_readiness,
 )
 from tldw_chatbook.MCP.redaction import redact_args, redact_mapping
+from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import MCPAuditMode
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
     MCPPermissionsMode,
@@ -134,14 +135,12 @@ MCP_HUB_MODES: dict[str, dict[str, str]] = {
     # "servers"/"tools" above, kept "" for shape parity with the remaining
     # MCP_HUB_MODES entries.
     "permissions": {"label": "Permissions", "button_id": "mcp-mode-permissions", "placeholder": ""},
-    "audit": {
-        "label": "Audit",
-        "button_id": "mcp-mode-audit",
-        "placeholder": (
-            "Audit mode arrives in a later phase. Action results appear inline in the "
-            "inspector's Advanced section for now."
-        ),
-    },
+    # T7 (MCP Hub Phase 5): Audit mode now hosts the real `MCPAuditMode`
+    # canvas (see compose()) -- "placeholder" is unused for it, same as
+    # "servers"/"tools"/"permissions" above, kept "" for shape parity. This
+    # was the last MCP_HUB_MODES entry still on the generic phase-placeholder
+    # path; compose()'s placeholder-rendering loop is gone along with it.
+    "audit": {"label": "Audit", "button_id": "mcp-mode-audit", "placeholder": ""},
 }
 
 _LEGACY_SECTIONS = [
@@ -494,6 +493,33 @@ class MCPWorkbench(Container):
         # rule (Tools-mode's `show_tool(tool, effective=...)` and
         # Permissions-mode's own `show_permission()`).
         self._last_effective_states: dict[tuple[str, str], EffectiveToolState] = {}
+        # T7 (MCP Hub Phase 5): the full (unfiltered) execution-log record
+        # list `_sync_audit_mode()` most recently pushed into `MCPAuditMode`
+        # -- `MCPAuditMode.EntrySelected.index` (a position in THAT SAME
+        # list) is looked up against this cache when the event arrives,
+        # rather than re-reading the log a second time.
+        self._last_audit_entries: list[dict[str, Any]] = []
+        # T8 (MCP Hub Phase 5): the full findings list `_sync_audit_mode()`
+        # most recently pushed into `MCPAuditMode` -- `MCPAuditMode.
+        # FindingSelected.index` is looked up against this cache when the
+        # event arrives, mirroring `_last_audit_entries`/`EntrySelected`
+        # immediately above.
+        self._last_audit_findings: list[dict[str, Any]] = []
+        # T8: this pass's server-source Audit-mode Findings fetch
+        # (`_load_server_findings()`), cached by `(source, target)` --
+        # mirrors `_governance_profiles_cache`/`_governance_profiles_
+        # cache_key` (T11) exactly: STATIC server-side data, unaffected by
+        # anything a client-side interaction can do, so repeated
+        # `_sync_children()` passes under the same identity reuse this
+        # instead of re-awaiting `load_section("advanced")` every time.
+        # `_UNSET` seeds the key so the very first fetch always "changes"
+        # it and fetches once. `_sync_audit_mode()` has no standalone
+        # caller (unlike `_sync_permissions_mode()`'s three), so unlike
+        # `_server_governance_profiles()` there is no separate `refresh`
+        # gate here -- every call is part of a full `_sync_children()`
+        # pass already.
+        self._findings_cache: list[dict[str, Any]] | None = None
+        self._findings_cache_key: tuple[str, str | None] | Any = _UNSET
         # T11: this pass's server-source governance-listing fetch
         # (`_load_server_governance_profiles()`), cached by `(source,
         # target)` identity -- that data is STATIC server-side profile
@@ -545,20 +571,13 @@ class MCPWorkbench(Container):
                 yield MCPServersMode(id="mcp-mode-canvas-servers")
                 yield MCPToolsMode(id="mcp-mode-canvas-tools")
                 yield MCPPermissionsMode(id="mcp-mode-canvas-permissions")
-                for mode, spec in MCP_HUB_MODES.items():
-                    if mode in ("servers", "tools", "permissions"):
-                        continue
-                    with Vertical(id=f"mcp-mode-canvas-{mode}"):
-                        yield Static(
-                            spec["placeholder"],
-                            # T12: phase placeholders are informational, not a
-                            # recovery/alarm condition -- the warning chrome
-                            # was semantic dilution of the single alarm color
-                            # (UX-inputs #4). T13 adds the `.ds-info-callout`
-                            # CSS rule itself; this is the class-name swap.
-                            classes="ds-info-callout",
-                            markup=False,
-                        )
+                # T7 (MCP Hub Phase 5): Audit mode now hosts the real
+                # `MCPAuditMode` canvas too -- every `MCP_HUB_MODES` entry is
+                # now a real canvas, so the generic phase-placeholder loop
+                # this used to fall through to (T12's `.ds-info-callout`
+                # Static) is gone; it would never have executed its body
+                # again anyway.
+                yield MCPAuditMode(id="mcp-mode-canvas-audit")
             yield MCPInspector(id="mcp-hub-inspector", classes="destination-workbench-pane")
 
     async def on_mount(self) -> None:
@@ -905,6 +924,105 @@ class MCPWorkbench(Container):
             effective = self._resolve_effective_states(tools)
             await self._sync_tools_mode(tools, effective)
             await self._sync_permissions_mode(effective, refresh_governance=True)
+            await self._sync_audit_mode()
+
+    async def _sync_audit_mode(self) -> None:
+        """Push the current execution-log window into `MCPAuditMode`.
+
+        Mirrors `_sync_tools_mode()`/`_sync_permissions_mode()`: runs on
+        every `_sync_children()` pass (the ContentSwitcher never unmounts
+        the inactive canvas, only hides it) so switching INTO Audit mode
+        never shows a stale window from before the last background resync.
+
+        `service.execution_log` is a PROPERTY on
+        `UnifiedMCPControlPlaneService` that can itself raise (see that
+        property's own N1 lesson, unified_control_plane_service.py) -- the
+        access is guarded by the SAME try/except as the `read_recent()`
+        call itself, not just a `getattr(..., None)` (which only catches an
+        `AttributeError`, not an arbitrary raise from inside a property
+        getter). No log configured (a service too old to expose the
+        property, a fake in older tests, or the property itself resolving
+        to `None` -- e.g. no local store yet) renders an empty window
+        rather than raising out of `_sync_children()`.
+        """
+        service = self._service()
+        entries: list[dict[str, Any]] = []
+        log = None
+        if service is not None:
+            try:
+                log = service.execution_log
+            except Exception as exc:
+                logger.warning(f"MCP execution log access failed: {exc}")
+                log = None
+        if log is not None:
+            try:
+                entries = log.read_recent(200)
+            except Exception as exc:
+                logger.warning(f"MCP execution log read failed: {exc}")
+                entries = []
+        self._last_audit_entries = entries
+        await self.query_one(MCPAuditMode).update_entries(entries)
+
+        # T8 (MCP Hub Phase 5): Findings sub-view -- server source only.
+        findings = await self._server_findings(service)
+        self._last_audit_findings = findings or []
+        await self.query_one(MCPAuditMode).update_findings(findings, source=self._source)
+
+    async def _server_findings(self, service: Any) -> list[dict[str, Any]] | None:
+        """T8: this pass's server-source Audit-mode Findings listing,
+        fetched at most once per `(source, target)` identity -- mirrors
+        `_server_governance_profiles()` (T11) exactly, minus that method's
+        `refresh` gate (see `_findings_cache_key`'s own docstring in
+        `__init__` for why: `_sync_audit_mode()`, this method's only
+        caller, has no standalone invocation path the way `_sync_
+        permissions_mode()` does).
+        """
+        key = (self._source, self._active_service_target_id())
+        if key != self._findings_cache_key:
+            self._findings_cache = await self._load_server_findings(service)
+            self._findings_cache_key = key
+        return self._findings_cache
+
+    async def _load_server_findings(self, service: Any) -> list[dict[str, Any]] | None:
+        """T8: the server-source Audit-mode Findings fetch's data.
+
+        Only ever fetched under the server source -- local/builtin never
+        call `load_section("advanced")` for this at all. Guarded the same
+        fail-soft way as `_load_server_governance_profiles()`: any
+        exception (no active target, a backend error, a service too old to
+        expose the section) -> `None` -> `MCPAuditMode.update_findings()`
+        renders the fetch-failure retry hint rather than raising out of
+        `_sync_children()`.
+
+        `governance_audit_findings` is an ENVELOPE dict (`{"items": [...]}
+        `, `_envelope_payload()`'s own shape in `MCP/server_unified_
+        service.py`'s `get_advanced()` ~:392), not a bare list -- mirrors
+        `unified_mcp_sections.render_advanced_section()`'s own extraction
+        (`(payload.get("governance_audit_findings") or {}).get("items")`).
+        A malformed-but-present response (not a Mapping, a
+        `governance_audit_findings` that isn't a Mapping, or an `items`
+        that isn't a list) still counts as a successful fetch -- `[]`, same
+        as `_load_server_governance_profiles()`'s own malformed-but-present
+        contract, so the Findings table renders its "no findings" empty
+        copy rather than the fetch-failure one.
+        """
+        if self._source != "server" or service is None:
+            return None
+        loader = getattr(service, "load_section", None)
+        if not callable(loader):
+            return None
+        try:
+            advanced_payload = await loader("advanced")
+        except Exception as exc:
+            logger.warning(f"MCP audit findings fetch failed: {exc}")
+            return None
+        if not isinstance(advanced_payload, Mapping):
+            return []
+        findings_envelope = advanced_payload.get("governance_audit_findings")
+        if not isinstance(findings_envelope, Mapping):
+            return []
+        raw_items = findings_envelope.get("items")
+        return raw_items if isinstance(raw_items, list) else []
 
     async def _sync_tools_mode(
         self, tools: list[HubTool], states: dict[tuple[str, str], EffectiveToolState]
@@ -1539,6 +1657,14 @@ class MCPWorkbench(Container):
 
     async def _clear_tool_view(self) -> None:
         await self.query_one(MCPInspector).show_tool(None)
+        # T7 (MCP Hub Phase 5): a mode change also invalidates whatever
+        # execution-log entry the inspector was showing -- same rationale
+        # as the `show_tool(None)` call above, one line up.
+        await self.query_one(MCPInspector).show_audit_entry(None)
+        # T8 (MCP Hub Phase 5): a mode change also invalidates whatever
+        # Findings-table selection the inspector was showing -- same
+        # rationale as the `show_audit_entry(None)` call above.
+        await self.query_one(MCPInspector).show_finding(None)
 
     async def _disarm_canvas_delete(self) -> None:
         # Under `_sync_children_lock`: `disarm_delete()` rebuilds the detail
@@ -1870,6 +1996,160 @@ class MCPWorkbench(Container):
         if tool is None:
             await inspector.show_tool(None)
             return
+        await inspector.show_permission(tool, self._effective_for_display(tool))
+
+    # -- T7 (MCP Hub Phase 5): Audit mode ------------------------------------
+
+    async def on_mcp_audit_mode_entry_selected(
+        self, event: MCPAuditMode.EntrySelected
+    ) -> None:
+        """Route an Audit-mode row selection to the inspector's audit-entry
+        detail view. `event.index` is looked up against `_last_audit_entries`
+        (the SAME list `_sync_audit_mode()` handed `MCPAuditMode` this pass)
+        -- an out-of-range index (a stale selection racing a background
+        resync that shrank the window) resolves to `None`, which
+        `show_audit_entry()` renders as "nothing selected" rather than
+        crashing.
+        """
+        event.stop()
+        entry = (
+            self._last_audit_entries[event.index]
+            if 0 <= event.index < len(self._last_audit_entries)
+            else None
+        )
+        await self.query_one(MCPInspector).show_audit_entry(entry)
+
+    async def on_mcp_audit_mode_finding_selected(
+        self, event: MCPAuditMode.FindingSelected
+    ) -> None:
+        """Route an Audit-mode Findings-table row selection to the
+        inspector's finding detail view (T8, MCP Hub Phase 5). Mirrors
+        `on_mcp_audit_mode_entry_selected()` exactly -- `event.index` is
+        looked up against `_last_audit_findings` (the SAME list `_sync_
+        audit_mode()` handed `MCPAuditMode` this pass); an out-of-range
+        index (a stale selection racing a background resync that shrank
+        the list) resolves to `None`, which `show_finding()` renders as
+        "nothing selected" rather than crashing.
+        """
+        event.stop()
+        finding = (
+            self._last_audit_findings[event.index]
+            if 0 <= event.index < len(self._last_audit_findings)
+            else None
+        )
+        await self.query_one(MCPInspector).show_finding(finding)
+
+    async def on_mcp_audit_mode_sub_view_changed(
+        self, event: MCPAuditMode.SubViewChanged
+    ) -> None:
+        """Clear the now-inactive Audit sub-view pane's inspector detail
+        (Critical fix, MCP Hub Phase 5 T8 review). `MCPAuditMode` itself
+        only flips which of its two panes is visible on a toggle press --
+        it never touches `MCPInspector` at all, so a prior Executions-row
+        selection's `#mcp-inspector-audit` (or a prior Findings-row
+        selection's `#mcp-inspector-finding`) stayed mounted and visible
+        after switching sub-view, and selecting a row in the newly-visible
+        pane then left BOTH detail panels stacked on screen at once.
+        `event.sub_view` is the pane now visible, so this clears the OTHER
+        one.
+
+        Sequential awaits directly in this handler, not a worker dispatch
+        (T7 lesson, see `_open_audit_tool()`/`_open_audit_permission()`
+        above): those two methods must share the "mcp-tool-clear" exclusive
+        worker group with `set_mode()`'s own clear, so they re-do the clear
+        themselves rather than trust a same-group predecessor to have run
+        it. There is no such predecessor here -- this handler's own awaits
+        are the only write to the inspector this pass, so a plain
+        sequential await is enough for the clear to actually execute.
+        """
+        event.stop()
+        inspector = self.query_one(MCPInspector)
+        if event.sub_view == "findings":
+            await inspector.show_audit_entry(None)
+        else:
+            await inspector.show_finding(None)
+
+    async def on_mcp_inspector_audit_open_tool_requested(
+        self, event: MCPInspector.AuditOpenToolRequested
+    ) -> None:
+        """Route the audit-entry detail's "Open tool" button: resolve the
+        entry's `(server_key, tool_name)` against `_last_hub_tools`
+        (`_tool_for()`, same lookup `on_mcp_tools_mode_tool_selected()`
+        uses) and, when found, switch to Tools mode, select its row, and
+        show its full tool detail in the inspector -- a tool that has since
+        dropped out of the catalog is a warning toast, never a crash.
+
+        The populate work is dispatched into the SAME exclusive worker
+        group (`"mcp-tool-clear"`) `set_mode()` just used for its own
+        `_clear_tool_view()` call, added HERE synchronously (no `await`
+        between the two `run_worker()` calls) -- Textual cancels the
+        PREVIOUSLY-QUEUED worker in an exclusive group at `add_worker()`
+        time, before it ever runs, not at completion time. That means
+        `_clear_tool_view()`'s own `show_audit_entry(None)` call is an
+        orphaned coroutine that never executes here -- `_open_audit_tool()`
+        below does NOT rely on that cancelled worker to clear the audit
+        panel; it clears `#mcp-inspector-audit` itself, explicitly, before
+        populating the Tools-mode detail (Critical fix: the stale
+        audit-entry detail -- including its own live "Open tool"/"Adjust
+        permission" buttons -- used to stay mounted underneath the new
+        detail otherwise).
+        """
+        event.stop()
+        tool = self._tool_for(event.server_key, event.tool_name)
+        if tool is None:
+            self.app.notify(
+                _toast(f"{event.server_key}::{event.tool_name}: tool no longer available."),
+                severity="warning",
+            )
+            return
+        self.set_mode("tools")
+        self.run_worker(
+            self._open_audit_tool(tool), group="mcp-tool-clear", exclusive=True
+        )
+
+    async def _open_audit_tool(self, tool: HubTool) -> None:
+        inspector = self.query_one(MCPInspector)
+        # Explicit clear -- see on_mcp_inspector_audit_open_tool_requested()'s
+        # docstring: set_mode()'s _clear_tool_view() worker (which would
+        # otherwise hide #mcp-inspector-audit via show_audit_entry(None))
+        # is cancelled before it runs by this method's own dispatch into
+        # the same exclusive "mcp-tool-clear" group, so it must not be
+        # relied upon here.
+        await inspector.show_audit_entry(None)
+        await self.query_one(MCPToolsMode).select_tool_row(tool.tool_id)
+        await inspector.show_tool(tool, effective=self._effective_for_display(tool))
+
+    async def on_mcp_inspector_audit_adjust_permission_requested(
+        self, event: MCPInspector.AuditAdjustPermissionRequested
+    ) -> None:
+        """Route the audit-entry detail's "Adjust permission" button --
+        mirrors `on_mcp_inspector_audit_open_tool_requested()` above, but
+        switches to Permissions mode and moves the matrix cursor to the
+        tool's row instead of opening its full Tools-mode detail. Same
+        exclusive-group dispatch rationale, and same explicit-clear fix,
+        as that method's docstring/body -- `_open_audit_permission()`
+        below does not rely on the cancelled `_clear_tool_view()` worker
+        to hide `#mcp-inspector-audit` either.
+        """
+        event.stop()
+        tool = self._tool_for(event.server_key, event.tool_name)
+        if tool is None:
+            self.app.notify(
+                _toast(f"{event.server_key}::{event.tool_name}: tool no longer available."),
+                severity="warning",
+            )
+            return
+        self.set_mode("permissions")
+        self.run_worker(
+            self._open_audit_permission(tool), group="mcp-tool-clear", exclusive=True
+        )
+
+    async def _open_audit_permission(self, tool: HubTool) -> None:
+        inspector = self.query_one(MCPInspector)
+        # Explicit clear -- same stale-audit-panel hazard as
+        # _open_audit_tool() above; see its comment for the mechanism.
+        await inspector.show_audit_entry(None)
+        self.query_one(MCPPermissionsMode).select_tool_row(tool.server_key, tool.name)
         await inspector.show_permission(tool, self._effective_for_display(tool))
 
     async def on_mcp_inspector_reallow_requested(

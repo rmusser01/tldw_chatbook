@@ -10,6 +10,15 @@ from typing import List, Dict, Any, Optional
 from loguru import logger
 
 from .pipeline_types import SearchResult
+from .semantic_availability import (
+    record_semantic_empty_index,
+    record_semantic_ok,
+    record_semantic_unavailable,
+    resolve_semantic_rag_service,
+    semantic_index_is_empty,
+    SEMANTIC_REASON_SEARCH_ERROR,
+    SEMANTIC_UNAVAILABLE_MESSAGES,
+)
 
 
 # ==============================================================================
@@ -80,38 +89,77 @@ async def search_media_fts5(
     return results[:limit]
 
 
+def _resolve_chacha_db(app: Any):
+    """Resolve the ChaChaNotes DB for pipeline searches.
+
+    Wiring decision (task-295): the app's LIVE instance
+    (``TldwCli.chachanotes_db``, thread-local connections already open,
+    schema already checked) is preferred; the ``db_config['chacha_db_path']``
+    seam stays as a construction fallback for tests and probes. Nothing in
+    production populates ``db_config``, and wiring it would add a second
+    source of truth for a path the app already resolves at startup.
+
+    Args:
+        app: App-like object; either ``chachanotes_db`` (live instance) or
+            ``db_config['chacha_db_path']`` (construction path) may be set.
+
+    Returns:
+        A CharactersRAGDB, or None when neither seam is available.
+    """
+    db = getattr(app, "chachanotes_db", None)
+    if db is not None:
+        return db
+    db_config = getattr(app, "db_config", None)
+    path = db_config.get("chacha_db_path") if isinstance(db_config, dict) else None
+    if not path:
+        return None
+    from ..DB.ChaChaNotes_DB import CharactersRAGDB
+
+    return CharactersRAGDB(path, client_id="rag_pipeline")
+
+
 async def search_conversations_fts5(
     app: Any,
     query: str,
     limit: int = 10
 ) -> List[SearchResult]:
-    """Search conversations database using FTS5."""
-    if not hasattr(app, 'db_config') or not app.db_config.get('chacha_db_path'):
+    """Search conversations database using FTS5.
+
+    Args:
+        app: App-like object exposing ``db_config['chacha_db_path']``.
+        query: FTS search text.
+        limit: Maximum number of conversation results to return.
+
+    Returns:
+        SearchResult entries in content-relevance order, each carrying a
+        snippet built from the conversation's first messages.
+    """
+    db = _resolve_chacha_db(app)
+    if db is None:
         return []
     
     logger.debug(f"Searching conversations for: {query}")
-    
-    from ...DB.ChaChaNotes_DB import CharactersRAGDB
-    
-    db = CharactersRAGDB(app.db_config['chacha_db_path'])
     conv_results = await asyncio.to_thread(
         db.search_conversations_by_content,
         search_query=query,
         limit=limit * 2
     )
     
+    # task-260: one batched query for all matched conversations' context
+    # messages (was one query per conversation), and text-only snippets
+    # never fetch image BLOBs.
+    messages_by_conv = await asyncio.to_thread(
+        db.get_messages_for_conversations_batch,
+        conversation_ids=[conv['id'] for conv in conv_results],
+        limit_per_conversation=5,
+        include_image_data=False,
+    )
+    
     results = []
     for conv in conv_results:
-        # Get some messages for context
-        messages = await asyncio.to_thread(
-            db.get_messages_for_conversation,
-            conversation_id=conv['id'],
-            limit=5
-        )
-        
         # Build content from messages
         content_parts = []
-        for msg in messages:
+        for msg in messages_by_conv.get(conv['id'], []):
             content_parts.append(f"{msg['sender']}: {msg['content']}")
         
         results.append(SearchResult(
@@ -134,24 +182,29 @@ async def search_notes_fts5(
     query: str,
     limit: int = 10
 ) -> List[SearchResult]:
-    """Search notes using FTS5."""
-    if not hasattr(app, 'db_config') or not app.db_config.get('notes_db_path'):
+    """Search notes using FTS5.
+
+    task-295: this used to import a ``Notes_DB`` module that no longer
+    exists anywhere (and called a ``user_id`` API shape the real store
+    never had) -- notes live in ChaChaNotes, so it now routes through the
+    same resolved DB as the conversations search.
+
+    Args:
+        app: App-like object; see ``_resolve_chacha_db`` for the seams.
+        query: FTS search text (matched as a literal phrase).
+        limit: Maximum number of note results to return.
+
+    Returns:
+        SearchResult entries for matching notes.
+    """
+    db = _resolve_chacha_db(app)
+    if db is None:
         return []
     
     logger.debug(f"Searching notes for: {query}")
     
-    from ...Notes.DB.Notes_DB import NotesDB
-    
-    db = NotesDB(app.db_config['notes_db_path'])
-    
-    # Get user ID if available
-    user_id = getattr(app, 'notes_user_id', None)
-    if not user_id:
-        return []
-    
     note_results = await asyncio.to_thread(
         db.search_notes,
-        user_id=user_id,
         search_term=query,
         limit=limit
     )
@@ -165,8 +218,7 @@ async def search_notes_fts5(
             content=note.get('content', ''),
             metadata={
                 'created_at': note.get('created_at'),
-                'updated_at': note.get('updated_at'),
-                'tags': note.get('tags', [])
+                'last_modified': note.get('last_modified')
             }
         ))
     
@@ -178,24 +230,66 @@ async def search_semantic(
     query: str,
     sources: Dict[str, bool],
     limit: int = 10,
+    diagnostics: Optional[Dict[str, Any]] = None,
     **kwargs
 ) -> List[SearchResult]:
-    """Search using semantic embeddings."""
-    if not hasattr(app, '_rag_service') or not app._rag_service:
-        logger.warning("RAG service not initialized")
+    """Search using semantic embeddings, initializing the runtime lazily.
+
+    A missing ``app._rag_service`` no longer means a silent empty result
+    (task-250): the shared process-wide RAG service is initialized on first
+    use (deps-gated, off the event loop), and when semantic retrieval is
+    unavailable or the index is verifiably empty the WHY is recorded into
+    ``diagnostics`` so calling surfaces can report it honestly.
+
+    Args:
+        app: App-like object carrying (or receiving) ``_rag_service``.
+        query: Search query text.
+        sources: Enabled sources mapping (currently unused by the vector leg).
+        limit: Maximum number of results (``top_k`` for the RAG service).
+        diagnostics: Optional dict that receives the semantic-leg state under
+            ``SEMANTIC_DIAGNOSTICS_KEY`` (ok / unavailable+reason /
+            empty_index).
+        **kwargs: Extra kwargs forwarded verbatim to ``rag_service.search``
+            (call sites whitelist these; see pipeline_builder_simple).
+
+    Returns:
+        SearchResult list; empty when semantic retrieval is unavailable (the
+        reason then rides in ``diagnostics``) or genuinely matches nothing.
+    """
+    rag_service, unavailable_reason = await resolve_semantic_rag_service(app)
+    if rag_service is None:
+        logger.warning(
+            "Semantic search unavailable ({}): {}".format(
+                unavailable_reason,
+                SEMANTIC_UNAVAILABLE_MESSAGES.get(unavailable_reason, ""),
+            )
+        )
+        record_semantic_unavailable(diagnostics, unavailable_reason)
         return []
-    
+
     logger.debug(f"Performing semantic search for: {query}")
-    
-    # Use the existing RAG service
-    rag_results = await app._rag_service.search(
-        query=query,
-        search_type="semantic",
-        top_k=limit,
-        include_citations=True,
-        **kwargs
-    )
-    
+
+    # Use the shared RAG service. A raising search must not leave the
+    # semantic leg unaccounted for: on the direct semantic/retrieve path an
+    # uncaught exception would surface raw error text (or, in gather-based
+    # callers, vanish entirely) without ever recording WHY -- so record the
+    # search_error state and degrade to the honest-empty outcome instead
+    # (PR #692 review).
+    try:
+        rag_results = await rag_service.search(
+            query=query,
+            search_type="semantic",
+            top_k=limit,
+            include_citations=True,
+            **kwargs
+        )
+    except Exception:
+        logger.opt(exception=True).error(
+            "Semantic search raised; recording search_error state."
+        )
+        record_semantic_unavailable(diagnostics, SEMANTIC_REASON_SEARCH_ERROR)
+        return []
+
     # Convert to our SearchResult format
     results = []
     for result in rag_results:
@@ -224,7 +318,14 @@ async def search_semantic(
                 score=result.score,
                 metadata=result.metadata if hasattr(result, 'metadata') else {}
             ))
-    
+
+    # Distinguish "no matches" from "nothing indexed yet" (task-250): only a
+    # trustworthy zero-document count reports the empty-index state.
+    if not results and await semantic_index_is_empty(rag_service):
+        record_semantic_empty_index(diagnostics)
+    else:
+        record_semantic_ok(diagnostics, len(results))
+
     return results
 
 
@@ -355,37 +456,61 @@ async def parallel_search(
     app: Any,
     query: str,
     sources: Dict[str, bool],
-    functions: List[Dict[str, Any]]
+    functions: List[Dict[str, Any]],
+    diagnostics: Optional[Dict[str, Any]] = None
 ) -> List[SearchResult]:
     """Execute multiple search functions in parallel."""
     tasks = []
-    
+    task_func_names = []
+
     for func_config in functions:
         func_name = func_config['function']
         config = func_config.get('config', {})
-        
+
         if func_name == 'search_fts5':
             # Run FTS5 searches for each enabled source
             if sources.get('media'):
                 tasks.append(search_media_fts5(app, query, **config))
+                task_func_names.append('search_media_fts5')
             if sources.get('conversations'):
                 tasks.append(search_conversations_fts5(app, query, **config))
+                task_func_names.append('search_conversations_fts5')
             if sources.get('notes'):
                 tasks.append(search_notes_fts5(app, query, **config))
+                task_func_names.append('search_notes_fts5')
         elif func_name == 'search_semantic':
-            tasks.append(search_semantic(app, query, sources, **config))
-    
+            # Forward only kwargs the RAG service accepts (same fix as the
+            # pipeline builder's parallel/retrieve steps, tasks 256/250):
+            # splatting the raw config duplicated top_k inside the service
+            # call, and gather() below swallowed the resulting TypeError.
+            semantic_kwargs = {
+                key: config[key]
+                for key in ('score_threshold', 'filter_metadata')
+                if key in config
+            }
+            tasks.append(search_semantic(
+                app, query, sources,
+                limit=config.get('top_k', config.get('limit', 10)),
+                diagnostics=diagnostics,
+                **semantic_kwargs
+            ))
+            task_func_names.append('search_semantic')
+
     # Execute all searches in parallel
     results_lists = await asyncio.gather(*tasks, return_exceptions=True)
-    
+
     # Combine results
     all_results = []
-    for results in results_lists:
+    for func_name, results in zip(task_func_names, results_lists):
         if isinstance(results, Exception):
-            logger.error(f"Search failed: {results}")
+            logger.error(f"Search failed ({func_name}): {results}")
+            if func_name == 'search_semantic':
+                # The vector leg died mid-search: record it so callers can
+                # say the results are keyword-only (task-250).
+                record_semantic_unavailable(diagnostics, SEMANTIC_REASON_SEARCH_ERROR)
             continue
         all_results.extend(results)
-    
+
     return all_results
 
 

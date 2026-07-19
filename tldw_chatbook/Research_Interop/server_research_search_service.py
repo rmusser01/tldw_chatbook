@@ -2,20 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    SUPPORTED_WEBSEARCH_ENGINES,
-    TLDWAPIClient,
-    WebSearchRequest,
-)
-from ..tldw_api.research_search_schemas import (
-    PaperSearchDetailRequest,
-    PaperSearchIngestRequest,
-    PaperSearchRequest,
-)
+if TYPE_CHECKING:
+    from ..tldw_api import TLDWAPIClient
 
 
 class ServerResearchSearchService:
@@ -96,6 +88,9 @@ class ServerResearchSearchService:
         return {key: value for key, value in kwargs.items() if value is not None}
 
     async def list_supported_websearch_engines(self) -> list[str]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SUPPORTED_WEBSEARCH_ENGINES
+
         self._enforce("research.search.providers.list.server")
         return sorted(SUPPORTED_WEBSEARCH_ENGINES)
 
@@ -112,6 +107,9 @@ class ServerResearchSearchService:
         aggregate: bool = False,
         **kwargs: Any,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import WebSearchRequest
+
         self._enforce("research.search.providers.launch.server")
         request = WebSearchRequest(
             query=query,
@@ -125,6 +123,9 @@ class ServerResearchSearchService:
         return self._dump(await method(request))
 
     async def paper_search(self, *, endpoint: str, **params: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.research_search_schemas import PaperSearchRequest
+
         self._enforce("research.search.providers.launch.server")
         request = PaperSearchRequest(endpoint=endpoint, params=self._params(**params))
         client = self._require_client()
@@ -139,6 +140,9 @@ class ServerResearchSearchService:
         return self._dump(response)
 
     async def paper_detail(self, *, endpoint: str, **params: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.research_search_schemas import PaperSearchDetailRequest
+
         self._enforce("research.search.providers.observe.server")
         request = PaperSearchDetailRequest(endpoint=endpoint, params=self._params(**params))
         client = self._require_client()
@@ -159,6 +163,9 @@ class ServerResearchSearchService:
         payload: dict[str, Any] | None = None,
         **params: Any,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.research_search_schemas import PaperSearchIngestRequest
+
         self._enforce("research.search.providers.launch.server")
         request = PaperSearchIngestRequest(endpoint=endpoint, params=self._params(**params), payload=payload)
         client = self._require_client()

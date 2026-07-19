@@ -5,6 +5,7 @@ import builtins
 from collections import UserDict
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -77,6 +78,27 @@ DUMMY_REDACTION_SERVER_VALUE = "redaction-fixture-server-value"
 
 class StyledSettingsDestinationHarness(DestinationHarness):
     CSS_PATH = str(Path(__file__).parents[2] / "tldw_chatbook/css/tldw_cli_modular.tcss")
+
+
+async def _settle_settings_mount_storm(pilot) -> None:
+    """Deterministically wait out the Settings mount-time refresh.
+
+    Mounting Settings queues the combined ``_refresh_sync_rows`` thread
+    worker (task-290 coalesced the former two-worker storm); its completion
+    applies both row sets in one hop, triggering ONE ``recompose=True``
+    rebuild at a nondeterministic moment shortly after mount. Waiting for
+    worker completion plus a pause makes every later query/click land on
+    the settled DOM.
+    """
+    await pilot.app.workers.wait_for_complete()
+    await pilot.pause()
+
+
+async def _open_settings_category(pilot, selector: str) -> None:
+    """Click a Settings category rail button with the mount storm settled."""
+    await _settle_settings_mount_storm(pilot)
+    await pilot.click(selector)
+    await pilot.pause()
 
 
 class FakeSettingsModelDiscoveryScope:
@@ -699,7 +721,7 @@ async def test_settings_library_rag_renders_guided_defaults_and_validates(monkey
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(190, 55)) as pilot:
-        await pilot.click("#settings-category-library-rag")
+        await _open_settings_category(pilot, "#settings-category-library-rag")
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
@@ -757,7 +779,7 @@ async def test_settings_library_rag_sync_clamps_invalid_select_values():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(190, 55)) as pilot:
-        await pilot.click("#settings-category-library-rag")
+        await _open_settings_category(pilot, "#settings-category-library-rag")
         screen = _active_destination_screen(host)
 
         screen._sync_library_rag_widgets()
@@ -801,7 +823,7 @@ async def test_settings_appearance_renders_guided_defaults_and_validates(monkeyp
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(190, 55)) as pilot:
-        await pilot.click("#settings-category-appearance")
+        await _open_settings_category(pilot, "#settings-category-appearance")
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
@@ -858,7 +880,7 @@ async def test_settings_appearance_revert_restores_loaded_values():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-appearance")
+        await _open_settings_category(pilot, "#settings-category-appearance")
         screen = _active_destination_screen(host)
         font_size = screen.query_one("#settings-appearance-font-size", Input)
         font_size.value = "16"
@@ -890,7 +912,7 @@ async def test_settings_appearance_preview_updates_runtime_without_saving(monkey
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-appearance")
+        await _open_settings_category(pilot, "#settings-category-appearance")
         screen = _active_destination_screen(host)
         theme = screen.query_one("#settings-appearance-theme", Select)
         theme.value = "textual-light"
@@ -912,7 +934,7 @@ async def test_settings_appearance_focused_input_keeps_typed_text_visible():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-appearance")
+        await _open_settings_category(pilot, "#settings-category-appearance")
         screen = _active_destination_screen(host)
         palette_limit = screen.query_one("#settings-appearance-palette-theme-limit", Input)
         palette_limit.focus()
@@ -1062,7 +1084,7 @@ async def test_settings_storage_renders_guided_defaults_and_validates(tmp_path):
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(195, 55)) as pilot:
-        await pilot.click("#settings-category-storage")
+        await _open_settings_category(pilot, "#settings-category-storage")
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
@@ -1108,7 +1130,7 @@ async def test_settings_storage_surfaces_check_action_before_long_path_editor(tm
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-storage")
+        await _open_settings_category(pilot, "#settings-category-storage")
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
@@ -1142,7 +1164,7 @@ async def test_settings_storage_save_and_revert_defaults(monkeypatch, tmp_path):
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(195, 55)) as pilot:
-        await pilot.click("#settings-category-storage")
+        await _open_settings_category(pilot, "#settings-category-storage")
         screen = _active_destination_screen(host)
         workspaces = screen.query_one("#settings-storage-workspaces-db-path", Input)
         workspaces.value = str(db_dir / "workspaces-next.db")
@@ -1334,7 +1356,7 @@ async def test_settings_overview_detail_uses_cached_server_sync_rows(monkeypatch
 
     monkeypatch.setattr(
         SettingsScreen,
-        "_refresh_server_sync_workspace_handoff_rows",
+        "_refresh_sync_rows",
         lambda _self: None,
         raising=False,
     )
@@ -1347,7 +1369,11 @@ async def test_settings_overview_detail_uses_cached_server_sync_rows(monkeypatch
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
-    async with host.run_test(size=(180, 50)):
+    async with host.run_test(size=(180, 50)) as pilot:
+        # The combined sync-rows refresh (task-290) is patched to a no-op
+        # above; settle anyway so _visible_text cannot race any other
+        # worker's landing.
+        await _settle_settings_mount_storm(pilot)
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
@@ -1362,14 +1388,14 @@ async def test_settings_overview_reselect_refreshes_cached_source_rows(monkeypat
         nonlocal refresh_calls
         refresh_calls += 1
 
-    monkeypatch.setattr(SettingsScreen, "_refresh_server_sync_workspace_handoff_rows", fake_refresh)
+    monkeypatch.setattr(SettingsScreen, "_refresh_sync_rows", fake_refresh)
 
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
-        await pilot.click("#settings-category-overview")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-overview")
 
         assert refresh_calls >= 2
 
@@ -1382,7 +1408,7 @@ async def test_settings_screen_resume_refreshes_cached_source_rows(monkeypatch):
         nonlocal refresh_calls
         refresh_calls += 1
 
-    monkeypatch.setattr(SettingsScreen, "_refresh_server_sync_workspace_handoff_rows", fake_refresh)
+    monkeypatch.setattr(SettingsScreen, "_refresh_sync_rows", fake_refresh)
 
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -1657,7 +1683,8 @@ async def test_settings_overview_renders_ownership_contract_boundaries():
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
-    async with host.run_test(size=(180, 50)):
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
@@ -1678,7 +1705,7 @@ async def test_settings_provider_inspector_excludes_console_sampling_ownership()
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
@@ -1694,7 +1721,7 @@ async def test_settings_provider_category_lists_console_supported_catalog():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
@@ -1783,7 +1810,7 @@ async def test_settings_provider_test_toast_states_failure_reason(monkeypatch):
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         toasts = []
         host.notify = lambda message, **kwargs: toasts.append((message, kwargs))
@@ -1804,7 +1831,7 @@ async def test_settings_provider_test_toast_states_success():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         toasts = []
         host.notify = lambda message, **kwargs: toasts.append((message, kwargs))
@@ -1824,7 +1851,7 @@ async def test_settings_inspector_has_no_write_blocked_contradiction():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
@@ -1843,7 +1870,8 @@ async def test_settings_overview_leads_with_readiness_before_manual_sync():
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
-    async with host.run_test(size=(180, 50)):
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
         screen = _active_destination_screen(host)
         card = screen.query_one("#settings-overview-card")
         statics = [str(widget.renderable) for widget in card.query(Static)]
@@ -1870,7 +1898,7 @@ async def test_settings_provider_api_key_focus_style_has_no_underline():
     host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         api_key_input = screen.query_one("#settings-provider-api-key", Input)
         api_key_input.focus()
@@ -1889,7 +1917,7 @@ async def test_settings_provider_model_defaults_appear_before_reference_copy():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         card = screen.query_one("#settings-providers-models-card")
         title = card.query_one("#settings-selected-model-defaults-title", Static)
@@ -1911,7 +1939,7 @@ async def test_settings_provider_connect_block_precedes_collapsed_generation_def
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         card = screen.query_one("#settings-providers-models-card")
         widgets = list(card.query("*"))
@@ -1956,7 +1984,7 @@ async def test_settings_provider_unavailable_fields_render_single_summary_line()
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
 
         summary = screen.query_one("#settings-provider-generation-support", Static)
@@ -2008,7 +2036,7 @@ async def test_settings_provider_test_toast_folds_in_reachable_endpoint_probe(mo
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         toasts = []
         host.notify = lambda message, **kwargs: toasts.append((message, kwargs))
@@ -2045,7 +2073,7 @@ async def test_settings_provider_test_toast_reports_unreachable_endpoint(monkeyp
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         toasts = []
         host.notify = lambda message, **kwargs: toasts.append((message, kwargs))
@@ -2081,7 +2109,7 @@ async def test_settings_provider_test_skips_probe_for_cloud_providers(monkeypatc
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         toasts = []
         host.notify = lambda message, **kwargs: toasts.append((message, kwargs))
@@ -2111,7 +2139,7 @@ async def test_settings_provider_test_failure_skips_endpoint_probe(monkeypatch):
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         toasts = []
         host.notify = lambda message, **kwargs: toasts.append((message, kwargs))
@@ -2215,7 +2243,7 @@ async def test_settings_provider_text_inputs_do_not_trigger_footer_shortcuts(mon
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         model_input = screen.query_one("#settings-model-value", Input)
         model_input.value = "gpt-shortcut-check"
@@ -2250,7 +2278,7 @@ async def test_settings_category_selection_updates_detail_and_inspector():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
@@ -2265,7 +2293,7 @@ async def test_settings_console_behavior_inspector_explains_visible_controls():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
@@ -2291,7 +2319,8 @@ async def test_settings_category_navigation_is_grouped_for_scan():
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
-    async with host.run_test(size=(180, 50)):
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
@@ -2311,7 +2340,7 @@ async def test_settings_active_category_uses_explicit_nav_marker():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-advanced-config")
+        await _open_settings_category(pilot, "#settings-category-advanced-config")
         screen = _active_destination_screen(host)
         active = screen.query_one("#settings-category-advanced-config")
         inactive = screen.query_one("#settings-category-diagnostics")
@@ -2403,7 +2432,8 @@ async def test_settings_detail_shows_state_banner_and_structured_rows():
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
-    async with host.run_test(size=(180, 50)):
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
         screen = _active_destination_screen(host)
         banner = screen.query_one("#settings-category-state-banner")
         detail_rows = list(screen.query(".settings-detail-row"))
@@ -2424,7 +2454,7 @@ async def test_settings_long_detail_and_inspector_panes_are_scrollable_container
         assert isinstance(screen.query_one("#settings-detail-pane"), VerticalScroll)
         assert isinstance(screen.query_one("#settings-impact-pane"), VerticalScroll)
 
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         detail_pane = screen.query_one("#settings-detail-pane", VerticalScroll)
         test_provider = screen.query_one("#settings-test-provider", Button)
 
@@ -2445,7 +2475,7 @@ async def test_settings_inspector_uses_category_specific_guidance():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-storage")
+        await _open_settings_category(pilot, "#settings-category-storage")
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
@@ -2463,7 +2493,7 @@ async def test_settings_inspector_boundary_is_structured_without_duplicate_copy(
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-advanced-config")
+        await _open_settings_category(pilot, "#settings-category-advanced-config")
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
@@ -2690,9 +2720,9 @@ async def test_settings_overview_paste_summary_updates_after_toggle(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         await pilot.click("#settings-console-collapse-large-pastes-toggle")
-        await pilot.click("#settings-category-overview")
+        await _open_settings_category(pilot, "#settings-category-overview")
         screen = _active_destination_screen(host)
 
         await _wait_for_settings_text(
@@ -2713,7 +2743,7 @@ async def test_settings_paste_toggle_keeps_keyboard_focus_after_refresh(monkeypa
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
         toggle = screen.query_one("#settings-console-collapse-large-pastes-toggle")
         toggle.focus()
@@ -2739,7 +2769,7 @@ async def test_settings_console_behavior_clean_state_does_not_show_staged_feedba
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
@@ -2754,7 +2784,7 @@ async def test_settings_console_behavior_default_undo_does_not_show_staged_feedb
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
         temperature = screen.query_one("#settings-console-default-temperature", Input)
 
@@ -2785,7 +2815,7 @@ async def test_settings_console_behavior_clean_staged_feedback_shows_workbench_w
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
         screen._console_behavior_result = "Console behavior settings staged."
         screen._set_static_text(
@@ -2814,7 +2844,7 @@ async def test_settings_console_behavior_stages_save_and_revert(monkeypatch):
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         await pilot.click("#settings-console-collapse-large-pastes-toggle")
         screen = _active_destination_screen(host)
 
@@ -2846,7 +2876,7 @@ async def test_settings_console_behavior_saves_paste_threshold(monkeypatch):
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
         threshold = screen.query_one("#settings-console-paste-collapse-threshold", Input)
 
@@ -2888,7 +2918,7 @@ async def test_settings_console_behavior_renders_global_default_controls():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
 
         assert screen.query_one("#settings-console-default-streaming", Input).value == "false"
@@ -2929,7 +2959,7 @@ async def test_settings_console_behavior_renders_background_effect_controls():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
 
         assert screen.query_one("#settings-console-background-effect-enabled", Button)
@@ -2972,7 +3002,7 @@ async def test_settings_console_background_effects_save_nested_config(monkeypatc
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
         enabled = screen.query_one("#settings-console-background-effect-enabled", Button)
         effect = screen.query_one("#settings-console-background-effect-type", Select)
@@ -3074,7 +3104,7 @@ async def test_settings_console_background_workbench_scope_falls_back_to_transcr
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
         scope = screen.query_one("#settings-console-background-effect-scope", Select)
 
@@ -3120,7 +3150,7 @@ async def test_settings_console_background_workbench_loaded_scope_save_shows_fal
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
         fps = screen.query_one("#settings-console-background-effect-fps", Input)
 
@@ -3164,7 +3194,7 @@ async def test_settings_console_background_workbench_loaded_scope_unrelated_save
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
         threshold = screen.query_one("#settings-console-paste-collapse-threshold", Input)
 
@@ -3241,7 +3271,7 @@ async def test_settings_console_background_workbench_loaded_scope_mounts_as_tran
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
         scope = screen.query_one("#settings-console-background-effect-scope", Select)
 
@@ -3272,7 +3302,7 @@ async def test_settings_console_behavior_saves_global_defaults(monkeypatch):
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
         streaming = screen.query_one("#settings-console-default-streaming", Input)
         temperature = screen.query_one("#settings-console-default-temperature", Input)
@@ -3402,7 +3432,7 @@ async def test_settings_console_behavior_uses_batched_save_adapter(monkeypatch):
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
         threshold = screen.query_one("#settings-console-paste-collapse-threshold", Input)
         streaming = screen.query_one("#settings-console-default-streaming", Input)
@@ -3490,7 +3520,7 @@ async def test_settings_console_behavior_rejects_invalid_global_defaults(
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
         field = screen.query_one(field_id, Input)
         field.value = value
@@ -3576,7 +3606,7 @@ async def test_settings_console_behavior_revert_button_works_with_input_focus(mo
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
         temperature = screen.query_one("#settings-console-default-temperature", Input)
         temperature.focus()
@@ -3609,7 +3639,7 @@ async def test_settings_console_behavior_revert_discards_draft(monkeypatch):
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         await pilot.click("#settings-console-collapse-large-pastes-toggle")
         screen = _active_destination_screen(host)
 
@@ -3657,7 +3687,7 @@ async def test_settings_console_guided_save_revert_enable_only_when_dirty():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
 
         assert screen.query_one("#settings-save-category", Button).disabled is True
@@ -3679,7 +3709,7 @@ async def test_settings_provider_category_uses_effective_console_source():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
@@ -3698,7 +3728,7 @@ async def test_settings_provider_category_renders_catalog_select_with_visible_va
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
 
         provider = screen.query_one("#settings-provider-value", Select)
@@ -3741,6 +3771,10 @@ async def test_settings_provider_navigation_context_focuses_api_key_field():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
+        # Settle the mount-time sync-rows worker FIRST so its landing cannot
+        # race the navigation focus dance nondeterministically -- the
+        # interleaved case has its own deterministic test below (task-290).
+        await _settle_settings_mount_storm(pilot)
         screen = _active_destination_screen(host)
 
         screen.apply_navigation_context(
@@ -3751,6 +3785,44 @@ async def test_settings_provider_navigation_context_focuses_api_key_field():
                 "field": "api_key",
             }
         )
+        await pilot.pause()
+        await pilot.pause()
+
+        api_key = screen.query_one("#settings-provider-api-key", Input)
+        assert api_key.has_focus
+
+
+@pytest.mark.asyncio
+async def test_sync_rows_recompose_mid_navigation_still_focuses_target_field():
+    """task-290: a sync-rows landing used to recompose the screen between a
+    navigation focus intent and its deferred set_focus processing,
+    destroying the target and dropping focus. The pending-intent mechanism
+    re-issues the focus against the fresh children."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+
+        screen.apply_navigation_context(
+            {
+                "category": SettingsCategoryId.PROVIDERS_MODELS.value,
+                "provider": "openai",
+                "model": "gpt-4.1",
+                "field": "api_key",
+            }
+        )
+        # Deterministic interleave: land a sync-rows apply (fresh values ->
+        # recompose) while the navigation focus is still in flight.
+        screen._apply_sync_rows(
+            (("Active server profile", "interleaved-value"),),
+            (("Manual sync status", "interleaved"),),
+        )
+        await pilot.pause()
+        await pilot.pause()
         await pilot.pause()
 
         api_key = screen.query_one("#settings-provider-api-key", Input)
@@ -3865,7 +3937,7 @@ async def test_settings_provider_openai_endpoint_placeholder_uses_provider_conte
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
 
@@ -3902,7 +3974,7 @@ async def test_settings_provider_endpoint_uses_url_safe_input_for_url_values():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
 
@@ -3922,7 +3994,7 @@ async def test_settings_provider_guided_save_revert_enable_only_when_dirty():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
 
         assert screen.query_one("#settings-save-category", Button).disabled is True
@@ -3947,7 +4019,7 @@ async def test_settings_provider_test_redacts_secrets(monkeypatch):
     host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
         await _wait_for_settings_text(screen, pilot, "Provider test")
@@ -3977,7 +4049,7 @@ async def test_settings_provider_category_saves_provider_defaults_without_sampli
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         provider = screen.query_one("#settings-provider-value", Select)
         provider.value = "llama_cpp"
@@ -4028,7 +4100,7 @@ async def test_settings_provider_category_saves_selected_model_profile(monkeypat
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         screen.query_one("#settings-model-profile-temperature", Input).value = "0.2"
         screen.query_one("#settings-model-profile-top-p", Input).value = "0.88"
@@ -4077,7 +4149,7 @@ async def test_settings_provider_category_saves_openai_generation_profile(monkey
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 55)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
 
         values = {
@@ -4177,7 +4249,7 @@ async def test_settings_provider_category_saves_anthropic_thinking_profile(monke
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 55)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
 
         values = {
@@ -4248,7 +4320,7 @@ async def test_settings_provider_category_rejects_out_of_range_model_profile(
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         screen.query_one(field_id, Input).value = value
 
@@ -4273,7 +4345,7 @@ async def test_settings_provider_category_rejects_invalid_streaming_profile(monk
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         screen.query_one("#settings-model-profile-streaming", Input).value = "tru"
 
@@ -4300,7 +4372,7 @@ async def test_settings_provider_model_switch_loads_selected_model_profile():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
 
         assert screen.query_one("#settings-model-profile-temperature", Input).value == "0.2"
@@ -4327,7 +4399,7 @@ async def test_settings_provider_model_profile_none_values_render_as_blank_input
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
 
         assert screen.query_one("#settings-model-profile-temperature", Input).value == ""
@@ -4355,7 +4427,7 @@ async def test_settings_provider_model_switch_does_not_save_unedited_profile(mon
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         model = screen.query_one("#settings-model-value", Input)
         model.value = "gpt-4.1-mini"
@@ -4381,7 +4453,7 @@ async def test_settings_provider_category_does_not_save_unedited_effective_defau
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         await pilot.click("#settings-save-category")
 
     assert saved == []
@@ -4406,7 +4478,7 @@ async def test_settings_provider_category_saves_only_dirty_provider_fields(monke
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         screen.query_one("#settings-model-value", Input).value = "gpt-4.1-mini"
 
@@ -4483,7 +4555,7 @@ async def test_settings_provider_category_preserves_existing_endpoint_key(monkey
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
 
         endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
@@ -4519,7 +4591,7 @@ async def test_settings_provider_save_button_works_with_endpoint_input_focus(mon
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
 
         endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
@@ -4556,7 +4628,7 @@ async def test_settings_provider_category_saves_credential_env_var(monkeypatch):
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
 
         env_var = screen.query_one("#settings-provider-credential-env-var", Input)
@@ -4590,7 +4662,7 @@ async def test_settings_provider_category_renders_local_api_key_setup_without_re
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
 
         api_key = screen.query_one("#settings-provider-api-key", Input)
@@ -4621,7 +4693,7 @@ async def test_settings_provider_category_saves_and_clears_local_api_key(monkeyp
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
 
         api_key = screen.query_one("#settings-provider-api-key", Input)
@@ -4666,7 +4738,7 @@ async def test_settings_provider_category_rejects_invalid_credential_env_var(mon
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
 
         env_var = screen.query_one("#settings-provider-credential-env-var", Input)
@@ -4706,7 +4778,7 @@ async def test_settings_provider_category_updates_existing_non_normalized_provid
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
 
         endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
@@ -4751,7 +4823,7 @@ async def test_settings_provider_endpoint_validation_blocks_bad_url(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         screen.query_one("#settings-provider-endpoint-value", Input).value = "javascript:alert(1)"
 
@@ -4783,7 +4855,7 @@ async def test_settings_provider_endpoint_save_blocks_blank_provider(monkeypatch
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         provider = screen.query_one("#settings-provider-value", Select)
         manual_provider = screen.query_one("#settings-provider-manual-value", Input)
@@ -4825,7 +4897,7 @@ async def test_settings_provider_category_blocks_empty_manual_provider_save(monk
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         provider = screen.query_one("#settings-provider-value", Select)
         manual_provider = screen.query_one("#settings-provider-manual-value", Input)
@@ -4853,7 +4925,7 @@ async def test_settings_provider_blank_select_value_is_not_treated_as_provider()
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         provider = screen.query_one("#settings-provider-value", Select)
 
@@ -4878,7 +4950,7 @@ async def test_settings_provider_revert_restores_provider_dependent_placeholders
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         provider = screen.query_one("#settings-provider-value", Select)
         endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
@@ -4955,7 +5027,7 @@ async def test_settings_provider_switch_updates_inspector_readiness():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         provider = screen.query_one("#settings-provider-value", Select)
 
@@ -4985,7 +5057,7 @@ async def test_settings_provider_switch_selects_provider_default_model():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         provider = screen.query_one("#settings-provider-value", Select)
 
@@ -5017,7 +5089,7 @@ async def test_settings_provider_switch_resets_staged_model_for_each_provider_tr
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         provider = screen.query_one("#settings-provider-value", Select)
         model_input = screen.query_one("#settings-model-value", Input)
@@ -5068,7 +5140,7 @@ async def test_settings_provider_detail_shows_field_guidance_and_readable_draft_
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         provider = screen.query_one("#settings-provider-value", Select)
 
@@ -5131,7 +5203,7 @@ async def test_settings_provider_manual_entry_promotes_known_provider_to_catalog
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         provider = screen.query_one("#settings-provider-value", Select)
         manual_provider = screen.query_one("#settings-provider-manual-value", Input)
@@ -5154,7 +5226,7 @@ async def test_settings_provider_test_blocks_unknown_provider():
     host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
         await _wait_for_settings_text(screen, pilot, "Unknown provider")
@@ -5177,7 +5249,7 @@ async def test_settings_provider_test_uses_api_settings_env_var_without_secret_l
     host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
         await _wait_for_settings_text(screen, pilot, "GROQ_API_KEY=<redacted>")
@@ -5211,7 +5283,7 @@ async def test_settings_provider_model_discovery_controls_render_for_eligible_pr
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
 
         discover = screen.query_one("#settings-discover-provider-models", Button)
@@ -5258,7 +5330,7 @@ async def test_settings_provider_model_discovery_saves_selected_runtime_models()
     host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         await _click_scrolled_settings_button(screen, pilot, "#settings-discover-provider-models")
         await _wait_for_settings_text(
@@ -5332,7 +5404,7 @@ async def test_settings_provider_model_discovery_shows_ambiguous_provider_recove
     host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         await _click_scrolled_settings_button(screen, pilot, "#settings-discover-provider-models")
         await _wait_for_settings_text(
@@ -5363,7 +5435,7 @@ async def test_settings_provider_test_does_not_depend_on_console_sampling_defaul
     host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         screen.query_one("#settings-model-profile-temperature", Input).value = "not-a-number"
 
@@ -5460,7 +5532,7 @@ async def test_settings_privacy_security_renders_guided_redacted_posture(monkeyp
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-privacy-security")
+        await _open_settings_category(pilot, "#settings-category-privacy-security")
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
@@ -5489,13 +5561,13 @@ async def test_settings_privacy_security_recovery_actions_navigate_to_existing_c
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-privacy-security")
+        await _open_settings_category(pilot, "#settings-category-privacy-security")
         screen = _active_destination_screen(host)
 
         await pilot.click("#settings-open-provider-credentials")
         assert screen.active_category == SettingsCategoryId.PROVIDERS_MODELS.value
 
-        await pilot.click("#settings-category-privacy-security")
+        await _open_settings_category(pilot, "#settings-category-privacy-security")
         await pilot.click("#settings-open-advanced-config")
         assert screen.active_category == SettingsCategoryId.ADVANCED_CONFIG.value
 
@@ -5506,7 +5578,7 @@ async def test_settings_diagnostics_validate_and_reload_config_actions():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-diagnostics")
+        await _open_settings_category(pilot, "#settings-category-diagnostics")
         screen = _active_destination_screen(host)
         await pilot.click("#settings-validate-config")
         await pilot.click("#settings-reload-config")
@@ -5522,7 +5594,7 @@ async def test_settings_diagnostics_test_shortcut_runs_validate_and_reload():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-diagnostics")
+        await _open_settings_category(pilot, "#settings-category-diagnostics")
         await pilot.press("t")
         screen = _active_destination_screen(host)
         await _wait_for_settings_text(screen, pilot, "Config reload: loaded")
@@ -5893,7 +5965,7 @@ async def test_settings_storage_test_shortcut_runs_safety_check(monkeypatch, tmp
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-storage")
+        await _open_settings_category(pilot, "#settings-category-storage")
         screen = _active_destination_screen(host)
 
         assert screen.query_one("#settings-check-storage")
@@ -5925,7 +5997,7 @@ async def test_settings_privacy_security_test_shortcut_runs_privacy_check(monkey
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-privacy-security")
+        await _open_settings_category(pilot, "#settings-category-privacy-security")
         screen = _active_destination_screen(host)
 
         assert screen.query_one("#settings-check-privacy")
@@ -5957,7 +6029,7 @@ async def test_settings_privacy_shortcut_passes_stable_config_snapshot_to_worker
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-privacy-security")
+        await _open_settings_category(pilot, "#settings-category-privacy-security")
         screen = _active_destination_screen(host)
         captured = {}
 
@@ -6015,7 +6087,7 @@ async def test_settings_advanced_config_shows_raw_editor_and_safety_actions():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-advanced-config")
+        await _open_settings_category(pilot, "#settings-category-advanced-config")
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
@@ -6034,7 +6106,7 @@ async def test_settings_advanced_config_keeps_safety_actions_before_raw_editor()
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-advanced-config")
+        await _open_settings_category(pilot, "#settings-category-advanced-config")
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, "#settings-advanced-config-actions")
         await _wait_for_selector(screen, pilot, "#settings-advanced-config-editor")
@@ -6052,7 +6124,7 @@ async def test_settings_advanced_config_uses_editor_owned_scroll_region():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-advanced-config")
+        await _open_settings_category(pilot, "#settings-category-advanced-config")
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, "#settings-advanced-config-editor")
         detail_pane = screen.query_one("#settings-detail-pane")
@@ -6092,7 +6164,7 @@ async def test_settings_advanced_config_blocks_invalid_toml_and_redacts_secret()
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-advanced-config")
+        await _open_settings_category(pilot, "#settings-category-advanced-config")
         screen = _active_destination_screen(host)
         editor = screen.query_one("#settings-advanced-config-editor", TextArea)
         editor.text = "OPENAI_API_KEY=sk-secret-token\n[broken"
@@ -6111,7 +6183,7 @@ async def test_settings_advanced_config_blocks_non_mapping_toml_on_save():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-advanced-config")
+        await _open_settings_category(pilot, "#settings-category-advanced-config")
         screen = _active_destination_screen(host)
         editor = screen.query_one("#settings-advanced-config-editor", TextArea)
         editor.text = "42"
@@ -6131,7 +6203,7 @@ async def test_settings_advanced_config_saves_atomically_with_backup(monkeypatch
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-advanced-config")
+        await _open_settings_category(pilot, "#settings-category-advanced-config")
         screen = _active_destination_screen(host)
         editor = screen.query_one("#settings-advanced-config-editor", TextArea)
         editor.text = "[chat_defaults]\nprovider = \"Ollama\"\nmodel = \"llama3\"\n"
@@ -6169,7 +6241,7 @@ async def test_settings_advanced_config_loads_backup_preview_without_saving(monk
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-advanced-config")
+        await _open_settings_category(pilot, "#settings-category-advanced-config")
         screen = _active_destination_screen(host)
         editor = screen.query_one("#settings-advanced-config-editor", TextArea)
 
@@ -6215,7 +6287,7 @@ async def test_settings_advanced_config_load_backup_reports_decode_failure(
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-advanced-config")
+        await _open_settings_category(pilot, "#settings-category-advanced-config")
         screen = _active_destination_screen(host)
         editor = screen.query_one("#settings-advanced-config-editor", TextArea)
 
@@ -6253,7 +6325,7 @@ async def test_settings_advanced_config_guided_path_buttons_escape_raw_toml():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-advanced-config")
+        await _open_settings_category(pilot, "#settings-category-advanced-config")
         screen = _active_destination_screen(host)
 
         assert screen.query_one("#settings-advanced-open-providers-models", Button)
@@ -6281,3 +6353,35 @@ def test_settings_advanced_config_new_file_save_reports_no_backup(monkeypatch, t
     assert "backup: none (new file)" in result
     assert config_path.exists()
     assert not config_path.with_suffix(".toml.bak").exists()
+
+
+@pytest.mark.asyncio
+async def test_settings_mount_triggers_at_most_one_post_mount_recompose():
+    """task-290: on_mount used to fire TWO independent thread workers whose
+    completions each set a recompose=True reactive at its own moment -- two
+    full-screen recomposes shortly after mount (the "mount storm"). The
+    combined _refresh_sync_rows worker applies both row sets in one
+    message-loop slot, so compose runs at most twice total: the initial
+    mount compose plus ONE coalesced storm recompose."""
+    compose_calls = 0
+    original_compose = SettingsScreen.compose
+
+    def counting_compose(self):
+        nonlocal compose_calls
+        compose_calls += 1
+        yield from original_compose(self)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    with patch.object(SettingsScreen, "compose", counting_compose):
+        async with host.run_test(size=(180, 50)) as pilot:
+            await _settle_settings_mount_storm(pilot)
+            # Extra settles: give any straggler recompose a chance to fire
+            # so the assertion below is a real ceiling, not a lucky read.
+            await pilot.pause()
+            await pilot.pause()
+
+    assert compose_calls <= 2, (
+        f"Settings composed {compose_calls} times after mount -- the sync-rows "
+        "refresh storm is no longer coalesced (task-290)."
+    )

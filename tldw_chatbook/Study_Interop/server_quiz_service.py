@@ -3,16 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    QuizAttemptSubmitRequest,
-    QuizCreateRequest,
-    QuizQuestionCreateRequest,
-    TLDWAPIClient,
-)
+if TYPE_CHECKING:
+    from ..tldw_api import TLDWAPIClient
 
 
 class ServerQuizService:
@@ -118,6 +114,9 @@ class ServerQuizService:
         time_limit_seconds: Optional[int] = None,
         passing_score: Optional[int] = None,
     ) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import QuizCreateRequest
+
         self._enforce(self._quiz_action_id("create"))
         return await self._require_client().create_quiz(
             QuizCreateRequest(
@@ -165,6 +164,9 @@ class ServerQuizService:
         )
 
     async def create_question(self, quiz_id: str | int, **payload: Any) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import QuizQuestionCreateRequest
+
         self._enforce(self._quiz_question_action_id("detail"))
         return await self._require_client().create_quiz_question(
             self._coerce_quiz_id(quiz_id),
@@ -197,6 +199,9 @@ class ServerQuizService:
         return await self._require_client().start_quiz_attempt(self._coerce_quiz_id(quiz_id))
 
     async def submit_attempt(self, attempt_id: str | int, *, answers: list[dict[str, Any]]) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import QuizAttemptSubmitRequest
+
         self._enforce(self._quiz_attempt_action_id("observe"))
         return await self._require_client().submit_quiz_attempt(
             self._coerce_attempt_id(attempt_id),

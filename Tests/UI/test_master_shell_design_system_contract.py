@@ -167,20 +167,21 @@ def test_library_mode_chip_selector_is_retired():
     selector, in every variant: base rule, ``:focus``, ``.is-active``, and
     ``.is-active:focus``) was deleted wholesale in L3b Task 9 along with
     ``LIBRARY_MODES`` and the rest of the mode-switch chrome the Library rail
-    + canvas shell superseded. ``.notes-mode-chip``/``.personas-mode-chip``
-    still render their own mode strips and keep both the base rule and the
-    shared ``.is-active``/``.is-active:focus`` variants -- only the
-    ``library-`` selector is gone. The ``$ds-library-mode-chip-*`` size
-    tokens survive (still consumed by ``.notes-mode-chip``); only the
-    Library-only ``$ds-library-mode-bar-height``/``$ds-library-mode-label-width``
+    + canvas shell superseded. ``.notes-mode-chip`` later went the same way:
+    the Notes screen rebuild retired its mode strip, and the orphaned
+    selectors were pruned once they had zero Python users, leaving
+    ``.personas-mode-chip`` as the only surviving mode-chip family (it keeps
+    the base rule and the shared ``.is-active``/``.is-active:focus``
+    variants). The ``$ds-library-mode-chip-*`` size token definitions
+    survive in ``_variables.tcss``; only the Library-only
+    ``$ds-library-mode-bar-height``/``$ds-library-mode-label-width``
     tokens, which had no other consumer, were deleted with the selector."""
     text = DESIGN_SYSTEM_TCSS.read_text(encoding="utf-8")
     variables = CORE_VARIABLES_TCSS.read_text(encoding="utf-8")
     library_screen = LIBRARY_SCREEN_PY.read_text(encoding="utf-8")
 
     assert ".library-mode-chip" not in text
-    assert ".notes-mode-chip.is-active" in text
-    assert ".notes-mode-chip.is-active:focus" in text
+    assert ".notes-mode-chip" not in text
     assert ".personas-mode-chip.is-active" in text
 
     assert "$ds-library-mode-bar-height" not in variables

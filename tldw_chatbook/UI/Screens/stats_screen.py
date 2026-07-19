@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Dict, Any, Optional
 from datetime import datetime
 
 from textual.app import ComposeResult
-from textual.screen import Screen
 from textual.widgets import Static, Label, LoadingIndicator, ProgressBar, Placeholder, Button
 from textual.containers import VerticalScroll, Horizontal, Container, Grid
 from textual.reactive import reactive
@@ -17,6 +16,9 @@ from textual import work
 # Local imports
 from tldw_chatbook.Stats.user_statistics import UserStatistics
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from ..Navigation.base_app_screen import BaseAppScreen
+from ..Workbench.workbench_state import WorkbenchHeaderState, WorkbenchStatus
+from ..Workbench.workbench_widgets import DestinationHeader
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -75,22 +77,22 @@ class TopicBar(Container):
             pass
 
 
-class StatsScreen(Screen):
+class StatsScreen(BaseAppScreen):
     """
     A screen to display dynamic user statistics.
     """
-    
+
     # Reactive attributes
     stats_data: reactive[Optional[Dict[str, Any]]] = reactive(None)
     is_loading: reactive[bool] = reactive(False)  # Start as False
     error_message: reactive[Optional[str]] = reactive(None)
-    
+
     def __init__(self, app_instance: 'TldwCli', **kwargs):
-        super().__init__(**kwargs)
-        self.app_instance = app_instance
-        
+        super().__init__(app_instance, "stats", **kwargs)
+
     def on_mount(self) -> None:
         """Load statistics when the screen is mounted."""
+        super().on_mount()
         # Verify we have the app instance
         if not self.app_instance:
             # Try to get from ancestry as fallback
@@ -108,6 +110,7 @@ class StatsScreen(Screen):
         self.stats_data = None
         self.error_message = None
         self.is_loading = True
+        self._sync_destination_header("loading")
         if self.is_mounted:
             self.call_after_refresh(self.refresh_stats_display)
         self.load_statistics()
@@ -121,6 +124,26 @@ class StatsScreen(Screen):
         self.stats_data = stats_data
         self.error_message = error_message
         self.is_loading = False
+        if error_message:
+            self._sync_destination_header("error")
+        elif stats_data:
+            self._sync_destination_header("ready")
+        else:
+            self._sync_destination_header("empty")
+
+    def _sync_destination_header(self, status: WorkbenchStatus) -> None:
+        """Refresh the destination header status badge; tolerate teardown races."""
+        try:
+            header = self.query_one("#stats-destination-header", DestinationHeader)
+        except Exception:
+            return
+        header.sync_state(
+            WorkbenchHeaderState(
+                title="Stats",
+                subtitle="Usage statistics from your local data.",
+                status=status,
+            )
+        )
         
     @work(thread=True)
     def load_statistics(self) -> None:
@@ -160,18 +183,34 @@ class StatsScreen(Screen):
             self.app.call_from_thread(self._apply_statistics_result, stats_data, error_message)
             logger.info("Statistics loading complete")
     
-    def compose(self) -> ComposeResult:
-        """Create the statistics display."""
-        with Container(id="stats-container"):
-            yield Label("📊 User Statistics Dashboard", classes="stats-header")
-            with VerticalScroll(id="stats-scroll"):
-                with Container(id="stats-content"):
+    def compose_content(self) -> ComposeResult:
+        """Create the statistics display with its destination header."""
+        yield DestinationHeader(
+            WorkbenchHeaderState(
+                title="Stats",
+                subtitle="Usage statistics from your local data.",
+                status="ready",
+            ),
+            id="stats-destination-header",
+        )
+        stats_container = Container(
+            VerticalScroll(
+                Container(
                     # Initial content - will be replaced by refresh_stats_display
-                    yield Container(
+                    Container(
                         LoadingIndicator(),
                         Label("Initializing statistics...", classes="loading-text"),
-                        classes="loading-container"
-                    )
+                        classes="loading-container",
+                    ),
+                    id="stats-content",
+                ),
+                id="stats-scroll",
+            ),
+            id="stats-container",
+        )
+        # Leave room for the destination header above the stats content.
+        stats_container.styles.height = "1fr"
+        yield stats_container
     
     def watch_is_loading(self, is_loading: bool) -> None:
         """React to loading state changes."""

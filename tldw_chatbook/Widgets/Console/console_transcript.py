@@ -386,6 +386,29 @@ class ConsoleTranscript(VerticalScroll):
         self._row_signatures: dict[str, tuple] = {}
         self._row_build_counts: dict[str, int] = {}
         self._image_specs: dict[str, ConsoleImageRowSpec] = {}
+        # TASK-259: per-message render-signature cache. Maps message id ->
+        # (cheap change-token, expensive row signature). `_transcript_rows`
+        # re-derives the render payload (Content assembly) only when the
+        # token differs, making derivation O(changed messages) per tick.
+        # Lives on the widget instance so a recompose starts it fresh.
+        self._message_signature_cache: dict[str, tuple[tuple, tuple]] = {}
+        self._signature_compute_counts: dict[str, int] = {}
+        # TASK-298: every message id seen by set_messages, so a NEW
+        # user-role message ANYWHERE in the update (a send) re-engages
+        # tail-follow even after the user scrolled up. The send path
+        # appends USER + ASSISTANT placeholder together, so the tail
+        # alone can miss the send (PR #697 review).
+        self._seen_message_ids: set[str] = set()
+
+    def on_mount(self) -> None:
+        """Engage tail-follow: stay scrolled to the newest content.
+
+        Textual's anchor keeps the view pinned to the bottom while content
+        grows, releases when the user scrolls up, and re-engages when they
+        return to the bottom (TASK-298 -- streamed replies taller than the
+        viewport used to finish below the fold with no scroll).
+        """
+        self.anchor()
 
     def compose(self) -> ComposeResult:
         self._row_widgets.clear()
@@ -398,11 +421,39 @@ class ConsoleTranscript(VerticalScroll):
             yield widget
 
     def set_messages(self, messages: Iterable[ConsoleChatMessage]) -> None:
-        """Replace transcript messages and refresh mounted rows when possible."""
+        """Replace transcript messages and refresh mounted rows when possible.
+
+        Args:
+            messages: New transcript messages in display order. Signature
+                cache entries for messages no longer present are pruned here
+                (delete correctness for the TASK-259 per-message cache).
+        """
         self._messages = list(messages)
         message_ids = {message.id for message in self._messages}
+        new_user_send = any(
+            message.id not in self._seen_message_ids
+            and message.role == ConsoleMessageRole.USER
+            for message in self._messages
+        )
+        if self.is_mounted and new_user_send:
+            # A send: jump to the tail even if the user had scrolled up
+            # (anchor() also re-engages follow for the reply that streams
+            # in next). Checked against ALL newly-seen ids, not just the
+            # tail -- the send path appends USER + ASSISTANT placeholder
+            # together and the first polled update can already have the
+            # placeholder at the tail. Appended assistant/tool rows alone
+            # never yank a reader.
+            self.anchor()
+        self._seen_message_ids = message_ids
         if self.selected_message_id not in message_ids:
             self.selected_message_id = None
+        for stale_id in [
+            cached_id
+            for cached_id in self._message_signature_cache
+            if cached_id not in message_ids
+        ]:
+            del self._message_signature_cache[stale_id]
+            self._signature_compute_counts.pop(stale_id, None)
 
     def set_image_specs(self, specs: Mapping[str, ConsoleImageRowSpec]) -> None:
         """Replace the prebuilt inline-image row payloads keyed by message ID.
@@ -453,6 +504,23 @@ class ConsoleTranscript(VerticalScroll):
     def row_render_signatures(self) -> dict[str, tuple]:
         """Return active row signatures for focused reconciliation tests."""
         return dict(self._row_signatures)
+
+    def message_signature_compute_counts(self) -> dict[str, int]:
+        """Return per-message signature derivation counts for cache tests.
+
+        Returns:
+            Mapping of message id to how many times its expensive row
+            signature (render Content assembly) was derived since mount.
+        """
+        return dict(self._signature_compute_counts)
+
+    def message_signature_cache_ids(self) -> tuple[str, ...]:
+        """Return the message ids currently held in the signature cache.
+
+        Returns:
+            Tuple of cached message ids, for delete-pruning tests.
+        """
+        return tuple(self._message_signature_cache)
 
     def select_message(self, message_id: str) -> None:
         """Select one message and show its contextual action row."""
@@ -629,7 +697,9 @@ class ConsoleTranscript(VerticalScroll):
                 _TranscriptRow(
                     key=f"message:{message.id}",
                     kind="message",
-                    signature=self._message_row_signature(message, selected=selected),
+                    signature=self._cached_message_row_signature(
+                        message, selected=selected
+                    ),
                     message=message,
                     selected=selected,
                 )
@@ -741,9 +811,11 @@ class ConsoleTranscript(VerticalScroll):
         if track:
             self._row_build_counts[row.key] = self._row_build_counts.get(row.key, 0) + 1
         if row.kind == "rule":
+            # Rule separators do not need stable IDs; using None avoids
+            # DuplicateIds when a recompose/race leaves the previous end-rule
+            # widget in the DOM briefly while the new one is mounted.
             return Static(
                 row.renderable,
-                id=self._row_widget_id(row),
                 classes="console-transcript-rule",
             )
         if row.kind == "empty":
@@ -818,6 +890,80 @@ class ConsoleTranscript(VerticalScroll):
     @staticmethod
     def _row_widget_id(row: _TranscriptRow) -> str:
         return "console-transcript-row-" + row.key.replace(":", "-")
+
+    @staticmethod
+    def _message_signature_token(message: ConsoleChatMessage, *, selected: bool) -> tuple:
+        """Return a cheap change-token covering every render-signature input.
+
+        Captures the exact inputs of ``_message_render_text`` plus the
+        non-render signature fields (status, selection, variant identity), so
+        token equality guarantees the cached expensive signature is current.
+        Unchanged messages keep the same ``str``/``bytes`` object references
+        across store snapshots, so tuple comparison short-circuits on
+        identity; content edits/streaming rebinds produce new objects and are
+        caught by value comparison (never by length alone -- an equal-length
+        edit still misses the cache).
+
+        Args:
+            message: Transcript message to fingerprint.
+            selected: Whether the message row renders as selected.
+
+        Returns:
+            Hashable token tuple; any render-affecting change alters it.
+        """
+        variants = message.variants
+        if variants is None:
+            variants_token = None
+            content = message.content
+        else:
+            variants_token = (
+                variants.selected_index,
+                tuple(variant.id for variant in variants.variants),
+            )
+            content = variants.current.content
+        attachments_token = tuple(
+            (
+                attachment.display_name,
+                attachment.mime_type,
+                attachment.position,
+                None if attachment.data is None else len(attachment.data),
+            )
+            for attachment in (getattr(message, "attachments", ()) or ())
+        )
+        return (
+            message.role,
+            message.status,
+            selected,
+            content,
+            variants_token,
+            attachments_token,
+            message.attachment_label,
+            message.image_mime_type,
+            None if message.image_data is None else len(message.image_data),
+        )
+
+    def _cached_message_row_signature(
+        self, message: ConsoleChatMessage, *, selected: bool
+    ) -> tuple:
+        """Return the row signature, deriving it only when the message changed.
+
+        Args:
+            message: Transcript message for the row.
+            selected: Whether the message row renders as selected.
+
+        Returns:
+            The (possibly cached) expensive row signature tuple.
+        """
+        token = self._message_signature_token(message, selected=selected)
+        cached = self._message_signature_cache.get(message.id)
+        if cached is not None and cached[0] == token:
+            return cached[1]
+        signature = self._message_row_signature(message, selected=selected)
+        self._message_signature_cache[message.id] = (token, signature)
+        self._signature_compute_counts[message.id] = (
+            self._signature_compute_counts.get(message.id, 0) + 1
+        )
+        return signature
 
     @staticmethod
     def _message_row_signature(message: ConsoleChatMessage, *, selected: bool) -> tuple:

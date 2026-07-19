@@ -7,8 +7,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ..tldw_api import ChatGrammarCreate, ChatGrammarUpdate
-
 
 class LocalChatGrammarsService:
     """Persist saved grammars for local/offline structured chat output."""
@@ -95,6 +93,9 @@ class LocalChatGrammarsService:
         grammar_text: str,
         description: str | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ChatGrammarCreate
+
         self._enforce("chat.grammars.create.local")
         request = ChatGrammarCreate(name=name, description=description, grammar_text=grammar_text)
         grammar_id = f"local-grammar-{self._next_id}"
@@ -151,6 +152,9 @@ class LocalChatGrammarsService:
         last_validated_at: Any = None,
         is_archived: bool | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ChatGrammarUpdate
+
         self._enforce("chat.grammars.update.local")
         record = self._find(grammar_id, include_archived=True)
         current_version = int(record.get("version", 1) or 1)

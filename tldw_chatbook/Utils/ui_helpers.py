@@ -147,26 +147,6 @@ class UIHelpers:
             pass  # If not found, it's fine
     
     @staticmethod
-    def update_token_count_in_footer(app: 'App', token_count: Optional[int] = None) -> None:
-        """
-        Update the token count display in the footer widget.
-        
-        Args:
-            app: The Textual app instance
-            token_count: The token count to display, or None to clear
-        """
-        if not hasattr(app, '_db_size_status_widget') or not app._db_size_status_widget:
-            return
-        
-        try:
-            if token_count is None:
-                app._db_size_status_widget.update_token_count("")
-            else:
-                app._db_size_status_widget.update_token_count(str(token_count))
-        except Exception as e:
-            logger.error(f"Error updating token count in footer: {e}")
-    
-    @staticmethod
     def get_widget_safely(app: 'App', widget_id: str, widget_type: type) -> Optional[object]:
         """
         Safely get a widget by ID, returning None if not found.

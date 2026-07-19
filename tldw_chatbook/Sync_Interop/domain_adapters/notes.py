@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any, Callable, TYPE_CHECKING
 
-from tldw_chatbook.tldw_api import SyncV2Envelope
+if TYPE_CHECKING:
+    from tldw_chatbook.tldw_api import SyncV2Envelope
 
 from ._helpers import call_if_present, decrypt_envelope_payload
 

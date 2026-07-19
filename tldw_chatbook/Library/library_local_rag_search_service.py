@@ -12,11 +12,18 @@ from tldw_chatbook.Library.library_fts_query import build_fts_match_query
 from tldw_chatbook.Library.library_notes_sync_state import count_noun
 from tldw_chatbook.Library.library_rag_service import LibraryRagSearchOutcome
 from tldw_chatbook.Library.library_rag_state import (
+    LIBRARY_RAG_EMPTY_STATE_SELECTOR,
     LIBRARY_RAG_QUERY_MAX_LENGTH,
     LIBRARY_RAG_SERVICE_ERROR_SELECTOR,
 )
+# The shared factory is the single process-wide RAG service constructor
+# (task-247): resolving through it guarantees Library RAG Answer queries read
+# the exact vector store / collection / embedding model that ingestion-time
+# indexing writes to.
+from tldw_chatbook.RAG_Search.ingestion_indexing import get_shared_rag_service
 from tldw_chatbook.UI.destination_recovery import DestinationRecoveryState
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
+from tldw_chatbook.Utils.optional_deps import embeddings_rag_deps_installed
 
 logger = logger.bind(module="LibraryLocalRagSearchService")
 
@@ -67,9 +74,11 @@ class LibraryLocalRagSearchService:
     """Keyword-first Library retrieval over the app's local source seams.
 
     `search` mode fans out over notes/media/conversations/prompts FTS seams and
-    always works when at least one seam is available. `rag` mode delegates
-    to the app's `_rag_service` and degrades to a blocked outcome with
-    setup routing when that runtime is absent.
+    always works when at least one seam is available. `rag` mode uses the
+    app's `_rag_service`, lazily initializing it from the process-wide
+    shared RAG service on first use when the embeddings deps are installed
+    (task-249), and degrades to a blocked outcome with setup routing when
+    the runtime is unavailable.
     """
 
     def __init__(self, app_instance: Any) -> None:
@@ -246,7 +255,7 @@ class LibraryLocalRagSearchService:
         top_k: int,
         kwargs: Mapping[str, Any],
     ) -> Any:
-        """Delegate to the app's optional RAG runtime, or report it as absent.
+        """Query the RAG runtime, initializing it lazily on first use (task-249).
 
         The RAG runtime's index is not itself scoped by source type, so
         results are post-filtered here: each row's provenance
@@ -260,16 +269,20 @@ class LibraryLocalRagSearchService:
         occasionally over-including it. An empty `scope` disables filtering
         entirely as a defensive guard; in practice the Search canvas's run
         gate never lets a query reach this method with no source selected.
+
+        Zero raw results over a verifiably empty vector store return a
+        distinct "Index empty" outcome instead of the bare zero-results
+        state (AC #4): "no evidence for this query" and "nothing has been
+        indexed yet" demand different user actions.
         """
-        rag_service = getattr(self._app, "_rag_service", None)
-        search = getattr(rag_service, "search", None)
-        if rag_service is None or not callable(search):
+        rag_service = await self._resolve_rag_runtime()
+        if rag_service is None:
             return LibraryRagSearchOutcome(
                 status="blocked",
                 recovery_state=_rag_mode_unavailable_recovery_state(),
             )
         include_citations = bool(kwargs.get("include_citations", True))
-        raw_results = await search(
+        raw_results = await rag_service.search(
             query=query,
             top_k=top_k,
             search_type="semantic",
@@ -278,7 +291,88 @@ class LibraryLocalRagSearchService:
         rows = [_semantic_row(item) for item in raw_results or ()]
         if scope:
             rows = [row for row in rows if _semantic_row_matches_scope(row, scope)]
+        if not raw_results and await self._semantic_index_is_empty(rag_service):
+            return LibraryRagSearchOutcome(
+                status="empty",
+                recovery_state=_rag_index_empty_recovery_state(),
+                runtime_backend=_RAG_RUNTIME_BACKEND,
+            )
         return {"results": rows, "runtime_backend": _RAG_RUNTIME_BACKEND}
+
+    async def _resolve_rag_runtime(self) -> Any:
+        """Return a usable RAG runtime, lazily creating the shared one.
+
+        Resolution order:
+
+        1. An existing ``app._rag_service`` with a callable ``search`` always
+           wins (already initialized by any surface, or injected by tests).
+        2. The ``embeddings_rag`` deps gate (cheap ``find_spec`` probe, no
+           imports) short-circuits BEFORE any heavy work, so missing-deps
+           installs keep the existing recovery routing at zero cost (AC #3).
+        3. ``get_shared_rag_service()`` constructs the process-wide runtime.
+           First-time construction loads an embedding model (can take
+           seconds), so it runs in ``asyncio.to_thread`` -- never on the UI
+           event loop. The factory is double-checked-locked, so concurrent
+           Library queries racing here serialize inside it and share one
+           instance. The factory already converts construction failures to
+           None; the guard here additionally maps anything it might still
+           raise to None, so a failed first initialization always renders
+           the RAG-unavailable recovery state (setup routing) rather than
+           ``run_library_rag_search``'s generic "Retrieval failed / Retry"
+           outcome -- retrying cannot fix a runtime that will not build.
+
+        Returns:
+            The RAG runtime, or None when it is unavailable (missing deps or
+            failed construction) -- the caller renders the recovery state.
+        """
+        rag_service = getattr(self._app, "_rag_service", None)
+        if rag_service is not None and callable(getattr(rag_service, "search", None)):
+            return rag_service
+        if not embeddings_rag_deps_installed():
+            return None
+        try:
+            service = await asyncio.to_thread(get_shared_rag_service)
+        except Exception:
+            logger.opt(exception=True).error(
+                "Library RAG: shared RAG service initialization raised; "
+                "treating the runtime as unavailable."
+            )
+            return None
+        if service is None or not callable(getattr(service, "search", None)):
+            return None
+        try:
+            # Cache on the app so every RAG surface (chat sidebar readiness,
+            # repeat Library queries) sees the initialized runtime.
+            self._app._rag_service = service
+        except Exception:
+            logger.opt(exception=True).debug(
+                "Could not cache the shared RAG service on the app instance."
+            )
+        return service
+
+    async def _semantic_index_is_empty(self, rag_service: Any) -> bool:
+        """True only when the runtime's vector store verifiably has 0 documents.
+
+        Anything short of a trustworthy zero -- no ``vector_store``, stats
+        call failing, an ``error`` payload, a non-integer count -- returns
+        False so the caller falls back to the generic zero-results outcome
+        rather than claiming an empty index it cannot verify.
+        """
+        get_stats = getattr(getattr(rag_service, "vector_store", None), "get_collection_stats", None)
+        if not callable(get_stats):
+            return False
+        try:
+            # ChromaDB-backed stats can touch disk; keep it off the event loop.
+            stats = await asyncio.to_thread(get_stats)
+        except Exception:
+            logger.opt(exception=True).debug("Library RAG: vector store stats probe failed.")
+            return False
+        if not isinstance(stats, Mapping) or stats.get("error"):
+            return False
+        try:
+            return int(stats.get("count")) == 0
+        except (TypeError, ValueError):
+            return False
 
 
 def _note_row(item: Mapping[str, Any]) -> dict[str, Any]:
@@ -447,5 +541,31 @@ def _rag_mode_unavailable_recovery_state() -> DestinationRecoveryState:
         disabled_tooltip=(
             "RAG runtime is unavailable in this app instance. "
             "Install embeddings support or switch mode to Search."
+        ),
+    )
+
+
+def _rag_index_empty_recovery_state() -> DestinationRecoveryState:
+    """Recovery copy for a working RAG runtime over an empty semantic index.
+
+    Distinct from the generic zero-results state (AC #4): the runtime is
+    fine, there is simply nothing indexed yet, so the next action is to add
+    content (ingestion indexes automatically, task-247) or backfill existing
+    content -- not to rephrase the query.
+    """
+    return DestinationRecoveryState(
+        status_label="Index empty",
+        unavailable_what="Library RAG Answer evidence",
+        why="The semantic index has no content yet",
+        next_action=(
+            "Ingest content to index it automatically, run a semantic index "
+            "backfill, or switch mode to Search"
+        ),
+        recovery_action="Library ingest",
+        authority_owner="Library retrieval service",
+        stable_selector=LIBRARY_RAG_EMPTY_STATE_SELECTOR,
+        disabled_tooltip=(
+            "The semantic index has no content yet. "
+            "Ingest content to index it automatically or run a semantic index backfill."
         ),
     )

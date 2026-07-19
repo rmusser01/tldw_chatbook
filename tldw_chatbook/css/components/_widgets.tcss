@@ -4,16 +4,6 @@
  * Miscellaneous reusable widgets
  * ======================================== */
 
-#app-titlebar {
-    dock: top;
-    height: 1;                 /* single line */
-    background: $panel;        /* Use panel background color */
-    color: $text;
-    text-align: center;
-    text-style: bold;
-    padding: 0 1;
-}
-
 /* Collapsible widget styling with enhanced UX */
 Collapsible {
     height: auto;
@@ -104,6 +94,12 @@ Collapsible > Contents {
 
 /* --- Window Footer Widget --- */
 
+/* KEEP IN SYNC with AppFooterStatus.DEFAULT_CSS (task-264): the widget
+   bakes the core layout rules (dock/height/background, #footer-key-quit,
+   #footer-spacer, #internal-db-size-indicator) in for stylesheet-less
+   harnesses; edits HERE (the live bundle source -- built into
+   tldw_cli_modular.tcss) must be mirrored there or harness geometry
+   silently diverges from production. */
 AppFooterStatus {
     dock: bottom;
     height: 1;  /* Single row height */

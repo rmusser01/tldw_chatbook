@@ -8,6 +8,8 @@ import json
 from dataclasses import dataclass
 from typing import Callable
 
+from loguru import logger
+
 from .agent_models import (
     FIND_TOOLS_NAME, LOAD_TOOLS_NAME, LOOP_DETECTION_N, RUN_CANCELLED,
     RUN_DONE, RUN_STUCK, SPAWN_TOOL_NAME, STEP_ERROR, STEP_MODEL,
@@ -186,6 +188,20 @@ class LoopDeps:
     should_cancel: Callable[[], bool]
     clock: Callable[[], float]
     on_step: Callable[[AgentStep], None] = lambda step: None
+    # Optional pre-dispatch batch-review hook (P5 Task 4): the generic seam
+    # the MCP approval flow (Task 6) rides on. When set, called ONCE per
+    # turn with the full batch of tool calls about to be dispatched
+    # (native multi-call batch, or the single fence-parsed call), BEFORE
+    # any of them is invoked. Returns a name -> verdict map; "proceed"
+    # (or an absent name -- a call the hook doesn't mention is presumed
+    # fine) dispatches normally, anything else is treated as a refusal
+    # string that is fed back to the model as that call's tool result
+    # instead of invoking it. Exceptions are caught, logged, and treated
+    # as "proceed" for every call in the batch -- the hook fails OPEN
+    # here; MCP-specific fail-closed behavior lives inside the Task 6
+    # closure, not in this generic runtime. ``None`` (the default) is a
+    # no-op: every call proceeds, byte-identical to pre-Task-4 behavior.
+    review_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None
 
 
 def _catalog_lines(entries: list) -> str:
@@ -193,6 +209,29 @@ def _catalog_lines(entries: list) -> str:
         return "No matching tools."
     return "\n".join(
         f"{e.id} — {e.name}: {e.one_line_description}" for e in entries)
+
+
+def _append_tool_result(messages: list[dict], call: ToolCall,
+                        content: str) -> None:
+    """Append one tool result to history using the call's role/id shaping.
+
+    Single source of truth for both the normal post-invoke path and the
+    review-hook refusal path (P5 Task 4) so the two can never drift.
+
+    Native protocol (``call.call_id`` set): a ``role="tool"`` message
+    paired to the assistant turn's ``tool_calls`` entry by
+    ``tool_call_id``. Fence protocol (``call.call_id`` unset): the
+    plain-text ``"Tool result for {name}: {content}"`` convention,
+    appended as a user-role message.
+    """
+    if call.call_id:
+        messages.append({
+            "role": "tool", "tool_call_id": call.call_id,
+            "content": content})
+    else:
+        messages.append({
+            "role": "user",
+            "content": f"Tool result for {call.name}: {content}"})
 
 
 def run_agent_loop(config: AgentConfig, initial_messages: list[dict],
@@ -284,6 +323,28 @@ def run_agent_loop(config: AgentConfig, initial_messages: list[dict],
         messages.append(turn.assistant_message
                         or {"role": "assistant", "content": turn.text})
 
+        # P5 Task 4: optional pre-dispatch batch review, called ONCE with
+        # the full batch about to be dispatched below (whichever produced
+        # it -- native multi-call or the single fence-parsed call) and
+        # BEFORE any of them is invoked. `deps.review_tool_calls is None`
+        # (the default) short-circuits to an empty verdicts map, which
+        # makes every `.get(name, "proceed")` lookup below resolve to
+        # "proceed" -- the exact same dispatch path as before this hook
+        # existed, so absent-hook behavior stays byte-identical.
+        verdicts: dict[str, str] = {}
+        if deps.review_tool_calls is not None and calls:
+            try:
+                verdicts = deps.review_tool_calls(list(calls)) or {}
+            except Exception as exc:  # noqa: BLE001 — fail OPEN here; the
+                # MCP-specific fail-closed policy lives in the Task 6
+                # closure that builds this callable, not in this generic
+                # runtime.
+                logger.opt(exception=True).warning(
+                    f"review_tool_calls hook raised for batch "
+                    f"{[c.name for c in calls]}; treating all {len(calls)} "
+                    f"calls as proceed")
+                verdicts = {}
+
         for call in calls:
             if deps.should_cancel():
                 return RunOutcome(RUN_CANCELLED, steps,
@@ -298,117 +359,120 @@ def run_agent_loop(config: AgentConfig, initial_messages: list[dict],
                 return RunOutcome(RUN_STUCK, steps,
                                   subagents_spawned=spawned)
 
-            if call.name == SPAWN_TOOL_NAME:
-                if SPAWN_TOOL_NAME not in config.allowed_tools:
-                    # Q6: refuse before dispatch — no budget consumption,
-                    # no STEP_SPAWN, deps.spawn never called.
-                    result = ToolResult(
-                        ok=False,
-                        error=f"Tool not permitted: {SPAWN_TOOL_NAME}")
-                else:
-                    task = str(call.args.get("task", "")).strip()
-                    if not task:
-                        # G4: an empty task is refused with no budget
-                        # consumption and no STEP_SPAWN.
+            # P5 Task 4: a non-"proceed" verdict (an absent name defaults to
+            # "proceed" — the hook only reports what it wants to stop)
+            # skips dispatch entirely: none of the SPAWN/find_tools/
+            # load_tools/invoke_tool branches below run, and the verdict
+            # string itself becomes the call's tool result, same as any
+            # other result content from here down.
+            # NOTE: verdict lookup by name only; same-name calls in one batch
+            # share a verdict (T5/T6 closure authors: this is a known limitation).
+            verdict = verdicts.get(call.name, "proceed")
+            if verdict != "proceed":
+                content = verdict
+            else:
+                if call.name == SPAWN_TOOL_NAME:
+                    if SPAWN_TOOL_NAME not in config.allowed_tools:
+                        # Q6: refuse before dispatch — no budget consumption,
+                        # no STEP_SPAWN, deps.spawn never called.
                         result = ToolResult(
                             ok=False,
-                            error="Task description cannot be empty")
-                    elif spawned >= budget.max_subagents:
-                        result = ToolResult(
-                            ok=False, error="sub-agent budget exhausted")
+                            error=f"Tool not permitted: {SPAWN_TOOL_NAME}")
                     else:
-                        add(STEP_SPAWN, summary=task[:200],
-                            tool_name=SPAWN_TOOL_NAME, args=dict(call.args))
-                        result = deps.spawn(task)
-                        spawned += 1
-            elif call.name == FIND_TOOLS_NAME:
-                add(STEP_TOOL_CALL, tool_name=call.name,
-                    args=dict(call.args))
-                entries = deps.find_tools(str(call.args.get("query", "")))
-                result = ToolResult(ok=True, content=_catalog_lines(entries))
-            elif call.name == LOAD_TOOLS_NAME:
-                add(STEP_TOOL_CALL, tool_name=call.name,
-                    args=dict(call.args))
-                # G1/Q9: `ids` may legitimately arrive as a bare string
-                # (one id) or as None/other junk from an unreliable local
-                # model — never crash, and never char-split a string.
-                raw_ids = call.args.get("ids")
-                if isinstance(raw_ids, str):
-                    ids = [raw_ids]
-                elif isinstance(raw_ids, list):
-                    ids = [str(x) for x in raw_ids]
-                else:
-                    ids = []
-                loaded = deps.load_schemas(ids)
-                if not loaded:
-                    # G5: every id was invalid (or none were valid) — this
-                    # is a different failure than "valid but no room".
-                    result = ToolResult(
-                        ok=False, error="No valid tools found to load")
-                else:
-                    # F1-b (plan-a-final-review addendum): a provider may
-                    # legitimately hand back a schema whose name is
-                    # already in `active` (a re-load of an already-active
-                    # tool). Drop those here, BEFORE the room slice below,
-                    # so `active` can never gain a duplicate name even if
-                    # a caller-side gate (e.g. agent_service's
-                    # disclosed_names filtering) is bypassed or desyncs —
-                    # this is the loop's own last line of defense for its
-                    # list-vs-set cap-boundary integrity.
-                    active_names = {a.name for a in active}
-                    already_active = [s.name for s in loaded if s.name in active_names]
-                    # PR #655 review: also dedupe by name WITHIN this batch
-                    # (a caller may hand back the same schema twice — e.g.
-                    # bare name + catalog id aliases) so `active` can never
-                    # gain a duplicate from one load, mirroring the
-                    # across-rounds guard above.
-                    new_loaded = []
-                    batch_names: set = set()
-                    for s in loaded:
-                        if s.name in active_names or s.name in batch_names:
-                            continue
-                        batch_names.add(s.name)
-                        new_loaded.append(s)
-                    if not new_loaded:
-                        # Every requested id was already active — a no-op,
-                        # not the "no valid ids at all" error case above,
-                        # and (Gemini M, PR #636 bot review) not the same
-                        # "no room" message a genuinely budget-exhausted
-                        # request gets below: those two reasons a load
-                        # accepts nothing are different for the model to
-                        # act on (proceed to just call the tool it already
-                        # has vs. it must free room first), so they must
-                        # not read identically.
-                        result = ToolResult(
-                            ok=True,
-                            content="already loaded: " + ", ".join(already_active))
+                        task = str(call.args.get("task", "")).strip()
+                        if not task:
+                            # G4: an empty task is refused with no budget
+                            # consumption and no STEP_SPAWN.
+                            result = ToolResult(
+                                ok=False,
+                                error="Task description cannot be empty")
+                        elif spawned >= budget.max_subagents:
+                            result = ToolResult(
+                                ok=False, error="sub-agent budget exhausted")
+                        else:
+                            add(STEP_SPAWN, summary=task[:200],
+                                tool_name=SPAWN_TOOL_NAME, args=dict(call.args))
+                            result = deps.spawn(task)
+                            spawned += 1
+                elif call.name == FIND_TOOLS_NAME:
+                    add(STEP_TOOL_CALL, tool_name=call.name,
+                        args=dict(call.args))
+                    entries = deps.find_tools(str(call.args.get("query", "")))
+                    result = ToolResult(ok=True, content=_catalog_lines(entries))
+                elif call.name == LOAD_TOOLS_NAME:
+                    add(STEP_TOOL_CALL, tool_name=call.name,
+                        args=dict(call.args))
+                    # G1/Q9: `ids` may legitimately arrive as a bare string
+                    # (one id) or as None/other junk from an unreliable local
+                    # model — never crash, and never char-split a string.
+                    raw_ids = call.args.get("ids")
+                    if isinstance(raw_ids, str):
+                        ids = [raw_ids]
+                    elif isinstance(raw_ids, list):
+                        ids = [str(x) for x in raw_ids]
                     else:
-                        room = budget.max_active_tools - len(active)
-                        accepted = new_loaded[:max(room, 0)]
-                        active.extend(accepted)
-                        if accepted:
+                        ids = []
+                    loaded = deps.load_schemas(ids)
+                    if not loaded:
+                        # G5: every id was invalid (or none were valid) — this
+                        # is a different failure than "valid but no room".
+                        result = ToolResult(
+                            ok=False, error="No valid tools found to load")
+                    else:
+                        # F1-b (plan-a-final-review addendum): a provider may
+                        # legitimately hand back a schema whose name is
+                        # already in `active` (a re-load of an already-active
+                        # tool). Drop those here, BEFORE the room slice below,
+                        # so `active` can never gain a duplicate name even if
+                        # a caller-side gate (e.g. agent_service's
+                        # disclosed_names filtering) is bypassed or desyncs —
+                        # this is the loop's own last line of defense for its
+                        # list-vs-set cap-boundary integrity.
+                        active_names = {a.name for a in active}
+                        already_active = [s.name for s in loaded if s.name in active_names]
+                        # PR #655 review: also dedupe by name WITHIN this batch
+                        # (a caller may hand back the same schema twice — e.g.
+                        # bare name + catalog id aliases) so `active` can never
+                        # gain a duplicate from one load, mirroring the
+                        # across-rounds guard above.
+                        new_loaded = []
+                        batch_names: set = set()
+                        for s in loaded:
+                            if s.name in active_names or s.name in batch_names:
+                                continue
+                            batch_names.add(s.name)
+                            new_loaded.append(s)
+                        if not new_loaded:
+                            # Every requested id was already active — a no-op,
+                            # not the "no valid ids at all" error case above,
+                            # and (Gemini M, PR #636 bot review) not the same
+                            # "no room" message a genuinely budget-exhausted
+                            # request gets below: those two reasons a load
+                            # accepts nothing are different for the model to
+                            # act on (proceed to just call the tool it already
+                            # has vs. it must free room first), so they must
+                            # not read identically.
                             result = ToolResult(
                                 ok=True,
-                                content="loaded: " + ", ".join(
-                                    s.name for s in accepted))
+                                content="already loaded: " + ", ".join(already_active))
                         else:
-                            result = ToolResult(ok=True, content="no room")
-            else:
-                add(STEP_TOOL_CALL, tool_name=call.name,
-                    args=dict(call.args))
-                result = deps.invoke_tool(call)
+                            room = budget.max_active_tools - len(active)
+                            accepted = new_loaded[:max(room, 0)]
+                            active.extend(accepted)
+                            if accepted:
+                                result = ToolResult(
+                                    ok=True,
+                                    content="loaded: " + ", ".join(
+                                        s.name for s in accepted))
+                            else:
+                                result = ToolResult(ok=True, content="no room")
+                else:
+                    add(STEP_TOOL_CALL, tool_name=call.name,
+                        args=dict(call.args))
+                    result = deps.invoke_tool(call)
 
-            content = result.content if result.ok else f"ERROR: {result.error}"
+                content = result.content if result.ok else f"ERROR: {result.error}"
+
             add(STEP_TOOL_RESULT, tool_name=call.name,
                 result=content[:2000])
-            if call.call_id:
-                # Native protocol: providers require each tool_call_id to be
-                # answered by a role="tool" message paired to the assistant
-                # turn's tool_calls entry.
-                messages.append({
-                    "role": "tool", "tool_call_id": call.call_id,
-                    "content": content})
-            else:
-                messages.append({
-                    "role": "user",
-                    "content": f"Tool result for {call.name}: {content}"})
+            _append_tool_result(messages, call, content)

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
@@ -36,6 +37,8 @@ class WorkbenchHelpState:
 
 class WorkbenchHelpPanel(ModalScreen[None]):
     """Modal panel showing contextual Workbench help."""
+
+    BINDINGS = [Binding("escape", "dismiss", "Close", show=False)]
 
     def __init__(self, state: WorkbenchHelpState) -> None:
         super().__init__()

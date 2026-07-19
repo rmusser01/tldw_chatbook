@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import TLDWAPIClient, Text2SQLRequest
+if TYPE_CHECKING:
+    from ..tldw_api import TLDWAPIClient
 
 
 class ServerText2SQLService:
@@ -94,6 +95,9 @@ class ServerText2SQLService:
         timeout_ms: int = 5000,
         include_sql: bool = True,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import Text2SQLRequest
+
         self._enforce("text2sql.query.launch.server")
         request = Text2SQLRequest(
             query=query,

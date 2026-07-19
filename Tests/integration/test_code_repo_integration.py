@@ -1,7 +1,9 @@
 """
 Full integration tests for Code Repo Copy/Paste feature.
 
-Tests the complete workflow from the Coding Tab through to file export.
+Tests the complete workflow through to file export. The standalone Coding
+screen/tab that used to host this window has been retired (folded into
+Console); the window itself is exercised directly here.
 """
 
 import pytest
@@ -9,10 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from pathlib import Path
 
 from tldw_chatbook.app import TldwCli
-from tldw_chatbook.UI.Coding_Window import CodingWindow, CODING_VIEW_REPO_COPY_PASTE
 from tldw_chatbook.UI.CodeRepoCopyPasteWindow import CodeRepoCopyPasteWindow
-from tldw_chatbook.UI.Screens.coding_screen import CodingScreen
-from tldw_chatbook.Constants import TAB_CODING
 from tldw_chatbook.Utils.github_api_client import GitHubAPIError
 from Tests.textual_test_utils import app_pilot
 
@@ -90,79 +89,6 @@ class TestCodeRepoIntegration:
         """Mock clipboard operations."""
         with patch('pyperclip.copy') as mock_copy:
             yield mock_copy
-    
-    @pytest.mark.asyncio
-    async def test_full_workflow_from_coding_tab(self, app_pilot, mock_github_api, mock_clipboard):
-        """Test complete workflow from Coding Tab to file copy."""
-        # Track workflow steps
-        workflow_steps = []
-        
-        class TestApp(CodeRepoTestApp):
-            def __init__(self):
-                super().__init__()
-                # Override some initialization that might cause issues in tests
-                self._init_complete = True
-
-            def notify(self, message, **kwargs):
-                workflow_steps.append(('notify', message, kwargs))
-                super().notify(message, **kwargs)
-        
-        async with app_pilot(TestApp) as pilot:
-            # Navigate directly; key ordering is presentation-level and may change.
-            await pilot.app.push_screen(CodingScreen(pilot.app))
-            pilot.app.current_tab = TAB_CODING
-            await pilot.pause()
-            
-            # Activate the Code Repo Copy/Paste view. Sidebar click routing is
-            # covered separately; this workflow verifies the embedded tool.
-            coding_window = pilot.app.query_one(CodingWindow)
-            coding_window.coding_active_view = CODING_VIEW_REPO_COPY_PASTE
-            await pilot.pause()
-            
-            # The view should now be active
-            repo_view = coding_window.query_one(f"#{CODING_VIEW_REPO_COPY_PASTE}")
-            assert repo_view is not None
-            assert repo_view.styles.display != "none"
-            
-            # The repository browser is embedded directly in the coding view.
-            repo_window = repo_view.query_one(CodeRepoCopyPasteWindow)
-            assert repo_window is not None
-            
-            # Enter repository URL
-            url_input = repo_window.query_one("#empty-state-input")
-            url_input.value = "https://github.com/test-owner/test-repo"
-            
-            # Load repository
-            load_button = repo_window.query_one("#empty-load-btn")
-            load_button.press()
-            await pilot.pause()
-            
-            # Verify repository loaded
-            assert mock_github_api.get_repository_info.called
-            assert any("Loaded" in str(step[1]) for step in workflow_steps if step[0] == 'notify')
-            
-            # The tree should have items
-            tree_view = repo_window.query_one("#repo-tree")
-            assert len(tree_view.nodes) > 0
-            
-            # Select some files (simulate selection)
-            tree_view.select_node('README.md', True)
-            tree_view.select_node('LICENSE', True)
-
-            generate_button = repo_window.query_one("#generate-compilation-btn")
-            generate_button.press()
-            await pilot.pause()
-
-            assert mock_github_api.get_file_content.call_count == 2
-            
-            # Copy to clipboard
-            copy_button = repo_window.query_one("#copy-clipboard-btn")
-            copy_button.press()
-            await pilot.pause()
-            
-            # Verify generated content was copied
-            mock_clipboard.assert_called_once()
-            assert any("Copied compilation" in str(step[1]) for step in workflow_steps if step[0] == 'notify')
     
     @pytest.mark.asyncio
     async def test_error_handling_workflow(self, app_pilot, mock_github_api):

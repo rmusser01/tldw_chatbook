@@ -503,6 +503,31 @@ class MCPPermissionsMode(Vertical):
             return
         self.post_message(self.RowSelected(row.kind, row.server_key, row.tool_name))
 
+    def select_tool_row(self, server_key: str, tool_name: str) -> bool:
+        """Move the matrix cursor to the given tool's row for an external
+        drill (T7, MCP Hub Phase 5: `MCPWorkbench`'s Audit-mode "Adjust
+        permission" routing) -- does NOT post `RowSelected` itself (the
+        caller already knows the resolved `HubTool` and calls
+        `MCPInspector.show_permission()` directly).
+
+        Returns whether the tool has a row in the CURRENT matrix at all
+        (`self._rows_by_key`, from the last `update_matrix()` call) --
+        `False` means the caller should fall back to a "tool no longer
+        available" toast rather than assume the cursor moved. No filter to
+        clear here (unlike `MCPToolsMode.select_tool_row()`): this matrix
+        has none.
+        """
+        key = f"{server_key}::{tool_name}"
+        row = self._rows_by_key.get(key)
+        if row is None:
+            return False
+        table = self.query_one("#mcp-perm-table", DataTable)
+        for index, candidate in enumerate(self._rows):
+            if _row_key(candidate) == key:
+                table.move_cursor(row=index)
+                return True
+        return False
+
     def action_cycle_state(self) -> None:
         """Cycle the matrix's CURSOR row one Space-press (T2's cycle rules).
 

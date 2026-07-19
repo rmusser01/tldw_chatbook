@@ -170,7 +170,7 @@ class TestUIComponents:
         
         # Check title (using TITLE constant)
         assert app.TITLE is not None
-        assert "tldw CLI" in app.TITLE
+        assert "tldw chatbook" in app.TITLE
     
     def test_chat_window_creation(self):
         """Test that chat window can be created."""

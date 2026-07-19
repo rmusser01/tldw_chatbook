@@ -633,6 +633,27 @@ class LocalMCPStore:
     def list_profiles(self) -> list[LocalExternalMCPProfile]:
         return list(self.load().profiles)
 
+    def get_external_catalog(
+        self,
+    ) -> list[tuple[LocalExternalMCPProfile, dict[str, Any] | None]]:
+        """Return every profile paired with its discovery snapshot, one load.
+
+        task-236: ``get_external_servers`` used to call ``list_profiles``
+        plus one ``get_discovery_snapshot`` PER profile — N+1 full state
+        loads (each accessor re-reads and re-parses the store file). This
+        joins both from a single ``load()`` with the exact per-profile key
+        normalization ``get_discovery_snapshot`` uses.
+
+        Returns:
+            (profile, snapshot-or-None) pairs in ``list_profiles`` order.
+        """
+        state = self.load()
+        snapshots = state.discovery_snapshots
+        return [
+            (profile, snapshots.get(_text(profile.profile_id)))
+            for profile in state.profiles
+        ]
+
     def get_profile(self, profile_id: str) -> LocalExternalMCPProfile | None:
         normalized_profile_id = _text(profile_id)
         for profile in self.list_profiles():

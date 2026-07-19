@@ -1,10 +1,12 @@
 """Focused notes.note push/pull/apply flow against an M1 Sync v2 server."""
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
-from tldw_chatbook.tldw_api import SyncV2Envelope, SyncV2PushRequest
+if TYPE_CHECKING:
+    from tldw_chatbook.tldw_api import SyncV2Envelope
+
 
 
 class NotesM1SyncFlow:
@@ -18,6 +20,9 @@ class NotesM1SyncFlow:
         self._client_sequence = 0
 
     async def push(self, envelopes: list[SyncV2Envelope]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api import SyncV2PushRequest
+
         for env in envelopes:
             self._client_sequence += 1
             env.client_sequence = self._client_sequence

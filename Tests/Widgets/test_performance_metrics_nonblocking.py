@@ -1,64 +1,25 @@
 # test_performance_metrics_nonblocking.py
-# Description: RED-first regression coverage for task-248 (cpu_percent event-loop freeze).
+# Description: Regression coverage for task-248 (cpu_percent event-loop freeze).
 """
-Task-248: ``PerformanceMetricsWidget._update_metrics`` called
-``psutil.Process.cpu_percent(interval=0.1)`` inside a synchronous
-``set_interval(2.0)`` callback -- ``interval=0.1`` makes psutil *sleep the
-calling thread* for 100ms to sample CPU usage over that window, which on
-Textual's single-threaded event loop is a guaranteed 100ms UI freeze every
-2 seconds while Embeddings Management is open. The non-blocking form
-(``interval=None``) compares against psutil's *last* call for that process
-instead of blocking to sample a fresh window -- the tradeoff is that the
-very first call returns 0.0/meaningless (no prior sample to diff against),
-which is fine here since the widget polls every 2s indefinitely.
+Task-248: passing ``interval=0.1`` to ``psutil.Process.cpu_percent()`` makes
+psutil *sleep the calling thread* for 100ms to sample CPU usage over that
+window, which on Textual's single-threaded event loop is a guaranteed 100ms
+UI freeze for any synchronous timer callback that does it. The non-blocking
+form (``interval=None``) compares against psutil's *last* call for that
+process instead of blocking to sample a fresh window.
 
-Also covers the two "latent copies" the audit flagged (no UI callers today,
-but the same trap): ``Metrics/metrics_logger.py`` and
-``RAG_Search/simplified/health_check.py``.
+The original offender (``Widgets/performance_metrics.py``, mounted only by
+the legacy Embeddings Management window) was removed with the unreachable
+SearchWindow stack in task-253; this lexical guard remains to keep the same
+trap out of the live call sites the task-248 audit flagged
+(``Metrics/metrics_logger.py`` and ``RAG_Search/simplified/health_check.py``)
+and any future ones.
 """
 
 import pathlib
 import re
-from unittest.mock import MagicMock
-
-from tldw_chatbook.Widgets.performance_metrics import PerformanceMetricsWidget
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2] / "tldw_chatbook"
-
-
-def _spy_process():
-    spy = MagicMock()
-    spy.cpu_percent.return_value = 12.3
-    spy.memory_info.return_value = MagicMock(rss=1024 * 1024 * 50)
-    spy.memory_percent.return_value = 5.0
-    return spy
-
-
-def test_update_metrics_calls_cpu_percent_non_blocking():
-    """The widget's 2s timer callback must never pass a blocking interval."""
-    widget = PerformanceMetricsWidget()
-    spy = _spy_process()
-    widget.process = spy
-
-    # _update_metrics() also drives _update_display()/_check_alerts(), which
-    # query_one() into a DOM this bare (unmounted) widget doesn't have; that
-    # failure is caught internally and logged (see the method's own
-    # try/except), so it doesn't affect the cpu_percent() call under test.
-    widget._update_metrics()
-
-    spy.cpu_percent.assert_called_once_with(interval=None)
-
-
-def test_update_metrics_still_updates_cpu_usage_reactive():
-    """Non-blocking form must not silently stop metrics from updating."""
-    widget = PerformanceMetricsWidget()
-    spy = _spy_process()
-    widget.process = spy
-
-    widget._update_metrics()
-
-    assert widget.cpu_usage == 12.3
-    assert len(widget.history) == 1
 
 
 def test_no_blocking_cpu_percent_interval_remains_in_source_tree():

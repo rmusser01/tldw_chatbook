@@ -230,29 +230,6 @@ def test_embeddings_lib_graceful_failure():
             DEPENDENCIES_AVAILABLE['embeddings_rag'] = original_rag_available
 
 
-def test_chroma_lib_graceful_failure():
-    """Test that Chroma_Lib handles missing dependencies gracefully."""
-    try:
-        # Clear optional dependency availability to simulate missing deps
-        from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
-        original_rag_available = DEPENDENCIES_AVAILABLE.get('embeddings_rag')
-        DEPENDENCIES_AVAILABLE['embeddings_rag'] = False
-        
-        # Test that ChromaDBManager raises helpful error
-        from tldw_chatbook.Embeddings.Chroma_Lib import ChromaDBManager
-        
-        with pytest.raises(ImportError) as exc_info:
-            ChromaDBManager("test_user", {"test": "config"})
-        
-        assert 'embeddings/RAG dependencies' in str(exc_info.value)
-        assert 'pip install' in str(exc_info.value)
-        
-    finally:
-        # Restore original state
-        if original_rag_available is not None:
-            DEPENDENCIES_AVAILABLE['embeddings_rag'] = original_rag_available
-
-
 def test_pdf_processing_deps():
     """Test PDF processing dependency checking."""
     from tldw_chatbook.Utils.optional_deps import check_pdf_processing_deps, DEPENDENCIES_AVAILABLE

@@ -95,7 +95,12 @@ async def test_destination_body_text_helper_excludes_navigation_chrome(
         async with app.run_test(size=(180, 50)) as pilot:
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "home" and app.screen.__class__.__name__ == "HomeScreen",
+                # Nav strip + docked hint mount a tick after the screen swap;
+                # wait for the full chrome before asserting/clicking.
+                lambda: app.current_tab == "home"
+                and app.screen.__class__.__name__ == "HomeScreen"
+                and len(app.screen.query(".nav-button")) == len(TOP_LEVEL_DESTINATION_IDS)
+                and len(app.screen.query("#nav-overflow-hint")) == 1,
             )
 
             screen_text = _screen_text(app)
@@ -114,7 +119,12 @@ async def test_clean_run_top_level_navigation_reaches_every_destination(
         async with app.run_test(size=(180, 50)) as pilot:
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "home" and app.screen.__class__.__name__ == "HomeScreen",
+                # Nav strip + docked hint mount a tick after the screen swap;
+                # wait for the full chrome before asserting/clicking.
+                lambda: app.current_tab == "home"
+                and app.screen.__class__.__name__ == "HomeScreen"
+                and len(app.screen.query(".nav-button")) == len(TOP_LEVEL_DESTINATION_IDS)
+                and len(app.screen.query("#nav-overflow-hint")) == 1,
             )
 
             nav_bar = app.screen.query_one(MainNavigationBar)
@@ -156,7 +166,12 @@ async def test_top_level_navigation_activates_visible_tab_border_from_cached_con
         async with app.run_test(size=(180, 50)) as pilot:
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "home" and app.screen.__class__.__name__ == "HomeScreen",
+                # Nav strip + docked hint mount a tick after the screen swap;
+                # wait for the full chrome before asserting/clicking.
+                lambda: app.current_tab == "home"
+                and app.screen.__class__.__name__ == "HomeScreen"
+                and len(app.screen.query(".nav-button")) == len(TOP_LEVEL_DESTINATION_IDS)
+                and len(app.screen.query("#nav-overflow-hint")) == 1,
             )
 
             await pilot.click("#nav-console")

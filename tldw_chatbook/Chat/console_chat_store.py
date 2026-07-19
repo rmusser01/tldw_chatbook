@@ -1173,14 +1173,27 @@ class ConsoleChatStore:
         raise KeyError(f"Unknown Console message: {message_id}")
 
     def _materialize_stream_buffer(self, message: ConsoleChatMessage) -> None:
+        """Fold buffered stream chunks into ``message.content`` if any are new.
+
+        TASK-259: after joining, the chunk list is collapsed to the single
+        joined string (in place, preserving any outstanding list references),
+        so the next materialize joins only the chunks that arrived since this
+        one instead of re-walking the whole stream history on every 0.2s
+        tick. The invariant ``"".join(buffer) == full streamed content`` is
+        preserved for every reader.
+
+        Args:
+            message: Store-owned message whose visible content should
+                reflect all chunks appended so far.
+        """
         buffer = self._stream_chunks_by_message.get(message.id)
         if not buffer:
             return
-        chunk_count = len(buffer)
-        if self._stream_materialized_counts.get(message.id) == chunk_count:
+        if self._stream_materialized_counts.get(message.id) == len(buffer):
             return
         message.content = "".join(buffer)
-        self._stream_materialized_counts[message.id] = chunk_count
+        buffer[:] = [message.content]
+        self._stream_materialized_counts[message.id] = 1
         self._persist_pending_message_if_ready(message)
 
     @staticmethod
