@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from loguru import logger
+
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from tldw_chatbook.Scheduling.models import ReminderTask
 from tldw_chatbook.Scheduling.services.server_client import (
@@ -19,6 +21,16 @@ from tldw_chatbook.Scheduling.services.server_client import (
 from tldw_chatbook.Scheduling.services.sync_engine import SyncEngine
 
 _REMINDER_PRIMITIVE = "reminder_task"
+
+# Fields that are local-only and should not be sent to the server.
+_LOCAL_ONLY_FIELDS = {
+    "id",
+    "server_id",
+    "owner_id",
+    "created_at",
+    "updated_at",
+    "sync_version",
+}
 
 
 class SchedulingService:
@@ -50,18 +62,26 @@ class SchedulingService:
     async def create_reminder(self, payload: dict[str, Any]) -> ReminderTask:
         """Create a reminder, preferring the server API when connected.
 
-        If the server is unreachable, the reminder is stored locally and a
-        pending mutation is recorded so the sync engine can push it later.
+        If the server is unreachable or returns an error, the reminder is stored
+        locally and a pending mutation is recorded so the sync engine can push it
+        later.
         """
-        if self._use_server():
+        use_server = self._use_server()
+        if use_server:
             try:
                 response = await self.server_client.create_reminder(**payload)
                 return await self._persist_server_reminder_response(response)
             except ServerUnavailableError:
-                pass
+                logger.warning(
+                    f"Server unavailable while creating reminder for {self.owner_id}"
+                )
+            except Exception as exc:  # noqa: BLE001 - server errors should fall back
+                logger.exception(
+                    f"Server create_reminder failed for {self.owner_id}: {exc}"
+                )
 
         task_id = self.db.create_reminder_task(owner_id=self.owner_id, **payload)
-        if self._use_server():
+        if use_server:
             self.db.record_pending_mutation(
                 task_id,
                 _REMINDER_PRIMITIVE,
@@ -90,13 +110,14 @@ class SchedulingService:
         """Update a reminder, preferring the server API when connected.
 
         Falls back to a local update plus a pending mutation if the server is
-        unavailable.
+        unavailable or returns an error.
         """
         row = self.db.get_reminder_task(task_id)
         if row is None:
             return None
 
-        if self._use_server():
+        use_server = self._use_server()
+        if use_server:
             server_id = row.get("server_id")
             try:
                 if server_id:
@@ -104,15 +125,24 @@ class SchedulingService:
                         server_id, **payload
                     )
                 else:
-                    response = await self.server_client.create_reminder(**payload)
+                    merged_payload = self._merge_update_payload(row, payload)
+                    response = await self.server_client.create_reminder(
+                        **merged_payload
+                    )
                 return await self._persist_server_reminder_response(
                     response, local_id=task_id
                 )
             except ServerUnavailableError:
-                pass
+                logger.warning(
+                    f"Server unavailable while updating reminder {task_id} for {self.owner_id}"
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.exception(
+                    f"Server update_reminder failed for {task_id} ({self.owner_id}): {exc}"
+                )
 
         self.db.update_reminder_task(task_id, **payload)
-        if self._use_server():
+        if use_server:
             self.db.record_pending_mutation(
                 task_id,
                 _REMINDER_PRIMITIVE,
@@ -126,14 +156,15 @@ class SchedulingService:
     async def delete_reminder(self, task_id: str) -> bool:
         """Delete a reminder locally and on the server when connected.
 
-        If the server is unavailable, a tombstone is recorded so the delete can
-        be pushed later.
+        If the server is unavailable or returns an error, a tombstone is recorded
+        so the delete can be pushed later.
         """
         row = self.db.get_reminder_task(task_id)
         if row is None:
             return False
 
-        if self._use_server():
+        use_server = self._use_server()
+        if use_server:
             server_id = row.get("server_id")
             try:
                 if server_id:
@@ -147,14 +178,29 @@ class SchedulingService:
                 )
                 return True
             except ServerUnavailableError:
-                self.db.record_tombstone(
-                    task_id, _REMINDER_PRIMITIVE, self.owner_id
+                logger.warning(
+                    f"Server unavailable while deleting reminder {task_id} for {self.owner_id}"
                 )
-                self.db.delete_reminder_task(task_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception(
+                    f"Server delete_reminder failed for {task_id} ({self.owner_id}): {exc}"
+                )
+
+            if server_id is None:
+                # No server copy exists; drop any stale pending mutation and
+                # fall back to a local-only delete.
                 self.db.delete_pending_mutation_for_record(
                     task_id, _REMINDER_PRIMITIVE, self.owner_id
                 )
-                return True
+
+            self.db.record_tombstone(
+                task_id, _REMINDER_PRIMITIVE, self.owner_id
+            )
+            self.db.delete_reminder_task(task_id)
+            self.db.delete_pending_mutation_for_record(
+                task_id, _REMINDER_PRIMITIVE, self.owner_id
+            )
+            return True
 
         return self.db.delete_reminder_task(task_id)
 
@@ -197,6 +243,21 @@ class SchedulingService:
 
         return local
 
+    def _merge_update_payload(
+        self, row: dict[str, Any], payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Merge an existing local row with an update payload for server create.
+
+        Local-only fields are excluded and the payload overrides existing values.
+        """
+        merged = {
+            key: value
+            for key, value in row.items()
+            if key not in _LOCAL_ONLY_FIELDS and value is not None
+        }
+        merged.update(payload)
+        return merged
+
     async def _persist_server_reminder_response(
         self,
         response: dict[str, Any],
@@ -227,6 +288,10 @@ class SchedulingService:
             self.db.set_sync_mapping(
                 task_id, server_id, _REMINDER_PRIMITIVE, self.owner_id
             )
+
+        self.db.delete_pending_mutation_for_record(
+            task_id, _REMINDER_PRIMITIVE, self.owner_id
+        )
 
         row = self.db.get_reminder_task(task_id)
         return self._row_to_reminder(row)

@@ -19,12 +19,21 @@ def db(tmp_path):
         database.close()
 
 
+def _reminder_payload(title, **kwargs):
+    """Build a valid reminder payload for tests."""
+    payload = {
+        "title": title,
+        "schedule_kind": "one_time",
+        "run_at": "2026-07-20T14:00:00+00:00",
+    }
+    payload.update(kwargs)
+    return payload
+
+
 @pytest.mark.asyncio
 async def test_create_reminder_local(db):
     svc = SchedulingService(db=db, runtime_source="local")
-    task = await svc.create_reminder(
-        {"title": "Test", "schedule_kind": "one_time", "run_at": "2026-07-20T14:00:00+00:00"}
-    )
+    task = await svc.create_reminder(_reminder_payload("Test"))
 
     assert isinstance(task, ReminderTask)
     assert task.title == "Test"
@@ -33,14 +42,35 @@ async def test_create_reminder_local(db):
 
 
 @pytest.mark.asyncio
+async def test_create_reminder_server_happy_path(db):
+    server_client = AsyncMock()
+    server_client.create_reminder.return_value = {
+        "id": "srv-1",
+        "title": "Server Task",
+        "schedule_kind": "one_time",
+        "run_at": "2026-07-20T14:00:00+00:00",
+    }
+
+    svc = SchedulingService(db=db, server_client=server_client, runtime_source="server:1")
+    task = await svc.create_reminder(_reminder_payload("Server Task"))
+
+    assert task.title == "Server Task"
+    assert task.server_id == "srv-1"
+    assert task.owner_id == "server:1"
+    server_client.create_reminder.assert_awaited_once()
+
+    mapping = db.get_sync_mapping_by_server_id("srv-1", "reminder_task", "server:1")
+    assert mapping is not None
+    assert mapping["local_id"] == task.id
+
+
+@pytest.mark.asyncio
 async def test_create_reminder_server_falls_back_local_on_unavailable(db):
     server_client = AsyncMock()
     server_client.create_reminder.side_effect = ServerUnavailableError("offline")
 
     svc = SchedulingService(db=db, server_client=server_client, runtime_source="server:1")
-    task = await svc.create_reminder(
-        {"title": "Fallback", "schedule_kind": "one_time", "run_at": "2026-07-20T14:00:00+00:00"}
-    )
+    task = await svc.create_reminder(_reminder_payload("Fallback"))
 
     assert task.title == "Fallback"
     assert task.owner_id == "server:1"
@@ -50,6 +80,22 @@ async def test_create_reminder_server_falls_back_local_on_unavailable(db):
     assert len(pending) == 1
     assert pending[0]["payload"]["action"] == "create"
     assert pending[0]["payload"]["fields"]["title"] == "Fallback"
+
+
+@pytest.mark.asyncio
+async def test_create_reminder_server_falls_back_on_generic_error(db):
+    server_client = AsyncMock()
+    server_client.create_reminder.side_effect = RuntimeError("boom")
+
+    svc = SchedulingService(db=db, server_client=server_client, runtime_source="server:1")
+    task = await svc.create_reminder(_reminder_payload("Fallback"))
+
+    assert task.title == "Fallback"
+    assert task.owner_id == "server:1"
+
+    pending = db.get_pending_mutations("server:1", primitive="reminder_task")
+    assert len(pending) == 1
+    assert pending[0]["payload"]["action"] == "create"
 
 
 @pytest.mark.asyncio
@@ -76,11 +122,27 @@ async def test_list_reminders_filtered_by_owner(db):
 
 
 @pytest.mark.asyncio
+async def test_get_reminder_returns_none_for_missing_id(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+    result = await svc.get_reminder("does-not-exist")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_get_reminder_returns_task(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+    created = await svc.create_reminder(_reminder_payload("Fetch me"))
+
+    fetched = await svc.get_reminder(created.id)
+    assert fetched is not None
+    assert fetched.id == created.id
+    assert fetched.title == "Fetch me"
+
+
+@pytest.mark.asyncio
 async def test_update_reminder_local(db):
     svc = SchedulingService(db=db, runtime_source="local")
-    task = await svc.create_reminder(
-        {"title": "Original", "schedule_kind": "one_time", "run_at": "2026-07-20T14:00:00+00:00"}
-    )
+    task = await svc.create_reminder(_reminder_payload("Original"))
 
     updated = await svc.update_reminder(task.id, {"title": "Updated"})
 
@@ -90,3 +152,236 @@ async def test_update_reminder_local(db):
     refreshed = await svc.get_reminder(task.id)
     assert refreshed is not None
     assert refreshed.title == "Updated"
+
+
+@pytest.mark.asyncio
+async def test_update_reminder_server_with_server_id_happy_path(db):
+    server_client = AsyncMock()
+    server_client.update_reminder.return_value = {
+        "id": "srv-1",
+        "title": "Updated",
+        "schedule_kind": "one_time",
+        "run_at": "2026-07-20T14:00:00+00:00",
+    }
+
+    svc = SchedulingService(db=db, server_client=server_client, runtime_source="local")
+    task = await svc.create_reminder(_reminder_payload("Original"))
+    svc.set_owner("server:1")
+    db.update_reminder_task(task.id, server_id="srv-1")
+    db.set_sync_mapping(task.id, "srv-1", "reminder_task", "server:1")
+    db.record_pending_mutation(
+        task.id,
+        "reminder_task",
+        "server:1",
+        {"action": "update", "fields": {"title": "Stale"}},
+    )
+
+    updated = await svc.update_reminder(task.id, {"title": "Updated"})
+
+    assert updated is not None
+    assert updated.title == "Updated"
+    assert updated.server_id == "srv-1"
+    server_client.update_reminder.assert_awaited_once_with("srv-1", title="Updated")
+
+    pending = db.get_pending_mutations("server:1", primitive="reminder_task")
+    assert len(pending) == 0
+
+
+@pytest.mark.asyncio
+async def test_update_reminder_server_without_server_id_creates_on_server(db):
+    server_client = AsyncMock()
+    server_client.create_reminder.return_value = {
+        "id": "srv-new",
+        "title": "Updated",
+        "schedule_kind": "one_time",
+        "run_at": "2026-07-20T14:00:00+00:00",
+    }
+
+    svc = SchedulingService(db=db, server_client=server_client, runtime_source="local")
+    task = await svc.create_reminder(_reminder_payload("Original"))
+    svc.set_owner("server:1")
+
+    updated = await svc.update_reminder(task.id, {"title": "Updated"})
+
+    assert updated is not None
+    assert updated.title == "Updated"
+    assert updated.server_id == "srv-new"
+    server_client.create_reminder.assert_awaited_once()
+    call_kwargs = server_client.create_reminder.call_args.kwargs
+    assert call_kwargs["title"] == "Updated"
+    assert call_kwargs["schedule_kind"] == "one_time"
+
+    mapping = db.get_sync_mapping_by_server_id("srv-new", "reminder_task", "server:1")
+    assert mapping is not None
+    assert mapping["local_id"] == task.id
+
+
+@pytest.mark.asyncio
+async def test_update_reminder_server_falls_back_local_on_unavailable(db):
+    server_client = AsyncMock()
+    server_client.update_reminder.side_effect = ServerUnavailableError("offline")
+
+    svc = SchedulingService(db=db, server_client=server_client, runtime_source="local")
+    task = await svc.create_reminder(_reminder_payload("Original"))
+    svc.set_owner("server:1")
+    db.update_reminder_task(task.id, server_id="srv-1")
+
+    updated = await svc.update_reminder(task.id, {"title": "Updated"})
+
+    assert updated is not None
+    assert updated.title == "Updated"
+
+    pending = db.get_pending_mutations("server:1", primitive="reminder_task")
+    assert len(pending) == 1
+    assert pending[0]["payload"]["action"] == "update"
+    assert pending[0]["payload"]["fields"]["title"] == "Updated"
+
+
+@pytest.mark.asyncio
+async def test_update_reminder_server_falls_back_on_generic_error(db):
+    server_client = AsyncMock()
+    server_client.update_reminder.side_effect = RuntimeError("boom")
+
+    svc = SchedulingService(db=db, server_client=server_client, runtime_source="local")
+    task = await svc.create_reminder(_reminder_payload("Original"))
+    svc.set_owner("server:1")
+    db.update_reminder_task(task.id, server_id="srv-1")
+
+    updated = await svc.update_reminder(task.id, {"title": "Updated"})
+
+    assert updated is not None
+    assert updated.title == "Updated"
+
+    pending = db.get_pending_mutations("server:1", primitive="reminder_task")
+    assert len(pending) == 1
+
+
+@pytest.mark.asyncio
+async def test_delete_reminder_local(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+    task = await svc.create_reminder(_reminder_payload("To delete"))
+
+    result = await svc.delete_reminder(task.id)
+
+    assert result is True
+    assert await svc.get_reminder(task.id) is None
+
+
+@pytest.mark.asyncio
+async def test_delete_reminder_server_with_server_id_happy_path(db):
+    server_client = AsyncMock()
+    server_client.delete_reminder.return_value = {"deleted": True}
+
+    svc = SchedulingService(db=db, server_client=server_client, runtime_source="local")
+    task = await svc.create_reminder(_reminder_payload("To delete"))
+    svc.set_owner("server:1")
+    db.update_reminder_task(task.id, server_id="srv-1")
+    db.set_sync_mapping(task.id, "srv-1", "reminder_task", "server:1")
+    db.record_pending_mutation(
+        task.id,
+        "reminder_task",
+        "server:1",
+        {"action": "update", "fields": {"title": "Stale"}},
+    )
+
+    result = await svc.delete_reminder(task.id)
+
+    assert result is True
+    server_client.delete_reminder.assert_awaited_once_with("srv-1")
+    assert await svc.get_reminder(task.id) is None
+    assert db.get_sync_mapping_by_local_id(task.id, "reminder_task", "server:1") is None
+
+    pending = db.get_pending_mutations("server:1", primitive="reminder_task")
+    assert len(pending) == 0
+
+
+@pytest.mark.asyncio
+async def test_delete_reminder_server_without_server_id_clears_pending_and_deletes_local(db):
+    server_client = AsyncMock()
+    server_client.delete_reminder.return_value = {"deleted": True}
+
+    svc = SchedulingService(db=db, server_client=server_client, runtime_source="local")
+    task = await svc.create_reminder(_reminder_payload("To delete"))
+    svc.set_owner("server:1")
+    db.record_pending_mutation(
+        task.id,
+        "reminder_task",
+        "server:1",
+        {"action": "create", "fields": {"title": "To delete"}},
+    )
+
+    result = await svc.delete_reminder(task.id)
+
+    assert result is True
+    server_client.delete_reminder.assert_not_awaited()
+    assert await svc.get_reminder(task.id) is None
+
+    pending = db.get_pending_mutations("server:1", primitive="reminder_task")
+    assert len(pending) == 0
+
+
+@pytest.mark.asyncio
+async def test_delete_reminder_server_falls_back_to_tombstone_on_unavailable(db):
+    server_client = AsyncMock()
+    server_client.delete_reminder.side_effect = ServerUnavailableError("offline")
+
+    svc = SchedulingService(db=db, server_client=server_client, runtime_source="local")
+    task = await svc.create_reminder(_reminder_payload("To delete"))
+    svc.set_owner("server:1")
+    db.update_reminder_task(task.id, server_id="srv-1")
+    db.set_sync_mapping(task.id, "srv-1", "reminder_task", "server:1")
+
+    result = await svc.delete_reminder(task.id)
+
+    assert result is True
+    server_client.delete_reminder.assert_awaited_once_with("srv-1")
+    assert await svc.get_reminder(task.id) is None
+
+    tombstone = db.get_tombstone(task.id, "reminder_task", "server:1")
+    assert tombstone is not None
+
+
+@pytest.mark.asyncio
+async def test_delete_reminder_server_falls_back_to_tombstone_on_generic_error(db):
+    server_client = AsyncMock()
+    server_client.delete_reminder.side_effect = RuntimeError("boom")
+
+    svc = SchedulingService(db=db, server_client=server_client, runtime_source="local")
+    task = await svc.create_reminder(_reminder_payload("To delete"))
+    svc.set_owner("server:1")
+    db.update_reminder_task(task.id, server_id="srv-1")
+    db.set_sync_mapping(task.id, "srv-1", "reminder_task", "server:1")
+
+    result = await svc.delete_reminder(task.id)
+
+    assert result is True
+    assert await svc.get_reminder(task.id) is None
+
+    tombstone = db.get_tombstone(task.id, "reminder_task", "server:1")
+    assert tombstone is not None
+
+
+@pytest.mark.asyncio
+async def test_delete_reminder_returns_false_for_missing_id(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+    result = await svc.delete_reminder("does-not-exist")
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_sync_now_delegates_to_sync_engine(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+    svc.sync_engine.sync_now = AsyncMock()
+
+    await svc.sync_now()
+
+    svc.sync_engine.sync_now.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_set_owner_propagates_to_sync_engine(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+    svc.set_owner("server:42")
+
+    assert svc.owner_id == "server:42"
+    assert svc.sync_engine.owner_id == "server:42"
