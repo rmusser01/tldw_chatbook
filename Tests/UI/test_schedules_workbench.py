@@ -7,7 +7,7 @@ from textual.app import App
 from textual.containers import Horizontal
 from textual.widgets import Button, DataTable, Input, Static
 
-from tldw_chatbook.Scheduling.events import DeleteTaskRequested
+from tldw_chatbook.Scheduling.events import DeleteTaskRequested, SyncCompleted, SyncFailed
 from tldw_chatbook.Scheduling.models import (
     ReminderTask,
     ScheduledTask,
@@ -808,3 +808,15 @@ async def test_edit_reminder_action_updates_existing_reminder():
         assert service.updated[0][1]["title"] == "Updated title"
         notifications = list(pilot.app._notifications)
         assert any(n.message == "Reminder updated." for n in notifications)
+
+
+def test_sync_completed_event():
+    msg = SyncCompleted("server:1", conflict_count=2)
+    assert msg.owner_id == "server:1"
+    assert msg.conflict_count == 2
+
+
+def test_sync_failed_event():
+    msg = SyncFailed("server:1", error="timeout")
+    assert msg.owner_id == "server:1"
+    assert msg.error == "timeout"
