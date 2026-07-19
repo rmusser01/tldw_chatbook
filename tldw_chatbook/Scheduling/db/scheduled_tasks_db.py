@@ -306,8 +306,7 @@ class ScheduledTasksDB(BaseDB):
             "SELECT * FROM reminder_tasks WHERE owner_id = ? AND server_id IS NOT NULL",
             (owner_id,),
         )
-        for row in cursor.fetchall():
-            local_row = self._row_to_dict(row)
+        for local_row in self._rows_to_dicts(cursor.fetchall()):
             server_id = local_row.get("server_id")
             if not server_id or server_id in seen_server_ids:
                 continue
@@ -409,6 +408,18 @@ class ScheduledTasksDB(BaseDB):
             list(fields.values()),
         )
 
+    def _get_sync_state_conn(
+        self,
+        conn: sqlite3.Connection,
+        owner_id: str,
+    ) -> Optional[dict[str, Any]]:
+        """Fetch the sync state row for ``owner_id`` on an existing connection."""
+        cursor = conn.execute(
+            "SELECT * FROM sync_state WHERE owner_id = ?",
+            (owner_id,),
+        )
+        return self._row_to_dict(cursor.fetchone(), json_fields={"sync_errors"})
+
     def _apply_pulled_reminders(
         self,
         conn: sqlite3.Connection,
@@ -456,14 +467,11 @@ class ScheduledTasksDB(BaseDB):
                 self._update_reminder_task_conn(conn, local_id, **fields)
             else:
                 local_id = self._create_reminder_task_conn(
-                    conn, owner_id, **fields
+                    conn, owner_id, server_id=server_id, **fields
                 )
 
             self._set_sync_mapping_conn(
                 conn, local_id, server_id, "reminder_task", owner_id
-            )
-            self._update_reminder_task_conn(
-                conn, local_id, server_id=server_id
             )
         return conflicts
 
@@ -471,7 +479,7 @@ class ScheduledTasksDB(BaseDB):
         self,
         conn: sqlite3.Connection,
         owner_id: str,
-        mutation_ids: list[str],
+        mutation_ids: list[int],
     ) -> None:
         """Delete pending mutations by their row ids inside an existing transaction."""
         if not mutation_ids:
@@ -484,11 +492,12 @@ class ScheduledTasksDB(BaseDB):
 
     def _append_sync_error(self, owner_id: str, message: str) -> None:
         """Append a sync error, capping the history at 10 entries."""
-        state = self.get_sync_state(owner_id) or {}
-        errors = list(state.get("sync_errors") or [])
-        errors.append({"message": message, "timestamp": datetime.now(timezone.utc).isoformat()})
-        errors = errors[-10:]
-        self.update_sync_state(owner_id, sync_errors=errors)
+        with self.transaction() as conn:
+            state = self._get_sync_state_conn(conn, owner_id) or {}
+            errors = list(state.get("sync_errors") or [])
+            errors.append({"message": message, "timestamp": datetime.now(timezone.utc).isoformat()})
+            errors = errors[-10:]
+            self._update_sync_state_conn(conn, owner_id, sync_errors=errors)
 
     # ------------------------------------------------------------------
     # Helpers

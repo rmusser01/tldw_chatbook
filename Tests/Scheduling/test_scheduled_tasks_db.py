@@ -583,20 +583,35 @@ def test_log_automation_audit_event_rejects_reserved_id(db: ScheduledTasksDB) ->
         )
 
 
-@pytest.mark.asyncio
-async def test_bulk_apply_pulled_items_and_purge_mutations(tmp_path):
+def test_bulk_apply_pulled_items_and_purge_mutations(tmp_path):
     db = ScheduledTasksDB(tmp_path / "db.db")
     owner_id = "server:1"
+
+    local_id = db.create_reminder_task(
+        owner_id=owner_id,
+        title="Local",
+        schedule_kind="one_time",
+    )
+    db.record_pending_mutation(
+        local_id=local_id,
+        primitive="reminder_task",
+        owner_id=owner_id,
+        payload={"action": "update", "title": "Local"},
+    )
+    pending = db.get_pending_mutations(owner_id)
+    assert len(pending) == 1
+    mutation_id = pending[0]["id"]
 
     with db.transaction() as conn:
         db._apply_pulled_reminders(conn, owner_id, [
             {"id": "srv-1", "title": "One", "schedule_kind": "one_time"},
         ])
-        db._purge_pending_mutations(conn, owner_id, ["mutation-uuid"])
+        db._purge_pending_mutations(conn, owner_id, [mutation_id])
 
     rows = db.list_reminder_tasks(owner_id=owner_id)
-    assert len(rows) == 1
-    assert rows[0]["server_id"] == "srv-1"
+    assert len(rows) == 2
+    assert any(r["server_id"] == "srv-1" for r in rows)
+    assert db.get_pending_mutations(owner_id) == []
 
 
 def test_bulk_apply_pulled_reminders_records_conflict_for_pending_mutation(tmp_path):
