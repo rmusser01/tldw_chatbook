@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 
 import pytest
+from loguru import logger
 
 from tldw_chatbook.LLM_Provider_Catalog.local_llm_provider_catalog_service import (
     LocalLLMProviderCatalogService,
@@ -448,6 +449,73 @@ async def test_unexpected_client_error_becomes_failed_outcome_and_loop_continues
     assert report.outcomes[0].status == "failed"
     assert report.outcomes[0].error_kind == "unexpected"
     assert report.outcomes[1].status == "refreshed"
+
+
+@pytest.mark.asyncio
+async def test_unexpected_error_logs_no_traceback_or_secrets(tmp_path):
+    secret = "sk-leak-probe-value"
+
+    async def raising_client(**kwargs):
+        raise ValueError("boom")
+
+    saved_calls = []
+    service = _service(
+        {},
+        saved_calls,
+        discovery_client=raising_client,
+        environ={"OPENAI_API_KEY": secret},
+    )
+    store = ModelCatalogDiskStore(tmp_path / "cache.json")
+    logged: list[str] = []
+    # str(message) renders the fully formatted record, including any traceback
+    # (the test sink, like the app's file sink, defaults to diagnose=True).
+    sink_id = logger.add(lambda message: logged.append(str(message)), level="WARNING")
+    try:
+        report = await service.refresh_stale_configured_providers(
+            catalog_settings=ModelCatalogSettings(),
+            disk_store=store,
+            provider_list_keys=("OpenAI",),
+        )
+    finally:
+        logger.remove(sink_id)
+    assert report.outcomes[0].status == "failed"
+    assert report.outcomes[0].error_kind == "unexpected"
+    text = "".join(logged)
+    assert "Model catalog refresh failed for OpenAI: ValueError" in text
+    assert "Traceback" not in text
+    assert secret not in text
+    assert "api_key" not in text
+
+
+@pytest.mark.asyncio
+async def test_setup_error_becomes_failed_outcome_and_loop_continues(tmp_path):
+    default_settings = {"providers": {k: ["saved-1"] for k in _SIX}}
+    settings_calls = {"count": 0}
+
+    def flaky_settings_loader():
+        settings_calls["count"] += 1
+        if settings_calls["count"] == 2:
+            # First in-loop settings read (OpenAI's endpoint fingerprint) blows up.
+            raise RuntimeError("settings read blew up")
+        return default_settings
+
+    saved_calls = []
+    service = _service(
+        {"OpenRouter": _discovered("OpenRouter", "a/b")},
+        saved_calls,
+        settings_loader=flaky_settings_loader,
+    )
+    store = ModelCatalogDiskStore(tmp_path / "cache.json")
+    report = await service.refresh_stale_configured_providers(
+        catalog_settings=ModelCatalogSettings(),
+        disk_store=store,
+        provider_list_keys=("OpenAI", "OpenRouter"),
+    )
+    assert report.outcomes[0].status == "failed"
+    assert report.outcomes[0].error_kind == "unexpected"
+    assert report.outcomes[0].provider_list_key == "OpenAI"
+    assert report.outcomes[1].status == "refreshed"
+    assert report.outcomes[1].provider_list_key == "OpenRouter"
 
 
 def test_notification_reports_baseline_diff_as_cached():

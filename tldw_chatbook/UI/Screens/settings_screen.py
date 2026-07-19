@@ -5005,7 +5005,9 @@ class SettingsScreen(BaseAppScreen):
                 staged_settings=staged_settings,
             )
         except Exception as exc:
-            logger.exception("Provider model discovery failed")
+            # No traceback: the log file sink runs with diagnose=True, which would
+            # dump frame locals (api_key, headers) into the log file.
+            logger.warning(f"Provider model discovery failed: {type(exc).__name__}")
             self._model_discovery_status = redact_secret_text(
                 f"Model discovery failed: {exc}"
             )
@@ -6212,7 +6214,7 @@ class SettingsScreen(BaseAppScreen):
             with Horizontal(classes="settings-input-row"):
                 yield Static("Refresh after (hours):", classes="settings-status-row")
                 yield Input(
-                    str(int(model_catalog_settings.stale_after_hours)),
+                    f"{model_catalog_settings.stale_after_hours:g}",
                     id="settings-model-catalog-stale-hours",
                     type="integer",
                     tooltip="0 = refetch every launch.",

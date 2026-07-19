@@ -6911,7 +6911,6 @@ class TldwCli(
         """ADR-019 startup auto-refresh; never blocks or crashes startup."""
         try:
             from tldw_chatbook.LLM_Provider_Catalog.model_auto_refresh import (
-                ModelCatalogRefreshed,
                 format_refresh_notification,
             )
             from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import (

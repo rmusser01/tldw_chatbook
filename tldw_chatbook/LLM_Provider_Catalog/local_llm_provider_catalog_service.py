@@ -528,55 +528,59 @@ class LocalLLMProviderCatalogService:
 
         try:
             for requested_key in provider_list_keys:
-                resolution = resolve_provider_list_key(requested_key, catalog)
-                if resolution.status != "resolved" or resolution.provider_list_key is None:
-                    outcomes.append(ProviderRefreshOutcome(
-                        provider_list_key=requested_key, status="skipped_not_ready"))
-                    continue
-                provider_key = resolution.normalized_provider
-                list_key = resolution.provider_list_key
-
-                if provider_key in catalog_settings.auto_refresh_disabled:
-                    outcomes.append(ProviderRefreshOutcome(
-                        provider_list_key=list_key, status="skipped_disabled"))
-                    continue
-
-                api_key = self._resolve_api_key(
-                    provider=list_key,
-                    provider_key=provider_key,
-                    saved_settings=saved_settings,
-                    staged_settings=None,
-                )
-                # OpenRouter's catalog is public; everything else needs credentials.
-                if api_key is None and provider_key != "openrouter":
-                    outcomes.append(ProviderRefreshOutcome(
-                        provider_list_key=list_key, status="skipped_not_ready"))
-                    continue
-
-                fingerprint = self._current_endpoint_fingerprint(provider_key=provider_key)
-                if fingerprint is None:
-                    outcomes.append(ProviderRefreshOutcome(
-                        provider_list_key=list_key, status="skipped_not_ready"))
-                    continue
-
-                if not force and not disk_store.is_stale(
-                    list_key, fingerprint,
-                    stale_after_hours=catalog_settings.stale_after_hours,
-                ):
-                    outcomes.append(ProviderRefreshOutcome(
-                        provider_list_key=list_key, status="skipped_fresh"))
-                    continue
-
-                # Snapshot the pre-fetch cache entry for the diff BEFORE discover_models
-                # replaces it (also empty after fingerprint change/corruption — the
-                # baseline guard below keeps that safe).
-                previous_ids = {
-                    model.model_id
-                    for model in self.discovery_cache.list(list_key, fingerprint)
-                }
-                saved_ids = set(catalog.get(list_key, []))
-
+                # Everything per-provider (resolve/api-key/fingerprint/previous-ids
+                # setup plus the fetch itself) lives inside the try: one provider
+                # blowing up must not abort the remaining refreshes.
+                list_key: str | None = None
                 try:
+                    resolution = resolve_provider_list_key(requested_key, catalog)
+                    if resolution.status != "resolved" or resolution.provider_list_key is None:
+                        outcomes.append(ProviderRefreshOutcome(
+                            provider_list_key=requested_key, status="skipped_not_ready"))
+                        continue
+                    provider_key = resolution.normalized_provider
+                    list_key = resolution.provider_list_key
+
+                    if provider_key in catalog_settings.auto_refresh_disabled:
+                        outcomes.append(ProviderRefreshOutcome(
+                            provider_list_key=list_key, status="skipped_disabled"))
+                        continue
+
+                    api_key = self._resolve_api_key(
+                        provider=list_key,
+                        provider_key=provider_key,
+                        saved_settings=saved_settings,
+                        staged_settings=None,
+                    )
+                    # OpenRouter's catalog is public; everything else needs credentials.
+                    if api_key is None and provider_key != "openrouter":
+                        outcomes.append(ProviderRefreshOutcome(
+                            provider_list_key=list_key, status="skipped_not_ready"))
+                        continue
+
+                    fingerprint = self._current_endpoint_fingerprint(provider_key=provider_key)
+                    if fingerprint is None:
+                        outcomes.append(ProviderRefreshOutcome(
+                            provider_list_key=list_key, status="skipped_not_ready"))
+                        continue
+
+                    if not force and not disk_store.is_stale(
+                        list_key, fingerprint,
+                        stale_after_hours=catalog_settings.stale_after_hours,
+                    ):
+                        outcomes.append(ProviderRefreshOutcome(
+                            provider_list_key=list_key, status="skipped_fresh"))
+                        continue
+
+                    # Snapshot the pre-fetch cache entry for the diff BEFORE discover_models
+                    # replaces it (also empty after fingerprint change/corruption — the
+                    # baseline guard below keeps that safe).
+                    previous_ids = {
+                        model.model_id
+                        for model in self.discovery_cache.list(list_key, fingerprint)
+                    }
+                    saved_ids = set(catalog.get(list_key, []))
+
                     result = await self.discover_models(provider=list_key)
                     if result.status != "success":
                         if result.error and result.error.kind == "missing_credentials":
@@ -646,13 +650,16 @@ class LocalLLMProviderCatalogService:
                         saved_model_ids=saved_to_config,
                         write_failed=write_failed,
                     ))
-                except Exception:
-                    # One provider blowing up must not abort the remaining refreshes.
-                    logger.opt(exception=True).warning(
-                        f"Model catalog auto-refresh hit an unexpected error for {list_key}"
+                except Exception as exc:
+                    # No traceback: the log file sink runs with diagnose=True, which
+                    # would dump frame locals (api_key, headers) into the log file.
+                    logger.warning(
+                        f"Model catalog refresh failed for {list_key or requested_key}: "
+                        f"{type(exc).__name__}"
                     )
                     outcomes.append(ProviderRefreshOutcome(
-                        provider_list_key=list_key, status="failed", error_kind="unexpected"))
+                        provider_list_key=list_key or requested_key,
+                        status="failed", error_kind="unexpected"))
         finally:
             disk_store.prune(set(catalog) | set(provider_list_keys))
             try:
