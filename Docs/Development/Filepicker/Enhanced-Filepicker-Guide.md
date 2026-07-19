@@ -2,7 +2,7 @@
 
 ## Overview
 
-The enhanced file picker in tldw_chatbook provides a modern, feature-rich file selection experience with persistent settings, bookmarks, recent files, and context-aware defaults. This guide covers the new features and how to use them effectively.
+The enhanced file picker in tldw_chatbook provides a feature-rich file selection experience with persistent settings, bookmarks, recent files, and context-aware defaults. It subclasses the vendored `textual_fspicker` base dialog and adds persistence and search without forking the third-party code. This guide covers the implemented features and how to use them effectively.
 
 ## Key Features
 
@@ -53,7 +53,7 @@ The enhanced file picker in tldw_chatbook provides a modern, feature-rich file s
 | `Ctrl+D` | Bookmark Current | Add/remove current directory bookmark |
 | `F5` | Refresh | Refresh current directory listing |
 | `Ctrl+F` | Search | Focus search box |
-| `1-9` | Quick Jump | Jump to bookmark 1-9 |
+| `1-9` | Quick Jump | Jump to bookmark 1-9 (only when an input is not focused) |
 | `Escape` | Cancel | Close file picker |
 
 ## Usage Examples
@@ -143,6 +143,10 @@ The following contexts are pre-configured with the migration:
 - `mlx_models` - MLX model files
 - `file_open` - Generic file open (default)
 - `file_save` - Generic file save (default)
+- `eval_file` - Generic evaluation file selection
+- `eval_task` - Evaluation task file selection
+- `eval_dataset` - Evaluation dataset file selection
+- `eval_export` - Evaluation result export destination
 
 ## Advanced Features
 
@@ -150,7 +154,7 @@ The following contexts are pre-configured with the migration:
 Users can add their own bookmarks by navigating to a directory and pressing `Ctrl+D`. Custom bookmarks are marked with `custom: true` in the config.
 
 ### Search Functionality
-The search box filters files in real-time as you type. The search is case-insensitive and matches partial filenames.
+Press `Ctrl+F` to focus the search box. The directory list filters in real-time as you type, matching partial filenames case-insensitively. Press the **Clear** button or `Ctrl+F` again to reset the filter.
 
 ### Multiple Contexts
 Different features of the app use different contexts, so your character import directory won't interfere with your document directory, etc.
@@ -192,9 +196,13 @@ Planned improvements include:
 
 ## Testing
 
-Run the test script to verify the enhanced file picker:
+Run the focused test suite to verify the enhanced file picker:
+
 ```bash
-python test_enhanced_filepicker.py
+python3 -m pytest Tests/UI/test_file_picker_filters_callable.py \
+    Tests/UI/test_file_picker_bookmarks_lazy.py \
+    Tests/UI/test_file_picker_action_tooltips.py \
+    Tests/UI/test_enhanced_file_dialog_mount.py -q
 ```
 
-This will open a test application where you can try all the features.
+For interactive exploration, you can still run `Tests/test_enhanced_filepicker.py` as a standalone Textual app.
