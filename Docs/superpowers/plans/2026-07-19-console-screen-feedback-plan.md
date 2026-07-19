@@ -1000,14 +1000,12 @@ class ConsoleContextModal(ModalScreen[None]):
 
     def __init__(
         self,
-        snapshot: ConsoleContextSnapshot,
         snapshot_factory: Callable[[], Awaitable[ConsoleContextSnapshot]],
         *,
         token_estimate: int | None = None,
         in_progress: bool = False,
     ) -> None:
         super().__init__()
-        self.snapshot = snapshot
         self._snapshot_factory = snapshot_factory
         self.token_estimate = token_estimate
         self.in_progress = in_progress
@@ -1295,7 +1293,7 @@ class ModalHarness(App):
         yield Static("background")
 
     def on_mount(self) -> None:
-        self.push_screen(ConsoleContextModal(SNAPSHOT, _snapshot_factory, token_estimate=42))
+        self.push_screen(ConsoleContextModal(_snapshot_factory, token_estimate=42))
 
 
 @pytest.mark.asyncio
