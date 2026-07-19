@@ -7,6 +7,7 @@ import pytest
 
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from tldw_chatbook.Scheduling.models import ReminderTask, ScheduledTask, TaskStatus
+from tldw_chatbook.Scheduling.scheduler.queue import PriorityQueue
 from tldw_chatbook.Scheduling.services import SchedulingService
 from tldw_chatbook.Scheduling.services.server_client import ServerUnavailableError
 from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProjection
@@ -450,3 +451,41 @@ async def test_list_tasks_filters_watchlist_by_owner(db):
 
     assert tasks == []
     projection.list_jobs.assert_called_once_with(owner_id="server:1")
+
+
+@pytest.mark.asyncio
+async def test_created_reminder_is_picked_up_by_priority_queue(db):
+    """Locally created reminders must have next_run_at set so the queue loads them."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    await svc.create_reminder(_reminder_payload("Queue me"))
+
+    queue = PriorityQueue(db=db)
+    queue.load(now=datetime(2026, 7, 21, tzinfo=timezone.utc))
+
+    assert len(queue._items) == 1
+    assert queue._items[0]["title"] == "Queue me"
+
+
+@pytest.mark.asyncio
+async def test_updated_reminder_is_picked_up_by_priority_queue(db):
+    """Updating schedule fields recomputes next_run_at so the queue loads the reminder."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    task = await svc.create_reminder(_reminder_payload("Original"))
+
+    updated = await svc.update_reminder(
+        task.id,
+        {
+            "schedule_kind": "recurring",
+            "run_at": None,
+            "cron": "0 9 * * *",
+            "timezone": "UTC",
+        },
+    )
+
+    assert updated is not None
+    assert updated.next_run_at is not None
+
+    queue = PriorityQueue(db=db)
+    queue.load(now=datetime(2099, 1, 1, tzinfo=timezone.utc))
+
+    assert any(item["id"] == task.id for item in queue._items)

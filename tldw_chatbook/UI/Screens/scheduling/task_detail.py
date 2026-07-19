@@ -9,7 +9,12 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Static
 
-from ....Scheduling.events import DeleteTaskRequested
+from ....Scheduling.events import (
+    DeleteTaskRequested,
+    DisableTaskRequested,
+    EditTaskRequested,
+    EnableTaskRequested,
+)
 from ....Scheduling.models import ReminderTask, ScheduledTask, ScheduleKind, TaskStatus
 from ....Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
 from ..destination_recovery import DestinationRecoveryState
@@ -302,6 +307,12 @@ class TaskDetail(Vertical):
             )
         yield Horizontal(
             Button(
+                "Edit",
+                id="scheduling-edit-task",
+                variant="primary",
+                tooltip="Edit this reminder.",
+            ),
+            Button(
                 "Enable",
                 id="scheduling-enable-task",
                 variant="success",
@@ -331,17 +342,35 @@ class TaskDetail(Vertical):
         """Handle lifecycle actions (console follow is handled by the workbench)."""
         button_id = event.button.id
         if button_id in {
+            "scheduling-edit-task",
             "scheduling-enable-task",
             "scheduling-disable-task",
             "scheduling-delete-task",
         }:
             event.stop()
-        if button_id == "scheduling-enable-task":
-            self.app.notify("Not yet available", severity="warning")
+        if button_id == "scheduling-edit-task":
+            self._request_edit()
+        elif button_id == "scheduling-enable-task":
+            self._request_enable()
         elif button_id == "scheduling-disable-task":
-            self.app.notify("Not yet available", severity="warning")
+            self._request_disable()
         elif button_id == "scheduling-delete-task":
             self.request_delete()
+
+    def _request_edit(self) -> None:
+        """Post an edit request for the current reminder."""
+        if isinstance(self._current_task, ReminderTask):
+            self.post_message(EditTaskRequested(self._current_task))
+
+    def _request_enable(self) -> None:
+        """Post an enable request for the current reminder."""
+        if isinstance(self._current_task, ReminderTask):
+            self.post_message(EnableTaskRequested(self._current_task))
+
+    def _request_disable(self) -> None:
+        """Post a disable request for the current reminder."""
+        if isinstance(self._current_task, ReminderTask):
+            self.post_message(DisableTaskRequested(self._current_task))
 
     def request_delete(self) -> None:
         """Open the delete confirmation modal for the current task."""
@@ -385,7 +414,7 @@ class TaskDetail(Vertical):
 
         empty_state.display = False
         metadata.display = True
-        lifecycle.display = True
+        lifecycle.display = isinstance(task, ReminderTask)
 
         self._update_static("scheduling-task-detail-title", task.title)
         self._update_static("scheduling-task-detail-type", _task_type_label(task))
