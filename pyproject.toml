@@ -55,6 +55,7 @@ dependencies = [
     "keyring",
     "markdownify",
     "aiofiles",
+    "croniter>=1.4.0",
     "textual-image",
     "anytree",
 ]
