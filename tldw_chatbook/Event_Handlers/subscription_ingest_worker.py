@@ -57,7 +57,7 @@ async def process_subscription_item(item: Dict[str, Any], subscription: Dict[str
                 options = json.loads(subscription['processing_options'])
                 analyze = options.get('analyze_before_ingest', False)
                 save_analysis_only = options.get('save_analysis_only', False)
-            except:
+            except Exception:
                 pass
         
         # Process content

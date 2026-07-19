@@ -562,7 +562,7 @@ class BaselineManager:
         if row['raw_html']:
             try:
                 content = zlib.decompress(row['raw_html']).decode('utf-8')
-            except:
+            except Exception:
                 content = row['raw_html']
         
         # Parse key elements
@@ -570,7 +570,7 @@ class BaselineManager:
         if row['key_elements']:
             try:
                 key_elements = json.loads(row['key_elements'])
-            except:
+            except Exception:
                 pass
         
         return ContentBaseline(

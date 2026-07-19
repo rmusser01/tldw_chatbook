@@ -434,7 +434,7 @@ def analyze(
         default_chunk_opts = {'method': 'sentences', 'max_size': 500, 'overlap': 200}
         current_chunk_options = chunk_options if isinstance(chunk_options, dict) else default_chunk_opts
 
-        if CHUNKER_AVAILABLE == True:
+        if CHUNKER_AVAILABLE:
             if recursive_summarization:
                 logging.info("Performing recursive summarization.")
                 chunks_data = improved_chunking_process(text_content, current_chunk_options) # Renamed variable for clarity

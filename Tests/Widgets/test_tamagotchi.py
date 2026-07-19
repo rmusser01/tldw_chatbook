@@ -182,7 +182,7 @@ class TestStateValidator:
         assert state['energy'] == 50
         assert state['health'] == 100
         assert state['age'] == 0
-        assert state['is_alive'] == True
+        assert state['is_alive']
 
 
 class TestRateLimiter:

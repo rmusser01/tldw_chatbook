@@ -42,7 +42,7 @@ async def safe_click(pilot: Pilot, widget_or_selector, max_attempts: int = 3) ->
                         # Try scrolling the screen
                         app.screen.scroll_to_widget(widget, animate=False)
                         await pilot.pause()
-                except:
+                except Exception:
                     pass
             else:
                 # Some other error

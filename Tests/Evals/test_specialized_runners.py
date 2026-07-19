@@ -112,7 +112,7 @@ class TestMultilingualEvaluationRunner:
         
         assert analysis["language_detected"] == "english"
         assert analysis["language_confidence"] > 0.1  # Lower threshold for short text
-        assert analysis["contains_latin"] == True
+        assert analysis["contains_latin"]
         
         # Test mixed language - need more substantial text for detection
         mixed_text = "Hello world! This is English. Bonjour le monde! C'est français."
@@ -248,8 +248,8 @@ class TestCreativeEvaluationRunner:
         assert analysis["word_count"] > 50
         assert analysis["vocabulary_diversity"] > 0.7
         assert analysis["creativity_indicators"]["uses_descriptive_words"] > 0
-        assert analysis["creativity_indicators"]["uses_dialogue"] == True
-        assert analysis["creativity_indicators"]["narrative_elements"] == True
+        assert analysis["creativity_indicators"]["uses_dialogue"]
+        assert analysis["creativity_indicators"]["narrative_elements"]
         assert analysis["creativity_indicators"]["emotional_language"] > 0
     
     def test_creative_metrics_calculation(self, runner):

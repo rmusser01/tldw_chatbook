@@ -219,7 +219,7 @@ class TestChatMessageSystem:
         message = ChatStreamingMessage.StreamStarted("msg-123")
         await chat_window.on_chat_streaming_message_stream_started(message)
         
-        assert chat_window.is_send_button == False
+        assert not chat_window.is_send_button
     
     @pytest.mark.asyncio
     async def test_stream_completed_message_handler(self, chat_window):
@@ -231,7 +231,7 @@ class TestChatMessageSystem:
         message = ChatStreamingMessage.StreamCompleted("msg-123", "Final content")
         await chat_window.on_chat_streaming_message_stream_completed(message)
         
-        assert chat_window.is_send_button == True
+        assert chat_window.is_send_button
 
 
 class TestHandlerFunctionality:
@@ -274,11 +274,11 @@ class TestHandlerFunctionality:
         handler = ChatVoiceHandler(mock_window)
         
         # Initial state
-        assert handler.is_voice_recording == False
+        assert not handler.is_voice_recording
         
         # Toggle should change state
         handler.is_voice_recording = True
-        assert handler.is_voice_recording == True
+        assert handler.is_voice_recording
     
     def test_sidebar_handler_visibility_toggle(self):
         """Test that sidebar handler can toggle visibility."""

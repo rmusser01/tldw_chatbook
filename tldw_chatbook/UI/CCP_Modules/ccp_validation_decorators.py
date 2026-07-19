@@ -44,12 +44,12 @@ def validate_input(model_class: Type[BaseModel], extract_fields: Optional[list] 
                             # Try input field first
                             widget = self.window.query_one(f"#{widget_id}")
                             data[field] = widget.value if hasattr(widget, 'value') else widget.text
-                        except:
+                        except Exception:
                             try:
                                 # Try textarea
                                 widget = self.window.query_one(f"#{alt_widget_id}")
                                 data[field] = widget.text if hasattr(widget, 'text') else widget.value
-                            except:
+                            except Exception:
                                 # Field not found, set as None
                                 data[field] = None
                 else:
@@ -103,13 +103,13 @@ def validate_search(func: Callable) -> Callable:
             try:
                 include_char = self.window.query_one("#conv-char-search-include-character-checkbox")
                 data['include_character_chats'] = include_char.value if hasattr(include_char, 'value') else True
-            except:
+            except Exception:
                 data['include_character_chats'] = True
             
             try:
                 all_chars = self.window.query_one("#conv-char-search-all-characters-checkbox")
                 data['all_characters'] = all_chars.value if hasattr(all_chars, 'value') else True
-            except:
+            except Exception:
                 data['all_characters'] = True
             
             # Validate

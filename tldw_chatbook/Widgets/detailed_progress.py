@@ -310,7 +310,7 @@ class DetailedProgressBar(Widget):
                     process = psutil.Process()
                     memory_mb = process.memory_info().rss / 1024 / 1024
                     self.query_one("#memory-usage", Static).update(f"{memory_mb:.1f} MB")
-                except:
+                except Exception:
                     pass
                     
         except Exception as e:
@@ -327,5 +327,5 @@ class DetailedProgressBar(Widget):
         # Update remaining time to show completion
         try:
             self.query_one("#remaining-time", Static).update("Complete!")
-        except:
+        except Exception:
             pass

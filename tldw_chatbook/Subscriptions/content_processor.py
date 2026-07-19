@@ -201,7 +201,7 @@ class ContentProcessor:
                 domain = parsed.netloc.replace('www.', '')
                 if domain:
                     keywords.append(domain)
-            except:
+            except Exception:
                 pass
         
         # Extract keywords from title
@@ -303,7 +303,7 @@ class ContentProcessor:
                     prompt = prompt.replace('{source}', subscription['name'])
                     prompt = prompt.replace('{url}', item.get('url', ''))
                     return prompt
-            except:
+            except Exception:
                 pass
         
         # Build default prompt based on type

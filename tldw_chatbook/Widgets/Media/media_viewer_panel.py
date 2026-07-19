@@ -797,7 +797,7 @@ class MediaViewerPanel(Container):
             else:
                 metadata_view.remove_class("hidden")
                 metadata_edit.add_class("hidden")
-        except:
+        except Exception:
             pass
     
     def watch_format_for_reading(self, format: bool) -> None:
@@ -1232,7 +1232,7 @@ class MediaViewerPanel(Container):
         try:
             search_input = self.query_one("#content-search-input", Input)
             search_input.value = ""
-        except:
+        except Exception:
             pass
         # Populate providers
         try:
@@ -1341,7 +1341,7 @@ class MediaViewerPanel(Container):
                             else:
                                 formatted_date = str(created_at)
                             date_info.update(f"Created: {formatted_date}")
-                        except:
+                        except Exception:
                             date_info.update(f"Version {version_num}")
                     else:
                         date_info.update(f"Version {version_num}")
@@ -1497,7 +1497,7 @@ class MediaViewerPanel(Container):
         try:
             prompt_select = self.query_one("#prompt-select", Select)
             prompt_select.set_options(options)
-        except:
+        except Exception:
             pass
     
     def load_prompt_details(self, prompt_id: str) -> None:
@@ -1639,7 +1639,7 @@ class MediaViewerPanel(Container):
         try:
             keyword_input = self.query_one("#prompt-keyword-input", Input)
             keywords = keyword_input.value
-        except:
+        except Exception:
             keywords = ""
         
         # Trigger search
@@ -1652,7 +1652,7 @@ class MediaViewerPanel(Container):
         try:
             search_input = self.query_one("#prompt-search-input", Input)
             search_term = search_input.value
-        except:
+        except Exception:
             search_term = ""
         
         # Trigger search
@@ -1863,7 +1863,7 @@ class MediaViewerPanel(Container):
             try:
                 edit_area = self.query_one("#analysis-edit-area", TextArea)
                 analysis_content = edit_area.text
-            except:
+            except Exception:
                 analysis_content = self.current_analysis
         else:
             analysis_content = self.current_analysis

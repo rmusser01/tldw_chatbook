@@ -232,7 +232,7 @@ class ChatbooksWindow(Widget):
                                     'description': manifest_data.get('description', ''),
                                     'tags': manifest_data.get('tags', []),
                                 })
-                    except:
+                    except Exception:
                         pass
                         
                     chatbooks.append(cb_info)

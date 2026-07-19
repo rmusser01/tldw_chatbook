@@ -174,7 +174,7 @@ async def wait_for_widget_mount(pilot: Pilot, widget_type: Type[W], timeout: flo
     def check():
         try:
             return pilot.app.query_one(widget_type)
-        except:
+        except Exception:
             return None
     
     widget = await pilot.wait_for(check, timeout=timeout)

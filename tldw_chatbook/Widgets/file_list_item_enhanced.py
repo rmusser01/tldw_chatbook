@@ -222,7 +222,7 @@ class FileListEnhanced(Widget):
             if file_path.exists() and not str(file_path).startswith(("http://", "https://")):
                 try:
                     total_size += file_path.stat().st_size
-                except:
+                except Exception:
                     pass
         
         size_str = self._format_file_size(total_size) if total_size > 0 else "0 B"

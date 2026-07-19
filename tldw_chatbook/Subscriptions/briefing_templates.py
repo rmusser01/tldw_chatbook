@@ -536,7 +536,7 @@ class BriefingRenderer:
             # Try to parse ISO format
             try:
                 timestamp = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-            except:
+            except Exception:
                 return timestamp
         
         if not isinstance(timestamp, datetime):
@@ -566,7 +566,7 @@ class BriefingRenderer:
         if isinstance(timestamp, str):
             try:
                 timestamp = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-            except:
+            except Exception:
                 return timestamp
         
         if isinstance(timestamp, datetime):
@@ -592,7 +592,7 @@ class BriefingRenderer:
         try:
             parsed = urlparse(url)
             return parsed.netloc.replace('www.', '')
-        except:
+        except Exception:
             return url
     
     def _convert_to_html(self, markdown_text: str) -> str:

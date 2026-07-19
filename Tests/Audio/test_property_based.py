@@ -481,7 +481,7 @@ class TestSystemIntegrationProperties:
                         try:
                             service._notify_error(Exception("Test error"))
                             errors_encountered += 1
-                        except:
+                        except Exception:
                             pass
                     else:
                         # Normal operation

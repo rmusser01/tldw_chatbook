@@ -1323,7 +1323,7 @@ class BaseEvalRunner(ABC):
             import json
             json.loads(text.strip())
             return True
-        except:
+        except Exception:
             return False
     
     def _is_valid_xml(self, text: str) -> bool:
@@ -1332,7 +1332,7 @@ class BaseEvalRunner(ABC):
             import xml.etree.ElementTree as ET
             ET.fromstring(text.strip())
             return True
-        except:
+        except Exception:
             return False
 
 class QuestionAnswerRunner(BaseEvalRunner):

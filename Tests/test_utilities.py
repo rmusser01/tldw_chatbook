@@ -74,7 +74,7 @@ def chacha_db_factory(tmp_path):
     for db in created_dbs:
         try:
             db.close()
-        except:
+        except Exception:
             pass
 
 
@@ -99,7 +99,7 @@ def media_db_factory(tmp_path):
     for db in created_dbs:
         try:
             db.close_connection()
-        except:
+        except Exception:
             pass
 
 
@@ -124,7 +124,7 @@ def rag_db_factory(tmp_path):
     for db in created_dbs:
         try:
             db.close()
-        except:
+        except Exception:
             pass
 
 

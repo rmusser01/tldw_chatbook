@@ -71,7 +71,7 @@ class TopicBar(Container):
         try:
             bar = self.query_one(f"#bar-{self.topic}")
             bar.styles.width = f"{percentage}%"
-        except:
+        except Exception:
             pass
 
 

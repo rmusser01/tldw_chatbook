@@ -157,14 +157,14 @@ class MediaNavigationPanel(Container):
             try:
                 old_button = self.query_one(f"#media-nav-{old_type}")
                 old_button.remove_class("active")
-            except:
+            except Exception:
                 pass
                 
         if new_type:
             try:
                 new_button = self.query_one(f"#media-nav-{new_type}")
                 new_button.add_class("active")
-            except:
+            except Exception:
                 pass
     
     @on(Button.Pressed, ".media-type-button")

@@ -174,7 +174,7 @@ class AllTalkTTSBackend(APITTSBackend):
                     error_text = await e.response.aread()
                     error_msg = error_text.decode('utf-8', errors='ignore')
                     logger.error(f"AllTalk API error {e.response.status_code}: {error_msg}")
-            except:
+            except Exception:
                 pass
             
             # Provide user-friendly error messages

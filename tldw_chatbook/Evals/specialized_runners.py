@@ -1597,7 +1597,7 @@ class RobustnessEvaluationRunner(BaseEvalRunner):
             try:
                 json.loads(response)
                 return True
-            except:
+            except Exception:
                 return False
         
         elif format_type == 'list':

@@ -104,7 +104,7 @@ class ProgressTracker(Container):
         try:
             self.query_one("#pause-button").disabled = False
             self.query_one("#cancel-button").disabled = False
-        except:
+        except Exception:
             pass
         
         # Start time update worker
@@ -119,7 +119,7 @@ class ProgressTracker(Container):
         try:
             self.query_one("#pause-button").disabled = True
             self.query_one("#cancel-button").disabled = True
-        except:
+        except Exception:
             pass
     
     def error_evaluation(self, error_message: str):
@@ -131,7 +131,7 @@ class ProgressTracker(Container):
         try:
             self.query_one("#pause-button").disabled = True
             self.query_one("#cancel-button").disabled = True
-        except:
+        except Exception:
             pass
     
     @work(exclusive=True)
@@ -144,7 +144,7 @@ class ProgressTracker(Container):
                 try:
                     time_display = self.query_one("#progress-time")
                     time_display.update(elapsed_str)
-                except:
+                except Exception:
                     pass
             
             await asyncio.sleep(1)

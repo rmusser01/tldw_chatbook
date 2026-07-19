@@ -2305,13 +2305,13 @@ class TTSSettingsWidget(Widget):
             try:
                 if any(opt[0] == default_voice for opt in voice_select._options):
                     voice_select.value = default_voice
-            except:
+            except Exception:
                 pass
                 
             try:
                 if any(opt[0] == default_model for opt in model_select._options):
                     model_select.value = default_model
-            except:
+            except Exception:
                 pass
             
             # Set default format

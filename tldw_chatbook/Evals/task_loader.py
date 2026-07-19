@@ -767,7 +767,7 @@ class TaskLoader:
                     if 'task' in data or 'output_type' in data:
                         return 'eleuther'
                     return 'custom'
-        except:
+        except Exception:
             # If we can't parse, default to custom
             return 'custom'
     

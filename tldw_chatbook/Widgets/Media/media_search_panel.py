@@ -242,7 +242,7 @@ class MediaSearchPanel(Container):
             search_input = self.query_one("#search-input", Input)
             if search_input.value != search_term:
                 search_input.value = search_term
-        except:
+        except Exception:
             pass
     
     def watch_keyword_filter(self, keyword_filter: str) -> None:
@@ -251,7 +251,7 @@ class MediaSearchPanel(Container):
             keyword_input = self.query_one("#keyword-input", Input)
             if keyword_input.value != keyword_filter:
                 keyword_input.value = keyword_filter
-        except:
+        except Exception:
             pass
     
     def watch_show_deleted(self, show_deleted: bool) -> None:
@@ -260,7 +260,7 @@ class MediaSearchPanel(Container):
             checkbox = self.query_one("#show-deleted-checkbox", Checkbox)
             if checkbox.value != show_deleted:
                 checkbox.value = show_deleted
-        except:
+        except Exception:
             pass
         self._update_active_filters()
     
@@ -320,7 +320,7 @@ class MediaSearchPanel(Container):
         try:
             active_filters = self.query_one("#active-filters", Static)
             active_filters.update(" | ".join(filters) if filters else "No active filters")
-        except:
+        except Exception:
             pass
     
     @on(Input.Changed, "#search-input")

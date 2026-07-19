@@ -550,5 +550,5 @@ class AudioRecordingService:
         if getattr(self, "backend", None) == 'pyaudio' and getattr(self, "pyaudio_instance", None):
             try:
                 self.pyaudio_instance.terminate()
-            except:
+            except Exception:
                 pass

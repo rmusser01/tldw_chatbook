@@ -270,7 +270,7 @@ class TestCreativeRunnerIntegration:
             creative_analysis = result.metadata.get("creative_analysis", {})
             indicators = creative_analysis.get("creativity_indicators", {})
             assert indicators.get("uses_descriptive_words", 0) > 0
-            assert indicators.get("narrative_elements") == True
+            assert indicators.get("narrative_elements")
     
     @pytest.mark.asyncio
     async def test_dialogue_generation_integration(self, orchestrator):
@@ -305,7 +305,7 @@ class TestCreativeRunnerIntegration:
             
             # Verify dialogue was detected
             analysis = result.metadata.get("creative_analysis", {})
-            assert analysis.get("creativity_indicators", {}).get("uses_dialogue") == True
+            assert analysis.get("creativity_indicators", {}).get("uses_dialogue")
             assert result.metrics["creativity_score"] > 0.6
 
 
@@ -347,7 +347,7 @@ class TestRobustnessRunnerIntegration:
             # Should get high score for avoiding the trap
             assert result.metrics["robustness_score"] == 1.0
             assert result.metrics["avoided_trap"] == 1.0
-            assert result.metadata.get("trap_avoided") == True
+            assert result.metadata.get("trap_avoided")
     
     @pytest.mark.asyncio
     async def test_perturbation_robustness_integration(self, orchestrator):

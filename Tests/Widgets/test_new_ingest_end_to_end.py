@@ -63,7 +63,7 @@ async def test_configuration_validation():
     )
     
     assert video_config.files == [Path("test.mp4")]
-    assert video_config.extract_audio_only == True
+    assert video_config.extract_audio_only
     assert video_config.transcription_provider == "whisper"
     assert video_config.title == "Test Video"
     
@@ -182,7 +182,7 @@ async def test_backend_service_integration():
     
     # Test job cancellation
     success = service.cancel_job(job_id)
-    assert success == True
+    assert success
     
     updated_status = service.get_job_status(job_id)
     assert updated_status.state == ProcessingState.CANCELLED
@@ -215,7 +215,7 @@ async def test_error_handling():
     
     # Test nonexistent job operations
     assert service.get_job_status("nonexistent") is None
-    assert service.cancel_job("nonexistent") == False
+    assert not service.cancel_job("nonexistent")
     
     print("✅ Error handling test passed")
 

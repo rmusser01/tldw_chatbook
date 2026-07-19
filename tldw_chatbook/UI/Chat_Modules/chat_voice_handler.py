@@ -242,6 +242,6 @@ class ChatVoiceHandler:
             try:
                 # Clean up any resources
                 self.voice_dictation_service.stop_dictation()
-            except:
+            except Exception:
                 pass
             self.voice_dictation_service = None

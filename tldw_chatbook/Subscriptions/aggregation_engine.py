@@ -526,7 +526,7 @@ class AggregationEngine:
             try:
                 dt = datetime.fromisoformat(date_value.replace('Z', '+00:00'))
                 return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
-            except:
+            except Exception:
                 pass
         
         return None

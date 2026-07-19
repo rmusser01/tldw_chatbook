@@ -92,7 +92,7 @@ def skip_if_koboldcpp_unavailable():
             result = sock.connect_ex((host, port))
             sock.close()
             return result == 0
-        except:
+        except Exception:
             return False
     
     if not is_server_available():

@@ -246,14 +246,14 @@ class TestEvaluationMetrics:
     def test_helper_methods(self, runner):
         """Test helper methods for format validation."""
         # Test JSON validation
-        assert runner._is_valid_json('{"key": "value"}') == True
-        assert runner._is_valid_json('{invalid json}') == False
-        assert runner._is_valid_json('') == False
+        assert runner._is_valid_json('{"key": "value"}')
+        assert not runner._is_valid_json('{invalid json}')
+        assert not runner._is_valid_json('')
         
         # Test XML validation
-        assert runner._is_valid_xml('<root><item>value</item></root>') == True
-        assert runner._is_valid_xml('<unclosed>') == False
-        assert runner._is_valid_xml('not xml') == False
+        assert runner._is_valid_xml('<root><item>value</item></root>')
+        assert not runner._is_valid_xml('<unclosed>')
+        assert not runner._is_valid_xml('not xml')
     
     def test_metrics_edge_cases(self, runner):
         """Test edge cases for all metrics."""

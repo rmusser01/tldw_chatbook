@@ -561,7 +561,7 @@ class CCPPromptEditorWidget(Container):
             
             editor = self.query_one("#prompt-editor-container")
             editor.remove_class("hidden")
-        except:
+        except Exception:
             pass
         
         # Load basic fields
@@ -602,7 +602,7 @@ class CCPPromptEditorWidget(Container):
             
             editor = self.query_one("#prompt-editor-container")
             editor.remove_class("hidden")
-        except:
+        except Exception:
             pass
         
         # Clear all fields
@@ -814,7 +814,7 @@ class CCPPromptEditorWidget(Container):
             try:
                 input_widget = self.query_one(f"#test-var-{var['name']}", Input)
                 test_values[var['name']] = input_widget.value
-            except:
+            except Exception:
                 test_values[var['name']] = ""
         
         # Create test data

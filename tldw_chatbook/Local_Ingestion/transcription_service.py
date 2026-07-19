@@ -229,12 +229,12 @@ def protect_file_descriptors():
         if sys.stdout != original_stdout and hasattr(sys.stdout, 'close'):
             try:
                 sys.stdout.close()
-            except:
+            except Exception:
                 pass
         if sys.stderr != original_stderr and hasattr(sys.stderr, 'close'):
             try:
                 sys.stderr.close()
-            except:
+            except Exception:
                 pass
         
         # Restore environment

@@ -270,7 +270,7 @@ class BriefingGenerator:
                 if item.get(field):
                     try:
                         item[field] = json.loads(item[field])
-                    except:
+                    except Exception:
                         pass
             items.append(item)
         

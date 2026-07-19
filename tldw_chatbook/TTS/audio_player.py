@@ -338,7 +338,7 @@ class SimpleAudioPlayer:
                 if self._player_name == "mpv" and hasattr(self, '_mpv_socket'):
                     try:
                         Path(self._mpv_socket).unlink(missing_ok=True)
-                    except:
+                    except Exception:
                         pass
                 
                 # Always reset all state when cleaning up
@@ -412,7 +412,7 @@ class SimpleAudioPlayer:
         if hasattr(self, '_mpv_socket') and self._mpv_socket:
             try:
                 Path(self._mpv_socket).unlink(missing_ok=True)
-            except:
+            except Exception:
                 pass
         logger.debug("Audio player cleaned up")
 

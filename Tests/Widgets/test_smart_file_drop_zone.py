@@ -174,7 +174,7 @@ async def test_smart_file_drop_zone_initialization():
     zone = SmartFileDropZone(allowed_types=allowed_types, max_files=50)
     
     assert zone.selected_files == []
-    assert zone.is_dragging == False
+    assert not zone.is_dragging
     assert zone.allowed_types == allowed_types
     assert zone.max_files == 50
 
@@ -347,13 +347,13 @@ async def test_smart_file_drop_zone_file_type_allowed():
     """Test file type checking."""
     zone = SmartFileDropZone(allowed_types={'.mp4', '.mp3'})
     
-    assert zone._is_file_type_allowed(Path("test.mp4")) == True
-    assert zone._is_file_type_allowed(Path("test.mp3")) == True
-    assert zone._is_file_type_allowed(Path("test.pdf")) == False
+    assert zone._is_file_type_allowed(Path("test.mp4"))
+    assert zone._is_file_type_allowed(Path("test.mp3"))
+    assert not zone._is_file_type_allowed(Path("test.pdf"))
     
     # Test with no restrictions
     zone_unrestricted = SmartFileDropZone()
-    assert zone_unrestricted._is_file_type_allowed(Path("test.anything")) == True
+    assert zone_unrestricted._is_file_type_allowed(Path("test.anything"))
 
 
 @pytest.mark.asyncio

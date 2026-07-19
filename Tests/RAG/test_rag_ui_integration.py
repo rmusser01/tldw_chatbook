@@ -227,7 +227,7 @@ async def test_ui_settings_parsing():
         # Verify parameters were parsed correctly
         assert top_k == 10, f"Expected top_k=10, got {top_k}"
         assert max_context_length == 15000, f"Expected max_context=15000, got {max_context_length}"
-        assert enable_rerank == True, f"Expected rerank=True, got {enable_rerank}"
+        assert enable_rerank, f"Expected rerank=True, got {enable_rerank}"
         assert reranker_model == "cohere", f"Expected model=cohere, got {reranker_model}"
         return [], "Test context"
     

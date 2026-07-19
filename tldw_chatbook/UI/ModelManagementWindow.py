@@ -183,7 +183,7 @@ class ModelManagementWindow(BaseEvaluationWindow):
             provider_config = api_settings.get(provider.lower(), {})
             
             return bool(provider_config.get('api_key'))
-        except:
+        except Exception:
             return False
     
     @on(ListView.Selected, "#provider-list")

@@ -308,7 +308,7 @@ class SplashScreen(Container):
             # Ensure we have valid dimensions
             if width > 0 and height > 0:
                 return width, height
-        except:
+        except Exception:
             pass
         
         # Try to get app size
@@ -360,7 +360,7 @@ class SplashScreen(Container):
             if text:
                 progress_text = self.query_one("#splash-progress-text", Label)
                 progress_text.update(text)
-        except:
+        except Exception:
             pass
     
     async def on_key(self, event: events.Key) -> None:

@@ -244,8 +244,8 @@ class TestTreeNodeProperties:
         assert node.file_size == size
         
         # Initial state
-        assert node.expanded == False
-        assert node.selected == False
+        assert not node.expanded
+        assert not node.selected
         assert not node.children_loaded
         
         # Files should get file icons
@@ -349,9 +349,9 @@ class TestTreeViewProperties:
         # Verify consistency
         for path, node in tree.nodes.items():
             if path in tree.selection:
-                assert node.selected == True
+                assert node.selected
             else:
-                assert node.selected == False
+                assert not node.selected
         
         # get_selected_files should only return non-directories
         selected_files = tree.get_selected_files()
@@ -439,7 +439,7 @@ class TestSelectionProperties:
         assert parent_path in tree.selection
         for child_path in child_paths:
             assert child_path in tree.selection
-            assert tree.nodes[child_path].selected == True
+            assert tree.nodes[child_path].selected
         
         # Deselect parent
         tree.select_node(parent_path, False)
@@ -448,4 +448,4 @@ class TestSelectionProperties:
         assert parent_path not in tree.selection
         for child_path in child_paths:
             assert child_path not in tree.selection
-            assert tree.nodes[child_path].selected == False
+            assert not tree.nodes[child_path].selected

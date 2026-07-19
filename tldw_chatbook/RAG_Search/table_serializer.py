@@ -109,7 +109,7 @@ class TableParser:
             data = json.loads(text)
             if isinstance(data, list) and all(isinstance(item, dict) for item in data):
                 return TableFormat.JSON
-        except:
+        except Exception:
             pass
         
         # Check for CSV/TSV

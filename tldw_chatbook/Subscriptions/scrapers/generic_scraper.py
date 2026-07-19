@@ -414,7 +414,7 @@ class GenericWebScrapingPipeline(BaseScrapingPipeline):
         # Try parsing ISO format
         try:
             return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
-        except:
+        except Exception:
             pass
         
         logger.warning(f"Could not parse date: {date_str}")
@@ -440,7 +440,7 @@ class GenericWebScrapingPipeline(BaseScrapingPipeline):
                 
                 if next_link and next_link.get('href'):
                     return urljoin(current_url, next_link['href'])
-            except:
+            except Exception:
                 continue
         
         return None

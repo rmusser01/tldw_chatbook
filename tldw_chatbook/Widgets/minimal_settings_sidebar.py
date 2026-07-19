@@ -152,7 +152,7 @@ class MinimalSettingsSidebar(Container):
                 else:
                     advanced.add_class("hidden")
                     event.button.label = "⚙️ Advanced Settings"
-            except:
+            except Exception:
                 pass
     
     @on(Select.Changed)
@@ -172,7 +172,7 @@ class MinimalSettingsSidebar(Container):
             model_select.set_options([(m, m) for m in new_models])
             if new_models:
                 model_select.value = new_models[0]
-        except:
+        except Exception:
             pass
 
 

@@ -189,7 +189,7 @@ class ChatterboxIsolatedBackend(TTSBackendBase):
                 await self._send_command({"command": "shutdown"})
                 # Give it time to shut down gracefully
                 await asyncio.sleep(0.5)
-            except:
+            except Exception:
                 pass
             
             # Terminate if still running

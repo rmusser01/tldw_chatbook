@@ -95,7 +95,7 @@ def real_embedding_service(persist_dir):
         # Force torch to use CPU for tests to avoid device issues
         import torch
         torch.set_default_device('cpu')
-    except:
+    except Exception:
         pass
     
     # Create service with explicit configuration

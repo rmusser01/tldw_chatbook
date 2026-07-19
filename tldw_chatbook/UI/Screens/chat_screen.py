@@ -10964,7 +10964,7 @@ class ChatScreen(BaseAppScreen):
                         tab_state.cursor_position = input_widget.selection.end if input_widget.selection else 0
                     else:
                         tab_state.cursor_position = len(input_widget.text)
-            except:
+            except Exception:
                 pass
             
             # Save scroll position
@@ -10972,7 +10972,7 @@ class ChatScreen(BaseAppScreen):
                 scroll_widget = session.query_one(f"#chat-log-{session_id}")
                 if scroll_widget:
                     tab_state.scroll_position = scroll_widget.scroll_y
-            except:
+            except Exception:
                 pass
             
             self.chat_state.tabs.append(tab_state)

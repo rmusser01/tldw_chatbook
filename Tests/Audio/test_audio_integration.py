@@ -86,7 +86,7 @@ class TestEndToEndDictation:
                     # Process some chunks
                     try:
                         service._pyaudio_recording_loop()
-                    except:
+                    except Exception:
                         pass  # Expected when chunks run out
                     
                     # Stop and get audio
@@ -293,7 +293,7 @@ class TestErrorRecovery:
                 try:
                     for _ in range(4):
                         service._pyaudio_recording_loop()
-                except:
+                except Exception:
                     pass
                 
                 # Should have captured some chunks despite error
@@ -331,7 +331,7 @@ class TestErrorRecovery:
                 for _ in range(3):
                     try:
                         service._process_audio_buffer(b'audio')
-                    except:
+                    except Exception:
                         pass
                 
                 # Should have recovered and continued

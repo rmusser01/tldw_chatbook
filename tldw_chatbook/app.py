@@ -4414,7 +4414,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                     if hasattr(self.app, '_current_log_widget') and self.app._current_log_widget:
                         try:
                             self.app._current_log_widget.write(msg)
-                        except:
+                        except Exception:
                             pass  # Widget might not be mounted
                 except Exception:
                     self.handleError(record)

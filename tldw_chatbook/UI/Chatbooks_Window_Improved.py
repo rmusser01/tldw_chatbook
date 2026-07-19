@@ -97,7 +97,7 @@ class ChatbookCard(Container):
                 try:
                     dt = datetime.fromisoformat(created)
                     created = dt.strftime('%Y-%m-%d')
-                except:
+                except Exception:
                     pass
             yield Static(f"📅 {created}", classes="chatbook-card-date")
             
@@ -555,7 +555,7 @@ class ChatbooksWindowImproved(Screen):
                                         'characters': 0
                                     })
                                 })
-                    except:
+                    except Exception:
                         pass
                         
                     chatbooks.append(cb_info)

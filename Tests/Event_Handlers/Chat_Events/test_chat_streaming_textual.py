@@ -260,7 +260,7 @@ class TestChatStreamingWithTextual:
         
         # Verify text was set correctly (first chunk replaces)
         assert ai_widget.message_text == "Hello\nWorld\t🌍!"
-        assert hasattr(ai_widget, '_streaming_started') and ai_widget._streaming_started == True
+        assert hasattr(ai_widget, '_streaming_started') and ai_widget._streaming_started
     
     @pytest.mark.asyncio
     async def test_streaming_error_handling(self, streaming_app):

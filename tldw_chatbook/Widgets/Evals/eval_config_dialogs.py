@@ -122,7 +122,7 @@ class ModelConfigDialog(ModalScreen):
             test_button = self.query_one("#test-button")
             test_button.label = "Testing..."
             test_button.disabled = True
-        except:
+        except Exception:
             pass
         
         try:
@@ -154,7 +154,7 @@ class ModelConfigDialog(ModalScreen):
                 test_button = self.query_one("#test-button")
                 test_button.label = "Test Connection"
                 test_button.disabled = False
-            except:
+            except Exception:
                 pass
     
     @on(Button.Pressed, "#save-button")

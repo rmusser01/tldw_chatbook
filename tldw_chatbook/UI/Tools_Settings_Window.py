@@ -3442,7 +3442,7 @@ Thank you for using tldw-chatbook! 🎉
             try:
                 tabs = self.query_one("#config-tabs", TabbedContent)
                 tabs.active = "tab-api"
-            except:
+            except Exception:
                 pass
         except Exception as e:
             self.app_instance.notify(f"Error opening API settings: {e}", severity="error")
@@ -5042,7 +5042,7 @@ Thank you for using tldw-chatbook! 🎉
                 return cursor.fetchone()[0]
             finally:
                 conn.close()
-        except:
+        except Exception:
             return None
     
     def _update_last_backup_status(self, db_name: str, timestamp: str) -> None:
@@ -5052,7 +5052,7 @@ Thank you for using tldw-chatbook! 🎉
             widget = self.query_one(f"#{widget_id}", Static)
             formatted_time = datetime.strptime(timestamp, "%Y%m%d_%H%M%S").strftime("%Y-%m-%d %H:%M")
             widget.update(f"Last Backup: {formatted_time}")
-        except:
+        except Exception:
             pass
     
     # Advanced database operations

@@ -183,9 +183,9 @@ class IngestTestHelper:
         process_button = self.app.query_one("#process-button", Button)
         
         if should_be_valid:
-            assert process_button.disabled == False, "Form should be valid (process button enabled)"
+            assert not process_button.disabled, "Form should be valid (process button enabled)"
         else:
-            assert process_button.disabled == True, "Form should be invalid (process button disabled)"
+            assert process_button.disabled, "Form should be invalid (process button disabled)"
     
     def assert_validation_error(self, field_id: str, expected_error: str) -> None:
         """Assert that a specific field has a validation error."""

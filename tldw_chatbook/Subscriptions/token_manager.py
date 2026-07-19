@@ -52,7 +52,7 @@ class TokenCounter:
                 # Fall back to cl100k_base for newer models
                 try:
                     self.encoder = tiktoken.get_encoding("cl100k_base")
-                except:
+                except Exception:
                     logger.warning(f"Could not load tiktoken encoding for {model}, using approximation")
         else:
             logger.info("tiktoken not available, using approximation for token counting")

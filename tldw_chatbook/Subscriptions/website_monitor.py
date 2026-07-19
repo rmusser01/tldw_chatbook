@@ -320,7 +320,7 @@ class WebsiteMonitor:
             if time_elem and time_elem.get('datetime'):
                 try:
                     pub_date = datetime.fromisoformat(time_elem['datetime'].replace('Z', '+00:00'))
-                except:
+                except Exception:
                     pass
             
             return [{

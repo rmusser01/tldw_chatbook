@@ -197,7 +197,7 @@ class ErrorDetailsDialog(ModalScreen):
                 details = self._format_technical_details()
                 pyperclip.copy(details)
                 self.notify("Error details copied to clipboard", severity="information")
-            except:
+            except Exception:
                 self.notify("Could not copy to clipboard", severity="warning")
         
         elif event.button.id == "dismiss-button":

@@ -42,7 +42,7 @@ def normalize_datetime(dt: Union[str, datetime, None]) -> Optional[str]:
             # Parse and re-format to ensure consistency
             parsed = parse_datetime_flexible(dt)
             return parsed.isoformat() if parsed else dt
-        except:
+        except Exception:
             return dt
     
     return str(dt)
@@ -82,7 +82,7 @@ def parse_datetime_flexible(dt_str: str) -> Optional[datetime]:
         # Remove 'Z' suffix if present
         cleaned = dt_str.rstrip('Z')
         return datetime.fromisoformat(cleaned)
-    except:
+    except Exception:
         return None
 
 

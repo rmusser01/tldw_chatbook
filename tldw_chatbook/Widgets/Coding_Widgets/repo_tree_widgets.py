@@ -409,7 +409,7 @@ class TreeView(VerticalScroll):
         try:
             expand_btn = node.query_one(".tree-expand-btn", Button)
             expand_btn.label = "▼" if node.expanded else "▶"
-        except:
+        except Exception:
             pass
     
     async def collapse_node(self, path: str) -> None:
@@ -447,7 +447,7 @@ class TreeView(VerticalScroll):
             try:
                 checkbox = node.query_one(f"#select-{path}", Checkbox)
                 checkbox.value = selected
-            except:
+            except Exception:
                 pass
         
         # If it's a directory, cascade to children
@@ -463,7 +463,7 @@ class TreeView(VerticalScroll):
                     try:
                         child_checkbox = child_node.query_one(f"#select-{child_path}", Checkbox)
                         child_checkbox.value = selected
-                    except:
+                    except Exception:
                         pass
         
         # Update parent selection state if needed
@@ -577,7 +577,7 @@ class TreeView(VerticalScroll):
         try:
             parent_checkbox = parent_node.query_one(f"#select-{parent_path}", Checkbox)
             parent_checkbox.value = parent_node.selected
-        except:
+        except Exception:
             pass
         
         # Recursively update grandparent

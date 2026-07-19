@@ -54,7 +54,7 @@ def memory_db_factory():
     for db in created_dbs:
         try:
             db.close_connection()
-        except: # Ignore errors during cleanup
+        except Exception: # Ignore errors during cleanup
             pass
 
 @pytest.fixture(scope="function")

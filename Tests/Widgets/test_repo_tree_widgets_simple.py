@@ -146,18 +146,18 @@ class TestTreeViewSimple:
         
         # Check all are selected
         assert tree.selection == {'src', 'src/file1.py', 'src/file2.py'}
-        assert dir_node.selected == True
-        assert child1.selected == True
-        assert child2.selected == True
+        assert dir_node.selected
+        assert child1.selected
+        assert child2.selected
         
         # Deselect directory
         tree.select_node('src', False)
         
         # Check all are deselected
         assert tree.selection == set()
-        assert dir_node.selected == False
-        assert child1.selected == False
-        assert child2.selected == False
+        assert not dir_node.selected
+        assert not child1.selected
+        assert not child2.selected
 
 
 class TestMessages:

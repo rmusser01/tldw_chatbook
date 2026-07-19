@@ -174,7 +174,7 @@ class ElevenLabsTTSBackend(APITTSBackend):
                             error_msg = error_data['detail']['message']
                         else:
                             error_msg = str(error_data['detail'])
-                except:
+                except Exception:
                     pass
             except Exception as read_error:
                 logger.error(f"Failed to read error response: {read_error}")

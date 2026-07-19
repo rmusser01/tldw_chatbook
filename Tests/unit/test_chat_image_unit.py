@@ -438,7 +438,7 @@ class TestImageAttachmentErrorHandling:
             if Path(temp_path).exists():
                 try:
                     Path(temp_path).unlink()
-                except:
+                except Exception:
                     pass  # Ignore cleanup errors on Windows
     
     @pytest.mark.asyncio
@@ -480,11 +480,11 @@ class TestImageAttachmentErrorHandling:
             import os
             try:
                 os.chmod(temp_path, 0o644)
-            except:
+            except Exception:
                 pass
             try:
                 temp_path.unlink()
-            except:
+            except Exception:
                 pass
 
 #

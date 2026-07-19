@@ -874,7 +874,7 @@ class SubscriptionWindow(Container):
                     try:
                         date_obj = datetime.fromisoformat(date)
                         date_str = date_obj.strftime("%m/%d %H:%M")
-                    except:
+                    except Exception:
                         date_str = date
                 else:
                     date_str = ""
@@ -1851,7 +1851,7 @@ Based on the analyzed content, consider the following actions:
             # Keep last 100 lines
             lines = new_text.split('\n')[:100]
             log.load_text('\n'.join(lines))
-        except:
+        except Exception:
             pass
 
 

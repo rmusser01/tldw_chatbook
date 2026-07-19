@@ -233,7 +233,7 @@ class DatasetValidator:
                     if 'choices' in row and row['choices'].startswith('['):
                         try:
                             row['choices'] = json.loads(row['choices'])
-                        except:
+                        except Exception:
                             pass
                     samples.append(row)
             return samples

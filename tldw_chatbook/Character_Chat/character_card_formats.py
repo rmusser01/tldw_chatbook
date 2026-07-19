@@ -69,11 +69,11 @@ class CharacterCardFormatDetector:
                 parsed_data = yaml.safe_load(data)
                 if parsed_data:
                     data = parsed_data
-            except:
+            except Exception:
                 # Try JSON if YAML fails
                 try:
                     data = json.loads(data)
-                except:
+                except Exception:
                     logger.error("Failed to parse character card data as JSON or YAML")
                     return None, 'unknown'
         

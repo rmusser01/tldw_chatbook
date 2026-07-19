@@ -83,7 +83,7 @@ class TranscriptionHistory:
             with open(self.history_file, 'r') as f:
                 data = json.load(f)
                 return data.get('encrypted', False)
-        except:
+        except Exception:
             return False
     
     def load(self, password: Optional[str] = None) -> bool:

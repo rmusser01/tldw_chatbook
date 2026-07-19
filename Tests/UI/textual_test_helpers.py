@@ -39,7 +39,7 @@ async def safe_click(pilot: Pilot, selector_or_widget: Union[str, Widget], force
                 # First try screen-level scrolling
                 app.screen.scroll_to_widget(widget, animate=False)
                 await pilot.pause()
-            except:
+            except Exception:
                 pass
                 
             try:
@@ -49,9 +49,9 @@ async def safe_click(pilot: Pilot, selector_or_widget: Union[str, Widget], force
                         container.scroll_to_widget(widget, animate=False)
                         await pilot.pause()
                         break
-                    except:
+                    except Exception:
                         continue
-            except:
+            except Exception:
                 pass
                 
         # Now try to click
@@ -162,7 +162,7 @@ async def expand_collapsible(pilot: Pilot, title_or_id: str) -> bool:
             await pilot.pause()
             
         return True
-    except:
+    except Exception:
         return False
 
 
@@ -183,7 +183,7 @@ async def set_select_value(pilot: Pilot, select_id: str, value: Any) -> bool:
         select.value = value
         await pilot.pause()
         return True
-    except:
+    except Exception:
         return False
 
 
@@ -204,7 +204,7 @@ async def get_visible_buttons(app: App) -> List[Button]:
         try:
             if button.visible and button.region.overlaps(screen_region):
                 visible_buttons.append(button)
-        except:
+        except Exception:
             pass
             
     return visible_buttons

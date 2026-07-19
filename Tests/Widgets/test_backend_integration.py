@@ -99,7 +99,7 @@ async def test_media_processing_service_cancel_job():
     # Cancel job
     result = service.cancel_job(job_id)
     
-    assert result == True
+    assert result
     mock_worker.cancel.assert_called_once()
     
     job = service._active_jobs[job_id]
@@ -113,7 +113,7 @@ async def test_media_processing_service_cancel_nonexistent_job():
     service = MediaProcessingService(mock_app)
     
     result = service.cancel_job("nonexistent-job")
-    assert result == False
+    assert not result
 
 
 @pytest.mark.asyncio
@@ -287,14 +287,14 @@ async def test_processing_job_result_message():
     # Test success result
     success_msg = ProcessingJobResult("job-1", True, {"processed": 1})
     assert success_msg.job_id == "job-1"
-    assert success_msg.success == True
+    assert success_msg.success
     assert success_msg.results == {"processed": 1}
     assert success_msg.error is None
     
     # Test failure result
     failure_msg = ProcessingJobResult("job-2", False, {}, "Test error")
     assert failure_msg.job_id == "job-2"
-    assert failure_msg.success == False
+    assert not failure_msg.success
     assert failure_msg.results == {}
     assert failure_msg.error == "Test error"
 

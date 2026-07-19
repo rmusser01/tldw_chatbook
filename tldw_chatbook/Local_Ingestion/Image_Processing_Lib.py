@@ -277,7 +277,7 @@ def extract_text_from_image(
         if preprocess and processed_path != Path(image_path):
             try:
                 os.unlink(processed_path)
-            except:
+            except Exception:
                 pass
         
         return result

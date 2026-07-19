@@ -156,7 +156,7 @@ class BaseTamagotchi(Static):
             # Log error if logger available
             try:
                 self.log.error(f"Validation error: {e}")
-            except:
+            except Exception:
                 pass  # No app context, skip logging
             raise
         

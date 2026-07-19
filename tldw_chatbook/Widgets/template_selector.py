@@ -99,7 +99,7 @@ class TemplatePreviewWidget(Container):
             self.query_one("#template-description").update("Select a template to see details")
             self.query_one("#config-display").update("")
             self._set_action_state(has_template=False)
-        except:
+        except Exception:
             pass
 
     def _set_action_state(self, *, has_template: bool) -> None:
@@ -233,7 +233,7 @@ class TemplateSelectorDialog(ModalScreen):
                 template_list.templates_by_category = template_list._organize_by_category()
                 # Refresh the display
                 self.refresh()
-            except:
+            except Exception:
                 pass
                 
         except Exception as e:
@@ -275,7 +275,7 @@ class TemplateSelectorDialog(ModalScreen):
         try:
             preview = self.query_one("#template-preview")
             preview.update_preview(template)
-        except:
+        except Exception:
             pass
         
         # Enable select button
@@ -283,7 +283,7 @@ class TemplateSelectorDialog(ModalScreen):
             select_button = self.query_one("#select-button", Button)
             select_button.disabled = False
             select_button.tooltip = TEMPLATE_SELECT_ENABLED_TOOLTIP
-        except:
+        except Exception:
             pass
     
     @on(Button.Pressed, "#create-task-btn")

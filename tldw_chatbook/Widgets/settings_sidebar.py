@@ -52,7 +52,7 @@ def get_pipeline_description(pipeline_id: str) -> str:
             pipeline_config = get_pipeline(pipeline_id)
             if pipeline_config and 'description' in pipeline_config:
                 return pipeline_config['description']
-        except:
+        except Exception:
             pass
     
     return descriptions.get(pipeline_id, f"Pipeline configuration: {pipeline_id}")

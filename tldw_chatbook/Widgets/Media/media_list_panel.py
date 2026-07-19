@@ -335,7 +335,7 @@ class MediaListPanel(Container):
                 )
             
             page_label.update(f"Page {self.current_page} / {self.total_pages}")
-        except:
+        except Exception:
             pass
     
     @on(ListView.Selected, "#media-list")
@@ -392,7 +392,7 @@ class MediaListPanel(Container):
             else:
                 item_count = len(self.items)
                 list_title.update(f"Media Items ({item_count})")
-        except:
+        except Exception:
             pass
     
     def load_items(self, items: List[Dict[str, Any]], page: int, total_pages: int) -> None:

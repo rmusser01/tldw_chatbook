@@ -506,7 +506,7 @@ async def _execute_evaluation(app: 'TldwCli', config: Dict[str, Any]):
             evals_window = app.query_one("EvalsWindow")
             progress_tracker = evals_window.query_one("#progress-tracker")
             cost_estimator = evals_window.query_one("#cost-estimator")
-        except:
+        except Exception:
             pass
         
         # Use the new EvaluationProgressAdapter for better integration

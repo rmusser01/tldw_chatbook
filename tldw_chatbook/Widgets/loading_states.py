@@ -168,7 +168,7 @@ class LoadingState(Container):
             try:
                 progress_bar = self.query_one("#loading-progress", ProgressBar)
                 progress_bar.update(progress=int(progress))
-            except:
+            except Exception:
                 pass
 
 

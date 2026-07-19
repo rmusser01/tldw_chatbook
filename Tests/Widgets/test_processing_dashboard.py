@@ -299,7 +299,7 @@ async def test_processing_dashboard_initialization():
     
     assert dashboard.active_jobs == {}
     assert dashboard.total_progress == 0.0
-    assert dashboard.is_processing == False
+    assert not dashboard.is_processing
 
 
 @pytest.mark.asyncio

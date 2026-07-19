@@ -3464,7 +3464,7 @@ async def handle_ccp_dict_delete_button_pressed(app: 'TldwCli', event: Button.Pr
         loaded_dict = cdl.get_chat_dictionary(db, int(app.loaded_dictionary_id))
         if loaded_dict and loaded_dict.get('name'):
             dict_name = loaded_dict['name']
-    except:
+    except Exception:
         pass
     
     # Show confirmation dialog

@@ -660,7 +660,7 @@ class ThemeEditorView(VerticalScroll):
                         # Ensure it's a valid color string
                         parsed_color = Color.parse(color_value)
                         colors[our_name] = parsed_color.hex
-                    except:
+                    except Exception:
                         colors[our_name] = "#808080"  # Gray fallback
                 else:
                     colors[our_name] = "#808080"
@@ -723,7 +723,7 @@ class ThemeEditorView(VerticalScroll):
                     self.color_swatches[color_name].styles.color = "black"
                 else:
                     self.color_swatches[color_name].styles.color = "white"
-            except:
+            except Exception:
                 self.color_swatches[color_name].styles.background = "#808080"
                 self.color_swatches[color_name].update("Invalid")
                 self.color_swatches[color_name].styles.color = "white"
@@ -743,7 +743,7 @@ class ThemeEditorView(VerticalScroll):
             # Try to parse with Textual's Color
             Color.parse(color_value)
             return True
-        except:
+        except Exception:
             return False
     
     def watch_focused(self, focused) -> None:
@@ -1078,5 +1078,5 @@ class ThemeEditorView(VerticalScroll):
             b = int((b + m) * 255)
             
             return f"#{r:02x}{g:02x}{b:02x}"
-        except:
+        except Exception:
             return "#808080"  # Fallback to gray

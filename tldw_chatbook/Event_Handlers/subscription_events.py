@@ -473,7 +473,7 @@ async def check_all_subscriptions_worker(app: 'TldwCli') -> None:
             button = app.query_one("#subscription-check-all-button", Button)
             app.call_from_thread(setattr, button, 'disabled', False)
             app.call_from_thread(setattr, button, 'label', "Check All Now")
-        except:
+        except Exception:
             pass
 
 

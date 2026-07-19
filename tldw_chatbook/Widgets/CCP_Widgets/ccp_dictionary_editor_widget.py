@@ -572,7 +572,7 @@ class CCPDictionaryEditorWidget(Container):
             
             editor = self.query_one("#dictionary-editor-container")
             editor.remove_class("hidden")
-        except:
+        except Exception:
             pass
         
         # Load basic fields
@@ -606,7 +606,7 @@ class CCPDictionaryEditorWidget(Container):
             
             editor = self.query_one("#dictionary-editor-container")
             editor.remove_class("hidden")
-        except:
+        except Exception:
             pass
         
         # Clear all fields
@@ -703,7 +703,7 @@ class CCPDictionaryEditorWidget(Container):
                 stats_modified.update(self.dictionary_data['last_modified'])
             else:
                 stats_modified.update("Never")
-        except:
+        except Exception:
             pass
     
     def _load_entry_for_editing(self, key: str) -> None:

@@ -142,7 +142,7 @@ def _collect_common_form_data(app: 'TldwCli', media_type: str) -> Dict[str, Any]
                         media_window = app.query_one(window_class)
                         if hasattr(media_window, 'selected_local_files'):
                             data["local_files"] = [str(p) for p in media_window.selected_local_files]
-            except:
+            except Exception:
                 # If we can't find the window, just use empty list
                 pass
         

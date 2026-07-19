@@ -77,7 +77,7 @@ async def test_video_config_model():
     )
     
     assert len(config.files) == 1
-    assert config.extract_audio_only == True
+    assert config.extract_audio_only
     assert config.start_time == "00:01:30"
     assert config.chunk_size == 500
     
@@ -99,8 +99,8 @@ async def test_audio_config_model():
         transcription_model="large"
     )
     
-    assert config.speaker_diarization == True
-    assert config.noise_reduction == True
+    assert config.speaker_diarization
+    assert config.noise_reduction
     assert config.transcription_model == "large"
 
 
@@ -114,8 +114,8 @@ async def test_document_config_model():
         chunk_method="semantic"
     )
     
-    assert config.ocr_enabled == True
-    assert config.preserve_formatting == False
+    assert config.ocr_enabled
+    assert not config.preserve_formatting
     assert config.chunk_method == "semantic"
 
 
@@ -129,8 +129,8 @@ async def test_pdf_config_model():
         chunk_size=600
     )
     
-    assert config.extract_images == True
-    assert config.preserve_layout == True
+    assert config.extract_images
+    assert config.preserve_layout
     assert config.chunk_size == 600
 
 
@@ -145,9 +145,9 @@ async def test_ebook_config_model():
         chunk_method="chapter"
     )
     
-    assert config.extract_metadata == True
-    assert config.preserve_chapters == True
-    assert config.include_toc == True
+    assert config.extract_metadata
+    assert config.preserve_chapters
+    assert config.include_toc
     assert config.chunk_method == "chapter"
 
 
@@ -161,9 +161,9 @@ async def test_web_config_model():
         clean_html=False
     )
     
-    assert config.extract_links == True
-    assert config.include_images == True
-    assert config.clean_html == False
+    assert config.extract_links
+    assert config.include_images
+    assert not config.clean_html
 
 
 @pytest.mark.asyncio
@@ -453,13 +453,13 @@ async def test_unified_processor_process_button_state():
         
         # Initially disabled (no files)
         button = processor.query_one("#process-button")
-        assert button.disabled == True
+        assert button.disabled
         
         # Add files - should enable
         processor.selected_files = [Path("test.mp4")]
         await pilot.pause()
         
-        assert button.disabled == False
+        assert not button.disabled
 
 
 @pytest.mark.asyncio

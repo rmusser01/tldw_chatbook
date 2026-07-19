@@ -49,8 +49,8 @@ class TestTreeNode:
         assert node.level == 1
         assert node.file_size == 1024
         # reactive values need to be accessed differently in tests
-        assert node.expanded == False
-        assert node.selected == False
+        assert not node.expanded
+        assert not node.selected
         assert not node.children_loaded
     
     def test_tree_node_creation_directory(self, sample_dir_data):
@@ -63,8 +63,8 @@ class TestTreeNode:
         assert node.level == 1
         assert node.file_size is None
         # reactive values need to be accessed differently in tests
-        assert node.expanded == False
-        assert node.selected == False
+        assert not node.expanded
+        assert not node.selected
         assert not node.children_loaded
     
     @pytest.mark.parametrize("filename,expected_icon", [
@@ -236,7 +236,7 @@ class TestTreeNode:
             await pilot.pause(0.1)
             
             # Check state changed
-            assert node.expanded == True
+            assert node.expanded
             assert str(button.label) == "⟳"
             assert node.is_loading is True
             
@@ -276,7 +276,7 @@ class TestTreeNode:
             await pilot.pause(0.1)
             
             # Check state
-            assert node.selected == True
+            assert node.selected
             
             # Check event was posted
             assert len(events) == 1
@@ -424,12 +424,12 @@ class TestTreeView:
         
         # Check selection
         assert 'test.py' in tree.selection
-        assert file_node.selected == True
+        assert file_node.selected
         
         # Deselect
         tree.select_node('test.py', False)
         assert 'test.py' not in tree.selection
-        assert file_node.selected == False
+        assert not file_node.selected
     
     def test_select_node_directory_cascades(self):
         """Test selecting directory cascades to children."""
@@ -460,18 +460,18 @@ class TestTreeView:
         
         # Check all are selected
         assert tree.selection == {'src', 'src/file1.py', 'src/file2.py'}
-        assert dir_node.selected == True
-        assert child1.selected == True
-        assert child2.selected == True
+        assert dir_node.selected
+        assert child1.selected
+        assert child2.selected
         
         # Deselect directory
         tree.select_node('src', False)
         
         # Check all are deselected
         assert tree.selection == set()
-        assert dir_node.selected == False
-        assert child1.selected == False
-        assert child2.selected == False
+        assert not dir_node.selected
+        assert not child1.selected
+        assert not child2.selected
     
     def test_get_selected_files(self):
         """Test getting only selected files (not directories)."""

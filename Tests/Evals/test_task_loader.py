@@ -721,9 +721,9 @@ class TestUtilityFunctions:
         loader = TaskLoader()
         
         # Test valid paths
-        assert loader._validate_dataset_path("local_file.csv") == True
-        assert loader._validate_dataset_path("huggingface/dataset") == True
-        assert loader._validate_dataset_path("/absolute/path/data.json") == True
+        assert loader._validate_dataset_path("local_file.csv")
+        assert loader._validate_dataset_path("huggingface/dataset")
+        assert loader._validate_dataset_path("/absolute/path/data.json")
         
         # Test invalid paths (if implemented)
         # Could test for security issues, invalid characters, etc.

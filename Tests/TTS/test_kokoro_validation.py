@@ -104,7 +104,7 @@ class TestKokoroValidation:
         
         # Verify voice config parsing
         voice_config = backend_onnx._parse_voice_config(request.voice)
-        assert voice_config['is_mixed'] == True
+        assert voice_config['is_mixed']
         assert len(voice_config['voices']) == 2
         assert voice_config['voices'][0] == ('af_bella', 0.7)
         assert voice_config['voices'][1] == ('af_sarah', 0.3)
@@ -301,7 +301,7 @@ class TestKokoroValidation:
             await backend_onnx._initialize_onnx()
             
         # Should fall back to non-ONNX
-        assert backend_onnx.use_onnx == False
+        assert not backend_onnx.use_onnx
     
     @pytest.mark.asyncio
     async def test_error_recovery(self, backend_onnx, mock_kokoro_instance):
