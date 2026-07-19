@@ -40,7 +40,25 @@ The enhanced file picker in tldw_chatbook provides a feature-rich file selection
 - Icons for different file types and bookmarks
 - Clear visual indicators for attached files
 - Highlighted search results
+- Dedicated inline error line instead of easy-to-miss border subtitles
+- Column headers in the file list (Name, Size, Modified)
 - Better spacing and organization
+
+### 6. **Type-Ahead File Jumping** ⌨️
+- When the file list is focused, type letters to jump to the next file whose name starts with the typed prefix
+- The prefix resets after a short period of inactivity
+- Digits are reserved for the `1-9` bookmark jumps unless you are already typing a prefix
+
+### 7. **Optional Multi-Select** ☑️
+- `EnhancedFileOpen` supports `multi_select=True`
+- Use `Space` to toggle the highlighted file
+- Selected files show a check-mark in the list and a count above the button bar
+- The main button returns a `List[Path]` instead of a single `Path`
+- `EnhancedFileSave` does not support multi-select
+
+### 8. **Collapsible Shortcut Hints** ❓
+- Footer shows the full shortcut cheat-sheet by default
+- Press `?` to collapse it to a compact "? Show shortcuts" reminder
 
 ## Keyboard Shortcuts
 
@@ -54,7 +72,11 @@ The enhanced file picker in tldw_chatbook provides a feature-rich file selection
 | `F5` | Refresh | Refresh current directory listing |
 | `Ctrl+F` | Search | Focus search box |
 | `1-9` | Quick Jump | Jump to bookmark 1-9 (only when an input is not focused) |
+| `Space` | Toggle Select | Toggle the highlighted file in multi-select mode |
+| `?` | Toggle Hints | Expand/collapse the shortcut-hint footer |
 | `Escape` | Cancel | Close file picker |
+
+*When the file list is focused, typing printable letters jumps to the next matching file name.*
 
 ## Usage Examples
 
@@ -98,6 +120,18 @@ save_dialog = EnhancedFileSave(
     title="Save Document",
     default_filename="document.txt",
     context="document_save"
+)
+```
+
+### Multi-Select File Open
+```python
+from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen
+
+# Select multiple files; dismiss returns a list of Path objects
+multi_dialog = EnhancedFileOpen(
+    title="Select Files",
+    context="batch_import",
+    multi_select=True,
 )
 ```
 
@@ -154,7 +188,13 @@ The following contexts are pre-configured with the migration:
 Users can add their own bookmarks by navigating to a directory and pressing `Ctrl+D`. Custom bookmarks are marked with `custom: true` in the config.
 
 ### Search Functionality
-Press `Ctrl+F` to focus the search box. The directory list filters in real-time as you type, matching partial filenames case-insensitively. Press the **Clear** button or `Ctrl+F` again to reset the filter.
+Press `Ctrl+F` to focus the search box. The directory list filters in real-time as you type, matching partial filenames case-insensitively. A result count is shown next to the search box and a "no matches" message appears when the filter matches nothing. Press the **Clear** button or `Ctrl+F` again to reset the filter.
+
+### Type-Ahead Jumping
+With the file list focused, type any printable letter to jump to the next entry whose name starts with that prefix. The prefix is cleared after a short idle timeout, so successive keystrokes refine the jump. Digits are reserved for bookmark jumps unless you have already started a prefix.
+
+### Multi-Select Mode
+Enable `multi_select=True` on `EnhancedFileOpen`. Use `Space` (or Enter) on a file to add it to the selection; a check-mark appears beside selected files and the status label shows the count. Click the main button to return a `list[Path]`. If no files are selected, the button shows an inline error.
 
 ### Multiple Contexts
 Different features of the app use different contexts, so your character import directory won't interfere with your document directory, etc.
@@ -187,7 +227,6 @@ All existing code has been automatically migrated to use the enhanced file picke
 
 Planned improvements include:
 - Drag and drop support
-- Multi-file selection
 - File preview pane
 - Grid view for images
 - Favorites filters

@@ -19,6 +19,7 @@ from tldw_chatbook.Third_Party.textual_fspicker.base_dialog import Dialog
 from tldw_chatbook.Widgets.enhanced_file_picker import (
     EnhancedFileOpen,
     EnhancedFileSave,
+    MultiSelectDirectoryEntry,
     SearchableDirectoryNavigation,
 )
 
@@ -317,6 +318,112 @@ async def test_cancel_dismisses_with_none(tmp_path):
         result.append(app._result)
 
     assert result[0] is None
+
+
+@pytest.mark.asyncio
+async def test_multi_select_hides_filename_input(tmp_path):
+    """Multi-select mode does not render the single-filename input."""
+    dialog = EnhancedFileOpen(
+        location=str(tmp_path),
+        title="Test Multi Select UI",
+        multi_select=True,
+        context="test_multi_select_ui",
+    )
+    app = _DialogHost(dialog)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        with pytest.raises(Exception):
+            dialog.query_one("#filename-input", Input)
+
+
+@pytest.mark.asyncio
+async def test_multi_select_toggles_and_returns_list(tmp_path):
+    """Multi-select mode returns a list of selected files."""
+    file_a = tmp_path / "alpha.txt"
+    file_b = tmp_path / "beta.txt"
+    file_a.write_text("a")
+    file_b.write_text("b")
+
+    dialog = EnhancedFileOpen(
+        location=str(tmp_path),
+        title="Test Multi Select",
+        multi_select=True,
+        context="test_multi_select",
+    )
+    app = _DialogHost(dialog)
+    result = []
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        dir_nav = dialog.query_one(SearchableDirectoryNavigation)
+        for _ in range(20):
+            if dir_nav.option_count > 0:
+                break
+            await pilot.pause()
+
+        # Find the two files in the option list.
+        indices = {}
+        for index in range(dir_nav.option_count):
+            option = dir_nav.get_option_at_index(index)
+            if option.location == file_a:
+                indices["alpha"] = index
+            elif option.location == file_b:
+                indices["beta"] = index
+        assert "alpha" in indices and "beta" in indices
+
+        # Toggle both files via Space/action_toggle_selection.
+        for key in ("alpha", "beta"):
+            dir_nav.highlighted = indices[key]
+            await pilot.pause()
+            dialog.action_toggle_selection()
+            await pilot.pause()
+            option = dir_nav.get_option_at_index(indices[key])
+            assert isinstance(option, MultiSelectDirectoryEntry)
+            assert option.selected is True
+
+        dialog.query_one("#select").press()
+        await pilot.pause()
+        result.append(app._result)
+
+    assert isinstance(result[0], list)
+    assert set(result[0]) == {file_a, file_b}
+
+
+@pytest.mark.asyncio
+async def test_type_ahead_jumps_to_file_prefix(tmp_path):
+    """Typing a letter in the directory list jumps to the matching file."""
+    alpha = tmp_path / "alpha.txt"
+    beta = tmp_path / "beta.txt"
+    alpha.write_text("a")
+    beta.write_text("b")
+
+    dialog = EnhancedFileOpen(
+        location=str(tmp_path),
+        title="Test Type Ahead",
+        context="test_type_ahead",
+    )
+    app = _DialogHost(dialog)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        dir_nav = dialog.query_one(SearchableDirectoryNavigation)
+        for _ in range(20):
+            if dir_nav.option_count > 0:
+                break
+            await pilot.pause()
+
+        dir_nav.focus()
+        await pilot.pause()
+        # Jump to the file whose name starts with "b".
+        await pilot.press("b")
+        await pilot.pause()
+
+        assert dir_nav.highlighted is not None
+        option = dir_nav.get_option_at_index(dir_nav.highlighted)
+        assert option.location.name.startswith("b")
 
 
 @pytest.mark.asyncio

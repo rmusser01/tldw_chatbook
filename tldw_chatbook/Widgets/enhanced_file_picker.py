@@ -1,12 +1,13 @@
 # enhanced_file_picker.py
 # Enhanced file picker with keyboard shortcuts, recent files, breadcrumbs, bookmarks, and search
 
+import asyncio
 import sys
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Union
 from datetime import datetime
 import os
-from textual import on
+from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -15,12 +16,15 @@ from textual.widgets import Button, Label, ListView, ListItem, Input, Static
 from textual.reactive import reactive
 from textual.message import Message
 from loguru import logger
+from rich.table import Table
+from rich.console import RenderableType
 
 from ..Third_Party.textual_fspicker import Filters
 from ..Third_Party.textual_fspicker.file_dialog import BaseFileDialog
 from ..Third_Party.textual_fspicker.base_dialog import FileSystemPickerScreen
 from ..Third_Party.textual_fspicker.parts import DirectoryNavigation
 from ..Third_Party.textual_fspicker.parts.directory_navigation import DirectoryEntry
+from ..Third_Party.textual_fspicker.safe_tests import is_dir, is_file, is_symlink
 from ..Third_Party.textual_fspicker.path_maker import MakePath
 from ..config import get_cli_setting, save_setting_to_cli_config
 
@@ -379,6 +383,88 @@ class DirectorySearch(Horizontal):
         self.post_message(self.SearchChanged(""))
 
 
+def _human_readable_size(size: int) -> str:
+    """Return a concise, human-readable byte size."""
+    if size < 1024:
+        return f"{size} B"
+    units = ["KB", "MB", "GB", "TB", "PB"]
+    value = size
+    unit = units[-1]
+    for u in units:
+        value /= 1024
+        if value < 1024:
+            unit = u
+            break
+    formatted = f"{value:.1f}"
+    # Drop trailing zeros and the decimal point when not needed.
+    if "." in formatted:
+        formatted = formatted.rstrip("0").rstrip(".")
+    return f"{formatted} {unit}"
+
+
+class FormattedDirectoryEntry(DirectoryEntry):
+    """Directory entry with human-readable sizes and no size for directories."""
+
+    @staticmethod
+    def _size(location: Path) -> str:
+        if is_dir(location):
+            return ""
+        try:
+            entry_size = location.stat().st_size
+        except (FileNotFoundError, OSError):
+            entry_size = 0
+        return _human_readable_size(entry_size)
+
+
+class MultiSelectDirectoryEntry(FormattedDirectoryEntry):
+    """A directory entry that renders a selection marker for multi-select."""
+
+    def __init__(self, location: Path, styles: Any, selected: bool = False) -> None:
+        self.selected = selected
+        super().__init__(location, styles)
+
+    def _as_renderable(self, location: Path) -> RenderableType:
+        """Render with an extra leading check-mark column."""
+        prompt = Table.grid(expand=True)
+        prompt.add_column(no_wrap=True, width=1)
+        prompt.add_column(
+            no_wrap=True,
+            width=1,
+            style=self._style(self._styles.name, location),
+        )
+        prompt.add_column(no_wrap=True, width=3)
+        prompt.add_column(
+            no_wrap=True,
+            justify="left",
+            ratio=1,
+            style=self._style(self._styles.name, location),
+        )
+        prompt.add_column(
+            no_wrap=True,
+            justify="right",
+            width=10,
+            style=self._style(self._styles.size, location),
+        )
+        prompt.add_column(
+            no_wrap=True,
+            justify="right",
+            width=20,
+            style=self._style(self._styles.time, location),
+        )
+        prompt.add_column(no_wrap=True, width=1)
+        marker = "✓" if self.selected else " "
+        prompt.add_row(
+            "",
+            marker,
+            self.FOLDER_ICON if is_dir(location) else self.FILE_ICON,
+            self._name(location),
+            self._size(location),
+            self._mtime(location),
+            "",
+        )
+        return prompt
+
+
 class SearchableDirectoryNavigation(DirectoryNavigation):
     """Directory navigation that also filters by a free-text search term.
 
@@ -386,28 +472,164 @@ class SearchableDirectoryNavigation(DirectoryNavigation):
     method but does not declare the reactive variable, and its
     ``_repopulate_display`` does not apply the term. This subclass adds the
     missing reactive and applies it without editing third-party code.
+
+    Additional enhancements:
+    - Type-ahead jumping to the next entry whose name starts with the typed
+      prefix.
+    - Optional multi-select rendering via :class:`MultiSelectDirectoryEntry`.
     """
 
     search_filter = reactive("")
     """Free-text filter applied to entry names."""
 
+    class SearchCountChanged(Message):
+        """Posted when the number of visible options changes."""
+        def __init__(self, navigation: DirectoryNavigation, count: int, query: str) -> None:
+            self.navigation = navigation
+            self.count = count
+            self.query = query
+            super().__init__()
+
+    class ToggleSelection(Message):
+        """Posted when the user asks to toggle the highlighted entry."""
+        def __init__(self, navigation: DirectoryNavigation) -> None:
+            self.navigation = navigation
+            super().__init__()
+
+    def __init__(self, location: Path | str = ".") -> None:
+        super().__init__(location)
+        self._type_ahead_buffer = ""
+        self._type_ahead_timer: Optional[asyncio.TimerHandle] = None
+
+    def _restart_type_ahead_timer(self) -> None:
+        """Reset the inactivity timeout that clears the type-ahead buffer."""
+        if self._type_ahead_timer is not None:
+            self._type_ahead_timer.cancel()
+        self._type_ahead_timer = asyncio.get_event_loop().call_later(
+            0.8, self._reset_type_ahead
+        )
+
+    def _reset_type_ahead(self) -> None:
+        """Clear the type-ahead buffer after a period of inactivity."""
+        self._type_ahead_buffer = ""
+        self._type_ahead_timer = None
+
+    def _jump_to_prefix(self, prefix: str) -> None:
+        """Move the highlight to the next entry whose name starts with prefix."""
+        prefix = prefix.lower()
+        start = (self.highlighted or -1) + 1
+        options = self.options
+
+        def match_at(index: int) -> bool:
+            option = options[index]
+            if not isinstance(option, DirectoryEntry):
+                return False
+            name = option.location.name.lower()
+            return name.startswith(prefix)
+
+        # Search from the item after the current highlight, wrapping around.
+        for idx in range(start, len(options)):
+            if match_at(idx):
+                self.highlighted = idx
+                return
+        for idx in range(0, start):
+            if match_at(idx):
+                self.highlighted = idx
+                return
+
+    def _on_key(self, event: events.Key) -> None:
+        """Handle type-ahead jumping and multi-select toggling.
+
+        Navigation keys (arrows, page, home, end, enter, backspace) are left
+        for the default OptionList bindings.  The space bar toggles selection
+        in multi-select mode.  Printable letters drive type-ahead jumping;
+        digits are reserved for the screen's bookmark-jump bindings unless a
+        type-ahead prefix is already active.
+        """
+        if event.key in ("up", "down", "pageup", "pagedown", "home", "end", "enter", "backspace"):
+            return
+
+        if event.key == "space":
+            if getattr(self.screen, "multi_select", False):
+                event.stop()
+                event.prevent_default()
+                self.post_message(self.ToggleSelection(self))
+            return
+
+        if not event.is_printable or not event.character or len(event.character) != 1:
+            return
+
+        char = event.character
+        if char.isspace():
+            return
+
+        # Digits jump bookmarks when no prefix is active; otherwise extend it.
+        if char.isdigit():
+            if self._type_ahead_buffer:
+                event.stop()
+                event.prevent_default()
+                self._type_ahead_buffer += char
+                self._jump_to_prefix(self._type_ahead_buffer)
+                self._restart_type_ahead_timer()
+            return
+
+        # Printable characters start or extend the type-ahead prefix.
+        event.stop()
+        event.prevent_default()
+        self._type_ahead_buffer += char.lower()
+        self._jump_to_prefix(self._type_ahead_buffer)
+        self._restart_type_ahead_timer()
+
     def _repopulate_display(self) -> None:
         """Repopulate the display, honouring file, hidden, and search filters."""
         styles = self._styles
         query = self.search_filter.strip().lower()
+
+        # Remember the currently highlighted path so we can restore it after
+        # rebuilding the option list.
+        previous_path: Optional[Path] = None
+        try:
+            if self.highlighted is not None:
+                highlighted_option = self.get_option_at_index(self.highlighted)
+                if isinstance(highlighted_option, DirectoryEntry):
+                    previous_path = highlighted_option.location
+        except Exception:
+            pass
+
+        # Determine whether the hosting dialog is in multi-select mode.
+        screen = self.screen
+        multi_select = getattr(screen, "multi_select", False)
+        selected = getattr(screen, "_selected_paths", set()) if multi_select else set()
+
         with self.app.batch_update():
             self.clear_options()
             if not self.is_root:
-                self.add_option(DirectoryEntry(self._location / "..", styles))
+                if multi_select:
+                    self.add_option(MultiSelectDirectoryEntry(self._location / "..", styles, False))
+                else:
+                    self.add_option(FormattedDirectoryEntry(self._location / "..", styles))
             self.add_options(
                 self._sort(
-                    entry
+                    (
+                        MultiSelectDirectoryEntry(entry.location, styles, entry.location in selected)
+                        if multi_select
+                        else FormattedDirectoryEntry(entry.location, styles)
+                    )
                     for entry in self._entries
                     if not self.hide(entry.location)
                     and (not query or query in entry.location.name.lower())
                 )
             )
         self._settle_highlight()
+
+        # Restore the previous highlight if the entry still exists.
+        if previous_path is not None:
+            for idx, option in enumerate(self.options):
+                if isinstance(option, DirectoryEntry) and option.location == previous_path:
+                    self.highlighted = idx
+                    break
+
+        self.post_message(self.SearchCountChanged(self, self.option_count, query))
 
 
 class EnhancedFileDialog(BaseFileDialog):
@@ -433,7 +655,7 @@ class EnhancedFileDialog(BaseFileDialog):
     #filepicker-sidebar {
         width: 28;
         height: 1fr;
-        border-right: tall $primary-lighten-1;
+        border-right: solid $surface-lighten-2;
         background: $surface;
         display: none;
     }
@@ -443,15 +665,35 @@ class EnhancedFileDialog(BaseFileDialog):
         height: 1fr;
     }
 
-    #recent-locations, #bookmarks-panel {
+    #file-list-container {
+        width: 1fr;
+        height: 1fr;
+    }
+
+    #file-list-pane {
+        width: 1fr;
+        height: 1fr;
+    }
+
+    EnhancedFileDialog #file-list-header {
         height: auto;
+        min-height: 1;
+        padding: 0 1 0 2;
+        color: $text-muted;
+        text-style: bold;
+        background: $surface;
+        border-bottom: solid $surface-lighten-2;
+    }
+
+    #recent-locations, #bookmarks-panel {
+        height: 1fr;
         border: none;
         background: $surface;
         padding: 0 1;
     }
 
     #recent-list, #bookmarks-list {
-        height: auto;
+        height: 1fr;
         background: $surface;
     }
 
@@ -459,9 +701,13 @@ class EnhancedFileDialog(BaseFileDialog):
         padding: 0 1;
     }
 
+    .empty-state {
+        color: $text-muted;
+        text-style: italic;
+    }
+
     EnhancedFileDialog #bookmarks-list {
-        height: auto;
-        max-height: 1fr;
+        height: 1fr;
         overflow-y: auto;
     }
 
@@ -497,7 +743,7 @@ class EnhancedFileDialog(BaseFileDialog):
 
     .bookmark-container {
         width: 100%;
-        height: 100%;
+        height: 3;
         align: left middle;
     }
 
@@ -537,6 +783,11 @@ class EnhancedFileDialog(BaseFileDialog):
         color: $text-muted;
     }
 
+    EnhancedFileDialog #path-breadcrumbs .breadcrumb-ellipsis {
+        color: $text-disabled;
+        padding: 0;
+    }
+
     EnhancedFileDialog #path-input-container {
         height: 3;
         padding: 0 1;
@@ -562,7 +813,8 @@ class EnhancedFileDialog(BaseFileDialog):
     }
 
     .shortcut-hints {
-        height: 1;
+        height: auto;
+        min-height: 1;
         padding: 0 1;
         color: $text-muted;
         background: $surface-darken-1;
@@ -570,19 +822,73 @@ class EnhancedFileDialog(BaseFileDialog):
         text-style: italic;
     }
 
+    .shortcut-hints.collapsed {
+        text-align: right;
+        text-style: none;
+    }
+
     #select {
         background: $primary;
         color: $text;
         text-style: bold;
     }
+
+    EnhancedFileDialog #error-line {
+        height: auto;
+        min-height: 1;
+        padding: 0 1;
+        color: $error;
+        text-style: bold;
+        display: none;
+    }
+
+    EnhancedFileDialog SearchableDirectoryNavigation > .option-list--option-highlighted {
+        background: $primary 30%;
+        color: $text;
+        text-style: bold;
+    }
+
+    EnhancedFileDialog SearchableDirectoryNavigation:focus > .option-list--option-highlighted {
+        background: $primary 50%;
+        color: $text;
+        text-style: bold;
+    }
+
+    EnhancedFileDialog #search-status {
+        width: auto;
+        min-width: 10;
+        padding: 0 1;
+        color: $text-muted;
+        text-align: right;
+        content-align: center middle;
+    }
+
+    EnhancedFileDialog #search-no-match {
+        height: auto;
+        padding: 1;
+        color: $text-muted;
+        text-style: italic;
+        text-align: center;
+    }
+
+    EnhancedFileDialog #multi-select-info {
+        height: auto;
+        min-height: 1;
+        padding: 0 1;
+        color: $text-muted;
+        text-align: right;
+        display: none;
+    }
     """
 
     BINDINGS = [
         Binding("ctrl+b", "toggle_bookmarks", "Show bookmarks"),
+        Binding("question_mark", "toggle_hints", "Toggle shortcuts"),
         *[Binding(str(n), f"jump_bookmark_{n}", f"Bookmark {n}", show=False) for n in range(1, 10)],
     ]
 
     show_bookmarks = reactive(False)
+    show_hints = reactive(True)
 
     # Base class handlers that this subclass replaces. Textual dispatches
     # decorated handlers from the whole MRO, so simply renaming the subclass
@@ -612,6 +918,7 @@ class EnhancedFileDialog(BaseFileDialog):
         filters: Optional[Filters] = None,
         default_file: Optional[Union[str, Path]] = None,
         context: str = "default",
+        multi_select: bool = False,
         id: Optional[str] = None,
         classes: Optional[str] = None,
         name: Optional[str] = None,
@@ -633,6 +940,8 @@ class EnhancedFileDialog(BaseFileDialog):
         if name is not None:
             self.name = name
         self.context = context
+        self.multi_select = multi_select
+        self._selected_paths: set[Path] = set()
         self.recent_locations = RecentLocations(context=context)
         self.bookmarks_manager = BookmarksManager(context=context)
         self._last_directory = self._get_last_directory()
@@ -702,20 +1011,30 @@ class EnhancedFileDialog(BaseFileDialog):
                     with Horizontal(id="search-container"):
                         yield Input(placeholder="Search files...", id="search-input")
                         yield Button("Clear", id="clear-search", variant="default")
+                        yield Label("", id="search-status")
+
+                    # Shown when a search returns no results.
+                    yield Static("", id="search-no-match", classes="hidden")
+
+                    # Multi-select status (visible only in multi-select mode).
+                    yield Static("", id="multi-select-info")
 
                     # Main directory navigation
-                    with Horizontal():
+                    with Horizontal(id="file-list-container"):
                         if sys.platform == "win32":
                             yield DriveNavigation(self._location)
-                        yield SearchableDirectoryNavigation(self._location)
+                        with Vertical(id="file-list-pane"):
+                            yield Static(self._file_list_header(), id="file-list-header")
+                            yield SearchableDirectoryNavigation(self._location)
 
-                    select_hint = self._label(self._select_button, "Select")
                     yield Static(
-                        f"Ctrl+B Bookmarks  Ctrl+R Recent  Ctrl+F Search  Ctrl+L Path  "
-                        f"1-9 Jump  Enter {select_hint}  Esc Cancel",
+                        "",
                         id="shortcut-hints",
                         classes="shortcut-hints",
                     )
+
+                    # Dedicated error line above the input bar.
+                    yield Static("", id="error-line")
 
                     # Input bar with buttons
                     with InputBar():
@@ -756,6 +1075,10 @@ class EnhancedFileDialog(BaseFileDialog):
             # Breadcrumbs already show the path; the label is redundant and
             # often truncated.
             self.query_one("#current_path_display").styles.display = "none"
+            self.watch_show_hints(self.show_hints)
+            if self.multi_select:
+                self.query_one("#multi-select-info").styles.display = "block"
+                self._update_multi_select_ui()
         except Exception:
             pass
 
@@ -808,6 +1131,38 @@ class EnhancedFileDialog(BaseFileDialog):
         except Exception:
             pass
 
+    def _shortcut_hint_text(self) -> str:
+        """Full shortcut-hint text shown when the footer is expanded."""
+        select_hint = self._label(self._select_button, "Select")
+        hints = [
+            "Ctrl+B Bookmarks",
+            "Ctrl+R Recent",
+            "Ctrl+F Search",
+            "Ctrl+L Path",
+            "1-9 Jump",
+        ]
+        if self.multi_select:
+            hints.append("Space Toggle")
+        hints.extend([f"Enter {select_hint}", "Esc Cancel", "? Hide"])
+        return "  ".join(hints)
+
+    def watch_show_hints(self, show: bool) -> None:
+        """Expand or collapse the shortcut-hints footer."""
+        try:
+            hints = self.query_one("#shortcut-hints", Static)
+            if show:
+                hints.update(self._shortcut_hint_text())
+                hints.remove_class("collapsed")
+            else:
+                hints.update("? Show shortcuts")
+                hints.add_class("collapsed")
+        except Exception:
+            pass
+
+    def action_toggle_hints(self) -> None:
+        """Toggle the shortcut-hints footer."""
+        self.show_hints = not self.show_hints
+
     def action_focus_path_input(self) -> None:
         """Toggle and focus the path input field."""
         try:
@@ -840,10 +1195,14 @@ class EnhancedFileDialog(BaseFileDialog):
     def _on_select_file(self, event: DirectoryNavigation.Selected) -> None:
         """Handle a file being selected in the picker.
 
-        Mirrors ``BaseFileDialog._select_file`` but targets the dedicated
-        ``#filename-input`` so the hidden ``#path-input`` and
-        ``#search-input`` are not selected by ``query_one(Input)``.
+        In multi-select mode the list selection toggles the file in the
+        selected set.  In single-select mode the file name is copied into the
+        filename input for editing/confirmation.
         """
+        if self.multi_select:
+            self._toggle_path_selection(event.path)
+            return
+
         try:
             file_name = self.query_one("#filename-input", Input)
         except Exception:
@@ -854,21 +1213,14 @@ class EnhancedFileDialog(BaseFileDialog):
     def _confirm_file(self, event: Input.Submitted | Button.Pressed) -> None:
         """No-op override of ``BaseFileDialog._confirm_file``.
 
-        The real confirmation handling happens in ``_on_confirm_file``. The
-        base decorated handler is suppressed via ``_get_dispatch_methods``.
+        The real confirmation handling happens in ``_on_confirm_file`` and
+        ``_on_select_button``. The base decorated handler is suppressed via
+        ``_get_dispatch_methods``.
         """
         pass
 
-    @on(Input.Submitted, "#filename-input")
-    @on(Button.Pressed, "#select")
-    def _on_confirm_file(self, event: Input.Submitted | Button.Pressed) -> None:
-        """Confirm the selection of the file in the input box.
-
-        Mirrors ``BaseFileDialog._confirm_file`` but targets the dedicated
-        ``#filename-input`` so the hidden ``#path-input`` and
-        ``#search-input`` are not selected by ``query_one(Input)``.
-        """
-        event.stop()
+    def _confirm_single(self) -> None:
+        """Confirm the single filename currently in the input box."""
         file_name = self.query_one("#filename-input", Input)
 
         # Only even try and process this if there's some input.
@@ -918,6 +1270,109 @@ class EnhancedFileDialog(BaseFileDialog):
             # ...return it.
             self.dismiss(result=chosen)
 
+    def _confirm_multi_select(self) -> None:
+        """Confirm a multi-select pick and return the selected files."""
+        if not self._selected_paths:
+            self._set_error("Select at least one file")
+            return
+        self.dismiss(result=list(self._selected_paths))
+
+    @on(Input.Submitted, "#filename-input")
+    def _on_confirm_file(self, event: Input.Submitted) -> None:
+        """Handle Enter in the filename input.
+
+        In single-select mode this confirms the file.  In multi-select mode a
+        non-empty value adds the file to the selection and an empty value
+        confirms the current selection.
+        """
+        event.stop()
+
+        if not self.multi_select:
+            self._confirm_single()
+            return
+
+        try:
+            file_name = self.query_one("#filename-input", Input)
+        except Exception:
+            self._confirm_multi_select()
+            return
+
+        if not file_name.value:
+            self._confirm_multi_select()
+            return
+
+        if file_name.value.startswith("~"):
+            try:
+                chosen = MakePath.of(file_name.value).expanduser().resolve()
+            except RuntimeError as error:
+                self._set_error(str(error))
+                return
+        else:
+            chosen = (
+                self.query_one(DirectoryNavigation).location / file_name.value
+            ).resolve()
+
+        if self._should_return(chosen):
+            self._toggle_path_selection(chosen)
+            file_name.value = ""
+
+    @on(Button.Pressed, "#select")
+    def _on_select_button(self, event: Button.Pressed) -> None:
+        """Handle the main select/save/open button."""
+        event.stop()
+        if self.multi_select:
+            self._confirm_multi_select()
+        else:
+            self._confirm_single()
+
+    def _toggle_path_selection(self, path: Path) -> None:
+        """Add or remove a file from the multi-select set."""
+        if not path.is_file():
+            self.notify("Only files can be selected", severity="warning", timeout=2)
+            return
+        if path in self._selected_paths:
+            self._selected_paths.discard(path)
+        else:
+            self._selected_paths.add(path)
+        self._update_multi_select_ui()
+        try:
+            self.query_one(SearchableDirectoryNavigation)._repopulate_display()
+        except Exception:
+            pass
+
+    def action_toggle_selection(self) -> None:
+        """Toggle selection for the currently highlighted file."""
+        if not self.multi_select:
+            return
+        nav = self.query_one(SearchableDirectoryNavigation)
+        highlighted = nav.highlighted
+        if highlighted is None:
+            return
+        option = nav.get_option_at_index(highlighted)
+        self._toggle_path_selection(option.location)
+
+    def _update_multi_select_ui(self) -> None:
+        """Refresh the multi-select status label and select button."""
+        if not self.multi_select:
+            return
+        count = len(self._selected_paths)
+        try:
+            info = self.query_one("#multi-select-info", Static)
+            if count == 0:
+                info.update("No files selected")
+            elif count == 1:
+                info.update("1 file selected")
+            else:
+                info.update(f"{count} files selected")
+        except Exception:
+            pass
+        try:
+            btn = self.query_one("#select", Button)
+            base = self._label(self._select_button, "Select")
+            btn.label = f"{base} ({count})" if count else base
+        except Exception:
+            pass
+
     _MAX_VISIBLE_BREADCRUMBS = 5
 
     def _update_breadcrumbs(self, path: Path) -> None:
@@ -947,7 +1402,7 @@ class EnhancedFileDialog(BaseFileDialog):
 
                 if i > 0 and i != visible_indices[position - 1] + 1:
                     breadcrumb_container.mount(
-                        Label("…", classes="breadcrumb-separator")
+                        Label("…", classes="breadcrumb-separator breadcrumb-ellipsis")
                     )
 
                 btn = Button(label, variant="default", classes="breadcrumb-btn")
@@ -967,7 +1422,16 @@ class EnhancedFileDialog(BaseFileDialog):
             recent_list = self.query_one("#recent-list", ListView)
             recent_list.clear()
 
-            for item in self.recent_locations.get_recent():
+            recent = self.recent_locations.get_recent()
+            if not recent:
+                empty_item = ListItem(
+                    Label("No recent files yet. Open a file to see it here.", classes="recent-item empty-state")
+                )
+                empty_item.data = None
+                recent_list.append(empty_item)
+                return
+
+            for item in recent:
                 path_str = item["path"]
                 name = item["name"]
                 file_type = item.get("type", "file")
@@ -992,7 +1456,19 @@ class EnhancedFileDialog(BaseFileDialog):
             bookmarks_list = self.query_one("#bookmarks-list", ListView)
             bookmarks_list.clear()
 
-            for bookmark in self.bookmarks_manager.get_bookmarks():
+            bookmarks = self.bookmarks_manager.get_bookmarks()
+            if not bookmarks:
+                empty_item = ListItem(
+                    Label(
+                        "No bookmarks. Press Ctrl+D to bookmark the current directory.",
+                        classes="bookmark-item empty-state"
+                    )
+                )
+                empty_item.data = None
+                bookmarks_list.append(empty_item)
+                return
+
+            for bookmark in bookmarks:
                 path = bookmark["path"]
                 name = bookmark["name"]
                 icon = bookmark.get("icon", "📁")
@@ -1028,6 +1504,26 @@ class EnhancedFileDialog(BaseFileDialog):
         if getattr(self, "filters", None):
             return "File name (filtered by selected type)"
         return "File name"
+
+    def _file_list_header(self) -> RenderableType:
+        """Return a column header matching DirectoryEntry's layout."""
+        grid = Table.grid(expand=True)
+        # Optional multi-select marker column.
+        if getattr(self, "multi_select", False):
+            grid.add_column(no_wrap=True, width=1)
+            grid.add_column(no_wrap=True, width=1)
+        else:
+            grid.add_column(no_wrap=True, width=1)
+        grid.add_column(no_wrap=True, width=3)
+        grid.add_column(no_wrap=True, ratio=1)
+        grid.add_column(no_wrap=True, justify="right", width=10)
+        grid.add_column(no_wrap=True, justify="right", width=20)
+        grid.add_column(no_wrap=True, width=1)
+        if self.multi_select:
+            grid.add_row("", "", "", "Name", "Size", "Modified", "")
+        else:
+            grid.add_row("", "", "Name", "Size", "Modified", "")
+        return grid
 
     def action_toggle_bookmarks(self) -> None:
         """Toggle bookmarks panel."""
@@ -1109,7 +1605,27 @@ class EnhancedFileDialog(BaseFileDialog):
     def action_jump_bookmark_9(self) -> None:
         self._jump_to_bookmark(8)
 
-    @on(DirectoryNavigation.Changed)
+    def _set_error(self, message: str = "") -> None:
+        """Show or clear the dedicated error line.
+
+        Overrides the base implementation that paints errors into the dialog's
+        border subtitle, which is too easy to miss.
+        """
+        try:
+            error_line = self.query_one("#error-line", Static)
+        except Exception:
+            # Fall back to the base border-subtitle behavior if the dedicated
+            # line is not in the DOM.
+            super()._set_error(message)
+            return
+
+        if message:
+            error_line.update(message)
+            error_line.styles.display = "block"
+        else:
+            error_line.update("")
+            error_line.styles.display = "none"
+
     def _on_directory_changed(self, event: DirectoryNavigation.Changed) -> None:
         """React to directory navigation.
 
@@ -1129,7 +1645,7 @@ class EnhancedFileDialog(BaseFileDialog):
     @on(ListView.Selected, "#bookmarks-list")
     def handle_bookmark_selection(self, event: ListView.Selected):
         """Handle selection from bookmarks list."""
-        if hasattr(event.item, 'data'):
+        if hasattr(event.item, 'data') and event.item.data is not None:
             path = Path(event.item.data)
             if path.exists():
                 dir_nav = self.query_one(SearchableDirectoryNavigation)
@@ -1167,10 +1683,41 @@ class EnhancedFileDialog(BaseFileDialog):
         except Exception:
             pass
 
-    def dismiss(self, result: Optional[Path]) -> None:
-        """Override dismiss to save recent location and last directory."""
-        if result:
-            self.recent_locations.add(result, "file" if result.is_file() else "directory")
+    @on(SearchableDirectoryNavigation.SearchCountChanged)
+    def _on_search_count_changed(self, event: SearchableDirectoryNavigation.SearchCountChanged) -> None:
+        """Update the search status label and no-match notice."""
+        try:
+            status = self.query_one("#search-status", Label)
+            no_match = self.query_one("#search-no-match", Static)
+            if event.query:
+                status.update(f"{event.count} result{'s' if event.count != 1 else ''}")
+                if event.count == 0:
+                    no_match.update(f"No files match '{event.query}'")
+                    no_match.styles.display = "block"
+                else:
+                    no_match.styles.display = "none"
+            else:
+                status.update("")
+                no_match.styles.display = "none"
+        except Exception:
+            pass
+
+    @on(SearchableDirectoryNavigation.ToggleSelection)
+    def _on_toggle_selection(self, event: SearchableDirectoryNavigation.ToggleSelection) -> None:
+        """Toggle selection for the currently highlighted file."""
+        self.action_toggle_selection()
+
+    def dismiss(self, result: Optional[Union[Path, List[Path]]]) -> None:
+        """Override dismiss to save recent location(s) and last directory."""
+        if isinstance(result, list):
+            for path in result:
+                self.recent_locations.add(
+                    path, "file" if path.is_file() else "directory"
+                )
+        elif result:
+            self.recent_locations.add(
+                result, "file" if result.is_file() else "directory"
+            )
             self._save_last_directory(result)
 
         try:
@@ -1194,6 +1741,7 @@ class EnhancedFileOpen(EnhancedFileDialog):
         *,
         filters: Optional[Filters] = None,
         must_exist: bool = True,
+        multi_select: bool = False,
         context: str = "file_open",
         select_button: str = "Open",
         cancel_button: str = "Cancel",
@@ -1208,12 +1756,14 @@ class EnhancedFileOpen(EnhancedFileDialog):
             cancel_button=cancel_button,
             filters=filters,
             context=context,
+            multi_select=multi_select,
             id=id,
             classes=classes,
             name=name,
         )
         self.filters = filters
         self.must_exist = must_exist
+        self.multi_select = multi_select
 
     def _should_return(self, candidate: Path) -> bool:
         """Final check on a picked file before returning it."""
@@ -1226,7 +1776,8 @@ class EnhancedFileOpen(EnhancedFileDialog):
         """Provide input widgets for file selection"""
         from textual.widgets import Input, Select
 
-        yield Input(placeholder=self._filename_placeholder(), id="filename-input")
+        if not self.multi_select:
+            yield Input(placeholder=self._filename_placeholder(), id="filename-input")
         if self.filters:
             yield Select(
                 self.filters.selections,
