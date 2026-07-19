@@ -29,6 +29,7 @@ from tldw_chatbook.RAG_Search.semantic_availability import (
     SEMANTIC_UNAVAILABLE_MESSAGES,
     resolve_semantic_rag_service,
     semantic_index_is_empty,
+    trustworthy_collection_count,
 )
 
 pytestmark = pytest.mark.unit
@@ -196,6 +197,30 @@ class TestSemanticIndexIsEmpty:
     def test_nonzero_count_is_not_empty(self):
         service = StrictRagService(stats={"count": 3})
         assert asyncio.run(semantic_index_is_empty(service)) is False
+
+
+class TestTrustworthyCollectionCount:
+    """Shared trustworthy-count rule for stats displays (task-251)."""
+
+    @pytest.mark.parametrize("stats,expected", [
+        ({"count": 0}, 0),
+        ({"count": 42}, 42),
+        ({"count": 0, "error": "stats failed"}, None),
+        ({"count": None}, None),
+        ({"count": 0.0}, None),
+        ({"count": False}, None),
+        ({"count": "0"}, None),
+        ({"count": -1}, None),
+        ("not-a-mapping", None),
+        (None, None),
+    ])
+    def test_only_genuine_nonnegative_ints_are_trusted(self, stats, expected):
+        result = trustworthy_collection_count(stats)
+        if expected is None:
+            assert result is None
+        else:
+            assert result == expected
+            assert isinstance(result, int) and not isinstance(result, bool)
 
 
 class TestSearchSemanticHonestStates:

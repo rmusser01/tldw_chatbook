@@ -635,6 +635,19 @@ class TestSharedRagService:
         finally:
             ingestion_indexing.reset_shared_rag_service()
 
+    def test_peek_shared_service_never_creates(self):
+        """peek returns the existing service or None; it must not construct one (task-251)."""
+        ingestion_indexing.reset_shared_rag_service()
+        assert ingestion_indexing.peek_shared_rag_service() is None
+
+        fake = FakeRAGService()
+        ingestion_indexing.set_shared_rag_service(fake)
+        try:
+            assert ingestion_indexing.peek_shared_rag_service() is fake
+        finally:
+            ingestion_indexing.reset_shared_rag_service()
+        assert ingestion_indexing.peek_shared_rag_service() is None
+
     def test_chat_rag_events_uses_shared_service(self):
         from types import SimpleNamespace
 
