@@ -7,6 +7,8 @@ import re
 from typing import Dict, List, Any, Optional, Tuple
 from loguru import logger
 
+from tldw_chatbook.Character_Chat.world_info_regex import validate_regex_pattern, regex_search
+
 
 def _coerce_int(value: Any, default: int = 0) -> int:
     """Best-effort int coercion for loosely-typed entry fields.
@@ -165,6 +167,16 @@ class WorldInfoProcessor:
                 secondary_keys = sec_keys
             secondary_keys = [k.strip() for k in secondary_keys if k and k.strip()]
         
+        regex_flag = bool(entry.get('regex', False))
+        if regex_flag:
+            # Load-time backstop: an invalid/too-complex pattern from ANY source
+            # (editor, import, or a character_book) is downgraded to literal so
+            # matching can never hang the on-loop send path.
+            try:
+                for pat in list(keys) + list(secondary_keys):
+                    validate_regex_pattern(pat)
+            except ValueError:
+                regex_flag = False
         return {
             'keys': keys,
             'secondary_keys': secondary_keys,
@@ -175,6 +187,7 @@ class WorldInfoProcessor:
             'case_sensitive': entry.get('case_sensitive', False),
             'extensions': entry.get('extensions', {}),
             'priority': _coerce_int(entry.get('priority'), 0),
+            'regex': regex_flag,
         }
 
     def _make_candidate(self, entry: Dict[str, Any], book_id: Optional[Any], book_name: str,
@@ -419,39 +432,39 @@ class WorldInfoProcessor:
         
         return matched
     
+    def _key_hits(self, entry: Dict[str, Any], key: str, scan_text: str, scan_text_lower: str) -> bool:
+        """Does one key match the scan text? Single branch point for literal vs
+        regex so _entry_matches and _classify_entry_match cannot drift."""
+        if entry.get('regex', False):
+            return regex_search(key, scan_text, ignore_case=not entry.get('case_sensitive', False))
+        if entry.get('case_sensitive', False):
+            return self._keyword_in_text(key, scan_text)
+        return self._keyword_in_text(key.lower(), scan_text_lower)
+
     def _entry_matches(self, entry: Dict[str, Any], scan_text: str, scan_text_lower: str) -> bool:
         """Check if an entry matches the scan text."""
         # Check primary keys
         primary_match = False
         for key in entry['keys']:
-            if entry.get('case_sensitive', False):
-                if self._keyword_in_text(key, scan_text):
-                    primary_match = True
-                    break
-            else:
-                if self._keyword_in_text(key.lower(), scan_text_lower):
-                    primary_match = True
-                    break
-        
+            if self._key_hits(entry, key, scan_text, scan_text_lower):
+                primary_match = True
+                break
+
         if not primary_match:
             return False
-        
+
         # If not selective, primary match is enough
         if not entry.get('selective', False):
             return True
-        
+
         # Check secondary keys for selective entries
         if not entry['secondary_keys']:
             return True  # No secondary keys means primary match is enough
-        
+
         for key in entry['secondary_keys']:
-            if entry.get('case_sensitive', False):
-                if self._keyword_in_text(key, scan_text):
-                    return True
-            else:
-                if self._keyword_in_text(key.lower(), scan_text_lower):
-                    return True
-        
+            if self._key_hits(entry, key, scan_text, scan_text_lower):
+                return True
+
         return False
 
     def _classify_entry_match(self, entry: Dict[str, Any], scan_text: str,
@@ -459,11 +472,8 @@ class WorldInfoProcessor:
         """Decompose an entry's match for diagnostics. Returns
         (primary_hit, primary_key, secondary_required, secondary_hit, secondary_key).
         Mirrors _entry_matches' logic exactly but reports WHICH key matched / why not."""
-        case = entry.get('case_sensitive', False)
-
         def hit(key):
-            return (self._keyword_in_text(key, scan_text) if case
-                    else self._keyword_in_text(key.lower(), scan_text_lower))
+            return self._key_hits(entry, key, scan_text, scan_text_lower)
 
         primary_key = next((k for k in (entry.get('keys') or []) if hit(k)), None)
         primary_hit = primary_key is not None
