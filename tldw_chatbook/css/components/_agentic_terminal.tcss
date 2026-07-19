@@ -555,7 +555,7 @@ ConsoleSystemPromptModal {
 #console-mode-bar,
 #artifacts-mode-strip,
 #personas-mode-strip,
-#watchlists-filter-strip,
+#watchlists-header-bar,
 #schedules-filter-strip,
 #workflows-mode-strip,
 #mcp-mode-strip,
@@ -568,6 +568,12 @@ ConsoleSystemPromptModal {
     padding: 0 1;
     margin: 0;
     border: none;
+}
+
+#watchlists-header-bar {
+    /* The backend Select widget needs more than one row to render. */
+    height: auto;
+    min-height: 3;
 }
 
 .destination-action-button {
