@@ -96,8 +96,8 @@ class _StubApp:
     def post_message(self, message):
         self.posted_messages.append(message)
 
-    def notify(self, message, *, severity=None):
-        self.notifications.append((message, severity))
+    def notify(self, message, *, title=None, severity=None):
+        self.notifications.append((message, title, severity))
 
 
 _DEFAULT_DISK_STORE = object()
@@ -153,7 +153,44 @@ async def test_refresh_notifies_once_with_formatted_message(monkeypatch):
     await TldwCli._refresh_model_catalogs(app)
     expected = format_refresh_notification(report)
     assert expected is not None
-    assert app.notifications == [(expected, "information")]
+    assert app.notifications == [(expected, "Model catalog", "information")]
+
+
+@pytest.mark.asyncio
+async def test_refresh_notifies_with_warning_severity_on_failure(monkeypatch):
+    report = RefreshReport(
+        outcomes=(
+            ProviderRefreshOutcome(
+                provider_list_key="OpenAI",
+                status="failed",
+                error_kind="network",
+            ),
+        )
+    )
+    app, _service = _stub(monkeypatch, report=report)
+    await TldwCli._refresh_model_catalogs(app)
+    expected = format_refresh_notification(report)
+    assert expected is not None
+    assert app.notifications == [(expected, "Model catalog", "warning")]
+
+
+@pytest.mark.asyncio
+async def test_refresh_notifies_with_warning_severity_on_write_failure(monkeypatch):
+    report = RefreshReport(
+        outcomes=(
+            ProviderRefreshOutcome(
+                provider_list_key="OpenAI",
+                status="refreshed",
+                new_model_ids=("gpt-9",),
+                write_failed=True,
+            ),
+        )
+    )
+    app, _service = _stub(monkeypatch, report=report)
+    await TldwCli._refresh_model_catalogs(app)
+    expected = format_refresh_notification(report)
+    assert expected is not None
+    assert app.notifications == [(expected, "Model catalog", "warning")]
 
 
 @pytest.mark.asyncio

@@ -91,7 +91,7 @@ async def forward_model_catalog_refreshed(app: Any, event: ModelCatalogRefreshed
     to reach the chat screen via duck typing; returns False when no mounted screen
     handles it (e.g. chat tab never opened — options build fresh on mount anyway).
     """
-    for screen in getattr(app, "screen_stack", ()):  # pragma: no branch
+    for screen in reversed(getattr(app, "screen_stack", ())):  # pragma: no branch
         handler = getattr(screen, "handle_model_catalog_refreshed", None)
         if callable(handler):
             await handler(event)

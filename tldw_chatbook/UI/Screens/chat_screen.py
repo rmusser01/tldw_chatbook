@@ -608,53 +608,51 @@ class ChatScreen(BaseAppScreen):
             return
         self.focus_previous()
 
+    async def _rebuild_chat_model_options(
+        self,
+        provider: str,
+        *,
+        current_model: str | None = None,
+        select_first: bool = False,
+    ) -> None:
+        """Rebuild #chat-api-model options (saved + capped discovered) preserving selection."""
+        from tldw_chatbook.UI.Screens.provider_model_resolution import (
+            resolve_provider_model_options,
+        )
+        if not self.chat_window:
+            return
+        try:
+            model_select = self.chat_window.query_one("#chat-api-model", Select)
+        except Exception:
+            return
+        options = await resolve_provider_model_options(
+            self.app, provider=provider, current_model=current_model,
+        )
+        select_options = [(option.label, option.model_id) for option in options]
+        model_select.set_options(select_options)  # resets selection — re-apply below
+        if select_first and options:
+            model_select.value = options[0].model_id
+        elif current_model and any(o.model_id == current_model for o in options):
+            model_select.value = current_model
+        model_select.prompt = "Select Model..." if options else "No models available"
+
     @on(Select.Changed, "#chat-api-provider")
     async def handle_provider_change(self, event: Select.Changed) -> None:
         """Handle API provider change and update model dropdown + compact bar."""
         logger.info(f"API provider changed to: {event.value}")
 
         try:
-            from tldw_chatbook.config import get_cli_providers_and_models
-
-            # Get the new provider's models
-            providers_models = get_cli_providers_and_models()
             new_provider = str(event.value)
-            available_models = providers_models.get(new_provider, [])
-            logger.info(
-                f"Found {len(available_models)} models for provider {new_provider}"
-            )
+            await self._rebuild_chat_model_options(new_provider, select_first=True)
 
             # Find the model select widget within the chat window
             if self.chat_window:
                 try:
                     model_select = self.chat_window.query_one("#chat-api-model", Select)
-
-                    # Update options
-                    new_model_options = [(model, model) for model in available_models]
-                    model_select.set_options(new_model_options)
-
-                    # Set to first model or blank if no models
-                    if available_models:
-                        model_select.value = available_models[0]
-                        logger.info(f"Set model to: {available_models[0]}")
-                    else:
-                        model_select.value = Select.BLANK
-                        logger.info("No models available, set to BLANK")
-
-                    model_select.prompt = (
-                        "Select Model..." if available_models else "No models available"
-                    )
-                    selected_model = (
-                        None
-                        if _is_empty_select_value(model_select.value)
-                        else str(model_select.value)
-                    )
+                    selected_model = None if _is_empty_select_value(model_select.value) else str(model_select.value)
                     self._sync_compact_shell_controls(
                         provider=new_provider,
                         model=selected_model,
-                    )
-                    logger.info(
-                        f"Successfully updated model dropdown with {len(available_models)} models"
                     )
                 except Exception as e:
                     logger.error(f"Could not find model select widget: {e}")
@@ -675,6 +673,25 @@ class ChatScreen(BaseAppScreen):
 
         except Exception as e:
             logger.opt(exception=True).error(f"Error updating model dropdown: {e}")
+
+    async def handle_model_catalog_refreshed(self, event) -> None:
+        """Re-merge options when startup refresh updated the active provider."""
+        if not self.chat_window:
+            return
+        try:
+            provider_select = self.chat_window.query_one("#chat-api-provider", Select)
+            model_select = self.chat_window.query_one("#chat-api-model", Select)
+        except Exception:
+            return
+        provider = str(provider_select.value or "").strip()
+        if not provider:
+            return
+        if provider_config_key(provider) not in {
+            provider_config_key(list_key) for list_key in event.providers
+        }:
+            return
+        current = None if _is_empty_select_value(model_select.value) else str(model_select.value)
+        await self._rebuild_chat_model_options(provider, current_model=current)
 
     @on(Select.Changed, "#chat-api-model")
     def on_chat_api_model_changed(self, event: Select.Changed) -> None:

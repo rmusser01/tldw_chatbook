@@ -6936,7 +6936,15 @@ class TldwCli(
                 self.post_message(ModelCatalogRefreshed(providers=refreshed))
             message = format_refresh_notification(report)
             if message:
-                self.notify(message, severity="information")
+                has_failure = any(
+                    outcome.status == "failed" or outcome.write_failed
+                    for outcome in report.outcomes
+                )
+                self.notify(
+                    message,
+                    title="Model catalog",
+                    severity="warning" if has_failure else "information",
+                )
         except Exception:
             logger.opt(exception=True).error("Model catalog auto-refresh failed")
 
