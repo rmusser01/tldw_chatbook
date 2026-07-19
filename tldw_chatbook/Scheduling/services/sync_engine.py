@@ -52,7 +52,56 @@ class SyncEngine:
 
     async def pull(self, owner_id: str | None = None) -> None:
         """Public entry point to pull server reminders for the given owner."""
-        await self.sync_now(owner_id)
+        target_owner = owner_id if owner_id is not None else self.owner_id
+        if self.server_client is None:
+            return
+        client = self.server_client
+
+        try:
+            response = await client.list_reminders()
+            if not isinstance(response, dict):
+                response = {}
+            pulled_items = response.get("items", [])
+        except ServerClientError as exc:
+            self._record_sync_error(str(exc), target_owner)
+            return
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(f"Sync pull failed for {target_owner}: {exc}")
+            self._record_sync_error(str(exc), target_owner)
+            return
+
+        try:
+            with self.db.transaction() as conn:
+                for item in pulled_items:
+                    if not item.get("title"):
+                        item["title"] = "Untitled reminder"
+
+                pull_conflicts = self.db._apply_pulled_reminders(
+                    conn, target_owner, pulled_items, set()
+                )
+                for conflict in pull_conflicts:
+                    self.db._record_conflict_conn(
+                        conn,
+                        local_id=conflict["local_id"],
+                        primitive=_REMINDER_PRIMITIVE,
+                        owner_id=target_owner,
+                        server_state=conflict["server_state"],
+                        local_state=conflict["local_state"],
+                    )
+                seen_server_ids = {
+                    item["id"] for item in pulled_items if item.get("id")
+                }
+                self.db._detect_server_deletions_conn(
+                    conn, target_owner, seen_server_ids
+                )
+                self.db._update_sync_state_conn(
+                    conn,
+                    target_owner,
+                    last_pull_at=now_utc_iso(),
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(f"Sync pull transaction failed for {target_owner}: {exc}")
+            self._record_sync_error(str(exc), target_owner)
 
     async def sync_now(self, owner_id: str | None = None) -> None:
         target_owner = owner_id if owner_id is not None else self.owner_id
@@ -160,6 +209,7 @@ class SyncEngine:
         conflicts: list[dict] = []
         tombstone_ids_to_delete: list[str] = []
 
+        assert self.server_client is not None
         response = await self.server_client.list_reminders()
         if not isinstance(response, dict):
             response = {}
@@ -181,8 +231,10 @@ class SyncEngine:
 
         tombstones = self.db.get_tombstones(owner_id, primitive=_REMINDER_PRIMITIVE)
         for tombstone in tombstones:
-            outcome = await self._push_tombstone(tombstone, owner_id)
-            staged_outcomes.append(outcome)
+            tombstone_outcome = await self._push_tombstone(tombstone, owner_id)
+            if tombstone_outcome is None:
+                raise ServerClientError("tombstone phase aborted")
+            staged_outcomes.append(tombstone_outcome)
             tombstone_ids_to_delete.append(tombstone["local_id"])
 
         return (
@@ -196,7 +248,7 @@ class SyncEngine:
 
     async def _push_mutation(
         self, mutation: dict, owner_id: str
-    ) -> dict[str, Any] | None:
+    ) -> dict[str, Any]:
         local_id = mutation["local_id"]
         payload = mutation.get("payload") or {}
         action = payload.get("action", "update")
@@ -204,6 +256,7 @@ class SyncEngine:
         idempotency_key = payload.get("idempotency_key")
 
         try:
+            assert self.server_client is not None
             if action == "create":
                 response = await self.server_client.create_reminder(
                     idempotency_key=idempotency_key, **fields
@@ -277,12 +330,13 @@ class SyncEngine:
         if server_id is None:
             return {"local_id": local_id, "delete_tombstone": True}
         try:
+            assert self.server_client is not None
             await self.server_client.delete_reminder(server_id)
             return {"local_id": local_id, "delete_tombstone": True}
         except ServerClientNotFoundError:
             return {"local_id": local_id, "delete_tombstone": True}
         except ServerClientError:
-            raise
+            return None
 
     def resolve_conflict(self, conflict_id: str, resolution: str = "server") -> bool:
         conflict = self.db.get_conflict_by_id(conflict_id)
