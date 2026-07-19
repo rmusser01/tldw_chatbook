@@ -210,6 +210,7 @@ from ...state.ui_state import UIState
 from ...Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
 from ...Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
 from ...Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
+from ...Widgets.model_search_picker import ModelSearchPicker
 from ...Widgets.Console import (
     ConsoleComposerBar,
     ConsoleControlBar,
@@ -693,6 +694,26 @@ class ChatScreen(BaseAppScreen):
             return
         current = None if _is_empty_select_value(model_select.value) else str(model_select.value)
         await self._rebuild_chat_model_options(provider, current_model=current)
+
+    @on(ModelSearchPicker.ModelSelected)
+    async def handle_model_search_selected(self, event: ModelSearchPicker.ModelSelected) -> None:
+        """Insert a picked model as a transient option and select it (ADR-019)."""
+        model_id = event.model_id.strip()
+        if not model_id or not self.chat_window:
+            return
+        try:
+            provider_select = self.chat_window.query_one("#chat-api-provider", Select)
+            model_select = self.chat_window.query_one("#chat-api-model", Select)
+        except Exception:
+            return
+        provider = str(provider_select.value or "").strip()
+        # current_model=model_id makes the rebuild insert it as a transient option
+        # when it is not in the merged options (Select rejects out-of-options values).
+        await self._rebuild_chat_model_options(provider, current_model=model_id)
+        model_select.value = model_id
+        # Persist so the pick restores on next launch (sidebar re-inserts it as a
+        # transient option when it is absent from the saved list).
+        save_settings_to_cli_config({"chat_defaults": {"model": model_id}})
 
     @on(Select.Changed, "#chat-api-model")
     def on_chat_api_model_changed(self, event: Select.Changed) -> None:
