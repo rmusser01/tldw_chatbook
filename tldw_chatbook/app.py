@@ -978,6 +978,57 @@ class MediaProvider(Provider):
             self.app.notify(f"Failed to execute media action: {e}", severity="error")
 
 
+class LibraryIngestProvider(Provider):
+    """Provider for the Library ingest deep-link command."""
+
+    COMMANDS = (
+        (
+            "Library: Ingest content…",
+            "open_library_ingest",
+            "Open Library and start ingesting content",
+        ),
+    )
+
+    def __init__(self, screen, *args, **kwargs):
+        """Initialize the LibraryIngestProvider with required screen parameter."""
+        super().__init__(screen, *args, **kwargs)
+
+    async def search(self, query: str) -> Hits:
+        matcher = self.matcher(query)
+
+        for command_text, action_id, help_text in self.COMMANDS:
+            score = matcher.match(command_text)
+            if score > 0:
+                yield Hit(
+                    score,
+                    matcher.highlight(command_text),
+                    partial(self.handle_library_ingest_action, action_id),
+                    help=help_text,
+                )
+
+    async def discover(self) -> Hits:
+        for command_text, action_id, help_text in self.COMMANDS:
+            yield Hit(
+                1.0,
+                command_text,
+                partial(self.handle_library_ingest_action, action_id),
+                help=help_text,
+            )
+
+    def handle_library_ingest_action(self, action_id: str) -> None:
+        """Handle Library ingest actions."""
+        try:
+            if action_id == "open_library_ingest":
+                _navigate_via_screen(
+                    self.app,
+                    TAB_LIBRARY,
+                    "Opened Library to ingest content",
+                    {LIBRARY_NAV_CONTEXT_INGEST: True},
+                )
+        except Exception as e:
+            self.app.notify(f"Failed to open Library ingest: {e}", severity="error")
+
+
 class DeveloperProvider(Provider):
     """Provider for developer and debug commands."""
     
@@ -2210,6 +2261,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         SettingsProvider,
         CharacterProvider,
         MediaProvider,
+        LibraryIngestProvider,
         DeveloperProvider,
         ConsoleCommandProvider,
     }
