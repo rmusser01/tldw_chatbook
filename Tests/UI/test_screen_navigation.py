@@ -521,52 +521,24 @@ def test_lazy_screen_registry_resolves_visible_shell_destinations():
     assert resolved == expected_class_names
 
 
-def test_optional_screen_registry_route_skips_import_when_dependency_guard_fails(
-    monkeypatch,
-):
+def test_subscriptions_route_resolves_to_watchlists_collections_via_alias():
     from tldw_chatbook.UI.Navigation import screen_registry
 
-    imported_modules = []
+    screen_name, canonical_tab, screen_class = screen_registry.resolve_screen_target("subscriptions")
 
-    def fake_import_module(module_name):
-        imported_modules.append(module_name)
-        if module_name == "tldw_chatbook.Utils.optional_deps":
-            return SimpleNamespace(check_subscriptions_deps=lambda: False)
-        raise AssertionError(
-            f"Optional screen should not import when dependencies are missing: {module_name}"
-        )
-
-    monkeypatch.setattr(screen_registry, "import_module", fake_import_module)
-
-    screen_name, canonical_tab, screen_class = screen_registry.resolve_screen_target(
-        "subscriptions"
-    )
-
-    assert screen_name == "subscriptions"
-    assert canonical_tab == TAB_SUBSCRIPTIONS
-    assert screen_class is None
-    assert imported_modules == ["tldw_chatbook.Utils.optional_deps"]
+    assert screen_name == "watchlists_collections"
+    assert canonical_tab == "watchlists_collections"
+    assert screen_class.__name__ == "WatchlistsCollectionsScreen"
 
 
-def test_optional_screen_registry_route_handles_import_error(monkeypatch):
+def test_subscription_route_resolves_to_watchlists_collections_via_alias():
     from tldw_chatbook.UI.Navigation import screen_registry
 
-    def fake_import_module(module_name):
-        if module_name == "tldw_chatbook.Utils.optional_deps":
-            return SimpleNamespace(check_subscriptions_deps=lambda: True)
-        if module_name == "tldw_chatbook.UI.Screens.subscription_screen":
-            raise ImportError("missing optional subscription dependency")
-        raise AssertionError(f"Unexpected import: {module_name}")
+    screen_name, canonical_tab, screen_class = screen_registry.resolve_screen_target("subscription")
 
-    monkeypatch.setattr(screen_registry, "import_module", fake_import_module)
-
-    screen_name, canonical_tab, screen_class = screen_registry.resolve_screen_target(
-        "subscriptions"
-    )
-
-    assert screen_name == "subscriptions"
-    assert canonical_tab == TAB_SUBSCRIPTIONS
-    assert screen_class is None
+    assert screen_name == "watchlists_collections"
+    assert canonical_tab == "watchlists_collections"
+    assert screen_class.__name__ == "WatchlistsCollectionsScreen"
 
 
 def test_conversation_route_uses_library_conversation_context():
@@ -1362,11 +1334,7 @@ async def test_main_navigation_route_ids_match_shell_destinations():
 
 
 @pytest.mark.asyncio
-async def test_screen_navigation_routes_reach_real_app_handler(monkeypatch):
-    monkeypatch.setattr(
-        "tldw_chatbook.Utils.optional_deps.check_subscriptions_deps",
-        lambda: True,
-    )
+async def test_screen_navigation_routes_reach_real_app_handler():
     app = _build_test_app()
     captured_destinations = []
 
@@ -1377,7 +1345,7 @@ async def test_screen_navigation_routes_reach_real_app_handler(monkeypatch):
 
     cases = [
         ("chatbooks", "ChatbooksScreen"),
-        ("subscriptions", "SubscriptionScreen"),
+        ("watchlists_collections", "WatchlistsCollectionsScreen"),
         ("study", "StudyScreen"),
         ("stts", "STTSScreen"),
     ]

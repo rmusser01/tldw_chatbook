@@ -141,6 +141,7 @@ from tldw_chatbook.Constants import (
     TAB_SUBSCRIPTIONS,
     TAB_CHATBOOKS,
     LIBRARY_NAV_CONTEXT_MODE,
+    LIBRARY_NAV_CONTEXT_NOTE_ID,
     LIBRARY_NAV_CONTEXT_NOTES_CREATE,
     LIBRARY_NAV_CONTEXT_INGEST,
     get_tab_display_label,
@@ -233,7 +234,6 @@ from .Event_Handlers import (
     llm_nav_events,
     media_events,
     app_lifecycle,
-    subscription_events,
 )
 from .Event_Handlers.Chat_Events import (
     chat_events as chat_handlers,
@@ -718,7 +718,7 @@ class TabNavigationProvider(Provider):
         TAB_STUDY: "Switch to flashcards and quizzes",
         TAB_WRITING: "Switch to writing tools",
         TAB_RESEARCH: "Switch to research workflows",
-        TAB_SUBSCRIPTIONS: "Switch to subscriptions and watchlists",
+        TAB_WATCHLISTS_COLLECTIONS: "Switch to watchlists",
         TAB_CHATBOOKS: "Switch to portable Chatbook context packs",
         TAB_TOOLS_SETTINGS: "Open MCP for legacy tools and settings",
         TAB_LOGS: "Switch to application logs",
@@ -3439,9 +3439,9 @@ class TldwCli(
             )
             return False
 
-        if action.target_route == TAB_SUBSCRIPTIONS:
+        if action.target_route == TAB_WATCHLISTS_COLLECTIONS:
             self._stage_subscription_watchlist_run_context(action.target_id)
-            self.post_message(NavigateToScreen(TAB_SUBSCRIPTIONS))
+            self.post_message(NavigateToScreen(TAB_WATCHLISTS_COLLECTIONS))
             return True
 
         if action.target_route == TAB_ARTIFACTS:
@@ -3489,12 +3489,12 @@ class TldwCli(
     def prepare_home_primary_action(self, action: Any) -> None:
         """Stage route-specific context before Home primary-action navigation."""
         if getattr(action, "action_id", None) == "review_notifications":
-            self.pending_subscription_initial_tab = "notifications"
+            self.pending_watchlists_section = "rules"
         elif (
             getattr(action, "action_id", None) == "review_failed_work"
             and getattr(action, "target_route", None) == "subscriptions"
         ):
-            self.pending_subscription_initial_tab = "watchlist-runs"
+            self.pending_watchlists_section = "runs"
 
     def approve_active_home_item(
         self, *, target_id: str | None = None
@@ -3611,10 +3611,8 @@ class TldwCli(
         )
         if result.status is HomeControlResultStatus.HANDLED and result.target_route:
             if result.target_route == "subscriptions":
-                self._stage_subscription_watchlist_run_context(
-                    result.target_id or target_id
-                )
-                self.post_message(NavigateToScreen(result.target_route))
+                self._stage_subscription_watchlist_run_context(result.target_id or target_id)
+                self.post_message(NavigateToScreen(TAB_WATCHLISTS_COLLECTIONS))
             elif result.target_route == "library" and str(
                 result.target_id or target_id or ""
             ).startswith("local:ingest:"):
@@ -3633,8 +3631,8 @@ class TldwCli(
 
     def _stage_subscription_watchlist_run_context(self, target_id: str | None) -> None:
         if target_id and ":watchlist_run:" in str(target_id):
-            self.pending_subscription_initial_tab = "watchlist-runs"
-            self.pending_subscription_watchlist_run_id = str(target_id)
+            self.pending_watchlists_section = "runs"
+            self.pending_watchlists_run_id = str(target_id)
 
     def open_active_home_item_in_console(
         self,
@@ -5105,13 +5103,7 @@ class TldwCli(
             TAB_EVALS: evals_handlers,
             TAB_STTS: {},  # STTS handles its own events
             TAB_STUDY: {},  # Study handles its own events
-            TAB_SUBSCRIPTIONS: {
-                "subscription-add-button": subscription_events.handle_add_subscription,
-                "subscription-check-all-button": subscription_events.handle_check_all_subscriptions,
-                "subscription-accept-button": subscription_events.handle_subscription_item_action,
-                "subscription-ignore-button": subscription_events.handle_subscription_item_action,
-                "subscription-mark-reviewed-button": subscription_events.handle_subscription_item_action,
-            },
+            TAB_WATCHLISTS_COLLECTIONS: {},  # Watchlists handles its own events
         }
 
     def _setup_buffered_logging(self):
