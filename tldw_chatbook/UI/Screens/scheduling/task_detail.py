@@ -69,6 +69,12 @@ class TaskDetail(Vertical):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle lifecycle actions (console follow is handled by the workbench)."""
         button_id = event.button.id
+        if button_id in {
+            "scheduling-enable-task",
+            "scheduling-disable-task",
+            "scheduling-delete-task",
+        }:
+            event.stop()
         if button_id == "scheduling-enable-task":
             self.log.debug("Enable task requested (not yet implemented)")
         elif button_id == "scheduling-disable-task":

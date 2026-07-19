@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from loguru import logger
-from textual import on
+from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -48,6 +48,7 @@ class SchedulesWorkbench(BaseAppScreen):
         super().__init__(app_instance, screen_name, **kwargs)
         self._scheduling_service = getattr(app_instance, "scheduling_service", None)
         self._tasks: list[ReminderTask] = []
+        self._current_console_follow_item = None
         self._latest_console_follow_item_id: str | None = None
         self._latest_console_launch_kwargs: dict[str, Any] | None = None
         self._latest_console_context_loaded = False
@@ -79,7 +80,7 @@ class SchedulesWorkbench(BaseAppScreen):
         table = self.query_one("#scheduling-task-table", DataTable)
         table.add_columns("Title", "Kind", "Status", "Next Run")
         self.run_worker(self.load_tasks, exclusive=True)
-        self.run_worker(self._refresh_console_context, exclusive=False)
+        self.set_timer(0.01, self._refresh_console_context)
 
     async def load_tasks(self) -> None:
         """Fetch reminders from the scheduling service and populate the table."""
@@ -135,13 +136,18 @@ class SchedulesWorkbench(BaseAppScreen):
         self.query_one("#scheduling-task-detail", TaskDetail).set_task(task)
         self.query_one("#scheduling-task-inspector", TaskInspector).set_task(task)
 
-    async def _refresh_console_context(self) -> None:
+    @work(exclusive=True, thread=True)
+    def _refresh_console_context(self) -> None:
         """Load the latest Schedules Console-follow context in the background."""
         latest_console_item = self._latest_console_follow_item_from_adapter()
         latest_console_launch = None
         if latest_console_item is None:
             latest_console_launch = self._latest_reading_digest_console_launch()
-        self._apply_console_context(latest_console_item, latest_console_launch)
+        self.app.call_from_thread(
+            self._apply_console_context,
+            latest_console_item,
+            latest_console_launch,
+        )
 
     def _latest_console_follow_item_from_adapter(self):
         adapter = getattr(self.app_instance, "home_active_work_adapter", None)
@@ -219,6 +225,7 @@ class SchedulesWorkbench(BaseAppScreen):
         }
 
     def _apply_console_context(self, latest_console_item, latest_console_launch) -> None:
+        self._current_console_follow_item = latest_console_item
         self._latest_console_follow_item_id = (
             getattr(latest_console_item, "item_id", None)
             if latest_console_item is not None
