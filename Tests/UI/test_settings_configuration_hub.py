@@ -106,6 +106,24 @@ async def _open_settings_category(pilot, selector: str) -> None:
     await pilot.pause()
 
 
+def test_settings_category_ids_include_theme_and_splash():
+    assert SettingsCategoryId.THEME.value == "theme"
+    assert SettingsCategoryId.SPLASH_SCREEN.value == "splash_screen"
+
+
+def test_theme_and_splash_appear_in_settings_sidebar():
+    screen = SettingsScreen(_build_test_app())
+    summaries = screen._category_summaries()
+    values = {s.category.value for s in summaries}
+    assert "theme" in values
+    assert "splash_screen" in values
+
+
+def test_theme_and_splash_not_in_guided_mutation_categories():
+    assert SettingsCategoryId.THEME not in settings_screen_module.GUIDED_SETTINGS_MUTATION_CATEGORIES
+    assert SettingsCategoryId.SPLASH_SCREEN not in settings_screen_module.GUIDED_SETTINGS_MUTATION_CATEGORIES
+
+
 class FakeSettingsModelDiscoveryScope:
     def __init__(
         self,

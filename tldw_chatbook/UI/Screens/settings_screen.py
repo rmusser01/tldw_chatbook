@@ -348,6 +348,8 @@ PROVIDER_ENDPOINT_PLACEHOLDERS = {
     "vllm": "http://127.0.0.1:8000/v1",
 }
 PROVIDER_CREDENTIAL_ENV_VAR_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
+# THEME and SPLASH_SCREEN are intentionally excluded; they manage their own
+# persistence models (theme files and immediate splash config writes).
 GUIDED_SETTINGS_MUTATION_CATEGORIES = frozenset(
     {
         SettingsCategoryId.PROVIDERS_MODELS,
@@ -939,6 +941,18 @@ class SettingsScreen(BaseAppScreen):
                 "Guided",
             ),
             SettingsCategorySummary(
+                SettingsCategoryId.THEME,
+                "Theme",
+                "Full theme editor, custom colors, presets, and live preview.",
+                "Custom",
+            ),
+            SettingsCategorySummary(
+                SettingsCategoryId.SPLASH_SCREEN,
+                "Splash Screen",
+                "Startup splash card selection, defaults, and preview gallery.",
+                "Custom",
+            ),
+            SettingsCategorySummary(
                 SettingsCategoryId.STORAGE,
                 "Storage",
                 "Config path, local databases, and file locations.",
@@ -1039,6 +1053,8 @@ class SettingsScreen(BaseAppScreen):
                 "Interface",
                 (
                     SettingsCategoryId.APPEARANCE,
+                    SettingsCategoryId.THEME,
+                    SettingsCategoryId.SPLASH_SCREEN,
                     SettingsCategoryId.CONSOLE_BEHAVIOR,
                 ),
             ),
@@ -1193,16 +1209,46 @@ class SettingsScreen(BaseAppScreen):
                     "appearance.animations_enabled",
                     "appearance.smooth_scrolling",
                 ),
-                reads_runtime_state_from=("app theme", "Customize destination"),
+                reads_runtime_state_from=("app theme",),
                 writes_allowed=True,
-                runtime_owner="Settings persisted defaults; Customize full theme editor",
+                runtime_owner="Settings persisted defaults",
                 boundary_copy=(
-                    "Settings owns launch/web visual defaults; Customize owns full "
+                    "Settings owns launch visual defaults; open the Theme category for full "
                     "theme editing and deeper visual preview."
                 ),
                 recovery_copy=(
                     "Preview applies runtime-safe values for this session only; Save persists "
                     "defaults, Revert restores loaded values."
+                ),
+            ),
+            SettingsOwnershipRecord(
+                category=SettingsCategoryId.THEME,
+                owns_config_sections=("custom theme files",),
+                reads_runtime_state_from=("app theme", "custom theme files"),
+                writes_allowed=True,
+                runtime_owner="Theme editor",
+                boundary_copy=(
+                    "Settings Theme editor owns custom color palettes and theme files; "
+                    "use the editor's Apply/Save/Reset buttons."
+                ),
+                recovery_copy=(
+                    "Themes are saved to ~/.config/tldw_cli/themes/; reset or delete files there "
+                    "to recover."
+                ),
+            ),
+            SettingsOwnershipRecord(
+                category=SettingsCategoryId.SPLASH_SCREEN,
+                owns_config_sections=("splash_screen",),
+                reads_runtime_state_from=("splash_screen config",),
+                writes_allowed=True,
+                runtime_owner="Splash Screen viewer",
+                boundary_copy=(
+                    "Settings Splash Screen viewer owns startup splash defaults and card "
+                    "selection; changes are saved immediately."
+                ),
+                recovery_copy=(
+                    "Edit splash_screen values in Advanced Config or reset defaults from the "
+                    "Splash Screen category."
                 ),
             ),
             SettingsOwnershipRecord(
