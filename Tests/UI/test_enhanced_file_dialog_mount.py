@@ -427,6 +427,46 @@ async def test_type_ahead_jumps_to_file_prefix(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_directory_change_updates_breadcrumbs_and_bookmark_button(tmp_path):
+    """Changing directory refreshes breadcrumbs and the bookmark button state."""
+    subdir = tmp_path / "subdir"
+    subdir.mkdir()
+
+    dialog = EnhancedFileOpen(
+        location=str(tmp_path),
+        title="Test Directory Change",
+        context="test_dir_change",
+    )
+    app = _DialogHost(dialog)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        dir_nav = dialog.query_one(SearchableDirectoryNavigation)
+        for _ in range(20):
+            if dir_nav.option_count > 0:
+                break
+            await pilot.pause()
+
+        # Sanity check: initial breadcrumbs show the starting directory.
+        initial_breadcrumbs = [str(btn.label) for btn in dialog.query("#path-breadcrumbs Button")]
+        assert tmp_path.name in initial_breadcrumbs or "🏠" in initial_breadcrumbs
+
+        # Navigate into the subdirectory.
+        dir_nav.location = subdir
+        await pilot.pause()
+        await pilot.pause()
+
+        # Breadcrumbs should now include the subdirectory name.
+        breadcrumbs = [str(btn.label) for btn in dialog.query("#path-breadcrumbs Button")]
+        assert "subdir" in breadcrumbs, f"Expected 'subdir' in breadcrumbs, got {breadcrumbs}"
+
+        # The bookmark button tooltip should reflect the new path (even if not bookmarked).
+        add_bookmark = dialog.query_one("#add-bookmark")
+        assert add_bookmark.tooltip is not None
+
+
+@pytest.mark.asyncio
 async def test_open_must_exist_rejects_missing_file(tmp_path):
     """EnhancedFileOpen with must_exist=True refuses a non-existent filename."""
     dialog = EnhancedFileOpen(

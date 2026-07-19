@@ -1,7 +1,6 @@
 # enhanced_file_picker.py
 # Enhanced file picker with keyboard shortcuts, recent files, breadcrumbs, bookmarks, and search
 
-import asyncio
 import sys
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Union
@@ -11,6 +10,7 @@ from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.timer import Timer
 
 from textual.widgets import Button, Label, ListView, ListItem, Input, Static
 from textual.reactive import reactive
@@ -387,7 +387,7 @@ def _human_readable_size(size: int) -> str:
     """Return a concise, human-readable byte size."""
     if size < 1024:
         return f"{size} B"
-    units = ["KB", "MB", "GB", "TB", "PB"]
+    units = ["KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"]
     value = size
     unit = units[-1]
     for u in units:
@@ -499,15 +499,13 @@ class SearchableDirectoryNavigation(DirectoryNavigation):
     def __init__(self, location: Path | str = ".") -> None:
         super().__init__(location)
         self._type_ahead_buffer = ""
-        self._type_ahead_timer: Optional[asyncio.TimerHandle] = None
+        self._type_ahead_timer: Optional[Timer] = None
 
     def _restart_type_ahead_timer(self) -> None:
         """Reset the inactivity timeout that clears the type-ahead buffer."""
         if self._type_ahead_timer is not None:
-            self._type_ahead_timer.cancel()
-        self._type_ahead_timer = asyncio.get_event_loop().call_later(
-            0.8, self._reset_type_ahead
-        )
+            self._type_ahead_timer.stop()
+        self._type_ahead_timer = self.app.set_timer(0.8, self._reset_type_ahead)
 
     def _reset_type_ahead(self) -> None:
         """Clear the type-ahead buffer after a period of inactivity."""
@@ -1221,6 +1219,10 @@ class EnhancedFileDialog(BaseFileDialog):
 
     def _confirm_single(self) -> None:
         """Confirm the single filename currently in the input box."""
+        if self.multi_select:
+            # Multi-select uses _confirm_multi_select; this path has no filename input.
+            return
+
         file_name = self.query_one("#filename-input", Input)
 
         # Only even try and process this if there's some input.
@@ -1233,7 +1235,7 @@ class EnhancedFileDialog(BaseFileDialog):
         if file_name.value.startswith("~"):
             # ...let's simply expand and go with that.
             try:
-                chosen = MakePath.of(file_name.value).expanduser()
+                chosen = MakePath.of(file_name.value).expanduser().resolve()
             except RuntimeError as error:
                 self._set_error(str(error))
                 return
@@ -1626,6 +1628,7 @@ class EnhancedFileDialog(BaseFileDialog):
             error_line.update("")
             error_line.styles.display = "none"
 
+    @on(DirectoryNavigation.Changed)
     def _on_directory_changed(self, event: DirectoryNavigation.Changed) -> None:
         """React to directory navigation.
 
