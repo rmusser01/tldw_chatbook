@@ -17,6 +17,13 @@ BORDER_PATTERN = re.compile(
 )
 
 SELECTORS = (
+    "#scheduling-workbench",
+    "#scheduling-list-pane",
+    "#scheduling-detail-pane",
+    "#scheduling-inspector-pane",
+)
+
+OLD_SELECTORS = (
     "#schedules-workbench",
     "#schedules-list-pane",
     "#schedules-detail-pane",
@@ -49,4 +56,13 @@ def test_scheduling_ids_not_in_agentic_terminal_shared_css() -> None:
     for selector in SELECTORS:
         assert selector not in agentic_css, (
             f"{selector} must live in _scheduling.tcss, not _agentic_terminal.tcss"
+        )
+
+
+def test_legacy_scheduling_ids_removed_from_source_css() -> None:
+    """The legacy SchedulesScreen IDs must not appear in the new workbench CSS."""
+    source_css = SOURCE_CSS.read_text(encoding="utf-8")
+    for selector in OLD_SELECTORS:
+        assert selector not in source_css, (
+            f"{selector} is a legacy SchedulesScreen ID and must not appear in _scheduling.tcss"
         )
