@@ -354,6 +354,9 @@ def _finalize_agent_cancelled(
     assistant_message_id: str,
     session_id: str,
 ) -> ConsoleSubmitResult:
+    # Preserve existing semantics: RUN_CANCELLED is terminal with status "stopped"
+    # and visible copy "Response stopped." (the spec's "failed" wording is relaxed
+    # here to avoid changing long-established stop/cancel UX).
     try:
         stopped = self._mark_stream_stopped(
             assistant_message_id, visible_copy="Response stopped.")
@@ -565,7 +568,23 @@ pytest Tests/Chat/test_console_agent_bridge.py -v
 
 Expected: PASS.
 
-### Step 2.8: Add structured diagnostics logging
+### Step 2.8: Store MCP provider for context snapshot
+
+In `_run_agent_reply`, after composing the MCP provider, store it on the controller:
+
+```python
+self._mcp_provider = mcp_provider
+```
+
+Initialize it in `ConsoleChatController.__init__`:
+
+```python
+self._mcp_provider: Any | None = None
+```
+
+This allows `build_context_snapshot` to include the MCP-configured note in the next-send payload.
+
+### Step 2.9: Add structured diagnostics logging
 
 In `_run_agent_reply`, before and after the `asyncio.to_thread` call:
 
