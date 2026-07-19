@@ -69,6 +69,8 @@ The workbench owner switcher maps:
 - `"local"` → `SchedulingService.set_owner("local")` and `set_authoritative_runtime_source(app, "local")`.
 - `"server:<active_server_id>"` → `SchedulingService.set_owner("server:<active_server_id>")` and `set_authoritative_runtime_source(app, "server")`.
 
+`SchedulingServerClient` is always instantiated, even when no server is configured at startup, so the app can inject or refresh the underlying notifications service after login via `server_client.set_notifications_service(...)` without rebuilding `SchedulingService`.
+
 ### Conflict resolution
 
 Server-wins remains the default. Conflicts are surfaced in a dedicated workbench tab. "Use server" applies the server state (or deletes the local row for server-deletion). "Use local" re-queues the original pending mutation, preserving action, fields, and idempotency_key. For server-deletion conflicts, "Use local" clears the stale `server_id` and `sync_mapping` before re-queuing a `create` mutation.

@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft — in spec review.
+Draft — pending user approval before implementation planning.
 
 ## Related Task
 
@@ -75,7 +75,7 @@ Key decisions:
   - **Do not retry `create_reminder`.** Because idempotency keys are local-only and the server does not yet accept them, a transient timeout/5xx on create may have already succeeded on the server; retrying would duplicate the record. On any non-404 failure during create, leave the pending mutation queued and stop the push phase.
   - Map status codes to typed exceptions; raise `ServerClientError` with context for anything unexpected.
 - **Idempotency keys are local-only.** `SchedulingServerClient.create_reminder`/`update_reminder` must **not** pass `idempotency_key` to `ServerNotificationsService`. The key stays in `pending_mutations.payload` for local deduplication and for future server support. Add a regression test that mocks `ServerNotificationsService` and asserts `idempotency_key` is never forwarded.
-- Add `set_notifications_service()` so the app can inject or refresh the real service after login without rebuilding `SchedulingService`.
+- **Always instantiate `SchedulingServerClient`.** Even when no server is configured at startup, create the client with `notifications_service=None`. This lets the app inject or refresh the real service after login via `server_client.set_notifications_service(...)` without rebuilding `SchedulingService`.
 
 ### 2. `SchedulesWorkbench` sync worker
 
@@ -105,7 +105,7 @@ Key decisions:
   - `Last pull:` / `Last push:` timestamps from `sync_state`
   - Latest error (most recent entry from `sync_errors`) with a manual “Clear” button. The Clear button resets the entire capped history (`sync_errors=[]`).
 - Refreshes on `SyncCompleted`, `SyncFailed`, and mode switch.
-- Server option is disabled when `SchedulingService.server_client` is `None`.
+- Server option is shown only when `active_server_id` is available; it is disabled when the underlying notifications service is unavailable (e.g., user not logged in or server unreachable).
 
 ### 4. Conflicts tab
 
@@ -137,9 +137,9 @@ Key decisions:
   - Switcher value `"server:<active_server_id>"` → `SchedulingService.set_owner("server:<active_server_id>")` and `set_authoritative_runtime_source(app, "server")`.
   - The switcher reads `app.runtime_policy.state.active_source` and `app.runtime_policy.state.active_server_id` to determine the initial selection and whether the server option is enabled.
 - **Owner identity interim fallback:** `<active_server_id>` is currently derived from the configured API URL (`runtime_policy.bootstrap.derive_configured_server_binding`). This is an interim owner identity. Once the server exposes an account/principal endpoint (e.g., `/api/v1/me`), the owner should become `"server:<user_id>"` and existing `sync_state`, `sync_mapping`, and `pending_mutations` rows must be migrated. Document this fallback and migration note in ADR-018.
-- Server option is shown only when `active_server_id` is available; it is disabled when `SchedulingService.server_client` is `None`.
+- Server option is shown only when `active_server_id` is available; it is disabled when the underlying notifications service is unavailable.
 - Refreshes the task list, sync status, and conflicts tab.
-- If switching to server mode with no `server_client`, notify “No server connection”.
+- If switching to server mode with no notifications service available, notify “No server connection”.
 
 ## Data Flow
 
@@ -266,7 +266,7 @@ SyncEngine.sync_now(owner_id)
 - Second `ctrl+s` during sync shows “Sync already in progress”.
 - Owner switcher updates `owner_id` and refreshes.
 - Owner switcher is disabled while a sync worker is running.
-- Server option disabled when `server_client` is `None`.
+- Server option disabled when the underlying notifications service is unavailable.
 - Conflicts tab renders rows and resolution actions.
 - Conflicts tab refreshes on `TabActivated`.
 - Sync status widget shows last pull/push and latest error.
