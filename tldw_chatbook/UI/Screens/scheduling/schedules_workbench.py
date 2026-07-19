@@ -11,6 +11,7 @@ from textual.widgets import DataTable, Static
 
 from ...Navigation.base_app_screen import BaseAppScreen
 from ....Scheduling.models import ReminderTask
+from .task_detail import TaskDetail, TaskInspector, _format_next_run
 
 
 logger = logger.bind(module="SchedulesWorkbench")
@@ -47,9 +48,9 @@ class SchedulesWorkbench(BaseAppScreen):
                 yield Static("Schedule Queue", id="scheduling-list-title")
                 yield DataTable(id="scheduling-task-table")
             with Vertical(id="scheduling-detail-pane"):
-                yield Static("Run Detail", id="scheduling-detail-content")
+                yield TaskDetail(id="scheduling-task-detail")
             with Vertical(id="scheduling-inspector-pane"):
-                yield Static("Status Inspector")
+                yield TaskInspector(id="scheduling-task-inspector")
 
     def _service(self):
         """Return the app's scheduling service, if available."""
@@ -79,15 +80,11 @@ class SchedulesWorkbench(BaseAppScreen):
             tasks = await service.list_reminders()
         except Exception:  # noqa: BLE001
             logger.exception("Failed to load reminders")
-            self._update_detail_content("Could not load tasks.")
+            self.query_one("#scheduling-task-detail", TaskDetail).set_task(None)
+            self.query_one("#scheduling-task-inspector", TaskInspector).set_task(None)
             return
 
         self._tasks = list(tasks)
-
-        def _format_next_run(task: ReminderTask) -> str:
-            if task.next_run_at is None:
-                return "-"
-            return task.next_run_at.strftime("%Y-%m-%d %H:%M")
 
         rows: list[tuple[str, str, str, str]] = [
             (
@@ -107,7 +104,8 @@ class SchedulesWorkbench(BaseAppScreen):
         if rows:
             self._update_detail_for_index(0)
         else:
-            self._update_detail_content("No tasks scheduled.")
+            self.query_one("#scheduling-task-detail", TaskDetail).set_task(None)
+            self.query_one("#scheduling-task-inspector", TaskInspector).set_task(None)
 
     @on(DataTable.RowHighlighted)
     def _on_task_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
@@ -115,27 +113,15 @@ class SchedulesWorkbench(BaseAppScreen):
         self._update_detail_for_index(event.cursor_row)
 
     def _update_detail_for_index(self, index: int) -> None:
-        """Render task details in the detail pane."""
+        """Render task details in the detail and inspector panes."""
         if not (0 <= index < len(self._tasks)):
-            self._update_detail_content("No task selected.")
+            self.query_one("#scheduling-task-detail", TaskDetail).set_task(None)
+            self.query_one("#scheduling-task-inspector", TaskInspector).set_task(None)
             return
 
         task = self._tasks[index]
-        lines = [
-            f"Title: {task.title}",
-            f"Kind: {task.schedule_kind.value}",
-            f"Status: {task.last_status.value}",
-        ]
-        if task.next_run_at is not None:
-            lines.append(f"Next Run: {task.next_run_at.strftime('%Y-%m-%d %H:%M')}")
-        else:
-            lines.append("Next Run: -")
-        self._update_detail_content("\n".join(lines))
-
-    def _update_detail_content(self, content: str) -> None:
-        """Set the detail pane content Static."""
-        detail = self.query_one("#scheduling-detail-content", Static)
-        detail.update(content)
+        self.query_one("#scheduling-task-detail", TaskDetail).set_task(task)
+        self.query_one("#scheduling-task-inspector", TaskInspector).set_task(task)
 
     def action_create_reminder(self) -> None:
         """Create a new reminder (stub for Task 4.4+)."""
