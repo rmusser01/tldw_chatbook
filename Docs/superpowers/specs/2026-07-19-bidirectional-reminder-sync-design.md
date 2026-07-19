@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft — pending user approval before implementation planning.
+Design approved — ready for implementation planning.
 
 ## Related Task
 
