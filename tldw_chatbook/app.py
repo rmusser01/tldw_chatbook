@@ -6390,12 +6390,17 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                     self.loguru_logger.error(f"Error stopping auto-sync manager: {e}")
 
             # Stop the background scheduler loop cleanly.
-            if self.scheduler_loop:
-                self.scheduler_loop.stop()
-            if self.scheduler_worker:
-                await self.scheduler_worker.wait(timeout=5)
-                if not self.scheduler_worker.is_finished:
-                    self.scheduler_worker.cancel()
+            scheduler_loop = getattr(self, "scheduler_loop", None)
+            scheduler_worker = getattr(self, "scheduler_worker", None)
+            if scheduler_loop is not None:
+                scheduler_loop.stop()
+            if scheduler_worker is not None:
+                try:
+                    await scheduler_worker.wait(timeout=5)
+                    if not scheduler_worker.is_finished:
+                        scheduler_worker.cancel()
+                except Exception as e:
+                    self.loguru_logger.error(f"Error stopping scheduler worker: {e}")
 
             # Disconnect local MCP client sessions (P5-T6), if any were ever
             # established this run.
