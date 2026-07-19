@@ -3,8 +3,9 @@
 ## Branch / commit under test
 
 - Branch: `feature/scheduling-module-screen`
-- Commit: `5ba331c3` (`fix(scheduling): address UX polish review feedback`)
+- Commit: `2967ff49` (`fix(scheduling): address residual UX polish upgrades`)
 - Previous commits in this phase:
+  - `5ba331c3` — `fix(scheduling): address UX polish review feedback`
   - `9afdd539` — `feat(scheduling): UX polish for Schedules workbench`
   - `c18439b0` — `feat(scheduling): route schedules destination to new workbench`
   - `c39f24de` — `fix(scheduling): address Console-follow seam review feedback`
@@ -69,6 +70,15 @@ This follow-up commit addresses blocking code-quality issues found in the UX pol
 
 Visual changes are subtle (behavior and code-quality fixes), so the existing final screenshot remains representative.
 
+## Residual UX polish upgrades (`2967ff49`)
+
+This commit addresses minor issues identified during a final review pass over the workbench:
+
+- **Dedicated status badge classes**: `TaskStatus.COMPLETED`, `FOUND_RESULTS`, `ARCHIVED`, and `MISSED` now map to their own CSS classes (`completed`, `found-results`, `archived`, `missed`) instead of aliasing to `running` / `needs-attention` / `disabled`. This lets the design system style each status independently.
+- **Public delete request API**: `TaskDetail._request_delete()` was renamed to `request_delete()` and the workbench `Ctrl+D` binding now calls the public method.
+- **Stale-row cleanup on service error**: When `list_reminders()` fails, the workbench now clears the `DataTable` and the internal task list so stale rows do not linger after a refresh failure.
+- **Regression tests**: Added coverage for the dedicated badge-class mapping and for clearing stale rows on a service error.
+
 ## User approval status
 
 Pending user review of the attached `final-2026-07-18T23-23-00.png`.
@@ -79,7 +89,7 @@ Pending user review of the attached `final-2026-07-18T23-23-00.png`.
 .venv/bin/python -m pytest Tests/UI/test_schedules_workbench.py Tests/UI/test_destination_shells.py -v
 ```
 
-Result: **117 passed, 1 skipped** (the single skip is an unrelated Personas tooltip audit).
+Result: **119 passed, 1 skipped** (the single skip is an unrelated Personas tooltip audit).
 
 ## Residual risks
 
