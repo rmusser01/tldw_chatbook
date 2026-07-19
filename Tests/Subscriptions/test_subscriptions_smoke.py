@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from tldw_chatbook.DB import Subscriptions_DB as subscriptions_module
+from tldw_chatbook.DB import base_db as base_db_module
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 
 
@@ -38,14 +38,14 @@ def test_subscriptions_db_closes_schema_initialization_connection(
     tmp_path, monkeypatch
 ):
     connections = []
-    original_connect = subscriptions_module.sqlite3.connect
+    original_connect = base_db_module.sqlite3.connect
 
     def tracked_connect(*args, **kwargs):
         conn = _TrackedConnection(original_connect(*args, **kwargs))
         connections.append(conn)
         return conn
 
-    monkeypatch.setattr(subscriptions_module.sqlite3, "connect", tracked_connect)
+    monkeypatch.setattr(base_db_module.sqlite3, "connect", tracked_connect)
 
     db = SubscriptionsDB(tmp_path / "subscriptions.db")
     try:
