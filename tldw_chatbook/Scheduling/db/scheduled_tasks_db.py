@@ -661,6 +661,23 @@ class ScheduledTasksDB(BaseDB):
             )
             conn.commit()
 
+    def delete_sync_mapping(
+        self,
+        local_id: str,
+        primitive: str,
+        owner_id: str,
+    ) -> None:
+        """Remove the sync mapping for a local record."""
+        with closing(self._get_connection()) as conn:
+            conn.execute(
+                """
+                DELETE FROM sync_mapping
+                WHERE local_id = ? AND primitive = ? AND owner_id = ?
+                """,
+                (local_id, primitive, owner_id),
+            )
+            conn.commit()
+
     def get_sync_state(self, owner_id: str) -> Optional[dict[str, Any]]:
         """Fetch the sync state row for ``owner_id``, or ``None`` if absent."""
         with closing(self._get_connection()) as conn:
@@ -723,9 +740,14 @@ class ScheduledTasksDB(BaseDB):
 
         ``payload`` typically contains an ``action`` key (``create``,
         ``update``, or ``delete``) plus any fields required by the server
-        client. Existing pending mutations for the same local id/primitive/
-        owner are replaced.
+        client. An ``idempotency_key`` is generated and persisted in the
+        payload if one is not already provided. Existing pending mutations
+        for the same local id/primitive/owner are replaced.
         """
+        stored_payload = dict(payload)
+        if "idempotency_key" not in stored_payload or not stored_payload["idempotency_key"]:
+            stored_payload["idempotency_key"] = str(uuid.uuid4())
+
         now = datetime.now(timezone.utc)
         with closing(self._get_connection()) as conn:
             conn.execute(
@@ -738,7 +760,7 @@ class ScheduledTasksDB(BaseDB):
                     local_id,
                     primitive,
                     owner_id,
-                    self._to_json(payload),
+                    self._to_json(stored_payload),
                     self._to_utc_iso(now),
                 ),
             )
@@ -840,6 +862,23 @@ class ScheduledTasksDB(BaseDB):
                 params,
             )
             return [self._row_to_dict(row) for row in cursor.fetchall()]
+
+    def get_tombstone(
+        self,
+        local_id: str,
+        primitive: str,
+        owner_id: str,
+    ) -> Optional[dict[str, Any]]:
+        """Return a single tombstone row if it exists."""
+        with closing(self._get_connection()) as conn:
+            cursor = conn.execute(
+                """
+                SELECT * FROM sync_tombstones
+                WHERE local_id = ? AND primitive = ? AND owner_id = ?
+                """,
+                (local_id, primitive, owner_id),
+            )
+            return self._row_to_dict(cursor.fetchone())
 
     def delete_tombstone(
         self,

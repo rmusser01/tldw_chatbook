@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -15,6 +14,7 @@ from tldw_chatbook.Scheduling.services.server_client import (
 )
 
 
+_REMINDER_PRIMITIVE = "reminder_task"
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
@@ -102,12 +102,12 @@ class SyncEngine:
                     **self._whitelist_reminder_fields(server_item),
                 )
                 self.db.set_sync_mapping(
-                    local_id, server_id, "reminder_task", self.owner_id
+                    local_id, server_id, _REMINDER_PRIMITIVE, self.owner_id
                 )
             else:
                 await self._reconcile_record(server_item, local_row)
                 self.db.set_sync_mapping(
-                    local_row["id"], server_id, "reminder_task", self.owner_id
+                    local_row["id"], server_id, _REMINDER_PRIMITIVE, self.owner_id
                 )
 
         self._detect_server_deletions(seen_server_ids)
@@ -122,29 +122,45 @@ class SyncEngine:
         server_updated = parse_iso(server_updated_raw)
         local_updated = parse_iso(local_row.get("updated_at"))
 
-        # If the server provides no updated_at, treat the server item as newer.
         server_has_timestamp = server_updated_raw is not None
-        if server_has_timestamp and server_updated <= local_updated:
+        if server_has_timestamp and server_updated < local_updated:
             return
 
-        pending = self.db.get_pending_mutations(self.owner_id, primitive="reminder_task")
-        has_pending = any(m["local_id"] == local_id for m in pending)
+        server_fields = self._whitelist_reminder_fields(server_item)
+        local_fields = {
+            key: local_row.get(key)
+            for key in server_fields
+            if key in local_row
+        }
+        fields_match = server_fields == local_fields
 
-        if has_pending:
+        if server_has_timestamp and server_updated == local_updated and fields_match:
+            return
+
+        pending = self.db.get_pending_mutations(
+            self.owner_id, primitive=_REMINDER_PRIMITIVE
+        )
+        pending_for_record = next(
+            (m for m in pending if m["local_id"] == local_id), None
+        )
+
+        if pending_for_record is not None:
+            local_state: dict[str, Any] = {
+                "record": dict(local_row),
+                "pending_mutation": pending_for_record.get("payload") or {},
+            }
             self.db.record_conflict(
                 local_id=local_id,
-                primitive="reminder_task",
+                primitive=_REMINDER_PRIMITIVE,
                 owner_id=self.owner_id,
                 server_state=dict(server_item),
-                local_state=dict(local_row),
+                local_state=local_state,
             )
             self.db.delete_pending_mutation_for_record(
-                local_id, "reminder_task", self.owner_id
+                local_id, _REMINDER_PRIMITIVE, self.owner_id
             )
 
-        self.db.update_reminder_task(
-            local_id, **self._whitelist_reminder_fields(server_item)
-        )
+        self.db.update_reminder_task(local_id, **server_fields)
 
     def _detect_server_deletions(self, seen_server_ids: set[str]) -> None:
         """Record conflicts for live local rows that no longer exist on the server."""
@@ -155,16 +171,17 @@ class SyncEngine:
                 continue
 
             local_id = local_row["id"]
-            tombstones = self.db.get_tombstones(self.owner_id, primitive="reminder_task")
-            has_tombstone = any(t["local_id"] == local_id for t in tombstones)
+            tombstone = self.db.get_tombstone(
+                local_id, _REMINDER_PRIMITIVE, self.owner_id
+            )
 
-            if has_tombstone:
+            if tombstone is not None:
                 self.db.delete_reminder_task(local_id)
-                self.db.delete_tombstone(local_id, "reminder_task", self.owner_id)
+                self.db.delete_tombstone(local_id, _REMINDER_PRIMITIVE, self.owner_id)
             else:
                 self.db.record_conflict(
                     local_id=local_id,
-                    primitive="reminder_task",
+                    primitive=_REMINDER_PRIMITIVE,
                     owner_id=self.owner_id,
                     server_state={},
                     local_state=dict(local_row),
@@ -175,14 +192,16 @@ class SyncEngine:
         if self.server_client is None:
             return
 
-        mutations = self.db.get_pending_mutations(self.owner_id, primitive="reminder_task")
+        mutations = self.db.get_pending_mutations(
+            self.owner_id, primitive=_REMINDER_PRIMITIVE
+        )
         pushed_any = False
 
         for mutation in mutations:
             local_id = mutation["local_id"]
             payload = mutation.get("payload") or {}
             action = payload.get("action", "update")
-            idempotency_key = payload.get("idempotency_key") or str(uuid.uuid4())
+            idempotency_key = payload.get("idempotency_key")
 
             try:
                 if action == "create":
@@ -190,6 +209,7 @@ class SyncEngine:
                         idempotency_key=idempotency_key,
                         **payload.get("fields", {}),
                     )
+                    self._update_local_from_push_response(local_id, response)
                 elif action == "update":
                     server_id = self._server_id_for_local(local_id)
                     if server_id is None:
@@ -202,19 +222,25 @@ class SyncEngine:
                         idempotency_key=idempotency_key,
                         **payload.get("fields", {}),
                     )
+                    self._update_local_from_push_response(local_id, response)
                 elif action == "delete":
-                    server_id = self._server_id_for_local(local_id)
+                    server_id = self._server_id_for_local(
+                        local_id, from_mapping_only=True
+                    )
                     if server_id is None:
                         logger.warning(
                             f"Cannot push delete for {local_id}: no server id mapping"
                         )
                         continue
-                    response = await self.server_client.delete_reminder(server_id)
+                    await self.server_client.delete_reminder(server_id)
+                    self.db.delete_reminder_task(local_id)
+                    self.db.delete_sync_mapping(
+                        local_id, _REMINDER_PRIMITIVE, self.owner_id
+                    )
                 else:
                     logger.warning(f"Unknown pending mutation action {action!r}")
                     continue
 
-                self._update_local_from_push_response(local_id, response)
                 self.db.delete_pending_mutation(mutation["id"])
                 pushed_any = True
             except ServerUnavailableError as exc:
@@ -236,7 +262,9 @@ class SyncEngine:
         if self.server_client is None:
             return
 
-        tombstones = self.db.get_tombstones(self.owner_id, primitive="reminder_task")
+        tombstones = self.db.get_tombstones(
+            self.owner_id, primitive=_REMINDER_PRIMITIVE
+        )
         pushed_any = False
 
         for tombstone in tombstones:
@@ -245,12 +273,12 @@ class SyncEngine:
 
             if server_id is None:
                 # Local-only record; no server copy to delete.
-                self.db.delete_tombstone(local_id, "reminder_task", self.owner_id)
+                self.db.delete_tombstone(local_id, _REMINDER_PRIMITIVE, self.owner_id)
                 continue
 
             try:
                 await self.server_client.delete_reminder(server_id)
-                self.db.delete_tombstone(local_id, "reminder_task", self.owner_id)
+                self.db.delete_tombstone(local_id, _REMINDER_PRIMITIVE, self.owner_id)
                 pushed_any = True
             except ServerUnavailableError as exc:
                 logger.warning(
@@ -280,14 +308,22 @@ class SyncEngine:
 
         if resolution == "local":
             local_state = conflict.get("local_state") or {}
-            fields = {
-                key: value
-                for key, value in local_state.items()
-                if key in self._REMINDER_MUTABLE_FIELDS
-            }
+            pending_mutation = local_state.get("pending_mutation") if isinstance(local_state, dict) else None
+            if pending_mutation and pending_mutation.get("fields"):
+                fields = {
+                    key: value
+                    for key, value in pending_mutation["fields"].items()
+                    if key in self._REMINDER_MUTABLE_FIELDS
+                }
+            else:
+                fields = {
+                    key: value
+                    for key, value in (local_state.get("record") or local_state).items()
+                    if key in self._REMINDER_MUTABLE_FIELDS
+                }
             self.db.record_pending_mutation(
                 local_id=local_id,
-                primitive="reminder_task",
+                primitive=_REMINDER_PRIMITIVE,
                 owner_id=self.owner_id,
                 payload={"action": "update", "fields": fields},
             )
@@ -299,7 +335,7 @@ class SyncEngine:
     def _find_local_row(self, server_id: str) -> dict[str, Any] | None:
         """Find a local reminder row by server id, using mapping or direct lookup."""
         mapping = self.db.get_sync_mapping_by_server_id(
-            server_id, "reminder_task", self.owner_id
+            server_id, _REMINDER_PRIMITIVE, self.owner_id
         )
         if mapping:
             return self.db.get_reminder_task(mapping["local_id"])
@@ -310,25 +346,15 @@ class SyncEngine:
         self, local_id: str, from_mapping_only: bool = False
     ) -> str | None:
         """Return the server id mapped to ``local_id`` if any."""
-        row = self.db.get_reminder_task(local_id)
-        if row:
-            server_id = row.get("server_id")
-            if server_id:
-                return server_id
-
-        if from_mapping_only:
-            mapping = self.db.get_sync_mapping_by_local_id(
-                local_id, "reminder_task", self.owner_id
-            )
-            return mapping.get("server_id") if mapping else None
+        if not from_mapping_only:
+            row = self.db.get_reminder_task(local_id)
+            if row and row.get("server_id"):
+                return row["server_id"]
 
         mapping = self.db.get_sync_mapping_by_local_id(
-            local_id, "reminder_task", self.owner_id
+            local_id, _REMINDER_PRIMITIVE, self.owner_id
         )
-        if mapping:
-            return mapping.get("server_id")
-
-        return None
+        return mapping.get("server_id") if mapping else None
 
     def _update_local_from_push_response(
         self, local_id: str, response: dict[str, Any]
@@ -337,7 +363,7 @@ class SyncEngine:
         server_id = response.get("id")
         if server_id:
             self.db.set_sync_mapping(
-                local_id, server_id, "reminder_task", self.owner_id
+                local_id, server_id, _REMINDER_PRIMITIVE, self.owner_id
             )
             self.db.update_reminder_task(
                 local_id,
