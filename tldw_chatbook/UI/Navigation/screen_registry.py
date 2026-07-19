@@ -116,51 +116,18 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
         "tldw_chatbook.UI.Screens.library_conversations_screen",
         "LibraryConversationsScreen",
     ),
-    "ccp": ScreenRoute(
-        "ccp", "personas", "tldw_chatbook.UI.Screens.personas_screen", "PersonasScreen"
-    ),
-    "media": ScreenRoute(
-        "media", "media", "tldw_chatbook.UI.Screens.media_screen", "MediaScreen"
-    ),
-    "search": ScreenRoute(
-        "search", "search", "tldw_chatbook.UI.Screens.search_screen", "SearchScreen"
-    ),
-    "evals": ScreenRoute(
-        "evals", "evals", "tldw_chatbook.UI.Screens.evals_screen", "EvalsScreen"
-    ),
-    "tools_settings": ScreenRoute(
-        "tools_settings", TAB_MCP, "tldw_chatbook.UI.Screens.mcp_screen", "MCPScreen"
-    ),
-    "llm": ScreenRoute(
-        "llm", TAB_LLM, "tldw_chatbook.UI.Screens.llm_screen", "LLMScreen"
-    ),
-    "customize": ScreenRoute(
-        "customize",
-        "customize",
-        "tldw_chatbook.UI.Screens.customize_screen",
-        "CustomizeScreen",
-    ),
-    "logs": ScreenRoute(
-        "logs", "logs", "tldw_chatbook.UI.Screens.logs_screen", "LogsScreen"
-    ),
-    "stats": ScreenRoute(
-        "stats", "stats", "tldw_chatbook.UI.Screens.stats_screen", "StatsScreen"
-    ),
-    "stts": ScreenRoute(
-        "stts", "stts", "tldw_chatbook.UI.Screens.stts_screen", "STTSScreen"
-    ),
-    "study": ScreenRoute(
-        "study", "study", "tldw_chatbook.UI.Screens.study_screen", "StudyScreen"
-    ),
-    "writing": ScreenRoute(
-        "writing", "writing", "tldw_chatbook.UI.Screens.writing_screen", "WritingScreen"
-    ),
-    "chatbooks": ScreenRoute(
-        "chatbooks",
-        "chatbooks",
-        "tldw_chatbook.UI.Screens.chatbooks_screen",
-        "ChatbooksScreen",
-    ),
+    "ccp": ScreenRoute("ccp", "personas", "tldw_chatbook.UI.Screens.personas_screen", "PersonasScreen"),
+    "media": ScreenRoute("media", "media", "tldw_chatbook.UI.Screens.media_screen", "MediaScreen"),
+    "search": ScreenRoute("search", "search", "tldw_chatbook.UI.Screens.search_screen", "SearchScreen"),
+    "evals": ScreenRoute("evals", "evals", "tldw_chatbook.UI.Screens.evals_screen", "EvalsScreen"),
+    "tools_settings": ScreenRoute("tools_settings", TAB_MCP, "tldw_chatbook.UI.Screens.mcp_screen", "MCPScreen"),
+    "llm": ScreenRoute("llm", TAB_LLM, "tldw_chatbook.UI.Screens.llm_screen", "LLMScreen"),
+    "logs": ScreenRoute("logs", "logs", "tldw_chatbook.UI.Screens.logs_screen", "LogsScreen"),
+    "stats": ScreenRoute("stats", "stats", "tldw_chatbook.UI.Screens.stats_screen", "StatsScreen"),
+    "stts": ScreenRoute("stts", "stts", "tldw_chatbook.UI.Screens.stts_screen", "STTSScreen"),
+    "study": ScreenRoute("study", "study", "tldw_chatbook.UI.Screens.study_screen", "StudyScreen"),
+    "writing": ScreenRoute("writing", "writing", "tldw_chatbook.UI.Screens.writing_screen", "WritingScreen"),
+    "chatbooks": ScreenRoute("chatbooks", "chatbooks", "tldw_chatbook.UI.Screens.chatbooks_screen", "ChatbooksScreen"),
     "subscriptions": ScreenRoute(
         "subscriptions",
         TAB_SUBSCRIPTIONS,
@@ -208,6 +175,9 @@ _SCREEN_ALIASES = {
     # "coding" route ids still resolve to a real screen (Console) instead of
     # erroring; the shell destination model owns the same fold.
     "coding": "chat",
+    # The standalone Customize screen is retired: theme/splash management now
+    # lives inside Settings. Legacy "customize" route ids resolve to Settings.
+    "customize": "settings",
 }
 
 

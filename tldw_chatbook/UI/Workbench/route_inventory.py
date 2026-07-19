@@ -45,7 +45,6 @@ WORKBENCH_ROUTE_OWNERS: dict[str, str] = {
     "tools_settings": "mcp",
     "llm": "settings",
     "llm_management": "settings",
-    "customize": "settings",
     "logs": "diagnostics_logs",
     "stats": "diagnostics_stats",
     "stts": "settings",

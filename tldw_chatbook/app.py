@@ -117,7 +117,6 @@ from tldw_chatbook.Constants import (
     TAB_LOGS,
     TAB_STATS,
     TAB_TOOLS_SETTINGS,
-    TAB_CUSTOMIZE,
     TAB_INGEST,
     TAB_LLM,
     TAB_MEDIA,
@@ -724,7 +723,6 @@ class TabNavigationProvider(Provider):
         TAB_TOOLS_SETTINGS: "Open MCP for legacy tools and settings",
         TAB_LOGS: "Switch to application logs",
         TAB_STATS: "Switch to statistics view",
-        TAB_CUSTOMIZE: "Switch to appearance customization",
     }
 
     NAVIGATION_TABS = tuple(
@@ -2618,7 +2616,6 @@ class TldwCli(
         "stts-window",
         "study-window",
         "chatbooks-window",
-        "customize-window",
     ]
 
     # Define reactive at class level with a placeholder default and type hint
@@ -5104,7 +5101,6 @@ class TldwCli(
             TAB_LLM: llm_handlers_map,
             TAB_LOGS: app_lifecycle.APP_LIFECYCLE_BUTTON_HANDLERS,
             TAB_TOOLS_SETTINGS: tools_settings_handlers,
-            TAB_CUSTOMIZE: {},  # Customize handles its own events
             TAB_SEARCH: search_handlers,
             TAB_EVALS: evals_handlers,
             TAB_STTS: {},  # STTS handles its own events
@@ -5387,7 +5383,7 @@ class TldwCli(
         """Normalize navigation aliases to a routed screen id and canonical current_tab value."""
         return resolve_screen_target(target)
 
-    # Legacy alias routes that need a default Library nav-context applied
+    # Legacy alias routes that need a default navigation context applied
     # when navigated to directly (bare ``NavigateToScreen(route)``, no
     # explicit context supplied). Mirrors how ``open_notes_workspace`` builds
     # ``{LIBRARY_NAV_CONTEXT_MODE: "notes"}`` for the retired standalone
@@ -5395,9 +5391,11 @@ class TldwCli(
     # chip, Task 7) and "skills" (the retired standalone Skills tab, Skills
     # sub-project Task 5) have no dedicated re-entry action to carry that
     # context, so the bare alias route itself must supply it here.
+    # The retired Customize screen folds into Settings > Theme.
     _LEGACY_ROUTE_LIBRARY_NAV_CONTEXT: dict[str, dict[str, str]] = {
         "prompts": {LIBRARY_NAV_CONTEXT_MODE: "prompts"},
         "skills": {LIBRARY_NAV_CONTEXT_MODE: "skills"},
+        "customize": {"category": "theme"},
     }
 
     def _create_navigation_screen(self, screen_name: str, screen_class: type):

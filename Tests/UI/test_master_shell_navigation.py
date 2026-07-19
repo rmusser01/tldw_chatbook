@@ -279,7 +279,6 @@ def test_folded_routes_highlight_owning_destination():
         "evals": ("lab", "evals"),
         "logs": ("settings", "logs"),
         "stats": ("settings", "stats"),
-        "customize": ("settings", "customize"),
         # The retired Coding screen folds into Console.
         "coding": ("console", "chat"),
     }

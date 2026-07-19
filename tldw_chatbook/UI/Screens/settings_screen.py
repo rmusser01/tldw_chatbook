@@ -8004,7 +8004,9 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#settings-open-appearance")
     def open_appearance_settings(self) -> None:
-        self.post_message(NavigateToScreen("customize"))
+        self.post_message(
+            NavigateToScreen("settings", {"category": SettingsCategoryId.THEME})
+        )
 
     @on(Select.Changed, "#settings-appearance-theme")
     def handle_appearance_theme_changed(self, event: Select.Changed) -> None:

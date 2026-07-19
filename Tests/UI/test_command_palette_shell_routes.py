@@ -3,7 +3,6 @@ from tldw_chatbook.Constants import (
     TAB_CCP,
     TAB_CHATBOOKS,
     TAB_CODING,
-    TAB_CUSTOMIZE,
     TAB_EVALS,
     TAB_INGEST,
     TAB_LLM,
@@ -108,9 +107,7 @@ def test_legacy_routes_are_searchable_alias_terms_on_their_destination():
         "evals",
         "Evals",
     } <= alias_terms["lab"]
-    assert {"customize", "Customize", "logs", "Logs", "stats", "Stats"} <= alias_terms[
-        "settings"
-    ]
+    assert {"logs", "Logs", "stats", "Stats"} <= alias_terms["settings"]
 
 
 def test_legacy_tab_ids_still_switch_through_route_aliases():
@@ -130,7 +127,6 @@ def test_legacy_tab_ids_still_switch_through_route_aliases():
         TAB_CODING,
         TAB_LOGS,
         TAB_STATS,
-        TAB_CUSTOMIZE,
         TAB_WRITING,
         TAB_RESEARCH,
     ]

@@ -3686,7 +3686,7 @@ def test_settings_sync_safety_state_failure_logs_context(caplog):
 
 
 @pytest.mark.asyncio
-async def test_settings_appearance_action_routes_to_customize_surface():
+async def test_settings_appearance_action_routes_to_settings_theme_category():
     app = _build_test_app()
     seen_routes = []
     host = DestinationHarness(app, "settings", seen_routes)
@@ -3697,7 +3697,7 @@ async def test_settings_appearance_action_routes_to_customize_surface():
         await pilot.click("#settings-open-appearance")
         await pilot.pause(0.1)
 
-    assert seen_routes[-1] == "customize"
+    assert seen_routes[-1] == "settings"
 
 
 @pytest.mark.parametrize(

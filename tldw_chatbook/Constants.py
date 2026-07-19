@@ -29,7 +29,6 @@ TAB_WRITING = "writing"
 TAB_RESEARCH = "research"
 TAB_SUBSCRIPTIONS = "subscriptions"
 TAB_CHATBOOKS = "chatbooks"
-TAB_CUSTOMIZE = "customize"
 TAB_HOME = "home"
 TAB_LIBRARY = "library"
 TAB_ARTIFACTS = "artifacts"
@@ -70,7 +69,6 @@ ALL_TABS = [
     TAB_LOGS,
     TAB_CODING,
     TAB_STATS,
-    TAB_CUSTOMIZE,
 ]
 
 TAB_DISPLAY_LABELS = {
@@ -91,7 +89,6 @@ TAB_DISPLAY_LABELS = {
     TAB_RESEARCH: "Research",
     TAB_SUBSCRIPTIONS: "Subscriptions",
     TAB_CHATBOOKS: "Chatbooks",
-    TAB_CUSTOMIZE: "Customize",
     TAB_HOME: "Home",
     TAB_LIBRARY: "Library",
     TAB_ARTIFACTS: "Artifacts",
