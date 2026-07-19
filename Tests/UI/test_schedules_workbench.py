@@ -65,6 +65,14 @@ async def test_select_task_updates_detail():
 
 
 @pytest.mark.asyncio
+async def test_console_follow_selector_exists():
+    app = WorkbenchTestApp()
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        assert pilot.app.screen.query_one("#schedules-follow-in-console") is not None
+
+
+@pytest.mark.asyncio
 async def test_task_detail_renders_selected_task():
     """The TaskDetail widget renders the selected reminder's metadata."""
     async with WorkbenchTestAppWithService().run_test() as pilot:

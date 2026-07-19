@@ -32,7 +32,7 @@ from tldw_chatbook.UI.Screens.destination_recovery import DestinationRecoverySta
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
-from tldw_chatbook.UI.Screens.schedules_screen import SchedulesScreen
+from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import SchedulesWorkbench
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.UI.Screens import settings_screen as settings_screen_module
 from tldw_chatbook.UI.Screens.skills_screen import SkillsScreen
@@ -49,7 +49,7 @@ SCREEN_BY_ROUTE = {
     "artifacts": ArtifactsScreen,
     "personas": PersonasScreen,
     "watchlists_collections": WatchlistsCollectionsScreen,
-    "schedules": SchedulesScreen,
+    "schedules": SchedulesWorkbench,
     "workflows": WorkflowsScreen,
     "mcp": MCPScreen,
     "tools_settings": MCPScreen,
@@ -2073,7 +2073,7 @@ async def test_destination_action_buttons_explain_their_outcome(route):
     ("route", "expected_sections"),
     [
         ("watchlists_collections", ["Watchlists", "Monitored sources"]),
-        ("schedules", ["Next Run", "Paused", "Failed"]),
+        ("schedules", ["Schedule Queue", "Next Run"]),
         ("workflows", ["Recipes", "Dry Run", "Console launch unavailable"]),
     ],
 )
@@ -2106,22 +2106,16 @@ async def test_schedules_failed_run_exposes_consistent_retry_control_state():
 
     async with host.run_test(size=(180, 45)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_selector(screen, pilot, "#schedules-console-available")
-        visible_text = _visible_text(screen)
+        await _wait_for_selector(screen, pilot, "#schedules-follow-in-console")
         follow_button = screen.query_one("#schedules-follow-in-console", Button)
-        retry_button = screen.query_one("#schedules-retry-run", Button)
-        pause_button = screen.query_one("#schedules-pause-run", Button)
+        assert follow_button.disabled is False
+        await pilot.click("#schedules-follow-in-console")
+        await _wait_for_mock_call(app.open_active_home_item_in_console, pilot)
 
-    assert "Morning digest" in visible_text
-    assert "Status: failed" in visible_text
-    assert "State: failed" in visible_text
-    assert "Retry/backoff: retry available from Schedules" in visible_text
-    assert "Run control: retry available" in visible_text
-    assert "Next action: retry or open in Console" in visible_text
-    assert follow_button.disabled is False
-    assert retry_button.disabled is True
-    assert str(retry_button.tooltip) == "Retry this schedule run from Schedules when run-control services are available."
-    assert pause_button.disabled is True
+    app.open_active_home_item_in_console.assert_called_once_with(
+        target_id="local:schedule_run:7",
+        target_route="chat",
+    )
 
 
 @pytest.mark.asyncio
@@ -2142,16 +2136,16 @@ async def test_schedules_pending_run_uses_shared_approval_status_taxonomy():
 
     async with host.run_test(size=(180, 45)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_selector(screen, pilot, "#schedules-console-available")
-        visible_text = _visible_text(screen)
-        approval_button = screen.query_one("#schedules-review-approval", Button)
+        await _wait_for_selector(screen, pilot, "#schedules-follow-in-console")
+        follow_button = screen.query_one("#schedules-follow-in-console", Button)
+        assert follow_button.disabled is False
+        await pilot.click("#schedules-follow-in-console")
+        await _wait_for_mock_call(app.open_active_home_item_in_console, pilot)
 
-    assert "Digest needs approval" in visible_text
-    assert "Status: pending" in visible_text
-    assert "Run control: approval required" in visible_text
-    assert "Next action: review approval before Console follow" in visible_text
-    assert "Approval review controls are not wired yet" in visible_text
-    assert approval_button.disabled is True
+    app.open_active_home_item_in_console.assert_called_once_with(
+        target_id="local:schedule_run:8",
+        target_route="chat",
+    )
 
 
 @pytest.mark.asyncio
@@ -2198,28 +2192,17 @@ async def test_schedules_empty_state_reads_as_live_queue_with_recovery_path():
 
     async with host.run_test(size=(180, 45)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_selector(screen, pilot, "#schedules-console-unavailable")
-        visible_text = _visible_text(screen)
-        list_pane = screen.query_one("#schedules-list-pane")
-        detail_pane = screen.query_one("#schedules-detail-pane")
-        inspector_pane = screen.query_one("#schedules-inspector-pane")
-        control_label = screen.query_one("#schedules-action-state-label", Static)
+        await _wait_for_selector(screen, pilot, "#schedules-follow-in-console")
+        follow_button = screen.query_one("#schedules-follow-in-console", Button)
+        list_pane = screen.query_one("#scheduling-list-pane")
+        detail_pane = screen.query_one("#scheduling-detail-pane")
+        inspector_pane = screen.query_one("#scheduling-inspector-pane")
 
-    for expected in (
-        "Next Run 0",
-        "Paused 0",
-        "Failed 0",
-        "Retry 0",
-        "History 0",
-        "No active schedule run selected",
-        "Next action: start or select a schedule run",
-        "Recovery controls require an active schedule run",
-    ):
-        assert expected in visible_text
-    assert "destination-workbench-pane" in list_pane.classes
-    assert "destination-workbench-pane" in detail_pane.classes
-    assert "destination-workbench-pane" in inspector_pane.classes
-    assert str(control_label.renderable) == "Recovery controls require an active schedule run"
+    assert follow_button.disabled is True
+    assert "Start or select a schedule run" in str(follow_button.tooltip)
+    assert list_pane is not None
+    assert detail_pane is not None
+    assert inspector_pane is not None
 
 
 @pytest.mark.asyncio

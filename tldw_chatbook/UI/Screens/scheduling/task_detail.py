@@ -7,6 +7,19 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Static
 
 from ....Scheduling.models import ReminderTask, TaskStatus
+from ..destination_recovery import DestinationRecoveryState
+
+
+SCHEDULES_EMPTY_CONSOLE_RECOVERY = DestinationRecoveryState(
+    status_label="Select an active run",
+    unavailable_what="Console follow for Schedules",
+    why="no active schedule run or reading digest output is available",
+    next_action="Start or select a schedule run to enable Console follow.",
+    recovery_action="Create a scheduled job",
+    authority_owner="local",
+    stable_selector="schedules-follow-in-console",
+    disabled_tooltip="Start or select a schedule run to enable Console follow.",
+)
 
 
 def _format_next_run(task: ReminderTask | None) -> str:
@@ -27,15 +40,34 @@ class TaskDetail(Vertical):
         yield Static("Schedule: -", id="scheduling-task-detail-schedule")
         yield Static("Next Run: -", id="scheduling-task-detail-next-run")
         yield Horizontal(
-            Button("Enable", id="scheduling-enable-task", variant="success"),
-            Button("Disable", id="scheduling-disable-task", variant="warning"),
-            Button("Delete", id="scheduling-delete-task", variant="error"),
+            Button(
+                "Enable",
+                id="scheduling-enable-task",
+                variant="success",
+                tooltip="Enable this scheduled task.",
+            ),
+            Button(
+                "Disable",
+                id="scheduling-disable-task",
+                variant="warning",
+                tooltip="Disable this scheduled task.",
+            ),
+            Button(
+                "Delete",
+                id="scheduling-delete-task",
+                variant="error",
+                tooltip="Delete this scheduled task.",
+            ),
             id="scheduling-task-detail-lifecycle",
         )
-        yield Button("Follow in Console", id="schedules-follow-in-console")
+        yield Button(
+            "Follow in Console",
+            id="schedules-follow-in-console",
+            tooltip=SCHEDULES_EMPTY_CONSOLE_RECOVERY.disabled_tooltip,
+        )
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle lifecycle and console follow actions (no-op stubs)."""
+        """Handle lifecycle actions (console follow is handled by the workbench)."""
         button_id = event.button.id
         if button_id == "scheduling-enable-task":
             self.log.debug("Enable task requested (not yet implemented)")
@@ -43,12 +75,6 @@ class TaskDetail(Vertical):
             self.log.debug("Disable task requested (not yet implemented)")
         elif button_id == "scheduling-delete-task":
             self.log.debug("Delete task requested (not yet implemented)")
-        elif button_id == "schedules-follow-in-console":
-            self.action_follow_in_console()
-
-    def action_follow_in_console(self) -> None:
-        """Stub for following the task in the console (Task 4.6)."""
-        self.log.debug("Follow in Console requested (not yet implemented)")
 
     def set_task(self, task: ReminderTask | None) -> None:
         """Update the detail view for the given task (or clear it)."""
@@ -67,6 +93,16 @@ class TaskDetail(Vertical):
         self._update_static("scheduling-task-detail-status", f"Status: {task.last_status.value}")
         self._update_static("scheduling-task-detail-schedule", f"Schedule: {schedule}")
         self._update_static("scheduling-task-detail-next-run", f"Next Run: {_format_next_run(task)}")
+
+    def set_follow_available(self, available: bool) -> None:
+        """Enable or disable the Console-follow button and set its tooltip."""
+        button = self.query_one("#schedules-follow-in-console", Button)
+        button.disabled = not available
+        button.tooltip = (
+            "Open the active schedule run in Console."
+            if available
+            else SCHEDULES_EMPTY_CONSOLE_RECOVERY.disabled_tooltip
+        )
 
     def _update_static(self, widget_id: str, content: str) -> None:
         """Update a child Static widget by id."""

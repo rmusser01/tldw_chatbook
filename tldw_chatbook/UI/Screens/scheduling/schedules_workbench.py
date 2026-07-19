@@ -2,16 +2,24 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any
+
 from loguru import logger
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.widgets import DataTable, Static
+from textual.widgets import Button, DataTable, Static
 
 from ...Navigation.base_app_screen import BaseAppScreen
 from ....Scheduling.models import ReminderTask
-from .task_detail import TaskDetail, TaskInspector, _format_next_run
+from .task_detail import (
+    SCHEDULES_EMPTY_CONSOLE_RECOVERY,
+    TaskDetail,
+    TaskInspector,
+    _format_next_run,
+)
 
 
 logger = logger.bind(module="SchedulesWorkbench")
@@ -40,6 +48,9 @@ class SchedulesWorkbench(BaseAppScreen):
         super().__init__(app_instance, screen_name, **kwargs)
         self._scheduling_service = getattr(app_instance, "scheduling_service", None)
         self._tasks: list[ReminderTask] = []
+        self._latest_console_follow_item_id: str | None = None
+        self._latest_console_launch_kwargs: dict[str, Any] | None = None
+        self._latest_console_context_loaded = False
 
     def compose_content(self) -> ComposeResult:
         """Build the three-pane scheduling workbench layout."""
@@ -68,6 +79,7 @@ class SchedulesWorkbench(BaseAppScreen):
         table = self.query_one("#scheduling-task-table", DataTable)
         table.add_columns("Title", "Kind", "Status", "Next Run")
         self.run_worker(self.load_tasks, exclusive=True)
+        self.run_worker(self._refresh_console_context, exclusive=False)
 
     async def load_tasks(self) -> None:
         """Fetch reminders from the scheduling service and populate the table."""
@@ -122,6 +134,143 @@ class SchedulesWorkbench(BaseAppScreen):
         task = self._tasks[index]
         self.query_one("#scheduling-task-detail", TaskDetail).set_task(task)
         self.query_one("#scheduling-task-inspector", TaskInspector).set_task(task)
+
+    async def _refresh_console_context(self) -> None:
+        """Load the latest Schedules Console-follow context in the background."""
+        latest_console_item = self._latest_console_follow_item_from_adapter()
+        latest_console_launch = None
+        if latest_console_item is None:
+            latest_console_launch = self._latest_reading_digest_console_launch()
+        self._apply_console_context(latest_console_item, latest_console_launch)
+
+    def _latest_console_follow_item_from_adapter(self):
+        adapter = getattr(self.app_instance, "home_active_work_adapter", None)
+        build_dashboard_input = getattr(adapter, "build_dashboard_input", None)
+        if not callable(build_dashboard_input):
+            return None
+        try:
+            providers = getattr(self.app_instance, "providers_models", {}) or {}
+            has_recent_work = bool(getattr(self.app_instance, "_screen_states", {}))
+            dashboard_input = build_dashboard_input(
+                providers_models=providers,
+                has_recent_work=has_recent_work,
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Failed to load Schedules Console follow item from Home active-work adapter.",
+            )
+            return None
+        for item in tuple(getattr(dashboard_input, "active_work_items", ()) or ()):
+            if (
+                getattr(item, "source", None) == "Schedules"
+                and bool(getattr(item, "console_available", False))
+                and getattr(item, "item_id", None)
+            ):
+                return item
+        return None
+
+    def _latest_reading_digest_console_launch(self) -> dict[str, Any] | None:
+        service = getattr(self.app_instance, "local_media_reading_service", None)
+        list_outputs = getattr(service, "list_reading_digest_outputs", None)
+        if not callable(list_outputs):
+            return None
+        try:
+            output_listing = list_outputs(schedule_id=None, limit=1, offset=0)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Failed to load Schedules Console launch context from local reading digest outputs.",
+            )
+            return None
+        items = output_listing.get("items") if isinstance(output_listing, Mapping) else None
+        latest_output = next(iter(tuple(items or ())), None)
+        if not isinstance(latest_output, Mapping):
+            return None
+
+        output_id = latest_output.get("output_id") or latest_output.get("id")
+        if output_id in (None, ""):
+            return None
+
+        metadata = latest_output.get("metadata")
+        metadata = dict(metadata) if isinstance(metadata, Mapping) else {}
+        schedule_name = str(
+            metadata.get("schedule_name")
+            or latest_output.get("schedule_name")
+            or latest_output.get("schedule_id")
+            or ""
+        ).strip()
+        title = str(latest_output.get("title") or schedule_name or "Reading digest output").strip()
+        item_count = metadata.get("item_count", latest_output.get("item_count"))
+        payload = {
+            "target_id": f"local:reading_digest_output:{output_id}",
+            "output_id": output_id,
+            "schedule_id": latest_output.get("schedule_id"),
+            "schedule_name": schedule_name or None,
+            "download_url": latest_output.get("download_url") or latest_output.get("storage_path"),
+            "created_at": latest_output.get("created_at"),
+            "item_count": item_count,
+        }
+        return {
+            "source": "schedules",
+            "title": title,
+            "payload": payload,
+            "status": "ready",
+            "recovery": "Review this reading digest output from Schedules or return to Library.",
+            "action_label": "Open schedule output",
+        }
+
+    def _apply_console_context(self, latest_console_item, latest_console_launch) -> None:
+        self._latest_console_follow_item_id = (
+            getattr(latest_console_item, "item_id", None)
+            if latest_console_item is not None
+            else None
+        )
+        self._latest_console_launch_kwargs = latest_console_launch
+        self._latest_console_context_loaded = True
+        self._update_follow_button_state()
+
+    def _update_follow_button_state(self) -> None:
+        task_detail = self.query_one("#scheduling-task-detail", TaskDetail)
+        available = (
+            self._latest_console_follow_item_id is not None
+            or self._latest_console_launch_kwargs is not None
+        )
+        task_detail.set_follow_available(available)
+
+    @on(Button.Pressed, "#schedules-follow-in-console")
+    def follow_latest_schedule_run_in_console(self, event: Button.Pressed) -> None:
+        """Hand off the active schedule run or digest output to the Console."""
+        event.stop()
+        target_id = self._latest_console_follow_item_id
+        if target_id:
+            open_active_item_in_console = getattr(self.app_instance, "open_active_home_item_in_console", None)
+            if not callable(open_active_item_in_console):
+                self.app_instance.notify(
+                    "Console follow is unavailable for Schedules in this runtime.",
+                    severity="warning",
+                )
+                return
+            open_active_item_in_console(
+                target_id=target_id,
+                target_route="chat",
+            )
+            return
+
+        launch_kwargs = self._latest_console_launch_kwargs
+        if launch_kwargs is not None:
+            open_in_console = getattr(self.app_instance, "open_console_for_live_work", None)
+            if not callable(open_in_console):
+                self.app_instance.notify(
+                    "Console launch is unavailable for Schedules in this runtime.",
+                    severity="warning",
+                )
+                return
+            open_in_console(**launch_kwargs)
+            return
+
+        self.app_instance.notify(
+            SCHEDULES_EMPTY_CONSOLE_RECOVERY.disabled_tooltip,
+            severity="warning",
+        )
 
     def action_create_reminder(self) -> None:
         """Create a new reminder (stub for Task 4.4+)."""
