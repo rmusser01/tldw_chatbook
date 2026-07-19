@@ -79,8 +79,8 @@ class TestChatImageProperties:
                 if width > 2048 or height > 2048:
                     # Should be resized
                     ratio = min(2048 / width, 2048 / height)
-                    expected_width = int(width * ratio)
-                    expected_height = int(height * ratio)
+                    int(width * ratio)
+                    int(height * ratio)
                     
                     # Check aspect ratio is preserved (with small tolerance for rounding)
                     original_ratio = width / height
@@ -93,7 +93,7 @@ class TestChatImageProperties:
                     # Should not be resized
                     assert processed_img.width == width
                     assert processed_img.height == height
-            except Exception as e:
+            except Exception:
                 # Some format/mode combinations might not be supported
                 assume(False)
     

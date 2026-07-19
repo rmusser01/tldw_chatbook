@@ -31,7 +31,7 @@ class TestMediaDatabasePagination:
         
         # The MediaDatabase constructor automatically creates the schema
         # We just need to insert test data
-        conn = db.get_connection()
+        db.get_connection()
         try:
             # Insert test data
             for i in range(250):  # Create 250 test media items

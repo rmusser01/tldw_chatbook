@@ -46,13 +46,12 @@ def css_block(text: str, selector: str) -> str:
 async def test_button_has_visible_non_obscuring_focus():
     """Test that buttons retain a visible focus cue without heavy outline."""
     app = FocusTestApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         # Focus the button
         button = app.query_one("#test-button", Button)
         button.focus()
         
         # Get computed styles
-        styles = button.styles
         
         # Verify outline is not 'none'
         # Note: Textual doesn't expose outline directly, but we can verify
@@ -175,7 +174,7 @@ async def test_keyboard_navigation_visible():
 async def test_focus_within_containers():
     """Test that containers show focus-within styles."""
     app = FocusTestApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         # Focus a widget inside the container
         button = app.query_one("#test-button", Button)
         button.focus()

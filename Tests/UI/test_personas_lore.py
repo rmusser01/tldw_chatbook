@@ -71,7 +71,6 @@ async def test_add_entry_posts_payload_from_form():
 @pytest.mark.asyncio
 async def test_reorder_posts_full_id_list():
     app = _DetailHost()
-    posted = []
     async with app.run_test(size=(140, 40)) as pilot:
         widget = app.query_one(PersonasLoreDetailWidget)
         widget.load_book({"id": 1, "name": "B", "description": "", "scan_depth": 3,

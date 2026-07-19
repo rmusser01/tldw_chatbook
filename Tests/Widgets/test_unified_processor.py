@@ -342,7 +342,7 @@ async def test_unified_processor_initialization_with_files():
 async def test_unified_processor_compose():
     """Test UnifiedProcessor composes correctly."""
     app = TestApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         processor = app.query_one(UnifiedProcessor)
         
         # Check main components exist
@@ -430,7 +430,7 @@ async def test_unified_processor_config_models():
 async def test_unified_processor_configuration_extraction():
     """Test UnifiedProcessor can extract configuration from UI."""
     app = TestApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         processor = app.query_one(UnifiedProcessor)
         
         # Set some test values
@@ -466,7 +466,7 @@ async def test_unified_processor_process_button_state():
 async def test_unified_processor_processing_simulation():
     """Test UnifiedProcessor processing simulation."""
     app = TestApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         processor = app.query_one(UnifiedProcessor)
         
         # Setup test files

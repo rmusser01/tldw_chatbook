@@ -631,7 +631,7 @@ class ChatbookImporter:
                     parts = content.split('---', 2)
                     if len(parts) >= 3:
                         # Parse frontmatter
-                        frontmatter = parts[1].strip()
+                        parts[1].strip()
                         note_content = parts[2].strip()
                     else:
                         note_content = content

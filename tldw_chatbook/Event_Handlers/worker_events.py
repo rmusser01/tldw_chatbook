@@ -340,12 +340,12 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
                                 else:
                                     original_text_for_storage = message_content
                                 
-                            final_display_text_obj = Text(original_text_for_storage)  # Use Text() for plain text
+                            Text(original_text_for_storage)  # Use Text() for plain text
                         except (KeyError, IndexError, TypeError) as e_parse:
                             logger.opt(exception=True).error(
                                 f"Error parsing non-streaming dict result: {e_parse}. Resp: {worker_result_content}")
                             original_text_for_storage = "[AI: Error parsing successful response structure.]"
-                            final_display_text_obj = Text.from_markup(
+                            Text.from_markup(
                                 f"[bold red]{escape_markup(original_text_for_storage)}[/]")
                     elif isinstance(worker_result_content, str):
                         original_text_for_storage = worker_result_content
@@ -353,18 +353,18 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
                                 ("[bold red]Error during chat processing (worker target):[/]",
                                  "[bold red]Error during chat processing:[/]",
                                  "An error occurred in the chat function:")):
-                            final_display_text_obj = Text.from_markup(worker_result_content)
+                            Text.from_markup(worker_result_content)
                         else:
-                            final_display_text_obj = Text(worker_result_content)  # Use Text()
+                            Text(worker_result_content)  # Use Text()
                     elif worker_result_content is None:
                         original_text_for_storage = "[AI: Error – No response received from API (Result was None).]"
-                        final_display_text_obj = Text.from_markup(
+                        Text.from_markup(
                             f"[bold red]{escape_markup(original_text_for_storage)}[/]")
                     else:
                         logger.error(
                             f"Unexpected result type from API via worker: {type(worker_result_content)}. Content: {str(worker_result_content)[:200]}...")
                         original_text_for_storage = f"[Error: Unexpected result type ({type(worker_result_content).__name__}) from API worker.]"
-                        final_display_text_obj = Text.from_markup(
+                        Text.from_markup(
                             f"[bold red]{escape_markup(original_text_for_storage)}[/]")
 
                     # Ensure thinking placeholder is cleared before updating with actual content
@@ -636,7 +636,7 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
                 logger.opt(exception=error_from_worker).error(
                     f"Worker '{worker_name}' failed with an unhandled exception in worker target function.")
                 error_message_str = f"AI System Error: Worker failed unexpectedly.\nDetails: {str(error_from_worker)}"
-                escaped_error_for_display = escape_markup(error_message_str)
+                escape_markup(error_message_str)
                 ai_message_widget.message_text = error_message_str
                 ai_message_widget.role = "System"
                 try:
@@ -689,7 +689,7 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
             if ai_message_widget and ai_message_widget.is_mounted:
                 try:
                     markdown_widget_unexp_err = ai_message_widget.query_one(".message-text", Markdown)
-                    error_update_text_unexp = Text.from_markup(
+                    Text.from_markup(
                         f"[bold red]Internal error handling AI response:[/]\n{escape_markup(str(exc_outer))}")
                     markdown_widget_unexp_err.update(f"**Internal error handling AI response:**\n{str(exc_outer)}")
                     ai_message_widget.role = "System"

@@ -163,7 +163,7 @@ def get_chrome_cookies(domain_name):
     
     try:
         shutil.copyfile(cookie_path, temp_cookie_path)
-    except Exception as e:
+    except Exception:
         duration = time.time() - start_time
         log_histogram("cookie_cloner_chrome_duration", duration, labels={"status": "error"})
         log_counter("cookie_cloner_chrome_error", labels={"error_type": "file_copy_failed", "platform": sys.platform})
@@ -206,7 +206,7 @@ def get_chrome_cookies(domain_name):
                 decryption_errors += 1
                 logger.debug(f"Failed to decrypt cookie {name}: {e}")
                 
-    except Exception as e:
+    except Exception:
         duration = time.time() - start_time
         log_histogram("cookie_cloner_chrome_duration", duration, labels={"status": "error"})
         log_counter("cookie_cloner_chrome_error", labels={"error_type": "database_error", "platform": sys.platform})
@@ -267,7 +267,7 @@ def get_firefox_cookies(domain_name):
     Note:
         Searches for default-release profile
     """
-    start_time = time.time()
+    time.time()
     log_counter("cookie_cloner_firefox_attempt", labels={"platform": sys.platform})
     if sys.platform == 'win32':
         appdata_path = os.getenv('APPDATA')
@@ -492,7 +492,7 @@ def get_safari_cookies(domain_name):
 
 def parse_safari_page(page_data, domain_name):
     cookies = {}
-    page_header = page_data[:4]
+    page_data[:4]
     num_cookies = struct.unpack('>i', page_data[4:8])[0]
     cookie_offsets = []
     for i in range(num_cookies):
@@ -506,10 +506,10 @@ def parse_safari_page(page_data, domain_name):
 
 def parse_safari_cookie(data, domain_name):
     try:
-        flags = struct.unpack('<i', data[0:4])[0]
+        struct.unpack('<i', data[0:4])[0]
         url_offset = struct.unpack('<i', data[4:8])[0]
         name_offset = struct.unpack('<i', data[8:12])[0]
-        path_offset = struct.unpack('<i', data[12:16])[0]
+        struct.unpack('<i', data[12:16])[0]
         value_offset = struct.unpack('<i', data[16:20])[0]
         end_of_cookie = data.find(b'\x00', value_offset)
         cookie_name = data[name_offset:data.find(b'\x00', name_offset)].decode('utf-8')
@@ -517,7 +517,7 @@ def parse_safari_cookie(data, domain_name):
         cookie_domain = data[url_offset:data.find(b'\x00', url_offset)].decode('utf-8')
         if domain_name in cookie_domain:
             return {'name': cookie_name, 'value': cookie_value}
-    except Exception as e:
+    except Exception:
         pass
     return None
 

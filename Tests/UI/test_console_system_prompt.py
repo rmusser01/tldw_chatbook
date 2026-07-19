@@ -458,7 +458,7 @@ async def test_console_system_command_picker_escape_leaves_settings_untouched(tm
 
         console.query_one("#console-send-message", Button).press()
         await pilot.pause(0.2)
-        picker = host.screen_stack[-1]
+        host.screen_stack[-1]
         await pilot.press("escape")
         await pilot.pause(0.2)
 

@@ -201,7 +201,7 @@ class AIGenerationHandler(BaseWorkerHandler):
         
         for line in content.split('\n'):
             line_stripped = line.strip()
-            line_lower = line_stripped.lower()
+            line_stripped.lower()
             
             # Remove markdown formatting from potential headers
             line_clean = line_stripped.replace('**', '').replace('##', '').strip()

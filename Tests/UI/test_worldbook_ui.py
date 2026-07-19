@@ -72,24 +72,6 @@ class TestWorldBookUI:
         # wb_manager = WorldBookManager(db)
         
         # Create test world books
-        test_books = [
-            {
-                "name": "Fantasy World Lore",
-                "description": "General fantasy world information",
-                "entries": [
-                    {"keys": ["magic", "spell"], "content": "Magic flows through ley lines"},
-                    {"keys": ["dragon"], "content": "Dragons are ancient and wise"}
-                ]
-            },
-            {
-                "name": "Sci-Fi Universe",
-                "description": "Science fiction setting details",
-                "entries": [
-                    {"keys": ["FTL", "hyperspace"], "content": "Faster than light travel uses hyperspace"},
-                    {"keys": ["AI", "android"], "content": "Artificial intelligences have rights"}
-                ]
-            }
-        ]
         
         # Code to create these would go here
         pass

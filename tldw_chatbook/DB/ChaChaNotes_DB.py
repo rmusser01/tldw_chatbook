@@ -6935,7 +6935,6 @@ UPDATE db_schema_version
                     check_again_cursor = conn.execute(
                         f"SELECT deleted, version FROM {table_name} WHERE {pk_col_name} = ?", (item_id,))
                     changed_record = check_again_cursor.fetchone()
-                    msg = f"Soft delete for {table_name} ID {item_id} (expected version {expected_version}) affected 0 rows."
                     if not changed_record:
                         raise ConflictError(
                             f"{table_name} ID {item_id} disappeared before soft-delete completion (expected version {expected_version}).",

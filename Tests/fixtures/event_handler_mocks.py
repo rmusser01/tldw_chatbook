@@ -101,7 +101,7 @@ def setup_mock_widgets(app):
     mock_chat_log.scroll_end = MagicMock()
     
     # Create text area mocks with proper methods
-    mock_text_area = create_widget_mock(TextArea, sync_methods=['clear'])
+    create_widget_mock(TextArea, sync_methods=['clear'])
     
     # Create all required widgets
     widgets = {

@@ -671,7 +671,7 @@ class URLMonitor:
             breaker.record_success()
             return change_info
             
-        except Exception as e:
+        except Exception:
             breaker.record_failure()
             raise
     

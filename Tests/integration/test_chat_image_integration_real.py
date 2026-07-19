@@ -146,7 +146,7 @@ class TestChatImageIntegration:
             # Check which chat window type is being used
             try:
                 # Try to find enhanced window first
-                chat_window = app.query_one(ChatWindowEnhanced)
+                app.query_one(ChatWindowEnhanced)
                 # If found, look for attach button
                 attach_button = app.query_one("#attach-image", Button)
                 assert attach_button is not None

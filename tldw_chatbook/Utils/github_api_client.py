@@ -286,7 +286,6 @@ class GitHubAPIClient:
             }
         """
         # Check cache for tree data
-        tree_cache_key = f"{owner}/{repo}/tree/{branch}/recursive={recursive}"
         
         # For non-recursive calls, we'll use a different approach
         if not recursive:

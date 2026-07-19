@@ -81,7 +81,7 @@ class TextExplosionEffect(BaseEffect):
         elapsed_time = time.time() - self.start_time
         progress = min(1.0, elapsed_time / self.duration) # Normalized time 0 to 1
 
-        grid = [[' ' for _ in range(self.display_width)] for _ in range(self.display_height)]
+        [[' ' for _ in range(self.display_width)] for _ in range(self.display_height)]
         # Store (char, style) to handle multiple chars on same spot (last one wins, or brightest)
         styled_grid: Dict[Tuple[int,int], Tuple[str,str]] = {}
 

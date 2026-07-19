@@ -127,7 +127,7 @@ class MindmapDatabase(BaseDB):
         try:
             yield cursor
             conn.commit()
-        except Exception as e:
+        except Exception:
             conn.rollback()
             raise
         finally:

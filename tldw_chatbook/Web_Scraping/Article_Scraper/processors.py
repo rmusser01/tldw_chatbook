@@ -163,7 +163,6 @@ async def scrape_and_process_urls(
         "has_db_logger": str(db_logger is not None)
     })
     
-    results = []
 
     # Scrape all URLs concurrently
     scrape_start = time.time()

@@ -28,7 +28,7 @@ async def _type_into_widget(pilot, widget, text: str, *, clear: bool = False) ->
 async def test_voice_blend_dialog_create():
     """Test creating a new voice blend"""
     app = VoiceBlendDialogApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         # Get the dialog
         dialog = app.query_one(VoiceBlendDialog)
         captured = {}

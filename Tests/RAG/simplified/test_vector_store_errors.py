@@ -119,7 +119,7 @@ class TestChromaVectorStoreErrors:
             
             try:
                 # Should handle permission error gracefully
-                store = ChromaVectorStore(persist_directory=temp_dir + "/subdir")
+                ChromaVectorStore(persist_directory=temp_dir + "/subdir")
                 # Depending on OS, this might fail at different points
             except (OSError, PermissionError):
                 # Expected behavior
@@ -218,7 +218,7 @@ class TestInMemoryVectorStoreErrors:
         
         # Search should raise an error for invalid metric
         with pytest.raises(ValueError, match="Unknown distance metric"):
-            results = store.search(
+            store.search(
                 query_embedding=[0.1] * 128,
                 top_k=2
             )

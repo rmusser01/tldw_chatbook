@@ -61,11 +61,6 @@ class TestURLValidation:
         
         # International domains (IDN)
         # Note: The basic regex might not support these
-        international_urls = [
-            "http://例え.jp",
-            "https://münchen.de",
-            "http://россия.рф"
-        ]
         # These might fail with basic regex, which is acceptable for security
 
     def test_loosened_urls_now_accepted(self):

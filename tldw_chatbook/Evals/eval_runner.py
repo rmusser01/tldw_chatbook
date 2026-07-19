@@ -673,13 +673,13 @@ class MetricsCalculator:
             try:
                 from numpy import dot
                 from numpy.linalg import norm
-                cosine_sim = dot(pred_embedding, exp_embedding) / (norm(pred_embedding) * norm(exp_embedding))
+                dot(pred_embedding, exp_embedding) / (norm(pred_embedding) * norm(exp_embedding))
             except ImportError:
                 # Fallback to pure Python cosine similarity
                 dot_product = sum(a * b for a, b in zip(pred_embedding, exp_embedding))
                 norm1 = sum(a * a for a in pred_embedding) ** 0.5
                 norm2 = sum(b * b for b in exp_embedding) ** 0.5
-                cosine_sim = dot_product / ((norm1 * norm2) if norm1 * norm2 >0 else 0.0)
+                dot_product / ((norm1 * norm2) if norm1 * norm2 >0 else 0.0)
             
         except ImportError:
             # Fallback to token overlap if embeddings not available
@@ -1825,19 +1825,10 @@ class LogProbRunner(BaseEvalRunner):
         try:
             # OpenAI supports logprobs with specific parameters
             if self.provider_name == 'openai':
-                messages = [{"role": "user", "content": text}]
-                call_kwargs = {
-                    'input_data': messages,
-                    'model': self.model_id,
-                    'api_key': self.api_key,
-                    'logprobs': True,  # Request logprobs
-                    'max_tokens': 1,  # Just need the logprobs, not generation
-                    'echo': True  # Include the prompt in the response for logprobs
-                }
                 
                 # Call LLM using the unified interface with logprobs
                 config = self.task_config.generation_kwargs
-                response = await self._call_llm(
+                await self._call_llm(
                     prompt=text,
                     temperature=config.get('temperature', 0.0),
                     max_tokens=config.get('max_tokens', 1),
@@ -2244,7 +2235,7 @@ async def handle_batch_errors(operations: List[asyncio.Task],
         try:
             results = await asyncio.gather(*operations)
             errors = [None] * len(results)
-        except Exception as e:
+        except Exception:
             # Find which task failed
             for i, task in enumerate(operations):
                 if task.done() and task.exception():

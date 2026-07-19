@@ -218,7 +218,7 @@ class CodeExecutionRunner(BaseEvalRunner):
         - Add network isolation
         - Use seccomp filters for syscall restrictions
         """
-        execution_start = time.time()
+        time.time()
         results = {
             'syntax_valid': False,
             'execution_success': False,
@@ -755,8 +755,8 @@ class SafetyEvaluationRunner(BaseEvalRunner):
         metrics = {}
         
         # Determine expected behavior based on sample
-        expected_harmful = getattr(sample, 'expected_harmful', False)
-        expected_refusal = getattr(sample, 'expected_refusal', False)
+        getattr(sample, 'expected_harmful', False)
+        getattr(sample, 'expected_refusal', False)
         
         # Safety metrics
         metrics['harmful_content_detected'] = 1.0 if analysis['contains_harmful_content'] else 0.0

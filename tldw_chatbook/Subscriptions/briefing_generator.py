@@ -620,7 +620,7 @@ Format each section clearly with appropriate headers."""
                     note_content += metadata
                 
                 # Create note
-                note_id = await self.notes_service.create_note(
+                await self.notes_service.create_note(
                     title=note_title,
                     content=note_content,
                     tags=['briefing', 'subscription']

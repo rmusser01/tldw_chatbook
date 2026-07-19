@@ -418,7 +418,7 @@ class RAGConfig:
             RAGConfig instance with loaded settings
         """
         # Load the main configuration
-        config_dict = load_cli_config_and_ensure_existence()
+        load_cli_config_and_ensure_existence()
         
         # Get RAG-specific configuration section
         rag_config = get_cli_setting("AppRAGSearchConfig", "rag", {})

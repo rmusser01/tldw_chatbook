@@ -240,7 +240,7 @@ class TestChunkingEdgeCases:
         # Should raise an error for negative chunk size
         from tldw_chatbook.RAG_Search.chunking_service import ChunkingError
         with pytest.raises(ChunkingError, match="max_words must be positive"):
-            chunks = chunking_service.chunk_text(text, chunk_size=-10, chunk_overlap=5)
+            chunking_service.chunk_text(text, chunk_size=-10, chunk_overlap=5)
     
     def test_text_with_only_whitespace(self, chunking_service):
         """Test text containing only whitespace"""

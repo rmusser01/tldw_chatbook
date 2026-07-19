@@ -233,7 +233,7 @@ class TestCreativeRunnerIntegration:
         )
         
         # Create evaluation run
-        eval_id = orchestrator.db.create_run(
+        orchestrator.db.create_run(
             name=f"Test run for {task_config.name}",
             task_id=task_id,
             model_id=model_id
@@ -365,7 +365,7 @@ class TestRobustnessRunnerIntegration:
             }
         )
         
-        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as mock_call:
+        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call'):
             runner = RobustnessEvaluationRunner(task_config, {"provider": "test", "model_id": "test"})
             
             sample = EvalSample(
@@ -630,7 +630,7 @@ class TestUIIntegration:
         }
         
         # Create task (normally done by UI)
-        task_id = orchestrator.db.create_task(
+        orchestrator.db.create_task(
             name=task_data["name"],
             task_type=task_data["task_type"],
             config_format=task_data["dataset_format"],

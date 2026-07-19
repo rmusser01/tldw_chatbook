@@ -141,7 +141,7 @@ async def handle_stream_done(self, event: StreamDone) -> None:
             logger.error(f"Stream completed with error: {event.error}")
             # If full_text has content, it means some chunks were received before the error.
             # Display partial text along with the error.
-            error_message_content = event.full_text + f"\n\n[bold red]Stream Error:[/]\n{escape_markup(event.error)}"
+            event.full_text + f"\n\n[bold red]Stream Error:[/]\n{escape_markup(event.error)}"
 
             ai_widget.message_text = event.full_text + f"\n\nStream Error:\n{event.error}"  # Update internal raw text
             markdown_widget.update(ai_widget.message_text)

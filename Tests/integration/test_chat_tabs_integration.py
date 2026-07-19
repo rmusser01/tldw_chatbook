@@ -235,7 +235,7 @@ class TestChatTabsIntegrationWorkflow:
     @pytest.mark.skip(reason="TypeError: 'coroutine' object is not subscriptable")
     async def test_tab_switching_preserves_state(self, integration_setup):
         """Test that switching tabs preserves each tab's state."""
-        app = integration_setup['app']
+        integration_setup['app']
         tab_container = integration_setup['tab_container']
         
         # Create tabs with different states
@@ -280,7 +280,7 @@ class TestChatTabsCharacterIntegration:
     @pytest.mark.asyncio
     async def test_character_assignment_per_tab(self, integration_setup):
         """Test assigning different characters to different tabs."""
-        app = integration_setup['app']
+        integration_setup['app']
         tab_container = integration_setup['tab_container']
         
         # Create tabs
@@ -316,7 +316,7 @@ class TestChatTabsErrorRecovery:
     @pytest.mark.skip(reason="TypeError: 'coroutine' object is not subscriptable")
     async def test_recovery_from_widget_errors(self, integration_setup):
         """Test recovery when widgets fail to mount or query."""
-        app = integration_setup['app']
+        integration_setup['app']
         tab_container = integration_setup['tab_container']
         
         # Make mount fail occasionally
@@ -331,7 +331,7 @@ class TestChatTabsErrorRecovery:
         
         with patch.object(tab_container, 'mount', side_effect=flaky_mount):
             # First tab creation might have issues
-            tab1_id = await tab_container.create_new_tab("Flaky Tab 1")
+            await tab_container.create_new_tab("Flaky Tab 1")
             
             # Should still create the tab
             assert len(tab_container.sessions) > 0
@@ -375,7 +375,7 @@ class TestChatTabsPerformance:
     @pytest.mark.asyncio
     async def test_rapid_tab_switching(self, integration_setup):
         """Test rapid switching between many tabs."""
-        app = integration_setup['app']
+        integration_setup['app']
         tab_container = integration_setup['tab_container']
         
         # Create several tabs
@@ -403,7 +403,7 @@ class TestChatTabsPerformance:
     @pytest.mark.asyncio
     async def test_memory_cleanup_on_tab_close(self, integration_setup):
         """Test that closing tabs properly cleans up memory."""
-        app = integration_setup['app']
+        integration_setup['app']
         tab_container = integration_setup['tab_container']
         
         # Create and close many tabs
@@ -434,7 +434,7 @@ class TestChatTabsUIConsistency:
     @pytest.mark.asyncio
     async def test_button_state_consistency(self, integration_setup):
         """Test that button states remain consistent across tabs."""
-        app = integration_setup['app']
+        integration_setup['app']
         tab_container = integration_setup['tab_container']
         
         # Create tabs
@@ -464,7 +464,7 @@ class TestChatTabsUIConsistency:
     @pytest.mark.asyncio
     async def test_widget_id_uniqueness(self, integration_setup):
         """Test that widget IDs are unique across tabs."""
-        app = integration_setup['app']
+        integration_setup['app']
         tab_container = integration_setup['tab_container']
         
         # Create multiple tabs
@@ -477,7 +477,7 @@ class TestChatTabsUIConsistency:
         all_widget_ids = set()
         
         for tab_id in tab_ids:
-            session = tab_container.sessions[tab_id]
+            tab_container.sessions[tab_id]
             
             # Get widget IDs for this session
             widget_ids = [
@@ -520,7 +520,7 @@ class TestChatTabsEnhancedMode:
         assert chat_window.tab_container.enhanced_mode is True
         
         # Create a tab
-        tab_id = await chat_window.tab_container.create_new_tab("Enhanced Tab")
+        await chat_window.tab_container.create_new_tab("Enhanced Tab")
         
         # Get the session
         session = chat_window.tab_container.get_active_session()

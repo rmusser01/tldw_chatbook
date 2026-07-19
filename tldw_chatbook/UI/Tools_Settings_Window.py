@@ -1457,7 +1457,7 @@ class ToolsSettingsWindow(Container):
         """Form for RAG configuration."""
         rag_config = self.config_data.get("rag_search", {})
         sources_config = rag_config.get("default_sources", {})
-        rerank_config = rag_config.get("reranking", {})
+        rag_config.get("reranking", {})
         chunking_config = rag_config.get("chunking", {})
         retriever_config = rag_config.get("retriever", {})
         processor_config = rag_config.get("processor", {})
@@ -4376,7 +4376,7 @@ Thank you for using tldw-chatbook! 🎉
             self.app_instance.notify("Starting database vacuum operation...", severity="information")
             
             # Get database paths from config
-            db_config = self.config_data.get("database", {})
+            self.config_data.get("database", {})
             
             # Run vacuum in a worker to avoid blocking UI
             self.run_worker(self._vacuum_worker, name="vacuum_worker")
@@ -4778,7 +4778,7 @@ Thank you for using tldw-chatbook! 🎉
                 except Exception:
                     pass
                     
-        except Exception as e:
+        except Exception:
             # Silently fail - this is non-critical
             pass
     

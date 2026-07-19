@@ -43,7 +43,7 @@ class TestRealDatabaseIntegration:
     
     def test_database_initialization(self, temp_db):
         """Test database initialization and schema creation."""
-        db = EvalsDB(db_path=temp_db)
+        EvalsDB(db_path=temp_db)
         
         # Check tables exist
         conn = sqlite3.connect(temp_db)

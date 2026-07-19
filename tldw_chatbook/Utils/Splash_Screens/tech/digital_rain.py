@@ -81,7 +81,7 @@ class DigitalRainEffect(BaseEffect):
         for col_idx in range(self.width):
             if self.frame_count >= self.column_next_update[col_idx]:
                 # Shift column down
-                last_char_tuple = self.columns[col_idx].pop()
+                self.columns[col_idx].pop()
 
                 # New char at top
                 new_char = random.choice(self.all_chars)

@@ -246,8 +246,6 @@ class ConsoleLiveWorkSourceReadinessState:
                 Schedules, Workflows, RAG, and Artifacts as connected while
                 MCP as unavailable until its payload producer is wired.
         """
-        connected = "destination-section console-live-work-source-row console-live-work-source-connected"
-        unavailable = "destination-section console-live-work-source-row console-live-work-source-unavailable"
         return cls.from_acp_runtime_status("not_configured")
 
     @classmethod

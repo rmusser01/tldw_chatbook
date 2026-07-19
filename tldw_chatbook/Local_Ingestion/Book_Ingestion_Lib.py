@@ -308,7 +308,6 @@ def epub_to_markdown(epub_path: str) -> Tuple[str, Optional['epub.EpubBook']]:
         logger.info(f"Converting EPUB to Markdown from {epub_path}")
         book = epub.read_epub(epub_path)
         markdown_content = "# Table of Contents\n\n"
-        chapters = []
 
         # Extract and format the table of contents
         toc = book.toc
@@ -1666,7 +1665,7 @@ def process_mobi(
     This function attempts to use the mobi library if available, otherwise
     falls back to converting to a temporary format or extracting raw text.
     """
-    start_time = datetime.now()
+    datetime.now()
     result: Dict[str, Any] = {
         "status": "Pending",
         "input_ref": file_path,
@@ -1803,7 +1802,7 @@ def process_fb2(
     
     FB2 is an XML-based ebook format, so we can parse it using XML tools.
     """
-    start_time = datetime.now()
+    datetime.now()
     result: Dict[str, Any] = {
         "status": "Pending",
         "input_ref": file_path,

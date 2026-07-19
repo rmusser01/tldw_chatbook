@@ -415,7 +415,6 @@ def process_pdf(
             raise TypeError(f"Unsupported file_input type: {type(file_input)}")
 
         # --- Step 1: Extract Text (Now always uses path_for_processing) ---
-        text_content = None
         if not path_for_processing: # Should not happen, but defensive check
              raise RuntimeError("Internal logic error: path_for_processing not set")
 
@@ -592,7 +591,6 @@ def process_pdf(
 
 
         # --- Step 4: Summarization / Analysis ---
-        final_analysis = None # Or final_summary
         # Use path_for_processing for logger context if needed
         logger.debug(f"PROCESS_PDF: Checking condition -> perform_analysis={perform_analysis}, api_name='{api_name}', api_key='{api_key}', chunks_exist={bool(processed_chunks)}") # Keep this log
         if perform_analysis and api_name and api_key and processed_chunks:
@@ -800,7 +798,6 @@ def process_pdf(
     # --- Finally Block: Cleanup ---
     finally:
         current_status_before_cleanup = result["status"]
-        temp_file_removed = False
 
         if path_for_processing and temp_dir_for_pdf and os.path.exists(path_for_processing):
             try:
@@ -813,7 +810,6 @@ def process_pdf(
                 logger.debug(f"Attempting to remove temporary file: {path_for_processing}")
                 os.remove(path_for_processing)
                 logger.debug(f"Successfully removed temporary file: {path_for_processing}")
-                temp_file_removed = True
                 time.sleep(0.1) # Small delay AFTER file removal before dir removal
 
             except OSError as file_rm_err:

@@ -558,12 +558,11 @@ class BaselineManager:
             return None
         
         # Decompress content if stored
-        content = ""
         if row['raw_html']:
             try:
-                content = zlib.decompress(row['raw_html']).decode('utf-8')
+                zlib.decompress(row['raw_html']).decode('utf-8')
             except Exception:
-                content = row['raw_html']
+                row['raw_html']
         
         # Parse key elements
         key_elements = {}

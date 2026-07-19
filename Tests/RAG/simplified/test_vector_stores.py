@@ -774,7 +774,7 @@ class TestVectorStoreIntegration:
         )
         
         # 4. Search again
-        ml_results2 = store.search(ml_query, top_k=2)
+        store.search(ml_query, top_k=2)
         # doc1 might now be more relevant
         
         # 5. Filter by category

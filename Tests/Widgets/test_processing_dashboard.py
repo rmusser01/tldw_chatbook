@@ -278,7 +278,6 @@ async def test_job_status_widget_control_buttons():
         
         # Track messages
         messages = []
-        original_post = widget.post_message
         widget.post_message = lambda msg: messages.append(msg)
         
         # Click pause button
@@ -306,7 +305,7 @@ async def test_processing_dashboard_initialization():
 async def test_processing_dashboard_compose():
     """Test ProcessingDashboard composes correctly."""
     app = TestApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         dashboard = app.query_one(ProcessingDashboard)
         
         # Check main components exist
@@ -361,7 +360,6 @@ async def test_processing_dashboard_update_job_status():
         
         # Track messages
         messages = []
-        original_post = dashboard.post_message
         dashboard.post_message = lambda msg: messages.append(msg)
         
         # Update status
@@ -413,7 +411,7 @@ async def test_processing_dashboard_remove_job():
         dashboard = app.query_one(ProcessingDashboard)
         
         # Add job
-        job = dashboard.add_job("job-1", "Test", [Path("test.mp4")])
+        dashboard.add_job("job-1", "Test", [Path("test.mp4")])
         await pilot.pause()
         
         # Remove job

@@ -493,7 +493,6 @@ def test_attach_conflict_on_stale_version(dictionary_db, monkeypatch):
     d = service.create_dictionary({"name": "Meds"})
     conv = _seed_conversation(dictionary_db)
     # Make update_conversation report a version mismatch.
-    real_update = dictionary_db.update_conversation
 
     def _stale(conversation_id, update_data, expected_version):
         raise ConflictError("version mismatch")

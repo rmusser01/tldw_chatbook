@@ -97,7 +97,7 @@ class TestSearchBarCoordination:
         """Test title-based search filtering."""
         mock_db.search_conversations_by_title.return_value = [1, 2]
         
-        results = perform_chat_conversation_search(
+        perform_chat_conversation_search(
             mock_db,
             title_query='Programming',
             keyword_query='',
@@ -163,7 +163,7 @@ class TestSearchEdgeCases:
         mock_db.search_conversations_by_title.return_value = [1]
         
         for query in special_queries:
-            results = perform_chat_conversation_search(
+            perform_chat_conversation_search(
                 mock_db,
                 title_query=query,
                 keyword_query='',

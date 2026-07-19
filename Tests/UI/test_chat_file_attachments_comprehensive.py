@@ -134,7 +134,7 @@ class TestFileProcessing:
         # Large files should be rejected or truncated
         try:
             content = temp_files['large_text'].read_text()
-            processed = self._process_text_file(content, max_size=1024*1024)
+            self._process_text_file(content, max_size=1024*1024)
             assert False, "Should have raised an exception for large file"
         except ValueError as e:
             assert 'too large' in str(e).lower()

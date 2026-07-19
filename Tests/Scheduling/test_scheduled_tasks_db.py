@@ -410,10 +410,10 @@ def test_list_automation_definitions_filters(db: ScheduledTasksDB) -> None:
     a1 = db.create_automation_definition(
         owner_id="local", family="agent_task", name="A1", lifecycle="paused"
     )
-    q2 = db.create_automation_definition(
+    db.create_automation_definition(
         owner_id="server:user-1", family="recurring_question", name="Q2"
     )
-    a2 = db.create_automation_definition(
+    db.create_automation_definition(
         owner_id="local", family="agent_task", name="A2", lifecycle="archived"
     )
 

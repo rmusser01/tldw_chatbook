@@ -416,7 +416,7 @@ class TestErrorHandling:
         
         # Check results
         successes = [r for r in results if r[0] == 'success']
-        errors = [r for r in results if r[0] == 'error']
+        [r for r in results if r[0] == 'error']
         
         # With retry logic, we expect most threads to succeed
         # At minimum, we should have more successes than errors

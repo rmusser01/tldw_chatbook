@@ -315,7 +315,7 @@ class EnhancedChunkingService(ChunkingService):
             elem_type = elem['type']
             elem_level = elem['level']
             elem_start = elem['start']
-            elem_end = elem['end']
+            elem['end']
             
             # Determine chunk type
             if elem_type.startswith('header'):

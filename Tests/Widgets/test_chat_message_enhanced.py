@@ -325,7 +325,6 @@ class TestChatMessageEnhancedImageHandling:
                 role="User",
                 image_data=sample_image_data
             ) as pilot:
-                widget = pilot.app.test_widget
                 await pilot.pause()
                 
                 # Verify TextualImage was created with a PIL Image object

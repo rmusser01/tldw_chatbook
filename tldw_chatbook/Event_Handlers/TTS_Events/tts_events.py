@@ -547,7 +547,7 @@ class TTSEventHandler:
                     TTSCompleteEvent(message_id=message_id or "adhoc", audio_file=Path(temp_path))
                 )
                 
-            except Exception as e:
+            except Exception:
                 # Clean up any partial file if created (with lock)
                 if message_id:
                     async with self._audio_files_lock:

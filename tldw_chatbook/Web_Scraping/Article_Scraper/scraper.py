@@ -166,7 +166,7 @@ class Scraper:
                 await page.close()
                 
                 # Log successful fetch
-                attempt_duration = time.time() - attempt_start
+                time.time() - attempt_start
                 total_duration = time.time() - start_time
                 log_histogram("article_scraper_fetch_duration", total_duration, labels={
                     "status": "success",

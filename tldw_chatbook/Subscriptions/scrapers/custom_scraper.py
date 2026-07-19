@@ -87,7 +87,7 @@ class CustomScrapingPipeline(BaseScrapingPipeline):
                     try:
                         # Test parse with BeautifulSoup
                         BeautifulSoup('<div></div>', 'html.parser').select(selector)
-                    except Exception as e:
+                    except Exception:
                         return False, f"Invalid CSS selector in {rule_name}: {selector}"
         
         # Validate transformations

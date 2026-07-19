@@ -335,7 +335,7 @@ def run_agent_loop(config: AgentConfig, initial_messages: list[dict],
         if deps.review_tool_calls is not None and calls:
             try:
                 verdicts = deps.review_tool_calls(list(calls)) or {}
-            except Exception as exc:  # noqa: BLE001 — fail OPEN here; the
+            except Exception:  # noqa: BLE001 — fail OPEN here; the
                 # MCP-specific fail-closed policy lives in the Task 6
                 # closure that builds this callable, not in this generic
                 # runtime.

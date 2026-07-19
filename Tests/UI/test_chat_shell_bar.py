@@ -146,7 +146,7 @@ async def test_chat_shell_bar_exposes_compact_control_ids() -> None:
         "tldw_chatbook.Widgets.compact_model_bar.get_cli_providers_and_models",
         return_value={"openai": ["gpt-4o-mini", "gpt-4o"]},
     ):
-        async with app.run_test(size=(120, 20)) as pilot:
+        async with app.run_test(size=(120, 20)):
             assert app.query_one("#compact-api-provider", Select)
             assert app.query_one("#compact-api-model", Select)
             assert app.query_one("#compact-temperature", Input)

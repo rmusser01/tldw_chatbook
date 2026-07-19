@@ -230,7 +230,7 @@ class GitHubScrapingPipeline(BaseScrapingPipeline):
             link = link_elem.get('href') if link_elem is not None else None
             
             published = self._get_atom_text(entry, 'atom:published', ns)
-            updated = self._get_atom_text(entry, 'atom:updated', ns)
+            self._get_atom_text(entry, 'atom:updated', ns)
             content = self._get_atom_text(entry, 'atom:content', ns)
             
             if not title or not link:

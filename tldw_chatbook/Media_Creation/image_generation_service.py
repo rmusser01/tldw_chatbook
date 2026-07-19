@@ -169,7 +169,7 @@ class ImageGenerationService:
         Returns:
             GenerationResult with outcome
         """
-        start_time = datetime.now()
+        datetime.now()
         
         try:
             # Get template

@@ -345,7 +345,7 @@ class CustomTokenizerManager:
             # Validate it's a valid tokenizer file
             if TOKENIZERS_AVAILABLE:
                 try:
-                    test_tokenizer = Tokenizer.from_file(str(source))
+                    Tokenizer.from_file(str(source))
                 except Exception as e:
                     logger.error(f"Invalid tokenizer file: {e}")
                     return False

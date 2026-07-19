@@ -2562,7 +2562,7 @@ async def test_console_inspector_live_work_sources_stay_near_top():
         await _wait_for_selector(console, pilot, "#console-live-work-source-readiness")
 
         inspector = console.query_one("#console-run-inspector")
-        inspector_state = console.query_one("#console-run-inspector-state")
+        console.query_one("#console-run-inspector-state")
         body = console.query_one("#console-inspector-rail-body")
         source_readiness = console.query_one("#console-live-work-source-readiness")
 

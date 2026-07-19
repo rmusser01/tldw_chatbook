@@ -125,7 +125,7 @@ async def test_processing_dashboard_management():
     
     # Add test jobs
     job1 = dashboard.add_job("job-1", "Video Job", [Path("test1.mp4")])
-    job2 = dashboard.add_job("job-2", "Audio Job", [Path("test2.mp3")])
+    dashboard.add_job("job-2", "Audio Job", [Path("test2.mp3")])
     
     assert len(dashboard.active_jobs) == 2
     assert "job-1" in dashboard.active_jobs

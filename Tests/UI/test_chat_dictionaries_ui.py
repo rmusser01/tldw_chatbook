@@ -72,32 +72,6 @@ class TestChatDictionaryUI:
         # dict_lib = ChatDictionaryLib(db)
         
         # Create test dictionaries
-        test_dicts = [
-            {
-                "name": "Common Replacements",
-                "description": "Common text replacements",
-                "entries": [
-                    {"pattern": "u", "replacement": "you", "entry_type": "preprocessing"},
-                    {"pattern": "ur", "replacement": "your", "entry_type": "preprocessing"}
-                ]
-            },
-            {
-                "name": "Technical Terms",
-                "description": "Technical terminology replacements",
-                "entries": [
-                    {"pattern": "AI", "replacement": "Artificial Intelligence", "entry_type": "postprocessing"},
-                    {"pattern": "ML", "replacement": "Machine Learning", "entry_type": "postprocessing"}
-                ]
-            },
-            {
-                "name": "Regex Patterns",
-                "description": "Advanced regex-based replacements",
-                "entries": [
-                    {"pattern": r"\b(\d+)F\b", "replacement": r"\1°F", "use_regex": True, "entry_type": "postprocessing"},
-                    {"pattern": r"\b(\d+)C\b", "replacement": r"\1°C", "use_regex": True, "entry_type": "postprocessing"}
-                ]
-            }
-        ]
         
         # Code to create these would go here
         pass

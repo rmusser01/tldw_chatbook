@@ -419,7 +419,7 @@ class TreeView(VerticalScroll):
             return
         
         # Find all child nodes to remove
-        container = self.query_one("#tree-container", Container)
+        self.query_one("#tree-container", Container)
         nodes_to_remove = []
         
         for child_path, child_node in self.nodes.items():
@@ -649,7 +649,7 @@ class TreeView(VerticalScroll):
         if not self.nodes:
             return
         
-        container = self.query_one("#tree-container", Container)
+        self.query_one("#tree-container", Container)
         
         # Show/hide nodes based on filters
         visible_parents = set()

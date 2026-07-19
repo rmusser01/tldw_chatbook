@@ -66,7 +66,7 @@ class TestTaskConfig:
             TaskConfig()  # Missing required fields
         
         # Test invalid task type
-        config = TaskConfig(
+        TaskConfig(
             name="test", description="test", task_type="invalid_type",
             dataset_name="test", split="test", metric="test"
         )

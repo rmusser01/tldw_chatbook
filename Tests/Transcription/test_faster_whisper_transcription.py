@@ -323,7 +323,7 @@ class TestFasterWhisperUnit:
         mock_class, mock_instance = mock_whisper_model
         
         # Test with VAD enabled
-        result_vad = transcription_service._transcribe_with_faster_whisper(
+        transcription_service._transcribe_with_faster_whisper(
             audio_path=sample_audio_file,
             model='base',
             language='en',
@@ -336,7 +336,7 @@ class TestFasterWhisperUnit:
         # Reset and test with VAD disabled
         mock_instance.reset_mock()
         
-        result_no_vad = transcription_service._transcribe_with_faster_whisper(
+        transcription_service._transcribe_with_faster_whisper(
             audio_path=sample_audio_file,
             model='base',
             language='en',
@@ -351,7 +351,7 @@ class TestFasterWhisperUnit:
         mock_class, mock_instance = mock_whisper_model
         mock_callback = Mock()
         
-        result = transcription_service._transcribe_with_faster_whisper(
+        transcription_service._transcribe_with_faster_whisper(
             audio_path=sample_audio_file,
             model='base',
             language='en',
@@ -453,7 +453,7 @@ class TestFasterWhisperUnit:
         """Test beam search configuration."""
         mock_class, mock_instance = mock_whisper_model
         
-        result = transcription_service._transcribe_with_faster_whisper(
+        transcription_service._transcribe_with_faster_whisper(
             audio_path=sample_audio_file,
             model='base',
             language='en',
@@ -719,7 +719,7 @@ class TestFasterWhisperIntegration:
                 'metadata': metadata
             })
         
-        result = real_transcription_service.transcribe(
+        real_transcription_service.transcribe(
             audio_path=test_audio_file,
             provider='faster-whisper',
             model='tiny',
@@ -851,7 +851,7 @@ class TestFasterWhisperPerformance:
                     wav.writeframes(np.zeros(16000, dtype=np.int16).tobytes())
                 
                 try:
-                    result = real_transcription_service.transcribe(
+                    real_transcription_service.transcribe(
                         audio_path=tmp.name,
                         provider='faster-whisper',
                         model=model

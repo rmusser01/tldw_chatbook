@@ -582,7 +582,7 @@ async def test_activate_native_console_session_clears_stale_drilldown():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
-    async with host.run_test(size=(180, 48)) as pilot:
+    async with host.run_test(size=(180, 48)):
         console = host.screen_stack[-1]
         store = console._ensure_console_chat_store()
         # ``create_session`` immediately activates the new session, so

@@ -564,7 +564,7 @@ async def test_server_unified_service_caches_catalogs_but_keeps_external_servers
         selected_section="external_servers",
     )
     first_external = await service.get_external_servers(target=target, access_context=external_context)
-    second_external = await service.get_external_servers(target=target, access_context=external_context)
+    await service.get_external_servers(target=target, access_context=external_context)
 
     assert first_catalogs == second_catalogs
     assert first_catalogs["catalogs"][0]["name"] == "Scoped Catalog"

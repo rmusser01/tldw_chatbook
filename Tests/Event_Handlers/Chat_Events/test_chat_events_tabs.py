@@ -996,7 +996,7 @@ class TestChatEventsTabsSettings:
         """Test that settings changes apply to active tab only."""
         # Create multiple sessions
         session1 = ChatSessionData(tab_id="tab1", conversation_id="conv1")
-        session2 = ChatSessionData(tab_id="tab2", conversation_id="conv2")
+        ChatSessionData(tab_id="tab2", conversation_id="conv2")
         
         # Mock settings widgets
         mock_system_prompt = Mock()

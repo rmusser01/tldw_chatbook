@@ -265,19 +265,19 @@ class PreviewValidationStep(WizardStep):
         
         # Add summary nodes
         if type_counts.get(ContentType.CONVERSATION):
-            node = root.add(f"💬 Conversations ({type_counts[ContentType.CONVERSATION]})")
+            root.add(f"💬 Conversations ({type_counts[ContentType.CONVERSATION]})")
             
         if type_counts.get(ContentType.NOTE):
-            node = root.add(f"📝 Notes ({type_counts[ContentType.NOTE]})")
+            root.add(f"📝 Notes ({type_counts[ContentType.NOTE]})")
             
         if type_counts.get(ContentType.CHARACTER):
-            node = root.add(f"👤 Characters ({type_counts[ContentType.CHARACTER]})")
+            root.add(f"👤 Characters ({type_counts[ContentType.CHARACTER]})")
             
         if type_counts.get(ContentType.MEDIA):
-            node = root.add(f"🎬 Media ({type_counts[ContentType.MEDIA]})")
+            root.add(f"🎬 Media ({type_counts[ContentType.MEDIA]})")
             
         if type_counts.get(ContentType.PROMPT):
-            node = root.add(f"💡 Prompts ({type_counts[ContentType.PROMPT]})")
+            root.add(f"💡 Prompts ({type_counts[ContentType.PROMPT]})")
     
     def _run_validation(self) -> None:
         """Run validation checks."""

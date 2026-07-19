@@ -385,7 +385,7 @@ class TestChatbookPerformance:
         
         # Add character
         char = CharacterFactory.create()
-        char_id = chacha_db.add_character_card(char)
+        chacha_db.add_character_card(char)
         
         # Add text-heavy content (compresses well)
         text_note_ids = []
@@ -502,7 +502,7 @@ class TestChatbookPerformance:
     def test_stress_test_extreme_scale(self, performance_db_setup, tmp_path):
         """Stress test with extreme scale (marked as slow)."""
         # Only run if explicitly requested
-        metrics = PerformanceMetrics()
+        PerformanceMetrics()
         
         # Create extreme dataset
         chacha_db = performance_db_setup['chacha_db']

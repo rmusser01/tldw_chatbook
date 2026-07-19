@@ -115,7 +115,7 @@ class TestFtsSyntaxHazardsDoNotRaise:
         assert isinstance(total, int)
 
     def test_quote_in_query_matches_literal_content_containing_it(self, db):
-        conv_id = _conversation_with_message(
+        _conversation_with_message(
             db, title="Alpha", content='He said "hello" to me'
         )
         rows, total, _ = db.search_conversations_page('"hello"')

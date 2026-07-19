@@ -813,7 +813,7 @@ class AudioBookGenerator:
             else:
                 raise ValueError("Could not determine duration with mutagen")
                 
-        except (ImportError, Exception) as e:
+        except (ImportError, Exception):
             # Fallback to pydub
             try:
                 from pydub import AudioSegment

@@ -80,7 +80,7 @@ class TestEvaluationOrchestrator:
         """Test that run_evaluation properly tracks active tasks."""
         with patch.object(orchestrator, 'db') as mock_db:
             with patch.object(orchestrator, 'task_loader') as mock_loader:
-                with patch.object(orchestrator.concurrent_manager, 'register_run', return_value=True) as mock_register:
+                with patch.object(orchestrator.concurrent_manager, 'register_run', return_value=True):
                     # Mock task config
                     mock_task = Mock()
                     mock_task.task_type = 'question_answer'
@@ -109,7 +109,7 @@ class TestEvaluationOrchestrator:
                     
                     # Start evaluation (will fail but should track)
                     try:
-                        run_id = await orchestrator.run_evaluation(
+                        await orchestrator.run_evaluation(
                             task_id='test_task',
                             model_id='test-model',
                             max_samples=10
@@ -242,7 +242,7 @@ class TestOrchestratorIntegration:
                 
                 # Run evaluation
                 # Note: This may fail in test environment, but we're testing the flow
-                run_id = await orchestrator.run_evaluation(
+                await orchestrator.run_evaluation(
                     task_id=task_id,
                     model_configs=[model_config],
                     max_samples=2

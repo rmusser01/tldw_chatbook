@@ -229,7 +229,7 @@ class HiggsVoiceProfileManager:
             if profile_name not in profiles:
                 return False, f"Profile '{profile_name}' not found"
             
-            profile = profiles[profile_name]
+            profiles[profile_name]
             
             # Remove profile directory
             profile_dir = self.voice_samples_dir / profile_name

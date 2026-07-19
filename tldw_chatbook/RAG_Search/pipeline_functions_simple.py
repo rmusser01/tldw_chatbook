@@ -336,7 +336,6 @@ async def search_semantic(
 def deduplicate_results(results: List[SearchResult]) -> List[SearchResult]:
     """Remove duplicate results based on content similarity."""
     seen = {}
-    deduped = []
     
     for result in results:
         # Use first 200 chars of content as key

@@ -149,7 +149,7 @@ class CostEstimationWidget(Container):
             return
         
         # Add sample cost
-        sample_cost = self.cost_estimator.add_sample_cost(
+        self.cost_estimator.add_sample_cost(
             self.run_id, input_tokens, output_tokens,
             self.provider, self.model
         )

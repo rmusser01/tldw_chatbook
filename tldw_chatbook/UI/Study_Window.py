@@ -904,17 +904,16 @@ class StudyWindow(Container):
 
     def _configure_flashcards_lifecycle_controls(self) -> None:
         try:
-            delete_deck_button = self.query_one("#delete-deck-button", Button)
+            self.query_one("#delete-deck-button", Button)
             delete_deck_note = self.query_one("#delete-deck-note", Static)
         except Exception:
             return
 
         server_mode = self._is_server_mode()
-        scope_enabled = True
         controller = getattr(self, "flashcards_controller", None)
         scope_checker = getattr(controller, "_scope_is_available", None)
         if callable(scope_checker):
-            scope_enabled = bool(scope_checker())
+            bool(scope_checker())
 
         delete_deck_note.display = server_mode
         delete_deck_note.display = server_mode

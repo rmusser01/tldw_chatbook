@@ -615,9 +615,9 @@ class LocalAudioProcessor:
         
         # Prepare prompt
         if custom_prompt:
-            user_prompt = custom_prompt + "\n\n" + content
+            custom_prompt + "\n\n" + content
         else:
-            user_prompt = f"Please summarize the following audio transcription:\n\n{content}"
+            pass
         
         # If chunking and recursive summarization
         if chunks and summarize_recursively and len(chunks) > 1:
@@ -705,7 +705,7 @@ class LocalAudioProcessor:
                     })
                 
                 # Use batch insert method
-                chunks_added = self.media_db.add_media_chunks_in_batches(
+                self.media_db.add_media_chunks_in_batches(
                     media_id=media_id,
                     chunks_to_add=chunks_to_add
                 )
@@ -795,7 +795,7 @@ class LocalAudioProcessor:
         
         try:
             logger.debug(f"Running ffmpeg command: {' '.join(command)}")
-            result = subprocess.run(
+            subprocess.run(
                 command,
                 capture_output=True,
                 text=True,

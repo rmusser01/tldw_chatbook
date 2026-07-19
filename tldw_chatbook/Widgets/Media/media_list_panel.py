@@ -265,7 +265,6 @@ class MediaListPanel(Container):
                 is_deleted = item.get("is_deleted", False) or item.get("deleted", 0) == 1
                 
                 # Create list item with formatted layout
-                title_classes = "item-title deleted" if is_deleted else "item-title"
                 meta_classes = "item-meta deleted" if is_deleted else "item-meta"
                 
                 # Build the formatted text

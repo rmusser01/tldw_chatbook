@@ -121,7 +121,7 @@ class TestFasterWhisperEdgeCases:
             
             threads = [threading.Thread(target=transcribe) for _ in range(3)]
             
-            start_time = time.time()
+            time.time()
             for t in threads:
                 t.start()
             for t in threads:
@@ -235,7 +235,7 @@ class TestFasterWhisperEdgeCases:
                     raise ValueError("Callback error")
             
             # Should complete despite callback errors
-            with patch('tldw_chatbook.Local_Ingestion.transcription_service.logger') as mock_logger:
+            with patch('tldw_chatbook.Local_Ingestion.transcription_service.logger'):
                 result = mock_service._transcribe_with_faster_whisper(
                     audio_path="dummy.wav",
                     model="base",
@@ -650,13 +650,12 @@ class TestFasterWhisperConcurrency:
             
             # Track concurrent calls
             active_transcriptions = []
-            max_concurrent = 0
             lock = threading.Lock()
             
             def concurrent_transcribe(*args, **kwargs):
                 with lock:
                     active_transcriptions.append(threading.current_thread().name)
-                    max_concurrent_local = len(active_transcriptions)
+                    len(active_transcriptions)
                 
                 time.sleep(0.1)  # Simulate transcription time
                 

@@ -206,7 +206,7 @@ class DoclingOCRBackend(OCRBackend):
         """Process image with Docling (converts to PDF internally if needed)."""
         # Validate path to prevent directory traversal
         base_dir = kwargs.get('base_directory', os.getcwd())
-        validated_path = validate_path(image_path, base_dir)
+        validate_path(image_path, base_dir)
         
         # Docling primarily works with PDFs, so for images we might need to convert
         # For now, we'll raise NotImplementedError
@@ -420,7 +420,7 @@ class TesseractOCRBackend(OCRBackend):
         """Process PDF by converting pages to images first."""
         # Validate path to prevent directory traversal
         base_dir = kwargs.get('base_directory', os.getcwd())
-        validated_path = validate_path(pdf_path, base_dir)
+        validate_path(pdf_path, base_dir)
         
         # This would require pdf2image or similar
         raise NotImplementedError("PDF processing not implemented for Tesseract backend. Convert to images first.")
@@ -558,7 +558,7 @@ class EasyOCRBackend(OCRBackend):
         """Process PDF by converting pages to images first."""
         # Validate path to prevent directory traversal
         base_dir = kwargs.get('base_directory', os.getcwd())
-        validated_path = validate_path(pdf_path, base_dir)
+        validate_path(pdf_path, base_dir)
         
         raise NotImplementedError("PDF processing not implemented for EasyOCR backend. Convert to images first.")
     
@@ -680,7 +680,7 @@ class PaddleOCRBackend(OCRBackend):
         """Process PDF by converting pages to images first."""
         # Validate path to prevent directory traversal
         base_dir = kwargs.get('base_directory', os.getcwd())
-        validated_path = validate_path(pdf_path, base_dir)
+        validate_path(pdf_path, base_dir)
         
         raise NotImplementedError("PDF processing not implemented for PaddleOCR backend. Convert to images first.")
     

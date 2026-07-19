@@ -133,7 +133,7 @@ class ParticleSwarmEffect(BaseEffect):
                     
                     # Alignment
                     avg_vx = sum(n.vx for n in neighbors) / len(neighbors)
-                    avg_vy = sum(n.vy for n in neighbors) / len(neighbors)
+                    sum(n.vy for n in neighbors) / len(neighbors)
                     particle.vx += (avg_vx - particle.vx) * self.alignment
             
             # Limit speed

@@ -214,7 +214,7 @@ class TestClientSyncEngineIntegration:
     def test_push_pull_basic_flow(self, sync_engine, client_db):
         """Test basic push and pull flow with real server"""
         # Create local changes
-        entities = create_test_entities(client_db)
+        create_test_entities(client_db)
         
         # Push changes to server
         sync_engine._push_local_changes()

@@ -191,7 +191,7 @@ class ChatbookErrorHandler:
     def _determine_error_type(cls, exception: Exception) -> ChatbookErrorType:
         """Determine the error type from an exception."""
         error_str = str(exception).lower()
-        exception_type = type(exception).__name__
+        type(exception).__name__
         
         # Check for specific error patterns
         if isinstance(exception, FileNotFoundError) or "not found" in error_str:

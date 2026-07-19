@@ -181,7 +181,7 @@ class TestEmbeddingPerformance:
             times = []
             for _ in range(3):
                 start_time = time.time()
-                embeddings = service.create_embeddings(texts)
+                service.create_embeddings(texts)
                 elapsed = time.time() - start_time
                 times.append(elapsed)
             
@@ -270,7 +270,7 @@ class TestVectorStorePerformance:
             times = []
             for _ in range(5):  # Multiple runs for average
                 start_time = time.time()
-                results = store.search(
+                store.search(
                     collection_name,
                     query_embedding,
                     top_k=10
@@ -443,7 +443,7 @@ class TestConcurrencyPerformance:
                 mock_factory.return_value = mock_instance
                 
                 service = EmbeddingsServiceWrapper(model_name=model_name)
-                embeddings = service.create_embeddings(["Test document"])
+                service.create_embeddings(["Test document"])
                 service.close()
             
             elapsed = time.time() - start_time

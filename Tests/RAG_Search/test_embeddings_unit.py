@@ -32,7 +32,7 @@ class TestEmbeddingsServiceWrapper:
     
     def test_initialization_with_openai_model(self):
         """Test initialization with OpenAI model"""
-        with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory') as mock_factory:
+        with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory'):
             service = EmbeddingsServiceWrapper(
                 model_name="openai/text-embedding-3-small",
                 api_key="test-key"
@@ -205,7 +205,7 @@ class TestErrorHandling:
             mock_factory.side_effect = Exception("Model not found")
             
             with pytest.raises(Exception) as exc_info:
-                service = EmbeddingsServiceWrapper(model_name="invalid/model")
+                EmbeddingsServiceWrapper(model_name="invalid/model")
             
             assert "Model not found" in str(exc_info.value)
     
@@ -221,7 +221,7 @@ class TestErrorHandling:
             service = EmbeddingsServiceWrapper()
             
             with pytest.raises(Exception) as exc_info:
-                embeddings = service.create_embeddings(["test"])
+                service.create_embeddings(["test"])
             
             assert "Embedding failed" in str(exc_info.value)
     

@@ -302,7 +302,7 @@ class TestFileOperationErrorHandling:
         file_paths = [str(valid_file)]
         
         # Mock an error during preparation
-        original_guess_type = prepare_files_for_httpx.__globals__['mimetypes'].guess_type
+        prepare_files_for_httpx.__globals__['mimetypes'].guess_type
         
         def mock_guess_type(filename):
             raise Exception("Simulated error")

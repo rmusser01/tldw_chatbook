@@ -324,7 +324,7 @@ class TestMLXParakeetUnit:
             mock_sf.read.return_value = (np.zeros(16000), 16000)
             mock_sf.info.return_value = MockAudioInfo(duration=1.0)
             
-            result = transcription_service._transcribe_with_parakeet_mlx(
+            transcription_service._transcribe_with_parakeet_mlx(
                 audio_path=sample_audio_file,
                 model='mlx-community/parakeet-tdt-0.6b-v2',
                 progress_callback=mock_callback
@@ -683,7 +683,7 @@ class TestMLXParakeetIntegration:
                 'metadata': metadata
             })
         
-        result = real_transcription_service.transcribe(
+        real_transcription_service.transcribe(
             audio_path=test_audio_file,
             provider='parakeet-mlx',
             model='mlx-community/parakeet-tdt-0.6b-v2',
@@ -805,7 +805,7 @@ class TestMLXParakeetPerformance:
             try:
                 start_time = time.time()
                 
-                result = real_transcription_service.transcribe(
+                real_transcription_service.transcribe(
                     audio_path=tmp_file.name,
                     provider='parakeet-mlx',
                     model='mlx-community/parakeet-tdt-0.6b-v2',

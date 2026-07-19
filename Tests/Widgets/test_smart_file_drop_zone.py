@@ -153,7 +153,6 @@ async def test_file_preview_item_remove_message():
             
             # Track messages
             messages = []
-            original_post = item.post_message
             item.post_message = lambda msg: messages.append(msg)
             
             # Click remove button
@@ -183,7 +182,7 @@ async def test_smart_file_drop_zone_initialization():
 async def test_smart_file_drop_zone_compose():
     """Test SmartFileDropZone composes correctly."""
     app = TestApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         zone = app.query_one(SmartFileDropZone)
         
         # Check main components exist
@@ -207,7 +206,6 @@ async def test_smart_file_drop_zone_add_files():
         
         # Track messages
         messages = []
-        original_post = zone.post_message
         zone.post_message = lambda msg: messages.append(msg)
         
         # Add test files
@@ -374,7 +372,7 @@ async def test_smart_file_drop_zone_browse_files():
     """Test browse files functionality."""
     app = TestApp()
     
-    with patch('tldw_chatbook.Widgets.NewIngest.SmartFileDropZone.FileOpen') as mock_file_open:
+    with patch('tldw_chatbook.Widgets.NewIngest.SmartFileDropZone.FileOpen'):
         async with app.run_test() as pilot:
             zone = app.query_one(SmartFileDropZone)
             

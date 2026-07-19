@@ -728,7 +728,7 @@ def test_submit_stores_detected_type():
 def test_next_queued_skip_types_skips_heavy_returns_next_light():
     registry = LibraryIngestJobRegistry()
     a1 = registry.submit(source_path="a1.mp3", detected_type="audio")
-    a2 = registry.submit(source_path="a2.mp3", detected_type="audio")
+    registry.submit(source_path="a2.mp3", detected_type="audio")
     d1 = registry.submit(source_path="d1.txt", detected_type="plaintext")
     heavy = frozenset({"audio", "video"})
     # default: oldest queued regardless of type

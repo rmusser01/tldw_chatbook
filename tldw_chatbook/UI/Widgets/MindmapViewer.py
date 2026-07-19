@@ -548,7 +548,7 @@ class MindmapViewer(Container):
         """Handle real-time search as user types"""
         query = event.value.strip()
         if query:
-            results = self.model.search(query)
+            self.model.search(query)
             self.refresh_display()
             self._update_status_bar()
     

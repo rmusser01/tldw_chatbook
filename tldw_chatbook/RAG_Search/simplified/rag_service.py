@@ -212,7 +212,7 @@ class RAGService:
         title = title or doc_id
         
         # Create correlation ID for tracking
-        correlation_id = str(uuid.uuid4())
+        str(uuid.uuid4())
         
         # Input validation
         if not doc_id or not isinstance(doc_id, str):
@@ -520,7 +520,6 @@ class RAGService:
         
         self._searches_performed += 1
         start_time = time.time()
-        results_before_filter = 0
         
         try:
             logger.info(f"[{correlation_id}] Performing {search_type} search with top_k={top_k}, threshold={score_threshold}")

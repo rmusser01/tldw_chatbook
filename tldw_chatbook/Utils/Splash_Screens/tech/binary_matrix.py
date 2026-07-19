@@ -32,7 +32,7 @@ class BinaryMatrixEffect(BaseEffect):
     
     def update(self) -> Optional[str]:
         """Update binary rain."""
-        elapsed_time = time.time() - self.start_time
+        time.time() - self.start_time
         for col in self.columns:
             col['offset'] += col['speed']
             if col['offset'] >= self.height * 2:

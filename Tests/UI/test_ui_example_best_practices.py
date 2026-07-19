@@ -150,7 +150,6 @@ class TestUIBestPractices:
         
         async with await widget_pilot(ChatWindow, app_instance=mock_app_instance) as pilot:
             app = pilot.app
-            chat_window = app.test_widget
             
             await pilot.pause()
             
@@ -167,7 +166,6 @@ class TestUIBestPractices:
     async def test_keyboard_shortcuts(self, widget_pilot, mock_app_instance):
         """Test keyboard shortcut handling."""
         async with await widget_pilot(ChatWindow, app_instance=mock_app_instance) as pilot:
-            app = pilot.app
             await pilot.pause()
             
             # Test Ctrl+[ to toggle sidebar
@@ -284,7 +282,6 @@ class TestComplexScenarios:
         """Test dynamic content updates."""
         async with await widget_pilot(ChatWindow, app_instance=mock_app_instance) as pilot:
             app = pilot.app
-            chat_window = app.test_widget
             await pilot.pause()
             
             # Get chat log

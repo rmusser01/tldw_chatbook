@@ -134,7 +134,7 @@ async def test_media_search_initial_state(real_app_media_test: TldwCli):
         
         # Check if splash screen is present
         try:
-            splash = app.query_one("#app-splash-screen")
+            app.query_one("#app-splash-screen")
             print("Splash screen is active, waiting for it to close...")
             # Press any key to skip splash screen if skip_on_keypress is enabled
             await pilot.press("space")
@@ -415,7 +415,7 @@ async def test_media_review_clearing_on_new_empty_search(real_app_media_test: Tl
         
         # Select and load first item
         results_listview = app.query_one("#chat-media-search-results-listview", ListView)
-        list_items = results_listview.query(ListItem)
+        results_listview.query(ListItem)
         results_listview.index = 0  # Set the index to select the first item
         results_listview.action_select_cursor()  # Trigger the selection
         await pilot.pause(0.5)  # Allow time for the selection to update the fields
@@ -476,7 +476,7 @@ async def test_media_search_input_debounced(real_app_media_test: TldwCli):
         
         # Mock the timer to track debounce
         from unittest.mock import MagicMock
-        mock_timer = MagicMock()
+        MagicMock()
         
         # Type quickly and trigger the search manually after debounce
         await pilot.click(search_input)

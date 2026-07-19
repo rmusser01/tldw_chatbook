@@ -90,7 +90,7 @@ class TestEndToEndDictation:
                         pass  # Expected when chunks run out
                     
                     # Stop and get audio
-                    audio_data = service.stop_recording()
+                    service.stop_recording()
                     
                     # Verify file was created
                     assert Path(tmp.name).exists()

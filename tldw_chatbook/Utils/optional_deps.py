@@ -596,8 +596,6 @@ def check_embeddings_rag_deps() -> bool:
 def check_websearch_deps() -> bool:
     """Check dependencies needed for web search functionality."""
     # Based on pyproject.toml websearch optional dependencies
-    required_deps = ['lxml', 'bs4', 'pandas', 'playwright', 'trafilatura', 'langdetect', 'nltk', 'scikit-learn']
-    optional_deps = ['playwright_stealth']  # This one was commented out
     
     essential_available = True
     for dep in ['lxml', 'bs4', 'trafilatura', 'langdetect']:  # Core web scraping deps
@@ -690,8 +688,6 @@ def check_audio_processing_deps() -> bool:
     """Check dependencies needed for audio processing functionality."""
     # Core audio processing dependencies
     core_deps = ['soundfile', 'scipy']
-    transcription_deps = ['faster_whisper']
-    download_deps = ['yt_dlp']
     
     # Check core deps
     core_available = all(check_dependency(dep) for dep in core_deps)

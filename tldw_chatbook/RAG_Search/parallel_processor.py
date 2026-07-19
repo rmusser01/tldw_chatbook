@@ -357,7 +357,7 @@ class EmbeddingBatchProcessor:
         
         # Log final statistics
         if progress:
-            stats = progress.get_stats()
+            progress.get_stats()
             success_rate = (total - len(failed_indices)) / total if total > 0 else 0
             logger.info(f"Embedding generation completed: {success_rate:.1%} success rate")
             

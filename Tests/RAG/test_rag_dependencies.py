@@ -178,7 +178,7 @@ def check_rag_services() -> Dict[str, bool]:
         try:
             from tldw_chatbook.RAG_Search import create_config_for_testing
             test_config = create_config_for_testing()
-            test_service = create_rag_service(test_config)
+            create_rag_service(test_config)
             results['rag_service_creation'] = True
             logger.success("✅ RAG service creation successful")
         except Exception as e:

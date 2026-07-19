@@ -252,7 +252,7 @@ class TestMLXWhisperUnit:
         mock_class, mock_instance = mock_lightning_whisper_model
         mock_callback = Mock()
         
-        result = transcription_service._transcribe_with_lightning_whisper_mlx(
+        transcription_service._transcribe_with_lightning_whisper_mlx(
             audio_path=sample_audio_file,
             model='base',
             progress_callback=mock_callback
@@ -575,7 +575,7 @@ class TestMLXWhisperIntegration:
                 'metadata': metadata
             })
         
-        result = real_transcription_service.transcribe(
+        real_transcription_service.transcribe(
             audio_path=test_audio_file,
             provider='lightning-whisper-mlx',
             model='tiny',

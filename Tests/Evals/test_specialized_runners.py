@@ -181,7 +181,7 @@ class TestCreativeEvaluationRunner:
     def runner(self, task_config):
         """Create a CreativeEvaluationRunner instance."""
         model_config = {"provider": "openai", "model_id": "gpt-4"}
-        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as mock_call:
+        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call'):
             return CreativeEvaluationRunner(task_config, model_config)
     
     @pytest.mark.asyncio
@@ -304,7 +304,7 @@ class TestRobustnessEvaluationRunner:
     def runner(self, task_config):
         """Create a RobustnessEvaluationRunner instance."""
         model_config = {"provider": "openai", "model_id": "gpt-3.5-turbo"}
-        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as mock_call:
+        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call'):
             return RobustnessEvaluationRunner(task_config, model_config)
     
     @pytest.mark.asyncio
@@ -458,7 +458,7 @@ class TestSpecializedRunnersIntegration:
             
             model_config = {"provider": "test", "model_id": "test-model"}
             
-            with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as mock_call:
+            with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call'):
                 runner = MultilingualEvaluationRunner(task_config, model_config)
                 runner.llm_interface.generate = AsyncMock(return_value="Bonjour")
                 

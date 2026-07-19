@@ -327,7 +327,6 @@ class STTSEventHandler:
             chunk_count = 0
             total_size = 0
             start_time = asyncio.get_event_loop().time()
-            last_status_time = start_time
             
             # Pass extra params to the service if needed
             if event.provider == "elevenlabs" and event.extra_params:

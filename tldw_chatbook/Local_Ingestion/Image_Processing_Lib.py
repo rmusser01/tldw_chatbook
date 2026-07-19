@@ -178,7 +178,7 @@ def extract_visual_features(image_path: Union[str, Path]) -> Dict[str, Any]:
                         img = img.convert('RGB')
                     
                     # Get color histogram
-                    histogram = img.histogram()
+                    img.histogram()
                     
                     # Calculate dominant colors (simplified)
                     pixels = list(img.getdata())

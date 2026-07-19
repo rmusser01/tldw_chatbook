@@ -849,7 +849,7 @@ class FileExtractor:
             # Cargo.toml validation
             try:
                 import toml
-                cargo_data = toml.loads(file.content)
+                toml.loads(file.content)
                 if '[package]' not in file.content:
                     return "Invalid Cargo.toml: Missing [package] section"
             except Exception as e:

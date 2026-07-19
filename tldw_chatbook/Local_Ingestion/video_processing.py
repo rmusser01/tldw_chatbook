@@ -696,7 +696,7 @@ class LocalVideoProcessor:
                                   start_time: Optional[str] = None, 
                                   end_time: Optional[str] = None) -> str:
         """Extract audio track from video file."""
-        extraction_start_time = time.time()
+        time.time()
         log_counter("video_processing_audio_extraction_attempt")
         
         logger.info(f"Extracting audio from video: {video_path}")
@@ -750,7 +750,7 @@ class LocalVideoProcessor:
             logger.info(f"Running ffmpeg command: {' '.join(command)}")
             logger.info(f"Extracting audio to: {audio_path}")
             
-            result = subprocess.run(
+            subprocess.run(
                 command,
                 capture_output=True,
                 text=True,

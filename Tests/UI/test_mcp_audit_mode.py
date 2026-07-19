@@ -409,7 +409,7 @@ async def test_filters_combine_with_and_semantics():
 @pytest.mark.asyncio
 async def test_select_options_cover_full_decision_and_initiator_vocabulary():
     app = AuditModeApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         decision_select = app.query_one("#mcp-audit-filter-decision", Select)
         initiator_select = app.query_one("#mcp-audit-filter-initiator", Select)
         decision_values = {value for _, value in decision_select._options if value is not Select.NULL}

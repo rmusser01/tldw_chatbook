@@ -674,7 +674,7 @@ class TestDictionaryDetailWidget:
 
     async def test_form_payload_converts_probability_percent(self):
         app = DetailHarnessApp()
-        async with app.run_test() as pilot:
+        async with app.run_test():
             widget = app.query_one(PersonasDictionaryDetailWidget)
             app.query_one("#personas-dict-entry-pattern", Input).value = "ASAP"
             app.query_one("#personas-dict-entry-probability", Input).value = "85"
@@ -685,7 +685,7 @@ class TestDictionaryDetailWidget:
 
     async def test_form_payload_requires_pattern(self):
         app = DetailHarnessApp()
-        async with app.run_test() as pilot:
+        async with app.run_test():
             widget = app.query_one(PersonasDictionaryDetailWidget)
             app.query_one("#personas-dict-entry-pattern", Input).value = "  "
             assert widget.form_payload() is None
@@ -695,7 +695,7 @@ class TestDictionaryDetailWidget:
     async def test_form_payload_rejects_out_of_range_probability(self):
         """Validate-don't-clamp: 150 is refused, not silently coerced to 100."""
         app = DetailHarnessApp()
-        async with app.run_test() as pilot:
+        async with app.run_test():
             widget = app.query_one(PersonasDictionaryDetailWidget)
             app.query_one("#personas-dict-entry-pattern", Input).value = "ASAP"
             app.query_one("#personas-dict-entry-probability", Input).value = "150"
@@ -706,7 +706,7 @@ class TestDictionaryDetailWidget:
     async def test_form_payload_rejects_non_positive_max_replacements(self):
         """Validate-don't-clamp: 0 is refused, not silently coerced to 1."""
         app = DetailHarnessApp()
-        async with app.run_test() as pilot:
+        async with app.run_test():
             widget = app.query_one(PersonasDictionaryDetailWidget)
             app.query_one("#personas-dict-entry-pattern", Input).value = "ASAP"
             app.query_one("#personas-dict-entry-max-repl", Input).value = "0"

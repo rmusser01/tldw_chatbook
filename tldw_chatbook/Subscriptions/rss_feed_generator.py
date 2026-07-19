@@ -79,7 +79,7 @@ class RSSFeedGenerator:
         ET.SubElement(self.channel, 'lastBuildDate').text = self._format_rfc822_date(datetime.now(timezone.utc))
         
         # Atom self link
-        atom_link = ET.SubElement(self.channel, '{http://www.w3.org/2005/Atom}link', {
+        ET.SubElement(self.channel, '{http://www.w3.org/2005/Atom}link', {
             'href': self.feed_link,
             'rel': 'self',
             'type': 'application/rss+xml'

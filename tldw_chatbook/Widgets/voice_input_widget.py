@@ -372,7 +372,6 @@ class VoiceInputWidget(Widget):
     
     def _on_state_change(self, new_state: str):
         """Handle dictation state change."""
-        old_state = self.state
         self.state = new_state
         self._call_from_worker_or_now(self._update_ui_state)
     

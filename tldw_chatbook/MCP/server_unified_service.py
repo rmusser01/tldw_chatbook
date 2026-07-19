@@ -48,10 +48,9 @@ class ServerUnifiedMCPService:
     ) -> ServerAccessContext:
         client = self._client_for_target(target)
 
-        status_payload = None
         status_error: Exception | None = None
         try:
-            status_payload = await client.get_status()
+            await client.get_status()
         except Exception as exc:
             status_error = exc
             logger.debug("Unified MCP status probe failed for {}: {}", target.server_id, exc)

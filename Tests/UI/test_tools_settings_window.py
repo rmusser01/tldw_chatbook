@@ -247,7 +247,7 @@ async def test_save_invalid_toml_format(settings_window: ToolsSettingsWindow, mo
 async def test_save_io_error(settings_window: ToolsSettingsWindow, mock_app_instance, monkeypatch):
     """Test saving config when an IOError occurs."""
     config_text_area = settings_window.query_one("#config-text-area", TextArea)
-    save_button = settings_window.query_one("#save-config-button", Button)
+    settings_window.query_one("#save-config-button", Button)
 
     config_text_area.text = toml.dumps({"good": "data"})
 
@@ -487,7 +487,7 @@ async def test_create_chatbook_button(settings_window: ToolsSettingsWindow, mock
     assert "Create Chatbook" in create_button.label.plain
     
     # Mock the chatbook creation window
-    with patch("tldw_chatbook.UI.Tools_Settings_Window.ChatbookCreationWindow") as mock_window:
+    with patch("tldw_chatbook.UI.Tools_Settings_Window.ChatbookCreationWindow"):
         await settings_window.on_button_pressed(Button.Pressed(create_button))
         
         # Should push the chatbook creation screen

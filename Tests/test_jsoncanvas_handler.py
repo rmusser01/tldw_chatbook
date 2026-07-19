@@ -21,8 +21,8 @@ class TestJSONCanvasExport:
         # Create a simple tree
         root = Node("root", text="Root Node")
         child1 = Node("child1", text="Child 1", parent=root)
-        child2 = Node("child2", text="Child 2", parent=root)
-        grandchild = Node("gc1", text="Grandchild", parent=child1)
+        Node("child2", text="Child 2", parent=root)
+        Node("gc1", text="Grandchild", parent=child1)
         
         # Export to JSON Canvas
         canvas_json = JSONCanvasHandler.to_json_canvas(root, layout='hierarchical')
@@ -47,9 +47,9 @@ class TestJSONCanvasExport:
     def test_node_types(self):
         """Test different node types in export"""
         root = Node("root", text="Root", metadata={'type': 'group'})
-        file_node = Node("file", text="Document", parent=root, 
+        Node("file", text="Document", parent=root, 
                         metadata={'type': 'file', 'file_path': '/path/to/file.md'})
-        link_node = Node("link", text="Website", parent=root,
+        Node("link", text="Website", parent=root,
                         metadata={'type': 'link', 'url': 'https://example.com'})
         
         canvas_json = JSONCanvasHandler.to_json_canvas(root)
@@ -72,7 +72,7 @@ class TestJSONCanvasExport:
     def test_color_mapping(self):
         """Test color conversion to JSON Canvas format"""
         root = Node("root", text="Root", color="red")
-        child = Node("child", text="Child", parent=root, color="green")
+        Node("child", text="Child", parent=root, color="green")
         
         canvas_json = JSONCanvasHandler.to_json_canvas(root)
         canvas_data = json.loads(canvas_json)
@@ -296,9 +296,9 @@ class TestRoundTrip:
         # Create original tree
         root = Node("root", text="Root Node")
         c1 = Node("c1", text="Child 1", parent=root)
-        c2 = Node("c2", text="Child 2", parent=root)
-        gc1 = Node("gc1", text="Grandchild 1", parent=c1)
-        gc2 = Node("gc2", text="Grandchild 2", parent=c1)
+        Node("c2", text="Child 2", parent=root)
+        Node("gc1", text="Grandchild 1", parent=c1)
+        Node("gc2", text="Grandchild 2", parent=c1)
         
         # Export to JSON Canvas
         canvas_json = JSONCanvasHandler.to_json_canvas(root)
@@ -317,7 +317,7 @@ class TestRoundTrip:
         """Test that metadata is preserved in round trip"""
         root = Node("root", text="Root", 
                    metadata={'type': 'group', 'custom': 'value'})
-        child = Node("child", text="Child", parent=root,
+        Node("child", text="Child", parent=root,
                     metadata={'type': 'file', 'file_path': '/test.md'})
         
         # Export and re-import

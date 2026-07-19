@@ -48,7 +48,7 @@ async def test_management_window_lists_server_jobs_from_app_state(monkeypatch):
             return None
 
     app = ManagementApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         table = app.query_one("#server-job-table", DataTable)
         assert table.row_count == 2
         first_row = table.get_row_at(0)
@@ -117,7 +117,7 @@ async def test_management_window_lists_live_remote_server_jobs(monkeypatch):
             return None
 
     app = ManagementApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         table = app.query_one("#server-job-table", DataTable)
         rows = [table.get_row_at(index) for index in range(table.row_count)]
 
@@ -178,7 +178,7 @@ async def test_management_window_prefers_app_server_chatbook_service_for_live_jo
             return None
 
     app = ManagementApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         table = app.query_one("#server-job-table", DataTable)
         rows = [table.get_row_at(index) for index in range(table.row_count)]
 
@@ -266,7 +266,7 @@ async def test_management_window_remote_job_actions_call_server(monkeypatch, tmp
             self.notifications.append((message, kwargs))
 
     app = ManagementApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         window = app.query_one(ChatbookExportManagementWindow)
         cancel_button = app.query_one("#cancel-server-job", Button)
         download_button = app.query_one("#download-server-job", Button)
@@ -343,7 +343,7 @@ async def test_manage_exports_action_pushes_management_window(monkeypatch):
             return None
 
     app = ChatbooksWindowApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         window = app.query_one(ChatbooksWindowImproved)
         await window.action_manage_exports()
         assert isinstance(app.pushed, ChatbookExportManagementWindow)

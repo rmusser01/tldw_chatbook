@@ -412,7 +412,7 @@ class CodeRepoCopyPasteWindow(ModalScreen):
                 self.current_repo = {"owner": owner, "repo": repo}
                 
                 # Get repository info
-                repo_info = await self.api_client.get_repository_info(owner, repo)
+                await self.api_client.get_repository_info(owner, repo)
                 logger.info(f"Loaded repository: {owner}/{repo}")
                 
                 # Get branches
@@ -465,10 +465,9 @@ class CodeRepoCopyPasteWindow(ModalScreen):
         
         if has_token:
             # Mask the current token
-            masked_token = current_token[:8] + "*" * (len(current_token) - 12) + current_token[-4:]
-            message = f"Current token: {masked_token}\n\nEnter new GitHub personal access token (or leave empty to keep current):"
+            current_token[:8] + "*" * (len(current_token) - 12) + current_token[-4:]
         else:
-            message = "Enter GitHub personal access token:\n\nCreate a token at: https://github.com/settings/tokens\nRequired scopes: repo (private), public_repo (public only)"
+            pass
         
         # Use a simple approach with Textual's Input dialog
         # For now, we'll use a notification and ask them to add it to the config file
@@ -927,7 +926,7 @@ class CodeRepoCopyPasteWindow(ModalScreen):
                     # Handle local files one by one
                     for idx, file_path in enumerate(selected_files):
                         # Update progress
-                        progress = (idx + 1) / total_files
+                        (idx + 1) / total_files
                         self.loading_message = f"Adding to ZIP: {file_path} ({idx + 1}/{total_files})"
                         
                         try:

@@ -162,7 +162,7 @@ class AllTalkTTSBackend(APITTSBackend):
                     
             logger.info(f"AllTalkTTSBackend: Generation complete, received {bytes_received/1024:.1f}KB")
             
-        except httpx.ConnectError as e:
+        except httpx.ConnectError:
             logger.error(f"AllTalk connection error: Could not connect to {self.base_url}")
             raise ValueError("Could not connect to AllTalk server. Please ensure it's running.")
         except httpx.HTTPStatusError as e:

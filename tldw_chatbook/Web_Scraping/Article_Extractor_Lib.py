@@ -1424,7 +1424,7 @@ class ContentMetadataHandler:
             metadata = json.loads(metadata_json)
             clean_content = content[metadata_end + len(ContentMetadataHandler.METADATA_END):].strip()
             return metadata, clean_content
-        except (ValueError, json.JSONDecodeError) as e:
+        except (ValueError, json.JSONDecodeError):
             return {}, content
 
     @staticmethod

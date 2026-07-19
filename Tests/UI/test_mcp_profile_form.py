@@ -29,7 +29,7 @@ class FormApp(App):
 @pytest.mark.asyncio
 async def test_build_payload_splits_env_into_placeholders_and_literals():
     app = FormApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         form = app.query_one(MCPProfileForm)
         app.query_one("#mcp-form-id", Input).value = "docs"
         app.query_one("#mcp-form-command", Input).value = "npx"
@@ -56,7 +56,7 @@ async def test_build_payload_splits_env_into_placeholders_and_literals():
 @pytest.mark.asyncio
 async def test_malformed_env_line_raises_with_line_number():
     app = FormApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         form = app.query_one(MCPProfileForm)
         app.query_one("#mcp-form-id", Input).value = "docs"
         app.query_one("#mcp-form-command", Input).value = "npx"
@@ -96,7 +96,7 @@ async def test_form_error_static_carries_status_error_class():
     instead of plain body text.
     """
     app = FormApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         error = app.query_one("#mcp-form-error", Static)
         assert "mcp-status-error" in error.classes
 
@@ -106,7 +106,7 @@ async def test_form_args_warning_static_carries_status_warning_class():
     """A2: `#mcp-form-args-warning` must carry `mcp-status-warning` at
     compose time so the secret-lint warning renders in the warning color."""
     app = FormApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         warning = app.query_one("#mcp-form-args-warning", Static)
         assert "mcp-status-warning" in warning.classes
 
@@ -181,7 +181,7 @@ async def test_add_mode_save_starts_disabled_with_empty_fields():
     submit an incomplete profile -- Save starts disabled with a tooltip
     explaining why."""
     app = FormApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         save_button = app.query_one("#mcp-form-save", Button)
         assert save_button.disabled
         assert save_button.tooltip == "Enter a profile id and command first."
@@ -195,7 +195,7 @@ async def test_edit_mode_save_starts_enabled_with_prefilled_fields():
     profile = {"profile_id": "docs", "command": "npx", "args": [],
                "env_placeholders": {}, "env_literals": {}}
     app = FormApp(profile=profile)
-    async with app.run_test() as pilot:
+    async with app.run_test():
         save_button = app.query_one("#mcp-form-save", Button)
         assert not save_button.disabled
 
@@ -392,7 +392,7 @@ async def test_import_error_static_carries_status_error_class():
     time, mirroring `#mcp-form-error`, so an invalid-JSON preview error
     renders in the error color instead of plain body text."""
     app = ImportApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         error = app.query_one("#mcp-import-error", Static)
         assert "mcp-status-error" in error.classes
 

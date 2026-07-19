@@ -58,7 +58,7 @@ class TopicBar(Container):
         
     def compose(self) -> ComposeResult:
         """Compose the topic bar."""
-        percentage = (self.count / self.max_count * 100) if self.max_count > 0 else 0
+        (self.count / self.max_count * 100) if self.max_count > 0 else 0
         
         with Horizontal(classes="topic-bar-container"):
             yield Label(f"{self.topic} ({self.count})", classes="topic-label")

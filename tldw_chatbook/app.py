@@ -2552,7 +2552,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 task_name = futures[future]
                 try:
                     task_start = time.perf_counter()
-                    result = future.result()
+                    future.result()
                     task_duration = time.perf_counter() - task_start
                     logger.info(f"Parallel init task '{task_name}' completed in {task_duration:.3f}s")
                 except Exception as e:
@@ -6930,7 +6930,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         try:
             from .UI.MediaIngestWindowRebuilt import MediaIngestWindowRebuilt as MediaIngestWindow
 
-            ingest_window = self.query_one("#ingest-window", MediaIngestWindow)
+            self.query_one("#ingest-window", MediaIngestWindow)
             # New ingest window doesn't need model initialization
             self.log.debug("New ingest window loaded")
         except Exception as e:
@@ -6941,7 +6941,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         try:
             from .UI.MediaIngestWindowRebuilt import MediaIngestWindowRebuilt as MediaIngestWindow
 
-            ingest_window = self.query_one("#ingest-window", MediaIngestWindow)
+            self.query_one("#ingest-window", MediaIngestWindow)
             # New ingest window doesn't need model initialization
             self.log.debug("New ingest window loaded")
         except Exception as e:
@@ -7558,7 +7558,6 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         """Handles changes in Switch widgets."""
 
         switch_id = event.switch.id
-        current_active_tab = self.current_tab
         
         if switch_id == "notes-auto-save-toggle":
             await self.handle_notes_auto_save_toggle(event)
@@ -8462,7 +8461,7 @@ if __name__ == "__main__":
             concurrent.futures.thread._threads_queues.clear()
         except Exception:
             pass
-    except Exception as e:
+    except Exception:
         loguru_logger.exception("--- CRITICAL ERROR DURING app.run() ---")
         traceback.print_exc()  # Make sure traceback prints
     finally:
@@ -8596,7 +8595,7 @@ def main_cli_runner():
     signal.signal(signal.SIGTERM, signal_handler)
     
     # Initialize logging first
-    early_logging_app = initialize_early_logging()
+    initialize_early_logging()
 
     # Ensure config file exists (create default if missing)
     try:
@@ -8739,7 +8738,7 @@ def main_cli_runner():
             concurrent.futures.thread._threads_queues.clear()
         except Exception:
             pass
-    except Exception as e:
+    except Exception:
         loguru_logger.exception("--- CRITICAL ERROR DURING app.run() ---")
         traceback.print_exc()  # Make sure traceback prints
     finally:

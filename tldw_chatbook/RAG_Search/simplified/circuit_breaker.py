@@ -197,7 +197,7 @@ class CircuitBreaker(Generic[T]):
             await self._record_success()
             return result
             
-        except self.config.expected_exception as e:
+        except self.config.expected_exception:
             await self._record_failure()
             raise
     

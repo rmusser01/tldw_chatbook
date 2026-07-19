@@ -324,7 +324,7 @@ class SubscriptionScheduler:
                 
                 # Calculate next run time
                 if sub['last_checked']:
-                    last_checked = datetime.fromisoformat(sub['last_checked'])
+                    datetime.fromisoformat(sub['last_checked'])
                     # Use pattern analysis for next check
                     next_check = self.update_patterns.get_next_check_time(
                         sub['id'], 

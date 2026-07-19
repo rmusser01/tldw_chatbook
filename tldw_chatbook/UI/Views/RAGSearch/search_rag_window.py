@@ -782,7 +782,7 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
     def _setup_collections_list(self) -> None:
         """Setup collections list for maintenance"""
         if RAG_SERVICES_AVAILABLE:
-            collections_list = self.query_one("#collections-list", ListView)
+            self.query_one("#collections-list", ListView)
             self._refresh_collections_list()
     
     def _setup_index_stats(self) -> None:

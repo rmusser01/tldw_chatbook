@@ -59,7 +59,7 @@ async def safe_click(pilot: Pilot, selector_or_widget: Union[str, Widget], force
         await pilot.pause()
         return True
         
-    except Exception as e:
+    except Exception:
         # NEVER re-raise OutOfBounds - just return False
         return False
 

@@ -221,7 +221,6 @@ class KokoroTTSBackend(LocalTTSBackend):
                     
                     url = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx"
                     # Expected SHA256 checksum for kokoro-v0_19.onnx
-                    expected_checksum = "7e4f8a3c8d5a2b1f9c6e5d4a3b2c1a0e9f8d7c6b5a4e3d2c1b0a9e8d7c6b5a4e"  # Placeholder - needs actual checksum
                     
                     response = requests.get(url, stream=True)
                     response.raise_for_status()
@@ -1232,7 +1231,6 @@ class KokoroTTSBackend(LocalTTSBackend):
         word_timestamps = []
         
         # Generate audio
-        audio_chunks = []
         sample_rate = 24000
         current_time = 0.0
         

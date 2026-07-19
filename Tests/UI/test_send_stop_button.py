@@ -113,7 +113,7 @@ async def test_send_stop_button_handler_debouncing(chat_window, mock_app):
     
     # Mock chat_events module
     with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.handle_chat_send_button_pressed') as mock_send, \
-         patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.handle_stop_chat_generation_pressed') as mock_stop:
+         patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.handle_stop_chat_generation_pressed'):
         
         # First click should work
         await chat_window.handle_send_stop_button(mock_app, mock_event)
@@ -178,7 +178,7 @@ async def test_button_disabled_during_operation(chat_window, mock_app):
     type(mock_button).disabled = property(lambda self: button_states[-1] if button_states else False, 
                                          lambda self, value: set_disabled(value))
     
-    with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.handle_chat_send_button_pressed') as mock_send:
+    with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.handle_chat_send_button_pressed'):
         await chat_window.handle_send_stop_button(mock_app, mock_event)
         
         # Check that button was disabled then re-enabled

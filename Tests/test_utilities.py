@@ -560,7 +560,7 @@ def assert_input_sanitized(func: Callable, test_inputs: List[str], *args, **kwar
             # Should either sanitize the input or raise an exception
             assert dangerous_input not in str(result), \
                 f"Dangerous input not sanitized: {dangerous_input}"
-        except (ValueError, TypeError, Exception) as e:
+        except (ValueError, TypeError, Exception):
             # Raising an exception is also acceptable
             pass
 

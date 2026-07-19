@@ -1751,7 +1751,6 @@ class MediaDatabase:
                     logging.warning(f"FTS MATCH error, falling back to LIKE-only search: {e}")
                     # Remove FTS conditions and keep only LIKE conditions
                     new_conditions = []
-                    new_params = []
                     for i, condition in enumerate(conditions):
                         if "fts.media_fts MATCH" not in condition:
                             new_conditions.append(condition)

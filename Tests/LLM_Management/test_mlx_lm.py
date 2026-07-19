@@ -248,8 +248,6 @@ def test_chat_with_mlx_lm_args_override_config(mock_openai_call, mock_mlx_settin
     custom_model = "override/model"
     custom_temp = 0.99
     custom_max_tokens = 512
-    custom_host = "192.168.1.100"  # This won't be used by chat_with_mlx_lm if api_url is formed by its own host/port config
-    custom_port = 9090  # Same as above
 
     # To test host/port override, we would typically pass api_url directly if chat_with_mlx_lm supported it
     # OR, we modify the settings for host/port for this specific test case.

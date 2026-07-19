@@ -102,7 +102,7 @@ class TestVoiceInputWidget:
     async def test_record_button_starts_recording(self, widget_app, mock_dictation_service):
         """Test clicking record button starts recording."""
         widget = widget_app.app.query_one(VoiceInputWidget)
-        button = widget_app.app.query_one("#record-button", Button)
+        widget_app.app.query_one("#record-button", Button)
         
         # Click button
         await widget_app.click("#record-button")
@@ -375,7 +375,7 @@ class TestVoiceInputIntegration:
             
             app = TestApp()
             async with app.run_test() as pilot:
-                widget = pilot.app.query_one(VoiceInputWidget)
+                pilot.app.query_one(VoiceInputWidget)
                 
                 # Start recording
                 await pilot.click("#record-button")

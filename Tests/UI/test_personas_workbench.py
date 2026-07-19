@@ -520,7 +520,7 @@ class TestCharacterSelectionAndEdit:
     async def test_ctrl_f_focuses_library_search(self, mock_app_instance, stub_characters):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
-            screen = await _mounted(pilot)
+            await _mounted(pilot)
             await pilot.pause()
             await pilot.press("ctrl+f")
             await pilot.pause()

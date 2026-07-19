@@ -179,7 +179,7 @@ class DatasetManagementWindow(BaseEvaluationWindow):
         
         try:
             # Get detailed dataset info
-            dataset_info = await get_dataset_info(self.app_instance, self.selected_dataset['name'])
+            await get_dataset_info(self.app_instance, self.selected_dataset['name'])
             
             # For now, show mock samples
             # TODO: Load actual samples from dataset file

@@ -584,7 +584,6 @@ class UserStatistics:
                 ORDER BY day
             """)
             
-            dates = []
             current_streak = 0
             longest_streak = 0
             last_date = None

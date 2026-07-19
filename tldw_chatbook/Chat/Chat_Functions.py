@@ -1800,7 +1800,6 @@ def generate_chat_history_content(
         # Assuming 'history' is like chatbot: List[Tuple[Optional[str], Optional[str]]]
     }
 
-    current_turn = []
     for item in history:  # Iterating through the provided history structure
         if isinstance(item, tuple) and len(item) == 2:  # Expected (user_msg, bot_msg)
             user_msg, bot_msg = item

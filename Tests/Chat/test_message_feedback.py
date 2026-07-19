@@ -197,7 +197,7 @@ class TestChatMessageWidget:
         """Test that feedback state affects button display in compose."""
         # This would require a more complex test with the Textual test framework
         # For now, just verify the widget accepts feedback parameter
-        msg = ChatMessage(
+        ChatMessage(
             message="AI response",
             role="Assistant",
             message_id="test-123",

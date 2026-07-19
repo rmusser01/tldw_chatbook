@@ -181,7 +181,7 @@ async def test_complete_video_ingestion_workflow():
                 assert len(drop_zone.files) == 2
                 assert drop_zone.file_count == 2
                 
-            except Exception as e:
+            except Exception:
                 # If drop zone not available, simulate with direct processor setup
                 processor = UnifiedProcessor(app, initial_files=[test_video1, test_video2])
                 
@@ -226,7 +226,7 @@ async def test_complete_video_ingestion_workflow():
                 title_input = processor.query_one("#title-input")
                 assert "Test Video Batch Processing" in str(title_input.value)
                 
-            except Exception as e:
+            except Exception:
                 # Form fields might not exist, continue with test
                 pass
             
@@ -461,7 +461,7 @@ async def test_responsive_layout_adaptation():
         await pilot.pause()
         
         # Check that layout adapted to narrow width
-        main_content = ingest_window.query_one(".main-content")
+        ingest_window.query_one(".main-content")
         # In narrow mode, layout should be vertical
         
         # Resize to wide terminal

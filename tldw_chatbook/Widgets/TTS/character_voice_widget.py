@@ -481,7 +481,7 @@ class CharacterVoiceWidget(Widget):
             sample_text = f"Hello, I am {character.name}."
         
         # Get voice settings
-        voice_settings = self._get_current_voice_settings()
+        self._get_current_voice_settings()
         
         # This would typically trigger a TTS preview event
         self.app.notify(f"Preview: {character.name} with voice {self._get_voice_label(voice_id)}", severity="information")

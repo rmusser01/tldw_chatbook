@@ -159,7 +159,7 @@ async def populate_ccp_prompts_list_view(app: 'TldwCli', search_term: Optional[s
 
 def clear_ccp_prompt_fields(app: 'TldwCli') -> None:
     """Clears prompt input fields in the CCP right pane."""
-    logger = getattr(app, 'loguru_logger', loguru_logger)
+    getattr(app, 'loguru_logger', loguru_logger)
     app._clear_prompt_fields()
 
 

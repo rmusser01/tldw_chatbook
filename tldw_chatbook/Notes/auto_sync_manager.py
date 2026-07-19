@@ -204,7 +204,7 @@ class AutoSyncManager:
                 self.on_sync_started()
             
             # Get changed files
-            changed_files = self.file_watcher.get_changed_files() if self.file_watcher else set()
+            self.file_watcher.get_changed_files() if self.file_watcher else set()
             
             # Perform sync
             session_id = await self.sync_service.sync(

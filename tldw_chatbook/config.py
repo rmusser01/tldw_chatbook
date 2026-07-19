@@ -703,8 +703,8 @@ def load_settings(force_reload: bool = False) -> Dict:
     search_settings_section = get_toml_section('SearchSettings')
     web_scraper_section = get_toml_section('WebScraper')
     confluence_section = get_toml_section('Confluence')
-    file_validation_section = get_toml_section('FileValidation')
-    providers_section_from_toml = get_toml_section('providers')  # Get the [providers] table
+    get_toml_section('FileValidation')
+    get_toml_section('providers')  # Get the [providers] table
 
     final_api_settings = get_toml_section('api_settings')
     final_logging_settings = get_toml_section('logging')
@@ -743,13 +743,13 @@ def load_settings(force_reload: bool = False) -> Dict:
 
     # --- Single-User Settings ---
     single_user_fixed_id = int(os.getenv("SINGLE_USER_FIXED_ID", _get_typed_value(processing_section, "single_user_fixed_id", "0", int)))
-    single_user_api_key = os.getenv("API_KEY", _get_typed_value(api_section, "single_user_api_key", "default-secret-key-for-single-user"))
+    os.getenv("API_KEY", _get_typed_value(api_section, "single_user_api_key", "default-secret-key-for-single-user"))
 
     # --- Paths ---
     api_section_legacy = get_toml_section('API')  # For legacy direct API key access if any
     paths_section_legacy = get_toml_section('Paths')
-    processing_section_legacy = get_toml_section('Processing')
-    chunking_section_legacy = get_toml_section('Chunking')
+    get_toml_section('Processing')
+    get_toml_section('Chunking')
 
     # --- User Name ---
     default_users_name_fallback = "default_user"
@@ -759,7 +759,7 @@ def load_settings(force_reload: bool = False) -> Dict:
 
     users_db_configured = os.getenv("USERS_DB_ENABLED", _get_typed_value(processing_section, "users_db_enabled", "false", str)).lower() == "true"
     log_level_env = os.getenv("LOG_LEVEL", "INFO").upper()
-    log_level_toml = _get_typed_value(logging_section_server, "log_level", log_level_env, str).upper()
+    _get_typed_value(logging_section_server, "log_level", log_level_env, str).upper()
 
 
 

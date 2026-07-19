@@ -743,7 +743,7 @@ def _status_summary_line(state: HomeDashboardInput) -> str:
 def summarize_home_dashboard(state: HomeDashboardInput) -> HomeDashboard:
     next_action = choose_next_best_action(state)
     approval_label = "Approval required" if _pending_approval_count(state) else "Ready"
-    active_count = _active_run_count(state)
+    _active_run_count(state)
     approval_count = _pending_approval_count(state)
     status_summary = _status_summary_line(state)
     return HomeDashboard(

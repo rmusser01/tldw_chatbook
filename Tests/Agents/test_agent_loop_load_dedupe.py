@@ -39,7 +39,7 @@ def test_load_tools_never_duplicates_an_active_schema():
         load_schemas=lambda ids: [ToolSchema(id="p:foo", name="foo", description="d", parameters={})],
         should_cancel=lambda: False,
         clock=lambda: 0.0)
-    outcome = run_agent_loop(
+    run_agent_loop(
         AgentConfig(model="m", system_prompt="s", allowed_tools=("foo", "load_tools"),
                     budget=RunBudget(max_active_tools=8)),
         [{"role": "user", "content": "hi"}], active, deps)

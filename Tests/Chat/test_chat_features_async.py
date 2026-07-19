@@ -29,7 +29,7 @@ async def test_thumbs_icons_visibility():
     """
     # Test AI message should have thumbs up/down
     app = ChatMessageTestApp(message="Hello AI", role="AI", generation_complete=True)
-    async with app.run_test() as pilot:
+    async with app.run_test():
         ai_message = app.query_one(ChatMessage)
         buttons = ai_message.query(Button)
         button_ids = {btn.id for btn in buttons if btn.id}
@@ -39,7 +39,7 @@ async def test_thumbs_icons_visibility():
     
     # Test User message should NOT have thumbs up/down
     app = ChatMessageTestApp(message="Hello User", role="User", generation_complete=True)
-    async with app.run_test() as pilot:
+    async with app.run_test():
         user_message = app.query_one(ChatMessage)
         buttons = user_message.query(Button)
         button_ids = {btn.id for btn in buttons if btn.id}
@@ -56,7 +56,7 @@ async def test_continue_button_exists():
     """
     # Test AI message should have continue button
     app = ChatMessageTestApp(message="Hello AI", role="AI", generation_complete=True)
-    async with app.run_test() as pilot:
+    async with app.run_test():
         ai_message = app.query_one(ChatMessage)
         buttons = ai_message.query(Button)
         button_ids = {btn.id for btn in buttons if btn.id}

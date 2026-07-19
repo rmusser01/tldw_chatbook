@@ -214,7 +214,7 @@ class TestNotesKeywordIntegration:
         # Create multiple notes and link some to keyword
         note1_id = create_test_note(notes_library, "Important Note 1")
         note2_id = create_test_note(notes_library, "Important Note 2")
-        note3_id = create_test_note(notes_library, "Regular Note")
+        create_test_note(notes_library, "Regular Note")
         
         notes_library.db.link_note_to_keyword(note1_id, kw_id)
         notes_library.db.link_note_to_keyword(note2_id, kw_id)
@@ -233,7 +233,7 @@ class TestNotesFileSync:
     
     def test_create_note_creates_file(self, sync_enabled_library):
         """Test that creating a note creates a corresponding file"""
-        note_id = create_test_note(sync_enabled_library, "File Test", "File content")
+        create_test_note(sync_enabled_library, "File Test", "File content")
         
         # Check that file was created
         notes_dir = Path(sync_enabled_library.notes_directory)

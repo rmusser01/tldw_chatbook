@@ -1049,7 +1049,7 @@ class TestChatHistorySaving:
         assert conv_details["title"] == "Chat with Canonical Saver"
 
     def test_resave_chat_history(self, db_instance: CharactersRAGDB):
-        char_id = db_instance.add_character_card({"name": "Resaver"})
+        db_instance.add_character_card({"name": "Resaver"})
         initial_history = [
             {
                 "id": "msg-user-1",

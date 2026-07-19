@@ -954,13 +954,13 @@ class TestMindmaps:
         )
         
         # Add child nodes
-        child1_id = db_instance.add_mindmap_node(
+        db_instance.add_mindmap_node(
             sample_mindmap,
             "Subtopic 1",
             parent_id=root_id,
             position=(100, 50)
         )
-        child2_id = db_instance.add_mindmap_node(
+        db_instance.add_mindmap_node(
             sample_mindmap,
             "Subtopic 2",
             parent_id=root_id,

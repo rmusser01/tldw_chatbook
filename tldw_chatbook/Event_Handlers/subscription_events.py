@@ -214,7 +214,7 @@ async def handle_add_subscription(app: 'TldwCli', event: Button.Pressed) -> None
         
         # Add subscription to database
         try:
-            subscription_id = app.subscriptions_db.add_subscription(
+            app.subscriptions_db.add_subscription(
                 name=name_input.value.strip(),
                 type=type_select.value,
                 source=url_input.value.strip(),
@@ -296,7 +296,7 @@ async def handle_subscription_item_action(app: 'TldwCli', event: Button.Pressed)
     
     try:
         # Get selected items from list
-        items_list = app.query_one("#subscription-new-items-list", ListView)
+        app.query_one("#subscription-new-items-list", ListView)
         selected_items = []
         
         # This is placeholder - in real implementation, track selected items properly

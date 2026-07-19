@@ -266,7 +266,7 @@ class EnhancedRAGService(RAGService):
         
         # Phase 2: Generate embeddings for retrieval chunks
         embed_start = time.time()
-        chunk_texts = [chunk['text'] if isinstance(chunk, dict) else str(chunk) for chunk in retrieval_chunks]
+        [chunk['text'] if isinstance(chunk, dict) else str(chunk) for chunk in retrieval_chunks]
         retrieval_embeddings, _, failed_indices, _ = await generate_embeddings_for_parent_retrieval(
             self, retrieval_chunks, parent_chunks, batch_size, show_progress, embed_parents=False
         )

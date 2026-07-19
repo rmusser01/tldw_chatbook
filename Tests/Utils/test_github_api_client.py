@@ -65,10 +65,9 @@ class TestGitHubAPIClient:
     
     def test_client_property_without_token(self):
         """Test client creation without token."""
-        client = GitHubAPIClient()
+        GitHubAPIClient()
         
         with patch('httpx.AsyncClient') as mock_client_class:
-            http_client = client.client
             
             call_args = mock_client_class.call_args
             headers = call_args.kwargs['headers']
@@ -283,7 +282,7 @@ class TestGitHubAPIClient:
         api_client._client = mock_http_client
         
         # Should succeed with master branch
-        items = await api_client.get_repository_tree("owner", "repo", "main")
+        await api_client.get_repository_tree("owner", "repo", "main")
         
         # Verify fallback happened
         assert mock_http_client.get.call_count == 3

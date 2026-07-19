@@ -166,7 +166,6 @@ class TestRealEmbeddingsWorkflow:
         rag_service = create_rag_service(config=config)
         
         # Index documents
-        collection_name = "real_documents"
         metadatas = [{"source": "test", "index": i} for i in range(len(sample_texts))]
         
         # Index documents one by one
@@ -524,7 +523,7 @@ class TestRealErrorHandling:
                 model_name="invalid/model/name/that/doesnt/exist"
             )
             # Try to actually create embeddings - this should fail
-            embeddings = service.create_embeddings(["test text"])
+            service.create_embeddings(["test text"])
             # If we get here without error, fail the test
             pytest.fail("Expected an error when using invalid model, but none was raised")
         except Exception as e:

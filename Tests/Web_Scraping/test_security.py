@@ -82,7 +82,7 @@ class TestSQLInjectionPrevention:
             # Mock the cookie path discovery
             with patch('os.path.expanduser') as mock_expand:
                 with patch('os.path.exists') as mock_exists:
-                    with patch('shutil.copyfile') as mock_copy:
+                    with patch('shutil.copyfile'):
                         with patch('tempfile.mkstemp') as mock_mkstemp:
                             # Set up mocks
                             mock_mkstemp.return_value = (999, tmp_path + "_temp")
@@ -255,7 +255,6 @@ class TestCookieSecurity:
         # Test that we don't expose decrypted values in logs/errors
         with patch('tldw_chatbook.Web_Scraping.cookie_scraping.cookie_cloner.logger') as mock_logger:
             # Simulate cookie decryption
-            encrypted_value = b"encrypted_cookie_value"
             
             # Good practice: never log decrypted cookie values
             # Check that sensitive data isn't logged

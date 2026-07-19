@@ -433,7 +433,7 @@ class SubscriptionSchedulerWorker:
             }
             
             # Aggregate content
-            agg_config = AggregationConfig.from_dict(config.get('aggregation', {}))
+            AggregationConfig.from_dict(config.get('aggregation', {}))
             aggregated = await self.aggregation_engine.aggregate_items(items, subscriptions)
             
             # Generate briefing

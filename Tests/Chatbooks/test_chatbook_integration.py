@@ -208,7 +208,7 @@ class TestChatbookIntegration:
         
         # Initialize import databases
         import_chacha_db = CharactersRAGDB(import_db_paths['ChaChaNotes'], "test_client")
-        import_media_db = MediaDatabase(import_db_paths['Media'], "test_client")
+        MediaDatabase(import_db_paths['Media'], "test_client")
         
         # Import chatbook
         importer = ChatbookImporter(db_paths=import_db_paths)
@@ -511,7 +511,7 @@ New content from import""".format(datetime.now().isoformat(), datetime.now().iso
         }
         
         # Initialize import database
-        import_chacha_db = CharactersRAGDB(import_db_paths['ChaChaNotes'], "test_client")
+        CharactersRAGDB(import_db_paths['ChaChaNotes'], "test_client")
         
         importer = ChatbookImporter(db_paths=import_db_paths)
         status = ImportStatus()

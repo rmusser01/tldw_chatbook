@@ -2162,7 +2162,7 @@ async def test_transcript_c_key_copies_selected_message():
         await _wait_for_selector(console, pilot, "#console-native-transcript")
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
-        message = store.append_message(
+        store.append_message(
             session.id,
             role=ConsoleMessageRole.ASSISTANT,
             content="answer",
@@ -2197,7 +2197,7 @@ async def test_transcript_rapid_select_then_action_retries_after_deferred_mount(
         await _wait_for_selector(console, pilot, "#console-native-transcript")
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
-        message = store.append_message(
+        store.append_message(
             session.id,
             role=ConsoleMessageRole.ASSISTANT,
             content="answer",
@@ -4353,7 +4353,7 @@ async def test_console_conversation_browser_marks_unavailable_keeps_browsing_ena
 async def test_console_conversation_browser_default_includes_sync_persisted_rows():
     app = _build_test_app()
     app.conversation_local_marks_service = None
-    service = _configure_grouped_browser_workspaces(app)
+    _configure_grouped_browser_workspaces(app)
     app.chat_conversation_scope_service = SyncSearchableConversationService(
         {
             "global-default": {
@@ -4963,7 +4963,7 @@ async def test_console_workspace_conversation_search_shows_cap_and_empty_copy():
         await _wait_for_text(console, pilot, "60 matches")
         await _wait_for_text(console, pilot, "Showing")
 
-        search = console.query_one("#console-workspace-conversation-search", Input)
+        console.query_one("#console-workspace-conversation-search", Input)
         await _set_console_conversation_browser_search(console, pilot, "missing")
         await _wait_for_text(console, pilot, "No workspace conversations.")
 
@@ -5028,7 +5028,7 @@ async def test_console_workspace_conversation_search_blank_query_clears_error_ca
             "Workspace conversation search is unavailable.",
         )
 
-        search = console.query_one("#console-workspace-conversation-search", Input)
+        console.query_one("#console-workspace-conversation-search", Input)
         await _set_console_conversation_browser_search(console, pilot, "")
 
         assert (

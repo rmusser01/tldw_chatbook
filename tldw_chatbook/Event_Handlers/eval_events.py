@@ -134,7 +134,7 @@ class EvaluationProgressAdapter:
             # Calculate derived metrics
             accuracy = (self.correct_count / self.sample_count * 100) if self.sample_count > 0 else 0
             elapsed_time = time.time() - self.start_time
-            speed = self.sample_count / elapsed_time if elapsed_time > 0 else 0
+            self.sample_count / elapsed_time if elapsed_time > 0 else 0
             
             # Update reactive state if working with EvalsLab
             if hasattr(self.app_or_lab, 'evaluation_progress'):
@@ -270,7 +270,7 @@ async def _create_custom_task(app: 'TldwCli', config: Dict[str, Any]):
         orchestrator = get_orchestrator()
         
         # Create task using orchestrator
-        task_id = orchestrator.db.create_task(
+        orchestrator.db.create_task(
             name=config['name'],
             description=config.get('description', ''),
             task_type=config['task_type'],
@@ -373,7 +373,7 @@ async def _save_model_config(app: 'TldwCli', config: Dict[str, Any]):
         orchestrator = get_orchestrator()
         
         # Save model configuration
-        model_id = orchestrator.create_model_config(
+        orchestrator.create_model_config(
             name=config['name'],
             provider=config['provider'],
             model_id=config['model_id'],
@@ -974,7 +974,7 @@ async def _process_dataset_upload(app: 'TldwCli', file_path: str):
         orchestrator = get_orchestrator()
         dataset_name = Path(file_path).stem
         
-        dataset_id = orchestrator.create_dataset_from_file(
+        orchestrator.create_dataset_from_file(
             name=dataset_name,
             file_path=file_path,
             description=f"Uploaded dataset from {Path(file_path).name}"

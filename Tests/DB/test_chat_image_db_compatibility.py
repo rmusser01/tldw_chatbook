@@ -433,7 +433,7 @@ class TestDatabaseMigrationCompatibility:
             
             # Test storing a message with an image
             test_image = b'\x89PNG\r\n\x1a\n...'  # Minimal PNG header
-            msg_id = db.add_message({
+            db.add_message({
                 "conversation_id": convo_id,
                 "sender": "user",
                 "content": "Test message with image",

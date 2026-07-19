@@ -763,10 +763,10 @@ class TestConcurrencyAndPerformance:
         """Test evaluation cancellation."""
         mock_llm_interface.generate.side_effect = lambda p, **k: asyncio.sleep(1)
         
-        runner = create_test_runner(mock_llm_interface)
+        create_test_runner(mock_llm_interface)
         
         from tldw_chatbook.Evals.eval_runner import EvalSample
-        eval_samples = [
+        [
             EvalSample(id=f"sample_{i}", input_text=f"Question {i}", expected_output=f"Answer {i}")
             for i in range(10)
         ]
@@ -786,7 +786,7 @@ class TestAdvancedFeatures:
     @pytest.mark.asyncio
     async def test_few_shot_prompting(self, mock_llm_interface):
         """Test few-shot prompting functionality."""
-        config = TaskConfig(
+        TaskConfig(
             name="fewshot_task",
             description="Few-shot evaluation",
             task_type="question_answer",
@@ -797,10 +797,10 @@ class TestAdvancedFeatures:
             metadata={"fewshot_split": "train"}
         )
         
-        runner = create_test_runner(mock_llm_interface)
+        create_test_runner(mock_llm_interface)
         
         from tldw_chatbook.Evals.eval_runner import EvalSample
-        sample = EvalSample(
+        EvalSample(
             id="fewshot_sample",
             input_text="What is 2+2?",
             expected_output="4"
@@ -839,7 +839,7 @@ class TestAdvancedFeatures:
             mock_llm_class.return_value = mock_llm_interface
             
             runner = create_test_runner()
-            result = await runner.run_single_sample(sample_task_config, sample)
+            await runner.run_single_sample(sample_task_config, sample)
         
         # Verify custom template was used
         mock_llm_interface.generate.assert_called_once()

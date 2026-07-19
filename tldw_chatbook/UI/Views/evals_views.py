@@ -377,7 +377,7 @@ class ResultsDashboardView(Container):
         
         try:
             # Update results table
-            results_table = self.query_one("#results-table", ResultsTable)
+            self.query_one("#results-table", ResultsTable)
             # results_table.update_data(self.state.recent_runs)
             
             # Update metrics display if there's a selected run

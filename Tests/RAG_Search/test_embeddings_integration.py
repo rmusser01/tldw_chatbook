@@ -60,7 +60,7 @@ class TestEndToEndWorkflow:
             )
             
             # Create vector store
-            vector_store = InMemoryVectorStore()
+            InMemoryVectorStore()
             
             # Create RAG config for testing
             config = create_config_for_testing(use_memory_store=True)
@@ -487,7 +487,7 @@ class TestErrorRecoveryIntegration:
             
             # Second call fails
             with pytest.raises(Exception) as exc_info:
-                embeddings2 = service.create_embeddings(["text2"])
+                service.create_embeddings(["text2"])
             assert "Temporary failure" in str(exc_info.value)
             
             # Third call succeeds again

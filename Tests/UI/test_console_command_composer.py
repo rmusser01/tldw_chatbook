@@ -327,7 +327,7 @@ async def test_console_prompt_command_large_user_prompt_collapses_to_paste_token
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        baseline_depth = len(host.screen_stack)
+        len(host.screen_stack)
         await _wait_for_selector(console, pilot, "#console-native-composer")
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("/prompt Big")
@@ -688,7 +688,7 @@ async def test_console_consumes_pending_prompt_insert_empty_draft_is_clean_inser
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        baseline_depth = len(host.screen_stack)
+        len(host.screen_stack)
         await _wait_for_selector(console, pilot, "#console-native-composer")
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         assert composer.draft_text() == ""
@@ -710,7 +710,7 @@ async def test_console_consumes_pending_prompt_insert_appends_to_existing_draft(
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        baseline_depth = len(host.screen_stack)
+        len(host.screen_stack)
         await _wait_for_selector(console, pilot, "#console-native-composer")
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("abc")
@@ -736,7 +736,7 @@ async def test_console_consumes_pending_prompt_insert_large_body_appends_as_coll
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        baseline_depth = len(host.screen_stack)
+        len(host.screen_stack)
         await _wait_for_selector(console, pilot, "#console-native-composer")
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("abc")
@@ -759,7 +759,7 @@ async def test_console_consumes_pending_prompt_insert_blocked_shows_exact_toast(
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        baseline_depth = len(host.screen_stack)
+        len(host.screen_stack)
         await _wait_for_selector(console, pilot, "#console-native-composer")
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("abc")
@@ -785,7 +785,7 @@ async def test_console_consumes_pending_prompt_insert_noop_when_nothing_pending(
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        baseline_depth = len(host.screen_stack)
+        len(host.screen_stack)
         await _wait_for_selector(console, pilot, "#console-native-composer")
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("abc")

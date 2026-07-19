@@ -190,7 +190,7 @@ def test_keybinding_registration():
 def test_theme_config_integration():
     """Test that theme config integration works."""
     try:
-        with patch('tldw_chatbook.app.get_cli_setting') as mock_get_setting:
+        with patch('tldw_chatbook.app.get_cli_setting'):
             with patch('tldw_chatbook.config.save_setting_to_cli_config') as mock_save_setting:
                 from tldw_chatbook.app import ThemeProvider
                 

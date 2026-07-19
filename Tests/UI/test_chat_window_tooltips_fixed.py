@@ -32,7 +32,6 @@ class TestChatWindowTooltips:
             async with await widget_pilot(ChatWindow, app_instance=mock_app) as pilot:
                 # Get the app and our test widget
                 app = pilot.app
-                chat_window = app.test_widget
 
                 # Expected tooltips for each button ID
                 expected_tooltips = {

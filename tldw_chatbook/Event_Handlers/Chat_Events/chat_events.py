@@ -4163,7 +4163,6 @@ async def handle_chat_sidebar_prompt_search_changed(
 async def handle_continue_response_button_pressed(app: 'TldwCli', event: Button.Pressed, message_widget: Union[ChatMessage, ChatMessageEnhanced]) -> None:
     """Handles the 'Continue Response' button press on an AI chat message."""
     loguru_logger.info(f"Continue Response button pressed for message_id: {message_widget.message_id_internal}, current text: '{message_widget.message_text[:50]}...'")
-    db = app.chachanotes_db
     prefix = "chat" # Assuming 'chat' is the prefix for UI elements in the main chat window
 
     continue_button_widget: Optional[Button] = None
@@ -4198,7 +4197,6 @@ async def handle_continue_response_button_pressed(app: 'TldwCli', event: Button.
         return
 
     original_message_text = message_widget.message_text # Raw text content
-    original_message_version = message_widget.message_version_internal
 
     # --- 1. Retrieve History for API ---
     # History should include the message being continued, as the LLM needs its content.
@@ -4298,7 +4296,7 @@ async def handle_continue_response_button_pressed(app: 'TldwCli', event: Button.
         return
 
     selected_provider = str(provider_widget.value) if provider_widget.value != Select.BLANK else None
-    selected_model = str(model_widget.value) if model_widget.value != Select.BLANK else None
+    str(model_widget.value) if model_widget.value != Select.BLANK else None
     temperature = safe_float(temp_widget.value, 0.7, "temperature")
     top_p = safe_float(top_p_widget.value, 0.95, "top_p")
     min_p = safe_float(min_p_widget.value, 0.05, "min_p")
@@ -4526,7 +4524,7 @@ async def handle_respond_for_me_button_pressed(app: 'TldwCli', event: Button.Pre
             model_widget = app.query_one(f"#{prefix}-api-model", Select)
             provider_widget = app.query_one(f"#{prefix}-api-provider", Select)
             model_widget = app.query_one(f"#{prefix}-api-model", Select)
-            system_prompt_widget = app.query_one(f"#{prefix}-system-prompt", TextArea) # Main system prompt
+            app.query_one(f"#{prefix}-system-prompt", TextArea) # Main system prompt
             temp_widget = app.query_one(f"#{prefix}-temperature", Input)
             top_p_widget = app.query_one(f"#{prefix}-top-p", Input)
             min_p_widget = app.query_one(f"#{prefix}-min-p", Input)
@@ -4699,12 +4697,10 @@ async def handle_stop_chat_generation_pressed(app: 'TldwCli', event: Button.Pres
     """Handles the 'Stop Chat Generation' button press."""
     loguru_logger.info("Stop Chat Generation button pressed.")
 
-    worker_cancelled = False
     if app.current_chat_worker and app.current_chat_worker.is_running:
         try:
             app.current_chat_worker.cancel()
             loguru_logger.info(f"Cancellation requested for worker: {app.current_chat_worker.name}")
-            worker_cancelled = True # Mark that cancellation was attempted
 
             if not app.current_chat_is_streaming:
                 loguru_logger.debug("Handling cancellation for a non-streaming chat request.")

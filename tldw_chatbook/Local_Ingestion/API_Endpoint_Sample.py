@@ -66,7 +66,7 @@ async def process_videos_endpoint(
             # Adapt raw file errors to the MediaItemProcessResponse structure
             for err in file_handling_errors_raw:
                  # *** Use original filename for input_ref here ***
-                 original_filename = err.get("input", "Unknown Filename") # Assume 'input' holds original name from _save_uploaded_files error
+                 err.get("input", "Unknown Filename") # Assume 'input' holds original name from _save_uploaded_files error
                  file_handling_errors_structured.append({
                      "status": "Error",
                      "input_ref": err.get("input", "Unknown Filename"),
@@ -238,9 +238,9 @@ async def process_videos_endpoint(
         # Base the status code *solely* on the final calculated errors_count
         final_error_count = batch_result.get("errors_count", 0)
         # Check if there are only warnings and no errors
-        final_success_count = batch_result.get("processed_count", 0)
+        batch_result.get("processed_count", 0)
         total_items = len(batch_result.get("results", []))
-        has_warnings = any(r.get("status") == "Warning" for r in batch_result.get("results", []))
+        any(r.get("status") == "Warning" for r in batch_result.get("results", []))
 
         if total_items == 0: # Should not happen if validation passed, but handle defensively
             final_status_code = status.HTTP_400_BAD_REQUEST # Or 500?

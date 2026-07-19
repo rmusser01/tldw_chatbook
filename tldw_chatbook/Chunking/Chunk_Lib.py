@@ -568,7 +568,7 @@ class Chunker:
 
 
     def _chunk_text_by_sentences(self, text: str, max_sentences: int, overlap: int, language: str) -> List[str]:
-        start_time = time.time()
+        time.time()
         logger.info(f"Chunking by sentences: max_sentences={max_sentences}, overlap={overlap}, lang='{language}'")
         log_counter("chunking_method_sentences_attempt", labels={"language": language})
         
@@ -1592,13 +1592,11 @@ def improved_chunking_process(text: str,
         for i, chunk_item in enumerate(raw_chunks):
             logger.debug(f"Processing chunk {i+1}/{total_chunks_count}")
             actual_text_content: str
-            is_json_chunk = False
             chunk_specific_metadata = {} # Initialize
 
             if isinstance(chunk_item, dict) and 'json' in chunk_item and 'metadata' in chunk_item : # From JSON methods
                 actual_text_content = json.dumps(chunk_item['json'], ensure_ascii=False)
                 chunk_specific_metadata = chunk_item['metadata']
-                is_json_chunk = True
             elif isinstance(chunk_item, dict) and 'text' in chunk_item and 'metadata' in chunk_item: # From Ebook/XML methods
                 actual_text_content = chunk_item['text']
                 chunk_specific_metadata = chunk_item['metadata']

@@ -623,8 +623,6 @@ def chat_with_openai(
             return response_data
 
     except requests.exceptions.HTTPError as e:
-        error_content_text = "No response text"
-        error_content_json = None
         status_code = e.response.status_code if e.response is not None else 0
         
         # Log error metrics
@@ -944,7 +942,7 @@ def chat_with_anthropic(
             logger.debug("Anthropic: Streaming response received. Normalizing to OpenAI SSE.")
             def stream_generator():
                 completion_id = f"chatcmpl-anthropic-{time.time_ns()}"
-                created_time = int(time.time())
+                int(time.time())
 
                 created_ts = int(time.time())
                 # model_name = current_model # Defined outside this generator

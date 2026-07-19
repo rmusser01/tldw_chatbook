@@ -895,7 +895,7 @@ class SubscriptionWindow(Container):
         """Load available briefing templates."""
         try:
             templates = self.template_manager.list_templates()
-            template_select = self.query_one("#briefing-template", Select)
+            self.query_one("#briefing-template", Select)
             
             options = []
             for template in templates:
@@ -1742,11 +1742,11 @@ class SubscriptionWindow(Container):
         try:
             # Get form values
             name = self.query_one("#briefing-name", Input).value
-            template = self.query_one("#briefing-template", Select).value
+            self.query_one("#briefing-template", Select).value
             time_range = self.query_one("#briefing-time-range", Select).value
             sources = self.query_one("#briefing-sources", Select).value
             format = self.query_one("#briefing-format", Select).value
-            enhance = self.query_one("#briefing-enhance", Checkbox).value
+            self.query_one("#briefing-enhance", Checkbox).value
             
             # Calculate time range
             now = datetime.now(timezone.utc)
@@ -1765,11 +1765,10 @@ class SubscriptionWindow(Container):
                 end_time = now
             
             # Build source filter
-            source_filter = None
             if sources == "high_priority":
-                source_filter = {'priority': [1]}
+                pass
             elif sources == "selected" and self.selected_subscription:
-                source_filter = {'subscription_ids': [self.selected_subscription]}
+                pass
             
             # Disable button
             event.button.disabled = True

@@ -247,7 +247,7 @@ async def test_update_matrix_sets_kill_switch_label_without_posting_a_toggle():
 @pytest.mark.asyncio
 async def test_kill_switch_button_default_label_reads_no():
     app = PermissionsModeApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         button = app.query_one("#mcp-perm-kill-switch", Button)
         assert str(button.label) == "block MCP tools in chat: no ▸"
 
@@ -505,7 +505,7 @@ async def test_legend_line_renders_fixed_marker_key():
     `PermRow`/preview text -- explaining the matrix's own State-column
     glyphs and giving Space-cycling minimal discoverability."""
     app = PermissionsModeApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         legend = str(app.query_one("#mcp-perm-legend", Static).renderable)
         assert legend == (
             "• override · ⚠ definition changed · ⚑ high-risk floor · "

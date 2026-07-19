@@ -443,7 +443,7 @@ class TestSystemIntegrationProperties:
         with patch('tldw_chatbook.Audio.recording_service.PYAUDIO_AVAILABLE', True):
             with patch('tldw_chatbook.Audio.dictation_service.TranscriptionService'):
                 recording_service = AudioRecordingService()
-                dictation_service = LiveDictationService()
+                LiveDictationService()
                 
                 total_bytes = 0
                 for i in range(num_chunks):

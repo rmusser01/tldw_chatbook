@@ -518,7 +518,7 @@ class TestMultiProviderIntegration:
         # that automatically tries a different provider when one fails
         orchestrator = EvaluationOrchestrator(db_path=temp_db_path)
         
-        task_id = orchestrator.db.create_task(
+        orchestrator.db.create_task(
             name="Fallback test",
             description="Test provider fallback",
             task_type="question_answer",
@@ -533,14 +533,14 @@ class TestMultiProviderIntegration:
         )
         
         # Primary provider (fails)
-        primary_model_id = orchestrator.create_model_config(
+        orchestrator.create_model_config(
             name="Primary Model",
             provider="openai",
             model_id="gpt-3.5-turbo"
         )
         
         # Fallback provider (succeeds)
-        fallback_model_id = orchestrator.create_model_config(
+        orchestrator.create_model_config(
             name="Fallback Model",
             provider="anthropic", 
             model_id="claude-3-sonnet"
@@ -951,7 +951,7 @@ class TestConcurrentEvaluations:
                 # Create runner and mock _call_llm
                 from tldw_chatbook.Evals.task_loader import TaskConfig
                 
-                task_config = TaskConfig(
+                TaskConfig(
                     name="Concurrent Test Task",
                     description="Task for concurrent evaluation",
                     task_type="question_answer",

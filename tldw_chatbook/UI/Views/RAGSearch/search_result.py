@@ -43,7 +43,7 @@ class SearchResult(Container):
         """Create the enhanced result display"""
         source = self.result.get('source', 'unknown')
         source_icon = SOURCE_ICONS.get(source, "📄")
-        source_color = SOURCE_COLORS.get(source, "white")
+        SOURCE_COLORS.get(source, "white")
         
         with Container(classes="result-card-wrapper"):
             # Left side - Source indicator

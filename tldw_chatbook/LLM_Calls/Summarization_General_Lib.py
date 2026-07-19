@@ -844,7 +844,7 @@ def summarize_with_anthropic(api_key, input_data, custom_prompt_arg, temp=None, 
                             logging.debug("Anthropic: Summarization successful")
                             logging.debug(f"Anthropic: Summary (first 500 chars): {summary[:500]}...")
                             return summary
-                        except Exception as e:
+                        except Exception:
                             logging.debug("Anthropic: Unexpected data in response")
                             logging.error(f"Unexpected response format from Anthropic API: {response.text}")
                             return None
@@ -863,10 +863,10 @@ def summarize_with_anthropic(api_key, input_data, custom_prompt_arg, temp=None, 
                     time.sleep(retry_delay)
                 else:
                     return f"Anthropic: Network error: {str(e)}"
-    except FileNotFoundError as e:
+    except FileNotFoundError:
         logging.error(f"Anthropic: File not found: {input_data}")
         return f"Anthropic: File not found: {input_data}"
-    except json.JSONDecodeError as e:
+    except json.JSONDecodeError:
         logging.error(f"Anthropic: Invalid JSON format in file: {input_data}")
         return f"Anthropic: Invalid JSON format in file: {input_data}"
     except Exception as e:
@@ -1299,7 +1299,7 @@ def summarize_with_openrouter(api_key, input_data, custom_prompt_arg, temp=None,
 
         # Model Selection validation
         logging.debug("OpenRouter: Validating model selection")
-        loaded_config_data = load_and_log_configs()
+        load_and_log_configs()
         openrouter_model = get_cli_setting('openrouter_api', 'model', 'mistralai/mistral-7b-instruct')
         logging.debug(f"OpenRouter: Using model from config file: {openrouter_model}")
 
@@ -1329,9 +1329,9 @@ def summarize_with_openrouter(api_key, input_data, custom_prompt_arg, temp=None,
     # If the loaded data is a list of segment dictionaries or a string, proceed with summarization
     if isinstance(data, list):
         segments = data
-        text = extract_text_from_segments(segments)
+        extract_text_from_segments(segments)
     elif isinstance(data, str):
-        text = data
+        pass
     else:
         raise ValueError("OpenRouter: Invalid input data format")
 
@@ -1484,7 +1484,7 @@ def summarize_with_openrouter(api_key, input_data, custom_prompt_arg, temp=None,
 
 def summarize_with_huggingface(api_key, input_data, custom_prompt_arg, temp=None, streaming=False,):
     # https://huggingface.co/docs/api-inference/tasks/chat-completion
-    loaded_config_data = load_and_log_configs()
+    load_and_log_configs()
     logging.debug("HuggingFace: Summarization process starting...")
     # Prioritize the API key passed as a parameter
     if api_key and api_key.strip():
@@ -1987,7 +1987,7 @@ def summarize_with_mistral(api_key, input_data, custom_prompt_arg, temp=None, sy
 
 
 def summarize_with_google(api_key, input_data, custom_prompt_arg, temp=None, system_message=None, streaming=False,):
-    loaded_config_data = load_and_log_configs()
+    load_and_log_configs()
     try:
         # API key validation
         if not api_key or api_key.strip() == "":

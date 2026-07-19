@@ -292,7 +292,7 @@ class SplashScreen(Container):
     def _display_static_fallback(self) -> None:
         """Display static content as fallback."""
         content = self.card_data.get("content", self.DEFAULT_SPLASH)
-        style = self.card_data.get("style", "bold white on black")
+        self.card_data.get("style", "bold white on black")
         logger.info(f"Displaying static fallback with {len(content)} chars")
         
         display = self.query_one("#splash-display", Static)

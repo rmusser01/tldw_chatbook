@@ -524,7 +524,7 @@ class TranscriptionService:
                     else:
                         # Get number of speakers from kwargs if provided
                         num_speakers = kwargs.get('num_speakers')
-                        diarization_config = kwargs.get('diarization_config', {})
+                        kwargs.get('diarization_config', {})
                         
                         # Perform diarization
                         diarization_result = self._diarization_service.diarize(
@@ -3002,7 +3002,7 @@ class TranscriptionService:
             # Use configured settings or provided parameters
             model = model or self._parakeet_mlx_config['model']
             precision = kwargs.get('precision', self._parakeet_mlx_config['precision'])
-            attention_type = kwargs.get('attention_type', self._parakeet_mlx_config['attention_type'])
+            kwargs.get('attention_type', self._parakeet_mlx_config['attention_type'])
             
             # Load model if not already loaded
             if self._parakeet_mlx_model is None or \

@@ -397,7 +397,7 @@ class FileSystemPickerScreen(ModalScreen[Union[Path, None]]):
                 # Add separator if not last
                 if i < len(parts) - 1:
                     breadcrumb_container.mount(Label("/", classes="breadcrumb-separator"))
-        except Exception as e:
+        except Exception:
             # Silently fail if breadcrumbs can't be updated
             pass
     

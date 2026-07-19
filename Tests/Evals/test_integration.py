@@ -174,7 +174,7 @@ class TestFullEvaluationPipeline:
         
         # Initialize components with error scenarios
         orchestrator = EvaluationOrchestrator(db_path=env['db_path'])
-        error_handler = get_error_handler()
+        get_error_handler()
         
         # Test invalid dataset handling
         from tldw_chatbook.Evals.eval_errors import FileSystemError
@@ -190,7 +190,6 @@ class TestFullEvaluationPipeline:
     @pytest.mark.asyncio
     async def test_budget_monitoring_integration(self, setup_test_environment):
         """Test budget monitoring during evaluation."""
-        env = setup_test_environment
         
         # Create budget monitor
         budget_monitor = BudgetMonitor(budget_limit=0.01)  # Very low limit

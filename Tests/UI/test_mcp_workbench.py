@@ -131,7 +131,7 @@ async def test_workbench_mounts_rail_canvas_inspector_and_loads_local_servers():
         await pilot.pause()
         workbench = app.query_one(MCPWorkbench)
         assert workbench.active_mode == "servers"
-        rail = app.query_one(MCPRail)
+        app.query_one(MCPRail)
         # builtin + docs rows (+ "All servers")
         assert len(list(app.query("Button.mcp-rail-row"))) == 3
         canvas = app.query_one(MCPServersMode)

@@ -20,7 +20,7 @@ from tldw_Server_API.app.core.Chat.Chat_Functions import chat_api_call
 # Function to generate prompt using metaprompt
 def generate_prompt(api_endpoint, api_key, task, variables_str, temperature):
     # Convert variables into a list from comma-separated input
-    variables = [v.strip() for v in variables_str.split(',') if v.strip()]
+    [v.strip() for v in variables_str.split(',') if v.strip()]
 
     # Construct the metaprompt by embedding the task and variables into the defined structure
     metaprompt = f"""Today you will be writing instructions to an eager, helpful, but inexperienced and unworldly AI assistant who needs careful instruction and examples to understand how best to behave. I will explain a task to you. You will write instructions that will direct the assistant on how best to accomplish the task consistently, accurately, and correctly. Here are some examples of tasks and instructions.

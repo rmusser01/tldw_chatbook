@@ -187,7 +187,7 @@ class MazeGeneratorEffect(BaseEffect):
             title_y = maze_start_row - 2 if maze_start_row > 1 else self.display_height - 1
             if not self.is_generating: title_y = self.display_height // 2 # Center title when done
 
-            title_x_start = (self.display_width - len(self.title)) // 2
+            (self.display_width - len(self.title)) // 2
             if 0 <= title_y < self.display_height:
                 # Simplified title overlay for now: assumes it replaces the line
                 title_line_str = self.title.center(self.display_width).replace('[',r'\[')

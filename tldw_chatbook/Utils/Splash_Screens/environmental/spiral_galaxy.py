@@ -60,8 +60,8 @@ class SpiralGalaxyEffect(BaseEffect):
             # Logarithmic spiral
             spiral_angle = angle + arm_angle + (radius * 0.1)
             
-            x = center_x + radius * math.cos(spiral_angle)
-            y = center_y + radius * math.sin(spiral_angle) * 0.5  # Aspect ratio
+            center_x + radius * math.cos(spiral_angle)
+            center_y + radius * math.sin(spiral_angle) * 0.5  # Aspect ratio
             
             char = random.choice(self.star_chars)
             color = random.choice(self.star_colors)

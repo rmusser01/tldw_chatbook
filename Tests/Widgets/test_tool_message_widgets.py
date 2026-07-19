@@ -164,7 +164,7 @@ class TestToolCallMessage:
         widget = ToolCallMessage(tool_calls=single_tool_call)
         app = ToolMessageTestApp(widget)
         
-        async with app.run_test() as pilot:
+        async with app.run_test():
             # Verify widget is mounted
             assert widget.is_mounted
             # Verify widget has expected content
@@ -245,7 +245,7 @@ class TestToolResultMessage:
         widget = ToolResultMessage(tool_results=success_tool_result)
         app = ToolMessageTestApp(widget)
         
-        async with app.run_test() as pilot:
+        async with app.run_test():
             # Verify widget is mounted
             assert widget.is_mounted
             # Verify widget has expected content
@@ -282,7 +282,7 @@ class TestToolExecutionWidget:
         widget = ToolExecutionWidget(tool_calls=single_tool_call)
         
         app = ToolMessageTestApp(widget)
-        async with app.run_test() as pilot:
+        async with app.run_test():
             # Should have one ToolCallMessage child
             children = list(widget.children)
             assert len(children) == 1

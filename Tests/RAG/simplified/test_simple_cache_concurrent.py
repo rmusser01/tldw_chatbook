@@ -281,7 +281,7 @@ class TestRaceConditions:
         def reader():
             """Try to read potentially expired entry."""
             for _ in range(10):
-                result = cache.get("expiry_test", "test", 10)
+                cache.get("expiry_test", "test", 10)
                 time.sleep(0.05)
         
         def pruner():

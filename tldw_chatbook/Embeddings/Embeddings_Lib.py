@@ -177,7 +177,6 @@ def protect_file_descriptors():
     env_backup = os.environ.copy()
     
     # Save original subprocess.Popen to restore later
-    original_popen = subprocess.Popen
     
     try:
         # Ensure we have real file descriptors, not wrapped objects

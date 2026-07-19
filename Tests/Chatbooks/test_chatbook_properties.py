@@ -495,7 +495,7 @@ class TestAdvancedProperties:
         creator = ChatbookCreator(mock_db_paths)
         
         # Generate large content
-        large_content = "x" * item_size
+        "x" * item_size
         
         # Mock collection to return many items
         def mock_collect_notes(ids, *args, **kwargs):

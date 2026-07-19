@@ -43,11 +43,11 @@ class TestDiarizationIntegration(unittest.TestCase):
             
             for speaker in range(num_speakers):
                 # Different frequency for each "speaker"
-                frequency = 440 * (speaker + 1)  # 440Hz, 880Hz, etc.
+                440 * (speaker + 1)  # 440Hz, 880Hz, etc.
                 
                 for i in range(samples_per_speaker):
                     # Generate sine wave
-                    t = i / sample_rate
+                    i / sample_rate
                     value = int(32767 * 0.5 * (1 + (i / samples_per_speaker) * 0.5) * 
                               (0.5 * (1 + speaker * 0.3)) * 
                               (0.8 + 0.2 * (i % 1000) / 1000))

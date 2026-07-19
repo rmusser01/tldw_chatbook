@@ -83,7 +83,7 @@ async def handle_llamafile_browse_exec_button_pressed(app: "TldwCli", event: But
     logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.debug("Llamafile browse executable button pressed.")
 
-    exec_filters = Filters(("Executables", lambda p: p.is_file()))
+    Filters(("Executables", lambda p: p.is_file()))
     await app.push_screen(
         FileOpen(
             location=str(Path.home()),

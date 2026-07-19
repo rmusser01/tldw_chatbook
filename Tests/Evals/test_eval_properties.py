@@ -341,7 +341,7 @@ class TestEvaluationProperties:
     @settings(max_examples=50, deadline=None)
     def test_exact_match_symmetry(self, text1, text2):
         """Test that exact match is symmetric."""
-        runner = create_test_runner(mock_llm_interface=AsyncMock())
+        create_test_runner(mock_llm_interface=AsyncMock())
         
         score1 = MetricsCalculator.calculate_exact_match(text1, text2)
         score2 = MetricsCalculator.calculate_exact_match(text2, text1)
@@ -352,7 +352,7 @@ class TestEvaluationProperties:
     @settings(max_examples=30, deadline=None)
     def test_exact_match_reflexivity(self, text):
         """Test that exact match of text with itself is always 1.0."""
-        runner = create_test_runner(mock_llm_interface=AsyncMock())
+        create_test_runner(mock_llm_interface=AsyncMock())
         
         score = MetricsCalculator.calculate_exact_match(text, text)
         assert score == 1.0
@@ -361,7 +361,7 @@ class TestEvaluationProperties:
     @settings(max_examples=50, deadline=None)
     def test_contains_answer_monotonicity(self, answer, response):
         """Test contains answer properties."""
-        runner = create_test_runner(mock_llm_interface=AsyncMock())
+        create_test_runner(mock_llm_interface=AsyncMock())
         
         # If answer is empty, result should be 1.0 (trivially contains empty string)
         if not answer:
@@ -379,10 +379,10 @@ class TestEvaluationProperties:
     @settings(max_examples=30, deadline=None)
     def test_metrics_aggregation_properties(self, scores):
         """Test properties of metric aggregation."""
-        runner = create_test_runner(mock_llm_interface=AsyncMock())
+        create_test_runner(mock_llm_interface=AsyncMock())
         
         # Calculate aggregated metrics manually since _aggregate_metrics is not available
-        metrics_list = [{"score": score} for score in scores]
+        [{"score": score} for score in scores]
         aggregated = {
             "score_mean": sum(scores) / len(scores) if scores else 0.0,
             "score_std": self._calculate_std(scores),
@@ -546,7 +546,7 @@ class TestFileHandlingProperties:
     @settings(max_examples=20, deadline=None)
     def test_text_processing_robustness(self, text_input):
         """Test that text processing handles arbitrary inputs gracefully."""
-        runner = create_test_runner(mock_llm_interface=AsyncMock())
+        create_test_runner(mock_llm_interface=AsyncMock())
         
         # These operations should not crash with any text input
         try:

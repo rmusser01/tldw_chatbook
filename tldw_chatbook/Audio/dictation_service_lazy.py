@@ -275,7 +275,6 @@ class LazyLiveDictationService:
             try:
                 # This will trigger lazy initialization
                 audio_svc = self.audio_service
-                trans_svc = self.transcription_service
             except (AudioInitializationError, TranscriptionInitializationError) as e:
                 self._notify_error(e)
                 with self.state_lock:
