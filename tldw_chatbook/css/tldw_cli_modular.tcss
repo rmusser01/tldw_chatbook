@@ -2114,6 +2114,14 @@ ConsoleSystemPromptModal {
 
 #settings-category-pane {
     width: 3fr;
+    overflow-y: hidden;
+    overflow-x: hidden;
+}
+
+#settings-category-list {
+    width: 100%;
+    height: 1fr;
+    min-height: 0;
     overflow-y: auto;
     overflow-x: hidden;
     scrollbar-size: 1 1;
@@ -4969,7 +4977,7 @@ Button.settings-category-button.settings-secondary-search-match {
     height: 1;
     min-height: 1;
     padding: 0 1;
-    margin: 1 0 0 0;
+    margin: 0;
     background: $ds-surface-inspector;
     color: $ds-text-primary;
     text-style: bold;

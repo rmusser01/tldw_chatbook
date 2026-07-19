@@ -102,6 +102,13 @@ async def _settle_settings_mount_storm(pilot) -> None:
 async def _open_settings_category(pilot, selector: str) -> None:
     """Click a Settings category rail button with the mount storm settled."""
     await _settle_settings_mount_storm(pilot)
+    try:
+        button = pilot.app.screen.query_one(selector)
+        category_list = pilot.app.screen.query_one("#settings-category-list")
+        category_list.scroll_to_widget(button, animate=False)
+        await pilot.pause()
+    except Exception:
+        pass
     await pilot.click(selector)
     await pilot.pause()
 
@@ -211,6 +218,14 @@ async def _select_settings_category(
     )
     button_selector = f"#settings-category-{category_value}"
     await _wait_for_selector(screen, pilot, button_selector, timeout=timeout)
+    try:
+        category_list = screen.query_one("#settings-category-list")
+        category_list.scroll_to_widget(
+            screen.query_one(button_selector), animate=False, immediate=True
+        )
+        await pilot.pause()
+    except Exception:
+        pass
     await pilot.click(button_selector)
 
     deadline = time.monotonic() + timeout
@@ -911,9 +926,9 @@ async def test_settings_appearance_renders_guided_defaults_and_validates(monkeyp
 
         assert "Appearance" in text
         assert "Global visual defaults" in text
-        assert "Customize owns full theme editing" in text
+        assert "Theme owns: full theme editing" in text
         assert "Save targets: general, web_server, and appearance" in text
-        assert "Open Customize" in text
+        assert "Open Theme" in text
         assert (
             screen.query_one("#settings-appearance-theme", Select).value
             == "textual-dark"
