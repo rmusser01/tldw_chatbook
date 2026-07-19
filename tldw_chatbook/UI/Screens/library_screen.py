@@ -21,6 +21,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
 from textual.timer import Timer
+from textual.widget import Widget
 from textual.widgets import Button, Collapsible, Input, Static, TextArea
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
@@ -3103,6 +3104,14 @@ class LibraryScreen(BaseAppScreen):
         )
         return tuple(widgets)
 
+    def _compose_library_rail_top_action(self) -> list[Widget]:
+        """Build the top-of-rail action widget(s) for the Library shell.
+
+        Returns a primary Ingest button that jumps directly to the Ingest
+        media canvas, surfaced above the rail search box for discoverability.
+        """
+        return [Button("Ingest content…", variant="primary", id="library-ingest-top-button")]
+
     def _compose_workspaces_rail_body(self) -> list[Any]:
         """Build the Workspaces body for the rail Details section.
 
@@ -3161,6 +3170,7 @@ class LibraryScreen(BaseAppScreen):
                 query=self._library_rag_query,
                 search_placeholder=self._library_rail_search_placeholder(),
                 workspaces_body_factory=self._compose_workspaces_rail_body,
+                top_action_factory=self._compose_library_rail_top_action,
                 id="library-rail",
                 classes="destination-workbench-pane",
             )
@@ -5952,6 +5962,12 @@ class LibraryScreen(BaseAppScreen):
             save_setting_to_cli_config("library.rail_state", "sections", serialized)
         except Exception:
             pass
+
+    @on(Button.Pressed, "#library-ingest-top-button")
+    async def _on_library_ingest_top_button(self, event: Button.Pressed) -> None:
+        """Jump from the rail-top Ingest button to the Ingest media canvas."""
+        event.stop()
+        await self._select_library_rail_row(LIBRARY_ROW_INGEST_MEDIA)
 
     @on(Button.Pressed, ".library-rail-row")
     async def handle_library_rail_row(self, event: Button.Pressed) -> None:
