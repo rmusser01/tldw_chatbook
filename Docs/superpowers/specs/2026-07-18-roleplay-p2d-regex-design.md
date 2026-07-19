@@ -1,6 +1,6 @@
 # Roleplay P2d-regex — optional regex matching for Lore entries
 
-**Status:** Design.
+**Status:** Implemented (P2d-regex).
 
 **Program:** Roleplay (Personas) redesign — P2 (Lore mode). The regex piece deliberately deferred from P2d-1; follows P2d-1 (matching editor #694) and P2d-2 (import/export #701), both merged. Schema currently v21.
 
