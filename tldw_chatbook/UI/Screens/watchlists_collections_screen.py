@@ -32,9 +32,16 @@ from ..Watchlists_Modules.inspector_pane import (
     PreviewRequested,
     StageInConsoleRequested,
 )
+from ..Watchlists_Modules.opml_dialogs import OpmlExportDialog, OpmlImportDialog
 from ..Watchlists_Modules.overview_pane import OverviewPane
 from ..Watchlists_Modules.runs_pane import CancelRunRequested, RerunRunRequested, RunsPane, RunSelected
-from ..Watchlists_Modules.sources_pane import CreateSourceRequested, SourceSelected, SourcesPane
+from ..Watchlists_Modules.sources_pane import (
+    CreateSourceRequested,
+    ExportOpmlRequested,
+    ImportOpmlRequested,
+    SourceSelected,
+    SourcesPane,
+)
 from ..Watchlists_Modules.watchlists_backend_controller import WatchlistsBackendController
 from ..Watchlists_Modules.watchlists_navigator import SectionSelected, WatchlistsNavigator
 from .destination_recovery import DestinationRecoveryState, policy_denied_recovery_state
@@ -643,16 +650,93 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     @on(PreviewRequested)
     def handle_preview_requested(self, event: PreviewRequested) -> None:
         event.stop()
+        entity = event.entity
+        if entity is None:
+            return
+        self.run_worker(self._preview_source(entity), exclusive=True)
+
+    async def _preview_source(self, source: dict[str, Any]) -> None:
         notify = getattr(self.app_instance, "notify", None)
-        if callable(notify):
-            notify("Preview is not implemented yet.", severity="information")
+        try:
+            result = await self._controller.preview_source(
+                runtime_backend=self.runtime_backend,
+                source_config=source,
+            )
+            items = result.get("items") or []
+            log_text = result.get("log_text", "Preview complete.")
+            if callable(notify):
+                notify(
+                    f"Preview: {log_text} ({len(items)} item(s))",
+                    severity="information",
+                    timeout=10,
+                )
+        except Exception:
+            logger.opt(exception=True).debug("Failed to preview source.")
+            if callable(notify):
+                notify("Failed to preview source.", severity="error")
 
     @on(CheckNowRequested)
     def handle_check_now_requested(self, event: CheckNowRequested) -> None:
         event.stop()
+        entity = event.entity
+        if entity is None:
+            return
+        self.run_worker(self._check_now_source(entity), exclusive=True)
+
+    async def _check_now_source(self, source: dict[str, Any]) -> None:
         notify = getattr(self.app_instance, "notify", None)
-        if callable(notify):
-            notify("Check now is not implemented yet.", severity="information")
+        try:
+            await self._controller.check_now(
+                runtime_backend=self.runtime_backend,
+                source_id=source.get("id"),
+            )
+            if callable(notify):
+                notify("Check now started.", severity="information")
+        except Exception:
+            logger.opt(exception=True).debug("Failed to check source.")
+            if callable(notify):
+                notify("Failed to check source.", severity="error")
+        self._refresh_local_wc_snapshot()
+
+    @on(ImportOpmlRequested)
+    def handle_import_opml_requested(self, event: ImportOpmlRequested) -> None:
+        event.stop()
+        self.app.push_screen(OpmlImportDialog(), callback=self._on_opml_import_complete)
+
+    async def _on_opml_import_complete(self, xml_text: str | None) -> None:
+        if not xml_text:
+            return
+        notify = getattr(self.app_instance, "notify", None)
+        try:
+            result = await self._controller.import_opml(
+                runtime_backend=self.runtime_backend,
+                xml_text=xml_text,
+            )
+            created = result.get("created", 0)
+            if callable(notify):
+                notify(f"Imported {created} source(s) from OPML.", severity="information")
+        except Exception:
+            logger.opt(exception=True).debug("Failed to import OPML.")
+            if callable(notify):
+                notify("Failed to import OPML.", severity="error")
+        self._refresh_local_wc_snapshot()
+
+    @on(ExportOpmlRequested)
+    def handle_export_opml_requested(self, event: ExportOpmlRequested) -> None:
+        event.stop()
+        self.run_worker(self._export_opml(), exclusive=True)
+
+    async def _export_opml(self) -> None:
+        notify = getattr(self.app_instance, "notify", None)
+        try:
+            xml_text = await self._controller.export_opml(
+                runtime_backend=self.runtime_backend,
+            )
+            self.app.push_screen(OpmlExportDialog(xml_text))
+        except Exception:
+            logger.opt(exception=True).debug("Failed to export OPML.")
+            if callable(notify):
+                notify("Failed to export OPML.", severity="error")
 
     @on(StageInConsoleRequested)
     def handle_stage_in_console_requested(self, event: StageInConsoleRequested) -> None:

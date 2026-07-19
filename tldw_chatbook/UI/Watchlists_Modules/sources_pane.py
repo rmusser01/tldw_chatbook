@@ -9,6 +9,8 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button, DataTable, Input, Select, Static, Switch
 
+from .inspector_pane import CheckNowRequested, PreviewRequested
+
 
 class SourceSelected(Message):
     """Posted when the user selects a source in the sources table."""
@@ -24,6 +26,14 @@ class CreateSourceRequested(Message):
     def __init__(self, payload: dict[str, Any]) -> None:
         self.payload = payload
         super().__init__()
+
+
+class ImportOpmlRequested(Message):
+    """Posted when the user requests an OPML import."""
+
+
+class ExportOpmlRequested(Message):
+    """Posted when the user requests an OPML export."""
 
 
 class SourcesPane(Vertical):
@@ -45,19 +55,33 @@ class SourcesPane(Vertical):
     ]
 
     def compose(self):
-        with Horizontal(id="sources-toolbar", classes="destination-filter-strip"):
-            yield Input(
-                placeholder="Search sources...",
-                id="sources-search-input",
-                value=self.search_query,
-            )
-            yield Select(
-                self._TYPE_OPTIONS,
-                value=self.source_type_filter,
-                id="sources-type-select",
-                allow_blank=False,
-            )
-            yield Button("New Source", id="sources-new-button", variant="primary")
+        with Vertical(id="sources-toolbar"):
+            with Horizontal(classes="destination-filter-strip"):
+                yield Input(
+                    placeholder="Search sources...",
+                    id="sources-search-input",
+                    value=self.search_query,
+                )
+                yield Select(
+                    self._TYPE_OPTIONS,
+                    value=self.source_type_filter,
+                    id="sources-type-select",
+                    allow_blank=False,
+                )
+                yield Button("New Source", id="sources-new-button", variant="primary")
+            with Horizontal(classes="destination-filter-strip"):
+                yield Button(
+                    "Preview",
+                    id="sources-preview-button",
+                    disabled=self.selected_source is None,
+                )
+                yield Button(
+                    "Check now",
+                    id="sources-check-now-button",
+                    disabled=self.selected_source is None,
+                )
+                yield Button("Import OPML", id="sources-import-opml-button")
+                yield Button("Export OPML", id="sources-export-opml-button")
 
         if self.show_create_form:
             with Grid(id="sources-create-form"):
@@ -126,6 +150,14 @@ class SourcesPane(Vertical):
             self.show_create_form = False
         elif button_id == "sources-create-submit":
             self._submit_create_form()
+        elif button_id == "sources-preview-button" and self.selected_source is not None:
+            self.post_message(PreviewRequested(self.selected_source))
+        elif button_id == "sources-check-now-button" and self.selected_source is not None:
+            self.post_message(CheckNowRequested(self.selected_source))
+        elif button_id == "sources-import-opml-button":
+            self.post_message(ImportOpmlRequested())
+        elif button_id == "sources-export-opml-button":
+            self.post_message(ExportOpmlRequested())
         event.stop()
 
     def _submit_create_form(self) -> None:

@@ -4,8 +4,14 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, DataTable, Input, Select, Switch
 
+from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
+    CheckNowRequested,
+    PreviewRequested,
+)
 from tldw_chatbook.UI.Watchlists_Modules.sources_pane import (
     CreateSourceRequested,
+    ExportOpmlRequested,
+    ImportOpmlRequested,
     SourceSelected,
     SourcesPane,
 )
@@ -24,6 +30,18 @@ class SourcesPaneHarness(App):
 
     def on_create_source_requested(self, message: CreateSourceRequested) -> None:
         self.captured_messages.append(("create_source_requested", message.payload))
+
+    def on_preview_requested(self, message: PreviewRequested) -> None:
+        self.captured_messages.append(("preview_requested", message.entity))
+
+    def on_check_now_requested(self, message: CheckNowRequested) -> None:
+        self.captured_messages.append(("check_now_requested", message.entity))
+
+    def on_import_opml_requested(self, message: ImportOpmlRequested) -> None:
+        self.captured_messages.append(("import_opml_requested", None))
+
+    def on_export_opml_requested(self, message: ExportOpmlRequested) -> None:
+        self.captured_messages.append(("export_opml_requested", None))
 
 
 @pytest.fixture
@@ -151,3 +169,75 @@ async def test_sources_pane_new_source_form_posts_request():
         assert payload["source_type"] == "rss"
         assert payload["active"] is True
         assert payload["tags"] == ["ai", "news"]
+
+
+@pytest.mark.asyncio
+async def test_sources_pane_action_buttons_exist():
+    app = SourcesPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(SourcesPane)
+        assert pane.query_one("#sources-preview-button", Button)
+        assert pane.query_one("#sources-check-now-button", Button)
+        assert pane.query_one("#sources-import-opml-button", Button)
+        assert pane.query_one("#sources-export-opml-button", Button)
+
+
+@pytest.mark.asyncio
+async def test_sources_pane_preview_and_check_now_disabled_without_selection():
+    app = SourcesPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(SourcesPane)
+        preview = pane.query_one("#sources-preview-button", Button)
+        check_now = pane.query_one("#sources-check-now-button", Button)
+        assert preview.disabled
+        assert check_now.disabled
+
+
+@pytest.mark.asyncio
+async def test_sources_pane_preview_and_check_now_enabled_with_selection(sample_sources):
+    app = SourcesPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(SourcesPane)
+        pane.sources = sample_sources
+        pane.select_source_by_id("source-1")
+        await pilot.pause()
+
+        preview = pane.query_one("#sources-preview-button", Button)
+        check_now = pane.query_one("#sources-check-now-button", Button)
+        assert not preview.disabled
+        assert not check_now.disabled
+
+
+@pytest.mark.asyncio
+async def test_sources_pane_posts_preview_and_check_now_messages(sample_sources):
+    app = SourcesPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(SourcesPane)
+        pane.sources = sample_sources
+        pane.select_source_by_id("source-1")
+        await pilot.pause()
+
+        pane.query_one("#sources-preview-button", Button).press()
+        pane.query_one("#sources-check-now-button", Button).press()
+        await pilot.pause()
+
+        assert app.captured_messages == [
+            ("source_selected", sample_sources[0]),
+            ("preview_requested", sample_sources[0]),
+            ("check_now_requested", sample_sources[0]),
+        ]
+
+
+@pytest.mark.asyncio
+async def test_sources_pane_posts_opml_messages():
+    app = SourcesPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(SourcesPane)
+        pane.query_one("#sources-import-opml-button", Button).press()
+        pane.query_one("#sources-export-opml-button", Button).press()
+        await pilot.pause()
+
+        assert app.captured_messages == [
+            ("import_opml_requested", None),
+            ("export_opml_requested", None),
+        ]

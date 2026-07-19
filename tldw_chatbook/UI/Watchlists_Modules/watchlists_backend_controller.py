@@ -79,6 +79,15 @@ class WatchlistsBackendController:
         return dict(result)
 
     async def cancel_run(self, *, runtime_backend: str | None = None, run_id: Any) -> dict[str, Any]:
+        """Cancel an in-progress watchlist run.
+
+        Args:
+            runtime_backend: Target backend (``local`` or ``server``).
+            run_id: Identifier of the run to cancel.
+
+        Returns:
+            Cancellation result metadata.
+        """
         backend = self._normalize_backend(runtime_backend)
         result = await self._maybe_await(
             self.scope_service.cancel_run(runtime_backend=backend, run_id=run_id)
@@ -92,6 +101,69 @@ class WatchlistsBackendController:
         )
         return dict(result)
 
+    async def preview_source(self, *, runtime_backend: str | None = None, source_config: dict[str, Any]) -> dict[str, Any]:
+        """Preview a watchlist source through the scope service.
+
+        Args:
+            runtime_backend: Target backend (``local`` or ``server``).
+            source_config: Source configuration (URL, parser, etc.).
+
+        Returns:
+            Preview result containing items and log text.
+        """
+        backend = self._normalize_backend(runtime_backend)
+        result = await self._maybe_await(
+            self.scope_service.preview_source(runtime_backend=backend, source_config=source_config)
+        )
+        return dict(result)
+
+    async def check_now(self, *, runtime_backend: str | None = None, source_id: Any) -> dict[str, Any]:
+        """Trigger an immediate check for a watchlist source.
+
+        Args:
+            runtime_backend: Target backend (``local`` or ``server``).
+            source_id: Identifier of the source to check.
+
+        Returns:
+            Run metadata for the launched check.
+        """
+        backend = self._normalize_backend(runtime_backend)
+        result = await self._maybe_await(
+            self.scope_service.check_now(runtime_backend=backend, source_id=source_id)
+        )
+        return dict(result)
+
+    async def import_opml(self, *, runtime_backend: str | None = None, xml_text: str) -> dict[str, Any]:
+        """Import watchlist sources from an OPML document.
+
+        Args:
+            runtime_backend: Target backend (``local`` or ``server``).
+            xml_text: Raw OPML XML string.
+
+        Returns:
+            Summary with the number of created sources and their records.
+        """
+        backend = self._normalize_backend(runtime_backend)
+        result = await self._maybe_await(
+            self.scope_service.import_opml(runtime_backend=backend, xml_text=xml_text)
+        )
+        return dict(result)
+
+    async def export_opml(self, *, runtime_backend: str | None = None) -> str:
+        """Export watchlist sources as an OPML document.
+
+        Args:
+            runtime_backend: Target backend (``local`` or ``server``).
+
+        Returns:
+            OPML XML string for the retrieved sources.
+        """
+        backend = self._normalize_backend(runtime_backend)
+        result = await self._maybe_await(
+            self.scope_service.export_opml(runtime_backend=backend)
+        )
+        return str(result)
+
     async def list_alert_rules(self, *, runtime_backend: str | None = None, **kwargs: Any) -> list[dict[str, Any]]:
         backend = self._normalize_backend(runtime_backend)
         result = await self._maybe_await(
@@ -100,6 +172,16 @@ class WatchlistsBackendController:
         return [dict(item) for item in list(result or [])]
 
     async def save_alert_rule(self, *, runtime_backend: str | None = None, payload: dict[str, Any]) -> dict[str, Any]:
+        """Create or update an alert rule through the scope service.
+
+        Args:
+            runtime_backend: Target backend (``local`` or ``server``).
+            payload: Alert rule fields. Presence of ``id`` or ``rule_id``
+                selects the update path.
+
+        Returns:
+            Created or updated alert rule record.
+        """
         backend = self._normalize_backend(runtime_backend)
         result = await self._maybe_await(
             self.scope_service.save_alert_rule(runtime_backend=backend, payload=payload)

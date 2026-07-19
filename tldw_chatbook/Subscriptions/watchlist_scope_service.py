@@ -7,6 +7,11 @@ from enum import Enum
 from typing import Any, Mapping
 
 from ..runtime_policy.types import PolicyDeniedError
+from .watchlist_opml_service import WatchlistOpmlService
+from .watchlist_preview_service import WatchlistPreviewService
+
+# Generous upper bound for the number of sources included in an OPML export.
+WC_EXPORT_OPML_MAX_SOURCES = 10000
 
 
 class WatchlistBackend(str, Enum):
@@ -115,6 +120,12 @@ class WatchlistScopeService:
         if self.server_service is None:
             raise ValueError("Server watchlists backend is unavailable.")
         return self.server_service
+
+    def _get_run_executor(self) -> Any:
+        local_service = self.local_service
+        if local_service is None:
+            return None
+        return getattr(local_service, "run_executor", None)
 
     @staticmethod
     async def _maybe_await(value: Any) -> Any:
@@ -310,6 +321,26 @@ class WatchlistScopeService:
             )
         )
 
+    async def cancel_run(
+        self,
+        *,
+        run_id: Any,
+        runtime_backend: WatchlistBackend | str | None = None,
+    ) -> dict[str, Any]:
+        """Cancel an in-progress watchlist run.
+
+        Args:
+            run_id: Identifier of the run to cancel.
+            runtime_backend: Target backend (``local`` or ``server``).
+
+        Returns:
+            Cancellation result metadata.
+        """
+        backend = self._normalize_backend(runtime_backend)
+        self._enforce_policy(backend, "runs.cancel")
+        service = self._service_for_backend(backend)
+        return await self._maybe_await(service.cancel_run(self._run_id_from_item_id(run_id)))
+
     async def list_alert_rules(
         self,
         *,
@@ -361,6 +392,38 @@ class WatchlistScopeService:
             )
         )
 
+    async def save_alert_rule(
+        self,
+        *,
+        payload: Mapping[str, Any],
+        runtime_backend: WatchlistBackend | str | None = None,
+    ) -> dict[str, Any]:
+        """Create or update an alert rule based on the payload.
+
+        Args:
+            payload: Alert rule fields. Presence of ``id`` or ``rule_id``
+                selects the update path.
+            runtime_backend: Target backend (``local`` or ``server``).
+
+        Returns:
+            Created or updated alert rule record.
+        """
+        backend = self._normalize_backend(runtime_backend)
+        service = self._service_for_backend(backend)
+        rule_id = None
+        if "id" in payload:
+            rule_id = payload["id"]
+        elif "rule_id" in payload:
+            rule_id = payload["rule_id"]
+        clean_payload = {k: v for k, v in payload.items() if k not in ("id", "rule_id")}
+        if rule_id is not None:
+            self._enforce_policy(backend, "alert_rules.update")
+            return await self._maybe_await(
+                service.update_alert_rule(self._rule_id_from_item_id(rule_id), **clean_payload)
+            )
+        self._enforce_policy(backend, "alert_rules.create")
+        return await self._maybe_await(service.create_alert_rule(**clean_payload))
+
     async def delete_alert_rule(
         self,
         rule_id: Any,
@@ -373,3 +436,97 @@ class WatchlistScopeService:
         return await self._maybe_await(
             service.delete_alert_rule(self._rule_id_from_item_id(rule_id))
         )
+
+    async def preview_source(
+        self,
+        *,
+        source_config: Mapping[str, Any],
+        runtime_backend: WatchlistBackend | str | None = None,
+    ) -> dict[str, Any]:
+        """Preview a watchlist source by fetching and parsing its feed.
+
+        Args:
+            source_config: Source configuration (URL, parser, etc.).
+            runtime_backend: Target backend (``local`` or ``server``).
+
+        Returns:
+            Preview result containing items and log text.
+
+        Raises:
+            ValueError: If the server backend is requested; preview is local-only.
+        """
+        backend = self._normalize_backend(runtime_backend)
+        self._enforce_policy(backend, "preview")
+        if backend == WatchlistBackend.SERVER:
+            raise ValueError("Preview is only supported for the local backend in this slice.")
+        preview_service = WatchlistPreviewService(run_executor=self._get_run_executor())
+        return await self._maybe_await(preview_service.preview(source_config))
+
+    async def check_now(
+        self,
+        *,
+        source_id: Any,
+        runtime_backend: WatchlistBackend | str | None = None,
+    ) -> dict[str, Any]:
+        """Trigger an immediate check for a watchlist source.
+
+        Args:
+            source_id: Identifier of the source to check.
+            runtime_backend: Target backend (``local`` or ``server``).
+
+        Returns:
+            Run metadata for the launched check.
+        """
+        backend = self._normalize_backend(runtime_backend)
+        self._enforce_policy(backend, "runs.launch")
+        return await self.launch_run(runtime_backend=backend, source_id=source_id)
+
+    async def import_opml(
+        self,
+        *,
+        xml_text: str,
+        runtime_backend: WatchlistBackend | str | None = None,
+    ) -> dict[str, Any]:
+        """Import watchlist sources from an OPML document.
+
+        Args:
+            xml_text: Raw OPML XML string.
+            runtime_backend: Target backend (``local`` or ``server``).
+
+        Returns:
+            Summary with the number of created sources and their records.
+
+        Raises:
+            ValueError: If the server backend is requested; OPML import is local-only.
+        """
+        backend = self._normalize_backend(runtime_backend)
+        self._enforce_policy(backend, "import")
+        if backend == WatchlistBackend.SERVER:
+            raise ValueError("OPML import is only supported for the local backend in this slice.")
+        payloads = WatchlistOpmlService().parse(xml_text)
+        service = self._service_for_backend(backend)
+        created: list[dict[str, Any]] = []
+        for payload in payloads:
+            source = await self._maybe_await(service.create_source(payload))
+            created.append(dict(source))
+        return {"created": len(created), "sources": created}
+
+    async def export_opml(
+        self,
+        *,
+        runtime_backend: WatchlistBackend | str | None = None,
+    ) -> str:
+        """Export watchlist sources as an OPML document.
+
+        Args:
+            runtime_backend: Target backend (``local`` or ``server``).
+
+        Returns:
+            OPML XML string for the retrieved sources.
+        """
+        backend = self._normalize_backend(runtime_backend)
+        self._enforce_policy(backend, "export")
+        sources = await self.list_watch_items(
+            runtime_backend=backend, limit=WC_EXPORT_OPML_MAX_SOURCES, offset=0
+        )
+        return WatchlistOpmlService().export(sources)
