@@ -409,7 +409,7 @@ def test_lazy_screen_registry_resolves_visible_shell_destinations():
         "artifacts": "ArtifactsScreen",
         "personas": "PersonasScreen",
         "watchlists_collections": "WatchlistsCollectionsScreen",
-        "schedules": "SchedulesScreen",
+        "schedules": "SchedulesWorkbench",
         "workflows": "WorkflowsScreen",
         "mcp": "MCPScreen",
         "acp": "ACPScreen",
