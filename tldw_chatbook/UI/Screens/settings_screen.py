@@ -21,6 +21,7 @@ from textual.reactive import reactive
 from textual.strip import Strip
 from textual.widgets import (
     Button,
+    Checkbox,
     Collapsible,
     Input,
     Rule,
@@ -67,6 +68,13 @@ from ...config import (
     MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     coerce_bool_setting,
     coerce_int_setting,
+    load_settings,
+    save_setting_to_cli_config,
+    save_settings_to_cli_config,
+)
+from ...LLM_Provider_Catalog.model_catalog_settings import (
+    AUTO_REFRESH_PROVIDER_LIST_KEYS,
+    load_model_catalog_settings,
 )
 from ...Utils.input_validation import (
     provider_api_key_validation_error,
@@ -207,6 +215,19 @@ MODEL_DISCOVERY_AMBIGUOUS_PROVIDER_COPY = (
 MODEL_DISCOVERY_UNSUPPORTED_ENDPOINT_COPY = (
     "This endpoint is not OpenAI-compatible for v1 discovery. Configure a /v1 endpoint "
     "to discover models."
+)
+# ADR-019: ids of the [model_catalog] auto-refresh toggles so unrelated
+# Checkbox.Changed events never trigger a config write.
+MODEL_CATALOG_CHECKBOX_IDS = frozenset(
+    {"settings-model-catalog-auto-refresh"}
+    | {
+        f"settings-mc-auto-{provider.lower()}"
+        for provider in AUTO_REFRESH_PROVIDER_LIST_KEYS
+    }
+    | {
+        f"settings-mc-write-{provider.lower()}"
+        for provider in AUTO_REFRESH_PROVIDER_LIST_KEYS
+    }
 )
 CONSOLE_BEHAVIOR_CONSOLE_KEYS = frozenset(
     {
@@ -5111,6 +5132,65 @@ class SettingsScreen(BaseAppScreen):
                 logger.exception("Provider discovered model cache clear failed")
         self._reset_provider_model_discovery_state("Discovered model cache cleared.")
 
+    def _persist_model_catalog_settings(self) -> None:
+        """Persist the model catalog toggles to ``[model_catalog]`` (ADR-019).
+
+        The toggles gate a background behavior, so changes save immediately
+        instead of staging into the category draft. States that match the
+        saved config (including the initial values emitted when the
+        subsection mounts) are skipped so merely viewing the category never
+        rewrites config.toml.
+        """
+        try:
+            auto_refresh_enabled = self.query_one(
+                "#settings-model-catalog-auto-refresh", Checkbox
+            ).value
+            stale_hours_raw = self.query_one(
+                "#settings-model-catalog-stale-hours", Input
+            ).value
+            auto_values = {
+                provider: self.query_one(
+                    f"#settings-mc-auto-{provider.lower()}", Checkbox
+                ).value
+                for provider in AUTO_REFRESH_PROVIDER_LIST_KEYS
+            }
+            write_values = {
+                provider: self.query_one(
+                    f"#settings-mc-write-{provider.lower()}", Checkbox
+                ).value
+                for provider in AUTO_REFRESH_PROVIDER_LIST_KEYS
+            }
+        except QueryError:
+            return
+        try:
+            stale_after_hours = int(stale_hours_raw or "24")
+        except (TypeError, ValueError):
+            # Invalid intermediate input; keep the last persisted value.
+            return
+        if stale_after_hours < 0:
+            return
+        section_values = {
+            "model_catalog": {
+                "auto_refresh_enabled": auto_refresh_enabled,
+                "stale_after_hours": stale_after_hours,
+                "auto_refresh_disabled": [
+                    provider
+                    for provider in AUTO_REFRESH_PROVIDER_LIST_KEYS
+                    if not auto_values[provider]
+                ],
+                "write_to_config": [
+                    provider
+                    for provider in AUTO_REFRESH_PROVIDER_LIST_KEYS
+                    if write_values[provider]
+                ],
+            }
+        }
+        if load_model_catalog_settings(section_values) == load_model_catalog_settings(
+            load_settings()
+        ):
+            return
+        save_settings_to_cli_config(section_values)
+
     def _provider_readiness_test_report(self) -> tuple[str, str, bool]:
         """Run the local provider readiness test.
 
@@ -6119,6 +6199,46 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-discovered-models-list",
                 disabled=not self._model_discovery_models,
             )
+            # ADR-019: [model_catalog] auto-refresh toggles. Values initialize
+            # inline from the saved config (the Connect block pattern) and
+            # persist immediately on change via the handlers below.
+            model_catalog_settings = load_model_catalog_settings(load_settings())
+            yield Static("Automatic refresh (ADR-019)", classes="destination-section")
+            yield Checkbox(
+                "Auto-refresh model lists on startup",
+                value=model_catalog_settings.auto_refresh_enabled,
+                id="settings-model-catalog-auto-refresh",
+            )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Refresh after (hours):", classes="settings-status-row")
+                yield Input(
+                    str(int(model_catalog_settings.stale_after_hours)),
+                    id="settings-model-catalog-stale-hours",
+                    type="integer",
+                    tooltip="0 = refetch every launch.",
+                )
+            for _provider in AUTO_REFRESH_PROVIDER_LIST_KEYS:
+                _provider_key = provider_config_key(_provider)
+                _pid = _provider.lower()
+                with Horizontal(classes="settings-input-row"):
+                    yield Checkbox(
+                        f"{_provider}: auto-refresh",
+                        value=(
+                            _provider_key
+                            not in model_catalog_settings.auto_refresh_disabled
+                        ),
+                        id=f"settings-mc-auto-{_pid}",
+                    )
+                    yield Checkbox(
+                        "save to config",
+                        value=_provider_key in model_catalog_settings.write_to_config,
+                        id=f"settings-mc-write-{_pid}",
+                        tooltip=(
+                            "Append newly discovered models to config.toml — "
+                            "large catalogs like OpenRouter only add newly released "
+                            "models after a first baseline."
+                        ),
+                    )
             # task-189: sampling and provider-specific tuning live below the
             # Connect block in a collapsed-by-default disclosure.
             with Collapsible(
@@ -8829,6 +8949,19 @@ class SettingsScreen(BaseAppScreen):
     def handle_clear_discovered_provider_models(self, event: Button.Pressed) -> None:
         event.stop()
         self._clear_discovered_provider_models_worker()
+
+    @on(Checkbox.Changed)
+    def handle_model_catalog_toggle_changed(self, event: Checkbox.Changed) -> None:
+        checkbox_id = str(getattr(event.checkbox, "id", "") or "")
+        if checkbox_id not in MODEL_CATALOG_CHECKBOX_IDS:
+            return
+        event.stop()
+        self._persist_model_catalog_settings()
+
+    @on(Input.Changed, "#settings-model-catalog-stale-hours")
+    def handle_model_catalog_stale_hours_changed(self, event: Input.Changed) -> None:
+        event.stop()
+        self._persist_model_catalog_settings()
 
     @on(Button.Pressed, "#settings-check-storage")
     def handle_check_storage(self, event: Button.Pressed) -> None:
