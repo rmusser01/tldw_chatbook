@@ -64,3 +64,10 @@ def test_regex_search_never_raises_on_bad_pattern():
 
 def test_regex_search_returns_bool():
     assert regex_search("x", "no match here", ignore_case=True) is False
+
+
+@pytest.mark.parametrize("pattern", [r"(\|\|\|)+", r"(a|b\|a)*", "(a[|]b)+", r"(foo\|bar)+"])
+def test_escaped_or_class_pipes_are_not_alternation_false_positives(pattern):
+    """Escaped pipes (\\|) and pipes inside a character class are NOT alternation
+    separators — safe patterns must pass (Gemini/Qodo #705)."""
+    validate_regex_pattern(pattern)  # must not raise

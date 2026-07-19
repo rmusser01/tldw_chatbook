@@ -328,3 +328,14 @@ def test_non_regex_entry_unchanged_stable_no_op():
     proc = WorldInfoProcessor(world_books=[book])
     assert proc.process_messages("The Warden.", [])["matched_entries"]
     assert proc.process_messages("nothing here", [])["matched_entries"] == []
+
+
+def test_string_false_regex_flag_is_not_enabled():
+    """A raw character_book-style entry with regex="false" (string) must NOT
+    enable regex — bool("false") is True, so a proper coercion is required
+    (Qodo #705). The entry matches literally (word-boundary), not as regex."""
+    book = _book(1, "B", [_entry(1, ["w[ao]rden"], "grim jailer", regex="false")])
+    proc = WorldInfoProcessor(world_books=[book])
+    assert proc.entries[0]["regex"] is False
+    # literal match: the key text "w[ao]rden" won't match "the warden"
+    assert proc.process_messages("the warden appears", [])["matched_entries"] == []

@@ -5,9 +5,37 @@ Handles keyword matching and injection of world info entries into conversations.
 
 import re
 from typing import Dict, List, Any, Optional, Tuple
+
 from loguru import logger
 
 from tldw_chatbook.Character_Chat.world_info_regex import validate_regex_pattern, regex_search
+
+_TRUE_STRINGS = {"true", "1", "yes", "on"}
+_FALSE_STRINGS = {"false", "0", "no", "off"}
+
+
+def _coerce_bool(value: Any, default: bool) -> bool:
+    """Best-effort bool coercion for loosely-typed entry fields.
+
+    A character_book entry reaches ``_process_entry`` raw (not through the import
+    adapter), so ``regex`` could be a string like ``"false"`` — ``bool("false")``
+    is ``True``, which would wrongly enable regex. ``None`` → ``default``;
+    recognized string booleans map by value; unknown strings → ``default``.
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in _TRUE_STRINGS:
+            return True
+        if token in _FALSE_STRINGS:
+            return False
+        return default
+    return default
 
 
 def _coerce_int(value: Any, default: int = 0) -> int:
@@ -167,7 +195,7 @@ class WorldInfoProcessor:
                 secondary_keys = sec_keys
             secondary_keys = [k.strip() for k in secondary_keys if k and k.strip()]
         
-        regex_flag = bool(entry.get('regex', False))
+        regex_flag = _coerce_bool(entry.get('regex'), False)
         if regex_flag:
             # Load-time backstop: an invalid/too-complex pattern from ANY source
             # (editor, import, or a character_book) is downgraded to literal so

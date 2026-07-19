@@ -92,12 +92,43 @@ def _has_nested_unbounded_quantifier(pattern: str) -> bool:
     return False
 
 
+def _split_top_level_alternation(body: str) -> list[str]:
+    """Split a (flat, paren-free) group body on top-level ``|`` only — NOT on
+    escaped pipes (``\\|``) or pipes inside a character class (``[a|b]``). A naive
+    ``body.split("|")`` would false-positive on those (e.g. reject ``(\\|\\|\\|)+``)."""
+    parts: list[str] = []
+    cur: list[str] = []
+    i, n = 0, len(body)
+    in_class = False
+    while i < n:
+        c = body[i]
+        if c == "\\":
+            cur.append(body[i:i + 2])
+            i += 2
+            continue
+        if c == "[":
+            in_class = True
+        elif c == "]":
+            in_class = False
+        if c == "|" and not in_class:
+            parts.append("".join(cur))
+            cur = []
+            i += 1
+            continue
+        cur.append(c)
+        i += 1
+    parts.append("".join(cur))
+    return parts
+
+
 def _has_duplicate_alternation(pattern: str) -> bool:
     """True if a flat unbounded-quantified group has a repeated alternation
-    branch — the ``(a|a)*`` / ``(a|a|a)+`` family (any number of branches)."""
+    branch — the ``(a|a)*`` / ``(a|a|a)+`` family (any number of branches).
+    Splits only on real top-level alternation (see _split_top_level_alternation),
+    so escaped/char-class pipes don't cause false positives."""
     for m in _FLAT_QUANT_GROUP_RE.finditer(pattern):
         body = _GROUP_PREFIX_RE.sub("", m.group(1))
-        alts = body.split("|")
+        alts = _split_top_level_alternation(body)
         if len(alts) >= 2 and len(set(alts)) < len(alts):
             return True
     return False
