@@ -616,18 +616,19 @@ class ChatScreen(BaseAppScreen):
         select_first: bool = False,
     ) -> None:
         """Rebuild #chat-api-model options (saved + capped discovered) preserving selection."""
-        from tldw_chatbook.UI.Screens.provider_model_resolution import (
-            resolve_provider_model_options,
-        )
         if not self.chat_window:
             return
         try:
             model_select = self.chat_window.query_one("#chat-api-model", Select)
         except Exception:
             return
-        options = await resolve_provider_model_options(
-            self.app, provider=provider, current_model=current_model,
-        )
+        try:
+            options = await resolve_provider_model_options(
+                self.app, provider=provider, current_model=current_model,
+            )
+        except Exception:
+            logger.opt(exception=True).warning(f"Could not resolve model options for {provider}")
+            return
         select_options = [(option.label, option.model_id) for option in options]
         model_select.set_options(select_options)  # resets selection — re-apply below
         if select_first and options:

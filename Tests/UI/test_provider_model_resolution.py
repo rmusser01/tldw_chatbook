@@ -8,6 +8,7 @@ gates the transient current-model option.
 
 import pytest
 
+from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import SELECTOR_MERGE_CAP
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import MergedModelEntry
 from tldw_chatbook.UI.Screens.provider_model_resolution import (
     resolve_provider_model_options,
@@ -50,6 +51,22 @@ async def test_small_discovered_catalog_merges_with_label():
 async def test_oversized_catalog_stays_saved_only():
     app = _FakeApp({"OpenRouter": ["saved-1"]},
                    _entries("OpenRouter", [f"v/m{i}" for i in range(60)]))
+    options = await resolve_provider_model_options(app, provider="OpenRouter")
+    assert [o.model_id for o in options] == ["saved-1"]
+
+
+@pytest.mark.asyncio
+async def test_catalog_at_cap_boundary_merges_in():
+    app = _FakeApp({"OpenRouter": ["saved-1"]},
+                   _entries("OpenRouter", [f"v/m{i}" for i in range(SELECTOR_MERGE_CAP)]))
+    options = await resolve_provider_model_options(app, provider="OpenRouter")
+    assert [o.model_id for o in options] == ["saved-1"] + [f"v/m{i}" for i in range(SELECTOR_MERGE_CAP)]
+
+
+@pytest.mark.asyncio
+async def test_catalog_one_over_cap_stays_saved_only():
+    app = _FakeApp({"OpenRouter": ["saved-1"]},
+                   _entries("OpenRouter", [f"v/m{i}" for i in range(SELECTOR_MERGE_CAP + 1)]))
     options = await resolve_provider_model_options(app, provider="OpenRouter")
     assert [o.model_id for o in options] == ["saved-1"]
 
