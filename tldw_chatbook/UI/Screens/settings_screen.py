@@ -5139,9 +5139,8 @@ class SettingsScreen(BaseAppScreen):
 
         The toggles gate a background behavior, so changes save immediately
         instead of staging into the category draft. States that match the
-        saved config (including the initial values emitted when the
-        subsection mounts) are skipped so merely viewing the category never
-        rewrites config.toml.
+        saved config are skipped (defense-in-depth no-op guard) so merely
+        viewing the category never rewrites config.toml.
         """
         try:
             auto_refresh_enabled = self.query_one(
@@ -5164,13 +5163,19 @@ class SettingsScreen(BaseAppScreen):
             }
         except QueryError:
             return
+        stale_hours_text = stale_hours_raw.strip()
+        if not stale_hours_text:
+            # Empty intermediate input; keep the last persisted value.
+            return
         try:
-            stale_after_hours = int(stale_hours_raw or "24")
+            stale_after_hours: float | int = float(stale_hours_text)
         except (TypeError, ValueError):
             # Invalid intermediate input; keep the last persisted value.
             return
         if stale_after_hours < 0:
             return
+        if stale_after_hours.is_integer():
+            stale_after_hours = int(stale_after_hours)
         section_values = {
             "model_catalog": {
                 "auto_refresh_enabled": auto_refresh_enabled,

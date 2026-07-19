@@ -241,6 +241,65 @@ async def test_model_catalog_invalid_hours_input_skips_persist():
 
 
 @pytest.mark.asyncio
+async def test_model_catalog_fractional_hours_persist_as_float():
+    """A hand-edited fractional TTL must persist, not silently no-op."""
+    app = _build_settings_app()
+    host = DestinationHarness(app, "settings")
+
+    with (
+        patch.object(settings_screen_module, "load_settings", return_value={}),
+        patch.object(
+            settings_screen_module,
+            "save_settings_to_cli_config",
+            return_value=True,
+        ) as save_mock,
+    ):
+        async with host.run_test(size=(180, 50)) as pilot:
+            screen = await _open_providers_category(host, pilot)
+
+            hours = screen.query_one(_HOURS_SELECTOR, Input)
+            hours.value = "0.5"
+            await _wait_for_save_calls(save_mock, pilot, 1)
+            payload = save_mock.call_args[0][0]
+            assert payload["model_catalog"]["stale_after_hours"] == 0.5
+
+            # Whole numbers still persist as ints.
+            hours.value = "6"
+            await _wait_for_save_calls(save_mock, pilot, 2)
+            payload = save_mock.call_args[0][0]
+            assert payload["model_catalog"]["stale_after_hours"] == 6
+            assert isinstance(payload["model_catalog"]["stale_after_hours"], int)
+
+
+@pytest.mark.asyncio
+async def test_model_catalog_empty_hours_skips_persist():
+    """Clearing the hours field keeps the last persisted value (no 24 rewrite)."""
+    app = _build_settings_app()
+    host = DestinationHarness(app, "settings")
+
+    with (
+        patch.object(settings_screen_module, "load_settings", return_value={}),
+        patch.object(
+            settings_screen_module,
+            "save_settings_to_cli_config",
+            return_value=True,
+        ) as save_mock,
+    ):
+        async with host.run_test(size=(180, 50)) as pilot:
+            screen = await _open_providers_category(host, pilot)
+
+            hours = screen.query_one(_HOURS_SELECTOR, Input)
+            hours.value = "6"
+            await _wait_for_save_calls(save_mock, pilot, 1)
+            calls_before = save_mock.call_count
+
+            hours.value = ""
+            await pilot.pause()
+            await pilot.pause()
+            assert save_mock.call_count == calls_before
+
+
+@pytest.mark.asyncio
 async def test_model_catalog_ignores_unrelated_checkbox_events():
     app = _build_settings_app()
     host = DestinationHarness(app, "settings")
