@@ -20,7 +20,6 @@ MAX_REGEX_PATTERN_LENGTH = 500
 
 # An UNBOUNDED quantifier only: +, *, or {n,}. Never ? or bounded {n}/{n,m}.
 _UNBOUNDED = r"(?:[*+]|\{\d+,\})"
-_UNBOUNDED_RE = re.compile(_UNBOUNDED)
 # A flat group (no inner parens) that is immediately followed by an unbounded
 # quantifier — its captured body is checked for a duplicated alternation branch.
 _FLAT_QUANT_GROUP_RE = re.compile(r"\(([^()]*)\)(?=" + _UNBOUNDED + r")")

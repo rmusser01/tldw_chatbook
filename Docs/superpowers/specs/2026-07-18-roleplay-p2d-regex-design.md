@@ -70,7 +70,7 @@ Pure, DB-free, unit-testable.
 
 - `create_world_book_entry(..., regex: bool = False)` writes it; `update_world_book_entry` field loop handles `regex` (bool); `get_world_book_entries` returns it; `export_world_book` serializes it.
 - `import_world_book` passes `regex=entry.get('regex', False)`.
-- `normalize_world_book_import`: map a tldw `regex` bool (via `_coerce_bool(entry.get('regex'), False)`; SillyTavern's classic World Info has no per-entry regex-key flag, so external files default to literal). **For a regex entry, validate every key (and secondary key) via `validate_regex_pattern`** — a bad/too-complex pattern raises `ValueError` naming the entry (fail-closed, consistent with the adapter's existing strict per-entry validation, so a malicious world book can't smuggle a UI-freezing pattern). Add `regex` to the normalized entry field set.
+- `normalize_world_book_import`: map a tldw `regex` bool (via `_coerce_bool(entry.get('regex'), False)`; SillyTavern's classic World Info has no per-entry regex-key flag, so external files default to literal). **For a regex entry, validate every key (and secondary key) via `validate_regex_pattern`** — a bad/too-complex pattern raises `ValueError` naming the entry (fail-closed, consistent with the adapter's existing strict per-entry validation, so an imported world book can't smuggle a pattern the heuristic recognizes as catastrophic; the documented best-effort residual still applies). Add `regex` to the normalized entry field set.
 
 ### 5. Editor (`personas_lore_detail.py`, `personas_screen.py`)
 

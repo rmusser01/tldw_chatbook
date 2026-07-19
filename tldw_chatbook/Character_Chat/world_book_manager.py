@@ -463,6 +463,8 @@ class WorldBookManager:
                     value = json.dumps(value) if value else None
                 elif field in ('priority', 'insertion_order'):
                     value = _coerce_int(value, 0)
+                elif field == 'regex':
+                    value = bool(value)  # symmetry with create's bool(regex) write
                 updates.append(f"{field} = ?")
                 params.append(value)
         
