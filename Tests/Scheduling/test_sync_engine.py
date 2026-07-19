@@ -4,7 +4,10 @@ import pytest
 from unittest.mock import AsyncMock
 
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
-from tldw_chatbook.Scheduling.services.server_client import ServerUnavailableError
+from tldw_chatbook.Scheduling.services.server_client import (
+    ServerClientNotFoundError,
+    ServerUnavailableError,
+)
 from tldw_chatbook.Scheduling.services.sync_engine import SyncEngine
 
 
@@ -272,16 +275,20 @@ async def test_sync_records_conflict_when_server_newer(tmp_path):
             }
         ]
     }
+    server_client.update_reminder.return_value = {"id": "srv-1"}
 
     engine = SyncEngine(db, server_client, owner_id="server:1")
     await engine.sync_now()
 
+    # The pending local mutation is preserved as a conflict, so the server
+    # state is not applied to the local row until the conflict is resolved.
     local_row = db.get_reminder_task(local_id)
-    assert local_row["title"] == "Server Newer"
+    assert local_row["title"] == "Local"
 
     conflicts = db.get_conflicts("server:1", primitive="reminder_task")
     assert len(conflicts) == 1
     assert conflicts[0]["local_id"] == local_id
+    assert conflicts[0]["server_state"]["title"] == "Server Newer"
 
     pending = db.get_pending_mutations("server:1", primitive="reminder_task")
     assert len(pending) == 0
@@ -323,6 +330,7 @@ async def test_sync_pushes_update_mutation(tmp_path):
         schedule_kind="one_time",
     )
     db.set_sync_mapping(local_id, "srv-1", "reminder_task", "server:1")
+    db.update_reminder_task(local_id, title="Updated")
     db.record_pending_mutation(
         local_id=local_id,
         primitive="reminder_task",
@@ -679,3 +687,108 @@ async def test_idempotency_key_stable_across_push_retries(tmp_path):
     succeeding_client.create_reminder.assert_awaited_once_with(
         idempotency_key=stable_key, title="Local", schedule_kind="one_time"
     )
+
+
+@pytest.mark.asyncio
+async def test_sync_now_uses_passed_owner_not_self_owner(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    server_client = AsyncMock()
+    server_client.list_reminders.return_value = {"items": []}
+    engine = SyncEngine(db, server_client, owner_id="local")
+    await engine.sync_now("server:1")
+    server_client.list_reminders.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_record_sync_error_appends_and_caps(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    engine = SyncEngine(db, None, owner_id="server:1")
+    for i in range(12):
+        engine._record_sync_error(f"err {i}")
+    state = db.get_sync_state("server:1")
+    assert len(state["sync_errors"]) == 10
+
+
+@pytest.mark.asyncio
+async def test_pull_conflict_when_local_pending_update_exists(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_reminder_task(
+        owner_id="server:1",
+        server_id="srv-1",
+        title="Local",
+        schedule_kind="one_time",
+    )
+    db.set_sync_mapping(local_id, "srv-1", "reminder_task", "server:1")
+    db.record_pending_mutation(
+        local_id,
+        "reminder_task",
+        "server:1",
+        {"action": "update", "fields": {"title": "Updated"}, "idempotency_key": "ik"},
+    )
+
+    server_client = AsyncMock()
+    server_client.list_reminders.return_value = {
+        "items": [{"id": "srv-1", "title": "Server", "schedule_kind": "one_time"}]
+    }
+    server_client.update_reminder.return_value = {"id": "srv-1"}
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+    await engine.sync_now()
+
+    conflicts = db.get_conflicts("server:1", primitive="reminder_task")
+    assert len(conflicts) == 1
+    row = db.get_reminder_task(local_id)
+    assert row["title"] == "Local"  # server state not applied
+    pending = db.get_pending_mutations("server:1")
+    assert len(pending) == 0  # update was pushed successfully
+
+
+@pytest.mark.asyncio
+async def test_push_404_records_conflict_and_removes_mutation(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_reminder_task(
+        owner_id="server:1",
+        server_id="srv-1",
+        title="T",
+        schedule_kind="one_time",
+    )
+    db.set_sync_mapping(local_id, "srv-1", "reminder_task", "server:1")
+    db.record_pending_mutation(
+        local_id,
+        "reminder_task",
+        "server:1",
+        {"action": "update", "fields": {"title": "Updated"}, "idempotency_key": "ik"},
+    )
+
+    server_client = AsyncMock()
+    server_client.update_reminder.side_effect = ServerClientNotFoundError("gone")
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+    await engine.sync_now()
+
+    conflicts = db.get_conflicts("server:1", primitive="reminder_task")
+    assert len(conflicts) == 1
+    pending = db.get_pending_mutations("server:1")
+    assert len(pending) == 0
+
+
+@pytest.mark.asyncio
+async def test_use_local_on_server_deletion_clears_server_id_and_requeues_create(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_reminder_task(
+        owner_id="server:1",
+        server_id="srv-1",
+        title="T",
+        schedule_kind="one_time",
+    )
+    db.set_sync_mapping(local_id, "srv-1", "reminder_task", "server:1")
+    conflict_id = db.record_conflict(
+        local_id, "reminder_task", "server:1", server_state={}, local_state={"record": db.get_reminder_task(local_id)}
+    )
+
+    engine = SyncEngine(db, None, owner_id="server:1")
+    engine.resolve_conflict(conflict_id, "local")
+
+    row = db.get_reminder_task(local_id)
+    assert row["server_id"] is None
+    pending = db.get_pending_mutations("server:1")
+    assert len(pending) == 1
+    assert pending[0]["payload"]["action"] == "create"
