@@ -170,7 +170,7 @@ class ChatbookImporter:
             manifest_path = extract_dir / "manifest.json"
             logger.info(f"ChatbookImporter.import_chatbook: Looking for manifest at {manifest_path}")
             if not manifest_path.exists():
-                logger.error(f"ChatbookImporter.import_chatbook: manifest.json not found")
+                logger.error("ChatbookImporter.import_chatbook: manifest.json not found")
                 status.add_error("Invalid chatbook: manifest.json not found")
                 shutil.rmtree(extract_dir)
                 return False, status
@@ -275,7 +275,7 @@ class ChatbookImporter:
                     message = "No items to import"
                 logger.info(message)
             else:
-                message = f"Failed to import any items from chatbook"
+                message = "Failed to import any items from chatbook"
                 logger.error(message)
             
             return success, message
@@ -347,7 +347,7 @@ class ChatbookImporter:
                     )
                     
                     if resolution == ConflictResolution.SKIP:
-                        logger.info(f"ChatbookImporter._import_conversations: Skipping conversation due to conflict resolution")
+                        logger.info("ChatbookImporter._import_conversations: Skipping conversation due to conflict resolution")
                         status.skipped_items += 1
                         continue
                     elif resolution == ConflictResolution.RENAME:
@@ -758,7 +758,7 @@ class ChatbookImporter:
                     )
                     
                     if resolution == ConflictResolution.SKIP:
-                        logger.info(f"ChatbookImporter._import_characters: Skipping character due to conflict resolution")
+                        logger.info("ChatbookImporter._import_characters: Skipping character due to conflict resolution")
                         status.skipped_items += 1
                         continue
                     elif resolution == ConflictResolution.RENAME:

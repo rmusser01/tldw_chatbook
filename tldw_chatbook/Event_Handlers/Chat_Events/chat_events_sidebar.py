@@ -109,7 +109,7 @@ async def perform_media_sidebar_search(app: 'TldwCli', search_term: str = ""):
         app.notify(f"Error during media search: {e}", severity="error")
         await results_list_view.clear()
         # FIX: Await the async append method.
-        await results_list_view.append(ListItem(Label(f"Search error.")))
+        await results_list_view.append(ListItem(Label("Search error.")))
 
 
 async def perform_media_search(app: 'TldwCli'):
@@ -280,7 +280,7 @@ async def perform_media_search(app: 'TldwCli'):
         app.notify(f"Error during media search: {e}", severity="error")
         await results_list_view.clear()
         # FIX: Await the async append method.
-        await results_list_view.append(ListItem(Label(f"Search error.")))
+        await results_list_view.append(ListItem(Label("Search error.")))
 
 
 async def handle_chat_media_sidebar_input_changed(app: 'TldwCli'):

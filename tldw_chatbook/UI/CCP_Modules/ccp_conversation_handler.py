@@ -401,7 +401,7 @@ class CCPConversationHandler:
                 logger.info(f"Exported conversation to {file_path}")
                 # Could show a notification here
             else:
-                logger.error(f"Failed to export conversation")
+                logger.error("Failed to export conversation")
                 
         except Exception as e:
             logger.opt(exception=True).error(f"Error exporting conversation: {e}")

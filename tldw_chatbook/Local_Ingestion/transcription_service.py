@@ -447,10 +447,10 @@ class TranscriptionService:
                 if not PARAKEET_MLX_AVAILABLE:
                     if sys.platform != 'darwin':
                         logger.error("[TRANSCRIPTION] parakeet-mlx is only available on macOS (Apple Silicon)")
-                        raise ValueError(f"parakeet-mlx is only available on macOS (Apple Silicon)")
+                        raise ValueError("parakeet-mlx is only available on macOS (Apple Silicon)")
                     else:
                         logger.error("[TRANSCRIPTION] parakeet-mlx is not installed")
-                        raise ValueError(f"parakeet-mlx is not installed. Install with: pip install parakeet-mlx")
+                        raise ValueError("parakeet-mlx is not installed. Install with: pip install parakeet-mlx")
                 else:
                     try:
                         logger.info("[TRANSCRIPTION] Attempting transcription with parakeet-mlx")
@@ -464,31 +464,31 @@ class TranscriptionService:
             elif provider == 'lightning-whisper-mlx':
                 if not LIGHTNING_WHISPER_AVAILABLE:
                     if sys.platform != 'darwin':
-                        raise ValueError(f"lightning-whisper-mlx is only available on macOS (Apple Silicon)")
+                        raise ValueError("lightning-whisper-mlx is only available on macOS (Apple Silicon)")
                     else:
-                        raise ValueError(f"lightning-whisper-mlx is not installed. Install with: pip install lightning-whisper-mlx")
+                        raise ValueError("lightning-whisper-mlx is not installed. Install with: pip install lightning-whisper-mlx")
                 result = self._transcribe_with_lightning_whisper_mlx(
                     wav_path, model, source_lang, target_lang,
                     progress_callback=progress_callback, **kwargs
                 )
             elif provider == 'faster-whisper':
                 if not FASTER_WHISPER_AVAILABLE:
-                    raise ValueError(f"faster-whisper is not installed. Install with: pip install faster-whisper")
+                    raise ValueError("faster-whisper is not installed. Install with: pip install faster-whisper")
                 result = self._transcribe_with_faster_whisper(
                     wav_path, model, language, vad_filter, source_lang, target_lang, 
                     progress_callback=progress_callback, **kwargs
                 )
             elif provider == 'qwen2audio':
                 if not QWEN2AUDIO_AVAILABLE:
-                    raise ValueError(f"Qwen2Audio is not installed. Install transformers and torch for Qwen2Audio support")
+                    raise ValueError("Qwen2Audio is not installed. Install transformers and torch for Qwen2Audio support")
                 result = self._transcribe_with_qwen2audio(wav_path, progress_callback=progress_callback, **kwargs)
             elif provider == 'parakeet':
                 if not NEMO_AVAILABLE:
-                    raise ValueError(f"NeMo toolkit is not installed. Install with: pip install nemo-toolkit[asr]")
+                    raise ValueError("NeMo toolkit is not installed. Install with: pip install nemo-toolkit[asr]")
                 result = self._transcribe_with_parakeet(wav_path, model, source_lang, progress_callback=progress_callback, **kwargs)
             elif provider == 'canary':
                 if not NEMO_AVAILABLE:
-                    raise ValueError(f"NeMo toolkit is not installed. Install with: pip install nemo-toolkit[asr]")
+                    raise ValueError("NeMo toolkit is not installed. Install with: pip install nemo-toolkit[asr]")
                 result = self._transcribe_with_canary(
                     wav_path, model, source_lang, target_lang, progress_callback=progress_callback, **kwargs
                 )
@@ -929,12 +929,12 @@ class TranscriptionService:
             try:
                 logger.info(f"Calling whisper_model.transcribe() on file: {audio_path}")
                 segments_generator, info = whisper_model.transcribe(audio_path, **options)
-                logger.info(f"whisper_model.transcribe() returned successfully, got generator and info")
+                logger.info("whisper_model.transcribe() returned successfully, got generator and info")
             except Exception as e:
                 logger.opt(exception=True).error(f"whisper_model.transcribe() failed: {type(e).__name__}: {str(e)}")
                 raise TranscriptionError(f"Whisper transcription failed: {str(e)}") from e
             
-            logger.debug(f"Whisper transcription started, processing segments...")
+            logger.debug("Whisper transcription started, processing segments...")
             
             # Get total duration for progress calculation
             total_duration = info.duration if info.duration else 0
@@ -1055,7 +1055,7 @@ class TranscriptionService:
                 "model": model,
             }
             
-            logger.info(f"Faster-whisper transcription complete:")
+            logger.info("Faster-whisper transcription complete:")
             logger.info(f"  - Total segments: {len(segments)}")
             logger.info(f"  - Total characters: {len(result['text'])}")
             logger.info(f"  - Processing time: {total_time:.2f}s (segment collection: {segment_time:.2f}s)")
@@ -1201,7 +1201,7 @@ class TranscriptionService:
             # Create segment (Qwen2Audio doesn't provide timestamps)
             total_time = time.time() - transcribe_start
             
-            logger.info(f"Qwen2Audio transcription complete:")
+            logger.info("Qwen2Audio transcription complete:")
             logger.info(f"  - Total characters: {len(transcription)}")
             logger.info(f"  - Total time: {total_time:.2f}s")
             logger.debug(f"First 200 chars: {transcription[:200]}...")
@@ -1320,7 +1320,7 @@ class TranscriptionService:
                 # Create segments (Parakeet doesn't provide timestamps by default)
                 total_time = time.time() - transcribe_start
                 
-                logger.info(f"Parakeet transcription complete:")
+                logger.info("Parakeet transcription complete:")
                 logger.info(f"  - Total characters: {len(text)}")
                 logger.info(f"  - Total time: {total_time:.2f}s")
                 logger.debug(f"First 200 chars: {text[:200]}...")
@@ -1514,7 +1514,7 @@ class TranscriptionService:
             # Create response
             total_time = time.time() - transcribe_start
             
-            logger.info(f"Canary transcription complete:")
+            logger.info("Canary transcription complete:")
             logger.info(f"  - Task: {taskname}")
             logger.info(f"  - Total characters: {len(text)}")
             logger.info(f"  - Total time: {total_time:.2f}s")
@@ -1700,7 +1700,7 @@ class TranscriptionService:
             # Create response
             total_time = time.time() - transcribe_start
             
-            logger.info(f"Lightning Whisper MLX transcription complete:")
+            logger.info("Lightning Whisper MLX transcription complete:")
             logger.info(f"  - Model: {model}")
             logger.info(f"  - Batch size: {batch_size}")
             logger.info(f"  - Quantization: {quant or 'None'}")
@@ -1914,7 +1914,7 @@ class TranscriptionService:
                     logger.warning(f"[PARAKEET] Progress callback error at transcription start: {e}")
                     _handle_progress_callback_error(e)
             
-            logger.info(f"Starting Parakeet MLX transcription")
+            logger.info("Starting Parakeet MLX transcription")
             logger.info(f"  Audio file: {audio_path}")
             logger.info(f"  Model: {model}")
             logger.info(f"  Precision: {precision}")
@@ -2110,7 +2110,7 @@ class TranscriptionService:
             # Create response
             total_time = time.time() - transcribe_start
             
-            logger.info(f"Parakeet MLX transcription complete:")
+            logger.info("Parakeet MLX transcription complete:")
             logger.info(f"  - Model: {model}")
             logger.info(f"  - Precision: {precision}")
             logger.info(f"  - Total characters: {len(text) if text else 0}")
@@ -2126,7 +2126,7 @@ class TranscriptionService:
                     speed = result.duration / total_time
                     logger.info(f"  - Speed: {speed:.2f}x realtime")
                 except (TypeError, ValueError, ZeroDivisionError):
-                    logger.info(f"  - Speed: Unable to calculate")
+                    logger.info("  - Speed: Unable to calculate")
             
             if text:
                 logger.debug(f"First 200 chars: {text[:200]}...")
@@ -2361,7 +2361,7 @@ class TranscriptionService:
                 # Calculate timing
                 total_time = time.time() - transcribe_start
                 
-                logger.info(f"Remote whisper transcription complete:")
+                logger.info("Remote whisper transcription complete:")
                 logger.info(f"  - Endpoint: {api_endpoint}")
                 logger.info(f"  - Model: {model}")
                 logger.info(f"  - Total characters: {len(text)}")

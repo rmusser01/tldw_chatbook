@@ -997,7 +997,7 @@ class ToolsSettingsWindow(Container):
                     detected_providers = get_detected_api_providers()
                     with Container(classes="settings-warning-box"):
                         yield Static(
-                            f"⚠️ Security Warning",
+                            "⚠️ Security Warning",
                             classes="warning-title"
                         )
                         yield Static(
@@ -1726,7 +1726,7 @@ class ToolsSettingsWindow(Container):
         for provider, models in providers_config.items():
             widgets.append(Static(f"{provider} Models", classes="form-section-title"))
             models_str = ", ".join(models) if isinstance(models, list) else str(models)
-            widgets.append(Label(f"Available Models (comma-separated):", classes="form-label"))
+            widgets.append(Label("Available Models (comma-separated):", classes="form-label"))
             widgets.append(TextArea(
                 text=models_str,
                 id=f"config-provider-{provider.lower().replace(' ', '-')}",
@@ -3374,7 +3374,7 @@ Thank you for using tldw-chatbook! 🎉
             if test_response and "OK" in str(test_response).upper():
                 self.app_instance.notify(f"✅ Connection to {provider} successful!", severity="information")
             else:
-                self.app_instance.notify(f"❌ Connection failed. Check your API key and model.", severity="error")
+                self.app_instance.notify("❌ Connection failed. Check your API key and model.", severity="error")
         except Exception as e:
             self.app_instance.notify(f"❌ Connection test failed: {str(e)}", severity="error")
     
@@ -3986,7 +3986,7 @@ Thank you for using tldw-chatbook! 🎉
                     models_text = textarea.text.strip()
                     if models_text:
                         models_list = [model.strip() for model in models_text.split(",") if model.strip()]
-                        save_setting_to_cli_config(f"providers", provider, models_list)
+                        save_setting_to_cli_config("providers", provider, models_list)
                 except Exception:
                     pass  # Skip if widget not found
             

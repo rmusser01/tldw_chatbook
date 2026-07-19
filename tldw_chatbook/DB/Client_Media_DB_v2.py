@@ -562,7 +562,7 @@ class MediaDatabase:
             
             # Run integrity check if requested and not in-memory
             if check_integrity_on_startup and not self.is_memory_db:
-                logging.info(f"Running startup integrity check for MediaDatabase")
+                logging.info("Running startup integrity check for MediaDatabase")
                 if not self.check_integrity():
                     logging.warning(f"Database integrity check failed for {self.db_path_str}. "
                                   "Consider running repairs or restoring from backup.")
@@ -861,7 +861,7 @@ class MediaDatabase:
                 if not version_in_tx or version_in_tx['version'] != 1:
                     logging.error(f"[Schema V1] Version check *inside* transaction failed. Found: {version_in_tx['version'] if version_in_tx else 'None'}")
                     raise SchemaError("Schema version update did not take effect within the transaction.")
-                logging.debug(f"[Schema V1] Version check inside transaction confirmed version is 1.")
+                logging.debug("[Schema V1] Version check inside transaction confirmed version is 1.")
 
             # Transaction commits here if all steps above succeeded
             logging.info(f"[Schema V1] Core Schema V1 (incl. version update) applied and committed successfully for DB: {self.db_path_str}.")
@@ -1674,7 +1674,7 @@ class MediaDatabase:
                 for field in like_fields_to_search:
                     # Avoid LIKE on 'type' if 'media_types' filter is already active for 'type'
                     if field == "type" and media_types:
-                        logging.debug(f"LIKE search on 'type' skipped due to active 'media_types' filter.")
+                        logging.debug("LIKE search on 'type' skipped due to active 'media_types' filter.")
                         continue
 
                     # Contains matching (standard)
@@ -1765,7 +1765,7 @@ class MediaDatabase:
                         count_sql = f"SELECT {count_select} FROM Media m WHERE m.deleted = 0 AND m.is_trash = 0"
                         if search_query:
                             # Add a simple LIKE condition on title and content
-                            count_sql += f" AND (m.title LIKE ? OR m.content LIKE ?)"
+                            count_sql += " AND (m.title LIKE ? OR m.content LIKE ?)"
                             count_params = (f"%{search_query}%", f"%{search_query}%")
                         else:
                             count_params = ()
@@ -1800,7 +1800,7 @@ class MediaDatabase:
                         # Simplified fallback query
                         fallback_sql = f"SELECT DISTINCT {', '.join(base_select_parts)} FROM Media m WHERE m.deleted = 0 AND m.is_trash = 0"
                         if search_query:
-                            fallback_sql += f" AND (m.title LIKE ? OR m.content LIKE ?)"
+                            fallback_sql += " AND (m.title LIKE ? OR m.content LIKE ?)"
                             fallback_params = (f"%{search_query}%", f"%{search_query}%", results_per_page, offset)
                         else:
                             fallback_params = (results_per_page, offset)
@@ -3383,7 +3383,7 @@ class MediaDatabase:
                     cursor.execute(update_sql, update_params)
                     
                     if cursor.rowcount == 0:
-                        raise ConflictError(f"Media metadata update failed due to version conflict", media_id)
+                        raise ConflictError("Media metadata update failed due to version conflict", media_id)
                     
                     # Log sync event for the update
                     self._log_sync_event(conn, "Media", media_uuid, "update", current_version + 1, sync_payload)

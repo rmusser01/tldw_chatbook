@@ -1117,7 +1117,7 @@ User for no name.
         # 7. Sync Log (Example)
         logging.info("\n--- Sync Log ---")
         sync_entries = get_sync_log_entries(limit=5)
-        logging.info(f"First 5 sync log entries:")
+        logging.info("First 5 sync log entries:")
         for entry in sync_entries:
             logging.info(f"  ID: {entry['change_id']}, Entity: {entry['entity']}, Op: {entry['operation']}, UUID: {entry['entity_uuid']}")
         if sync_entries:

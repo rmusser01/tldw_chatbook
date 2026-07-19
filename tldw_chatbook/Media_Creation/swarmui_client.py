@@ -252,7 +252,7 @@ class SwarmUIClient:
                                 # Response might be plain text path
                                 data = {'images': [response_text.strip()]}
                             
-                            logger.info(f"Image generated successfully")
+                            logger.info("Image generated successfully")
                             return {
                                 'success': True,
                                 'images': data.get('images', []),

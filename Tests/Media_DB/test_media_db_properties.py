@@ -194,7 +194,7 @@ class TestMediaItemProperties:
         
         # Verify that we got back the same IDs
         assert media_id_up == media_id, f"Update returned different ID: {media_id_up} vs original {media_id}"
-        assert media_uuid_up == media_uuid, f"Update returned different UUID"
+        assert media_uuid_up == media_uuid, "Update returned different UUID"
         
         # Verify the message indicates an update
         assert "updated" in msg2.lower(), f"Expected 'updated' in message, got: {msg2}"

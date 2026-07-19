@@ -1290,7 +1290,7 @@ class MediaWindow(Container):
                         api_key_for_call = config_api_key
                         logger.debug(f"Using API key for '{event.provider}' from config file field.")
                     else:
-                        logger.debug(f"API key field exists but is empty or placeholder")
+                        logger.debug("API key field exists but is empty or placeholder")
                 
                 # If not found, check environment variable
                 if not api_key_for_call:

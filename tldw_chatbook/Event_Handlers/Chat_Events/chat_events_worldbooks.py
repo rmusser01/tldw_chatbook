@@ -264,7 +264,7 @@ async def handle_worldbook_selection(app: 'TldwCli', list_view_id: str) -> None:
         if worldbook_data.get('description'):
             details_text += f"Description: {worldbook_data['description']}\n"
             
-        details_text += f"\nSettings:\n"
+        details_text += "\nSettings:\n"
         details_text += f"  Scan Depth: {worldbook_data.get('scan_depth', 3)}\n"
         details_text += f"  Token Budget: {worldbook_data.get('token_budget', 500)}\n"
         details_text += f"  Recursive: {'Yes' if worldbook_data.get('recursive_scanning') else 'No'}\n"

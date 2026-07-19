@@ -11,8 +11,6 @@ from tldw_chatbook.tldw_api.character_persona_schemas import (
     ArchetypePreviewResponse,
     ArchetypeSummary,
     ArchetypeTemplate,
-    CharacterChatSessionCreate,
-    CharacterChatSessionUpdate,
     CharacterCreateRequest,
     CharacterMessageCreate,
     CharacterMessageListResponse,

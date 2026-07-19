@@ -69,7 +69,7 @@ class ChatWorkerHandler(BaseWorkerHandler):
     async def _handle_running_state(self, send_button_id: str, get_char: callable, 
                                    emoji_stop: str, fallback_stop: str) -> None:
         """Handle the RUNNING state for chat workers."""
-        self.logger.info(f"Chat worker is RUNNING, updating button to STOP state")
+        self.logger.info("Chat worker is RUNNING, updating button to STOP state")
         
         try:
             # Query from the current screen, not directly from app

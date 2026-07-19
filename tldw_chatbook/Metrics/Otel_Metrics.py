@@ -211,7 +211,7 @@ def timeit(metric_name=None, documentation="Execution time and call count of a f
                 log_counter(
                     metric_name=f"{base_name}_calls_total",
                     labels=common_attributes,
-                    documentation=f"Total calls to the function."
+                    documentation="Total calls to the function."
                 )
 
                 # 2. Add a precise event to the active trace for debugging

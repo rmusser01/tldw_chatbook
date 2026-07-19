@@ -384,7 +384,6 @@ class TestConfigEncryption:
     
     def test_global_instance(self):
         """Test that global instance works correctly."""
-        from tldw_chatbook.Utils.config_encryption import config_encryption
         
         password = "test123"
         plaintext = "test data"

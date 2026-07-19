@@ -30,7 +30,7 @@ def run_command(cmd, description):
     if result.returncode != 0:
         print(f"❌ Failed with return code: {result.returncode}")
     else:
-        print(f"✅ Passed")
+        print("✅ Passed")
     
     return result.returncode == 0
 

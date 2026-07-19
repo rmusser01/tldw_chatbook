@@ -72,7 +72,7 @@ class AllTalkTTSBackend(APITTSBackend):
                         if isinstance(voices_data, list):
                             logger.info(f"AllTalk available voices: {', '.join(voices_data)}")
                         else:
-                            logger.info(f"AllTalk server responded with voices data")
+                            logger.info("AllTalk server responded with voices data")
                     except Exception as e:
                         logger.debug(f"Could not parse voices response: {e}")
                 else:

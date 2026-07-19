@@ -11097,7 +11097,7 @@ class ChatScreen(BaseAppScreen):
 
                 if input_widget and hasattr(input_widget, 'load_text'):
                     input_widget.load_text(active_tab.input_text)
-                    logger.info(f"Successfully restored input text to widget")
+                    logger.info("Successfully restored input text to widget")
                     
                     # Try to restore cursor position
                     if hasattr(input_widget, 'cursor_position'):
@@ -11108,7 +11108,7 @@ class ChatScreen(BaseAppScreen):
                 elif input_widget and hasattr(input_widget, 'value'):
                     # Try setting value directly
                     input_widget.value = active_tab.input_text
-                    logger.info(f"Restored input text via value property")
+                    logger.info("Restored input text via value property")
                 else:
                     logger.warning(f"Could not find suitable method to restore text to widget: {type(input_widget)}")
             else:

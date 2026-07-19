@@ -272,7 +272,7 @@ class PromptsDatabase:
             
             # Run integrity check if requested and not in-memory
             if check_integrity_on_startup and not self.is_memory_db:
-                logging.info(f"Running startup integrity check for PromptsDatabase")
+                logging.info("Running startup integrity check for PromptsDatabase")
                 if not self.check_integrity():
                     logging.warning(f"Database integrity check failed for {self.db_path_str}. "
                                   "Consider running repairs or restoring from backup.")

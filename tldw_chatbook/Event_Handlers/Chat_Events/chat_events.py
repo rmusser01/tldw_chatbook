@@ -503,7 +503,7 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
     if message_text_from_input:
         if not validate_text_input(message_text_from_input, max_length=100000, allow_html=False):
             await chat_container.mount(ChatMessage(Text.from_markup("Error: Message contains invalid content or is too long."), role="System", classes="-error"))
-            loguru_logger.warning(f"Invalid user message input rejected")
+            loguru_logger.warning("Invalid user message input rejected")
             log_counter("chat_ui_message_validation_failed", labels={"tab": prefix, "reason": "invalid_content"})
             return
         
@@ -561,7 +561,7 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
     # Validate system prompt input
     if system_prompt and not validate_text_input(system_prompt, max_length=50000, allow_html=False):
         await chat_container.mount(ChatMessage(Text.from_markup("Error: System prompt contains invalid content or is too long."), role="System", classes="-error"))
-        loguru_logger.warning(f"Invalid system prompt input rejected")
+        loguru_logger.warning("Invalid system prompt input rejected")
         return
     
     # Sanitize system prompt
@@ -834,7 +834,7 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
                                 'mime_type': pending_attachment['mime_type'],
                                 'path': pending_attachment.get('path')
                             }
-                            loguru_logger.info(f"DEBUG: Also set pending_image for backward compatibility")
+                            loguru_logger.info("DEBUG: Also set pending_image for backward compatibility")
                         loguru_logger.debug(f"Enhanced chat window - pending attachment: {pending_attachment.get('file_type', 'unknown')} ({pending_attachment.get('display_name', 'unnamed')})")
                 # Fall back to old pending_image system
                 elif hasattr(chat_window, 'get_pending_image'):
@@ -1116,7 +1116,7 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
                     "mime_type": pending_image['mime_type']
                 }
                 loguru_logger.info(f"Including image in API call (legacy) (type: {pending_image['mime_type']}, size: {len(pending_image['data'])} bytes)")
-                app.notify(f"Sending image with message", severity="information", timeout=2)
+                app.notify("Sending image with message", severity="information", timeout=2)
             except Exception as e:
                 loguru_logger.error(f"Failed to prepare image for API (legacy): {e}")
                 app.notify("Failed to prepare image", severity="error")
@@ -1552,7 +1552,7 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
             logging.error("Could not find .message-text Static for speak action.")
     
     elif "tts-play-button" in button_classes:
-        logging.info(f"Action: TTS Play clicked for message")
+        logging.info("Action: TTS Play clicked for message")
         
         # Import TTS events
         from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import TTSPlaybackEvent
@@ -1571,7 +1571,7 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
         ))
     
     elif "tts-pause-button" in button_classes:
-        logging.info(f"Action: TTS Pause clicked for message")
+        logging.info("Action: TTS Pause clicked for message")
         
         # Import TTS events
         from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import TTSPlaybackEvent
@@ -1590,7 +1590,7 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
         ))
     
     elif "tts-save-button" in button_classes:
-        logging.info(f"Action: TTS Save clicked for message")
+        logging.info("Action: TTS Save clicked for message")
         
         # Import TTS events and Path
         from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import TTSExportEvent
@@ -1615,7 +1615,7 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
             app.notify("No audio file available to save", severity="warning")
     
     elif "tts-stop-button" in button_classes:
-        logging.info(f"Action: TTS Stop clicked for message")
+        logging.info("Action: TTS Stop clicked for message")
         
         # Import TTS events
         from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import TTSPlaybackEvent
@@ -1705,7 +1705,7 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
                             
                         loguru_logger.info(f"Message {action_widget.message_id_internal} feedback updated")
                     else:
-                        loguru_logger.error(f"update_message_feedback returned False")
+                        loguru_logger.error("update_message_feedback returned False")
                         app.notify("Failed to save feedback", severity="error")
                         
                 except ConflictError as e:
@@ -1802,7 +1802,7 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
                             
                         loguru_logger.info(f"Message {action_widget.message_id_internal} feedback updated")
                     else:
-                        loguru_logger.error(f"update_message_feedback returned False")
+                        loguru_logger.error("update_message_feedback returned False")
                         app.notify("Failed to save feedback", severity="error")
                         
                 except ConflictError as e:
@@ -2262,7 +2262,7 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
                         except QueryError:
                             pass
             
-            app.notify(f"Selected this response to continue the conversation", severity="information")
+            app.notify("Selected this response to continue the conversation", severity="information")
             loguru_logger.info(f"Selected variant {variant_id} as the active variant for message {original_id}")
             
         except Exception as e:
@@ -4347,7 +4347,7 @@ async def handle_continue_response_button_pressed(app: 'TldwCli', event: Button.
         streaming_checkbox_cont = current_screen.query_one("#chat-streaming-enabled-checkbox", Checkbox)
         streaming_override_cont = streaming_checkbox_cont.value
         if not streaming_override_cont:
-            loguru_logger.info(f"Streaming override for CONTINUATION: checkbox=False, overriding default continuation streaming")
+            loguru_logger.info("Streaming override for CONTINUATION: checkbox=False, overriding default continuation streaming")
             should_stream = False
     except QueryError:
         loguru_logger.debug("Streaming checkbox not found for CONTINUATION, using default streaming=True")

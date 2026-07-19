@@ -784,7 +784,6 @@ class TestFasterWhisperPerformance:
     @pytest.mark.slow
     def test_transcription_speed(self, real_transcription_service, test_audio_file):
         """Benchmark transcription speed with different configurations."""
-        import time
         
         configurations = [
             {'model': 'tiny', 'compute_type': 'int8'},
@@ -836,7 +835,6 @@ class TestFasterWhisperPerformance:
     @pytest.mark.slow
     def test_model_loading_time(self, real_transcription_service):
         """Test model loading time for different models."""
-        import time
         
         models = ['tiny', 'base']
         

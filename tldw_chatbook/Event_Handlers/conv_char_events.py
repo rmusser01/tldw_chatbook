@@ -1751,7 +1751,7 @@ async def handle_ccp_editor_prompt_delete_button_pressed(app: 'TldwCli', event: 
             await populate_ccp_prompts_list_view(app)
             app.ccp_active_view = "conversation_details_view" # Switch view back
         else:
-            app.notify(f"Editor: Failed to delete prompt. It might have been already deleted.", severity="error")
+            app.notify("Editor: Failed to delete prompt. It might have been already deleted.", severity="error")
             await populate_ccp_prompts_list_view(app)
             if app.current_prompt_id == prompt_id_to_delete: # If it was the one we tried to delete
                 app._clear_prompt_fields()
@@ -1944,7 +1944,7 @@ async def handle_ccp_editor_char_save_button_pressed(app: 'TldwCli', event: Butt
 
     except ConflictError as e_conflict:
         logger.opt(exception=True).warning(f"Conflict saving character '{char_name}': {e_conflict}")
-        app.notify(f"Save conflict: Data was modified elsewhere. Please reload and try again.", severity="error", timeout=7)
+        app.notify("Save conflict: Data was modified elsewhere. Please reload and try again.", severity="error", timeout=7)
         if app.current_editing_character_id: # Reload to show current state from DB
             await _helper_ccp_load_character_into_center_pane_editor(app, app.current_editing_character_id)
     except CharactersRAGDBError as e_db:
@@ -2874,7 +2874,7 @@ async def handle_ccp_generate_all_button_pressed(app: 'TldwCli', event: Button.P
             app.notify("No API provider configured. Please configure in chat settings or config file.", severity="warning")
             return
             
-        app.notify(f"Generating complete character profile... This may take up to a minute.", severity="information")
+        app.notify("Generating complete character profile... This may take up to a minute.", severity="information")
         
         # Generate all fields in one comprehensive prompt
         prompt = f"""Create a complete character profile for a character named '{char_name}'.

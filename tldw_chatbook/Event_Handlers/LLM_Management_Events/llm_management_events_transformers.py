@@ -89,7 +89,7 @@ async def run_transformers_model_download_worker(app_instance: "TldwCli", comman
         return final_status_message
 
     except FileNotFoundError:
-        msg = f"ERROR: huggingface-cli not found. Please ensure it's installed and in PATH."
+        msg = "ERROR: huggingface-cli not found. Please ensure it's installed and in PATH."
         logger.error(msg)
         app_instance.call_from_thread(app_instance._update_transformers_log, f"[bold red]{msg}[/]\n")
         raise

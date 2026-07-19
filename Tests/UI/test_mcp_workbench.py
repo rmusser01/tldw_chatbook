@@ -735,7 +735,6 @@ def test_screen_hosts_workbench_with_mode_action_and_tolerant_restore():
 
 
 def test_mcp_hub_modes_registry_is_complete():
-    from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCP_HUB_MODES
 
     assert list(MCP_HUB_MODES) == ["servers", "tools", "permissions", "audit"]
     for spec in MCP_HUB_MODES.values():

@@ -409,7 +409,6 @@ def test_dashboard_counts_parsing_and_writing_ingest_items_as_running():
 
 from datetime import datetime, timezone
 
-from tldw_chatbook.Home.dashboard_state import build_home_triage_state
 
 _NOW = datetime(2026, 7, 4, 12, 0, 0, tzinfo=timezone.utc)
 

@@ -1113,7 +1113,6 @@ def initialize_dependency_checks():
     logger.info("Dependency check complete.")
 
 # Lazy initialization - dependencies will be checked on first use
-import os
 
 # Track if we've initialized
 _initialized = False

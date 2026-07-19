@@ -235,7 +235,6 @@ class TestRealEmbeddingsWorkflow:
     @requires_sentence_transformers
     def test_real_concurrent_operations(self, persist_dir, sample_texts):
         """Test concurrent operations with real embeddings"""
-        import threading
         
         # Create a single shared service to avoid concurrent model loading issues
         try:
@@ -552,7 +551,7 @@ class TestRealErrorHandling:
         assert embeddings is not None
         assert embeddings.shape == (500, 384)
         
-        print(f"\nLarge batch performance:")
+        print("\nLarge batch performance:")
         print(f"  Texts: {len(large_batch)}")
         print(f"  Time: {elapsed:.2f}s")
         print(f"  Throughput: {len(large_batch)/elapsed:.1f} texts/sec")

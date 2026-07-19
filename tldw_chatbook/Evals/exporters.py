@@ -410,7 +410,7 @@ class EvaluationExporter:
         lines = []
         
         # Header
-        lines.append(f"# Evaluation Report")
+        lines.append("# Evaluation Report")
         lines.append(f"\n**Run ID:** {run_data.get('run_id', 'N/A')}")
         lines.append(f"**Model:** {run_data.get('model', 'N/A')}")
         lines.append(f"**Task:** {run_data.get('task', 'N/A')}")

@@ -69,11 +69,11 @@ class ChatbooksWindow(Widget):
         self._export_path = Path(config.get("export_directory", "~/Documents/Chatbooks")).expanduser()
         self._export_path.mkdir(parents=True, exist_ok=True)
         
-        logger.info(f"ChatbooksWindow.__init__: Created")
+        logger.info("ChatbooksWindow.__init__: Created")
         
     def compose(self) -> ComposeResult:
         """Compose the UI."""
-        logger.info(f"ChatbooksWindow.compose() called")
+        logger.info("ChatbooksWindow.compose() called")
         
         # Main horizontal layout
         yield Horizontal(

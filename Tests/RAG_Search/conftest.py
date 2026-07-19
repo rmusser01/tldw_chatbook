@@ -649,14 +649,14 @@ def initialize_test_dependencies():
                     _fast_init=False
                 )
                 del model, tokenizer
-                print(f"[Session Start] Successfully initialized transformers with test model")
+                print("[Session Start] Successfully initialized transformers with test model")
             except Exception as e:
                 print(f"[Session Start] Warning: Could not load test model: {e}")
         except Exception as e:
             print(f"[Session Start] Warning: Could not initialize transformers properly: {e}")
     
     yield
-    print(f"[Session End] Tests completed")
+    print("[Session End] Tests completed")
 
 
 # ===========================================

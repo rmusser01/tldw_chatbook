@@ -358,7 +358,7 @@ class SearchEventHandlersMixin(metaclass=type(Container)):
         
         if self.parent_retrieval_strategy == "full":
             preview_text.update(
-                f"[dim]Will retrieve full parent documents[/dim]"
+                "[dim]Will retrieve full parent documents[/dim]"
             )
         elif self.parent_retrieval_strategy == "sentence_window":
             preview_text.update(

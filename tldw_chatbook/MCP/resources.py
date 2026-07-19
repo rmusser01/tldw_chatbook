@@ -192,7 +192,7 @@ class MCPResources:
                 content += f"## Example Dialogue\n\n{char['example_dialogue']}\n\n"
             
             # Add metadata
-            content += f"\n---\n\n"
+            content += "\n---\n\n"
             content += f"*Created: {char['created_at']}*\n"
             
             return {

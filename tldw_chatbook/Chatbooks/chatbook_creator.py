@@ -227,7 +227,7 @@ class ChatbookCreator:
             content = ChatbookContent()
             
             # Process each content type
-            logger.info(f"ChatbookCreator.create_chatbook: Processing content types")
+            logger.info("ChatbookCreator.create_chatbook: Processing content types")
             
             # Collect conversations
             if ContentType.CONVERSATION in content_selections:
@@ -1286,7 +1286,7 @@ class ChatbookCreator:
                 f.write(f"- **Prompts:** {manifest.total_prompts}\n")
             
             if manifest.tags:
-                f.write(f"\n## Tags\n\n")
+                f.write("\n## Tags\n\n")
                 f.write(", ".join(manifest.tags))
                 f.write("\n")
             

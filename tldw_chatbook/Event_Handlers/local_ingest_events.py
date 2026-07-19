@@ -84,7 +84,7 @@ async def handle_local_document_submit_button_pressed(app: 'TldwCli', event: 'Bu
         await ingest_window.handle_local_document_process()
             
     except QueryError:
-        logger.error(f"Could not find IngestWindow to handle document button")
+        logger.error("Could not find IngestWindow to handle document button")
     except Exception as e:
         logger.error(f"Error handling local document button: {e}")
         app.notify(f"Error: {str(e)}", severity="error")
@@ -96,7 +96,7 @@ async def handle_local_plaintext_submit_button_pressed(app: 'TldwCli', event: 'B
         await ingest_window.handle_local_plaintext_process()
             
     except QueryError:
-        logger.error(f"Could not find IngestWindow to handle plaintext button")
+        logger.error("Could not find IngestWindow to handle plaintext button")
     except Exception as e:
         logger.error(f"Error handling local plaintext button: {e}")
         app.notify(f"Error: {str(e)}", severity="error")

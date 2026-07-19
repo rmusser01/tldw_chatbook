@@ -1286,7 +1286,7 @@ def summarize_with_ollama(
             # Mount adapters for both HTTP and HTTPS
             session.mount("http://", adapter)
             session.mount("https://", adapter)
-            logging.debug(f"Ollama Summarize request being sent")
+            logging.debug("Ollama Summarize request being sent")
             response = session.post(
                 api_url,
                 headers=headers,

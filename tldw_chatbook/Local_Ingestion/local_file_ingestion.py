@@ -593,7 +593,7 @@ def parse_local_file_for_ingest(file_path: Union[str, Path], options: Dict[str, 
             
         elif file_type == 'xml':
             # XML processing not yet implemented in the expected format
-            raise FileIngestionError(f"XML file processing is not yet implemented")
+            raise FileIngestionError("XML file processing is not yet implemented")
             
         elif file_type == 'plaintext':
             # For plaintext files, we'll process them directly

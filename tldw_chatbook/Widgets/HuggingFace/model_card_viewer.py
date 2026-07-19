@@ -249,7 +249,6 @@ class ModelCardViewer(Container):
             self.load_model_details(repo_id)
         
         # Populate Model Card tab after a small delay to ensure mounting
-        from textual import work
         self.call_after_refresh(self._populate_model_card, model_info)
     
     def watch_model_files(self, files: List[Dict[str, Any]]) -> None:

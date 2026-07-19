@@ -967,7 +967,7 @@ class CodeRepoCopyPasteWindow(ModalScreen):
                             zip_file.writestr(file_path, file_contents[file_path].encode('utf-8'))
                         else:
                             # Add error file for failed fetches
-                            error_content = f"Error fetching file from GitHub"
+                            error_content = "Error fetching file from GitHub"
                             zip_file.writestr(f"{file_path}.error", error_content)
                 
                 # Add a manifest file

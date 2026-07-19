@@ -365,17 +365,17 @@ class AdvancedTextProcessor:
             if re.search(marker.pattern, sentence, re.IGNORECASE):
                 # Map emotion to prosody attributes
                 if marker.emotion == "excited":
-                    return f'<prosody rate="110%" pitch="+10%">'
+                    return '<prosody rate="110%" pitch="+10%">'
                 elif marker.emotion == "sad":
-                    return f'<prosody rate="90%" pitch="-10%">'
+                    return '<prosody rate="90%" pitch="-10%">'
                 elif marker.emotion == "happy":
-                    return f'<prosody rate="105%" pitch="+5%">'
+                    return '<prosody rate="105%" pitch="+5%">'
                 elif marker.emotion == "angry":
-                    return f'<prosody rate="95%" volume="+10%">'
+                    return '<prosody rate="95%" volume="+10%">'
                 elif marker.emotion == "thoughtful":
-                    return f'<prosody rate="85%">'
+                    return '<prosody rate="85%">'
                 elif marker.emotion == "questioning":
-                    return f'<prosody pitch="+15%">'
+                    return '<prosody pitch="+15%">'
         
         return None
     

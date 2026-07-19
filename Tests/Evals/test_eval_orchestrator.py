@@ -261,7 +261,7 @@ class TestOrchestratorIntegration:
         orchestrator = EvaluationOrchestrator(db_path=str(db_path))
         
         # Test that concurrent manager is working by simulating a conflict
-        from tldw_chatbook.Evals.eval_errors import ValidationError, ErrorContext, ErrorCategory, ErrorSeverity
+        from tldw_chatbook.Evals.eval_errors import ValidationError, ErrorSeverity
         
         conflict_error = ValidationError(ErrorContext(
             category=ErrorCategory.VALIDATION,

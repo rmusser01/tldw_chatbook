@@ -510,7 +510,7 @@ class WizardContainer(Container):
         # Set navigation values after mount to avoid warnings
         try:
             nav = self.query_one(".wizard-navigation", WizardNavigation)
-            logger.info(f"BaseWizard.on_mount: Found WizardNavigation, setting values")
+            logger.info("BaseWizard.on_mount: Found WizardNavigation, setting values")
             nav.current_step = self.current_step + 1
             nav.total_steps = self.total_steps
             nav.can_go_back = self.current_step > 0
@@ -583,7 +583,7 @@ class WizardContainer(Container):
                 nav = self.query_one(".wizard-navigation", WizardNavigation)
                 logger.info(f"BaseWizard.validate_step: Setting nav.can_go_forward={is_valid}")
                 nav.can_go_forward = is_valid
-                logger.info(f"BaseWizard.validate_step: Navigation updated successfully")
+                logger.info("BaseWizard.validate_step: Navigation updated successfully")
             except NoMatches as e:
                 logger.error(f"BaseWizard.validate_step: Could not find navigation to update - {e}")
             

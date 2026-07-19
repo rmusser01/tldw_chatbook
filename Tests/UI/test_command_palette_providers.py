@@ -873,9 +873,9 @@ class TestCommandPaletteIntegration:
             assert len(hits) > 0, f"{provider.__class__.__name__} should return at least one hit"
             
             for hit in hits:
-                assert isinstance(hit, Hit), f"All items should be Hit objects"
-                assert hasattr(hit, 'text'), f"Hit should have text attribute"
-                assert hasattr(hit, 'help'), f"Hit should have help attribute"
+                assert isinstance(hit, Hit), "All items should be Hit objects"
+                assert hasattr(hit, 'text'), "Hit should have text attribute"
+                assert hasattr(hit, 'help'), "Hit should have help attribute"
     
     @pytest.mark.asyncio
     async def test_search_consistency_across_providers(self, mock_app):

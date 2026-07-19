@@ -331,7 +331,7 @@ class VoiceCommandDialog(ModalScreen[bool]):
         
         if result:
             action, params = result
-            result_text = f"✅ Detected command:\n"
+            result_text = "✅ Detected command:\n"
             result_text += f"Action: {action}\n"
             if params:
                 result_text += f"Parameters: {params}"

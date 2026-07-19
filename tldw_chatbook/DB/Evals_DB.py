@@ -597,7 +597,7 @@ class EvalsDB:
                 
         except sqlite3.IntegrityError as e:
             if "UNIQUE constraint failed" in str(e):
-                raise ConflictError(f"Task name already exists", "eval_tasks", task_id)
+                raise ConflictError("Task name already exists", "eval_tasks", task_id)
             raise EvalsDBError(f"Failed to update task: {e}")
     
     def delete_task(self, task_id: str) -> bool:

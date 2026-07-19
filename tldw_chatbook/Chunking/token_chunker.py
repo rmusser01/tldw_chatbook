@@ -32,7 +32,7 @@ class TransformersTokenizer:
         self.available = self._transformers is not None
         
         if not self.available:
-            logger.debug(f"transformers not available, token-based chunking will be disabled")
+            logger.debug("transformers not available, token-based chunking will be disabled")
     
     @property
     def tokenizer(self):

@@ -582,7 +582,7 @@ def load_character_and_image(
         # The 'first_message' field from DB corresponds to 'first_mes' from old card spec
         first_mes_content = char_data.get('first_message')  # Already processed by placeholders if it was a string
         if not first_mes_content:  # Provide a generic greeting if first_message is empty
-            first_mes_content = replace_placeholders(f"Hello, I am {{char}}. How can I help you, {{user}}?",
+            first_mes_content = replace_placeholders("Hello, I am {char}. How can I help you, {user}?",
                                                      char_name_from_card, user_name)
 
         # Initial chat history is just the character's first message

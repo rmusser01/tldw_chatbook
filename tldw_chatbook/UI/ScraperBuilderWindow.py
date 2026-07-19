@@ -546,7 +546,7 @@ class ScraperBuilderWindow(Screen):
         # Add summary
         summary = f"\n[green]Found {total_count} elements[/green]"
         if total_count > 10:
-            summary += f" [dim](showing first 10)[/dim]"
+            summary += " [dim](showing first 10)[/dim]"
         
         container.mount(Static(table))
         container.mount(Static(summary))

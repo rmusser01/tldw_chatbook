@@ -332,8 +332,8 @@ class AudioService:
             # Add chapters
             for i, (title, start_time) in enumerate(zip(chapter_titles, chapter_times[:-1])):
                 end_time = chapter_times[i + 1] if i + 1 < len(chapter_times) else len(combined)
-                metadata_content += f"\n[CHAPTER]\n"
-                metadata_content += f"TIMEBASE=1/1000\n"
+                metadata_content += "\n[CHAPTER]\n"
+                metadata_content += "TIMEBASE=1/1000\n"
                 metadata_content += f"START={start_time}\n"
                 metadata_content += f"END={end_time}\n"
                 metadata_content += f"title={title}\n"

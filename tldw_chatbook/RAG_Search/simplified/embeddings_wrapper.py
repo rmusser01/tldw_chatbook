@@ -392,11 +392,11 @@ class EmbeddingsServiceWrapper:
             if is_cached:
                 self._cache_hits += 1
                 log_counter("embeddings_cache_hit")
-                logger.debug(f"Cache hit for embedding batch")
+                logger.debug("Cache hit for embedding batch")
             else:
                 self._cache_misses += 1
                 log_counter("embeddings_cache_miss")
-                logger.debug(f"Cache miss for embedding batch")
+                logger.debug("Cache miss for embedding batch")
             
             # Use the factory's embed method with circuit breaker protection
             logger.debug(f"Calling factory.embed with {len(texts)} texts")

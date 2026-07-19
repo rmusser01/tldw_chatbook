@@ -239,7 +239,6 @@ class GitHubAPIClient:
         cache_key = self._get_cache_key(url, params)
         
         # Estimate size of data (rough approximation)
-        import sys
         data_size = sys.getsizeof(str(data)) / (1024 * 1024)  # Convert to MB
         
         # Check if we need to evict entries

@@ -175,7 +175,6 @@ def cleanup_async_tasks():
     Note: This fixture should be explicitly used by async tests that need cleanup,
     not applied automatically to all tests.
     """
-    import asyncio
     import sys
     
     yield
@@ -225,7 +224,6 @@ def event_loop():
     This fixture is recognized by pytest-asyncio and helps ensure
     each async test gets a fresh event loop.
     """
-    import asyncio
     loop = asyncio.new_event_loop()
     yield loop
     # Cleanup
@@ -238,7 +236,6 @@ def event_loop():
 
 def _cancel_all_tasks(loop):
     """Cancel all tasks in the given event loop."""
-    import asyncio
     import sys
     
     # Get all tasks for this loop - API changed in Python 3.9

@@ -1016,7 +1016,7 @@ def process_epub(
                     # Simple join if not recursive or only one summary
                     final_analysis = "\n\n---\n\n".join(chunk_summaries)
                     if len(chunk_summaries) > 1 : logger.info(f"Combined {len(chunk_summaries)} chunk summaries (non-recursive).")
-                    else: logger.info(f"Using single chunk analysis as final analysis.")
+                    else: logger.info("Using single chunk analysis as final analysis.")
 
             result["analysis"] = final_analysis # Store final combined analysis
             log_counter("epub_chunks_summarized", value=len(chunk_summaries), labels={"file_path": file_path})

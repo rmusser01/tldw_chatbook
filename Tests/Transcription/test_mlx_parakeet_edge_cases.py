@@ -153,7 +153,7 @@ class TestMLXParakeetEdgeCases:
                 
                 # All should succeed
                 if errors:
-                    print(f"Errors encountered:")
+                    print("Errors encountered:")
                     for e, tb in errors:
                         print(f"Error: {str(e)}")
                         print(f"Traceback:\n{tb}")

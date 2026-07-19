@@ -230,12 +230,12 @@ class OpenAITTSBackend(APITTSBackend):
             
         except httpx.RequestError as e:
             # Log without exposing connection details
-            logger.error(f"OpenAITTSBackend: Network request failed")
+            logger.error("OpenAITTSBackend: Network request failed")
             raise ValueError("Unable to connect to TTS service. Please check your internet connection.")
             
         except Exception as e:
             # Log error without stack trace that might contain sensitive data
-            logger.error(f"OpenAITTSBackend: Unexpected error during TTS generation")
+            logger.error("OpenAITTSBackend: Unexpected error during TTS generation")
             raise ValueError("An unexpected error occurred during TTS generation.")
 
 #

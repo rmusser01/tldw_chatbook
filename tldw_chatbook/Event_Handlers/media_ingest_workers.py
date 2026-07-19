@@ -151,7 +151,7 @@ async def handle_tldw_api_worker_success(app: 'TldwCli', event: 'Worker.StateCha
             ))
     else:
         logger.error(f"Unexpected TLDW API response data type for {media_type}: {type(response_data)}.")
-        status_area.load_text(f"## API Request Processed\n\nUnexpected response format. Raw response logged.")
+        status_area.load_text("## API Request Processed\n\nUnexpected response format. Raw response logged.")
         app.notify("Error: Received unexpected data format from API.", severity="error")
         return
 

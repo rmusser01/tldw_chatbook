@@ -80,7 +80,7 @@ class TestTTSEventHandler:
             handler._request_cooldown[f"msg_{i}"] = base_time + i
         
         # Create a request that triggers cleanup
-        event = TTSRequestEvent("Test text", f"msg_new")
+        event = TTSRequestEvent("Test text", "msg_new")
         with patch.object(handler, '_tts_service', None):
             await handler.handle_tts_request(event)
         

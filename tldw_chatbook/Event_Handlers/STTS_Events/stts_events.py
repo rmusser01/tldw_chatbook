@@ -666,7 +666,7 @@ class STTSEventHandler:
                     audiobook_widget = self.app.query_one(AudioBookGenerationWidget)
                     if audiobook_widget:
                         log = audiobook_widget.query_one("#audiobook-generation-log", RichLog)
-                        log.write(f"[bold yellow]Starting audiobook generation...[/bold yellow]")
+                        log.write("[bold yellow]Starting audiobook generation...[/bold yellow]")
                         log.write(f"Estimated cost: ${estimated_cost:.2f}")
                 except Exception:
                     pass  # UI element not found, continue without UI updates
@@ -716,7 +716,7 @@ class STTSEventHandler:
                     audiobook_widget = self.app.query_one(AudioBookGenerationWidget)
                     if audiobook_widget:
                         log = audiobook_widget.query_one("#audiobook-generation-log", RichLog)
-                        log.write(f"[bold green]✓ AudioBook generation complete![/bold green]")
+                        log.write("[bold green]✓ AudioBook generation complete![/bold green]")
                         log.write(f"Output file: {output_path}")
                         log.write(f"Total duration: {generator.progress.actual_duration / 60:.1f} minutes")
                         

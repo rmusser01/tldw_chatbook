@@ -141,7 +141,7 @@ class TestEmbeddingPerformance:
             assert embeddings.shape == (150, 384)
             assert cache_hits == 100  # Should have 100 cache hits
             
-            print(f"\nCache performance:")
+            print("\nCache performance:")
             print(f"  Total texts: {len(repeated_texts)}")
             print(f"  Unique texts: {len(unique_texts)}")
             print(f"  Cache hits: {cache_hits}")
@@ -240,7 +240,7 @@ class TestVectorStorePerformance:
         # Calculate insertion rate
         insertion_rate = num_docs / insertion_time
         
-        print(f"\nInsertion performance:")
+        print("\nInsertion performance:")
         print(f"  Documents: {num_docs}")
         print(f"  Time: {insertion_time:.3f}s")
         print(f"  Rate: {insertion_rate:.0f} docs/sec")
@@ -297,7 +297,7 @@ class TestVectorStorePerformance:
         size_ratio = 5000 / 100
         per_doc_ratio = (search_times[5000] / 5000) / (search_times[100] / 100)
         
-        print(f"\nScaling analysis:")
+        print("\nScaling analysis:")
         print(f"  Size increased: {size_ratio}x")
         print(f"  Time increased: {time_ratio:.2f}x")
         print(f"  Per-document time ratio: {per_doc_ratio:.2f}x")
@@ -413,7 +413,7 @@ class TestConcurrencyPerformance:
             sequential_throughput = total_texts / sequential_time
             concurrent_throughput = total_texts / concurrent_time
             
-            print(f"\nConcurrency performance:")
+            print("\nConcurrency performance:")
             print(f"  Sequential: {sequential_time:.3f}s ({sequential_throughput:.0f} texts/sec)")
             print(f"  Concurrent: {concurrent_time:.3f}s ({concurrent_throughput:.0f} texts/sec)")
             print(f"  Speedup: {concurrent_throughput/sequential_throughput:.2f}x")
@@ -456,7 +456,7 @@ class TestConcurrencyPerformance:
         
         avg_switch_time = statistics.mean(switch_times)
         
-        print(f"\nModel switching overhead:")
+        print("\nModel switching overhead:")
         print(f"  Switches: {len(switch_times)}")
         print(f"  Avg time: {avg_switch_time*1000:.2f}ms")
         print(f"  Min time: {min(switch_times)*1000:.2f}ms")
@@ -517,7 +517,7 @@ class TestMemoryPerformance:
             docs_added = batch_size * num_batches
             memory_per_doc = memory_growth / docs_added * 1000  # KB per doc
             
-            print(f"\nMemory usage scaling:")
+            print("\nMemory usage scaling:")
             print(f"  Documents added: {docs_added}")
             print(f"  Memory growth: {memory_growth:.1f}MB")
             print(f"  Memory per doc: {memory_per_doc:.2f}KB")
@@ -572,7 +572,7 @@ class TestMemoryPerformance:
             # Measure after cleanup
             final_memory = process.memory_info().rss / 1024 / 1024
             
-            print(f"\nMemory cleanup test:")
+            print("\nMemory cleanup test:")
             print(f"  Baseline: {baseline_memory:.1f}MB")
             print(f"  Peak: {peak_memory:.1f}MB")
             print(f"  Final: {final_memory:.1f}MB")
@@ -618,7 +618,7 @@ class TestPerformanceOptimizations:
             
             assert embeddings.shape == (1000, 384)
             
-            print(f"\nBatch processing efficiency:")
+            print("\nBatch processing efficiency:")
             print(f"  Total texts: {len(texts)}")
             print(f"  API calls: {len(embed_calls)}")
             print(f"  Batch sizes: {embed_calls}")
@@ -681,7 +681,7 @@ class TestPerformanceOptimizations:
             
             elapsed = time.time() - start_time
             
-            print(f"\nConcurrent request handling:")
+            print("\nConcurrent request handling:")
             print(f"  Threads: {num_threads}")
             print(f"  Max concurrent API calls: {max_concurrent}")
             print(f"  Total time: {elapsed:.3f}s")

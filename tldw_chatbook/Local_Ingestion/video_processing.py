@@ -758,7 +758,7 @@ class LocalVideoProcessor:
                 check=True
             )
             
-            logger.info(f"ffmpeg completed successfully")
+            logger.info("ffmpeg completed successfully")
             logger.info(f"Audio file created: {audio_path}, exists: {os.path.exists(audio_path)}, size: {os.path.getsize(audio_path) if os.path.exists(audio_path) else 'N/A'} bytes")
             
             if not os.path.exists(audio_path):
@@ -808,7 +808,7 @@ class LocalVideoProcessor:
                 "analysis_content": result.get("analysis")  # Store analysis separately
             }
             
-            logger.info(f"[VIDEO] Prepared media data for DB save:")
+            logger.info("[VIDEO] Prepared media data for DB save:")
             logger.info(f"[VIDEO]   - URL: {media_data['url']}")
             logger.info(f"[VIDEO]   - Title: {media_data['title']}")
             logger.info(f"[VIDEO]   - Content length: {len(media_data['content'])} chars")

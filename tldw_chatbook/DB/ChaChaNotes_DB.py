@@ -2452,7 +2452,7 @@ UPDATE db_schema_version
             
             # Run integrity check if requested and not in-memory
             if check_integrity_on_startup and not self.is_memory_db:
-                logger.info(f"Running startup integrity check for CharactersRAGDB")
+                logger.info("Running startup integrity check for CharactersRAGDB")
                 if not self.check_integrity():
                     logger.warning(f"Database integrity check failed for {self.db_path_str}. "
                                   "Consider running repairs or restoring from backup.")

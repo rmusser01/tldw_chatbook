@@ -801,7 +801,6 @@ Performance Tips:
     
     def _export_as_text(self):
         """Export transcript as text file."""
-        from pathlib import Path
         from datetime import datetime
         
         try:
@@ -826,7 +825,6 @@ Performance Tips:
     
     def _export_as_markdown(self):
         """Export transcript as markdown file."""
-        from pathlib import Path
         from datetime import datetime
         
         try:

@@ -175,7 +175,6 @@ class TestDatabaseProperties:
     def test_task_roundtrip_property(self, task_config):
         """Test that tasks can be stored and retrieved without data loss."""
         # Create in-memory database
-        from tldw_chatbook.DB.Evals_DB import EvalsDB
         in_memory_db = EvalsDB(db_path=":memory:", client_id="test_client")
         
         # Skip if name is empty or just whitespace (expected to fail validation)
@@ -212,7 +211,6 @@ class TestDatabaseProperties:
     def test_multiple_tasks_uniqueness(self, task_configs):
         """Test that multiple tasks maintain unique IDs."""
         # Create in-memory database
-        from tldw_chatbook.DB.Evals_DB import EvalsDB
         in_memory_db = EvalsDB(db_path=":memory:", client_id="test_client")
         
         task_ids = []
@@ -242,7 +240,6 @@ class TestDatabaseProperties:
     def test_search_consistency(self, search_term):
         """Test that search results are consistent and contain search terms."""
         # Create in-memory database
-        from tldw_chatbook.DB.Evals_DB import EvalsDB
         in_memory_db = EvalsDB(db_path=":memory:", client_id="test_client")
         
         # Create some tasks with the search term
@@ -287,7 +284,6 @@ class TestDatabaseProperties:
     def test_pagination_properties(self, total_tasks):
         """Test pagination properties with variable number of tasks."""
         # Create in-memory database
-        from tldw_chatbook.DB.Evals_DB import EvalsDB
         in_memory_db = EvalsDB(db_path=":memory:", client_id="test_client")
         
         # Create tasks
@@ -602,7 +598,6 @@ class TestConcurrencyProperties:
         task_names = list(set(cleaned_names))
         
         # Use a temporary file database for thread safety
-        from tldw_chatbook.DB.Evals_DB import EvalsDB
         with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as f:
             temp_path = f.name
         
@@ -700,7 +695,6 @@ class TestSystemInvariants:
         import gc
         
         # Create in-memory database
-        from tldw_chatbook.DB.Evals_DB import EvalsDB
         temp_db = EvalsDB(db_path=":memory:", client_id="test_client")
         
         task_ids = []
@@ -749,7 +743,6 @@ class TestSystemInvariants:
     def test_database_consistency_invariant(self, operations):
         """Test that database maintains consistency across operations."""
         # Create in-memory database
-        from tldw_chatbook.DB.Evals_DB import EvalsDB
         temp_db = EvalsDB(db_path=":memory:", client_id="test_client")
         
         valid_operations = ["create_task", "create_model", "create_dataset"]

@@ -749,7 +749,6 @@ class TestMLXParakeetPerformance:
     @pytest.mark.slow
     def test_transcription_speed(self, real_transcription_service, test_audio_file):
         """Benchmark transcription speed with different configurations."""
-        import time
         
         configurations = [
             {'model': 'mlx-community/parakeet-tdt-0.6b-v2', 'precision': 'float16'},
@@ -791,7 +790,6 @@ class TestMLXParakeetPerformance:
     @pytest.mark.slow
     def test_real_time_factor(self, real_transcription_service):
         """Test real-time factor (RTF) of Parakeet transcription."""
-        import time
         
         # Create audio of known duration
         duration_seconds = 10

@@ -26,7 +26,6 @@ import tldw_chatbook.config
 
 # Import test utilities
 import sys
-from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 from db_test_utilities import TestDatabaseSchema, DatabasePopulator
 from test_utilities import TestDataFactory

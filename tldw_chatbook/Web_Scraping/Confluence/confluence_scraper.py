@@ -131,7 +131,7 @@ class ConfluenceScraper(Scraper):
                 # Fetch pages in space
                 response = self.auth.make_request(
                     'GET',
-                    f'/rest/api/content',
+                    '/rest/api/content',
                     params={
                         'spaceKey': space_key,
                         'type': 'page',

@@ -771,7 +771,7 @@ async def search_result_relevance(
 
             if relevancy_result:
                 # Extract the selected answer and reasoning via regex
-                logger.debug(f"LLM Relevancy Response for item:", relevancy_result)
+                logger.debug("LLM Relevancy Response for item:", relevancy_result)
                 selected_answer_match = re.search(
                     r"Selected Answer:\s*(True|False)",
                     relevancy_result,

@@ -519,7 +519,7 @@ class TranscriptionHistoryViewer(Widget):
         
         # Confirm deletion
         self.app.notify(
-            f"Delete this entry? This cannot be undone.",
+            "Delete this entry? This cannot be undone.",
             title="Confirm Deletion",
             severity="warning"
         )

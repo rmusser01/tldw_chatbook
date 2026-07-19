@@ -1104,7 +1104,7 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
                     logger.error(f"Failed to load reference audio: {e}")
         else:
             # Zero-shot mode - add system prompt
-            system_content = f"Generate audio following instruction.\n\n<|scene_desc_start|>\nSPEAKER0: "
+            system_content = "Generate audio following instruction.\n\n<|scene_desc_start|>\nSPEAKER0: "
             
             # Add voice characteristics from profile if available
             if voice_config.get("type") == "profile" and voice_config.get("metadata"):

@@ -345,7 +345,7 @@ class HiggsVoiceProfileManager:
                 f.write(f"Language: {profile.get('language', 'unknown')}\n")
                 f.write(f"Created: {profile.get('created_at', 'unknown')}\n")
                 f.write(f"\nDescription:\n{profile.get('description', 'No description')}\n")
-                f.write(f"\nTo import this profile, use the import_profile function.\n")
+                f.write("\nTo import this profile, use the import_profile function.\n")
             
             logger.info(f"Exported profile '{profile_name}' to {package_dir}")
             return True, f"Successfully exported to {package_dir}"

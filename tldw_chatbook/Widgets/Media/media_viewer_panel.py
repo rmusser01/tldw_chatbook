@@ -8,7 +8,7 @@ This component provides:
 - Analysis display
 """
 
-from typing import TYPE_CHECKING, Dict, Any, Optional, List, Tuple, Any
+from typing import TYPE_CHECKING, Dict, Optional, List, Tuple, Any
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
@@ -1346,7 +1346,7 @@ class MediaViewerPanel(Container):
                     else:
                         date_info.update(f"Version {version_num}")
                 
-                logger.debug(f"Analysis displayed successfully")
+                logger.debug("Analysis displayed successfully")
             except Exception as e:
                 logger.error(f"Error displaying analysis: {e}")
     

@@ -390,7 +390,7 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
                     # Check for tool calls in non-streaming response
                     tool_calls = None
                     if isinstance(worker_result_content, dict):
-                        logger.debug(f"Checking for tool calls in non-streaming response")
+                        logger.debug("Checking for tool calls in non-streaming response")
                         tool_calls = parse_tool_calls_from_response(worker_result_content)
                         if tool_calls:
                             logger.info(f"Detected {len(tool_calls)} tool call(s) in non-streaming response")
@@ -626,7 +626,7 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
                                     logger.error(
                                         f"Failed to retrieve saved non-streamed AI message details from DB for ID {ai_msg_db_id_ns_version}.")
                             else:
-                                logger.error(f"Failed to save non-streamed AI message to DB (no ID returned).")
+                                logger.error("Failed to save non-streamed AI message to DB (no ID returned).")
                         except (CharactersRAGDBError, InputError) as e_save_ai_ns:
                             logger.opt(exception=True).error(f"Failed to save non-streamed AI message to DB: {e_save_ai_ns}")
 

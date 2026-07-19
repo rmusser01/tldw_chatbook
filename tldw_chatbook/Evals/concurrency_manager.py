@@ -35,7 +35,7 @@ class ConcurrentRunManager:
                     raise ValidationError(ErrorContext(
                         category=ErrorCategory.VALIDATION,
                         severity=ErrorSeverity.WARNING,
-                        message=f"An evaluation is already running for this task and model combination",
+                        message="An evaluation is already running for this task and model combination",
                         details=f"Existing run: {existing_id}",
                         suggestion="Wait for the existing run to complete or cancel it",
                         is_retryable=True

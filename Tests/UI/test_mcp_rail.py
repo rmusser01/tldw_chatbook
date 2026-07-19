@@ -60,7 +60,7 @@ class RailApp(App):
 async def test_rail_renders_all_servers_row_plus_one_row_per_snapshot():
     app = RailApp()
     async with app.run_test() as pilot:
-        rows = list(app.query(f"Button.mcp-rail-row"))
+        rows = list(app.query("Button.mcp-rail-row"))
         # "All servers" + builtin + docs
         assert len(rows) == 3
         labels = [str(row.label) for row in rows]

@@ -2964,7 +2964,7 @@ def save_settings_to_cli_config(section_values: Mapping[str, Mapping[Any, Any]])
         except (TypeError, AttributeError):
             logger.error(
                 "Configuration structure conflict. Could not save settings batch "
-                f"because a part of the path is not a table/dictionary. Please check your config file."
+                "because a part of the path is not a table/dictionary. Please check your config file."
             )
             return False
 

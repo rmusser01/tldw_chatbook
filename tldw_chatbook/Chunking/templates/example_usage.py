@@ -230,7 +230,7 @@ def example_template_inheritance():
     text = " ".join([f"word{i}" for i in range(2000)])
     chunks = chunker.chunk_text(text)
     
-    print(f"Parent template (words) default max_size: 400")
+    print("Parent template (words) default max_size: 400")
     print(f"Child template (words_large) chunks: {len(chunks)}")
     print("Successfully demonstrated template inheritance")
     print()

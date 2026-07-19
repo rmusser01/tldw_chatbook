@@ -533,7 +533,7 @@ class DictationWindow(Widget):
     
     def _export_as_markdown(self):
         """Export transcript as markdown."""
-        content = f"# Transcript\n\n"
+        content = "# Transcript\n\n"
         content += f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
         content += f"**Duration:** {self._format_time(self.duration)}\n"
         content += f"**Words:** {self.word_count}\n\n"

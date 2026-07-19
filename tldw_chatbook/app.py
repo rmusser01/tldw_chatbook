@@ -71,7 +71,6 @@ from .config import (
     get_library_collections_db_path,
     get_library_ingest_jobs_db_path,
     get_media_db_path,
-    get_notifications_db_path,
     get_prompts_db_path,
     get_notifications_db_path,
     get_research_db_path,
@@ -149,7 +148,6 @@ from .config import (
     CONFIG_TOML_CONTENT,
     DEFAULT_CONFIG_PATH,
     load_settings,
-    get_cli_setting,
     get_cli_providers_and_models,
     API_MODELS_BY_PROVIDER,
     LOCAL_PROVIDERS,
@@ -2705,13 +2703,13 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                      documentation="Total application initialization time in seconds")
         
         # Log startup summary
-        logger.info(f"=== STARTUP TIMING SUMMARY ===")
+        logger.info("=== STARTUP TIMING SUMMARY ===")
         logger.info(f"Total initialization time: {total_init_time:.3f} seconds")
         for phase, duration in self._startup_phases.items():
             if phase != "total_init":
                 percentage = (duration / total_init_time) * 100 if total_init_time > 0 else 0
                 logger.info(f"  {phase}: {duration:.3f}s ({percentage:.1f}%)")
-        logger.info(f"==============================")
+        logger.info("==============================")
         
         # Final memory check
         log_resource_usage()
@@ -6014,12 +6012,12 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                          labels={"phase": "post_mount_setup"},
                          documentation="Breakdown of application startup phases")
             
-            self.loguru_logger.info(f"=== APPLICATION STARTUP COMPLETE ===")
+            self.loguru_logger.info("=== APPLICATION STARTUP COMPLETE ===")
             self.loguru_logger.info(f"Total startup time: {total_startup_time:.3f} seconds")
             self.loguru_logger.info(f"  - Backend init: {backend_init_time:.3f}s")
             self.loguru_logger.info(f"  - UI composition: {ui_compose_time:.3f}s")
             self.loguru_logger.info(f"  - Post-mount setup: {post_mount_duration:.3f}s")
-            self.loguru_logger.info(f"===================================")
+            self.loguru_logger.info("===================================")
             
             # Final memory usage
             log_resource_usage()
@@ -6804,7 +6802,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             self.call_after_refresh(llm_management_events.populate_llm_help_texts, self)
         elif new_tab == TAB_EVALS: # Added for Evals tab
             # EvalsLab is a unified dashboard - no need for view activation
-            self.loguru_logger.debug(f"Switched to Evals tab")
+            self.loguru_logger.debug("Switched to Evals tab")
 
     def _log_view_dimensions(self, view, parent):
         """Helper to log view dimensions after refresh."""

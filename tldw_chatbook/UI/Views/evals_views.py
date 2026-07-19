@@ -411,7 +411,7 @@ class ResultsDashboardView(Container):
                 self.query_one("#stat-success-rate").update(f"Success Rate: {avg_success_rate:.1f}%")
                 self.query_one("#stat-avg-duration").update(f"Avg Duration: {avg_duration:.1f}s")
                 # TODO: Calculate actual cost when cost tracking is implemented
-                self.query_one("#stat-total-cost").update(f"Total Cost: $0.00")
+                self.query_one("#stat-total-cost").update("Total Cost: $0.00")
             
         except Exception as e:
             logger.warning(f"Error updating quick stats: {e}")

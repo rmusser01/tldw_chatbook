@@ -14,7 +14,6 @@ from tldw_chatbook.tldw_api.notes_workspace_schemas import (
     GraphFormat,
     MediaSearchRequest,
     MediaListResponse,
-    NoteGraphRequest,
     NoteLinkCreate,
     NoteCreateRequest,
     NoteGraphRequest,

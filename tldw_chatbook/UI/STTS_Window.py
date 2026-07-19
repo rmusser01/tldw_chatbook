@@ -1112,7 +1112,7 @@ class TTSPlaygroundWidget(Widget):
         
         # Log the request
         log = self.query_one("#tts-generation-log", RichLog)
-        log.write(f"[bold blue]Generating TTS...[/bold blue]")
+        log.write("[bold blue]Generating TTS...[/bold blue]")
         log.write(f"Provider: {provider}")
         log.write(f"Voice: {voice}")
         log.write(f"Model: {model}")

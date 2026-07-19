@@ -104,7 +104,6 @@ class EnhancedSettingsSidebar(Container):
         self.loaded_tabs = set()
         
         # Initialize logging
-        import logging
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
         
     def _define_setting_groups(self) -> Dict[str, SettingGroup]:

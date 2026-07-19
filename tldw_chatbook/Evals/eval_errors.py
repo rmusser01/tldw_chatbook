@@ -163,7 +163,7 @@ class ModelConfigurationError(EvaluationError):
             category=ErrorCategory.MODEL_CONFIGURATION,
             severity=ErrorSeverity.ERROR,
             message=f"API key not found for {provider}",
-            suggestion=f"Set the API key in settings or environment variable",
+            suggestion="Set the API key in settings or environment variable",
             is_retryable=False,
             error_code="MISSING_API_KEY"
         ))
@@ -307,7 +307,7 @@ class SecurityError(EvaluationError):
             category=ErrorCategory.SECURITY,
             severity=ErrorSeverity.CRITICAL,
             message="Attempted to execute potentially unsafe code",
-            details=f"Code contained restricted operations",
+            details="Code contained restricted operations",
             suggestion="Review the code for security issues",
             is_retryable=False,
             error_code="UNSAFE_CODE"

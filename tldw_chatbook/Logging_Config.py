@@ -155,7 +155,7 @@ class RichLogHandler(logging.Handler):
                     print(f"LOG_FALLBACK: {message} (Error: {e})", file=sys.stderr)
         except Exception:
             # Last resort - print to stderr to avoid losing critical messages
-            print(f"!!!!!!!! ERROR within RichLogHandler.emit !!!!!!!!!!", file=sys.stderr)
+            print("!!!!!!!! ERROR within RichLogHandler.emit !!!!!!!!!!", file=sys.stderr)
             traceback.print_exc(file=sys.stderr)
 
 

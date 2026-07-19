@@ -422,7 +422,7 @@ async def process_audios_endpoint(
     """
     # --- 0) Validation and Logging ---
     # Validation happened in the dependency. Log success or handle HTTPException.
-    logger.info(f"Request received for /process-audios. Form data validated via dependency.")
+    logger.info("Request received for /process-audios. Form data validated via dependency.")
 
     if form_data.urls and form_data.urls == ['']:
         logger.info("Received urls=[''], treating as no URLs provided for audio processing.")

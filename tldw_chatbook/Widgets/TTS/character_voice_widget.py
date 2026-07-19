@@ -605,7 +605,7 @@ class CharacterVoiceWidget(Widget):
                     characters.append(Character(
                         name=name,
                         voice="narrator",
-                        description=f"Character detected from dialogue"
+                        description="Character detected from dialogue"
                     ))
         
         # Auto-assign voices if requested

@@ -379,10 +379,10 @@ def _collect_xml_specific_data(app: 'TldwCli', common_api_data: Dict[str, Any], 
         per_segment_summary = False  # Default value
         if per_segment_summary_str.lower() in ["true", "1", "yes", "y"]:
             per_segment_summary = True
-            logger.debug(f"per_segment_summary: True")
+            logger.debug("per_segment_summary: True")
         elif per_segment_summary_str.lower() in ["false", "0", "no", "n", ""]:
             per_segment_summary = False
-            logger.debug(f"per_segment_summary: False (explicit or blank)")
+            logger.debug("per_segment_summary: False (explicit or blank)")
         else:
             logger.warning(f"Invalid per_segment_summary value: '{per_segment_summary_str}'. Using default (False).")
 
@@ -728,7 +728,7 @@ async def handle_tldw_api_submit_button_pressed(app: 'TldwCli', event: Button.Pr
                 ))
         else:
             logger.error(f"Unexpected TLDW API response data type for {selected_media_type}: {type(response_data)}.")
-            current_status_area.load_text(f"## API Request Processed\n\nUnexpected response format. Raw response logged.")
+            current_status_area.load_text("## API Request Processed\n\nUnexpected response format. Raw response logged.")
             current_status_area.display = True
             app.notify("Error: Received unexpected data format from API.", severity="error")
             return
@@ -805,7 +805,7 @@ async def handle_tldw_api_submit_button_pressed(app: 'TldwCli', event: Button.Pr
         if processed_count == 0 and error_count == 0 and not results_to_ingest:
             summary_parts.append("API request successful, but no items were provided or found for processing.\n")
         elif processed_count == 0 and error_count > 0:
-            summary_parts.append(f"API request successful, but no new items were ingested due to errors.\n")
+            summary_parts.append("API request successful, but no new items were ingested due to errors.\n")
             summary_parts.append(f"- Successfully processed items by API: {processed_count}\n")  # This might be confusing if API said success but ingest failed
             summary_parts.append(f"- Items with errors during API processing or local ingestion: {error_count}\n")
         else:

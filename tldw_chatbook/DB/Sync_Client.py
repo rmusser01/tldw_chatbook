@@ -605,7 +605,7 @@ class ClientSyncEngine:
                 if not force_apply and operation in ['update', 'delete'] and optimistic_lock_sql and rows_affected == 0:
                     logger.warning(
                         f"Optimistic lock failed for {entity} UUID {uuid} (Op: {operation}, Expected Base Ver: {expected_base_version}). Rowcount 0.")
-                    raise ConflictError(f"Optimistic lock failed applying change.", entity=entity, identifier=uuid)
+                    raise ConflictError("Optimistic lock failed applying change.", entity=entity, identifier=uuid)
                 elif not force_apply and operation == 'create' and rows_affected == 0:
                     logger.warning(
                         f"'Create' operation for {entity} UUID {uuid} affected 0 rows (INSERT OR IGNORE). Likely benign duplicate.")

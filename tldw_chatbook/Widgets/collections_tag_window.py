@@ -422,7 +422,7 @@ class CollectionsTagWindow(Container):
         
         # Create a simple confirmation dialog
         from textual.screen import ModalScreen
-        from textual.containers import Vertical, Horizontal
+        from textual.containers import Horizontal
         from textual.widgets import Label, Button
         
         class DeleteConfirmationModal(ModalScreen):

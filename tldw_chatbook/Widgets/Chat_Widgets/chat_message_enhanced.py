@@ -542,7 +542,7 @@ Preview: {preview}...
     
     def mark_generation_complete(self):
         """Marks the AI message generation as complete."""
-        logging.info(f"mark_generation_complete called")
+        logging.info("mark_generation_complete called")
         if self.has_class("-ai"):
             self._generation_complete_internal = True
             self.refresh()

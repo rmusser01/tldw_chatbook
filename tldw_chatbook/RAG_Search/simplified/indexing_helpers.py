@@ -121,7 +121,7 @@ async def generate_embeddings_batch(rag_service, chunk_texts: List[str],
             
             if retry_failed and len(batch) > 1:
                 # Try to process the batch in smaller chunks or individually
-                logger.info(f"Retrying failed batch with individual processing...")
+                logger.info("Retrying failed batch with individual processing...")
                 
                 for j, (text, idx) in enumerate(zip(batch, batch_indices)):
                     try:

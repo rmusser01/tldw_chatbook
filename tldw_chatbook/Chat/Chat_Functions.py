@@ -787,7 +787,7 @@ def chat_api_call(
         if isinstance(response, str):
              logger.debug(f"Debug - Chat API Call - Response (first 500 chars): {response[:500]}...")
         elif hasattr(response, '__iter__') and not isinstance(response, (str, bytes, dict)):
-             logger.debug(f"Debug - Chat API Call - Response: Streaming Generator")
+             logger.debug("Debug - Chat API Call - Response: Streaming Generator")
         else:
              logger.debug(f"Debug - Chat API Call - Response Type: {type(response)}")
         return response
@@ -1127,7 +1127,7 @@ def chat(
         try: temperature_float = float(temperature) if temperature is not None else 0.7
         except ValueError: logging.warning(f"Invalid temperature '{temperature}', using 0.7.")
 
-        logging.debug(f"Debug - Chat Function - Final LLM Payload (structure, image data truncated):")
+        logging.debug("Debug - Chat Function - Final LLM Payload (structure, image data truncated):")
         for i, msg_p in enumerate(llm_messages_payload):
             content_log = []
             if isinstance(msg_p.get("content"), list):
@@ -1278,7 +1278,7 @@ def chat(
                 elif think_blocks: # Only one block, or stripping not needed / done
                     logging.info(f"Thinking tags: {len(think_blocks)} block(s) found, no stripping needed or already processed if only one.")
             elif not streaming and isinstance(response, str) and not strip_thinking_tags:
-                logging.info(f"Not stripping thinking tags from non-streaming response - setting is disabled")
+                logging.info("Not stripping thinking tags from non-streaming response - setting is disabled")
 
             # For streaming=True, stripping logic should be applied by the receiver
             # of the stream (e.g., in app.py's on_stream_done event handler).

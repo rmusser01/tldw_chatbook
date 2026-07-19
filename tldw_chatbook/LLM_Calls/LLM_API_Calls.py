@@ -532,7 +532,7 @@ def chat_with_openai(
         'Authorization': f'Bearer {final_api_key}',
         'Content-Type': 'application/json'
     }
-    logger.debug(f"OpenAI Request Payload (excluding messages): {{k: v for k, v in payload.items() if k != 'messages'}}")
+    logger.debug("OpenAI Request Payload (excluding messages): {k: v for k, v in payload.items() if k != 'messages'}")
 
     api_path = "/responses" if use_responses_api else "/chat/completions"
     api_url = openai_config.get('api_base_url', 'https://api.openai.com/v1').rstrip('/') + api_path
@@ -925,7 +925,7 @@ def chat_with_anthropic(
     if thinking_config is not None: data["thinking"] = thinking_config
 
     api_url = anthropic_config.get('api_base_url', 'https://api.anthropic.com/v1').rstrip('/') + '/messages'
-    logger.debug(f"Anthropic Request Payload (excluding messages): {{k: v for k, v in data.items() if k != 'messages'}}")
+    logger.debug("Anthropic Request Payload (excluding messages): {k: v for k, v in data.items() if k != 'messages'}")
 
     start_time = time.time()
     log_counter("anthropic_api_request", labels={"model": current_model, "streaming": str(current_streaming)})
@@ -1854,7 +1854,7 @@ def chat_with_deepseek(
 
     api_url = deepseek_config.get('api_base_url', 'https://api.deepseek.com').rstrip('/') + '/chat/completions'
     logger.debug(
-        f"DeepSeek Request Payload (excluding messages): {{k: v for k, v in data.items() if k != 'messages'}}")
+        "DeepSeek Request Payload (excluding messages): {k: v for k, v in data.items() if k != 'messages'}")
 
     try:
         if current_streaming:
@@ -2167,7 +2167,7 @@ def chat_with_google(
     stream_suffix = ":streamGenerateContent?alt=sse" if current_streaming else ":generateContent"
     api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{current_model}{stream_suffix}"
     headers = {'x-goog-api-key': final_api_key, 'Content-Type': 'application/json'}
-    logger.debug(f"Google Gemini Request Payload (excluding contents): {{k: v for k,v in payload.items() if k != 'contents'}}")
+    logger.debug("Google Gemini Request Payload (excluding contents): {k: v for k,v in payload.items() if k != 'contents'}")
     logger.debug(f"Google Gemini Contents (first item parts): {payload.get('contents', [{}])[0].get('parts', [])[:2] if payload.get('contents') else 'No contents'}")
 
 
@@ -2524,7 +2524,7 @@ def chat_with_groq(
     if top_logprobs is not None and data.get("logprobs") is True: data["top_logprobs"] = top_logprobs
 
     api_url = groq_config.get('api_base_url', 'https://api.groq.com/openai/v1').rstrip('/') + '/chat/completions'
-    logger.debug(f"Groq Request Payload (excluding messages): {{k: v for k, v in data.items() if k != 'messages'}}")
+    logger.debug("Groq Request Payload (excluding messages): {k: v for k, v in data.items() if k != 'messages'}")
     try:
         if current_streaming:
             # ... (OpenAI-like streaming logic, ensure "Groq" in logs) ...
@@ -2993,7 +2993,7 @@ def chat_with_mistral(
     if response_format is not None: data["response_format"] = response_format  # {"type": "json_object"}
 
     api_url = mistral_config.get('api_base_url', 'https://api.mistral.ai/v1').rstrip('/') + '/chat/completions'
-    logger.debug(f"Mistral Request Payload (excluding messages): {{k: v for k, v in data.items() if k != 'messages'}}")
+    logger.debug("Mistral Request Payload (excluding messages): {k: v for k, v in data.items() if k != 'messages'}")
 
     try:
         if current_streaming:
@@ -3151,7 +3151,7 @@ def chat_with_openrouter(
 
     api_url = openrouter_config.get('api_base_url', "https://openrouter.ai/api/v1").rstrip('/') + "/chat/completions"
     logger.debug(
-        f"OpenRouter Request Payload (excluding messages): {{k: v for k, v in data.items() if k != 'messages'}}")
+        "OpenRouter Request Payload (excluding messages): {k: v for k, v in data.items() if k != 'messages'}")
 
     try:
         if current_streaming:
@@ -3449,7 +3449,7 @@ def chat_with_moonshot(
         'Authorization': f'Bearer {final_api_key}',
         'Content-Type': 'application/json'
     }
-    logger.debug(f"Moonshot Request Payload (excluding messages): {{k: v for k, v in payload.items() if k != 'messages'}}")
+    logger.debug("Moonshot Request Payload (excluding messages): {k: v for k, v in payload.items() if k != 'messages'}")
     
     # Determine API endpoint based on config (default to international)
     api_region = moonshot_config.get('api_region', 'international').lower()
@@ -3675,7 +3675,7 @@ def chat_with_zai(
     api_base_url = zai_config.get('api_base_url', 'https://api.z.ai/api/paas/v4')
     api_url = api_base_url.rstrip('/') + '/chat/completions'
     
-    logger.debug(f"Z.AI Request Payload (excluding messages): {{k: v for k, v in payload.items() if k != 'messages'}}")
+    logger.debug("Z.AI Request Payload (excluding messages): {k: v for k, v in payload.items() if k != 'messages'}")
     
     start_time = time.time()
     

@@ -21,7 +21,6 @@ from textual.reactive import reactive
 from textual.binding import Binding
 from textual import work
 from textual.worker import Worker
-import asyncio
 
 # Local imports
 from ..TTS.backends.higgs_voice_manager import HiggsVoiceProfileManager

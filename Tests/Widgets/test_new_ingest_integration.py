@@ -425,7 +425,7 @@ async def test_processing_dashboard_controls():
         # Test individual job controls
         try:
             # Click cancel on job-1
-            await pilot.click(f"#cancel-job-1")
+            await pilot.click("#cancel-job-1")
             await pilot.pause()
             
             assert job1.state == ProcessingState.CANCELLED
