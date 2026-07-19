@@ -309,6 +309,7 @@ async def test_write_through_failure_is_flagged_and_notified(tmp_path):
     assert outcome.saved_model_ids == ()
     message = format_refresh_notification(report)
     assert "config save failed" in message
+    assert "new cached" not in message  # save-failed clause already covers the diff
 
 
 @pytest.mark.asyncio
@@ -328,3 +329,133 @@ async def test_zero_stale_after_hours_refetches_fresh_entry(tmp_path):
         provider_list_keys=("OpenAI",),
     )
     assert report.outcomes[0].status == "refreshed"
+
+
+@pytest.mark.asyncio
+async def test_disk_save_failure_still_returns_report(tmp_path, monkeypatch):
+    saved_calls = []
+    service = _service({"OpenAI": _discovered("OpenAI", "saved-1", "new-1")}, saved_calls)
+    store = ModelCatalogDiskStore(tmp_path / "cache.json")
+
+    def failing_save():
+        raise OSError("disk full")
+
+    monkeypatch.setattr(store, "save", failing_save)
+    report = await service.refresh_stale_configured_providers(
+        catalog_settings=ModelCatalogSettings(),
+        disk_store=store,
+        provider_list_keys=("OpenAI",),
+    )
+    assert report.outcomes[0].status == "refreshed"
+    assert report.outcomes[0].new_model_ids == ("new-1",)
+
+
+@pytest.mark.asyncio
+async def test_unresolved_provider_is_skipped_not_ready(tmp_path):
+    saved_calls = []
+    service = _service(
+        {},
+        saved_calls,
+        catalog_loader=lambda: {"OpenAI": ["saved-1"]},  # requested key absent
+    )
+    store = ModelCatalogDiskStore(tmp_path / "cache.json")
+    report = await service.refresh_stale_configured_providers(
+        catalog_settings=ModelCatalogSettings(),
+        disk_store=store,
+        provider_list_keys=("OpenRouter",),
+    )
+    assert report.outcomes[0].status == "skipped_not_ready"
+    assert report.outcomes[0].provider_list_key == "OpenRouter"
+
+
+@pytest.mark.asyncio
+async def test_unsupported_endpoint_is_reported_as_failed(tmp_path):
+    async def unsupported_client(**kwargs):
+        return ModelDiscoveryResult(
+            provider=kwargs["provider"],
+            provider_list_key=kwargs["provider_list_key"],
+            endpoint_fingerprint=fingerprint_endpoint(kwargs["endpoint"]),
+            status="unsupported",
+            error=ModelDiscoveryError(
+                kind="unsupported_endpoint",
+                message="This endpoint is not a valid OpenAI-compatible models endpoint.",
+                recovery_hint="Configure an explicit http:// or https:// /v1 models endpoint.",
+            ),
+        )
+
+    saved_calls = []
+    service = _service({}, saved_calls, discovery_client=unsupported_client)
+    store = ModelCatalogDiskStore(tmp_path / "cache.json")
+    report = await service.refresh_stale_configured_providers(
+        catalog_settings=ModelCatalogSettings(),
+        disk_store=store,
+        provider_list_keys=("OpenAI",),
+    )
+    assert report.outcomes[0].status == "failed"
+    assert report.outcomes[0].error_kind == "unsupported_endpoint"
+
+
+@pytest.mark.asyncio
+async def test_failed_refresh_leaves_disk_entry_unset(tmp_path):
+    async def failing_client(**kwargs):
+        return ModelDiscoveryResult(
+            provider=kwargs["provider"],
+            provider_list_key=kwargs["provider_list_key"],
+            endpoint_fingerprint=fingerprint_endpoint(kwargs["endpoint"]),
+            status="error",
+            error=ModelDiscoveryError(
+                kind="request_failed",
+                message="The models endpoint could not be reached.",
+                recovery_hint="Check the endpoint and try again.",
+            ),
+        )
+
+    saved_calls = []
+    service = _service({}, saved_calls, discovery_client=failing_client)
+    store = ModelCatalogDiskStore(tmp_path / "cache.json")
+    report = await service.refresh_stale_configured_providers(
+        catalog_settings=ModelCatalogSettings(),
+        disk_store=store,
+        provider_list_keys=("OpenAI",),
+    )
+    assert report.outcomes[0].status == "failed"
+    fingerprint = fingerprint_endpoint("https://api.openai.com/v1")
+    assert store.fetched_at("OpenAI", fingerprint) is None  # retried next launch
+    assert store.is_stale("OpenAI", fingerprint, stale_after_hours=24)
+
+
+@pytest.mark.asyncio
+async def test_unexpected_client_error_becomes_failed_outcome_and_loop_continues(tmp_path):
+    async def raising_client(**kwargs):
+        if kwargs["provider_list_key"] == "OpenAI":
+            raise RuntimeError("boom")
+        return ModelDiscoveryResult(
+            provider=kwargs["provider"],
+            provider_list_key=kwargs["provider_list_key"],
+            endpoint_fingerprint=fingerprint_endpoint(kwargs["endpoint"]),
+            status="success",
+            models=_discovered("OpenRouter", "a/b"),
+        )
+
+    saved_calls = []
+    service = _service({}, saved_calls, discovery_client=raising_client)
+    store = ModelCatalogDiskStore(tmp_path / "cache.json")
+    report = await service.refresh_stale_configured_providers(
+        catalog_settings=ModelCatalogSettings(),
+        disk_store=store,
+        provider_list_keys=("OpenAI", "OpenRouter"),
+    )
+    assert report.outcomes[0].status == "failed"
+    assert report.outcomes[0].error_kind == "unexpected"
+    assert report.outcomes[1].status == "refreshed"
+
+
+def test_notification_reports_baseline_diff_as_cached():
+    report = RefreshReport((
+        ProviderRefreshOutcome(
+            provider_list_key="OpenRouter", status="baseline", new_model_ids=("a/b", "c/d")),
+        ProviderRefreshOutcome(provider_list_key="ZAI", status="baseline"),
+    ))
+    message = format_refresh_notification(report)
+    assert "OpenRouter: 2 new cached" in message
+    assert "ZAI: catalog cached" in message

@@ -44,10 +44,19 @@ def format_refresh_notification(report: RefreshReport) -> str | None:
     for outcome in report.outcomes:
         if outcome.status == "refreshed" and outcome.saved_model_ids:
             parts.append(f"{outcome.provider_list_key}: {len(outcome.saved_model_ids)} new saved")
-        elif outcome.status == "refreshed" and outcome.new_model_ids:
+        elif (
+            outcome.status == "refreshed"
+            and outcome.new_model_ids
+            and not outcome.write_failed
+        ):
+            # Suppressed on write failure: the save-failed clause already covers it.
             parts.append(f"{outcome.provider_list_key}: {len(outcome.new_model_ids)} new cached")
         elif outcome.status == "baseline":
-            parts.append(f"{outcome.provider_list_key}: catalog cached")
+            if outcome.new_model_ids:
+                # Baseline suppressed the write; the diff is still reported as cached.
+                parts.append(f"{outcome.provider_list_key}: {len(outcome.new_model_ids)} new cached")
+            else:
+                parts.append(f"{outcome.provider_list_key}: catalog cached")
         if outcome.write_failed:
             write_failures.append(outcome.provider_list_key)
         if outcome.status == "failed":
