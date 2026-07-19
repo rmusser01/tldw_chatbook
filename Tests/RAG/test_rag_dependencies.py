@@ -31,7 +31,7 @@ def check_rag_dependencies() -> Dict[str, bool]:
 
     # Check core dependencies
     try:
-        import torch
+        import torch  # noqa: F401
 
         results["torch"] = True
         logger.success("✅ torch available")
@@ -40,7 +40,7 @@ def check_rag_dependencies() -> Dict[str, bool]:
         logger.warning("❌ torch not available")
 
     try:
-        import transformers
+        import transformers  # noqa: F401
 
         results["transformers"] = True
         logger.success("✅ transformers available")
@@ -49,7 +49,7 @@ def check_rag_dependencies() -> Dict[str, bool]:
         logger.warning("❌ transformers not available")
 
     try:
-        import numpy
+        import numpy  # noqa: F401
 
         results["numpy"] = True
         logger.success("✅ numpy available")
@@ -58,7 +58,7 @@ def check_rag_dependencies() -> Dict[str, bool]:
         logger.warning("❌ numpy not available")
 
     try:
-        import chromadb
+        import chromadb  # noqa: F401
 
         results["chromadb"] = True
         logger.success("✅ chromadb available")
@@ -67,7 +67,7 @@ def check_rag_dependencies() -> Dict[str, bool]:
         logger.warning("❌ chromadb not available")
 
     try:
-        import sentence_transformers
+        import sentence_transformers  # noqa: F401
 
         results["sentence_transformers"] = True
         logger.success("✅ sentence_transformers available")
@@ -77,7 +77,7 @@ def check_rag_dependencies() -> Dict[str, bool]:
 
     # Check reranking dependencies
     try:
-        import flashrank
+        import flashrank  # noqa: F401
 
         results["flashrank"] = True
         logger.success("✅ flashrank available (for reranking)")
@@ -86,7 +86,7 @@ def check_rag_dependencies() -> Dict[str, bool]:
         logger.warning("❌ flashrank not available (reranking will be limited)")
 
     try:
-        import cohere
+        import cohere  # noqa: F401
 
         results["cohere"] = True
         logger.success("✅ cohere available (for advanced reranking)")
@@ -178,9 +178,9 @@ def check_rag_services() -> Dict[str, bool]:
     # Check if RAG event handlers are available
     try:
         from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
-            perform_plain_rag_search,
-            perform_full_rag_pipeline,
-            get_rag_context_for_chat,
+            perform_plain_rag_search,  # noqa: F401
+            perform_full_rag_pipeline,  # noqa: F401
+            get_rag_context_for_chat,  # noqa: F401
         )
 
         results["rag_events"] = True
@@ -192,7 +192,7 @@ def check_rag_services() -> Dict[str, bool]:
     # Check if simplified RAG is available
     try:
         from tldw_chatbook.RAG_Search import (
-            RAGService,
+            RAGService,  # noqa: F401
             EmbeddingsService,
             ChunkingService,
             create_rag_service,
@@ -219,7 +219,7 @@ def check_rag_services() -> Dict[str, bool]:
 
     # Check embeddings service
     try:
-        from tldw_chatbook.RAG_Search import EmbeddingsService
+        from tldw_chatbook.RAG_Search import EmbeddingsService  # noqa: F401
 
         results["embeddings_service"] = True
         logger.success("✅ Embeddings service available")
@@ -229,7 +229,7 @@ def check_rag_services() -> Dict[str, bool]:
 
     # Check chunking service
     try:
-        from tldw_chatbook.RAG_Search import ChunkingService
+        from tldw_chatbook.RAG_Search import ChunkingService  # noqa: F401
 
         results["chunking_service"] = True
         logger.success("✅ Chunking service available")
@@ -240,9 +240,9 @@ def check_rag_services() -> Dict[str, bool]:
     # Check vector store options
     try:
         from tldw_chatbook.RAG_Search.simplified import (
-            ChromaVectorStore,
-            InMemoryVectorStore,
-            create_vector_store,
+            ChromaVectorStore,  # noqa: F401
+            InMemoryVectorStore,  # noqa: F401
+            create_vector_store,  # noqa: F401
         )
 
         results["vector_stores"] = True
@@ -254,9 +254,9 @@ def check_rag_services() -> Dict[str, bool]:
     # Check citation support
     try:
         from tldw_chatbook.RAG_Search.simplified import (
-            Citation,
-            CitationType,
-            SearchResultWithCitations,
+            Citation,  # noqa: F401
+            CitationType,  # noqa: F401
+            SearchResultWithCitations,  # noqa: F401
         )
 
         results["citations"] = True

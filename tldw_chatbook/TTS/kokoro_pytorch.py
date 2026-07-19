@@ -21,7 +21,7 @@ except ImportError:
 
 # Optional imports with fallbacks
 try:
-    import phonemizer
+    import phonemizer  # noqa: F401
 
     PHONEMIZER_AVAILABLE = True
 except ImportError:

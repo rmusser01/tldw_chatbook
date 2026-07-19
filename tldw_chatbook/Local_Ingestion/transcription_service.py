@@ -1690,7 +1690,7 @@ class TranscriptionService:
         try:
             from nemo.collections.asr.models import EncDecMultiTaskModel
             from nemo.collections.asr.parts.utils.transcribe_utils import (
-                transcribe_partial_audio,
+                transcribe_partial_audio,  # noqa: F401
                 get_buffered_pred_feat_multitaskAED,
             )
         except ImportError as e:

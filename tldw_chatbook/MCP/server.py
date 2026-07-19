@@ -17,7 +17,7 @@ from datetime import datetime  # noqa: E402
 try:
     from mcp.server.fastmcp import FastMCP
     from mcp.server.models import InitializationOptions
-    from mcp.types import Tool, Resource, Prompt, TextContent, ImageContent
+    from mcp.types import Tool, Resource, Prompt, TextContent, ImageContent  # noqa: F401
 
     MCP_AVAILABLE = True
 except ImportError:

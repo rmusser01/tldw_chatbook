@@ -18,17 +18,17 @@ def test_imports():
 
     try:
         from tldw_chatbook.app import (
-            ThemeProvider,
-            TabNavigationProvider,
-            LLMProviderProvider,
-            QuickActionsProvider,
-            SettingsProvider,
-            CharacterProvider,
-            MediaProvider,
-            DeveloperProvider,
-            TldwCli,
+            ThemeProvider,  # noqa: F401
+            TabNavigationProvider,  # noqa: F401
+            LLMProviderProvider,  # noqa: F401
+            QuickActionsProvider,  # noqa: F401
+            SettingsProvider,  # noqa: F401
+            CharacterProvider,  # noqa: F401
+            MediaProvider,  # noqa: F401
+            DeveloperProvider,  # noqa: F401
+            TldwCli,  # noqa: F401
         )
-        from tldw_chatbook.Constants import TAB_CHAT
+        from tldw_chatbook.Constants import TAB_CHAT  # noqa: F401
 
         print("✅ All imports successful")
         return True

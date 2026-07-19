@@ -865,7 +865,7 @@ def load_settings(force_reload: bool = False) -> Dict:
     if sys.platform == "darwin":
         # Check if macOS-specific providers are available
         try:
-            import parakeet_mlx
+            import parakeet_mlx  # noqa: F401
 
             default_stt_provider = "parakeet-mlx"
             logger.debug(
@@ -873,7 +873,7 @@ def load_settings(force_reload: bool = False) -> Dict:
             )
         except ImportError:
             try:
-                from lightning_whisper_mlx import LightningWhisperMLX
+                from lightning_whisper_mlx import LightningWhisperMLX  # noqa: F401
 
                 default_stt_provider = "lightning-whisper-mlx"
                 logger.debug(

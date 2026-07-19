@@ -155,7 +155,7 @@ def get_image_render_mode(config_mode: str = "auto") -> Literal["pixels", "regul
         if capabilities["recommended_mode"] == "regular":
             # Check if textual-image is available
             try:
-                import textual_image
+                import textual_image  # noqa: F401
 
                 log_counter(
                     "terminal_utils_render_mode_result",
@@ -191,8 +191,8 @@ def is_image_support_available() -> bool:
 
     # Check for rich-pixels (should always be available if PIL is installed)
     try:
-        import rich_pixels
-        import PIL
+        import rich_pixels  # noqa: F401
+        import PIL  # noqa: F401
 
         log_counter(
             "terminal_utils_image_support_result",
@@ -204,7 +204,7 @@ def is_image_support_available() -> bool:
 
     # Check for textual-image
     try:
-        import textual_image
+        import textual_image  # noqa: F401
 
         log_counter(
             "terminal_utils_image_support_result",

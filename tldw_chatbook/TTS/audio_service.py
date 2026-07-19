@@ -33,7 +33,7 @@ except ImportError:
 
 try:
     from pydub import AudioSegment
-    from pydub.exceptions import CouldntDecodeError
+    from pydub.exceptions import CouldntDecodeError  # noqa: F401
 
     PYDUB_AVAILABLE = True
 except ImportError:

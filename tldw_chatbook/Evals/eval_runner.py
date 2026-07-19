@@ -28,7 +28,7 @@ import csv
 from loguru import logger
 
 try:
-    from datasets import load_dataset, Dataset
+    from datasets import load_dataset, Dataset  # noqa: F401
 
     HF_DATASETS_AVAILABLE = True
 except ImportError:

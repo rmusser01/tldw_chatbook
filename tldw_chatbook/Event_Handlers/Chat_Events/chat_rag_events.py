@@ -28,8 +28,8 @@ logger = logger.bind(module="chat_rag_events_simplified")
 # Check if RAG dependencies are available
 try:
     from ...RAG_Search.simplified import (
-        create_rag_service,
-        create_config_for_collection,
+        create_rag_service,  # noqa: F401
+        create_config_for_collection,  # noqa: F401
     )
 
     RAG_SERVICES_AVAILABLE = True

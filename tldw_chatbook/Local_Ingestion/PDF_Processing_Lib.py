@@ -513,7 +513,7 @@ def process_pdf(
             elif parser == "docling":
                 DOCLING_AVAILABLE = False
                 try:
-                    from docling.document_converter import DocumentConverter
+                    from docling.document_converter import DocumentConverter  # noqa: F401
 
                     DOCLING_AVAILABLE = True
                 except ImportError:

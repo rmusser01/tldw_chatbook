@@ -28,11 +28,11 @@ from ..Metrics.metrics_logger import log_histogram, log_counter
 try:
     from ..Web_Scraping.Article_Extractor_Lib import (
         scrape_article,
-        scrape_and_summarize_multiple,
+        scrape_and_summarize_multiple,  # noqa: F401
     )
-    from ..Web_Scraping.Article_Scraper.main import scrape_and_process_urls
+    from ..Web_Scraping.Article_Scraper.main import scrape_and_process_urls  # noqa: F401
     from ..Web_Scraping.Article_Scraper.config import (
-        ScraperConfig as ArticleScraperConfig,
+        ScraperConfig as ArticleScraperConfig,  # noqa: F401
     )
 
     ARTICLE_SCRAPER_AVAILABLE = True

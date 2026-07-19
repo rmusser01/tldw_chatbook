@@ -43,7 +43,7 @@ print(
 # Try to import from the new simplified structure first
 try:
     from tldw_chatbook.RAG_Search.simplified import (
-        EmbeddingConfig,
+        EmbeddingConfig,  # noqa: F401
         VectorStore,
         InMemoryVectorStore,
         EmbeddingsService,

@@ -1773,7 +1773,7 @@ class TTSPlaygroundWidget(Widget):
     def _check_higgs_installation(self) -> None:
         """Check if Higgs Audio is properly installed"""
         try:
-            import boson_multimodal
+            import boson_multimodal  # noqa: F401
 
             logger.info("Higgs Audio is installed and available")
         except ImportError:

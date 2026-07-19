@@ -808,7 +808,7 @@ class AudioBookGenerator:
         try:
             from pydub import AudioSegment
             import io
-            import numpy as np
+            import numpy as np  # noqa: F401
 
             # Load audio from bytes
             audio = AudioSegment.from_file(io.BytesIO(audio_data), format=format)

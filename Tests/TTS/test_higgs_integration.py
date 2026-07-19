@@ -26,7 +26,7 @@ from tldw_chatbook.TTS.backends.higgs_voice_manager import HiggsVoiceProfileMana
 
 # Check if boson-multimodal is available
 try:
-    import boson_multimodal
+    import boson_multimodal  # noqa: F401
 
     HIGGS_AVAILABLE = True
 except ImportError:

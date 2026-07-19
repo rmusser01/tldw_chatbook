@@ -69,7 +69,7 @@ class ChatVoiceHandler:
             from ...config import get_cli_setting
             from ...Audio.dictation_service_lazy import (
                 LazyLiveDictationService,
-                AudioInitializationError,
+                AudioInitializationError,  # noqa: F401
             )
 
             self.voice_dictation_service = LazyLiveDictationService(

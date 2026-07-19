@@ -695,7 +695,7 @@ def check_embeddings_rag_deps() -> bool:
                         # ChromaDB has some import quirks, handle them carefully
                         try:
                             # First ensure protobuf internal builder is available
-                            from google.protobuf.internal import builder
+                            from google.protobuf.internal import builder  # noqa: F401
                         except ImportError:
                             # Create a dummy if needed
                             import google.protobuf.internal
@@ -1102,7 +1102,7 @@ def check_stt_deps() -> bool:
 def check_image_processing_deps() -> bool:
     """Check dependencies needed for image processing functionality."""
     try:
-        import PIL
+        import PIL  # noqa: F401
 
         pil_available = True
         DEPENDENCIES_AVAILABLE["PIL"] = True

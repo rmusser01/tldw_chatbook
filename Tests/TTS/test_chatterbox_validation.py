@@ -305,7 +305,7 @@ class TestChatterboxValidation:
 async def test_integration_with_real_model():
     """Integration test with real Chatterbox model (if available)"""
     try:
-        from chatterbox.tts import ChatterboxTTS
+        from chatterbox.tts import ChatterboxTTS  # noqa: F401
 
         backend = ChatterboxTTSBackend()
         await backend.initialize()

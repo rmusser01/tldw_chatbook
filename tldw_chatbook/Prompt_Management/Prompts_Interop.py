@@ -45,7 +45,7 @@ except ImportError:
     logger.warning("PyYAML not installed. YAML import will not be available.")
 
 try:
-    import frontmatter  # For Markdown
+    import frontmatter  # For Markdown  # noqa: F401
 
     FRONTMATTER_AVAILABLE = True
 except ImportError:

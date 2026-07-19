@@ -20,7 +20,7 @@ import tempfile
 from unittest.mock import AsyncMock
 
 try:
-    from hypothesis import given, strategies as st, assume, settings
+    from hypothesis import given, strategies as st, assume, settings  # noqa: F401
     from hypothesis.strategies import composite
 
     HYPOTHESIS_AVAILABLE = True

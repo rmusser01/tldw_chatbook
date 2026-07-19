@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 try:
     # First try to import the base Provider class from textual
-    from textual.command import Provider
+    from textual.command import Provider  # noqa: F401
 
     # Then try to import from the app
     from tldw_chatbook.app import (

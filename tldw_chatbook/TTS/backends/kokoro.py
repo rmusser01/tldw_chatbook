@@ -77,7 +77,7 @@ class KokoroTTSBackend(LocalTTSBackend):
         # Check if we're on Windows and pre-validate ONNX dependencies
         if sys.platform == "win32":
             try:
-                import onnxruntime
+                import onnxruntime  # noqa: F401
 
                 logger.debug("onnxruntime available on Windows")
             except ImportError:

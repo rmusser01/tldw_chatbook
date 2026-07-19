@@ -436,9 +436,9 @@ pytest.mark.property = pytest.mark.property
 
 # Conditional markers based on dependencies
 try:
-    import chromadb
-    import sentence_transformers
-    import torch
+    import chromadb  # noqa: F401
+    import sentence_transformers  # noqa: F401
+    import torch  # noqa: F401
 
     has_rag_deps = True
 except ImportError:

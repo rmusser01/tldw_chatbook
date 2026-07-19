@@ -19,12 +19,12 @@ from loguru import logger
 
 try:
     from reportlab.lib import colors
-    from reportlab.lib.pagesizes import letter, A4
+    from reportlab.lib.pagesizes import letter, A4  # noqa: F401
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import inch
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
-    from reportlab.platypus import Table, TableStyle, Image
-    from reportlab.lib.enums import TA_JUSTIFY, TA_CENTER, TA_LEFT
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak  # noqa: F401
+    from reportlab.platypus import Table, TableStyle, Image  # noqa: F401
+    from reportlab.lib.enums import TA_JUSTIFY, TA_CENTER, TA_LEFT  # noqa: F401
 
     HAS_REPORTLAB = True
 except ImportError:
@@ -41,7 +41,7 @@ except ImportError:
 
 try:
     from docx import Document
-    from docx.shared import Pt, Inches
+    from docx.shared import Pt, Inches  # noqa: F401
     from docx.enum.text import WD_ALIGN_PARAGRAPH
 
     HAS_DOCX = True

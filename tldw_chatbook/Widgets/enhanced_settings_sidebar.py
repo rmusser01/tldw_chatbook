@@ -33,7 +33,7 @@ from ..state.ui_state import UIState
 
 # Try to import pipeline integration
 try:
-    from ..RAG_Search.pipeline_integration import get_pipeline_manager
+    from ..RAG_Search.pipeline_integration import get_pipeline_manager  # noqa: F401
     from ..RAG_Search.pipeline_builder_simple import get_pipeline, BUILTIN_PIPELINES
 
     PIPELINE_INTEGRATION_AVAILABLE = True

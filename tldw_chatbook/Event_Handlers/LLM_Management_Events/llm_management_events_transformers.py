@@ -11,7 +11,7 @@ from textual.widgets import Input, RichLog, Button
 
 # For listing local models, you might need to interact with huggingface_hub or scan directories
 try:
-    from huggingface_hub import HfApi, constants as hf_constants
+    from huggingface_hub import HfApi, constants as hf_constants  # noqa: F401
 
     # from huggingface_hub import list_models, model_info as hf_model_info # For online search
     # from huggingface_hub.utils import GatedRepoError, RepositoryNotFoundError
@@ -337,7 +337,7 @@ async def handle_transformers_browse_models_dir_button_pressed(
     try:
         from textual_fspicker import (
             FileOpen,
-            Filters,
+            Filters,  # noqa: F401
         )  # Ensure it's imported for runtime
     except ImportError:
         app.notify(

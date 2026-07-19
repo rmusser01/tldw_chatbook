@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 # Check availability of required modules without importing
 def _check_torch_available():
     try:
-        import torch
+        import torch  # noqa: F401
 
         return True
     except ImportError:
@@ -30,7 +30,7 @@ def _check_torch_available():
 
 def _check_speechbrain_available():
     try:
-        import speechbrain
+        import speechbrain  # noqa: F401
 
         return True
     except ImportError:
@@ -39,7 +39,7 @@ def _check_speechbrain_available():
 
 def _check_sklearn_available():
     try:
-        import sklearn
+        import sklearn  # noqa: F401
 
         return True
     except ImportError:
@@ -48,7 +48,7 @@ def _check_sklearn_available():
 
 def _check_torchaudio_available():
     try:
-        import torchaudio
+        import torchaudio  # noqa: F401
 
         return True
     except ImportError:
