@@ -13,12 +13,15 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, DataTable, Static
 
 from ...Navigation.base_app_screen import BaseAppScreen
+from ....Scheduling.events import DeleteTaskRequested
 from ....Scheduling.models import ReminderTask
 from .task_detail import (
     SCHEDULES_EMPTY_CONSOLE_RECOVERY,
     TaskDetail,
     TaskInspector,
     _format_next_run,
+    _humanize_schedule_kind,
+    status_badge_text,
 )
 
 
@@ -78,7 +81,7 @@ class SchedulesWorkbench(BaseAppScreen):
         super().on_mount()
         self._register_footer_shortcuts()
         table = self.query_one("#scheduling-task-table", DataTable)
-        table.add_columns("Title", "Kind", "Status", "Next Run")
+        table.add_columns("Title", "Type", "Status", "Next Run")
         self.run_worker(self.load_tasks, exclusive=True)
         self.set_timer(0.01, self._refresh_console_context)
 
@@ -99,11 +102,11 @@ class SchedulesWorkbench(BaseAppScreen):
 
         self._tasks = list(tasks)
 
-        rows: list[tuple[str, str, str, str]] = [
+        rows: list[tuple[str, str, Text, str]] = [
             (
                 task.title,
-                task.schedule_kind.value,
-                task.last_status.value,
+                _humanize_schedule_kind(task.schedule_kind),
+                status_badge_text(task.last_status),
                 _format_next_run(task),
             )
             for task in self._tasks
@@ -117,7 +120,7 @@ class SchedulesWorkbench(BaseAppScreen):
         if rows:
             self._update_detail_for_index(0)
         else:
-            self.query_one("#scheduling-task-detail", TaskDetail).set_task(None)
+            self.query_one("#scheduling-task-detail", TaskDetail).set_task(None, queue_empty=True)
             self.query_one("#scheduling-task-inspector", TaskInspector).set_task(None)
 
     @on(DataTable.RowHighlighted)
@@ -128,7 +131,9 @@ class SchedulesWorkbench(BaseAppScreen):
     def _update_detail_for_index(self, index: int) -> None:
         """Render task details in the detail and inspector panes."""
         if not (0 <= index < len(self._tasks)):
-            self.query_one("#scheduling-task-detail", TaskDetail).set_task(None)
+            self.query_one("#scheduling-task-detail", TaskDetail).set_task(
+                None, queue_empty=not self._tasks
+            )
             self.query_one("#scheduling-task-inspector", TaskInspector).set_task(None)
             return
 
@@ -242,6 +247,36 @@ class SchedulesWorkbench(BaseAppScreen):
             or self._latest_console_launch_kwargs is not None
         )
         task_detail.set_follow_available(available)
+
+    @on(DeleteTaskRequested)
+    def _on_delete_task_requested(self, event: DeleteTaskRequested) -> None:
+        """Delete the requested task and refresh the queue."""
+        event.stop()
+        service = self._scheduling_service
+        if service is None:
+            self.app_instance.notify(
+                "Scheduling service is unavailable; cannot delete task.",
+                severity="warning",
+            )
+            return
+
+        async def _delete_and_refresh() -> None:
+            try:
+                await service.delete_reminder(event.task.id)
+            except Exception:  # noqa: BLE001
+                logger.exception(f"Failed to delete reminder {event.task.id}")
+                self.app_instance.notify(
+                    f"Failed to delete '{event.task.title}'.",
+                    severity="error",
+                )
+            else:
+                self.app_instance.notify(
+                    f"Deleted '{event.task.title}'.",
+                    severity="information",
+                )
+            await self.load_tasks()
+
+        self.run_worker(_delete_and_refresh, exclusive=True)
 
     @on(Button.Pressed, "#schedules-follow-in-console")
     def follow_latest_schedule_run_in_console(self, event: Button.Pressed) -> None:

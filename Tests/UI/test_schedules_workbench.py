@@ -27,6 +27,7 @@ class MockSchedulingService:
                 title="Test",
                 schedule_kind=ScheduleKind.ONE_TIME,
                 run_at=datetime.now(timezone.utc),
+                next_run_at=datetime.now(timezone.utc),
             )
         ]
 
@@ -86,15 +87,19 @@ async def test_task_detail_renders_selected_task():
         detail = pilot.app.screen.query_one("#scheduling-task-detail", TaskDetail)
         title = detail.query_one("#scheduling-task-detail-title", Static)
         kind = detail.query_one("#scheduling-task-detail-type", Static)
-        status = detail.query_one("#scheduling-task-detail-status", Static)
+        status_badge = detail.query_one("#scheduling-task-status-badge", Static)
+        schedule = detail.query_one("#scheduling-task-detail-schedule", Static)
+        next_run = detail.query_one("#scheduling-task-detail-next-run", Static)
         enable_button = detail.query_one("#scheduling-enable-task", Button)
         disable_button = detail.query_one("#scheduling-disable-task", Button)
         delete_button = detail.query_one("#scheduling-delete-task", Button)
         follow_button = detail.query_one("#schedules-follow-in-console", Button)
 
         assert "Test" in title.visual.plain
-        assert "one_time" in kind.visual.plain
-        assert "waiting" in status.visual.plain
+        assert "One-time" in kind.visual.plain
+        assert "Waiting" in status_badge.visual.plain
+        assert "One-time at" in schedule.visual.plain
+        assert "UTC" in next_run.visual.plain
         assert enable_button.label.plain == "Enable"
         assert disable_button.label.plain == "Disable"
         assert delete_button.label.plain == "Delete"
@@ -102,8 +107,8 @@ async def test_task_detail_renders_selected_task():
 
 
 @pytest.mark.asyncio
-async def test_task_inspector_renders_status():
-    """The TaskInspector widget shows status, sync, and conflict text."""
+async def test_task_inspector_renders_metadata():
+    """The TaskInspector widget shows sync, last-run, owner, and conflict text."""
     async with WorkbenchTestAppWithService().run_test() as pilot:
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
         await pilot.pause()
@@ -113,11 +118,14 @@ async def test_task_inspector_renders_status():
         await pilot.pause()
 
         inspector = pilot.app.screen.query_one("#scheduling-task-inspector", TaskInspector)
-        status = inspector.query_one("#scheduling-inspector-status", Static)
         sync = inspector.query_one("#scheduling-inspector-sync", Static)
+        last_run = inspector.query_one("#scheduling-inspector-last-run", Static)
+        owner = inspector.query_one("#scheduling-inspector-owner", Static)
         conflict_card = inspector.query_one("#scheduling-conflict-card")
         conflict_text = inspector.query_one("#scheduling-conflict-text", Static)
 
-        assert "waiting" in status.visual.plain
-        assert "version" in sync.visual.plain
+        assert "version 0 (local)" in sync.visual.plain
+        assert "Never run" in last_run.visual.plain
+        assert "local" in owner.visual.plain
         assert "No conflict" in conflict_text.visual.plain
+        assert "conflict" not in conflict_card.classes

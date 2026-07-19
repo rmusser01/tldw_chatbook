@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Static
+from textual.screen import ModalScreen
+from textual.widgets import Button, Label, Static
+from rich.text import Text
 
-from ....Scheduling.models import ReminderTask, TaskStatus
+from ....Scheduling.events import DeleteTaskRequested
+from ....Scheduling.models import ReminderTask, ScheduleKind, TaskStatus
 from ..destination_recovery import DestinationRecoveryState
 
 
@@ -22,23 +25,326 @@ SCHEDULES_EMPTY_CONSOLE_RECOVERY = DestinationRecoveryState(
 )
 
 
+_WEEKDAYS = [
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+]
+
+_STATUS_LABELS: dict[TaskStatus, str] = {
+    TaskStatus.WAITING: "Waiting",
+    TaskStatus.RUNNING: "Running",
+    TaskStatus.PAUSED: "Paused",
+    TaskStatus.NEEDS_ATTENTION: "Needs Attention",
+    TaskStatus.BLOCKED: "Blocked",
+    TaskStatus.DISABLED: "Disabled",
+    TaskStatus.ARCHIVED: "Archived",
+    TaskStatus.COMPLETED: "Completed",
+    TaskStatus.FOUND_RESULTS: "Found Results",
+    TaskStatus.MISSED: "Missed",
+    TaskStatus.CONFLICT: "Conflict",
+}
+
+_STATUS_BADGE_CLASSES: dict[TaskStatus, str] = {
+    TaskStatus.WAITING: "waiting",
+    TaskStatus.RUNNING: "running",
+    TaskStatus.PAUSED: "paused",
+    TaskStatus.NEEDS_ATTENTION: "needs-attention",
+    TaskStatus.BLOCKED: "blocked",
+    TaskStatus.DISABLED: "disabled",
+    TaskStatus.ARCHIVED: "disabled",
+    TaskStatus.COMPLETED: "running",
+    TaskStatus.FOUND_RESULTS: "running",
+    TaskStatus.MISSED: "needs-attention",
+    TaskStatus.CONFLICT: "conflict",
+}
+
+# Rich color/styles for DataTable cell badges. These map to the design-system
+# semantics (success/warning/error/muted/primary) using standard Rich colors.
+_STATUS_TABLE_STYLES: dict[TaskStatus, str] = {
+    TaskStatus.WAITING: "bold white on blue",
+    TaskStatus.RUNNING: "bold white on green",
+    TaskStatus.PAUSED: "bold black on yellow",
+    TaskStatus.NEEDS_ATTENTION: "bold black on yellow",
+    TaskStatus.BLOCKED: "bold white on red",
+    TaskStatus.DISABLED: "bold white on grey50",
+    TaskStatus.ARCHIVED: "bold white on grey50",
+    TaskStatus.COMPLETED: "bold white on green",
+    TaskStatus.FOUND_RESULTS: "bold white on green",
+    TaskStatus.MISSED: "bold black on yellow",
+    TaskStatus.CONFLICT: "bold white on red",
+}
+
+
+def _humanize_status(status: TaskStatus) -> str:
+    """Return a human-readable, capitalized status label."""
+    return _STATUS_LABELS.get(status, status.value.replace("_", " ").title())
+
+
+def _humanize_schedule_kind(kind: ScheduleKind) -> str:
+    """Return 'Recurring' or 'One-time' for a schedule kind."""
+    return "Recurring" if kind == ScheduleKind.RECURRING else "One-time"
+
+
+def _format_timezone(dt) -> str:
+    """Return a timezone label for a datetime, defaulting to UTC."""
+    if dt.tzinfo is None:
+        return "UTC"
+    return dt.tzname() or "UTC"
+
+
 def _format_next_run(task: ReminderTask | None) -> str:
-    """Format a task's next run time for display."""
+    """Format a task's next run time with timezone."""
     if task is None or task.next_run_at is None:
         return "-"
-    return task.next_run_at.strftime("%Y-%m-%d %H:%M")
+    return f"{task.next_run_at.strftime('%Y-%m-%d %H:%M')} {_format_timezone(task.next_run_at)}"
+
+
+def _format_last_run(task: ReminderTask | None) -> str:
+    """Format a task's last run time, or 'Never run'."""
+    if task is None or task.last_run_at is None:
+        return "Never run"
+    return f"{task.last_run_at.strftime('%Y-%m-%d %H:%M')} {_format_timezone(task.last_run_at)}"
+
+
+def _humanize_cron(cron: str | None, timezone: str | None = None) -> str:
+    """Summarize a cron expression in plain English."""
+    if not cron:
+        return "-"
+    parts = cron.split()
+    if len(parts) != 5:
+        return cron
+    minute, hour, dom, month, dow = parts
+    tz = f" {timezone}" if timezone else " UTC"
+
+    def _is_wildcard(value: str) -> bool:
+        return value == "*"
+
+    def _is_digit(value: str) -> bool:
+        return value.isdigit()
+
+    if _is_digit(minute) and _is_digit(hour) and _is_wildcard(dom) and _is_wildcard(month) and _is_wildcard(dow):
+        return f"Daily at {int(hour):02d}:{int(minute):02d}{tz}"
+
+    if _is_digit(minute) and _is_digit(hour) and _is_wildcard(dom) and _is_wildcard(month) and _is_digit(dow):
+        day_index = int(dow)
+        if 0 <= day_index <= 6:
+            return f"Weekly on {_WEEKDAYS[day_index]} at {int(hour):02d}:{int(minute):02d}{tz}"
+
+    if _is_digit(minute) and _is_digit(hour) and _is_digit(dom) and _is_wildcard(month) and _is_wildcard(dow):
+        return f"Monthly on the {int(dom)} at {int(hour):02d}:{int(minute):02d}{tz}"
+
+    return f"cron: {cron}{tz}"
+
+
+def _humanize_schedule(task: ReminderTask) -> str:
+    """Return a human-readable schedule summary for the task."""
+    if task.schedule_kind == ScheduleKind.ONE_TIME:
+        if task.run_at is None:
+            return "One-time"
+        return f"One-time at {task.run_at.strftime('%Y-%m-%d %H:%M')} {_format_timezone(task.run_at)}"
+    return _humanize_cron(task.cron, task.timezone)
+
+
+def status_badge_text(status: TaskStatus) -> Text:
+    """Return a styled Rich Text badge for use in a DataTable cell."""
+    label = _humanize_status(status)
+    style = _STATUS_TABLE_STYLES.get(status, "bold white on grey50")
+    return Text(f" {label} ", style=style)
+
+
+def status_badge_class(status: TaskStatus) -> str:
+    """Return the CSS class suffix for a status badge."""
+    return _STATUS_BADGE_CLASSES.get(status, "waiting")
+
+
+class DeleteTaskModal(ModalScreen[bool]):
+    """Confirmation modal shown before deleting a scheduled task."""
+
+    DEFAULT_CSS = """
+    DeleteTaskModal {
+        align: center middle;
+    }
+
+    DeleteTaskModal > Vertical {
+        width: 70;
+        height: auto;
+        max-height: 30;
+        background: $surface;
+        border: thick $error;
+        padding: 1 2;
+    }
+
+    .delete-modal-title {
+        text-style: bold;
+        text-align: center;
+        padding: 1 0;
+    }
+
+    .delete-modal-body {
+        padding: 1 0;
+        text-align: center;
+    }
+
+    .delete-modal-actions {
+        align: center middle;
+        height: auto;
+        padding: 1 0;
+    }
+
+    .delete-modal-actions Button {
+        margin: 0 1;
+    }
+    """
+
+    def __init__(self, task_title: str) -> None:
+        super().__init__()
+        self.task_title = task_title
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Label("Delete scheduled task?", classes="delete-modal-title")
+            yield Label(
+                f"Are you sure you want to delete '{self.task_title}'? This cannot be undone.",
+                classes="delete-modal-body",
+            )
+            with Horizontal(classes="delete-modal-actions"):
+                yield Button("Delete", variant="error", id="delete-task-confirm")
+                yield Button("Cancel", id="delete-task-cancel")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Confirm or cancel the deletion."""
+        if event.button.id == "delete-task-confirm":
+            self.dismiss(True)
+        else:
+            self.dismiss(False)
 
 
 class TaskDetail(Vertical):
     """Render the selected reminder task's core details and actions."""
 
+    DEFAULT_CSS = """
+    #scheduling-task-detail-header {
+        text-style: bold;
+        padding: 0 0 0 0;
+        margin-bottom: 1;
+    }
+
+    #scheduling-task-detail-metadata {
+        height: auto;
+        padding: 0;
+    }
+
+    #scheduling-task-detail-metadata Horizontal {
+        height: auto;
+        padding: 0;
+        margin: 0;
+    }
+
+    .scheduling-detail-label {
+        color: $text-muted;
+        padding: 0 1 0 0;
+        width: 10;
+    }
+
+    .scheduling-detail-value {
+        color: $text;
+    }
+
+    #scheduling-task-detail-lifecycle {
+        height: auto;
+        padding: 1 0 0 0;
+        margin: 0;
+    }
+
+    #scheduling-task-detail-lifecycle Button {
+        margin: 0 1 0 0;
+    }
+
+    #schedules-follow-in-console {
+        margin-top: 1;
+    }
+
+    #scheduling-task-detail-empty-state {
+        color: $text-muted;
+        text-align: center;
+        padding: 2 1;
+    }
+
+    #scheduling-task-status-badge {
+        width: auto;
+        height: 1;
+        padding: 0 1;
+        text-style: bold;
+        color: $text;
+        border: none;
+        text-align: center;
+    }
+
+    #scheduling-task-status-badge.waiting {
+        background: $primary;
+    }
+
+    #scheduling-task-status-badge.running,
+    #scheduling-task-status-badge.completed,
+    #scheduling-task-status-badge.found-results {
+        background: $success;
+    }
+
+    #scheduling-task-status-badge.paused,
+    #scheduling-task-status-badge.needs-attention,
+    #scheduling-task-status-badge.missed {
+        background: $warning;
+        color: $text;
+    }
+
+    #scheduling-task-status-badge.blocked,
+    #scheduling-task-status-badge.conflict {
+        background: $error;
+    }
+
+    #scheduling-task-status-badge.disabled,
+    #scheduling-task-status-badge.archived {
+        background: $surface-darken-1;
+        color: $text-muted;
+    }
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._current_task: ReminderTask | None = None
+
     def compose(self) -> ComposeResult:
         yield Static("Task Detail", id="scheduling-task-detail-header")
-        yield Static("Title: -", id="scheduling-task-detail-title")
-        yield Static("Type: -", id="scheduling-task-detail-type")
-        yield Static("Status: -", id="scheduling-task-detail-status")
-        yield Static("Schedule: -", id="scheduling-task-detail-schedule")
-        yield Static("Next Run: -", id="scheduling-task-detail-next-run")
+        yield Static(
+            "Select a scheduled task from the queue, or press Ctrl+C to create one.",
+            id="scheduling-task-detail-empty-state",
+        )
+        with Vertical(id="scheduling-task-detail-metadata"):
+            yield Horizontal(
+                Static("Title:", classes="scheduling-detail-label"),
+                Static("-", id="scheduling-task-detail-title", classes="scheduling-detail-value"),
+            )
+            yield Horizontal(
+                Static("Type:", classes="scheduling-detail-label"),
+                Static("-", id="scheduling-task-detail-type", classes="scheduling-detail-value"),
+            )
+            yield Horizontal(
+                Static("Schedule:", classes="scheduling-detail-label"),
+                Static("-", id="scheduling-task-detail-schedule", classes="scheduling-detail-value"),
+            )
+            yield Horizontal(
+                Static("Status:", classes="scheduling-detail-label"),
+                Static("-", id="scheduling-task-status-badge"),
+            )
+            yield Horizontal(
+                Static("Next Run:", classes="scheduling-detail-label"),
+                Static("-", id="scheduling-task-detail-next-run", classes="scheduling-detail-value"),
+            )
         yield Horizontal(
             Button(
                 "Enable",
@@ -80,25 +386,55 @@ class TaskDetail(Vertical):
         elif button_id == "scheduling-disable-task":
             self.log.debug("Disable task requested (not yet implemented)")
         elif button_id == "scheduling-delete-task":
-            self.log.debug("Delete task requested (not yet implemented)")
+            self._request_delete()
 
-    def set_task(self, task: ReminderTask | None) -> None:
+    def _request_delete(self) -> None:
+        """Open the delete confirmation modal for the current task."""
+        if self._current_task is None:
+            return
+        self.app.push_screen(
+            DeleteTaskModal(self._current_task.title),
+            callback=self._on_delete_confirmed,
+        )
+
+    def _on_delete_confirmed(self, confirmed: bool) -> None:
+        """Post a delete request when the user confirms the modal."""
+        if confirmed and self._current_task is not None:
+            self.post_message(DeleteTaskRequested(self._current_task))
+
+    def set_task(self, task: ReminderTask | None, *, queue_empty: bool = False) -> None:
         """Update the detail view for the given task (or clear it)."""
+        self._current_task = task
+        metadata = self.query_one("#scheduling-task-detail-metadata", Vertical)
+        lifecycle = self.query_one("#scheduling-task-detail-lifecycle", Horizontal)
+        follow_button = self.query_one("#schedules-follow-in-console", Button)
+        empty_state = self.query_one("#scheduling-task-detail-empty-state", Static)
+
         if task is None:
-            self._update_static("scheduling-task-detail-title", "Title: -")
-            self._update_static("scheduling-task-detail-type", "Type: -")
-            self._update_static("scheduling-task-detail-status", "Status: -")
-            self._update_static("scheduling-task-detail-schedule", "Schedule: -")
-            self._update_static("scheduling-task-detail-next-run", "Next Run: -")
+            empty_copy = (
+                "No scheduled tasks yet. Press Ctrl+C to create your first reminder."
+                if queue_empty
+                else "Select a scheduled task from the queue, or press Ctrl+C to create one."
+            )
+            empty_state.update(empty_copy)
+            empty_state.display = True
+            metadata.display = False
+            lifecycle.display = False
             return
 
-        schedule = task.cron if task.schedule_kind.value == "recurring" else "One-time"
+        empty_state.display = False
+        metadata.display = True
+        lifecycle.display = True
 
-        self._update_static("scheduling-task-detail-title", f"Title: {task.title}")
-        self._update_static("scheduling-task-detail-type", f"Type: {task.schedule_kind.value}")
-        self._update_static("scheduling-task-detail-status", f"Status: {task.last_status.value}")
-        self._update_static("scheduling-task-detail-schedule", f"Schedule: {schedule}")
-        self._update_static("scheduling-task-detail-next-run", f"Next Run: {_format_next_run(task)}")
+        self._update_static("scheduling-task-detail-title", task.title)
+        self._update_static("scheduling-task-detail-type", _humanize_schedule_kind(task.schedule_kind))
+        self._update_static("scheduling-task-detail-schedule", _humanize_schedule(task))
+        self._update_static("scheduling-task-detail-next-run", _format_next_run(task))
+
+        badge = self.query_one("#scheduling-task-status-badge", Static)
+        badge.update(_humanize_status(task.last_status))
+        badge.remove_class(*_STATUS_BADGE_CLASSES.values())
+        badge.add_class(status_badge_class(task.last_status))
 
     def set_follow_available(self, available: bool) -> None:
         """Enable or disable the Console-follow button and set its tooltip."""
@@ -117,23 +453,65 @@ class TaskDetail(Vertical):
 
 
 class TaskInspector(Vertical):
-    """Render status, sync, and conflict metadata for a task."""
+    """Render sync, conflict, and last-run metadata for a task."""
 
     DEFAULT_CSS = """
+    #scheduling-task-inspector-header {
+        text-style: bold;
+        padding-bottom: 1;
+    }
+
+    #scheduling-inspector-metadata {
+        height: auto;
+    }
+
+    #scheduling-inspector-metadata Horizontal {
+        height: auto;
+        width: 100%;
+        padding: 0;
+        margin: 0;
+    }
+
+    .scheduling-inspector-label {
+        color: $text-muted;
+        padding: 0 1 0 0;
+        width: 10;
+    }
+
+    .scheduling-inspector-value {
+        color: $text;
+        width: 1fr;
+        height: auto;
+    }
+
     #scheduling-conflict-card {
         padding: 0;
+        height: auto;
     }
+
     #scheduling-conflict-card.conflict {
         border: solid $error;
         padding: 1;
         color: $error;
+        background: $error 10%;
     }
     """
 
     def compose(self) -> ComposeResult:
         yield Static("Inspector", id="scheduling-task-inspector-header")
-        yield Static("Status: -", id="scheduling-inspector-status")
-        yield Static("Sync: -", id="scheduling-inspector-sync")
+        with Vertical(id="scheduling-inspector-metadata"):
+            yield Horizontal(
+                Static("Sync:", classes="scheduling-inspector-label"),
+                Static("-", id="scheduling-inspector-sync", classes="scheduling-inspector-value"),
+            )
+            yield Horizontal(
+                Static("Last Run:", classes="scheduling-inspector-label"),
+                Static("-", id="scheduling-inspector-last-run", classes="scheduling-inspector-value"),
+            )
+            yield Horizontal(
+                Static("Owner:", classes="scheduling-inspector-label"),
+                Static("-", id="scheduling-inspector-owner", classes="scheduling-inspector-value"),
+            )
         yield Vertical(
             Static("No conflict", id="scheduling-conflict-text"),
             id="scheduling-conflict-card",
@@ -142,8 +520,9 @@ class TaskInspector(Vertical):
     def set_task(self, task: ReminderTask | None) -> None:
         """Update the inspector view for the given task (or clear it)."""
         if task is None:
-            self._update_static("scheduling-inspector-status", "Status: -")
-            self._update_static("scheduling-inspector-sync", "Sync: -")
+            self._update_static("scheduling-inspector-sync", "-")
+            self._update_static("scheduling-inspector-last-run", "-")
+            self._update_static("scheduling-inspector-owner", "-")
             self._update_conflict_card(None)
             return
 
@@ -153,10 +532,13 @@ class TaskInspector(Vertical):
         else:
             sync_status += " (local)"
 
-        summary = f"{task.last_status.value}; next run {_format_next_run(task)}"
+        owner = task.owner_id or "local"
+        if task.server_id:
+            owner += f" / server {task.server_id}"
 
-        self._update_static("scheduling-inspector-status", f"Status: {summary}")
-        self._update_static("scheduling-inspector-sync", f"Sync: {sync_status}")
+        self._update_static("scheduling-inspector-sync", sync_status)
+        self._update_static("scheduling-inspector-last-run", _format_last_run(task))
+        self._update_static("scheduling-inspector-owner", owner)
         self._update_conflict_card(task)
 
     def _update_conflict_card(self, task: ReminderTask | None) -> None:

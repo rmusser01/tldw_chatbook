@@ -21,3 +21,115 @@
 #scheduling-list-pane { width: 3fr; min-width: 30; border: solid $ds-grid-line; padding: 1; }
 #scheduling-detail-pane { width: 4fr; min-width: 52; border: solid $ds-grid-line; padding: 1; }
 #scheduling-inspector-pane { width: 2fr; min-width: 34; border: solid $ds-grid-line; padding: 1; }
+
+/* Pane headers */
+#scheduling-list-title,
+#scheduling-task-detail-header,
+#scheduling-task-inspector-header {
+    text-style: bold;
+    color: $text;
+    padding: 0 0 0 0;
+    border-bottom: solid $ds-grid-line;
+    margin-bottom: 1;
+}
+
+/* Empty state */
+#scheduling-task-detail-empty-state {
+    color: $text-muted;
+    text-align: center;
+    padding: 3 1;
+}
+
+/* Lifecycle action row */
+#scheduling-task-detail-lifecycle {
+    height: auto;
+    padding: 1 0;
+    margin-top: 1;
+}
+
+#scheduling-task-detail-lifecycle Button {
+    margin: 0 1 0 0;
+}
+
+/* Follow-in-Console prominence */
+#schedules-follow-in-console {
+    margin-top: 1;
+    width: 100%;
+    text-style: bold;
+}
+
+/* Status badge base (detail pane) */
+#scheduling-task-status-badge {
+    width: auto;
+    height: 1;
+    padding: 0 1;
+    text-style: bold;
+    color: $text;
+    border: none;
+    text-align: center;
+}
+
+#scheduling-task-status-badge.waiting {
+    background: $primary;
+}
+
+#scheduling-task-status-badge.running,
+#scheduling-task-status-badge.completed,
+#scheduling-task-status-badge.found-results {
+    background: $success;
+}
+
+#scheduling-task-status-badge.paused,
+#scheduling-task-status-badge.needs-attention,
+#scheduling-task-status-badge.missed {
+    background: $warning;
+    color: $text;
+}
+
+#scheduling-task-status-badge.blocked,
+#scheduling-task-status-badge.conflict {
+    background: $error;
+}
+
+#scheduling-task-status-badge.disabled,
+#scheduling-task-status-badge.archived {
+    background: $surface-darken-1;
+    color: $text-muted;
+}
+
+/* Inspector metadata */
+#scheduling-inspector-metadata {
+    height: auto;
+    padding-bottom: 1;
+}
+
+#scheduling-inspector-metadata Horizontal {
+    height: auto;
+    width: 100%;
+    padding: 0;
+    margin: 0;
+}
+
+.scheduling-inspector-label {
+    color: $text-muted;
+    padding: 0 1 0 0;
+    width: 10;
+}
+
+.scheduling-inspector-value {
+    color: $text;
+    width: 1fr;
+    height: auto;
+}
+
+#scheduling-conflict-card {
+    height: auto;
+    margin-top: 1;
+}
+
+#scheduling-conflict-card.conflict {
+    border: solid $error;
+    padding: 1;
+    color: $error;
+    background: $error 10%;
+}
