@@ -18,7 +18,6 @@ from typing import Any, Optional, Union
 from loguru import logger
 
 from tldw_chatbook.DB.base_db import BaseDB
-from tldw_chatbook.Scheduling.db.schema import CREATE_SCHEMA_SQL
 
 
 class ScheduledTasksDB(BaseDB):
@@ -127,13 +126,9 @@ class ScheduledTasksDB(BaseDB):
 
     def _initialize_schema(self) -> None:
         """Create tables, indexes, and schema version row."""
-        with closing(self._get_connection()) as conn:
-            conn.executescript(CREATE_SCHEMA_SQL)
-            conn.execute(
-                "INSERT OR IGNORE INTO schema_version (version) VALUES (?)",
-                (self._CURRENT_SCHEMA_VERSION,),
-            )
-            conn.commit()
+        from tldw_chatbook.Scheduling.db.migrations.v0_to_v1 import migrate
+
+        migrate(self)
 
     def get_schema_version(self) -> int:
         """Return the currently recorded schema version."""
