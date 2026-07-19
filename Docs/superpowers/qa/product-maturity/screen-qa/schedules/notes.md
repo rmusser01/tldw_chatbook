@@ -3,8 +3,9 @@
 ## Branch / commit under test
 
 - Branch: `feature/scheduling-module-screen`
-- Commit: `2967ff49` (`fix(scheduling): address residual UX polish upgrades`)
+- Commit: `63d8a553` (`fix(scheduling): address code-quality review blockers for UX polish`)
 - Previous commits in this phase:
+  - `2967ff49` — `fix(scheduling): address residual UX polish upgrades`
   - `5ba331c3` — `fix(scheduling): address UX polish review feedback`
   - `9afdd539` — `feat(scheduling): UX polish for Schedules workbench`
   - `c18439b0` — `feat(scheduling): route schedules destination to new workbench`
@@ -79,6 +80,16 @@ This commit addresses minor issues identified during a final review pass over th
 - **Stale-row cleanup on service error**: When `list_reminders()` fails, the workbench now clears the `DataTable` and the internal task list so stale rows do not linger after a refresh failure.
 - **Regression tests**: Added coverage for the dedicated badge-class mapping and for clearing stale rows on a service error.
 
+## Code-quality review blockers (`63d8a553`)
+
+This commit addresses blocking issues raised by a code-quality review of the workbench:
+
+- **Missing `Text` import**: `schedules_workbench.py` now imports `Text` from `rich.text` for its `DataTable` row annotation.
+- **Type annotations**: `app_instance` and `_latest_console_follow_item_from_adapter` now carry type hints.
+- **Async console-follow refresh**: `_refresh_console_context` is now a plain async helper awaited by `load_tasks`. It handles both sync and async service methods (`build_dashboard_input`, `list_reading_digest_outputs`) so it no longer silently receives coroutines inside a `thread=True` worker.
+- **Duplicate CSS removed**: Styles for headers, lifecycle rows, follow button, empty state, and conflict card were removed from `TaskDetail.DEFAULT_CSS` and `TaskInspector.DEFAULT_CSS`; they now live only in `_scheduling.tcss`.
+- **Delete end-to-end tests**: Added tests for the confirmation → `DeleteTaskRequested` → `delete_reminder` success path and the delete-reminder failure path.
+
 ## User approval status
 
 Pending user review of the attached `final-2026-07-18T23-23-00.png`.
@@ -89,7 +100,7 @@ Pending user review of the attached `final-2026-07-18T23-23-00.png`.
 .venv/bin/python -m pytest Tests/UI/test_schedules_workbench.py Tests/UI/test_destination_shells.py -v
 ```
 
-Result: **119 passed, 1 skipped** (the single skip is an unrelated Personas tooltip audit).
+Result: **122 passed, 1 skipped** (the single skip is an unrelated Personas tooltip audit).
 
 ## Residual risks
 
