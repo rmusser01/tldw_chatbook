@@ -213,9 +213,9 @@ class TestCrudOperations(BaseTestCase):
         # Check sync logs - 1 for prompt, 2 for keywords, 2 for links
         sync_logs = self.db.get_sync_log_entries()
         prompt_create_logs = [
-            l
-            for l in sync_logs
-            if l["entity"] == "Prompts" and l["operation"] == "create"
+            log
+            for log in sync_logs
+            if log["entity"] == "Prompts" and log["operation"] == "create"
         ]
         self.assertEqual(len(prompt_create_logs), 1)
         prompt_create_log = prompt_create_logs[0]
@@ -275,14 +275,14 @@ class TestCrudOperations(BaseTestCase):
 
         sync_logs = self.db.get_sync_log_entries()  # Check all logs
         delete_log = next(
-            l
-            for l in sync_logs
-            if l["entity"] == "Prompts" and l["operation"] == "delete"
+            log
+            for log in sync_logs
+            if log["entity"] == "Prompts" and log["operation"] == "delete"
         )
         unlink_log = next(
-            l
-            for l in sync_logs
-            if l["entity"] == "PromptKeywordLinks" and l["operation"] == "unlink"
+            log
+            for log in sync_logs
+            if log["entity"] == "PromptKeywordLinks" and log["operation"] == "unlink"
         )
         self.assertEqual(delete_log["entity_uuid"], puuid)
         self.assertIn(puuid, unlink_log["entity_uuid"])
@@ -1109,7 +1109,9 @@ class TestComplexStateAndInputInteractions(BaseTestCase):
 
         # Verify unlink events were logged
         unlink_logs = [
-            l for l in self.db.get_sync_log_entries() if l["operation"] == "unlink"
+            log
+            for log in self.db.get_sync_log_entries()
+            if log["operation"] == "unlink"
         ]
         self.assertEqual(len(unlink_logs), 2)
 

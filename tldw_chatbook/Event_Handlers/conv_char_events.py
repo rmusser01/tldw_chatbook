@@ -3531,20 +3531,21 @@ async def handle_ccp_generate_description_button_pressed(
         )
 
         # Make API call using app's chat wrapper
-        worker_target = lambda: app.chat_wrapper(
-            message=prompt,
-            history=[],
-            api_endpoint=provider,
-            model=model,
-            api_key=api_key,
-            temperature=0.8,  # More creative
-            system_message="You are a creative writing assistant helping to create compelling character descriptions. Be vivid and engaging.",
-            streaming=False,
-            strip_thinking_tags=True,
-            media_content={},  # No media content for AI generation
-            selected_parts=[],  # No parts selected
-            custom_prompt=None,  # No custom prompt override
-        )
+        def worker_target():
+            return app.chat_wrapper(
+                    message=prompt,
+                    history=[],
+                    api_endpoint=provider,
+                    model=model,
+                    api_key=api_key,
+                    temperature=0.8,  # More creative
+                    system_message="You are a creative writing assistant helping to create compelling character descriptions. Be vivid and engaging.",
+                    streaming=False,
+                    strip_thinking_tags=True,
+                    media_content={},  # No media content for AI generation
+                    selected_parts=[],  # No parts selected
+                    custom_prompt=None,  # No custom prompt override
+                )
         app.run_worker(
             worker_target,
             name="ai_generate_description",
@@ -3610,20 +3611,21 @@ async def handle_ccp_generate_personality_button_pressed(
             "Generating personality... This may take a moment.", severity="information"
         )
 
-        worker_target = lambda: app.chat_wrapper(
-            message=prompt,
-            history=[],
-            api_endpoint=provider,
-            model=model,
-            api_key=api_key,
-            temperature=0.8,
-            system_message="You are a creative writing assistant specializing in character development. Create nuanced, believable personalities.",
-            streaming=False,
-            strip_thinking_tags=True,
-            media_content={},  # No media content for AI generation
-            selected_parts=[],  # No parts selected
-            custom_prompt=None,  # No custom prompt override
-        )
+        def worker_target():
+            return app.chat_wrapper(
+                    message=prompt,
+                    history=[],
+                    api_endpoint=provider,
+                    model=model,
+                    api_key=api_key,
+                    temperature=0.8,
+                    system_message="You are a creative writing assistant specializing in character development. Create nuanced, believable personalities.",
+                    streaming=False,
+                    strip_thinking_tags=True,
+                    media_content={},  # No media content for AI generation
+                    selected_parts=[],  # No parts selected
+                    custom_prompt=None,  # No custom prompt override
+                )
         app.run_worker(
             worker_target,
             name="ai_generate_personality",
@@ -3690,20 +3692,21 @@ async def handle_ccp_generate_scenario_button_pressed(
             "Generating scenario... This may take a moment.", severity="information"
         )
 
-        worker_target = lambda: app.chat_wrapper(
-            message=prompt,
-            history=[],
-            api_endpoint=provider,
-            model=model,
-            api_key=api_key,
-            temperature=0.8,
-            system_message="You are a creative writing assistant. Create engaging scenarios that set up interesting interactions.",
-            streaming=False,
-            strip_thinking_tags=True,
-            media_content={},  # No media content for AI generation
-            selected_parts=[],  # No parts selected
-            custom_prompt=None,  # No custom prompt override
-        )
+        def worker_target():
+            return app.chat_wrapper(
+                    message=prompt,
+                    history=[],
+                    api_endpoint=provider,
+                    model=model,
+                    api_key=api_key,
+                    temperature=0.8,
+                    system_message="You are a creative writing assistant. Create engaging scenarios that set up interesting interactions.",
+                    streaming=False,
+                    strip_thinking_tags=True,
+                    media_content={},  # No media content for AI generation
+                    selected_parts=[],  # No parts selected
+                    custom_prompt=None,  # No custom prompt override
+                )
         app.run_worker(
             worker_target,
             name="ai_generate_scenario",
@@ -3776,20 +3779,21 @@ async def handle_ccp_generate_first_message_button_pressed(
             severity="information",
         )
 
-        worker_target = lambda: app.chat_wrapper(
-            message=prompt,
-            history=[],
-            api_endpoint=provider,
-            model=model,
-            api_key=api_key,
-            temperature=0.8,
-            system_message=f"You are roleplaying as {char_name}. Write in first person as the character. Be true to their personality and scenario.",
-            streaming=False,
-            strip_thinking_tags=True,
-            media_content={},  # No media content for AI generation
-            selected_parts=[],  # No parts selected
-            custom_prompt=None,  # No custom prompt override
-        )
+        def worker_target():
+            return app.chat_wrapper(
+                    message=prompt,
+                    history=[],
+                    api_endpoint=provider,
+                    model=model,
+                    api_key=api_key,
+                    temperature=0.8,
+                    system_message=f"You are roleplaying as {char_name}. Write in first person as the character. Be true to their personality and scenario.",
+                    streaming=False,
+                    strip_thinking_tags=True,
+                    media_content={},  # No media content for AI generation
+                    selected_parts=[],  # No parts selected
+                    custom_prompt=None,  # No custom prompt override
+                )
         app.run_worker(
             worker_target,
             name="ai_generate_first_message",
@@ -3862,20 +3866,21 @@ async def handle_ccp_generate_system_prompt_button_pressed(
             severity="information",
         )
 
-        worker_target = lambda: app.chat_wrapper(
-            message=prompt,
-            history=[],
-            api_endpoint=provider,
-            model=model,
-            api_key=api_key,
-            temperature=0.7,  # Slightly less creative for instructions
-            system_message="You are an expert at writing clear, effective system prompts for AI roleplay. Create prompts that result in consistent, engaging character portrayals.",
-            streaming=False,
-            strip_thinking_tags=True,
-            media_content={},  # No media content for AI generation
-            selected_parts=[],  # No parts selected
-            custom_prompt=None,  # No custom prompt override
-        )
+        def worker_target():
+            return app.chat_wrapper(
+                    message=prompt,
+                    history=[],
+                    api_endpoint=provider,
+                    model=model,
+                    api_key=api_key,
+                    temperature=0.7,  # Slightly less creative for instructions
+                    system_message="You are an expert at writing clear, effective system prompts for AI roleplay. Create prompts that result in consistent, engaging character portrayals.",
+                    streaming=False,
+                    strip_thinking_tags=True,
+                    media_content={},  # No media content for AI generation
+                    selected_parts=[],  # No parts selected
+                    custom_prompt=None,  # No custom prompt override
+                )
         app.run_worker(
             worker_target,
             name="ai_generate_system_prompt",
@@ -3941,20 +3946,21 @@ Please provide:
 
 Format your response with clear headers for each section."""
 
-        worker_target = lambda: app.chat_wrapper(
-            message=prompt,
-            history=[],
-            api_endpoint=provider,
-            model=model,
-            api_key=api_key,
-            temperature=0.8,
-            system_message="You are a creative character designer. Create compelling, coherent characters with rich personalities and engaging scenarios.",
-            streaming=False,
-            strip_thinking_tags=True,
-            media_content={},  # No media content for AI generation
-            selected_parts=[],  # No parts selected
-            custom_prompt=None,  # No custom prompt override
-        )
+        def worker_target():
+            return app.chat_wrapper(
+                    message=prompt,
+                    history=[],
+                    api_endpoint=provider,
+                    model=model,
+                    api_key=api_key,
+                    temperature=0.8,
+                    system_message="You are a creative character designer. Create compelling, coherent characters with rich personalities and engaging scenarios.",
+                    streaming=False,
+                    strip_thinking_tags=True,
+                    media_content={},  # No media content for AI generation
+                    selected_parts=[],  # No parts selected
+                    custom_prompt=None,  # No custom prompt override
+                )
         app.run_worker(
             worker_target,
             name="ai_generate_all",

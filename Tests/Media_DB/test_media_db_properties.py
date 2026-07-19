@@ -100,7 +100,7 @@ st_keyword_text = (
 # Strategy for generating a list of unique, case-insensitive keywords.
 st_keywords_list = st.lists(
     st_keyword_text, min_size=1, max_size=5, unique_by=lambda s: s.lower()
-).filter(lambda l: len(l) > 0)  # Ensure list is not empty after filtering
+).filter(lambda items: len(items) > 0)  # Ensure list is not empty after filtering
 
 
 # A composite strategy to generate a valid dictionary of media data for creation.

@@ -179,8 +179,8 @@ async def test_transcript_lines_carry_role_classes():
         await pilot.pause()
         you_lines = pilot.app.query(".personas-preview-line-you")
         character_lines = pilot.app.query(".personas-preview-line-character")
-        assert [str(l.renderable) for l in you_lines] == ["you: Hi"]
-        assert [str(l.renderable) for l in character_lines] == ["character: Hello."]
+        assert [str(line.renderable) for line in you_lines] == ["you: Hi"]
+        assert [str(line.renderable) for line in character_lines] == ["character: Hello."]
 
 
 async def test_test_reply_posts_message_and_clears_input():

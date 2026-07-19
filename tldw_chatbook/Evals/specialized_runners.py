@@ -2063,9 +2063,9 @@ class RobustnessEvaluationRunner(BaseEvalRunner):
                 for resp in robustness_results["perturbation_responses"].values()
             ]
             if perturbed_lens:
-                avg_len_diff = sum(abs(l - original_len) for l in perturbed_lens) / len(
-                    perturbed_lens
-                )
+                avg_len_diff = sum(
+                    abs(length - original_len) for length in perturbed_lens
+                ) / len(perturbed_lens)
                 metrics["length_stability"] = (
                     1.0 - min(avg_len_diff / original_len, 1.0)
                     if original_len > 0

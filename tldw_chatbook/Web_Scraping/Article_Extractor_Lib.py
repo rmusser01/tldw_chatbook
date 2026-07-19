@@ -176,7 +176,8 @@ from tldw_chatbook.Web_Scraping.exceptions import (  # noqa: E402
 #######################################################################################################################
 # Function Definitions
 #
-load_and_log_configs = lambda: {}
+def load_and_log_configs():
+    return {}
 # FIXME - Add a config file option/check for the user agent
 web_scraping_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 

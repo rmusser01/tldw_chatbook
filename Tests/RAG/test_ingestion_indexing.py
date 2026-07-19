@@ -235,7 +235,8 @@ class TestMediaPostIngestHook:
 
     def test_unregister_stops_callbacks(self, media_db):
         calls = []
-        cb = lambda db, mid, muuid: calls.append(mid)
+        def cb(db, mid, muuid):
+            return calls.append(mid)
         media_db_module.register_media_post_ingest_callback(cb)
         media_db_module.unregister_media_post_ingest_callback(cb)
 

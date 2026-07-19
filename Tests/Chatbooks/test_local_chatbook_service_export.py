@@ -25,8 +25,10 @@ def test_export_forwards_hooks_and_maps_cancelled(tmp_path):
             {"cancelled": True, "missing_dependencies": [], "auto_included": []},
         )
 
-    cb = lambda evt: None
-    cc = lambda: True
+    def cb(evt):
+        return None
+    def cc():
+        return True
     with patch("tldw_chatbook.Chatbooks.local_chatbook_service.ChatbookCreator") as CC:
         CC.return_value.create_chatbook.side_effect = fake_create
         result = asyncio.run(

@@ -122,7 +122,7 @@ class NeonSignFlickerEffect(BaseEffect):
                 if self.startup_progress < 1.0:
                     # Startup sequence - letters turn on sequentially
                     turn_on_time = (line_idx * len(line) + char_idx) / (
-                        len(self.sign_text) * max(len(l) for l in self.sign_text)
+                        len(self.sign_text) * max(len(line) for line in self.sign_text)
                     )
                     if self.startup_progress > turn_on_time:
                         state["on"] = True

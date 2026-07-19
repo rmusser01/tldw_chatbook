@@ -1719,43 +1719,42 @@ async def handle_chat_send_button_pressed(
             "DEBUG: No media_content_for_api being passed to chat_wrapper"
         )
 
-    worker_target = (
-        lambda: app.chat_wrapper(
-            message=message_text_with_world_info,  # Current user utterance with RAG context and world info
-            history=chat_history_for_api,  # History *before* current utterance
-            media_content={},  # Empty dict - media_content is for RAG text, not images
-            api_endpoint=selected_provider,
-            api_key=api_key_for_call,
-            custom_prompt=custom_prompt,
-            temperature=temperature,
-            system_message=final_system_prompt_for_api,
-            streaming=should_stream,
-            minp=min_p,
-            model=selected_model,
-            topp=top_p,
-            topk=top_k,
-            llm_max_tokens=llm_max_tokens_value,
-            llm_seed=llm_seed_value,
-            llm_stop=llm_stop_value,
-            llm_response_format=llm_response_format_value,
-            llm_n=llm_n_value,
-            llm_user_identifier=llm_user_identifier_value,
-            llm_logprobs=llm_logprobs_value,
-            llm_top_logprobs=llm_top_logprobs_value,
-            llm_logit_bias=llm_logit_bias_value,
-            llm_presence_penalty=llm_presence_penalty_value,
-            llm_frequency_penalty=llm_frequency_penalty_value,
-            llm_tools=llm_tools_value,
-            llm_tool_choice=llm_tool_choice_value,
-            llm_fixed_tokens_kobold=llm_fixed_tokens_kobold_value,  # Added new parameter
-            current_image_input=media_content_for_api,  # Include image data if present
-            selected_parts=[],  # Placeholder for now
-            chatdict_entries=chatdict_entries,  # Pass loaded dictionary entries
-            max_tokens=500,  # This is the existing chatdict max_tokens, distinct from llm_max_tokens
-            strategy="sorted_evenly",  # Default or get from config/UI
-            strip_thinking_tags=strip_thinking_tags_value,  # Pass the new setting
-        )
-    )
+    def worker_target():
+        return (app.chat_wrapper(
+                message=message_text_with_world_info,  # Current user utterance with RAG context and world info
+                history=chat_history_for_api,  # History *before* current utterance
+                media_content={},  # Empty dict - media_content is for RAG text, not images
+                api_endpoint=selected_provider,
+                api_key=api_key_for_call,
+                custom_prompt=custom_prompt,
+                temperature=temperature,
+                system_message=final_system_prompt_for_api,
+                streaming=should_stream,
+                minp=min_p,
+                model=selected_model,
+                topp=top_p,
+                topk=top_k,
+                llm_max_tokens=llm_max_tokens_value,
+                llm_seed=llm_seed_value,
+                llm_stop=llm_stop_value,
+                llm_response_format=llm_response_format_value,
+                llm_n=llm_n_value,
+                llm_user_identifier=llm_user_identifier_value,
+                llm_logprobs=llm_logprobs_value,
+                llm_top_logprobs=llm_top_logprobs_value,
+                llm_logit_bias=llm_logit_bias_value,
+                llm_presence_penalty=llm_presence_penalty_value,
+                llm_frequency_penalty=llm_frequency_penalty_value,
+                llm_tools=llm_tools_value,
+                llm_tool_choice=llm_tool_choice_value,
+                llm_fixed_tokens_kobold=llm_fixed_tokens_kobold_value,  # Added new parameter
+                current_image_input=media_content_for_api,  # Include image data if present
+                selected_parts=[],  # Placeholder for now
+                chatdict_entries=chatdict_entries,  # Pass loaded dictionary entries
+                max_tokens=500,  # This is the existing chatdict max_tokens, distinct from llm_max_tokens
+                strategy="sorted_evenly",  # Default or get from config/UI
+                strip_thinking_tags=strip_thinking_tags_value,  # Pass the new setting
+            ))
     worker = app.run_worker(
         worker_target,
         name=f"API_Call_{prefix}",
@@ -2905,41 +2904,40 @@ async def handle_chat_action_button_pressed(
             )
 
         # The "message" to chat_wrapper is empty because we're using the history
-        worker_target_regen = (
-            lambda: app.chat_wrapper(
-                message="",
-                history=history_for_regeneration,
-                api_endpoint=selected_provider_regen,
-                api_key=api_key_for_regen,
-                custom_prompt="",
-                temperature=temperature_regen,
-                system_message=system_prompt_regen,
-                streaming=should_stream_regen,
-                minp=min_p_regen,
-                model=selected_model_regen,
-                topp=top_p_regen,
-                topk=top_k_regen,
-                llm_max_tokens=llm_max_tokens_value_regen,
-                llm_seed=llm_seed_value_regen,
-                llm_stop=llm_stop_value_regen,
-                llm_response_format=llm_response_format_value_regen,
-                llm_n=llm_n_value_regen,
-                llm_user_identifier=llm_user_identifier_value_regen,
-                llm_logprobs=llm_logprobs_value_regen,
-                llm_top_logprobs=llm_top_logprobs_value_regen,
-                llm_logit_bias=llm_logit_bias_value_regen,
-                llm_presence_penalty=llm_presence_penalty_value_regen,
-                llm_frequency_penalty=llm_frequency_penalty_value_regen,
-                llm_tools=llm_tools_value_regen,
-                llm_tool_choice=llm_tool_choice_value_regen,
-                strip_thinking_tags=strip_thinking_tags_value_regen,  # Pass for regeneration
-                media_content={},
-                selected_parts=[],
-                chatdict_entries=None,
-                max_tokens=500,
-                strategy="sorted_evenly",
-            )
-        )
+        def worker_target_regen():
+            return (app.chat_wrapper(
+                        message="",
+                        history=history_for_regeneration,
+                        api_endpoint=selected_provider_regen,
+                        api_key=api_key_for_regen,
+                        custom_prompt="",
+                        temperature=temperature_regen,
+                        system_message=system_prompt_regen,
+                        streaming=should_stream_regen,
+                        minp=min_p_regen,
+                        model=selected_model_regen,
+                        topp=top_p_regen,
+                        topk=top_k_regen,
+                        llm_max_tokens=llm_max_tokens_value_regen,
+                        llm_seed=llm_seed_value_regen,
+                        llm_stop=llm_stop_value_regen,
+                        llm_response_format=llm_response_format_value_regen,
+                        llm_n=llm_n_value_regen,
+                        llm_user_identifier=llm_user_identifier_value_regen,
+                        llm_logprobs=llm_logprobs_value_regen,
+                        llm_top_logprobs=llm_top_logprobs_value_regen,
+                        llm_logit_bias=llm_logit_bias_value_regen,
+                        llm_presence_penalty=llm_presence_penalty_value_regen,
+                        llm_frequency_penalty=llm_frequency_penalty_value_regen,
+                        llm_tools=llm_tools_value_regen,
+                        llm_tool_choice=llm_tool_choice_value_regen,
+                        strip_thinking_tags=strip_thinking_tags_value_regen,  # Pass for regeneration
+                        media_content={},
+                        selected_parts=[],
+                        chatdict_entries=None,
+                        max_tokens=500,
+                        strategy="sorted_evenly",
+                    ))
         worker = app.run_worker(
             worker_target_regen,
             name=f"API_Call_{prefix}_regenerate",
@@ -5956,41 +5954,40 @@ async def handle_continue_response_button_pressed(
     app.continue_thinking_removed = False
 
     # Define the worker target
-    worker_target = (
-        lambda: app.chat_wrapper(
-            message=continuation_prompt_instruction,  # The instruction for how to use the history
-            history=history_for_api,  # Contains the actual message to be continued as the last item
-            api_endpoint=selected_provider,
-            api_key=api_key_for_call,
-            system_message=final_system_prompt_for_api,
-            temperature=temperature,
-            topp=top_p,
-            minp=min_p,
-            topk=top_k,
-            llm_max_tokens=llm_max_tokens_value,
-            llm_seed=llm_seed_value,
-            llm_stop=llm_stop_value,
-            llm_response_format=llm_response_format_value,
-            llm_n=llm_n_value,
-            llm_user_identifier=llm_user_identifier_value,
-            llm_logprobs=llm_logprobs_value,
-            llm_top_logprobs=llm_top_logprobs_value,
-            llm_logit_bias=llm_logit_bias_value,
-            llm_presence_penalty=llm_presence_penalty_value,
-            llm_frequency_penalty=llm_frequency_penalty_value,
-            llm_tools=llm_tools_value,
-            llm_tool_choice=llm_tool_choice_value,
-            llm_fixed_tokens_kobold=llm_fixed_tokens_kobold_value,
-            streaming=should_stream,  # Forced True
-            # These are older/other params, ensure they are correctly defaulted or excluded if not needed
-            custom_prompt="",
-            media_content={},
-            selected_parts=[],
-            chatdict_entries=None,
-            max_tokens=500,
-            strategy="sorted_evenly",
-        )
-    )
+    def worker_target():
+        return (app.chat_wrapper(
+                message=continuation_prompt_instruction,  # The instruction for how to use the history
+                history=history_for_api,  # Contains the actual message to be continued as the last item
+                api_endpoint=selected_provider,
+                api_key=api_key_for_call,
+                system_message=final_system_prompt_for_api,
+                temperature=temperature,
+                topp=top_p,
+                minp=min_p,
+                topk=top_k,
+                llm_max_tokens=llm_max_tokens_value,
+                llm_seed=llm_seed_value,
+                llm_stop=llm_stop_value,
+                llm_response_format=llm_response_format_value,
+                llm_n=llm_n_value,
+                llm_user_identifier=llm_user_identifier_value,
+                llm_logprobs=llm_logprobs_value,
+                llm_top_logprobs=llm_top_logprobs_value,
+                llm_logit_bias=llm_logit_bias_value,
+                llm_presence_penalty=llm_presence_penalty_value,
+                llm_frequency_penalty=llm_frequency_penalty_value,
+                llm_tools=llm_tools_value,
+                llm_tool_choice=llm_tool_choice_value,
+                llm_fixed_tokens_kobold=llm_fixed_tokens_kobold_value,
+                streaming=should_stream,  # Forced True
+                # These are older/other params, ensure they are correctly defaulted or excluded if not needed
+                custom_prompt="",
+                media_content={},
+                selected_parts=[],
+                chatdict_entries=None,
+                max_tokens=500,
+                strategy="sorted_evenly",
+            ))
 
     # Run the worker
     try:
@@ -6308,42 +6305,41 @@ async def handle_respond_for_me_button_pressed(
         # `history` param is the preceding conversation.
 
         # Define the target for the worker
-        worker_target = (
-            lambda: app.chat_wrapper(
-                message=suggestion_prompt_instruction,  # This is the specific instruction to suggest a response
-                history=[],  # Full context is in the message for this specific prompt type
-                api_endpoint=selected_provider,
-                api_key=api_key_for_call,
-                system_message=final_system_prompt_for_api,  # This is the suggestion_system_prompt
-                temperature=temperature,
-                topp=top_p,
-                minp=min_p,
-                topk=top_k,
-                llm_max_tokens=llm_max_tokens_value,
-                llm_seed=llm_seed_value,
-                llm_stop=llm_stop_value,
-                llm_response_format=llm_response_format_value,
-                llm_n=llm_n_value,
-                llm_user_identifier=llm_user_identifier_value,
-                llm_logprobs=llm_logprobs_value,
-                llm_top_logprobs=llm_top_logprobs_value,
-                llm_logit_bias=llm_logit_bias_value,
-                llm_presence_penalty=llm_presence_penalty_value,
-                llm_frequency_penalty=llm_frequency_penalty_value,
-                llm_tools=llm_tools_value,
-                llm_tool_choice=llm_tool_choice_value,
-                llm_fixed_tokens_kobold=llm_fixed_tokens_kobold_value,
-                # Ensure custom_prompt, media_content etc. are defaulted if not used for suggestions
-                custom_prompt="",
-                media_content={},
-                selected_parts=[],
-                chatdict_entries=None,
-                max_tokens=500,  # This is chatdict's max_tokens, distinct from llm_max_tokens. Review if needed here.
-                strategy="sorted_evenly",  # Default or from config
-                strip_thinking_tags=strip_thinking_tags_value_suggest,  # Pass for suggestion
-                streaming=False,  # Explicitly non-streaming for suggestions
-            )
-        )
+        def worker_target():
+            return (app.chat_wrapper(
+                        message=suggestion_prompt_instruction,  # This is the specific instruction to suggest a response
+                        history=[],  # Full context is in the message for this specific prompt type
+                        api_endpoint=selected_provider,
+                        api_key=api_key_for_call,
+                        system_message=final_system_prompt_for_api,  # This is the suggestion_system_prompt
+                        temperature=temperature,
+                        topp=top_p,
+                        minp=min_p,
+                        topk=top_k,
+                        llm_max_tokens=llm_max_tokens_value,
+                        llm_seed=llm_seed_value,
+                        llm_stop=llm_stop_value,
+                        llm_response_format=llm_response_format_value,
+                        llm_n=llm_n_value,
+                        llm_user_identifier=llm_user_identifier_value,
+                        llm_logprobs=llm_logprobs_value,
+                        llm_top_logprobs=llm_top_logprobs_value,
+                        llm_logit_bias=llm_logit_bias_value,
+                        llm_presence_penalty=llm_presence_penalty_value,
+                        llm_frequency_penalty=llm_frequency_penalty_value,
+                        llm_tools=llm_tools_value,
+                        llm_tool_choice=llm_tool_choice_value,
+                        llm_fixed_tokens_kobold=llm_fixed_tokens_kobold_value,
+                        # Ensure custom_prompt, media_content etc. are defaulted if not used for suggestions
+                        custom_prompt="",
+                        media_content={},
+                        selected_parts=[],
+                        chatdict_entries=None,
+                        max_tokens=500,  # This is chatdict's max_tokens, distinct from llm_max_tokens. Review if needed here.
+                        strategy="sorted_evenly",  # Default or from config
+                        strip_thinking_tags=strip_thinking_tags_value_suggest,  # Pass for suggestion
+                        streaming=False,  # Explicitly non-streaming for suggestions
+                    ))
 
         # Run the LLM call in a worker
         worker = app.run_worker(

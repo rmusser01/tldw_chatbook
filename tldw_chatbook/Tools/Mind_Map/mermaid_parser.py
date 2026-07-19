@@ -136,7 +136,9 @@ class MermaidMindmapParser:
                     )
 
                     # Update stack
-                    node_stack = [(n, l) for n, l in node_stack if l < indent_level]
+                    node_stack = [
+                        (n, level) for n, level in node_stack if level < indent_level
+                    ]
                     node_stack.append((new_node, indent_level))
 
         except Exception as e:

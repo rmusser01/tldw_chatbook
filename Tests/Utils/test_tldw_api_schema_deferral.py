@@ -91,7 +91,9 @@ def test_app_import_schema_submodule_set_is_within_allowlist(tmp_path):
     )
     import json
 
-    line = next(l for l in result.stdout.splitlines() if l.startswith("LOADED_JSON:"))
+    line = next(
+        line for line in result.stdout.splitlines() if line.startswith("LOADED_JSON:")
+    )
     loaded = set(json.loads(line[len("LOADED_JSON:") :]))
     extra = loaded - ALLOWED_SCHEMA_SUBMODULES
     assert not extra, (

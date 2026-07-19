@@ -119,4 +119,5 @@ def create_rag_service_from_config(
 
 # Compatibility aliases
 create_auto_rag_service = create_rag_service_from_config
-get_available_profiles = lambda: get_profile_manager().list_profiles()
+def get_available_profiles():
+    return get_profile_manager().list_profiles()

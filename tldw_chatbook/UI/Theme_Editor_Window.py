@@ -1080,15 +1080,17 @@ class ThemeEditorView(VerticalScroll):
     def _generate_theme_from_primary(self, primary: Color) -> Dict[str, str]:
         """Generate a complete theme based on a primary color."""
         # Get HSL values for manipulation
-        h, s, l = primary.hsl
+        h, s, lightness = primary.hsl
 
         # Generate harmonious colors
         theme = {
             "primary": primary.hex,
             "secondary": self._adjust_color(
-                h, s * 0.8, l * 0.8
+                h, s * 0.8, lightness * 0.8
             ),  # Darker, less saturated
-            "accent": self._adjust_color((h + 180) % 360, s, l),  # Complementary color
+            "accent": self._adjust_color(
+                (h + 180) % 360, s, lightness
+            ),  # Complementary color
             "background": self._adjust_color(
                 h, s * 0.1, 0.08 if self.is_dark_theme else 0.95
             ),
@@ -1106,19 +1108,19 @@ class ThemeEditorView(VerticalScroll):
 
         return theme
 
-    def _adjust_color(self, h: float, s: float, l: float) -> str:
+    def _adjust_color(self, h: float, s: float, lightness: float) -> str:
         """Create a color from HSL values."""
         try:
             # Ensure values are in valid ranges
             h = h % 360
             s = max(0, min(1, s))
-            l = max(0, min(1, l))
+            lightness = max(0, min(1, lightness))
 
             # Convert HSL to RGB
             # This is a simplified conversion - for production, use a proper color library
-            c = (1 - abs(2 * l - 1)) * s
+            c = (1 - abs(2 * lightness - 1)) * s
             x = c * (1 - abs((h / 60) % 2 - 1))
-            m = l - c / 2
+            m = lightness - c / 2
 
             if h < 60:
                 r, g, b = c, x, 0
