@@ -7,11 +7,10 @@ events, and sync helpers.
 
 from __future__ import annotations
 
-import json
 import sqlite3
 import uuid
 from contextlib import closing
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -25,36 +24,6 @@ class ScheduledTasksDB(BaseDB):
     """Database operations for scheduled tasks and reminders."""
 
     _CURRENT_SCHEMA_VERSION = 1
-
-    def __init__(
-        self,
-        db_path: Union[str, Path],
-        client_id: str = "default",
-        check_integrity_on_startup: bool = False,
-    ):
-        self._local = {}
-        super().__init__(db_path, client_id, check_integrity_on_startup)
-
-    def _initialize_schema(self) -> None:
-        """Create tables, indexes, and schema version row."""
-        with closing(self._get_connection()) as conn:
-            conn.executescript(CREATE_SCHEMA_SQL)
-            conn.execute(
-                "INSERT OR IGNORE INTO schema_version (version) VALUES (?)",
-                (self._CURRENT_SCHEMA_VERSION,),
-            )
-            conn.commit()
-
-    def get_schema_version(self) -> int:
-        """Return the currently recorded schema version."""
-        with closing(self._get_connection()) as conn:
-            cursor = conn.execute("SELECT version FROM schema_version LIMIT 1")
-            row = cursor.fetchone()
-            return int(row[0]) if row else 0
-
-    # ------------------------------------------------------------------
-    # Reminder tasks
-    # ------------------------------------------------------------------
 
     _REMINDER_TASK_COLUMNS = {
         "id",
@@ -79,20 +48,78 @@ class ScheduledTasksDB(BaseDB):
         "sync_version",
     }
 
+    _DATETIME_FIELDS = {
+        "run_at",
+        "next_run_at",
+        "last_run_at",
+        "missed_at",
+        "created_at",
+        "updated_at",
+    }
+
+    _RESERVED_FIELDS = {"id"}
+
+    def __init__(
+        self,
+        db_path: Union[str, Path],
+        client_id: str = "default",
+        check_integrity_on_startup: bool = False,
+    ):
+        super().__init__(db_path, client_id, check_integrity_on_startup)
+
+    def _initialize_schema(self) -> None:
+        """Create tables, indexes, and schema version row."""
+        with closing(self._get_connection()) as conn:
+            conn.executescript(CREATE_SCHEMA_SQL)
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_version (version) VALUES (?)",
+                (self._CURRENT_SCHEMA_VERSION,),
+            )
+            conn.commit()
+
+    def get_schema_version(self) -> int:
+        """Return the currently recorded schema version."""
+        with closing(self._get_connection()) as conn:
+            cursor = conn.execute("SELECT version FROM schema_version LIMIT 1")
+            row = cursor.fetchone()
+            return int(row[0]) if row else 0
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
     @staticmethod
     def _to_utc_iso(value: Any) -> Optional[str]:
-        """Convert a datetime to a UTC ISO-8601 string for SQLite storage."""
+        """Convert a datetime/date/string to a UTC ISO-8601 string.
+
+        - ``datetime`` values are converted to UTC (naive datetimes are
+          assumed to be UTC).
+        - ``date`` values are treated as midnight UTC.
+        - Strings are parsed as ISO-8601 and then converted to UTC.
+        - ``None`` returns ``None``.
+        """
         if value is None:
             return None
-        if isinstance(value, str):
-            return value
+
         if isinstance(value, datetime):
-            if value.tzinfo is None:
-                value = value.replace(tzinfo=timezone.utc)
-            else:
-                value = value.astimezone(timezone.utc)
-            return value.isoformat()
-        raise TypeError(f"Expected datetime or str, got {type(value).__name__}")
+            dt = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone.utc).isoformat()
+
+        if isinstance(value, date):
+            return datetime(value.year, value.month, value.day, tzinfo=timezone.utc).isoformat()
+
+        if isinstance(value, str):
+            try:
+                parsed = datetime.fromisoformat(value)
+            except ValueError as exc:
+                raise ValueError(f"Invalid ISO-8601 datetime string: {value!r}") from exc
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc).isoformat()
+
+        raise TypeError(
+            f"Expected datetime, date, or str, got {type(value).__name__}"
+        )
 
     @classmethod
     def _row_to_dict(cls, row: Optional[sqlite3.Row]) -> Optional[dict[str, Any]]:
@@ -104,10 +131,25 @@ class ScheduledTasksDB(BaseDB):
             result["enabled"] = bool(result["enabled"])
         return result
 
+    @classmethod
+    def _validate_reminder_kwargs(cls, kwargs: dict[str, Any]) -> None:
+        """Validate kwargs for create/update; raises ValueError on bad keys."""
+        for key in kwargs:
+            if key in cls._RESERVED_FIELDS:
+                raise ValueError(f"Field {key!r} is reserved and cannot be set via kwargs")
+            if key not in cls._REMINDER_TASK_COLUMNS:
+                raise ValueError(f"Unknown reminder task field: {key!r}")
+
+    # ------------------------------------------------------------------
+    # Reminder tasks
+    # ------------------------------------------------------------------
+
     def create_reminder_task(
         self, owner_id: str, title: str, **kwargs: Any
     ) -> str:
         """Create a reminder task and return its generated local UUID."""
+        self._validate_reminder_kwargs(kwargs)
+
         task_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc)
 
@@ -121,21 +163,10 @@ class ScheduledTasksDB(BaseDB):
             "sync_version": 0,
         }
 
-        datetime_fields = {
-            "run_at",
-            "next_run_at",
-            "last_run_at",
-            "missed_at",
-            "created_at",
-            "updated_at",
-        }
-
         for key, value in kwargs.items():
-            if key not in self._REMINDER_TASK_COLUMNS or key in ("id",):
-                continue
             if key == "enabled":
                 fields[key] = 1 if value else 0
-            elif key in datetime_fields:
+            elif key in self._DATETIME_FIELDS:
                 fields[key] = self._to_utc_iso(value)
             else:
                 fields[key] = value
@@ -195,25 +226,16 @@ class ScheduledTasksDB(BaseDB):
         if not kwargs:
             return False
 
-        datetime_fields = {
-            "run_at",
-            "next_run_at",
-            "last_run_at",
-            "missed_at",
-            "created_at",
-            "updated_at",
-        }
+        self._validate_reminder_kwargs(kwargs)
 
         updates: list[str] = []
         params: list[Any] = []
 
         for key, value in kwargs.items():
-            if key not in self._REMINDER_TASK_COLUMNS or key == "id":
-                continue
             if key == "enabled":
                 updates.append("enabled = ?")
                 params.append(1 if value else 0)
-            elif key in datetime_fields:
+            elif key in self._DATETIME_FIELDS:
                 updates.append(f"{key} = ?")
                 params.append(self._to_utc_iso(value))
             else:

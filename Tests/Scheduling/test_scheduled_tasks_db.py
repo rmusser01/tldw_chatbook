@@ -61,6 +61,64 @@ def test_create_and_get_reminder_task(db: ScheduledTasksDB) -> None:
     assert task["updated_at"]
 
 
+def test_create_reminder_task_enabled_defaults_to_true(db: ScheduledTasksDB) -> None:
+    task_id = db.create_reminder_task(
+        owner_id="local",
+        title="Default enabled",
+        schedule_kind="one_time",
+        run_at=_utc(2026, 7, 20, 14, 0),
+    )
+
+    task = db.get_reminder_task(task_id)
+    assert task is not None
+    assert task["enabled"] is True
+
+
+def test_create_reminder_task_rejects_unknown_kwargs(db: ScheduledTasksDB) -> None:
+    with pytest.raises(ValueError, match="Unknown reminder task field"):
+        db.create_reminder_task(
+            owner_id="local",
+            title="Bad field",
+            schedule_kind="one_time",
+            run_at=_utc(2026, 7, 20, 14, 0),
+            not_a_field="nope",
+        )
+
+
+def test_create_reminder_task_rejects_reserved_id(db: ScheduledTasksDB) -> None:
+    with pytest.raises(ValueError, match="reserved"):
+        db.create_reminder_task(
+            owner_id="local",
+            title="Reserved id",
+            schedule_kind="one_time",
+            run_at=_utc(2026, 7, 20, 14, 0),
+            id="custom-id",
+        )
+
+
+def test_update_reminder_task_rejects_unknown_kwargs(db: ScheduledTasksDB) -> None:
+    task_id = db.create_reminder_task(
+        owner_id="local",
+        title="Original",
+        schedule_kind="one_time",
+        run_at=_utc(2026, 7, 20, 14, 0),
+    )
+
+    with pytest.raises(ValueError, match="Unknown reminder task field"):
+        db.update_reminder_task(task_id, not_a_field="nope")
+
+
+def test_update_reminder_task_empty_kwargs_returns_false(db: ScheduledTasksDB) -> None:
+    task_id = db.create_reminder_task(
+        owner_id="local",
+        title="Original",
+        schedule_kind="one_time",
+        run_at=_utc(2026, 7, 20, 14, 0),
+    )
+
+    assert db.update_reminder_task(task_id) is False
+
+
 def test_list_reminder_tasks_filters(db: ScheduledTasksDB) -> None:
     now = _utc(2026, 7, 20, 12, 0)
 
@@ -222,3 +280,31 @@ def test_reminders_due_before(db: ScheduledTasksDB) -> None:
     assert len(due) == 2
     assert {t["id"] for t in due} == {due_id, past_id}
     assert due[0]["next_run_at"] <= due[1]["next_run_at"]
+
+
+def test_to_utc_iso_naive_datetime_assumed_utc(db: ScheduledTasksDB) -> None:
+    naive = datetime(2026, 7, 20, 14, 0)
+    assert db._to_utc_iso(naive) == naive.replace(tzinfo=timezone.utc).isoformat()
+
+
+def test_to_utc_iso_non_utc_aware_datetime_converted_to_utc(db: ScheduledTasksDB) -> None:
+    eastern = datetime(2026, 7, 20, 10, 0, tzinfo=timezone(timedelta(hours=-4)))
+    assert db._to_utc_iso(eastern) == _utc(2026, 7, 20, 14, 0).isoformat()
+
+
+def test_to_utc_iso_string_parsed_and_converted_to_utc(db: ScheduledTasksDB) -> None:
+    eastern_iso = "2026-07-20T10:00:00-04:00"
+    assert db._to_utc_iso(eastern_iso) == _utc(2026, 7, 20, 14, 0).isoformat()
+
+
+def test_to_utc_iso_rejects_invalid_types(db: ScheduledTasksDB) -> None:
+    with pytest.raises(TypeError):
+        db._to_utc_iso(12345)
+
+    with pytest.raises(TypeError):
+        db._to_utc_iso(["not", "a", "datetime"])
+
+
+def test_to_utc_iso_rejects_invalid_string(db: ScheduledTasksDB) -> None:
+    with pytest.raises(ValueError, match="Invalid ISO-8601"):
+        db._to_utc_iso("not-a-datetime")
