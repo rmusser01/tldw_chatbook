@@ -764,3 +764,82 @@ async def test_popover_apply_accepts_in_range_temperature():
         await pilot.pause()
         assert isinstance(app.result, ConsoleSessionSettings)
         assert app.result.temperature == 1.2
+
+
+class _PopoverSearchScope:
+    """Minimal llm_provider_catalog_scope_service stand-in for search tests."""
+
+    def __init__(self, entries):
+        self._entries = entries
+
+    async def merge_saved_and_discovered_models(self, *, mode, provider):
+        return self._entries
+
+
+_POPOVER_SEARCH_PROVIDERS = {"openrouter": ["saved-model"]}
+_POPOVER_SEARCH_MODEL_IDS = ["anthropic/claude-x", "openai/gpt-y"]
+
+
+def _popover_search_entries():
+    from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
+        MergedModelEntry,
+    )
+
+    return tuple(
+        MergedModelEntry(
+            provider="openrouter",
+            provider_list_key="openrouter",
+            model_id=m,
+            display_name=m,
+            source="runtime_discovered",
+            capability_status="unknown",
+            persisted=False,
+        )
+        for m in _POPOVER_SEARCH_MODEL_IDS
+    )
+
+
+class _PopoverSearchApp(App):
+    """Popover host app exposing the catalog scope the search picker reads."""
+
+    def __init__(self):
+        super().__init__()
+        self.result = "unset"
+        self.providers_models = _POPOVER_SEARCH_PROVIDERS
+        self.llm_provider_catalog_scope_service = _PopoverSearchScope(
+            _popover_search_entries()
+        )
+
+    async def on_mount(self) -> None:
+        settings = ConsoleSessionSettings(provider="openrouter", model="saved-model")
+
+        def _capture(result):
+            self.result = result
+
+        await self.push_screen(
+            ConsoleModelPopover(
+                settings=settings, providers_models=self.providers_models
+            ),
+            callback=_capture,
+        )
+
+
+@pytest.mark.asyncio
+async def test_popover_model_search_inserts_transient_option():
+    """Picking a search result inserts it as a transient option and selects it."""
+    from textual.widgets import Input, OptionList, Select
+
+    app = _PopoverSearchApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        search_input = app.screen.query_one("#model-search-picker-input", Input)
+        search_input.value = "claude"
+        await pilot.pause()
+        results = app.screen.query_one("#model-search-picker-results", OptionList)
+        assert results.display
+        option = results.get_option_at_index(0)
+        results.post_message(OptionList.OptionSelected(results, option, 0))
+        await pilot.pause()
+        model_select = app.screen.query_one("#console-popover-model", Select)
+        option_values = [value for _, value in model_select._options]
+        assert "anthropic/claude-x" in option_values
+        assert model_select.value == "anthropic/claude-x"

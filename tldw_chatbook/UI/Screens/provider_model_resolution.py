@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 from ...Chat.provider_readiness import provider_config_key
+from ...LLM_Provider_Catalog.model_catalog_settings import SELECTOR_MERGE_CAP
 from ...LLM_Provider_Catalog.model_discovery_contracts import MergedModelEntry
 
 
@@ -143,8 +144,14 @@ async def resolve_provider_model_options(
     *,
     provider: str,
     current_model: str | None = None,
+    merge_cap: int | None = SELECTOR_MERGE_CAP,
 ) -> list[ResolvedProviderModelOption]:
-    """Return saved and runtime-discovered model selector options for a provider."""
+    """Return saved and runtime-discovered model selector options for a provider.
+
+    Discovered entries merge only when the provider's total discovered catalog is
+    at or below ``merge_cap`` (ADR-020); pass ``merge_cap=None`` for the uncapped
+    list (search picker). Oversized catalogs stay saved-list-only in dropdowns.
+    """
     provider_key = provider_config_key(provider)
     saved_models = _saved_models_for_provider(
         _providers_models(app_instance), provider_key
@@ -159,7 +166,11 @@ async def resolve_provider_model_options(
     merged_entries = await _merged_model_entries_from_scope(
         app_instance, provider=provider_key
     )
+    discovered_count = sum(1 for entry in merged_entries if str(entry.source) == "runtime_discovered")
+    include_discovered = merge_cap is None or discovered_count <= merge_cap
     for entry in merged_entries:
+        if str(entry.source) == "runtime_discovered" and not include_discovered:
+            continue
         option = _option_from_entry(entry)
         if option.model_id and option.model_id not in seen_model_ids:
             options.append(option)

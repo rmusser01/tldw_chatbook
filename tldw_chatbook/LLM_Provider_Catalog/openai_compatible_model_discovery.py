@@ -49,6 +49,8 @@ _EXPLICIT_OPENAI_COMPATIBLE_ENDPOINT_PATHS = frozenset(
         "/v1/models",
         "/completion",
         "/completions",
+        "/api/v1",
+        "/api/paas/v4",
     }
 )
 _EXACT_SENSITIVE_METADATA_KEYS = frozenset(
@@ -97,6 +99,32 @@ _COMPACT_SENSITIVE_METADATA_KEY_SUBSTRINGS = frozenset(
     for sensitive_key in _SENSITIVE_METADATA_KEY_SUBSTRINGS
 )
 _COMPACT_SENSITIVE_METADATA_KEY_SUFFIXES = frozenset({"token"})
+
+_ANTHROPIC_PROVIDER_KEY = "anthropic"
+_ANTHROPIC_VERSION_HEADER = "2023-06-01"
+_ANTHROPIC_MODELS_PAGE_LIMIT = 1000
+_ANTHROPIC_MAX_MODEL_PAGES = 10
+
+
+def build_discovery_auth_headers(provider_identity: str, api_key: str | None) -> dict[str, str]:
+    """Return provider-appropriate auth headers for a models request.
+
+    Args:
+        provider_identity: Provider name/identity used to pick the auth scheme
+            (Anthropic gets x-api-key; everything else gets a Bearer token).
+        api_key: The provider API key, or None for unauthenticated access.
+
+    Returns:
+        dict[str, str]: Headers for the request; empty when no key is given.
+    """
+    if not api_key:
+        return {}
+    if _normalized_provider_identity(provider_identity) == _ANTHROPIC_PROVIDER_KEY:
+        return {
+            "x-api-key": api_key,
+            "anthropic-version": _ANTHROPIC_VERSION_HEADER,
+        }
+    return {"Authorization": f"Bearer {api_key}"}
 
 
 def _normalized_provider_identity(provider_identity: str | None) -> str:
@@ -167,6 +195,8 @@ def _models_path_for_endpoint_path(path: str) -> str | None:
         return normalized_path
     if normalized_path == "/v1":
         return "/v1/models"
+    if normalized_path in {"/api/v1", "/api/paas/v4"}:
+        return f"{normalized_path}/models"
     if normalized_path in {"/completion", "/completions"}:
         return "/v1/models"
     if normalized_path.endswith("/v1/chat/completions"):
@@ -410,49 +440,98 @@ async def discover_openai_compatible_models(
             ),
         )
 
-    headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
+    headers = build_discovery_auth_headers(provider, api_key) or None
+    paginate = _normalized_provider_identity(provider) == _ANTHROPIC_PROVIDER_KEY
 
-    async def _request_payload(
+    async def _request_payloads(
         active_client: httpx.AsyncClient,
-    ) -> tuple[Mapping[str, Any] | None, ModelDiscoveryResult | None]:
-        try:
-            response = await active_client.get(models_url, headers=headers)
-            response.raise_for_status()
-        except httpx.HTTPError:
-            return None, ModelDiscoveryResult(
-                provider=provider,
-                provider_list_key=provider_list_key,
-                endpoint_fingerprint=endpoint_fingerprint,
-                status="error",
-                error=_discovery_error(
-                    "request_failed",
-                    "Model discovery request failed.",
-                    "Check the endpoint URL, server availability, and credentials.",
-                ),
-            )
-
-        try:
-            payload = response.json()
-        except ValueError:
-            return None, ModelDiscoveryResult(
-                provider=provider,
-                provider_list_key=provider_list_key,
-                endpoint_fingerprint=endpoint_fingerprint,
-                status="error",
-                error=_discovery_error(
-                    "invalid_response",
-                    "The models endpoint did not return valid JSON.",
-                    "Use an endpoint that returns a JSON object with a data array of model IDs.",
-                ),
-            )
-        return payload, None
+    ) -> tuple[list[Mapping[str, Any]] | None, ModelDiscoveryResult | None]:
+        payloads: list[Mapping[str, Any]] = []
+        params: dict[str, Any] | None = (
+            {"limit": _ANTHROPIC_MODELS_PAGE_LIMIT} if paginate else None
+        )
+        for _page in range(_ANTHROPIC_MAX_MODEL_PAGES if paginate else 1):
+            try:
+                response = await active_client.get(models_url, headers=headers, params=params)
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code in {401, 403}:
+                    return None, ModelDiscoveryResult(
+                        provider=provider,
+                        provider_list_key=provider_list_key,
+                        endpoint_fingerprint=endpoint_fingerprint,
+                        status="error",
+                        error=_discovery_error(
+                            "missing_credentials",
+                            "The models endpoint rejected the configured credentials.",
+                            "Check the API key configured for this provider.",
+                        ),
+                    )
+                return None, ModelDiscoveryResult(
+                    provider=provider,
+                    provider_list_key=provider_list_key,
+                    endpoint_fingerprint=endpoint_fingerprint,
+                    status="error",
+                    error=_discovery_error(
+                        "request_failed",
+                        "Model discovery request failed.",
+                        "Check the endpoint URL, server availability, and credentials.",
+                    ),
+                )
+            except httpx.HTTPError:
+                return None, ModelDiscoveryResult(
+                    provider=provider,
+                    provider_list_key=provider_list_key,
+                    endpoint_fingerprint=endpoint_fingerprint,
+                    status="error",
+                    error=_discovery_error(
+                        "request_failed",
+                        "Model discovery request failed.",
+                        "Check the endpoint URL, server availability, and credentials.",
+                    ),
+                )
+            try:
+                payload = response.json()
+            except ValueError:
+                return None, ModelDiscoveryResult(
+                    provider=provider,
+                    provider_list_key=provider_list_key,
+                    endpoint_fingerprint=endpoint_fingerprint,
+                    status="error",
+                    error=_discovery_error(
+                        "invalid_response",
+                        "The models endpoint did not return valid JSON.",
+                        "Use an endpoint that returns a JSON object with a data array of model IDs.",
+                    ),
+                )
+            if not isinstance(payload, Mapping) or not isinstance(payload.get("data"), list):
+                return None, ModelDiscoveryResult(
+                    provider=provider,
+                    provider_list_key=provider_list_key,
+                    endpoint_fingerprint=endpoint_fingerprint,
+                    status="error",
+                    error=_discovery_error(
+                        "invalid_response",
+                        "The models endpoint did not return a valid OpenAI-compatible response.",
+                        "Use an endpoint that returns a JSON object with a data array of model IDs.",
+                    ),
+                )
+            payloads.append(payload)
+            if not paginate:
+                break
+            last_id = payload.get("last_id")
+            if bool(payload.get("has_more")) and isinstance(last_id, str) and last_id:
+                params = {"limit": _ANTHROPIC_MODELS_PAGE_LIMIT, "after_id": last_id}
+                continue
+            break
+        return payloads, None
 
     try:
         if client is not None:
-            payload, request_error = await _request_payload(client)
+            payloads, request_error = await _request_payloads(client)
         else:
             async with httpx.AsyncClient(timeout=timeout_seconds) as active_client:
-                payload, request_error = await _request_payload(active_client)
+                payloads, request_error = await _request_payloads(active_client)
     except httpx.HTTPError:
         return ModelDiscoveryResult(
             provider=provider,
@@ -467,7 +546,7 @@ async def discover_openai_compatible_models(
         )
     if request_error is not None:
         return request_error
-    if payload is None:
+    if not payloads:
         return ModelDiscoveryResult(
             provider=provider,
             provider_list_key=provider_list_key,
@@ -480,12 +559,14 @@ async def discover_openai_compatible_models(
             ),
         )
 
-    now_iso = (
-        datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    )
+    combined_data: list[Any] = []
+    for payload in payloads:
+        combined_data.extend(payload["data"])
+
+    now_iso = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     try:
         models = normalize_models_response(
-            payload,
+            {"data": combined_data},
             provider=provider,
             provider_list_key=provider_list_key,
             endpoint_fingerprint=endpoint_fingerprint or "",

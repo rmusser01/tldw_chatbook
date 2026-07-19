@@ -183,6 +183,13 @@ Key sections:
 - Reviews diffs with LLM
 - Exit 0 = pass, 2 = fail
 
+### Model Catalog Auto-Refresh
+- Startup background refresh of cloud-provider model lists (OpenAI, Anthropic, MistralAI, Moonshot, OpenRouter, ZAI) via `LLM_Provider_Catalog/`
+- Disk TTL cache: `model_catalog_cache.json` in the user data dir (IDs + timestamps only)
+- Capped merge (50) into model selectors; full catalog searchable in the Alt+M popover
+- Config: `[model_catalog]` in config.toml; per-provider opt-in write-through appends new models to `[providers]`
+- Governance: ADR-020 (amends ADR-002), spec/plan in Docs/superpowers/{specs,plans}/2026-07-17-model-catalog-auto-refresh*
+
 ## Project-Specific Gotchas
 
 1. **No localStorage** in artifacts - use React state or JS variables

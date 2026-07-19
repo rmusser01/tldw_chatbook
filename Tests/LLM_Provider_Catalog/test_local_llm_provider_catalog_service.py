@@ -10,6 +10,7 @@ from tldw_chatbook.LLM_Provider_Catalog.local_llm_provider_catalog_service impor
     LocalLLMProviderCatalogService,
 )
 from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
+    build_models_url,
     fingerprint_endpoint,
 )
 from tldw_chatbook.runtime_policy import PolicyDeniedError
@@ -445,3 +446,38 @@ def test_local_discovered_model_cache_operations_enforce_runtime_policy():
         "llm.catalog.models.list.local",
         "llm.catalog.models.persist.local",
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "list_key", "expected_url"),
+    [
+        ("anthropic", "Anthropic", "https://api.anthropic.com/v1/models"),
+        ("mistralai", "MistralAI", "https://api.mistral.ai/v1/models"),
+        ("moonshot", "Moonshot", "https://api.moonshot.ai/v1/models"),
+        ("zai", "ZAI", "https://api.z.ai/api/paas/v4/models"),
+        ("openrouter", "OpenRouter", "https://openrouter.ai/api/v1/models"),
+    ],
+)
+async def test_cloud_provider_default_endpoints_resolve(provider, list_key, expected_url):
+    seen_urls: list[str] = []
+
+    async def fake_client(**kwargs):
+        seen_urls.append(build_models_url(kwargs["endpoint"], kwargs["provider"]))
+        return ModelDiscoveryResult(
+            provider=kwargs["provider"],
+            provider_list_key=kwargs["provider_list_key"],
+            endpoint_fingerprint="fp",
+            status="success",
+            models=(),
+        )
+
+    service = LocalLLMProviderCatalogService(
+        provider_catalog_loader=lambda: {list_key: ["placeholder-model"]},
+        settings_loader=lambda: {},
+        discovery_client=fake_client,
+        environ={},
+    )
+    result = await service.discover_models(provider=list_key)
+    assert result.status == "success"
+    assert seen_urls == [expected_url]

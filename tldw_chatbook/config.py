@@ -2241,7 +2241,7 @@ sync_retry_max_delay_seconds = 300
 sync_retry_jitter = true
 scheduler_poll_interval_seconds = 30
 reminder_catchup_hours = 24
-# Feature flags for the watchlist-to-unified-scheduler migration (ADR-019).
+# Feature flags for the watchlist-to-unified-scheduler migration (ADR-020).
 watchlist_checks_enabled = false  # Enable unified scheduler watchlist execution
 watchlist_checks_shadow = true    # Run new handler side-by-side without mutating Subscriptions_DB
 
@@ -2284,6 +2284,7 @@ HuggingFace = ["openai/gpt-oss-120b", "meta-llama/Meta-Llama-3.1-8B-Instruct", "
 MistralAI = ["open-mistral-nemo", "mistral-medium-2505", "codestral-2501", "mistral-saba-2502", "mistral-large-2411", "ministral-3b-2410", "ministral-8b-2410", "mistral-moderation-2411", "devstral-small-2505", "mistral-small-2503", ]
 Moonshot = ["kimi-latest", "kimi-thinking-preview", "moonshot-v1-auto", "moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k", "moonshot-v1-8k-vision-preview", "moonshot-v1-32k-vision-preview", "moonshot-v1-128k-vision-preview", "kimi-k2-0711-preview"]
 OpenRouter = ["openai/gpt-4o-mini", "anthropic/claude-3.7-sonnet", "google/gemini-2.0-flash-001", "google/gemini-2.5-pro-preview", "google/gemini-2.5-flash-preview", "deepseek/deepseek-chat-v3-0324:free", "deepseek/deepseek-chat-v3-0324", "openai/gpt-4.1", "anthropic/claude-sonnet-4", "deepseek/deepseek-r1:free", "anthropic/claude-3.7-sonnet:thinking", "google/gemini-flash-1.5-8b", "mistralai/mistral-nemo", "google/gemini-2.5-flash-preview-05-20", ]
+ZAI = ["glm-4.6", "glm-4.5", "glm-4.5-air", "glm-4.5-flash", "glm-4.5v", "glm-4-32b-0414-128k"]
 # Local Providers
 Llama_cpp = ["None"]
 koboldcpp = ["None"]
@@ -2302,6 +2303,13 @@ local_vllm = ["None"]
 local_onnx = ["None"]
 local_transformers = ["None"]
 local_mlx_lm = ["None"]
+
+[model_catalog]
+# Automatic model-list refresh for cloud providers (ADR-020).
+auto_refresh_enabled = true
+stale_after_hours = 24 # 0 = refetch every launch
+auto_refresh_disabled = [] # exact [providers] keys to opt out, e.g. ["ZAI"]
+write_to_config = [] # exact [providers] keys whose new models append to this file
 
 [api_settings] # Parent section for all API provider specific settings
 
@@ -2434,6 +2442,19 @@ local_mlx_lm = ["None"]
     timeout = 90
     retries = 3
     retry_delay = 1.0
+    streaming = false
+
+    [api_settings.zai] # Matches key in [providers]
+    api_key_env_var = "ZAI_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    model = "glm-4.5"
+    temperature = 0.7
+    top_p = 0.95
+    max_tokens = 4096
+    api_base_url = "https://api.z.ai/api/paas/v4"
+    timeout = 90
+    retries = 3
+    retry_delay = 5
     streaming = false
 
     # --- Local Providers ---
@@ -4685,7 +4706,9 @@ _cloud_provider_keys = [
     "Google",
     "HuggingFace",
     "MistralAI",
+    "Moonshot",
     "OpenRouter",
+    "ZAI",
 ]  # Example list
 
 for provider_name, models_list in _config_providers.items():
