@@ -288,6 +288,11 @@ import asyncio
 import random
 from typing import Any
 
+try:
+    import httpx
+except ImportError:  # pragma: no cover
+    httpx = None  # type: ignore[assignment]
+
 
 class SchedulingServerClient:
     """Async client that delegates scheduling operations to a notifications service.
@@ -364,6 +369,10 @@ class SchedulingServerClient:
                 if status is not None and 400 <= status < 500:
                     raise ServerClientValidationError(str(exc)) from exc
                 if status is not None and 500 <= status < 600:
+                    error_cls = ServerClientServerError
+                elif httpx is not None and isinstance(exc, httpx.TimeoutException):
+                    error_cls = ServerClientTimeoutError
+                elif httpx is not None and isinstance(exc, (httpx.ConnectError, httpx.NetworkError)):
                     error_cls = ServerClientServerError
                 else:
                     error_cls = ServerClientError
@@ -818,6 +827,69 @@ def _delete_tombstone_conn(
         """,
         (local_id, primitive, owner_id),
     )
+
+
+def _record_conflict_conn(
+    self,
+    conn: sqlite3.Connection,
+    local_id: str,
+    primitive: str,
+    owner_id: str,
+    server_state: dict[str, Any],
+    local_state: dict[str, Any],
+) -> str:
+    conflict_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
+    conn.execute(
+        """
+        INSERT INTO sync_conflicts
+        (id, local_id, primitive, owner_id, server_state, local_state,
+         server_state_at, created_at, resolved_at, resolution, retry_count)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 0)
+        """,
+        (
+            conflict_id,
+            local_id,
+            primitive,
+            owner_id,
+            self._to_json(server_state),
+            self._to_json(local_state),
+            self._to_utc_iso(server_state.get("updated_at") or now),
+            self._to_utc_iso(now),
+        ),
+    )
+    return conflict_id
+
+
+def _update_sync_state_conn(
+    self,
+    conn: sqlite3.Connection,
+    owner_id: str,
+    **kwargs: Any,
+) -> None:
+    if not kwargs:
+        return
+    self._validate_kwargs(kwargs, self._SYNC_STATE_COLUMNS, "sync state")
+    fields: dict[str, Any] = {"owner_id": owner_id}
+    for key, value in kwargs.items():
+        if key == "sync_errors":
+            fields[key] = self._to_json(value)
+        elif key in self._DATETIME_FIELDS:
+            fields[key] = self._to_utc_iso(value)
+        else:
+            fields[key] = value
+    self._validate_sql_identifiers(list(fields.keys()))
+    columns = ", ".join(fields.keys())
+    placeholders = ", ".join(["?"] * len(fields))
+    updates = [f"{key} = excluded.{key}" for key in fields if key != "owner_id"]
+    self._validate_sql_identifiers([key.split(" ", 1)[0] for key in updates])
+    conn.execute(
+        f"""
+        INSERT INTO sync_state ({columns}) VALUES ({placeholders})
+        ON CONFLICT(owner_id) DO UPDATE SET {", ".join(updates)}
+        """,
+        list(fields.values()),
+    )
 ```
 
 Then refactor the public methods to call these helpers with `self.transaction()` so existing tests continue to pass.
@@ -974,7 +1046,8 @@ class SyncEngine:
             with self.db.transaction() as conn:
                 self.db._apply_pulled_reminders(conn, target_owner, pulled_items)
                 for conflict in conflicts:
-                    self.db.record_conflict(
+                    self.db._record_conflict_conn(
+                        conn,
                         local_id=conflict["local_id"],
                         primitive=_REMINDER_PRIMITIVE,
                         owner_id=target_owner,
@@ -1002,7 +1075,8 @@ class SyncEngine:
                     self.db._delete_tombstone_conn(
                         conn, local_id, _REMINDER_PRIMITIVE, target_owner
                     )
-                self.db.update_sync_state(
+                self.db._update_sync_state_conn(
+                    conn,
                     target_owner,
                     last_pull_at=now_utc_iso(),
                     last_push_at=now_utc_iso() if staged_outcomes or tombstone_ids else None,
@@ -1072,7 +1146,14 @@ class SyncEngine:
             if action == "update":
                 server_id = self._server_id_for_local(local_id)
                 if server_id is None:
-                    return {"local_id": local_id, "mutation_id": mutation["id"]}
+                    # The local task was created offline and has never been synced.
+                    # Convert this update into a create so the data is not lost.
+                    response = await self.server_client.create_reminder(**fields)
+                    return {
+                        "local_id": local_id,
+                        "server_id": response.get("id"),
+                        "mutation_id": mutation["id"],
+                    }
                 response = await self.server_client.update_reminder(server_id, **fields)
                 return {
                     "local_id": local_id,
@@ -1245,22 +1326,23 @@ def test_sync_status_widget_renders_mode_and_timestamps():
         sync_errors=[],
     )
 
-    select = widget.query_one("#scheduling-owner-select", Select)
-    assert select.value == "server:example.com"
+    local_btn = widget.query_one("#scheduling-owner-local", Button)
+    server_btn = widget.query_one("#scheduling-owner-server", Button)
+    assert local_btn.variant != "primary"
+    assert server_btn.variant == "primary"
     pull = widget.query_one("#scheduling-last-pull", Static)
     push = widget.query_one("#scheduling-last-push", Static)
     assert "Last pull" in pull.renderable.plain
     assert "Last push" in push.renderable.plain
 
 
-def test_sync_status_widget_disables_server_option_when_unavailable():
+def test_sync_status_widget_disables_server_button_when_unavailable():
     widget = SyncStatusWidget(
         current_owner="local",
         server_available=False,
     )
-    select = widget.query_one("#scheduling-owner-select", Select)
-    server_option = next(opt for opt in select.options if opt[1].startswith("server:"))
-    assert server_option[2] is False  # (prompt, value, disabled)
+    server_btn = widget.query_one("#scheduling-owner-server", Button)
+    assert server_btn.disabled
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1280,7 +1362,7 @@ Create `tldw_chatbook/UI/Screens/scheduling/sync_status_widget.py`:
 
 from __future__ import annotations
 
-from textual.widgets import Button, Select, Static
+from textual.widgets import Button, Static
 from textual.containers import Horizontal
 
 
@@ -1292,8 +1374,8 @@ class SyncStatusWidget(Horizontal):
         height: auto;
         padding: 1;
     }
-    #scheduling-owner-select {
-        width: 30;
+    #scheduling-owner-local, #scheduling-owner-server {
+        width: auto;
     }
     #scheduling-last-pull, #scheduling-last-push {
         width: auto;
@@ -1320,14 +1402,11 @@ class SyncStatusWidget(Horizontal):
         self.server_available = server_available
 
     def compose(self):
-        options = [("Local", "local", False)]
-        server_value = f"server:{self.active_server_id}" if self.active_server_id else "server:"
-        options.append((
-            f"Server ({self.active_server_id or 'unavailable'})",
-            server_value,
-            not self.server_available,
-        ))
-        yield Select(options, value=self.current_owner, id="scheduling-owner-select")
+        local_variant = "primary" if self.current_owner == "local" else "default"
+        server_variant = "primary" if self.current_owner.startswith("server:") else "default"
+        server_label = f"Server ({self.active_server_id or 'unavailable'})"
+        yield Button("Local", id="scheduling-owner-local", variant=local_variant)
+        yield Button(server_label, id="scheduling-owner-server", variant=server_variant, disabled=not self.server_available)
         yield Static("Last pull: —", id="scheduling-last-pull")
         yield Static("Last push: —", id="scheduling-last-push")
         yield Static("", id="scheduling-sync-error")
@@ -1575,7 +1654,7 @@ Expected: FAIL or behavior mismatch.
 Modify `tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py`:
 
 ```python
-from textual.widgets import Button, DataTable, Select, Static, TabbedContent, TabPane
+from textual.widgets import Button, DataTable, Static, TabbedContent, TabPane
 
 from ....runtime_policy.bootstrap import set_authoritative_runtime_source
 from ....Scheduling.events import (
@@ -1655,15 +1734,24 @@ Add owner switching and sync worker methods:
             sync_errors=state.get("sync_errors") or [],
         )
 
-    @on(Select.Changed, "#scheduling-owner-select")
-    def _on_owner_changed(self, event: Select.Changed) -> None:
+    @on(Button.Pressed, "#scheduling-owner-local")
+    def _on_owner_local(self) -> None:
+        self._set_owner("local")
+
+    @on(Button.Pressed, "#scheduling-owner-server")
+    def _on_owner_server(self) -> None:
         service = self._service()
         if service is None:
             return
-        new_owner = event.value
-        if new_owner.startswith("server:") and service.server_client.notifications_service is None:
+        active_server_id = getattr(self.app_instance, "active_server_id", None)
+        if active_server_id is None or service.server_client.notifications_service is None:
             self.app_instance.notify("No server connection", severity="warning")
-            self._refresh_owner_select()
+            return
+        self._set_owner(f"server:{active_server_id}")
+
+    def _set_owner(self, new_owner: str) -> None:
+        service = self._service()
+        if service is None:
             return
         service.set_owner(new_owner)
         runtime_source = "server" if new_owner.startswith("server:") else "local"
@@ -1729,8 +1817,8 @@ Add owner switching and sync worker methods:
         if service is None:
             self._sync_running = False
             return
-        owner_select = self.query_one("#scheduling-owner-select", Select)
-        owner_select.disabled = True
+        for btn_id in ("#scheduling-owner-local", "#scheduling-owner-server"):
+            self.query_one(btn_id, Button).disabled = True
         try:
             owner_id = service.owner_id
             await service.sync_now(owner_id)
@@ -1740,7 +1828,7 @@ Add owner switching and sync worker methods:
             logger.exception("Sync failed")
             self.post_message(SyncFailed(service.owner_id, str(exc)))
         finally:
-            owner_select.disabled = False
+            self._refresh_owner_select()
             self._sync_running = False
 ```
 
@@ -1808,17 +1896,43 @@ git commit -m "feat(scheduling): always instantiate SchedulingServerClient in ap
 
 - [ ] **Step 1: Append the TASK-299.2 addendum**
 
-Ensure `backlog/decisions/018-local-server-hybrid-scheduled-tasks.md` contains an addendum section documenting:
-- Local-only idempotency keys.
-- `create_reminder` is not retried.
-- Network-then-transaction sync boundary.
-- Crash-window trade-off.
-- Interim URL-derived owner identity and migration path.
-- Runtime-source mapping.
-- Conflict resolution behavior.
-- Always-instantiated `SchedulingServerClient`.
+Append the following section to `backlog/decisions/018-local-server-hybrid-scheduled-tasks.md` (adjust heading levels to match the existing ADR):
 
-Use the exact wording already approved in the design spec's referenced ADR-018 update.
+```markdown
+## TASK-299.2 Addendum: Bidirectional Reminder Sync
+
+### Idempotency keys are local-only
+
+`ServerNotificationsService.create_reminder()` and `update_reminder()` do not yet accept an `idempotency_key` argument. Therefore `SchedulingServerClient` must strip any `idempotency_key` from the payload before forwarding to the service. The key remains in `pending_mutations.payload` for local deduplication and for future server-side idempotency support.
+
+### `create_reminder` is not retried
+
+Because idempotency keys are not forwarded to the server, retrying a transient timeout or 5xx on `create_reminder` could duplicate the server record. `SchedulingServerClient` retries transient failures for `list_reminders`, `update_reminder`, and `delete_reminder`, but **not** for `create_reminder`. A failed create leaves the pending mutation queued and stops the push phase.
+
+### Network-then-transaction sync boundary
+
+`SyncEngine.sync_now(owner_id)` performs all server calls in Phase 1 with **no** SQLite transaction held. Phase 2 opens a single `ScheduledTasksDB.transaction()` and atomically persists: pulled inserts/updates, conflict records, staged push outcomes (server_id → local_id mappings and pending-mutation deletions), tombstone cleanup, and `sync_state`. This prevents holding the SQLite connection across async HTTP I/O while still giving each sync attempt a single logical commit boundary.
+
+### Crash-window trade-off
+
+A crash after a successful network `create` but before the Phase 2 commit can leave the pending `create` mutation in the queue. Because the local row has no `server_id` yet, the next sync may create a duplicate server record. This is an accepted trade-off for TASK-299.2. A future upgrade can eliminate the window by adding per-push persistent staging or server-side idempotency.
+
+### Owner identity interim fallback
+
+Until the server exposes an account/principal endpoint (e.g., `/api/v1/me`), the server owner id is `"server:<active_server_id>"` where `active_server_id` is derived from the configured API URL by `runtime_policy.bootstrap.derive_configured_server_binding()`. This is an interim fallback that collides for multiple accounts on the same server. When an account endpoint becomes available, the owner id should become `"server:<user_id>"` and existing `sync_state`, `sync_mapping`, and `pending_mutations` rows must be migrated.
+
+### Runtime-source mapping
+
+The workbench owner switcher maps:
+- `"local"` → `SchedulingService.set_owner("local")` and `set_authoritative_runtime_source(app, "local")`.
+- `"server:<active_server_id>"` → `SchedulingService.set_owner("server:<active_server_id>")` and `set_authoritative_runtime_source(app, "server")`.
+
+`SchedulingServerClient` is always instantiated, even when no server is configured at startup, so the app can inject or refresh the underlying notifications service after login via `server_client.set_notifications_service(...)` without rebuilding `SchedulingService`.
+
+### Conflict resolution
+
+Server-wins remains the default. Conflicts are surfaced in a dedicated workbench tab. "Use server" applies the server state (or deletes the local row for server-deletion). "Use local" re-queues the original pending mutation, preserving action, fields, and idempotency_key. For server-deletion conflicts, "Use local" clears the stale `server_id` and `sync_mapping` before re-queuing a `create` mutation.
+```
 
 - [ ] **Step 2: Verify the ADR renders**
 
