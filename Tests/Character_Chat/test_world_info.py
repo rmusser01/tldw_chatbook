@@ -3,8 +3,7 @@ Tests for World Info/Lorebook functionality.
 """
 
 import pytest
-import json
-from typing import Dict, Any, List
+from typing import Dict, Any
 
 from tldw_chatbook.Character_Chat.world_info_processor import WorldInfoProcessor
 

@@ -1,14 +1,12 @@
 # config_search_widget.py
 # Widget for searching through UI form elements in configuration settings
 #
-from typing import Any, Dict, List, Tuple, Optional, Union
+from typing import Any, Dict, List, Optional
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical
-from textual.widgets import Static, Button, Input, ListItem, Label, Checkbox, Select, TextArea
+from textual.containers import Horizontal, Vertical
+from textual.widgets import Button, Input, ListItem, Label, Checkbox, Select, TextArea
 from textual.widget import Widget
 from textual.message import Message
-from textual.dom import DOMNode
-from loguru import logger
 
 
 class ConfigSearchResult(ListItem):

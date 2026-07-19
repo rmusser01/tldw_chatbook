@@ -1,10 +1,10 @@
 # tldw_chatbook/Widgets/status_dashboard.py
 # Status dashboard widget for unified status handling in ingestion forms
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 from datetime import datetime
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container, Horizontal
 from textual.widgets import Static, ProgressBar, Label, Button
 from textual.widget import Widget
 from textual.reactive import reactive

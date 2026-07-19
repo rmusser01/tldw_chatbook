@@ -2,7 +2,7 @@
 # Description: Data models for chat functionality including session management
 #
 # Imports
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional, Dict, Any
 from textual.worker import Worker
 

@@ -6,7 +6,6 @@
 ####
 import json
 import os
-import subprocess
 import time
 from typing import Any, Generator, Union, Dict, Optional, List
 
@@ -17,7 +16,6 @@ from urllib3 import Retry
 from tldw_chatbook.Chat.Chat_Deps import ChatProviderError, ChatBadRequestError, ChatConfigurationError
 from tldw_chatbook.Utils.Utils import logging
 from tldw_chatbook.config import load_settings, settings
-from tldw_chatbook.Local_Inference.mlx_lm_inference_local import start_mlx_lm_server, stop_mlx_lm_server
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 
 

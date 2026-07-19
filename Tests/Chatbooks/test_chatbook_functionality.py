@@ -21,7 +21,7 @@ from tldw_chatbook.Chatbooks import (
     ChatbookError,
     ChatbookErrorType
 )
-from tldw_chatbook.Chatbooks.chatbook_models import ContentType, ChatbookVersion
+from tldw_chatbook.Chatbooks.chatbook_models import ChatbookVersion
 from tldw_chatbook.Chatbooks.conflict_resolver import ConflictResolution
 
 

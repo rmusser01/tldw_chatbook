@@ -5,13 +5,9 @@ Tests for character chat file operations including import/export functionality.
 
 import pytest
 import json
-import tempfile
-from pathlib import Path
 import io
-import base64
 
 from PIL import Image
-from PIL.PngImagePlugin import PngInfo
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Character_Chat.Character_Chat_Lib import (

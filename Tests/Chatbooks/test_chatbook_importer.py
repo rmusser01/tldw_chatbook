@@ -4,19 +4,14 @@
 import pytest
 import json
 import zipfile
-import tempfile
 from pathlib import Path
 from datetime import datetime
-from unittest.mock import MagicMock, patch, Mock
+from unittest.mock import MagicMock, patch
 import sqlite3
 
 import sys
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
-from tldw_chatbook.Chatbooks.chatbook_models import (
-    ContentType, ContentItem, Relationship, ChatbookManifest, 
-    ChatbookContent, Chatbook, ChatbookVersion
-)
 from tldw_chatbook.Chatbooks.chatbook_importer import ChatbookImporter, ImportStatus
 from tldw_chatbook.Chatbooks.conflict_resolver import ConflictResolution
 

@@ -2,7 +2,7 @@ import sqlite3
 import pytest
 
 from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
-from tldw_chatbook.Library.library_ingest_jobs import LibraryIngestJobRegistry, IngestJobState
+from tldw_chatbook.Library.library_ingest_jobs import LibraryIngestJobRegistry
 
 
 def _db(tmp_path):

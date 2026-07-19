@@ -1,14 +1,12 @@
 """Tests for Chat Window button tooltips."""
 import pytest
 import pytest_asyncio
-from unittest.mock import MagicMock, patch, Mock
+from unittest.mock import patch, Mock
 from textual.widgets import Button
 from textual.app import App, ComposeResult
 from textual.pilot import Pilot
 
-from tldw_chatbook.app import TldwCli
 from tldw_chatbook.UI.Chat_Window import ChatWindow
-from tldw_chatbook.UI.Chat_Window_Enhanced import ChatWindowEnhanced
 
 
 def _legacy_chat_window_setting(section: str, key: str, default=None):

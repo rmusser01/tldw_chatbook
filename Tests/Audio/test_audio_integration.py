@@ -9,7 +9,7 @@ import asyncio
 import time
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock, AsyncMock
+from unittest.mock import Mock, patch
 import numpy as np
 import wave
 
@@ -19,7 +19,7 @@ from tldw_chatbook.Audio import (
     DictationState,
     DictationResult
 )
-from tldw_chatbook.Widgets.voice_input_widget import VoiceInputWidget, VoiceInputMessage
+from tldw_chatbook.Widgets.voice_input_widget import VoiceInputWidget
 from tldw_chatbook.Local_Ingestion.transcription_service import TranscriptionService
 
 

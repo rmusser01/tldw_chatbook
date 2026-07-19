@@ -3,10 +3,10 @@
 Reusable prompt selector widget for analysis prompts with dropdown and text area.
 """
 
-from typing import TYPE_CHECKING, Optional, List, Tuple, Dict, Any
+from typing import TYPE_CHECKING, List, Tuple, Dict, Any
 from textual.app import ComposeResult
-from textual.containers import Vertical, Container
-from textual.widgets import Label, Select, TextArea, Static
+from textual.containers import Container
+from textual.widgets import Label, Select, TextArea
 from textual import on
 from loguru import logger
 

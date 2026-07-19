@@ -1,6 +1,6 @@
 """Loading indicators for CCP async operations following Textual best practices."""
 
-from typing import Optional, Any, Callable
+from typing import Optional, Callable
 from functools import wraps
 from contextlib import asynccontextmanager
 from datetime import datetime

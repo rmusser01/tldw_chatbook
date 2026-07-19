@@ -22,9 +22,7 @@ import json
 import subprocess
 import tempfile
 import time
-import traceback
-from abc import ABC, abstractmethod
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional
 from pathlib import Path
 
 from loguru import logger
@@ -2299,7 +2297,6 @@ class DialogueRunner(BaseEvalRunner):
 
 # Backward-compatible export for tests and integrations that historically
 # patched the basic Q&A runner through this module.
-from .eval_runner import QuestionAnswerRunner
 
 
 # Registry of specialized runners

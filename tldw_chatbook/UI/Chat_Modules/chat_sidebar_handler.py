@@ -10,7 +10,7 @@ Handles all sidebar functionality including:
 - Settings sidebar interactions
 """
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 from loguru import logger
 from textual.widgets import Button, TextArea
 from textual.css.query import NoMatches

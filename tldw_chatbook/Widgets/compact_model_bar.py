@@ -3,17 +3,16 @@
 # Provides quick access to Provider, Model, Temperature without opening the sidebar.
 #
 # Imports
-from typing import TYPE_CHECKING, Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable
 
 from loguru import logger
 from textual.app import ComposeResult
 from textual.containers import Horizontal
-from textual.widgets import Button, Select, Input, Static, Label
-from textual.reactive import reactive
+from textual.widgets import Button, Select, Input, Label
 from textual import on
 from textual.css.query import NoMatches
 
-from ..config import get_cli_providers_and_models, get_cli_setting, resolve_provider_name
+from ..config import get_cli_providers_and_models, resolve_provider_name
 
 if TYPE_CHECKING:
     from ..app import TldwCli

@@ -14,20 +14,19 @@ Interactive dialog for:
 """
 
 import json
-from typing import Dict, List, Any, Optional, Callable, Union
+from typing import Dict, Any, Optional, Callable, Union
 from pathlib import Path
 from textual import on, work
 from textual.app import ComposeResult
-from textual.containers import Container, Vertical, Horizontal, ScrollableContainer, Grid
+from textual.containers import Container, Horizontal, ScrollableContainer, Grid
 from textual.events import Click
 from textual.screen import ModalScreen
 from textual.widgets import (
     Button, Label, Static, Input, Select, DataTable, 
-    Tabs, Tab, TabPane, Footer, Markdown, TextArea
+    Tabs, TabPane, TextArea
 )
 from textual.reactive import reactive
 from textual.binding import Binding
-from textual.message import Message
 from loguru import logger
 
 from tldw_chatbook.Evals.eval_runner import DatasetLoader

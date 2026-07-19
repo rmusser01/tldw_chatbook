@@ -36,7 +36,6 @@ from tldw_chatbook.Library.library_prompts_state import (
     PromptEditorState,
     PromptListRow,
     PromptsListState,
-    build_prompts_list_state,
 )
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_PROMPTS,

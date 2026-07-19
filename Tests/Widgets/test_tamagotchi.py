@@ -9,23 +9,18 @@ import time
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import patch, MagicMock
 
 # Import the modules to test
 from tldw_chatbook.Widgets.Tamagotchi import (
     BaseTamagotchi,
     Tamagotchi,
-    CompactTamagotchi,
     BehaviorEngine,
-    Personality,
     PERSONALITIES,
     SpriteManager,
     MemoryStorage,
     JSONStorage,
-    SQLiteStorage,
-    TamagotchiInteraction,
-    TamagotchiDeath,
-    TamagotchiStateChange
+    TamagotchiInteraction
 )
 from tldw_chatbook.Widgets.Tamagotchi.validators import (
     TamagotchiValidator,

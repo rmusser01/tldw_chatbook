@@ -6,10 +6,8 @@ independently of characters, allowing shared lorebooks across conversations.
 """
 
 import json
-import logging
 import sqlite3
-from typing import List, Dict, Any, Optional, Tuple, Union
-from datetime import datetime, timezone
+from typing import List, Dict, Any, Optional
 
 from loguru import logger
 

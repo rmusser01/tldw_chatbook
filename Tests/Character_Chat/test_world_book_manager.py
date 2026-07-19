@@ -3,9 +3,6 @@ Tests for World Book Manager functionality.
 """
 
 import pytest
-import json
-from pathlib import Path
-from typing import Dict, Any, List
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, InputError, ConflictError
 from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager

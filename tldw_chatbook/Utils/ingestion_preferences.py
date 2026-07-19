@@ -1,7 +1,6 @@
 # tldw_chatbook/Utils/ingestion_preferences.py
 # Utility functions for managing ingestion UI preferences
 
-from typing import Optional
 from loguru import logger
 from ..config import save_setting_to_cli_config, get_cli_setting
 

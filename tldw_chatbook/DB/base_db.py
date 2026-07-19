@@ -15,7 +15,7 @@ This ensures consistent behavior across all DB classes for:
 
 import sqlite3
 from pathlib import Path
-from typing import Union, Optional
+from typing import Union
 from abc import ABC, abstractmethod
 from loguru import logger
 

@@ -6,10 +6,8 @@ Tests dictation, transcription integration, and state management.
 
 import pytest
 import time
-import threading
-from unittest.mock import Mock, patch, MagicMock, call
+from unittest.mock import Mock, patch
 from datetime import datetime
-import numpy as np
 
 from tldw_chatbook.Audio.dictation_service import (
     LiveDictationService,

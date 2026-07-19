@@ -22,13 +22,12 @@
 #########################################
 
 import json
-import sqlite3
 import threading
 import time
 from contextlib import closing, contextmanager
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Tuple, Dict, Any, Optional, Union
+from typing import List, Dict, Any, Optional, Union
 from urllib.parse import urlparse, urlunparse
 
 # Third-Party Libraries
@@ -36,7 +35,6 @@ from loguru import logger
 
 # Local Imports
 from .base_db import BaseDB
-from .sql_validation import validate_table_name, validate_column_name
 from ..Metrics.metrics_logger import log_counter, log_histogram
 
 

@@ -9,7 +9,6 @@ This module isolates vLLM-specific logic from the main llm_management_events.py.
 # Imports
 from __future__ import annotations
 #
-import logging
 from loguru import logger as _loguru_fallback_logger
 import re
 import shlex

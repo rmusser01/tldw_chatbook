@@ -9,14 +9,12 @@ import tempfile
 import time
 from pathlib import Path
 from io import BytesIO
-import sqlite3
 
 # 3rd-party Libraries
 from PIL import Image as PILImage
 
 # Local Imports
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from tldw_chatbook.Event_Handlers.Chat_Events.chat_image_events import ChatImageHandler
 
 #
 #######################################################################################################################

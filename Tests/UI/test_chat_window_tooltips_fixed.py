@@ -3,7 +3,6 @@ import pytest
 from unittest.mock import MagicMock, patch
 from textual.widgets import Button
 from tldw_chatbook.UI.Chat_Window import ChatWindow
-from Tests.textual_test_utils import widget_pilot
 
 
 def _legacy_chat_window_setting(section: str, key: str, default=None):

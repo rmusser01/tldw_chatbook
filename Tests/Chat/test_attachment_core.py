@@ -6,7 +6,6 @@ from PIL import Image as PILImage
 from tldw_chatbook.Chat import attachment_core
 from tldw_chatbook.Chat.attachment_core import (
     DEFAULT_MAX_HISTORY_IMAGES,
-    PendingAttachment,
     image_content_parts,
     max_history_images,
     process_attachment_path,

@@ -2,15 +2,12 @@
 Validation tests for Higgs Audio TTS backend.
 Tests model loading, streaming, voice cloning, multi-speaker, and profile management.
 """
-import asyncio
 import pytest
 import pytest_asyncio
 import tempfile
 import os
-import json
-import shutil
 from pathlib import Path
-from unittest.mock import Mock, patch, AsyncMock, MagicMock
+from unittest.mock import Mock, patch, MagicMock
 import numpy as np
 
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest

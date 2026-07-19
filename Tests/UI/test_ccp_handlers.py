@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from tldw_chatbook.Character_Chat.Character_Chat_Lib import fetch_all_dictionaries, fetch_character_names
-from tldw_chatbook.Character_Chat.character_persona_scope_service import CharacterPersonaScopeService
 from tldw_chatbook.UI.CCP_Modules import (
     CCPCharacterHandler,
     CCPConversationHandler,

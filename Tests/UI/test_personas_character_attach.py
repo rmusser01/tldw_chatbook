@@ -218,7 +218,7 @@ class TestCharacterDictionaryAttach:
         the attach could break if the base copy no longer round-trips
         through ``get_character_data`` - both directions are asserted below.
         """
-        from textual.widgets import DataTable, Input, TextArea
+        from textual.widgets import Input, TextArea
         from tldw_chatbook.Widgets.Persona_Widgets.dictionary_picker import DictionaryPicker
         from tldw_chatbook.Widgets.Persona_Widgets.personas_character_editor_widget import (
             PersonasCharacterEditorWidget,

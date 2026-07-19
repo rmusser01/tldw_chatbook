@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from textual import on
 from textual.app import ComposeResult
 from textual.screen import Screen
-from textual.containers import Container, Grid, Vertical
-from textual.widgets import Button, Static, Header, Footer
+from textual.containers import Container, Grid
+from textual.widgets import Button, Static
 from textual.binding import Binding
 from textual.message import Message
 

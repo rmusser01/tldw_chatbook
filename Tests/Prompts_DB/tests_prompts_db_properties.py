@@ -5,22 +5,19 @@
 # Imports
 import uuid
 import pytest
-import json
 from pathlib import Path
-import sqlite3
 import threading
 import time
 
 # Third-Party Imports
 from hypothesis import given, strategies as st, settings, HealthCheck
-from hypothesis.stateful import RuleBasedStateMachine, rule, precondition, Bundle
+from hypothesis.stateful import RuleBasedStateMachine, rule, Bundle
 
 # Local Imports
 # Assuming Prompts_DB_v2.py is in a location Python can find.
 # For example, in the same directory or in a package.
 from tldw_chatbook.DB.Prompts_DB import (
     PromptsDatabase,
-    InputError,
     DatabaseError,
     ConflictError
 )

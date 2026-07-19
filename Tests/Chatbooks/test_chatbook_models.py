@@ -1,9 +1,7 @@
 # test_chatbook_models.py
 # Unit tests for chatbook data models
 
-import pytest
 from datetime import datetime, timezone
-import json
 from pathlib import Path
 
 import sys

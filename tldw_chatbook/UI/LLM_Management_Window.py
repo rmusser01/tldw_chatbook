@@ -2,7 +2,7 @@
 #
 #
 # Imports
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 #
 # 3rd-Party Imports
 from textual import on

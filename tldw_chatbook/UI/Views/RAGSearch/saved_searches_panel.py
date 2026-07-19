@@ -7,7 +7,6 @@ Panel for managing saved search configurations
 from typing import Dict, Any, Optional
 from datetime import datetime
 import json
-from pathlib import Path
 
 from textual import on
 from textual.app import ComposeResult

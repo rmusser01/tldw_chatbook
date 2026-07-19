@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, List, Dict, Any, Mapping, Optional, Union
 from loguru import logger as loguru_logger
 from rich.text import Text
 from textual.widgets import (
-    Button, Input, TextArea, Static, Select, Checkbox, ListView, ListItem, Label, Markdown
+    Button, Input, TextArea, Select, Checkbox, ListView, ListItem, Label, Markdown
 )
 from textual.containers import VerticalScroll
 from textual.css.query import QueryError
@@ -1153,8 +1153,8 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
             loguru_logger.info(f"Disabled streaming because n={llm_n_value} (multiple responses requested)")
         
         # Show cost warning dialog and get confirmation
-        from textual.containers import Container, Horizontal, Vertical
-        from textual.widgets import Button, Label, Static
+        from textual.containers import Container, Horizontal
+        from textual.widgets import Button, Static
         from textual.screen import ModalScreen
         
         class CostWarningDialog(ModalScreen):

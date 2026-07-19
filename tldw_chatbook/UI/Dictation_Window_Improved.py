@@ -3,7 +3,7 @@
 Improved dictation interface with privacy settings and better error handling.
 """
 
-from typing import Optional, List, Dict, Any
+from typing import List, Dict, Any
 from pathlib import Path
 from datetime import datetime
 import time
@@ -11,31 +11,22 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, ScrollableContainer, Container
 from textual.widgets import (
     Label, Button, TextArea, Select, Input, Static, 
-    RichLog, Switch, Collapsible, Rule, ListView, ListItem,
-    LoadingIndicator
+    Switch, Collapsible, ListView
 )
 from textual.widget import Widget
 from textual.reactive import reactive
-from textual.message import Message
-from textual import work
 from textual.binding import Binding
 from loguru import logger
-import json
 
 # Local imports
 from ..config import get_cli_setting, save_setting_to_cli_config
 from ..Audio.dictation_service_lazy import (
     LazyLiveDictationService, 
-    AudioInitializationError,
-    TranscriptionInitializationError,
     DictationState
 )
 from ..Event_Handlers.Audio_Events import (
-    DictationStartedEvent, DictationStoppedEvent,
-    PartialTranscriptEvent, FinalTranscriptEvent,
     VoiceCommandEvent
 )
-from ..Utils.input_validation import validate_text_input
 from ..Widgets.audio_troubleshooting_dialog import AudioTroubleshootingDialog
 
 

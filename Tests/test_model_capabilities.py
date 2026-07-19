@@ -5,8 +5,7 @@
 #
 # Standard Library
 import pytest
-from unittest.mock import patch, MagicMock
-import re
+from unittest.mock import patch
 
 # Local Imports
 from tldw_chatbook.model_capabilities import (

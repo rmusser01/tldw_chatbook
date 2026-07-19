@@ -3,7 +3,7 @@
 from typing import TYPE_CHECKING, Optional, List, Dict, Any, Tuple, Union
 from loguru import logger
 from textual import work
-from textual.widgets import ListView, ListItem, Input, TextArea, Button, Static
+from textual.widgets import ListView, ListItem, Input, Static
 
 from ...config import get_chachanotes_db_lazy
 from .ccp_messages import ConversationMessage, ViewChangeMessage

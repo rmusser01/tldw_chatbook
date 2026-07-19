@@ -40,7 +40,7 @@ def test_notes_functionality_without_optional_deps():
 def test_character_chat_without_optional_deps():
     """Test character chat functionality without optional dependencies."""
     from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
-        load_character_card_from_file, validate_character_book
+        validate_character_book
     )
     
     # Basic character book parsing should work without embeddings

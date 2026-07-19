@@ -10,9 +10,8 @@ Handles all chat input functionality including:
 
 import asyncio
 import time
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 from loguru import logger
-from textual.widgets import Button, TextArea
 from textual.worker import WorkerCancelled
 
 if TYPE_CHECKING:

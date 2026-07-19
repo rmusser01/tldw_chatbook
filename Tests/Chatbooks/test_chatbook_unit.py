@@ -13,7 +13,7 @@ import json
 import zipfile
 from pathlib import Path
 from datetime import datetime
-from unittest.mock import Mock, MagicMock, patch, call
+from unittest.mock import Mock, patch
 import sqlite3
 
 from tldw_chatbook.Chatbooks import (
@@ -29,8 +29,7 @@ from tldw_chatbook.Chatbooks.conflict_resolver import (
 )
 from tldw_chatbook.Chatbooks.error_handler import safe_chatbook_operation
 from Tests.Chatbooks.factories import (
-    CharacterFactory, ConversationFactory, NoteFactory,
-    MediaFactory, PromptFactory, ManifestFactory
+    ManifestFactory
 )
 
 

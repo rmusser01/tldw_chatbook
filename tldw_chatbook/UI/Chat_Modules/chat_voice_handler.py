@@ -9,7 +9,7 @@ Handles all voice input functionality including:
 - Audio error handling
 """
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 from loguru import logger
 from textual import work
 from textual.widgets import Button

@@ -4,8 +4,6 @@ Simplified integration tests for file extraction workflow.
 import pytest
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock, patch
-import asyncio
 
 from tldw_chatbook.Utils.file_extraction import FileExtractor, ExtractedFile
 from tldw_chatbook.Widgets.file_extraction_dialog import FileExtractionDialog

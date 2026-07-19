@@ -15,16 +15,13 @@ Tests end-to-end evaluation workflows including:
 
 import pytest
 import asyncio
-import tempfile
 import json
 import yaml
-from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from tldw_chatbook.Evals.eval_orchestrator import EvaluationOrchestrator
-from tldw_chatbook.Evals.task_loader import TaskLoader, TaskConfig
-from tldw_chatbook.Evals.eval_runner import EvalRunner, EvalSample
-from tldw_chatbook.DB.Evals_DB import EvalsDB
+from tldw_chatbook.Evals.task_loader import TaskConfig
+from tldw_chatbook.Evals.eval_runner import EvalSample
 
 class TestEndToEndEvaluation:
     """Test complete end-to-end evaluation workflows."""
@@ -953,7 +950,6 @@ class TestConcurrentEvaluations:
             with patch('tldw_chatbook.Evals.eval_runner.DatasetLoader.load_dataset_samples', return_value=eval_samples):
                 # Create runner and mock _call_llm
                 from tldw_chatbook.Evals.task_loader import TaskConfig
-                from tldw_chatbook.Evals.specialized_runners import QuestionAnswerRunner
                 
                 task_config = TaskConfig(
                     name="Concurrent Test Task",

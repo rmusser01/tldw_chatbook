@@ -15,7 +15,7 @@ from textual.worker import Worker, WorkerState
 from .base_handler import BaseWorkerHandler
 
 if TYPE_CHECKING:
-    from tldw_chatbook.app import TldwCli
+    pass
 
 
 class MiscWorkerHandler(BaseWorkerHandler):
@@ -54,7 +54,6 @@ class MiscWorkerHandler(BaseWorkerHandler):
         
         # Import here to avoid circular imports
         from tldw_chatbook.Event_Handlers import ingest_events
-        from tldw_chatbook.Utils.log_widget_manager import LogWidgetManager
         
         if worker_info['group'] == "api_calls":
             await self._handle_api_calls(event, worker_info, ingest_events)

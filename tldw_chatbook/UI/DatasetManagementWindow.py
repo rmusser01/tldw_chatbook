@@ -8,8 +8,7 @@ Dataset Management Window
 Provides interface for managing, uploading, and exploring evaluation datasets.
 """
 
-from typing import Dict, Any, Optional, List
-from pathlib import Path
+from typing import Dict, Any, List
 from textual import on, work
 from textual.app import ComposeResult
 from textual.widgets import (
@@ -18,16 +17,12 @@ from textual.widgets import (
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
 from loguru import logger
-import json
-from datetime import datetime
 
 from .eval_shared_components import (
-    BaseEvaluationWindow, RefreshDataRequest,
-    format_status_badge
+    BaseEvaluationWindow
 )
 from ..Event_Handlers.eval_events import (
-    get_available_datasets, get_dataset_info, validate_dataset,
-    upload_dataset, delete_dataset, export_dataset
+    get_available_datasets, get_dataset_info
 )
 
 

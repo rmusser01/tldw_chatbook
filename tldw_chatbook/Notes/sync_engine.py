@@ -2,10 +2,8 @@
 # Description: Engine for bi-directional file synchronization of notes
 #
 # Imports
-import asyncio
 import hashlib
 import json
-import logging
 import time
 import uuid
 from datetime import datetime, timezone
@@ -18,7 +16,7 @@ from dataclasses import dataclass, field
 from loguru import logger
 #
 # Local Imports
-from ..DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError, ConflictError
+from ..DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 from .Notes_Library import NotesInteropService
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from ..Utils.atomic_file_ops import atomic_write_text

@@ -4,7 +4,6 @@ import tempfile
 import pytest
 
 from tldw_chatbook.Chatbooks.chatbook_creator import ChatbookCreator
-from tldw_chatbook.Chatbooks.chatbook_models import ContentType
 
 
 @pytest.mark.unit

@@ -3,7 +3,6 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Checkbox, Input, Select, Static, TextArea
 
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Media.media_reading_scope_service import MediaReadingScopeService

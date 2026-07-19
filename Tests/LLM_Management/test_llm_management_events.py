@@ -1,10 +1,9 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 from textual.widgets import Input, RichLog, Button
 
 from tldw_chatbook.Event_Handlers.LLM_Management_Events.llm_management_events import handle_start_llamacpp_server_button_pressed
-from tldw_chatbook.app import TldwCli  # Assuming TldwCli is the app class
 
 # Import comprehensive mock but create custom fixture for LLM management
 from Tests.fixtures.event_handler_mocks import create_comprehensive_app_mock

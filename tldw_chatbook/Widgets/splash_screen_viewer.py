@@ -1,22 +1,19 @@
 """Splash screen viewer widget for browsing and previewing available splash screens."""
 
 import asyncio
-from typing import Optional, Dict, Any, List
-import time
+from typing import Optional, Dict, Any
 
-from textual import on, work
+from textual import on
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical, VerticalScroll
-from textual.widgets import Static, Button, Select, Label, OptionList, Input
+from textual.containers import Container, Horizontal
+from textual.widgets import Static, Button, Label, OptionList, Input
 from textual.widgets.option_list import Option
 from textual.reactive import reactive
-from textual.message import Message
-from textual.worker import Worker, WorkerState
 
 from loguru import logger
 
 from ..config import get_cli_setting, save_setting_to_cli_config
-from ..Utils.Splash_Screens import load_all_effects, EFFECTS_REGISTRY
+from ..Utils.Splash_Screens import load_all_effects
 from ..Utils.Splash_Screens.card_definitions import get_all_card_definitions
 from .splash_screen import SplashScreen
 

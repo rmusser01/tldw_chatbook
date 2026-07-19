@@ -4,7 +4,6 @@ Also (Task 6): PersonasScreen wiring — mounted integration against a REAL
 CharactersRAGDB seeded through WorldBookManager (mirrors
 test_personas_dictionaries.py's PersonasTestApp harness)."""
 
-import json
 
 import pytest
 from textual.app import App, ComposeResult
@@ -320,7 +319,6 @@ from tldw_chatbook.Character_Chat.world_info_processor import WorldInfoProcessor
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
-from tldw_chatbook.Widgets.Persona_Widgets.personas_messages import PersonaActionRequested
 
 
 @pytest.fixture

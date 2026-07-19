@@ -3,8 +3,6 @@
 
 from typing import Dict, Any, Optional, List
 from pathlib import Path
-from tldw_chatbook.Notes.Notes_Library import NotesInteropService as BaseNotesService
-from tldw_chatbook.Notes.sync_engine import NotesSyncEngine
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 

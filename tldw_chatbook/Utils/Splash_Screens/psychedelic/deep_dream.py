@@ -3,7 +3,7 @@
 from tldw_chatbook.Utils.Splash import get_ascii_art
 import math
 import random
-from typing import Optional, Any, List, Tuple
+from typing import Optional, Any
 
 from ..base_effect import BaseEffect, register_effect
 

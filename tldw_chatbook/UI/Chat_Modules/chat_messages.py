@@ -10,7 +10,6 @@ between components without direct dependencies.
 
 from typing import Optional, Any, Dict
 from textual.message import Message
-from textual.widgets import Button
 from pathlib import Path
 
 

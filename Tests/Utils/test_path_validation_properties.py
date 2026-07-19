@@ -2,7 +2,6 @@
 Property-based tests for path validation using hypothesis.
 """
 
-import os
 import tempfile
 from pathlib import Path
 import string

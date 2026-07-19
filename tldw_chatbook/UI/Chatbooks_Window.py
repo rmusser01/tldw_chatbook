@@ -11,16 +11,15 @@ A proper chatbooks management interface with:
 - Dynamic content area based on selected action
 """
 
-from typing import Optional, List, Dict, Any, TYPE_CHECKING
+from typing import List, Dict, Any, TYPE_CHECKING
 from pathlib import Path
 from datetime import datetime
 import json
 import zipfile
-import traceback
 
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, VerticalScroll, ScrollableContainer
-from textual.widgets import Static, Button, Label, ListView, ListItem
+from textual.containers import Container, Horizontal
+from textual.widgets import Static, Button, ListView, ListItem
 from textual.reactive import reactive
 from textual.widget import Widget
 from loguru import logger

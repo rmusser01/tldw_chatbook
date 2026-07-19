@@ -1,13 +1,8 @@
 """End-to-end integration tests for tool calling flow in chat."""
 
 import pytest
-import asyncio
 import json
-from unittest.mock import Mock, patch, AsyncMock, MagicMock
-from typing import List, Dict, Any
 
-from textual.app import App
-from textual.widgets import Input, Button
 
 # Mock the tool-related imports for testing
 class MockTool:

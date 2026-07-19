@@ -4,8 +4,7 @@ Tests for plaintext ingestion event handlers.
 """
 
 import pytest
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
-from pathlib import Path
+from unittest.mock import Mock
 
 from tldw_chatbook.Event_Handlers.ingest_events import (
     _collect_plaintext_specific_data,

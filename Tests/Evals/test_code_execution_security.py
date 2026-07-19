@@ -1,13 +1,11 @@
 """Test security enhancements for code execution in evaluations."""
 
 import pytest
-import asyncio
 import time
 from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
 from tldw_chatbook.Evals.specialized_runners import CodeExecutionRunner
 from tldw_chatbook.Evals.task_loader import TaskConfig
-from tldw_chatbook.Evals.eval_runner import EvalSample
 
 
 @dataclass

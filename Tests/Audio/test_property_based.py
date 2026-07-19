@@ -4,11 +4,10 @@ Property-based tests for the audio recording and dictation system.
 Uses hypothesis to test invariants and edge cases.
 """
 
-import pytest
 import numpy as np
 from hypothesis import given, strategies as st, assume, settings
 from hypothesis.extra.numpy import arrays
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 import wave
 import tempfile
 from pathlib import Path
@@ -17,8 +16,7 @@ from tldw_chatbook.Audio import (
     AudioRecordingService,
     LiveDictationService,
     DictationResult,
-    DictationState,
-    AudioRecordingError
+    DictationState
 )
 from tldw_chatbook.Widgets.voice_input_widget import VoiceInputWidget, VoiceInputMessage
 

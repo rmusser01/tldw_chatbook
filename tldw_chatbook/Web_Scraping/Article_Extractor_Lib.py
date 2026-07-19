@@ -31,14 +31,12 @@ Dependencies:
 """
 #
 # Import necessary libraries
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import hashlib
 import importlib.util
 import json
 import os
 import random
-import tempfile
 from typing import Any, Dict, List, Union, Optional, Tuple
 #
 # 3rd-Party Imports
@@ -158,12 +156,10 @@ except ImportError:
 from tldw_chatbook.Metrics.metrics_logger import log_histogram, log_counter
 from tldw_chatbook.Logging_Config import logging
 from tldw_chatbook.DB.Client_Media_DB_v2 import ingest_article_to_db_new
-from tldw_chatbook.Utils.input_validation import validate_url, sanitize_string
-from tldw_chatbook.Utils.path_validation import validate_path
+from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.secure_temp_files import secure_temp_file, get_temp_manager
 from tldw_chatbook.Web_Scraping.exceptions import (
-    InvalidURLError, NetworkError, BrowserError, ContentExtractionError,
-    MaxRetriesExceededError, TimeoutError as ScrapingTimeoutError
+    InvalidURLError, NetworkError, BrowserError, MaxRetriesExceededError, TimeoutError as ScrapingTimeoutError
 )
 
 #

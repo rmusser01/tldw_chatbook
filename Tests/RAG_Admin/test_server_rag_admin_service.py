@@ -5,11 +5,8 @@ import pytest
 from tldw_chatbook.RAG_Admin.server_rag_admin_service import ServerRAGAdminService
 from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError
 from tldw_chatbook.tldw_api import (
-    BatchMediaEmbeddingsRequest,
-    BatchMediaEmbeddingsResponse,
     ChunkingTemplateCreateRequest,
     ChunkingTemplateDiagnosticsResponse,
-    ChunkingTemplateLearnRequest,
     ChunkingTemplateLearnResponse,
     ChunkingTemplateListResponse,
     ChunkingTemplateMatchResponse,

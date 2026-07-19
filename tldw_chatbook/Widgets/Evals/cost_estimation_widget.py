@@ -16,7 +16,7 @@ from typing import Optional, Dict, Any
 from textual import on
 from textual.app import ComposeResult
 from textual.reactive import reactive
-from textual.widgets import Static, Button, Label, ProgressBar
+from textual.widgets import Static, Button, ProgressBar
 from textual.containers import Container, Horizontal, Vertical, Grid
 from textual.css.query import NoMatches
 from loguru import logger

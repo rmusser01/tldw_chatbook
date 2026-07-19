@@ -11,8 +11,6 @@ Tests for the consolidated export functionality.
 import pytest
 import json
 import csv
-from pathlib import Path
-from unittest.mock import Mock, patch
 from datetime import datetime
 
 from tldw_chatbook.Evals.exporters import EvaluationExporter, export_to_csv, export_to_json

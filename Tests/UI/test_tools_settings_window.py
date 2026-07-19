@@ -1,16 +1,13 @@
-import shutil
 import sqlite3
-import tempfile
 from contextlib import asynccontextmanager
-from datetime import datetime
 from pathlib import Path
-from unittest.mock import MagicMock, patch, AsyncMock, call
+from unittest.mock import MagicMock, patch, AsyncMock
 
 import pytest
 import pytest_asyncio
 import toml
 
-from textual.widgets import Button, Checkbox, Input, Select, TextArea, Label, Static
+from textual.widgets import Button, Checkbox, Input, Select, TextArea, Static
 from textual.app import App
 try:
     from textual.app import AppTest
@@ -27,8 +24,7 @@ import tldw_chatbook.config
 # Import test utilities
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
-from db_test_utilities import TestDatabaseSchema, DatabasePopulator
-from test_utilities import TestDataFactory
+from db_test_utilities import TestDatabaseSchema
 
 
 # Helper to create a dummy config file for testing

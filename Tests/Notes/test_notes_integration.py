@@ -2,17 +2,14 @@
 # Integration tests for Notes functionality using real database
 
 import pytest
-import pytest_asyncio
 import tempfile
 import os
-from datetime import datetime, timezone
 import uuid
 from pathlib import Path
 
 # Local imports
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from .test_notes_adapter import NotesInteropService  # Use the adapter for tests
-from tldw_chatbook.Notes.sync_engine import NotesSyncEngine
 
 # Test marker for integration tests
 pytestmark = pytest.mark.integration

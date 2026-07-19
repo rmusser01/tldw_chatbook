@@ -18,14 +18,13 @@ from textual.app import ComposeResult
 from textual.containers import Container, Vertical, Horizontal, VerticalScroll, Grid
 from textual.widgets import (
     Static, Button, Input, Select, Checkbox, ListView, ListItem,
-    DataTable, Markdown, Label, TabbedContent, TabPane,
+    DataTable, Label, TabbedContent, TabPane,
     LoadingIndicator, ProgressBar, Collapsible
 )
 from textual.binding import Binding
 from textual.reactive import reactive
 from textual.css.query import NoMatches
 from rich.markup import escape
-from rich.text import Text
 from loguru import logger
 
 # Local imports
@@ -36,7 +35,7 @@ from .saved_searches_panel import SavedSearchesPanel
 from .search_handoff import build_search_chat_handoff_payload
 from .constants import (
     DEFAULT_TOP_K, DEFAULT_TEMPERATURE, DEFAULT_PARENT_SIZE,
-    MAX_CONCURRENT_SEARCHES, SEARCH_MODES, PARENT_STRATEGIES
+    SEARCH_MODES, PARENT_STRATEGIES
 )
 
 from ....Chat.chat_handoff_messages import (

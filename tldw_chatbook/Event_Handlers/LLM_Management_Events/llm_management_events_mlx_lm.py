@@ -4,7 +4,6 @@
 from __future__ import annotations
 #
 import functools
-import logging
 from loguru import logger as _loguru_fallback_logger
 import os
 import shlex

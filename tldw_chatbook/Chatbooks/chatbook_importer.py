@@ -13,22 +13,17 @@ import shutil
 import zipfile
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Tuple, Set, Mapping
-from enum import Enum
+from typing import List, Dict, Any, Optional, Tuple, Mapping
 from loguru import logger
 
 from .chatbook_models import (
-    Chatbook, ChatbookManifest, ChatbookContent,
-    ContentItem, ContentType, ChatbookVersion
+    ChatbookManifest, ContentType, ChatbookVersion
 )
 from .conflict_resolver import ConflictResolver, ConflictResolution
-from .error_handler import ChatbookErrorHandler, ChatbookErrorType, safe_chatbook_operation
 from ..Chat.chat_conversation_service import ChatConversationService
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..DB.Prompts_DB import PromptsDatabase
-from ..DB.RAG_Indexing_DB import RAGIndexingDB
-from ..DB.Evals_DB import EvalsDB
 from ..Character_Chat.character_card_formats import detect_and_parse_character_card
 from ..Utils.path_validation import validate_filename
 from ..Utils.paths import get_user_data_dir

@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 from textual.widgets import Static
 
-from Tests.textual_test_utils import widget_pilot
 from tldw_chatbook.Library.library_collections_state import LibraryCollectionsPanelState
 from tldw_chatbook.Widgets.Library.library_collections_panel import LibraryCollectionsPanel
 

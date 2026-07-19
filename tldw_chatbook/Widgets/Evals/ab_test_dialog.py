@@ -12,14 +12,14 @@ Interactive dialog for:
 - Viewing results and statistical analysis
 """
 
-from typing import Dict, List, Any, Optional, Callable
+from typing import Dict, Any, Optional, Callable
 from textual import on, work
 from textual.app import ComposeResult
-from textual.containers import Container, Vertical, Horizontal, Grid, ScrollableContainer
+from textual.containers import Container, Horizontal, Grid, ScrollableContainer
 from textual.screen import ModalScreen
 from textual.widgets import (
     Button, Label, Static, Input, Select, DataTable, 
-    ProgressBar, Tabs, Tab, TabPane, Markdown, Switch
+    ProgressBar, Tabs, TabPane, Switch
 )
 from textual.reactive import reactive
 from textual.binding import Binding
@@ -28,7 +28,6 @@ from loguru import logger
 
 from tldw_chatbook.Evals.ab_testing import ABTestConfig, ABTestRunner, ABTestResult
 from tldw_chatbook.Evals.eval_orchestrator import EvaluationOrchestrator
-from tldw_chatbook.DB.Evals_DB import EvalsDB
 
 class ABTestProgressMessage(Message):
     """Message for A/B test progress updates."""

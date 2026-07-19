@@ -7,7 +7,6 @@ from textual.widgets import Collapsible, Static, ListView, ListItem
 from textual.containers import Container
 from textual import work
 from loguru import logger
-import asyncio
 
 class LazyCollapsible(Collapsible):
     """A Collapsible that defers content creation until first expanded.

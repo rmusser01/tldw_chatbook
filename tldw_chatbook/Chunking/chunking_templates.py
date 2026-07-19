@@ -6,9 +6,8 @@ complex chunking pipelines with preprocessing and postprocessing stages.
 """
 
 import json
-import os
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Protocol, Callable
+from typing import Dict, Any, List, Optional, Protocol
 from pydantic import BaseModel, Field, ValidationError
 from loguru import logger
 from jinja2.sandbox import SandboxedEnvironment

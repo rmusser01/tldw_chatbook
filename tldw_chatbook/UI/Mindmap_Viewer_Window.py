@@ -11,12 +11,12 @@ Visual learning with mindmaps:
 - Export options for study materials
 """
 
-from typing import Optional, Dict, List, Any
+from typing import Dict, List, Any
 from textual import on, work
 from textual.app import ComposeResult
 from textual.screen import Screen
 from textual.containers import Container, Horizontal, Vertical
-from textual.widgets import Static, Button, Label, TabbedContent, TabPane, LoadingIndicator
+from textual.widgets import Button, Label
 from textual.reactive import reactive
 from loguru import logger
 from datetime import datetime
@@ -383,7 +383,6 @@ class MindmapViewerWindow(Screen):
         try:
             # Use file dialog if available
             from pathlib import Path
-            import json
             
             # For now, use a hardcoded path - in production would use file picker
             # TODO: Integrate with proper file picker when available

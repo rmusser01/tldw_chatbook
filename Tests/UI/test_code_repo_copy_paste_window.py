@@ -4,10 +4,9 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Input, Select, Static, TextArea
+from textual.widgets import Input, Select, Static, TextArea
 
 from tldw_chatbook.UI.CodeRepoCopyPasteWindow import CodeRepoCopyPasteWindow
-from Tests.textual_test_utils import app_pilot
 
 
 async def _active_window(pilot) -> CodeRepoCopyPasteWindow:

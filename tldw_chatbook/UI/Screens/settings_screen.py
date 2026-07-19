@@ -61,7 +61,6 @@ from ...config import (
     MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     coerce_bool_setting,
     coerce_int_setting,
-    save_setting_to_cli_config,
 )
 from ...Utils.input_validation import (
     provider_api_key_validation_error,

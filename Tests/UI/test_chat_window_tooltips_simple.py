@@ -1,10 +1,6 @@
 """Simple unit tests for Chat Window button tooltips."""
-import pytest
-import os
 from pathlib import Path
-from textual.widgets import Button
 
-from tldw_chatbook.UI.Chat_Window import ChatWindow
 
 
 class TestChatButtonTooltips:

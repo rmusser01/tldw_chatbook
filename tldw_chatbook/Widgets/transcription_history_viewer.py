@@ -7,19 +7,18 @@ from typing import Optional, List
 from datetime import datetime
 from pathlib import Path
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical, ScrollableContainer, Container
+from textual.containers import Horizontal, Vertical, Container
 from textual.widgets import (
     Button, Label, Input, Select, Static, DataTable,
-    TextArea, Rule, Collapsible, LoadingIndicator
+    TextArea
 )
 from textual.widget import Widget
 from textual.reactive import reactive
-from textual.message import Message
 from textual import work
 from loguru import logger
 
 from ..Audio.transcription_history import (
-    TranscriptionHistory, TranscriptionEntry, get_transcription_history
+    TranscriptionEntry, get_transcription_history
 )
 from ..Widgets.enhanced_file_picker import EnhancedFileSave as FileSave
 from ..Third_Party.textual_fspicker import Filters

@@ -4,11 +4,10 @@
 # Imports
 import pytest
 from contextlib import asynccontextmanager
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
+from unittest.mock import Mock, AsyncMock, patch
 #
 # 3rd-Party Imports
-from textual.widgets import Button, TextArea
-from textual.containers import VerticalScroll
+from textual.widgets import Button
 #
 # Local Imports
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_tabs
@@ -865,7 +864,6 @@ class TestChatEventsTabsToolCalling:
             MockToolCallMessage.return_value = mock_tool_widget
             
             # Simulate displaying tool call message
-            from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import display_tool_call_message
             
             with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.display_tool_call_message') as mock_display:
                 await mock_display(mock_app, tool_calls, "msg_123")
@@ -905,7 +903,6 @@ class TestChatEventsTabsToolCalling:
             MockToolResultMessage.return_value = mock_result_widget
             
             # Simulate displaying tool result message
-            from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import display_tool_result_message
             
             with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.display_tool_result_message') as mock_display:
                 await mock_display(mock_app, tool_results)

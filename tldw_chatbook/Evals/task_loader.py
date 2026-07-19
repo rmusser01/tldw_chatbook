@@ -19,7 +19,7 @@ import yaml
 import csv
 import time
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Union, Tuple
+from typing import Dict, List, Any, Optional, Union
 from dataclasses import dataclass, asdict
 from loguru import logger
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram

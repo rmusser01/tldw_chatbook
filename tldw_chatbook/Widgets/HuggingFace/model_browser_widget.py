@@ -3,12 +3,11 @@
 Main HuggingFace GGUF model browser widget.
 """
 
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 from pathlib import Path
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container, Horizontal
 from textual.widgets import Label, TabbedContent, TabPane
-from textual.reactive import reactive
 from textual import on
 from loguru import logger
 

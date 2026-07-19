@@ -89,7 +89,6 @@ def test_console_glyph_constants():
 
 
 def test_console_active_row_marker_and_close_glyphs():
-    from tldw_chatbook.Chat.console_glyphs import GLYPH_ACTIVE, GLYPH_CLOSE
     from tldw_chatbook.Widgets.Console import console_workspace_context, console_session_surface
     import inspect
     assert '"> "' not in inspect.getsource(console_workspace_context)
@@ -476,7 +475,6 @@ async def test_setup_backdrop_no_resume_intent_stays_paused_after_mount():
 # Console session switcher modal (Ctrl+K).
 # ---------------------------------------------------------------------------
 
-from tldw_chatbook.Chat.console_switcher_state import ConsoleSwitcherEntry
 from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (
     ConsoleSessionSwitcherModal,
     ConsoleSwitcherChoice,

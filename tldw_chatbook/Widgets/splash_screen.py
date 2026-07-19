@@ -2,30 +2,21 @@
 # Customizable splash screen widget for tldw_chatbook startup
 # Supports static and animated splash screens with Call of Duty-style "calling cards"
 
-import asyncio
 import random
 import time
-from pathlib import Path
-from typing import Optional, Dict, Any, List, Callable, Tuple
+from typing import Optional, Dict, Any, Tuple
 
 from textual.app import ComposeResult
-from textual.containers import Container, Center, Vertical
+from textual.containers import Container
 from textual.reactive import reactive
-from textual.widget import Widget
 from textual.widgets import Static, ProgressBar, Label
 from textual.timer import Timer
 from textual import events
 from textual.message import Message
-from rich.text import Text
-from rich.align import Align
-from rich.console import Console
-from rich.style import Style
 
 from loguru import logger
 
-from ..Utils.Splash_Strings import splashscreen_message_selection
 from ..config import get_cli_setting
-from ..Utils.Splash import get_ascii_art, get_splash_card_config
 
 # Import the registration system and load all effects
 from ..Utils.Splash_Screens import load_all_effects, get_effect_class

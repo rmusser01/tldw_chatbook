@@ -4,10 +4,10 @@ This widget provides a comprehensive form for editing prompts,
 following Textual best practices with focused components.
 """
 
-from typing import TYPE_CHECKING, Optional, Dict, Any, List, Union
+from typing import Optional, Dict, Any, List, Union
 from loguru import logger
 from textual.app import ComposeResult
-from textual.containers import Container, VerticalScroll, Horizontal
+from textual.containers import Container, VerticalScroll
 from textual.widgets import Static, Label, Input, TextArea, Button, Select, Switch
 from textual.reactive import reactive
 from textual import on

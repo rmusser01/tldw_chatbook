@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from textual.widgets import TabbedContent
 
-from Tests.textual_test_utils import widget_pilot
 from tldw_chatbook.UI.MediaIngestWindowRebuilt import MediaIngestWindowRebuilt
 
 

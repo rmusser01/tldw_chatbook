@@ -2,26 +2,21 @@
 # Description: Enhanced chapter editor widget for audiobook generation
 #
 # Imports
-from typing import List, Optional, Dict, Any, Tuple
+from typing import List, Optional
 from dataclasses import dataclass
 from loguru import logger
-import re
 from datetime import timedelta
 #
 # Third-party imports  
 from textual.app import ComposeResult
-from textual.binding import Binding
-from textual.containers import ScrollableContainer, Horizontal, Vertical, Container
+from textual.containers import Horizontal, Vertical, Container
 from textual.widget import Widget
 from textual.widgets import (
     DataTable, Button, Label, TextArea, 
-    Input, Switch, Select, Static, Rule, Collapsible
+    Input, Select, Collapsible
 )
 from textual.reactive import reactive
 from textual.message import Message
-from textual.coordinate import Coordinate
-from rich.text import Text
-from rich.console import RenderableType
 #
 # Local imports
 from tldw_chatbook.TTS.audiobook_generator import Chapter

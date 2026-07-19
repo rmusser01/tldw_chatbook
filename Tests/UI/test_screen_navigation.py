@@ -5,7 +5,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from textual import on
 from textual.app import App
 from textual.widgets import Button, Input
 from unittest.mock import AsyncMock, MagicMock, patch

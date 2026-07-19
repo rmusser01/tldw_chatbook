@@ -12,7 +12,6 @@ from tldw_chatbook.Widgets.Coding_Widgets.repo_tree_widgets import (
 )
 from textual.widgets import Button, Checkbox
 from textual.containers import Container
-from Tests.textual_test_utils import widget_pilot
 
 
 class TestTreeNode:

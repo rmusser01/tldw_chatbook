@@ -2,10 +2,10 @@
 Modal screen for previewing document chunks with different configurations.
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Container, Vertical, Horizontal, VerticalScroll
+from textual.containers import Container, Horizontal, VerticalScroll
 from textual.widgets import Static, Button, Label, DataTable
 from textual.screen import ModalScreen
 from loguru import logger

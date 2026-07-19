@@ -4,19 +4,18 @@ Audio device troubleshooting dialog with diagnostics and testing capabilities.
 Helps users resolve common microphone and audio issues.
 """
 
-from typing import Optional, List, Dict, Any
+from typing import List, Dict, Any
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical, ScrollableContainer, Container
+from textual.containers import ScrollableContainer, Container
 from textual.widgets import (
     Button, Label, Select, Static, ProgressBar, 
-    LoadingIndicator, Collapsible, Rule, RichLog
+    LoadingIndicator, Collapsible, RichLog
 )
 from textual.screen import ModalScreen
 from textual.reactive import reactive
 from textual import work
 from loguru import logger
 import asyncio
-import time
 
 from ..Audio.dictation_service_lazy import LazyLiveDictationService, AudioInitializationError
 

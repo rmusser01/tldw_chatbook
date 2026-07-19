@@ -13,7 +13,6 @@ including file I/O operations and image manipulation with PIL.
 # Standard Library
 import pytest
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
 import tempfile
 
 # 3rd-party Libraries

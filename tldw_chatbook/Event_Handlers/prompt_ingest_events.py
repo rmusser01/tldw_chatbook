@@ -4,11 +4,11 @@
 #
 # Imports
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, List, Any, Dict, Callable, Union
+from typing import TYPE_CHECKING, Optional, List, Any, Dict, Callable
 
 # 3rd-party Libraries
 from loguru import logger
-from textual.widgets import Button, Label, ListItem, ListView, Static, Markdown, TextArea, Select
+from textual.widgets import Button, Label, ListItem, ListView, Static, Markdown, TextArea
 from textual.css.query import QueryError
 from textual.containers import VerticalScroll
 

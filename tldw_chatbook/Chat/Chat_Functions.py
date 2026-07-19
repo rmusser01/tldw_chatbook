@@ -19,14 +19,10 @@ import inspect
 import json
 import logging
 import os
-import random
 import re
-import tempfile
 from ..Utils.secure_temp_files import create_secure_temp_file, secure_delete_file
 import time
-import warnings
-from datetime import datetime, timedelta
-from pathlib import Path
+from datetime import datetime
 from typing import List, Dict, Any, Tuple, Optional, Union, Literal
 #
 # 3rd-party Libraries
@@ -49,7 +45,6 @@ from tldw_chatbook.LLM_Calls.LLM_API_Calls_Local import chat_with_aphrodite, cha
     chat_with_kobold, chat_with_llama, chat_with_oobabooga, chat_with_tabbyapi, chat_with_vllm, chat_with_custom_openai, \
     chat_with_custom_openai_2, chat_with_mlx_lm
 from tldw_chatbook.Utils.Utils import generate_unique_filename, logging
-from tldw_chatbook.Utils.path_validation import validate_path
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.config import load_settings
 from .chat_persistence_service import ChatPersistenceService
@@ -2031,8 +2026,7 @@ def update_chat_content(
 from ..Character_Chat.Chat_Dictionary_Lib import (
     ChatDictionary,
     parse_user_dict_markdown_file,
-    process_user_input,
-    TokenBudgetExceededWarning
+    process_user_input
 )
 
 #

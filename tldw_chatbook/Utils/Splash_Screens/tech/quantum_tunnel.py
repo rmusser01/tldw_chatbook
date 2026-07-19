@@ -1,10 +1,9 @@
 """QuantumTunnel splash screen effect."""
 
-from rich.color import Color
 import math
 import random
 import time
-from typing import Optional, Any, List, Tuple
+from typing import Optional, Any
 
 from ..base_effect import BaseEffect, register_effect
 

@@ -13,7 +13,7 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Tuple, Callable
+from typing import Optional, List, Dict, Any, Callable
 from urllib.parse import urlparse
 from loguru import logger
 #

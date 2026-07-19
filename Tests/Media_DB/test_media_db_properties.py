@@ -6,7 +6,7 @@
 #
 # Imports
 from datetime import datetime, timezone, timedelta
-from typing import Iterator, Callable, Any, Generator
+from typing import Callable, Any, Generator
 import pytest
 import uuid
 from pathlib import Path
@@ -18,9 +18,7 @@ from hypothesis import given, strategies as st, settings, HealthCheck, assume
 # Adjust the import path based on your project structure
 from tldw_chatbook.DB.Client_Media_DB_v2 import (
     MediaDatabase,
-    InputError,
-    DatabaseError,
-    ConflictError, fetch_keywords_for_media, empty_trash
+    fetch_keywords_for_media, empty_trash
 )
 #
 #######################################################################################################################

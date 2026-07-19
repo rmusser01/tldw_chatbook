@@ -8,10 +8,9 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional, Tuple, Union
+from typing import List, Dict, Any, Optional, Tuple
 from urllib.parse import urlparse
 import hashlib
-import json
 #
 # Third-Party Imports
 from loguru import logger

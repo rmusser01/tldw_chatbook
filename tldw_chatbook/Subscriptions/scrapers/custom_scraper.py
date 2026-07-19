@@ -11,7 +11,7 @@
 import json
 import re
 from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional, Tuple, Callable
+from typing import List, Dict, Any, Optional, Tuple
 from urllib.parse import urljoin
 #
 # Third-Party Imports
@@ -21,7 +21,7 @@ from loguru import logger
 #
 # Local Imports
 from ..web_scraping_pipelines import (
-    BaseScrapingPipeline, ScrapedItem, ScrapingConfig, ContentExtractor
+    BaseScrapingPipeline, ScrapedItem, ScrapingConfig
 )
 from ...Metrics.metrics_logger import log_counter
 #

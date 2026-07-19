@@ -6,7 +6,7 @@ Provides health status monitoring for all RAG subsystems.
 
 import time
 import asyncio
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, Optional
 from dataclasses import dataclass
 from enum import Enum
 from loguru import logger

@@ -1,9 +1,5 @@
-import json
-from types import SimpleNamespace
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from tldw_chatbook.Notifications.client_notifications_db import ClientNotificationsDB
-from tldw_chatbook.Notifications.notification_dispatch_service import NotificationDispatchService
 from tldw_chatbook.Study_Interop.local_study_service import LocalStudyService
 
 

@@ -15,9 +15,8 @@ import pytest
 import asyncio
 import numpy as np
 from typing import List, Dict, Any
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import MagicMock, patch
 from hypothesis import given, strategies as st
-import time
 
 # Import optional dependency checker
 from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE

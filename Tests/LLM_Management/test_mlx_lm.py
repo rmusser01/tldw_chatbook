@@ -15,7 +15,6 @@ from tldw_chatbook.Local_Inference.mlx_lm_inference_local import (
     start_mlx_lm_server,
     stop_mlx_lm_server
 )
-from tldw_chatbook.config import settings  # Assuming settings is already loaded or mutable for tests
 # Define exception classes if they don't exist in Chat_Deps
 try:
     from tldw_chatbook.Chat.Chat_Deps import ChatConfigurationError, ChatProviderError

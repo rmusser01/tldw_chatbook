@@ -6,10 +6,10 @@ from datetime import datetime
 from textual import on, work
 from textual.app import ComposeResult
 from textual.screen import Screen
-from textual.containers import Container, Horizontal, Vertical, ScrollableContainer
+from textual.containers import Container, ScrollableContainer
 from textual.widgets import (
     Button, Static, Select, Input, Label,
-    ProgressBar, TextArea, DataTable, LoadingIndicator
+    ProgressBar, TextArea
 )
 from textual.binding import Binding
 from textual.reactive import reactive
@@ -19,7 +19,6 @@ from loguru import logger
 
 from ..navigation.nav_bar import EvalNavigationBar, QuickAction, EvalStatus
 from ....Evals.eval_orchestrator import EvaluationOrchestrator
-from ....DB.Evals_DB import EvalsDB
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli

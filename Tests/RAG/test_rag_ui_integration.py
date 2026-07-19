@@ -12,8 +12,8 @@ This tests:
 import asyncio
 import sys
 from pathlib import Path
-from typing import Dict, Any, Optional
-from unittest.mock import MagicMock, Mock
+from typing import Dict, Any
+from unittest.mock import MagicMock
 import pytest
 
 # Add parent directory to path

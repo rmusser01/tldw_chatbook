@@ -18,8 +18,8 @@ from loguru import logger
 # Local Imports
 from ..Utils.input_validation import validate_text_input
 from ..Utils.path_validation import validate_path
-from ..DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError, InputError, ConflictError
-from ..Metrics.metrics import log_counter, log_histogram, log_gauge
+from ..DB.ChaChaNotes_DB import CharactersRAGDB, InputError, ConflictError
+from ..Metrics.metrics import log_counter
 
 #
 #######################################################################################################################

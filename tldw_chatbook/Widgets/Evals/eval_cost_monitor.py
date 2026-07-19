@@ -20,7 +20,6 @@ from textual.containers import Container, Vertical, Horizontal, Grid
 from textual.widgets import Static, ProgressBar, Button, Label
 from textual.reactive import reactive
 from textual.message import Message
-from loguru import logger
 
 @dataclass
 class CostLimit:

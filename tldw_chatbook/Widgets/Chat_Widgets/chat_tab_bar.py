@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, List, Optional, Dict
 from loguru import logger
 from textual.app import ComposeResult
 from textual.containers import Horizontal, HorizontalScroll
-from textual.widgets import Button, Static
+from textual.widgets import Button
 from textual.reactive import reactive
 from textual.message import Message
 #
@@ -16,7 +16,7 @@ from textual.message import Message
 from tldw_chatbook.Chat.chat_models import ChatSessionData
 #
 if TYPE_CHECKING:
-    from tldw_chatbook.app import TldwCli
+    pass
 #
 #######################################################################################################################
 #

@@ -6,9 +6,8 @@ to evaluate and reorder search results based on their relevance to the query.
 """
 
 import asyncio
-import time
-from typing import List, Dict, Any, Optional, Union, Literal, Tuple
-from dataclasses import dataclass, field
+from typing import List, Optional, Union, Literal, Tuple
+from dataclasses import dataclass
 from abc import ABC, abstractmethod
 import json
 from loguru import logger

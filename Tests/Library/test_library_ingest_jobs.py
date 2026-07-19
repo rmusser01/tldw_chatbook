@@ -5,11 +5,9 @@ from __future__ import annotations
 import time
 from datetime import datetime, timezone
 
-import pytest
 
 from tldw_chatbook.Library.library_ingest_jobs import (
     IngestJobState,
-    LibraryIngestJob,
     LibraryIngestJobRegistry,
 )
 
@@ -770,7 +768,6 @@ class _FakeStore:
 
 
 def test_submit_starts_retry_count_zero_and_requeue_increments():
-    from tldw_chatbook.Library.library_ingest_jobs import IngestJobState
     reg = LibraryIngestJobRegistry()
     j = reg.submit(source_path="/a.mp3")
     assert j.retry_count == 0

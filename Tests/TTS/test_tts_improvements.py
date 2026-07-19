@@ -4,8 +4,7 @@ Test cases for TTS improvements
 import asyncio
 import pytest
 from pathlib import Path
-from unittest.mock import Mock, patch, AsyncMock
-from datetime import datetime
+from unittest.mock import patch, AsyncMock
 
 try:
     from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (

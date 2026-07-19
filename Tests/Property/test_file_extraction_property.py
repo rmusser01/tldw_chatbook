@@ -2,14 +2,12 @@
 Property-based tests for file extraction using Hypothesis.
 """
 import pytest
-from hypothesis import given, strategies as st, assume, settings
-from hypothesis.provisional import urls
+from hypothesis import given, strategies as st, settings
 import string
 import json
 import yaml
 import csv
 import io
-from pathlib import Path
 
 from tldw_chatbook.Utils.file_extraction import FileExtractor, ExtractedFile
 

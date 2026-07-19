@@ -3,14 +3,14 @@
 #
 # Imports
 from __future__ import annotations
-from typing import Optional, List, Tuple
+from typing import Optional, List
 from datetime import datetime, timedelta
 from dataclasses import dataclass
 import time
 
 # Third-party imports
 from textual.app import ComposeResult
-from textual.containers import Container, Vertical, Horizontal
+from textual.containers import Vertical, Horizontal
 from textual.widgets import Static, Label, ProgressBar, Button
 from textual.widget import Widget
 from textual.reactive import reactive

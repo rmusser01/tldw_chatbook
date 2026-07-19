@@ -3,7 +3,6 @@
 
 import sqlite3
 import tempfile
-import os
 from pathlib import Path
 
 # Create a minimal test database

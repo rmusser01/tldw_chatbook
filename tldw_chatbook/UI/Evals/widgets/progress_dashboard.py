@@ -1,6 +1,6 @@
 """Progress dashboard widget for evaluation tracking."""
 
-from typing import Optional, Dict, Any
+from typing import Optional
 from datetime import datetime, timedelta
 from dataclasses import dataclass
 

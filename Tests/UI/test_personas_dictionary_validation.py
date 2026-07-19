@@ -1,7 +1,6 @@
 """Pure unit tests for the dictionary validation module (P1c)."""
 
 from tldw_chatbook.Widgets.Persona_Widgets.personas_dictionary_validation import (
-    ValidationFinding,
     validate_entries,
 )
 

@@ -9,9 +9,7 @@ Tests for the main orchestrator including the _active_tasks bug fix.
 """
 
 import pytest
-import asyncio
-from unittest.mock import Mock, MagicMock, patch, AsyncMock
-from pathlib import Path
+from unittest.mock import Mock, patch
 
 from tldw_chatbook.Evals.eval_orchestrator import EvaluationOrchestrator
 from tldw_chatbook.Evals.eval_errors import EvaluationError, ErrorContext, ErrorCategory

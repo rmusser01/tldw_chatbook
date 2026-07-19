@@ -14,7 +14,7 @@ from textual.message import Message
 # from textual.reactive import reactive # No longer needed if search_results reactive is removed
 # from textual.widget import Widget # Not used directly, can remove
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, TabbedContent, TabPane, Static, Label
+from textual.widgets import Button, Input, TabbedContent, TabPane, Static
 from textual.timer import Timer
 
 # Try to get the richer EMOJI_DATA from unicode_codes if available (recommended)

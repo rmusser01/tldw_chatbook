@@ -2,9 +2,6 @@
 Unit tests for file extraction functionality.
 """
 import pytest
-from unittest.mock import Mock, patch
-import json
-import yaml
 
 from tldw_chatbook.Utils.file_extraction import FileExtractor, ExtractedFile
 

@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Checkbox, Select, Static
+from textual.widgets import Button, Select, Static
 
 from Tests.UI.test_screen_navigation import _build_test_app
 from Tests.UI.test_unified_mcp_panel import FakeUnifiedMCPService
@@ -39,7 +39,6 @@ from tldw_chatbook.UI.Screens.skills_screen import SkillsScreen
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import WatchlistsCollectionsScreen
 from tldw_chatbook.UI.Screens.workflows_screen import WorkflowsScreen
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
-from tldw_chatbook.UI.Screens import personas_screen as personas_screen_module
 from tldw_chatbook.UI.Screens import skills_screen as skills_screen_module
 from tldw_chatbook.UI.Screens import watchlists_collections_screen as wc_screen_module
 

@@ -5,10 +5,9 @@
 # monitoring of any website as if it were an RSS feed.
 #
 # Imports
-import asyncio
 import hashlib
 from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Dict, Any, Optional
 from pathlib import Path
 #
 # Third-Party Imports

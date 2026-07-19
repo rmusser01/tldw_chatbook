@@ -13,10 +13,8 @@ import sys
 import threading
 import io
 import wave
-import asyncio
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Union, Callable
-import json
 from types import SimpleNamespace
 from loguru import logger
 import requests
@@ -36,7 +34,6 @@ except ImportError:
 
 # Local imports  
 from ..config import get_cli_setting
-from ..Utils.text import sanitize_filename
 from contextlib import contextmanager
 
 # Optional imports with graceful degradation

@@ -6,9 +6,8 @@ Tests flashcards, spaced repetition, learning paths, mindmaps, and study statist
 
 import pytest
 import sqlite3
-import json
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Third-Party Imports
@@ -18,8 +17,6 @@ from hypothesis import given, settings, HealthCheck
 # Local Imports
 from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDB,
-    CharactersRAGDBError,
-    SchemaError,
     InputError,
     ConflictError
 )

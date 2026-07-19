@@ -9,7 +9,6 @@ import asyncio
 from typing import List, Optional, Dict, Any, Literal, Union, Tuple
 from pathlib import Path
 from loguru import logger
-from dataclasses import dataclass
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -25,14 +24,14 @@ import psutil
 
 from .embeddings_wrapper import EmbeddingsServiceWrapper
 from .vector_store import (
-    create_vector_store, VectorStore, SearchResult, 
+    create_vector_store, SearchResult, 
     SearchResultWithCitations
 )
 from .citations import Citation, CitationType, merge_citations
 from .config import RAGConfig
 from ..fusion import reciprocal_rank_fusion, resolve_hybrid_alpha, DEFAULT_RRF_K
 from ..chunking_service import ChunkingService
-from .simple_cache import SimpleRAGCache, get_rag_cache
+from .simple_cache import get_rag_cache
 from .db_connection_pool import get_connection_pool
 from .indexing_helpers import chunk_documents_batch, generate_embeddings_batch, store_documents_batch
 from .health_check import init_health_checker, get_health_status
@@ -934,7 +933,6 @@ class RAGService:
                                                      filter_metadata: Optional[Dict[str, Any]],
                                                      top_k: int) -> List[SearchResultWithCitations]:
         """Process keyword search results with citations - batch processing for efficiency."""
-        import re
         import asyncio
         
         results = []

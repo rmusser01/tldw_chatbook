@@ -11,7 +11,7 @@ Loads evaluation datasets from various sources including local files and Hugging
 import json
 import csv
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from loguru import logger
 
 from .base_runner import EvalSample

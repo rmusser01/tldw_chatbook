@@ -17,7 +17,6 @@ from .models import (
     DEFAULT_WORKSPACE_ID,
     RuntimeBindingStatus,
     WorkspaceAuthority,
-    WorkspaceEligibility,
     WorkspaceMembership,
     WorkspaceOperation,
     WorkspaceRecord,

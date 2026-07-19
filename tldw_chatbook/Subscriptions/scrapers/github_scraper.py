@@ -10,9 +10,8 @@
 #
 # Imports
 import re
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import List, Dict, Any, Optional, Tuple
-from urllib.parse import urlparse, quote
 import json
 #
 # Third-Party Imports

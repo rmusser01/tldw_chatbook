@@ -4,7 +4,6 @@ Root application state container.
 
 from dataclasses import dataclass, field
 from typing import Optional
-from textual.reactive import reactive
 
 from ..runtime_policy.types import RuntimeSourceState
 from .navigation_state import NavigationState

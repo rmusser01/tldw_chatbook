@@ -13,7 +13,6 @@ from textual.reactive import reactive
 
 from tldw_chatbook.Utils.file_extraction import ExtractedFile
 from tldw_chatbook.Utils.path_validation import validate_filename
-from tldw_chatbook.Utils.secure_temp_files import secure_temp_file
 
 logger = logging.getLogger(__name__)
 

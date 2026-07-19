@@ -8,9 +8,9 @@ Metrics Display Widget
 Displays evaluation metrics in a visual grid format.
 """
 
-from typing import Dict, Any
+from typing import Dict
 from textual.app import ComposeResult
-from textual.widgets import Static, Label
+from textual.widgets import Static
 from textual.containers import Container, Grid
 from textual.reactive import reactive
 

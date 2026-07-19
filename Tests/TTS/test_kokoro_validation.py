@@ -2,13 +2,10 @@
 Validation tests for Kokoro TTS backend.
 Tests ONNX/PyTorch backends, streaming, voice mixing, and new features.
 """
-import asyncio
 import pytest
 import pytest_asyncio
-import tempfile
-import os
 import time
-from unittest.mock import Mock, patch, AsyncMock, MagicMock
+from unittest.mock import Mock, patch
 import numpy as np
 
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest

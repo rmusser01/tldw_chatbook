@@ -2,11 +2,9 @@
 # Unit tests for the simplified embeddings service API
 
 import pytest
-from unittest.mock import Mock, MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 import threading
 import time
-from typing import List, Dict, Any
-import os
 import numpy as np
 
 from tldw_chatbook.RAG_Search.simplified import (
@@ -17,7 +15,7 @@ from tldw_chatbook.RAG_Search.simplified import (
 )
 
 # Import test utilities
-from .conftest import requires_embeddings, requires_numpy
+from .conftest import requires_numpy
 
 
 class TestEmbeddingsServiceWrapper:

@@ -12,12 +12,9 @@ Note: These tests may take significant time and resources as they perform actual
 """
 
 import asyncio
-import io
-import os
 import tempfile
 import wave
 from pathlib import Path
-from typing import Optional, List, Dict, Any
 
 import numpy as np
 import pytest

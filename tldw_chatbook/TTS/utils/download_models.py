@@ -2,7 +2,6 @@
 # Description: Utilities for downloading TTS model files
 #
 # Imports
-import os
 import asyncio
 from pathlib import Path
 from typing import Optional, Dict, Tuple

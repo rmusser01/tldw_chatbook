@@ -3,10 +3,9 @@
 #
 # Imports
 import re
-from typing import List, Tuple, Optional, Dict, Any, AsyncGenerator
+from typing import List, Optional, Dict, Any, AsyncGenerator
 from dataclasses import dataclass
 import unicodedata
-from loguru import logger
 
 #######################################################################################################################
 #

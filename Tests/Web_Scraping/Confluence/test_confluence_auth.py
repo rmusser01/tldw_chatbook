@@ -4,7 +4,7 @@
 #
 import pytest
 import os
-from unittest.mock import MagicMock, patch, Mock
+from unittest.mock import patch, Mock
 import requests
 from tldw_chatbook.Web_Scraping.Confluence.confluence_auth import (
     ConfluenceAuth,

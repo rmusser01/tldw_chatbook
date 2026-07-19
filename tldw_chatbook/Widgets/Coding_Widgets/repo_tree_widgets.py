@@ -8,14 +8,12 @@ from __future__ import annotations
 from typing import Optional, Dict, List, Set, Callable
 import hashlib
 import os
-from pathlib import Path
 
 from loguru import logger
-from textual import on, work
+from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, VerticalScroll
 from textual.message import Message
-from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Button, Checkbox, Static
 

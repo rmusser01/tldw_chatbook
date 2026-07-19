@@ -14,7 +14,6 @@ Coordinates the complete evaluation pipeline:
 This is the main entry point for running evaluations.
 """
 
-import asyncio
 import time
 import sqlite3
 from datetime import datetime, timezone
@@ -30,7 +29,6 @@ from .eval_runner import EvalRunner, EvalSampleResult
 from tldw_chatbook.DB.Evals_DB import EvalsDB
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.Utils.path_validation import validate_path_simple
-from tldw_chatbook.Utils.cost_estimation import estimate_evaluation_cost, get_model_cost_per_1k_tokens
 from .eval_errors import (
     get_error_handler, EvaluationError, ValidationError, 
     DatabaseError, FileSystemError, ModelConfigurationError,

@@ -5,23 +5,22 @@
 #
 # 3rd-Party Imports
 import logging
-from typing import Optional, Dict, Any, List, Callable
+from typing import Dict, Any, List
 from dataclasses import dataclass, field
 
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll, Horizontal, Container
 from textual.widgets import (
     Static, Select, TextArea, Input, Collapsible, Button, 
-    Checkbox, ListView, TabbedContent, TabPane, Label
+    Checkbox, ListView, TabbedContent, Label
 )
 from textual.reactive import reactive
-from textual.message import Message
 from textual import on
 from textual.css.query import NoMatches
 
 #
 # Local Imports
-from ..config import get_cli_providers_and_models, get_cli_setting
+from ..config import get_cli_providers_and_models
 from ..state.ui_state import UIState
 
 # Try to import pipeline integration

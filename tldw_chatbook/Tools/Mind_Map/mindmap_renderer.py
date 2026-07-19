@@ -12,11 +12,10 @@ Renders mindmap trees in various formats:
 - Screen reader friendly format
 """
 
-from typing import List, Dict, Tuple, Optional
-from anytree import Node, PreOrderIter
+from typing import List, Optional
+from anytree import Node
 from rich.text import Text
 from rich.console import Console
-from rich.panel import Panel
 from loguru import logger
 
 from .mindmap_model import MindmapModel

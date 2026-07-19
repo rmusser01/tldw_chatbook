@@ -3,7 +3,6 @@
 Provides compatibility layer for status updates during migration from TextArea to EnhancedStatusWidget.
 """
 
-from typing import Union, Optional
 from textual.widgets import TextArea
 from textual.css.query import QueryError
 from loguru import logger

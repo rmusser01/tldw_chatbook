@@ -2,7 +2,6 @@
 Simple database connection pool for FTS5 searches.
 """
 
-import sqlite3
 from typing import Dict, Any
 from loguru import logger
 

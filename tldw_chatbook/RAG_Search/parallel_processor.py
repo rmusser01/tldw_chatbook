@@ -8,15 +8,11 @@ multiprocessing and concurrent execution strategies.
 import asyncio
 import time
 import multiprocessing as mp
-from multiprocessing import Pool, Queue, Manager
+from multiprocessing import Pool
 from typing import List, Dict, Any, Optional, Callable, Tuple, Union
 from dataclasses import dataclass
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import threading
-from queue import Empty
-import signal
-import sys
-from functools import partial
 from loguru import logger
 
 # Optional numpy import
@@ -27,7 +23,6 @@ except ImportError:
     NUMPY_AVAILABLE = False
     np = None
 
-from ..config import load_settings
 from ..Metrics.metrics_logger import log_counter, log_histogram, timeit
 from .simplified.data_models import IndexingResult
 

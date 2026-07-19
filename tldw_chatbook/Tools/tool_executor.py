@@ -5,15 +5,14 @@ Tool execution framework for handling function/tool calls from LLMs.
 
 import asyncio
 import json
-import logging
 import hashlib
 import time
 import pickle
 from pathlib import Path
 from abc import ABC, abstractmethod
-from datetime import datetime, timedelta
-from typing import Dict, Any, Callable, Optional, List, Union, Tuple
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from datetime import datetime
+from typing import Dict, Any, Optional, List, Tuple
+from concurrent.futures import ThreadPoolExecutor
 from collections import OrderedDict
 
 from loguru import logger

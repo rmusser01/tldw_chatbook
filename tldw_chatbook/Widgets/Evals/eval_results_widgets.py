@@ -13,14 +13,13 @@ Provides widgets for displaying evaluation results:
 """
 
 import asyncio
-from typing import Dict, List, Any, Optional, Callable
+from typing import Dict, List, Any, Optional
 from datetime import datetime
 from textual import on, work
 from textual.app import ComposeResult
-from textual.containers import Container, Vertical, Horizontal, Grid
+from textual.containers import Container, Horizontal, Grid
 from textual.widgets import (
-    Button, Label, Static, ListView, ListItem, 
-    DataTable, ProgressBar, Tabs, TabPane, Tree
+    Button, Label, Static, DataTable, ProgressBar
 )
 from textual.reactive import reactive
 from textual.message import Message

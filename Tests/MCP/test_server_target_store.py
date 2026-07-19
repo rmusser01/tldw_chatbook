@@ -2,10 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from pathlib import Path
 
 from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
-from tldw_chatbook.MCP.unified_control_models import ConfiguredServerTarget, TargetStatusMetadata
+from tldw_chatbook.MCP.unified_control_models import ConfiguredServerTarget
 
 
 def test_bootstrap_from_legacy_config_only_when_registry_is_empty(tmp_path):

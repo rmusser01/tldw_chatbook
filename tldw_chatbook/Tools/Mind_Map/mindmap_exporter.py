@@ -16,7 +16,7 @@ Export mindmaps to various formats:
 - OPML
 """
 
-from typing import List, Dict, Any, Optional, TextIO
+from typing import List, Dict, Any
 from pathlib import Path
 from anytree import Node, PreOrderIter, RenderTree
 from datetime import datetime

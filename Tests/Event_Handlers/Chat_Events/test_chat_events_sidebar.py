@@ -1,10 +1,9 @@
 # /tests/Event_Handlers/Chat_Events/test_chat_events_sidebar.py
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
-from textual.widgets import Button, Input, ListView, TextArea, ListItem, Label
-from textual.css.query import QueryError
+from textual.widgets import Button, ListView, TextArea, ListItem, Label
 
 # Functions to test
 from tldw_chatbook.Event_Handlers.Chat_Events.chat_events_sidebar import (
@@ -19,7 +18,7 @@ from tldw_chatbook.Event_Handlers.Chat_Events.chat_events_sidebar import (
 )
 
 # Import our comprehensive mock fixture
-from Tests.fixtures.event_handler_mocks import create_comprehensive_app_mock, create_widget_mock
+from Tests.fixtures.event_handler_mocks import create_comprehensive_app_mock
 
 pytestmark = pytest.mark.unit
 

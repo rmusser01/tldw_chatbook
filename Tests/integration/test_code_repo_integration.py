@@ -8,12 +8,10 @@ Console); the window itself is exercised directly here.
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from pathlib import Path
 
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.UI.CodeRepoCopyPasteWindow import CodeRepoCopyPasteWindow
 from tldw_chatbook.Utils.github_api_client import GitHubAPIError
-from Tests.textual_test_utils import app_pilot
 
 
 class CodeRepoTestApp(TldwCli):

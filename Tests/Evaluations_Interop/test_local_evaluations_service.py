@@ -1,10 +1,7 @@
 import pytest
-from types import SimpleNamespace
 
 from tldw_chatbook.DB.Evals_DB import EvalsDB
 from tldw_chatbook.Evaluations_Interop.local_evaluations_service import LocalEvaluationsService
-from tldw_chatbook.Notifications.client_notifications_db import ClientNotificationsDB
-from tldw_chatbook.Notifications.notification_dispatch_service import NotificationDispatchService
 
 
 class FakeEvalsDB:

@@ -4,19 +4,17 @@ Full dictation interface for the STTS tab.
 Provides comprehensive live dictation functionality with settings and export options.
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, Dict, Any
 from pathlib import Path
 from datetime import datetime
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, ScrollableContainer
 from textual.widgets import (
-    Label, Button, TextArea, Select, Input, Static, 
-    RichLog, Switch, Collapsible, Rule, ListView, ListItem
+    Label, Button, TextArea, Select, Static, 
+    Switch, ListView, ListItem
 )
 from textual.widget import Widget
 from textual.reactive import reactive
-from textual.message import Message
-from textual import work
 from textual.binding import Binding
 from loguru import logger
 import json
@@ -29,7 +27,6 @@ from ..Event_Handlers.Audio_Events import (
     PartialTranscriptEvent, FinalTranscriptEvent,
     VoiceCommandEvent
 )
-from ..Utils.input_validation import validate_text_input
 
 
 class DictationWindow(Widget):

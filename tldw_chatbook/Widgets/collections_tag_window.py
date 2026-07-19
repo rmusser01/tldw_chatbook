@@ -4,14 +4,13 @@ CollectionsTagWindow widget for managing keywords/tags in the media database.
 Provides functionality for viewing, editing, merging, and deleting keywords.
 """
 
-from typing import TYPE_CHECKING, List, Dict, Any, Optional
+from typing import TYPE_CHECKING, List, Dict, Any
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import Static, Button, Label, Input, ListView, ListItem, Markdown
 from textual.reactive import reactive
 from textual.screen import ModalScreen
-from textual.message import Message
 from loguru import logger
 
 if TYPE_CHECKING:

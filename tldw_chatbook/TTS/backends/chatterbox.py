@@ -5,7 +5,7 @@
 import os
 import sys
 import subprocess
-from typing import AsyncGenerator, Optional, Dict, Any, List, Tuple
+from typing import AsyncGenerator, Optional, Dict, Any, List
 from pathlib import Path
 import asyncio
 import re
@@ -20,7 +20,7 @@ import contextlib
 # Local imports
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.TTS_Backends import TTSBackendBase
-from tldw_chatbook.TTS.audio_service import AudioService, get_audio_service
+from tldw_chatbook.TTS.audio_service import get_audio_service
 from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.Utils.optional_deps import check_dependency
 
@@ -1119,7 +1119,6 @@ class ChatterboxTTSBackend(TTSBackendBase):
                                 )
                     
                     # Chunk the audio
-                    import torch
                     chunk_size = self.chunk_size
                     for i in range(0, len(full_audio), chunk_size):
                         chunk = full_audio[i:i + chunk_size]

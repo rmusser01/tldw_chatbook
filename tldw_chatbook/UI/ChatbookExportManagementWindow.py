@@ -12,8 +12,6 @@ Provides interface for:
 - Sharing chatbooks
 """
 
-import os
-import shutil
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, List, Dict, Any, TYPE_CHECKING
@@ -21,13 +19,11 @@ from typing import Optional, List, Dict, Any, TYPE_CHECKING
 from textual.app import ComposeResult
 from textual import on
 from textual.screen import ModalScreen
-from textual.containers import Container, Horizontal, VerticalScroll, Grid
+from textual.containers import Container, Horizontal, Grid
 from textual.widgets import (
-    Static, Button, DataTable, Label, Checkbox,
-    OptionList, Header, Footer
+    Static, Button, DataTable, OptionList, Footer
 )
 from textual.reactive import reactive
-from textual.coordinate import Coordinate
 from loguru import logger
 
 from ..Chatbooks.chatbook_importer import ChatbookImporter

@@ -12,7 +12,7 @@ from textual.containers import Horizontal, Vertical
 from textual.css.query import QueryError
 from textual.message import Message
 from textual.widget import Widget
-from textual.widgets import Static, Button, Label, Markdown # Added Label and Markdown
+from textual.widgets import Button, Label, Markdown # Added Label and Markdown
 from textual.reactive import reactive
 #
 # Local Imports

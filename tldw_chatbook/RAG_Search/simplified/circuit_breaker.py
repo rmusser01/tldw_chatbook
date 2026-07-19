@@ -7,7 +7,7 @@ Prevents cascading failures by temporarily disabling calls to failing services.
 import threading
 import time
 from loguru import logger
-from typing import Callable, Any, Optional, TypeVar, Generic
+from typing import Callable, Optional, TypeVar, Generic
 from dataclasses import dataclass, field
 from enum import Enum
 import asyncio

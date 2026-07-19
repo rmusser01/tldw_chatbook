@@ -1,9 +1,8 @@
 """ASCIIFire splash screen effect."""
 import time
 
-from rich.color import Color
 import random
-from typing import Optional, Any, List, Tuple
+from typing import Optional
 
 from ..base_effect import BaseEffect, register_effect
 

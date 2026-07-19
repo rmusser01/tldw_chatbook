@@ -3,14 +3,11 @@
 # This version is self-contained and does not require a conftest.py file.
 #
 # Standard Library Imports:
-import json
 import os
 import pytest
-import shutil
 import sys
 import time
 import sqlite3
-from datetime import datetime, timezone, timedelta
 from pathlib import Path
 #
 # --- Path Setup (Replaces conftest.py logic) ---
@@ -26,7 +23,7 @@ except (NameError, IndexError):
     pass
 #
 # Local imports (from the main project)
-from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase as Database, ConflictError
+from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase as Database
 #
 #######################################################################################################################
 #

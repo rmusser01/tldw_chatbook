@@ -9,7 +9,6 @@ rather than being hidden by a permissive fake.
 from __future__ import annotations
 
 import asyncio
-import concurrent.futures
 import threading
 import time
 from types import SimpleNamespace

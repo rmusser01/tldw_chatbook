@@ -7,7 +7,6 @@ that provides thread-safe caching, multiple providers, and async support.
 
 from types import SimpleNamespace
 from typing import List, Optional, Dict, Any, Union
-from pathlib import Path
 from loguru import logger
 import os
 import re

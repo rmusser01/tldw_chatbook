@@ -4,8 +4,7 @@ MCP Prompts implementation for tldw_chatbook
 This module provides reusable prompt templates for common workflows.
 """
 
-from typing import Dict, List, Optional, Any, Union
-from datetime import datetime
+from typing import Dict, List, Optional
 
 from loguru import logger
 

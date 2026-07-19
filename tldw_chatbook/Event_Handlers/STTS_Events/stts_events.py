@@ -7,15 +7,13 @@ from datetime import datetime
 from typing import Optional, Dict, Any
 from pathlib import Path
 from loguru import logger
-import tempfile
 #
 # Third-party imports
 from textual.message import Message
-from textual.widgets import Button, TextArea, Select, Input, RichLog, Static, ProgressBar
+from textual.widgets import Button, Select, RichLog, Static, ProgressBar
 #
 # Local imports
 from tldw_chatbook.TTS import get_tts_service, OpenAISpeechRequest
-from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import TTSRequestEvent, TTSCompleteEvent, TTSPlaybackEvent
 from tldw_chatbook.config import get_cli_setting
 #
 #######################################################################################################################

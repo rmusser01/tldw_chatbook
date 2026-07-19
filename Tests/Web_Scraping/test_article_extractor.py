@@ -11,7 +11,6 @@ Tests core functionality including:
 import pytest
 import asyncio
 from unittest.mock import Mock, patch, AsyncMock
-from datetime import datetime
 
 # Import the module to test
 import builtins

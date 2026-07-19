@@ -5,7 +5,6 @@
 import json
 import logging
 import threading
-from pathlib import Path
 from typing import List, Dict, Optional, Any, Union, Tuple
 from datetime import datetime
 import sqlite3
@@ -14,8 +13,8 @@ import sqlite3
 from loguru import logger
 
 # Local Imports
-from ..DB.Client_Media_DB_v2 import MediaDatabase, DatabaseError, InputError, ConflictError
-from ..Metrics.metrics_logger import log_counter, log_histogram
+from ..DB.Client_Media_DB_v2 import MediaDatabase, InputError
+from ..Metrics.metrics_logger import log_counter
 
 #######################################################################################################################
 #

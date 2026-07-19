@@ -2,16 +2,14 @@
 test_sync_engine.py
 Test suite for the notes synchronization engine
 """
-import asyncio
 import tempfile
 import shutil
 from pathlib import Path
-from datetime import datetime
 import pytest
 
 from tldw_chatbook.Notes.sync_engine import (
     NotesSyncEngine, SyncDirection, ConflictResolution,
-    SyncProgress, SyncFileInfo
+    SyncProgress
 )
 from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB

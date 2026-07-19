@@ -8,29 +8,21 @@ conversations, and message handling.
 """
 
 import pytest
-import sqlite3
 import json
-import uuid
 import base64
 import io
-from datetime import datetime, timezone
-from pathlib import Path
 
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
 
 # Local Imports from this project
 from tldw_chatbook.DB.ChaChaNotes_DB import (
-    CharactersRAGDB,
-    CharactersRAGDBError,
-    ConflictError,
-    InputError
+    CharactersRAGDB
 )
 from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
     create_conversation,
     get_conversation_details_and_messages,
     add_message_to_conversation,
-    get_character_list_for_ui,
     extract_character_id_from_ui_choice,
     load_character_and_image,
     process_db_messages_to_ui_history,
@@ -39,8 +31,6 @@ from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
     import_and_save_character_from_file,
     load_chat_history_from_file_and_save_to_db,
     start_new_chat_session,
-    list_character_conversations,
-    update_conversation_metadata,
     post_message_to_conversation,
     retrieve_conversation_messages_for_ui
 )

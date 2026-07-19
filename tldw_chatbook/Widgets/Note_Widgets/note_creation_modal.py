@@ -7,10 +7,10 @@ Modal dialog for creating notes from chat messages with customizable
 title, keywords, and content.
 """
 
-from typing import Optional, Callable, Dict, Any, Tuple
+from typing import Optional, Callable, Dict, Any
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Container, Vertical, Horizontal
+from textual.containers import Container, Horizontal
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Input, TextArea, Static
 from textual.binding import Binding

@@ -3,7 +3,7 @@
 from typing import TYPE_CHECKING, Optional, Dict, Any, List
 from loguru import logger
 from textual import work
-from textual.widgets import Select, ListView, ListItem, Input, TextArea, Button, Static
+from textual.widgets import Select, ListView, ListItem, Input, TextArea, Static
 
 from .ccp_messages import DictionaryMessage, ViewChangeMessage
 

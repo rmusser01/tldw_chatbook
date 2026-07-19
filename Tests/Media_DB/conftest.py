@@ -4,7 +4,6 @@ import tempfile
 import os
 import shutil
 from pathlib import Path
-import sys
 
 # Import the MediaDatabase from tldw_chatbook instead of tldw_Server_API
 try:

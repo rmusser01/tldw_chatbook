@@ -2,19 +2,19 @@
 # Description: Window for customizing the application's appearance (themes and splash screens)
 #
 # Imports
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 #
 # 3rd-Party Imports
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, VerticalScroll
-from textual.widgets import Static, Button, ContentSwitcher
+from textual.containers import Container
+from textual.widgets import Static, Button
 from textual import on
 from loguru import logger
 #
 # Local Imports
 #
 if TYPE_CHECKING:
-    from ..app import TldwCli
+    pass
 #
 #######################################################################################################################
 #

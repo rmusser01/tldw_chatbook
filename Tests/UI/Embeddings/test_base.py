@@ -4,9 +4,8 @@ Provides common fixtures, mocks, and helper functions.
 """
 
 import pytest
-import pytest_asyncio
 from unittest.mock import MagicMock, AsyncMock, patch
-from typing import Type, Optional, Any, Dict
+from typing import Type
 from pathlib import Path
 
 from textual.app import App, ComposeResult
@@ -17,7 +16,6 @@ from textual.containers import Container
 # Import test harness
 import sys
 sys.path.append(str(Path(__file__).parent.parent.parent))
-from textual_test_harness import TestApp, IsolatedWidgetTestApp
 
 
 class EmbeddingsTestBase:

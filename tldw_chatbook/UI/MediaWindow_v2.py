@@ -5,12 +5,10 @@ This is a refactored version that uses the new component-based architecture.
 """
 
 import inspect
-from types import SimpleNamespace
 from typing import TYPE_CHECKING, List, Optional, Dict, Any
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical, Container
-from textual.css.query import QueryError
+from textual.containers import Container
 from textual.reactive import reactive
 from textual.widgets import Button, Markdown, Label
 from loguru import logger
@@ -25,7 +23,6 @@ from ..Widgets.Media import (
     MediaItemSelectedEvent,
     MediaViewerPanel
 )
-from ..Utils.Emoji_Handling import get_char, EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE
 
 # Import events
 from ..Widgets.Media.media_navigation_panel import MediaTypeSelectedEvent

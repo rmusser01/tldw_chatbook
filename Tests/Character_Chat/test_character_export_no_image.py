@@ -5,8 +5,6 @@ Test character export behavior when character has no image.
 
 import pytest
 import json
-import tempfile
-from pathlib import Path
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Character_Chat.Character_Chat_Lib import (

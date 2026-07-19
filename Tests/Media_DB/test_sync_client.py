@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 import pytest
 import json
 import os
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock
 #
 # 3rd-Party Imports
 import requests

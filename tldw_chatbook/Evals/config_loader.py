@@ -8,7 +8,6 @@ Configuration Loader
 Loads and manages configuration from YAML files for the evaluation system.
 """
 
-import os
 import yaml
 from pathlib import Path
 from typing import Dict, Any, List, Optional

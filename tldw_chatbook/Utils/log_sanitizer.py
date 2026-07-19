@@ -6,7 +6,7 @@ sensitive information from log messages.
 """
 
 import re
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List
 
 
 # Patterns for common sensitive data

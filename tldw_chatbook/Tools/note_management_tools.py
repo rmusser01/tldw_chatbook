@@ -4,9 +4,7 @@ Note Management Tools for LLM function calling.
 These tools allow LLMs to create, search, update, and manage notes.
 """
 
-import json
-import uuid
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any
 from loguru import logger
 
 from . import Tool

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import re
 
 # Read the file
 with open('../tldw_chatbook/UI/Tools_Settings_Window.py', 'r') as f:

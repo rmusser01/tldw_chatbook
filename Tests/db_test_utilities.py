@@ -8,7 +8,6 @@ Provides fixtures and helpers specific to database testing patterns.
 
 import pytest
 import sqlite3
-import json
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime, timezone
 from contextlib import contextmanager

@@ -2,7 +2,6 @@
 # Description:
 #
 # Imports
-import logging
 from typing import TYPE_CHECKING
 
 from textual.css.query import QueryError

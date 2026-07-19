@@ -14,18 +14,17 @@ Implements the 5-step chatbook creation workflow:
 """
 
 import asyncio
-import json
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Any, Optional, TYPE_CHECKING
 
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, VerticalScroll, Grid
+from textual.containers import Container, Horizontal
 from textual.widgets import (
     Static, Input, TextArea, Button, Label, 
-    Checkbox, RadioSet, RadioButton, Tree, DataTable, ProgressBar
+    Checkbox, RadioSet, RadioButton, Tree, ProgressBar
 )
-from textual.worker import Worker, WorkerState
+from textual.worker import Worker
 from textual.reactive import reactive
 from textual import on
 from loguru import logger
@@ -44,7 +43,7 @@ from ..server_chatbook_service_lease import (
 )
 
 if TYPE_CHECKING:
-    from ...app import TldwCli
+    pass
 
 
 class BasicInfoStep(WizardStep):

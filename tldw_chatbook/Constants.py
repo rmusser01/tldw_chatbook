@@ -10,7 +10,6 @@
 ########################################################################################################################
 #
 # Functions:
-from tldw_chatbook.Third_Party.textual_fspicker import Filters
 
 # --- Constants ---
 TAB_CHAT = "chat"

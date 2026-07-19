@@ -2,7 +2,6 @@
 Unit tests for SQL validation module.
 """
 
-import pytest
 
 from tldw_chatbook.DB.sql_validation import (
     validate_identifier, validate_table_name, validate_column_name,

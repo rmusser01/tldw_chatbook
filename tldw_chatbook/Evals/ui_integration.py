@@ -11,8 +11,7 @@ Provides helper functions for connecting the evaluation backend to the UI:
 - State management helpers
 """
 
-from typing import Dict, Any, Optional
-from datetime import datetime, timedelta
+from typing import Dict, Any
 
 def format_model_item(model: Dict[str, Any]) -> str:
     """Format model data for display."""

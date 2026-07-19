@@ -14,12 +14,12 @@ import json
 import re
 import zlib
 from datetime import datetime, timezone, timedelta
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 #
 # Third-Party Imports
-from bs4 import BeautifulSoup, NavigableString
+from bs4 import BeautifulSoup
 from loguru import logger
 #
 # Local Imports

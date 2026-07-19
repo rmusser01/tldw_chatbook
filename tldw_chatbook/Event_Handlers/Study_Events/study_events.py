@@ -1,12 +1,10 @@
 # study_events.py
 # Description: Event handlers for Study tab functionality
 #
-from typing import Optional, Dict, Any, List
+from typing import Dict, Any
 from textual.message import Message
-from textual.events import Event
 from textual.widgets import Button, Input, Select, TextArea, Tree
 from loguru import logger
-from datetime import datetime, timezone
 
 # StudyDB import removed - using ChaChaNotes_DB instead
 

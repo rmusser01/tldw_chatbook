@@ -2,7 +2,6 @@
 # Description:
 #
 # Imports
-import logging
 import json # Added for SSE JSON parsing
 import time
 from typing import TYPE_CHECKING, Generator, Any, Union

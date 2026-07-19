@@ -15,10 +15,7 @@
 # Import necessary libraries
 import importlib.util
 import os
-import re
-import gc
-from datetime import datetime
-from typing import Dict, Any, Optional, List, Union, Tuple
+from typing import Dict, Any, Optional, List
 from pathlib import Path
 #
 # Import External Libs
@@ -61,8 +58,7 @@ except ImportError:
 #
 # Import Local
 from ..config import get_cli_setting
-from ..Metrics.metrics_logger import log_counter, log_histogram
-from ..Utils.optional_deps import get_safe_import
+from ..Metrics.metrics_logger import log_counter
 from loguru import logger
 # NOTE: `analyze` (LLM_Calls.Summarization_General_Lib) is intentionally NOT
 # imported at module level -- it pulls in nltk (via Chunk_Lib) and should

@@ -7,14 +7,13 @@ import asyncio
 import queue
 import tempfile
 import threading
-from typing import Dict, List, Optional, Any
+from typing import Dict, Optional, Any
 from pathlib import Path
 from datetime import datetime
 from textual.app import ComposeResult
 from textual.containers import Container, Vertical, Horizontal
 from textual.widgets import Label, Button, ProgressBar, Static, ListView, ListItem
 from textual.reactive import reactive
-from textual import work
 from loguru import logger
 
 

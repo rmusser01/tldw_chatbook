@@ -4,7 +4,6 @@ CSS Build Script for tldw_chatbook
 Concatenates modular CSS files into a single file for Textual
 """
 
-import os
 from pathlib import Path
 from datetime import datetime
 

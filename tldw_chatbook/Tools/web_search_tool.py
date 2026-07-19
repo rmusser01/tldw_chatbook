@@ -4,7 +4,6 @@ Web Search Tool for LLM function calling.
 This tool allows LLMs to search the web using various search engines.
 """
 
-import json
 from typing import Dict, Any
 from loguru import logger
 

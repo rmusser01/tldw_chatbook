@@ -11,7 +11,7 @@ This component provides:
 from typing import TYPE_CHECKING, List, Dict, Any, Optional
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container, Horizontal
 from textual.reactive import reactive
 from textual.widgets import ListView, ListItem, Button, Label, Static
 from textual.message import Message

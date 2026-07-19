@@ -6,9 +6,8 @@ Tests error handling, dimension mismatches, and recovery scenarios.
 
 import pytest
 import numpy as np
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 import tempfile
-import shutil
 
 from tldw_chatbook.RAG_Search.simplified.vector_store import ChromaVectorStore, InMemoryVectorStore
 

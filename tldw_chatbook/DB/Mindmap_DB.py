@@ -12,11 +12,9 @@ Database module for storing and retrieving mindmaps with:
 - Collaborative features
 """
 
-import sqlite3
 import json
 from pathlib import Path
 from typing import Union, Optional, List, Dict, Tuple, Any
-from datetime import datetime
 from contextlib import contextmanager
 from anytree import Node
 from loguru import logger

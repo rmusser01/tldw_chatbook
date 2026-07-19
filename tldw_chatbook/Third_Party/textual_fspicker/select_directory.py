@@ -12,8 +12,7 @@ from pathlib import Path
 # Textual imports.
 from textual import on
 from textual.app import ComposeResult
-from textual.reactive import var
-from textual.widgets import Button, Label, Input
+from textual.widgets import Button, Input
 
 ##############################################################################
 # Local imports.

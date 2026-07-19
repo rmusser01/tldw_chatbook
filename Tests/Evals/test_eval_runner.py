@@ -15,14 +15,11 @@ Tests the EvalRunner class functionality including:
 
 import pytest
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime, timezone
-from dataclasses import dataclass
-from typing import Dict, Any, Optional
+from unittest.mock import AsyncMock, patch
 
 from tldw_chatbook.Evals.eval_runner import EvalRunner, QuestionAnswerRunner
 # Import the evaluation classes
-from tldw_chatbook.Evals.eval_runner import EvalSampleResult, EvalProgress, EvalError, EvalSample
+from tldw_chatbook.Evals.eval_runner import EvalSampleResult, EvalProgress, EvalSample
 from tldw_chatbook.Evals.task_loader import TaskConfig
 # LLMInterface removed - using existing chat infrastructure
 

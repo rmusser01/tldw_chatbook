@@ -5,7 +5,6 @@ from textual.widgets import Button, Label, Static, Input, Checkbox
 from textual.screen import ModalScreen
 from textual.reactive import reactive
 from typing import Optional, List, Dict, Any
-from loguru import logger
 
 
 class NoteItem(Container):

@@ -8,16 +8,11 @@ This module extends the basic RAG service with:
 - Improved search with context expansion
 """
 
-import asyncio
-from typing import List, Optional, Dict, Any, Union, Tuple, Literal
-from pathlib import Path
+from typing import List, Optional, Dict, Any, Union, Literal
 from loguru import logger
-from dataclasses import dataclass
 import time
-import uuid
 
 from .rag_service import RAGService, SearchResult, SearchResultWithCitations
-from .citations import Citation, CitationType
 from .config import RAGConfig
 from .data_models import IndexingResult
 from ..enhanced_chunking_service import EnhancedChunkingService

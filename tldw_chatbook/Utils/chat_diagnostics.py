@@ -6,11 +6,11 @@ This tool helps diagnose the actual structure of chat widgets
 to understand how to properly save and restore state.
 """
 
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List
 from datetime import datetime
 from loguru import logger
 from textual.widget import Widget
-from textual.widgets import TextArea, Button, Static, Label
+from textual.widgets import TextArea
 from textual.containers import Container
 
 logger = logger.bind(module="ChatDiagnostics")

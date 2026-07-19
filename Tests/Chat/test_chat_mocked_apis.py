@@ -6,19 +6,15 @@ These tests don't require actual API keys or external services.
 
 import pytest
 from unittest.mock import patch, MagicMock, Mock
-from typing import List, Dict, Any
 
 # Import the functions we're testing
-from tldw_chatbook.Chat.Chat_Functions import chat_api_call, chat
+from tldw_chatbook.Chat.Chat_Functions import chat_api_call
 from tldw_chatbook.Chat.Chat_Deps import (
-    ChatAuthenticationError, ChatRateLimitError, ChatBadRequestError,
-    ChatProviderError, ChatAPIError
+    ChatProviderError
 )
 
 # Import our mock responses
 from .mock_api_responses import (
-    get_mock_response, mock_api_call, mock_streaming_call,
-    MockAPIResponse, MockStreamResponse,
     OPENAI_CHAT_RESPONSE, ANTHROPIC_CHAT_RESPONSE
 )
 

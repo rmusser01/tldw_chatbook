@@ -6,14 +6,12 @@
 # the internal logic of the chat functions.
 
 import pytest
-from unittest.mock import patch, Mock, MagicMock
-from typing import Dict, Any, List, Generator
+from unittest.mock import patch, Mock
 import json
 
-from tldw_chatbook.Chat.Chat_Functions import chat_api_call, chat, PROVIDER_PARAM_MAP, API_CALL_HANDLERS
+from tldw_chatbook.Chat.Chat_Functions import chat_api_call, PROVIDER_PARAM_MAP, API_CALL_HANDLERS
 from tldw_chatbook.Chat.Chat_Deps import (
-    ChatAuthenticationError, ChatRateLimitError, ChatBadRequestError,
-    ChatProviderError, ChatAPIError, ChatConfigurationError
+    ChatAuthenticationError, ChatRateLimitError, ChatProviderError, ChatConfigurationError
 )
 
 

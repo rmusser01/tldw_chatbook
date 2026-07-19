@@ -32,7 +32,7 @@ Example:
 import asyncio
 import logging
 import time
-from typing import List, Set, Callable, Optional
+from typing import List, Set, Callable
 from urllib.parse import urlparse, urljoin
 import xml.etree.ElementTree as ET
 #

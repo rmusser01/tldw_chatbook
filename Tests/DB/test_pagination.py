@@ -3,7 +3,6 @@ Integration tests for pagination functionality in database functions.
 """
 
 from loguru import logger
-import sqlite3
 import tempfile
 from pathlib import Path
 import pytest

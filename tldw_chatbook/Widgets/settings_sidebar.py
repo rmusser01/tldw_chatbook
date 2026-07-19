@@ -8,8 +8,7 @@ import logging
 
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll, Horizontal, Container
-from textual.widgets import Static, Select, TextArea, Input, Collapsible, Button, Checkbox, ListView, Switch, Label
-from textual.message import Message
+from textual.widgets import Static, Select, TextArea, Input, Collapsible, Button, Checkbox, ListView, Label
 #
 # Local Imports
 from ..config import get_cli_providers_and_models, resolve_provider_name

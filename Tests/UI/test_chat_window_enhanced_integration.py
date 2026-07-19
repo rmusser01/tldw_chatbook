@@ -5,7 +5,6 @@ from unittest.mock import Mock
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.containers import Container
 from textual.widgets import Button, Static, TextArea
 
 from tldw_chatbook.UI.Chat_Window_Enhanced import ChatWindowEnhanced

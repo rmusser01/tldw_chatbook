@@ -2,7 +2,6 @@
 # Description: Voice profile management for Chatterbox TTS backend
 #
 # Imports
-import os
 import json
 import shutil
 from pathlib import Path

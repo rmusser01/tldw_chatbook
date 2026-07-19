@@ -3,10 +3,7 @@ Integration tests for evaluation system components.
 Tests interaction between runners, orchestrator, database, and UI.
 """
 import pytest
-import asyncio
-from datetime import datetime
-from typing import Dict, List, Any
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
+from unittest.mock import Mock, AsyncMock, patch
 
 from tldw_chatbook.Evals.eval_orchestrator import EvaluationOrchestrator
 from tldw_chatbook.Evals.eval_runner import EvalSample, EvalSampleResult

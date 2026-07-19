@@ -2,25 +2,23 @@
 # Description: Voice Cloning management window for multiple TTS backends
 #
 # Imports
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, Any, List
 from pathlib import Path
-from datetime import datetime
 import asyncio
 from loguru import logger
 
 # Textual imports
 from textual.app import ComposeResult
 from textual.screen import Screen
-from textual.containers import Container, Horizontal, Vertical, ScrollableContainer
+from textual.containers import Container, Horizontal
 from textual.widgets import (
-    Static, Button, Label, Input, TextArea, Select, DataTable, 
-    TabbedContent, TabPane, LoadingIndicator, Rule, Collapsible,
-    Switch, ListView, ListItem, RichLog
+    Static, Button, Label, TextArea, Select, DataTable, 
+    TabbedContent, TabPane, Rule, Collapsible,
+    RichLog
 )
 from textual.reactive import reactive
 from textual.binding import Binding
 from textual import work
-from textual.worker import Worker
 
 # Local imports
 from ..TTS.backends.higgs_voice_manager import HiggsVoiceProfileManager

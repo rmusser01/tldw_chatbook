@@ -3,14 +3,13 @@
 Widget for displaying dictation performance metrics and analytics.
 """
 
-from typing import Dict, Any
+from typing import Dict
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical, Container, Grid
-from textual.widgets import Label, Static, ProgressBar, Button, Rule
+from textual.containers import Horizontal, Container, Grid
+from textual.widgets import Label, Static, ProgressBar, Button
 from textual.widget import Widget
 from textual.reactive import reactive
 from textual import work
-from loguru import logger
 
 from ..Audio.dictation_metrics import get_performance_monitor
 

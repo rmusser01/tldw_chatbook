@@ -10,7 +10,7 @@ from typing import Any
 from loguru import logger
 from textual import on, work
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_session_settings import (
@@ -29,7 +29,6 @@ from tldw_chatbook.Home.dashboard_state import (
     HomeControl,
     HomeDashboard,
     HomeDashboardInput,
-    HomeTriageState,
     apply_home_content_snapshot,
     build_home_triage_state,
     choose_home_selected_item,

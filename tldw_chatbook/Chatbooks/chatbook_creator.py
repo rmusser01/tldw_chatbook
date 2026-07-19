@@ -24,17 +24,13 @@ from typing import Callable, List, Dict, Any, Optional, Set, Tuple
 from loguru import logger
 
 from .chatbook_models import (
-    Chatbook, ChatbookManifest, ChatbookContent, 
+    ChatbookManifest, ChatbookContent, 
     ContentItem, ContentType, ChatbookVersion, Relationship
 )
-from .error_handler import ChatbookErrorHandler, ChatbookErrorType, safe_chatbook_operation
 from ..Chat.chat_conversation_service import ChatConversationService
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..DB.Prompts_DB import PromptsDatabase
-from ..DB.RAG_Indexing_DB import RAGIndexingDB
-from ..DB.Evals_DB import EvalsDB
-from ..DB.Subscriptions_DB import SubscriptionsDB
 from ..Utils.input_validation import sanitize_string
 from ..Utils.path_validation import validate_filename
 from ..Utils.text import sanitize_filename

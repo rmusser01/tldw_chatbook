@@ -39,7 +39,7 @@ import json
 import logging
 import os
 import time
-from typing import Dict, List, Union
+from typing import Dict, List
 #
 # Third-Party Libraries
 # Handle optional dependencies

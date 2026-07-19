@@ -34,7 +34,6 @@ from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
 
 # Import our comprehensive mock fixture
-from Tests.fixtures.event_handler_mocks import mock_app
 
 # Test marker for unit tests
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]

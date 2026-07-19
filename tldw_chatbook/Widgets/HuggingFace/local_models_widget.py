@@ -7,9 +7,9 @@ import os
 import shutil
 from pathlib import Path
 from datetime import datetime
-from typing import Optional, List, Dict, Any, TYPE_CHECKING
+from typing import Optional, List, TYPE_CHECKING
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Label, Button, ListView, ListItem, Static
 from textual.reactive import reactive
 from textual.message import Message

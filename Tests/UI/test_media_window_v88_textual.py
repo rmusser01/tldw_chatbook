@@ -5,9 +5,8 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from textual.widgets import Button, Input, Label
+from textual.widgets import Button, Input
 
-from Tests.textual_test_utils import widget_pilot
 from tldw_chatbook.UI.MediaWindowV88 import MediaWindowV88
 from tldw_chatbook.Widgets.Media.media_list_panel import MediaListPanel
 from tldw_chatbook.Widgets.Media.media_navigation_panel import MediaNavigationPanel

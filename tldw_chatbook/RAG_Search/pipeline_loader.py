@@ -5,7 +5,6 @@ This module provides functionality to load, validate, and instantiate
 RAG pipelines from TOML configuration files.
 """
 
-import os
 import sys
 if sys.version_info < (3, 11):
     import tomli as tomllib

@@ -9,14 +9,12 @@
 # - Content extraction
 #
 # Imports
-import asyncio
 import hashlib
 import json
 import time
-from datetime import datetime, timezone, timedelta
-from typing import List, Dict, Any, Optional, Tuple
-from urllib.parse import urlparse, urljoin
-import re
+from datetime import datetime, timezone
+from typing import List, Dict, Any, Optional
+from urllib.parse import urlparse
 from difflib import SequenceMatcher
 #
 # Third-Party Imports
@@ -34,7 +32,7 @@ from loguru import logger
 # Local Imports
 from ..DB.Subscriptions_DB import SubscriptionsDB, RateLimitError, AuthenticationError
 from ..Metrics.metrics_logger import log_histogram, log_counter
-from .security import SecurityValidator, SSRFProtector
+from .security import SecurityValidator
 #
 ########################################################################################################################
 #

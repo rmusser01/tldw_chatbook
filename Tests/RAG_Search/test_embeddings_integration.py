@@ -3,23 +3,14 @@
 # NOTE: This file uses MockEmbeddingProvider from conftest. For tests with real embeddings, see test_embeddings_real_integration.py
 
 import pytest
-import tempfile
-import shutil
-import time
 import threading
-from pathlib import Path
-from typing import List, Dict, Any
-import os
-from unittest.mock import patch, Mock, MagicMock, AsyncMock
+from unittest.mock import patch, MagicMock, AsyncMock
 
 from tldw_chatbook.RAG_Search.simplified import (
     EmbeddingsServiceWrapper,
     ChromaVectorStore,
     InMemoryVectorStore,
-    create_embeddings_service,
-    RAGService,
     create_rag_service,
-    RAGConfig,
     create_config_for_testing
 )
 # Note: Provider classes are handled internally in simplified API
@@ -34,12 +25,11 @@ def reset_circuit_breakers():
     yield
     # Clear again after test
     circuit_breaker._circuit_breakers.clear()
-from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
 
 # Import test markers from conftest
 import numpy as np
 # Import from the same directory using relative import
-from .conftest import requires_embeddings, requires_chromadb, requires_numpy, create_mock_embedding_factory
+from .conftest import requires_embeddings, requires_chromadb, create_mock_embedding_factory
 
 
 @pytest.mark.integration
@@ -259,7 +249,7 @@ class TestRAGServiceIntegration:
         """Test complete RAG workflow with RAGService"""
         # Import required modules
         from tldw_chatbook.RAG_Search.simplified import embeddings_wrapper
-        from unittest.mock import AsyncMock, MagicMock
+        from unittest.mock import MagicMock
         
         # Mock the config schema
         mock_config_schema = MagicMock()

@@ -18,7 +18,7 @@ from ..DB.ChaChaNotes_DB import ConflictError as ChaChaConflictError, Characters
 # NOTE: LibraryScreen is imported lazily inside on_import_success_notes (not at
 # module scope) -- event handlers and UI screens import each other, so a
 # top-level import here risks a circular import at load time (PR #599 review).
-from ..Utils.note_importers import note_importer_registry, ParsedNote
+from ..Utils.note_importers import note_importer_registry
 from ..Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
 from .ingest_utils import (
     NOTE_FILE_FILTERS,

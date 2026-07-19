@@ -15,7 +15,6 @@ if TYPE_CHECKING:
         FileCreateRequest,
         IngestWebContentResponse,
         ItemsBulkRequest,
-        MediaIngestSubmitRequest,
         ProcessAudioRequest,
         ProcessCodeRequest,
         ProcessDocumentRequest,

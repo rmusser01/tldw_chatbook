@@ -6,7 +6,7 @@ when tabs are shown or hidden in the application.
 """
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Optional, List, Dict, Any
+from typing import TYPE_CHECKING, Optional, Dict
 from loguru import logger
 
 if TYPE_CHECKING:

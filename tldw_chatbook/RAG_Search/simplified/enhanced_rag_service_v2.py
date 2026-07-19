@@ -10,17 +10,15 @@ This extends the Phase 1 enhanced RAG service with:
 import asyncio
 import time
 from typing import List, Optional, Dict, Any, Literal, Union, Tuple
-from pathlib import Path
 from loguru import logger
-import uuid
 
 from .enhanced_rag_service import EnhancedRAGService
 from .config import RAGConfig
 from .vector_store import SearchResult, SearchResultWithCitations
-from ..reranker import create_reranker, BaseReranker, RerankingConfig
+from ..reranker import create_reranker
 from ..parallel_processor import (
     create_embedding_processor, create_chunking_processor,
-    ProcessingConfig, EmbeddingBatchProcessor, ChunkingBatchProcessor
+    ProcessingConfig
 )
 from ..config_profiles import (
     get_profile_manager, ProfileConfig, ExperimentConfig,

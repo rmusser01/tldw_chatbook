@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 
 # Third-party Libraries
 from textual.app import App
-from textual.widgets import Button, Input, Select, Checkbox, TextArea, RadioSet, RadioButton
+from textual.widgets import Button, Input, Select, Checkbox
 from textual.pilot import Pilot
 
 # Local Imports

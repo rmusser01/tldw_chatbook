@@ -4,7 +4,6 @@ This provides a basic test structure for manual testing of the world book UI.
 """
 
 import pytest
-from typing import List, Dict, Any
 
 # Note: These are placeholder tests for manual UI testing guidance
 # Full automated UI testing would require Textual's testing framework
@@ -67,8 +66,6 @@ class TestWorldBookUI:
         Example code for creating test world books.
         Run this in the app console or a separate script.
         """
-        from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-        from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
         
         # This would need a real database connection
         # db = CharactersRAGDB("path/to/db", "test_client")

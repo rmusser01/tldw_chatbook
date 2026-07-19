@@ -5,7 +5,7 @@ This module provides a unified interface for creating RAG services
 using the V2 implementation with different configuration profiles.
 """
 
-from typing import Optional, Union
+from typing import Optional
 from loguru import logger
 
 from .config import RAGConfig

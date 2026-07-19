@@ -5,7 +5,6 @@ from tldw_chatbook.tldw_api import (
     QuizAttemptSubmitRequest,
     QuizCreateRequest,
     QuizListResponse,
-    QuizQuestionCreateRequest,
     QuizQuestionListResponse,
     QuizQuestionResponse,
     QuizResponse,

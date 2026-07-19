@@ -6,7 +6,7 @@ to satisfy the import requirements of the simplified RAG service.
 """
 
 import re
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 import logging
 from tldw_chatbook.Chunking.Chunk_Lib import Chunker
 

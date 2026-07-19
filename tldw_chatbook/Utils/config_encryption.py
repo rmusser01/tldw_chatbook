@@ -7,7 +7,7 @@ Provides authenticated encryption to ensure both confidentiality and integrity.
 import base64
 import os
 import secrets
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 from Cryptodome.Cipher import AES
 from Cryptodome.Protocol.KDF import scrypt

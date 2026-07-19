@@ -25,21 +25,13 @@ os.environ["TLDW_CONFIG_PATH"] = str(_BOOTSTRAP_CONFIG_PATH)
 
 import pytest
 import pytest_asyncio
-from typing import Type, TypeVar, Callable
+from typing import TypeVar
 from contextlib import asynccontextmanager
 
-from textual.app import App, ComposeResult
+from textual.app import App
 from textual.widget import Widget
-from textual.pilot import Pilot
 
 # Import test utilities
-from Tests.textual_test_utils import widget_pilot, app_pilot
-from Tests.textual_test_harness import (
-    isolated_widget_pilot, 
-    enhanced_app_pilot,
-    TestApp,
-    IsolatedWidgetTestApp
-)
 
 # Type variables
 W = TypeVar('W', bound=Widget)

@@ -2,7 +2,7 @@
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Input, Static, TextArea
+from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.tldw_api import PersonaProfileCreate
 from tldw_chatbook.Widgets.Persona_Widgets.persona_profile_card_widget import (

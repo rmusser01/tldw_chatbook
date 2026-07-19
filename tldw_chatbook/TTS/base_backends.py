@@ -3,7 +3,7 @@
 #
 # Imports
 from abc import ABC, abstractmethod
-from typing import Optional, Dict, Any, AsyncGenerator, Callable, Protocol
+from typing import Optional, Dict, Any, AsyncGenerator, Protocol
 import httpx
 from loguru import logger
 

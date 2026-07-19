@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, VerticalScroll
+from textual.containers import Container, Horizontal
 from textual.widgets import Tree, Input, Checkbox, Button, Static
 from textual.widgets.tree import TreeNode
 from textual.reactive import reactive

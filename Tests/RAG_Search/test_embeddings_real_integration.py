@@ -9,14 +9,11 @@ import threading
 import os
 import numpy as np
 from pathlib import Path
-from typing import List, Dict, Any
 
 from tldw_chatbook.RAG_Search.simplified import (
     EmbeddingsServiceWrapper,
     InMemoryVectorStore,
     ChromaVectorStore,
-    create_embeddings_service,
-    RAGService,
     create_rag_service
 )
 from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE

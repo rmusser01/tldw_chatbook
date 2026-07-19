@@ -2,25 +2,16 @@
 # Description: Study tab with Structured Learning, Anki/Flashcards, and Mindmaps
 #
 # Imports
-from typing import Optional, Dict, Any, List, TYPE_CHECKING
-from pathlib import Path
+from typing import Any, TYPE_CHECKING
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, ScrollableContainer, Container
-from textual.widgets import Label, Button, TextArea, Select, Input, Static, ListView, ListItem, Tree, Switch
+from textual.widgets import Label, Button, TextArea, Select, Input, Static, ListView, Tree
 from textual.widget import Widget
 from textual.reactive import reactive
-from textual.message import Message
-from textual import work
-from textual.binding import Binding
-from loguru import logger
 
 # Local imports
-from tldw_chatbook.config import get_cli_setting
-from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.UI.Study_Modules import (
-    FLASHCARD_DELETE_DECK_SERVER_TOOLTIP,
-    FLASHCARD_SCOPE_UNAVAILABLE_TOOLTIP,
     StudyFlashcardsController,
     StudyQuizzesController,
 )

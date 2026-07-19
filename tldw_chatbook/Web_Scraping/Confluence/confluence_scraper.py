@@ -4,14 +4,11 @@
 #
 # Imports
 import asyncio
-import json
-from typing import Dict, Any, List, Optional, Union
-from datetime import datetime
+from typing import Dict, Any, List, Optional
 import re
 #
 # Third-party imports
 from loguru import logger
-import requests
 
 # Handle optional BeautifulSoup dependency
 try:

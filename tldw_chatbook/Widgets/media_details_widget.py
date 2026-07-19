@@ -9,13 +9,11 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Static, Button, Label, Input, TextArea, Checkbox, Select, Collapsible
 from textual.reactive import reactive
-from textual.screen import ModalScreen
 from loguru import logger
 import json
 
 from ..Widgets.form_components import create_form_field
 from ..Chunking.chunking_interop_library import (
-    ChunkingInteropService, 
     get_chunking_service,
     ChunkingTemplateError
 )

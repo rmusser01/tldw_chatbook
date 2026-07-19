@@ -10,17 +10,10 @@ Tests focused on performance characteristics and optimization.
 
 import pytest
 import time
-import json
-import zipfile
-import sqlite3
-import tempfile
 import threading
 import concurrent.futures
-from pathlib import Path
-from datetime import datetime, timedelta
 from contextlib import contextmanager
 from typing import Dict, Any, List, Tuple
-from unittest.mock import Mock, patch
 import psutil
 import os
 import sys
@@ -36,15 +29,14 @@ else:
 
 from tldw_chatbook.Chatbooks import ChatbookCreator, ChatbookImporter
 from tldw_chatbook.Chatbooks.chatbook_models import (
-    ContentType, ContentItem, ChatbookManifest, ChatbookVersion
+    ContentType
 )
 from tldw_chatbook.Chatbooks.conflict_resolver import ConflictResolution
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 from Tests.Chatbooks.factories import (
-    CharacterFactory, ConversationFactory, NoteFactory,
-    MediaFactory, PromptFactory
+    CharacterFactory, ConversationFactory, NoteFactory
 )
 
 

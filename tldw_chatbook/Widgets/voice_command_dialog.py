@@ -3,16 +3,14 @@
 Dialog for configuring voice commands, including custom command creation.
 """
 
-from typing import Optional, List
+from typing import Optional
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical, ScrollableContainer, Container
+from textual.containers import ScrollableContainer, Container
 from textual.widgets import (
-    Button, Label, Input, Select, Static, Switch,
-    DataTable, TextArea, Rule, Collapsible
+    Button, Label, Input, Static, DataTable, Rule, Collapsible
 )
 from textual.screen import ModalScreen
 from textual.reactive import reactive
-from loguru import logger
 
 from ..Audio.voice_commands import (
     VoiceCommand, CommandType, get_command_processor

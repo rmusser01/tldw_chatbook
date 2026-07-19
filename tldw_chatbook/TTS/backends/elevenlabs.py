@@ -2,7 +2,6 @@
 # Description: ElevenLabs TTS API backend implementation
 #
 # Imports
-import tempfile
 from typing import AsyncGenerator, Optional, Dict, Any
 import httpx
 from loguru import logger

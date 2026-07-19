@@ -16,7 +16,7 @@ from anytree import Node, PreOrderIter, find_by_attr
 from typing import List, Optional, Set, Dict, Any
 from loguru import logger
 
-from .mermaid_parser import MermaidMindmapParser, ExtendedMermaidParser, NodeShape
+from .mermaid_parser import ExtendedMermaidParser
 from .jsoncanvas_handler import JSONCanvasHandler
 
 

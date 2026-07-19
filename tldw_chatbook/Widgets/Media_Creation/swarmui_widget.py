@@ -1,10 +1,10 @@
 # swarmui_widget.py
 # Description: SwarmUI image generation widget for chat sidebar
 
-from typing import Optional, Dict, Any, List
+from typing import Optional, List
 from pathlib import Path
 from textual.app import ComposeResult
-from textual.containers import Container, VerticalScroll, Horizontal
+from textual.containers import Container, Horizontal
 from textual.widgets import Static, Button, TextArea, Select, Input, Label, LoadingIndicator, Collapsible
 from textual.reactive import reactive
 from textual.message import Message
@@ -12,7 +12,6 @@ from textual import work
 from loguru import logger
 
 from ...Media_Creation import ImageGenerationService, get_all_categories, get_templates_by_category, BUILTIN_TEMPLATES
-from ...config import load_settings
 
 
 class ImageGenerationMessage(Message):

@@ -2,7 +2,7 @@
 
 import random
 import time
-from typing import Optional, Any, List, Tuple
+from typing import Optional, Any, List
 
 from rich.markup import escape
 

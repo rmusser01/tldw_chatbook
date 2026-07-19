@@ -11,15 +11,12 @@ from pathlib import Path
 
 #
 # Third-Party Imports
-from hypothesis import strategies as st
-from hypothesis import given, settings, HealthCheck
 #
 # Local Imports
 # --- UPDATED IMPORT PATH ---
 from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDB,
     CharactersRAGDBError,
-    SchemaError,
     InputError,
     ConflictError
 )

@@ -15,7 +15,7 @@ Provides comprehensive error handling for the evaluation system with:
 """
 
 import asyncio
-from typing import Dict, Any, Optional, List, Callable, Tuple
+from typing import Dict, Any, Optional, List, Callable
 from enum import Enum
 from dataclasses import dataclass
 from datetime import datetime

@@ -13,21 +13,19 @@ Interactive mindmap viewer with:
 - Integration with tldw_chatbook content
 """
 
-from typing import Optional, Dict, List, Any
-from textual import on, work
+from typing import Optional
+from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical, ScrollableContainer
-from textual.widgets import Static, Input, Button, Checkbox, Label
+from textual.containers import Container, Horizontal, ScrollableContainer
+from textual.widgets import Static, Input, Button, Label
 from textual.reactive import reactive
 from textual.message import Message
-from textual.worker import Worker, WorkerState
 from loguru import logger
 from anytree import Node
 
 from ...Tools.Mind_Map.mindmap_model import MindmapModel
 from ...Tools.Mind_Map.mindmap_renderer import ThemedMindmapRenderer
-from ...Tools.Mind_Map.mermaid_parser import ExtendedMermaidParser
 
 
 class MindmapNodeSelected(Message):

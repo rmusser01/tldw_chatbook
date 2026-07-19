@@ -9,7 +9,7 @@ import json
 import sqlite3
 import shutil
 from pathlib import Path
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional
 from datetime import datetime
 import logging
 

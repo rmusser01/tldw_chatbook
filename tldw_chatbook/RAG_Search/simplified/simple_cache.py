@@ -9,7 +9,7 @@ import hashlib
 import json
 import time
 import threading
-from typing import Dict, Any, List, Optional, Tuple, Union
+from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass, field
 from collections import OrderedDict
 from loguru import logger
@@ -216,7 +216,6 @@ class SimpleRAGCache:
         
         # Use a separate thread to avoid event loop conflicts
         import concurrent.futures
-        import threading
         
         # Check if we're in an async context
         try:

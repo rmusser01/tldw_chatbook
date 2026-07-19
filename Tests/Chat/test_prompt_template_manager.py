@@ -2,7 +2,6 @@
 
 import pytest
 import json
-from pathlib import Path
 
 # Local Imports from this project
 from tldw_chatbook.Chat.prompt_template_manager import (

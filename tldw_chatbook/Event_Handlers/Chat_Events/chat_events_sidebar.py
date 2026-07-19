@@ -4,17 +4,14 @@
 #
 # Standard Library Imports
 import math
-from typing import TYPE_CHECKING, Dict, Any, Optional
-import logging
+from typing import TYPE_CHECKING
 
 # 3rd-party Libraries
 from loguru import logger as loguru_logger, logger
 from textual.widgets import ListItem, Input, ListView, TextArea, Button, Label
 from textual.css.query import QueryError
-from textual.app import App
 #
 # Local Imports
-from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.Event_Handlers.media_events import RESULTS_PER_PAGE
 
 if TYPE_CHECKING:

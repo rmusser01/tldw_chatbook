@@ -6,7 +6,6 @@ Unit tests for ProcessingDashboard component.
 import pytest
 from pathlib import Path
 from datetime import datetime, timedelta
-from unittest.mock import Mock, patch
 from textual.app import App
 
 from tldw_chatbook.Widgets.NewIngest.ProcessingDashboard import (

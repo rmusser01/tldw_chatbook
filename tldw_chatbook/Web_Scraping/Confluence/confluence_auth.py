@@ -5,7 +5,7 @@
 # Imports
 import os
 import base64
-from typing import Dict, Optional, Any, List
+from typing import Dict, Optional, Any
 from enum import Enum
 import requests
 from requests.auth import HTTPBasicAuth

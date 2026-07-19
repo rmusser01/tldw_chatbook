@@ -12,7 +12,7 @@
 import json
 import re
 from datetime import datetime
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional
 from urllib.parse import urlparse
 #
 # Third-Party Imports

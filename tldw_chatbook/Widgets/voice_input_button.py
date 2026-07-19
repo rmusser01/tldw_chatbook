@@ -7,16 +7,14 @@ Provides quick access to dictation functionality from anywhere in the app.
 from typing import Optional, Callable, Literal
 from textual.app import ComposeResult
 from textual.containers import Container
-from textual.widgets import Button, Static, LoadingIndicator
+from textual.widgets import Button, Static
 from textual.widget import Widget
 from textual.reactive import reactive
-from textual.message import Message
 from textual import work
 from loguru import logger
 
 from ..Audio.dictation_service_lazy import LazyLiveDictationService, DictationState
 from ..Event_Handlers.Audio_Events.dictation_integration_events import (
-    VoiceInputRequestEvent,
     VoiceInputResponseEvent,
     InsertDictationTextEvent
 )

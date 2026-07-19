@@ -3,9 +3,8 @@
 Event handlers for live dictation functionality.
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Optional
 from textual.message import Message
-from loguru import logger
 
 
 class DictationEvent(Message):

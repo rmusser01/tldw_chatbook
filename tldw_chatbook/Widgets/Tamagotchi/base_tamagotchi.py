@@ -5,7 +5,7 @@ Core widget class following Textual best practices.
 """
 
 import time
-from typing import Optional, Dict, Any
+from typing import Optional
 from textual.reactive import reactive
 from textual.widgets import Static
 from textual.timer import Timer
@@ -21,7 +21,7 @@ from .tamagotchi_messages import (
     TamagotchiStateChange,
     TamagotchiDeath
 )
-from .validators import TamagotchiValidator, StateValidator, RateLimiter, ValidationError
+from .validators import TamagotchiValidator, RateLimiter, ValidationError
 
 
 class BaseTamagotchi(Static):

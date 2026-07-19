@@ -2,7 +2,6 @@
 Test utilities for Evals Window tests
 """
 
-from textual.widgets import Button
 from textual.pilot import Pilot
 
 

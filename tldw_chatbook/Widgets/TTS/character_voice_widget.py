@@ -2,14 +2,14 @@
 # Description: Character voice assignment widget for audiobook generation
 #
 # Imports
-from typing import List, Dict, Optional, Any, Set
+from typing import List, Dict, Optional, Any
 from dataclasses import dataclass
 from loguru import logger
 import re
 #
 # Third-party imports
 from textual.app import ComposeResult
-from textual.containers import ScrollableContainer, Horizontal, Vertical, Container, Grid
+from textual.containers import Horizontal, Vertical, Container
 from textual.widget import Widget
 from textual.widgets import (
     DataTable, Button, Label, Select, 
@@ -17,7 +17,6 @@ from textual.widgets import (
 )
 from textual.reactive import reactive
 from textual.message import Message
-from rich.text import Text
 #
 # Local imports
 from tldw_chatbook.TTS.audiobook_generator import Character

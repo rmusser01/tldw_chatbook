@@ -9,8 +9,8 @@
 #
 # Imports
 import pytest
-from unittest.mock import MagicMock, patch, AsyncMock, PropertyMock
-from typing import List, AsyncIterator
+from unittest.mock import MagicMock, patch, PropertyMock
+from typing import List
 
 # 3rd-party Libraries
 from textual.app import App
@@ -839,7 +839,6 @@ class TestCommandPaletteIntegration:
             assert hasattr(provider, 'discover')
             
             # Check methods are callable
-            import inspect
             # Check if the provider has the correct methods
             assert callable(provider.search), f"{provider_class.__name__}.search is not callable"
             assert callable(provider.discover), f"{provider_class.__name__}.discover is not callable"

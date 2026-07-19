@@ -20,11 +20,10 @@ import re
 import time
 import traceback
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import Dict, List, Any, Optional, Union, Tuple, AsyncIterator
+from dataclasses import dataclass
+from typing import Dict, List, Any, Optional, Union, Tuple
 from pathlib import Path
 import csv
-from contextlib import asynccontextmanager
 
 from loguru import logger
 
@@ -45,8 +44,8 @@ from tldw_chatbook.Chat.Chat_Deps import (
 )
 from .eval_errors import (
     get_error_handler, EvaluationError, DatasetLoadingError, 
-    ModelConfigurationError, APIError, ExecutionError, 
-    ValidationError, ErrorContext, ErrorCategory, ErrorSeverity
+    APIError, ExecutionError, 
+    ErrorContext, ErrorCategory, ErrorSeverity
 )
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 

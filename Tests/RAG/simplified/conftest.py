@@ -8,15 +8,13 @@ import tempfile
 import shutil
 import asyncio
 import time
-import json
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Tuple
-from unittest.mock import MagicMock, Mock
-from dataclasses import dataclass
+from typing import List, Dict, Any
+from unittest.mock import MagicMock
 import numpy as np
 
 # Import optional dependency checker
-from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE, check_embeddings_rag_deps
+from tldw_chatbook.Utils.optional_deps import check_embeddings_rag_deps
 
 # Force check embeddings dependencies before tests run
 # This is a workaround for the dependency check bug where it returns cached False

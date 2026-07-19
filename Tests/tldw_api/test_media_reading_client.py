@@ -30,7 +30,6 @@ from tldw_chatbook.tldw_api import (
     ItemsBulkRequest,
     ItemsBulkResponse,
     IngestionSourceCreateRequest,
-    IngestionSourceItemListResponse,
     IngestionSourceItemResponse,
     IngestionSourcePatchRequest,
     IngestionSourceResponse,

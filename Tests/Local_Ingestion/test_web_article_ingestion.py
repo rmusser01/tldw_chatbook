@@ -92,7 +92,6 @@ def test_missing_trafilatura_is_permanent(monkeypatch):
 def test_oversized_streamed_body_is_permanent_before_full_buffer():
     # Two 8 MB chunks: the guard must abort after the SECOND chunk crosses the
     # 10 MB cap without draining the (unbounded) remainder.
-    from tldw_chatbook.Local_Ingestion import web_article_ingestion as wai
     big = b"x" * (8 * 1024 * 1024)
     drained = {"chunks": 0}
     def _gen():

@@ -4,8 +4,7 @@ RAG Search Tool for LLM function calling.
 This tool allows LLMs to search the knowledge base using the RAG system.
 """
 
-import json
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any
 from loguru import logger
 
 from . import Tool

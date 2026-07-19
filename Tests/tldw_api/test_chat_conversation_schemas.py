@@ -8,13 +8,8 @@ import pytest
 
 from tldw_chatbook.tldw_api.chat_conversation_schemas import (
     ALLOWED_CONVERSATION_STATES,
-    ConversationListItem,
-    ConversationListPagination,
     ConversationListResponse,
-    ConversationMetadata,
     ConversationScopeParams,
-    ConversationTreeNode,
-    ConversationTreePagination,
     ConversationTreeResponse,
     ConversationUpdateRequest,
 )

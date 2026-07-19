@@ -12,7 +12,6 @@ from pathlib import Path
 from tldw_chatbook.DB.Prompts_DB import (
     PromptsDatabase,
     DatabaseError,
-    SchemaError,
     InputError,
     ConflictError,
     add_or_update_prompt,

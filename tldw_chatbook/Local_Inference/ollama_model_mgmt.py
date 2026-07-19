@@ -14,7 +14,6 @@ import json as json_parser
 import time
 from typing import Optional, Callable, Tuple, Any, Dict, List
 import requests
-from textual.widgets import RichLog
 from ..Metrics.metrics_logger import log_counter, log_histogram
 # Note: TypingDict is used as an alias for Dict in type hints for Ollama functions
 # to avoid any potential (though unlikely) conflict if 'Dict' itself were a parameter name.

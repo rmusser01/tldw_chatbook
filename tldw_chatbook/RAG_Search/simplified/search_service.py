@@ -5,13 +5,12 @@ This module provides a simple interface for RAG search functionality
 specifically designed for MCP (Model Context Protocol) integration.
 """
 
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Dict, Any, Optional
 from loguru import logger
 
 from ...DB.Client_Media_DB_v2 import MediaDatabase
 from ...config import load_settings
 from .rag_factory import create_rag_service
-from .config import RAGConfig
 
 
 class SimplifiedRAGSearchService:

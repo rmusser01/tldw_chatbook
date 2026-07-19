@@ -8,14 +8,11 @@
 # - Read later services (Pocket, Instapaper)
 #
 # Imports
-import os
-import json
-import asyncio
 import smtplib
 import mimetypes
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Optional, Dict, Any, List, Union, Tuple
+from typing import Optional, Dict, Any, List
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase

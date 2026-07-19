@@ -48,7 +48,6 @@ from urllib.parse import urlparse, urlencode, unquote
 #
 # 3rd-Party Imports
 import requests
-from loguru._logger import start_time
 from requests import RequestException
 from requests.adapters import HTTPAdapter
 from urllib3 import Retry

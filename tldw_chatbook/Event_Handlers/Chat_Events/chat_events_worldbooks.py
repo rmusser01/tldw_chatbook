@@ -2,14 +2,12 @@
 Event handlers for world book UI interactions in the chat sidebar.
 """
 
-import logging
-from typing import TYPE_CHECKING, List, Dict, Any, Optional
+from typing import TYPE_CHECKING
 from loguru import logger as loguru_logger
-from textual.widgets import ListItem, Input, ListView, TextArea, Button, Label, Select, Checkbox
+from textual.widgets import ListItem, ListView, TextArea, Button, Label, Select
 from textual.css.query import QueryError
 
 from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
-from tldw_chatbook.config import get_cli_setting
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli

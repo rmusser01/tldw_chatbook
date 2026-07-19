@@ -2,7 +2,6 @@
 # Description: Enhanced Chat Window with image attachment support
 #
 # Imports
-import asyncio
 from typing import TYPE_CHECKING, Optional, Any, Dict
 #
 # 3rd-Party Imports
@@ -11,16 +10,13 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
 from textual.widgets import Button, TextArea, Input, Static, Select
 from textual.reactive import reactive
-from textual import work, on
-from textual.worker import Worker, get_current_worker, WorkerCancelled
+from textual import on
 from textual.css.query import NoMatches
 #
 # Local Imports
 from ..Widgets.enhanced_settings_sidebar import EnhancedSettingsSidebar
-from ..Widgets.compact_model_bar import CompactModelBar
 from ..Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 # Right sidebar removed - functionality moved to settings_sidebar
-from ..Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen, Filters
 from tldw_chatbook.Widgets.Chat_Widgets.chat_shell_bar import ChatShellBar
 from tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
 from ..Widgets.voice_input_widget import VoiceInputWidget, VoiceInputMessage
@@ -28,7 +24,7 @@ from ..Chat.provider_readiness import get_provider_readiness
 from ..config import get_cli_setting
 from ..Constants import TAB_CHAT
 from ..Utils.Emoji_Handling import get_char, EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE, EMOJI_SEND, FALLBACK_SEND, \
-    EMOJI_CHARACTER_ICON, FALLBACK_CHARACTER_ICON, EMOJI_STOP, FALLBACK_STOP
+    EMOJI_STOP, FALLBACK_STOP
 
 # Import modular handlers and messages
 from .Chat_Modules import (

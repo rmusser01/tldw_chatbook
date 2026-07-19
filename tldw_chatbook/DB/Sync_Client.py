@@ -1,12 +1,10 @@
 # sync_client.py
-import time
 import requests
 import json
-import logging
 import os
 import sqlite3 # For specific error types
 from datetime import datetime
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional
 
 from loguru import logger
 

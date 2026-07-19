@@ -14,7 +14,7 @@ Provides a user-friendly error dialog with:
 
 from typing import Dict, Any, Optional, Callable
 from textual.app import ComposeResult
-from textual.containers import Container, Vertical, Horizontal, Grid, ScrollableContainer
+from textual.containers import Container, Horizontal
 from textual.widgets import Button, Label, Static, TextArea, Collapsible
 from textual.screen import ModalScreen
 from textual.reactive import reactive

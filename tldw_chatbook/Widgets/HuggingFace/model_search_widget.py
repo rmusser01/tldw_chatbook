@@ -5,11 +5,10 @@ Search widget for HuggingFace GGUF models.
 
 from typing import Optional, List, Dict, Any
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical
-from textual.widgets import Input, Button, Select, Label, ListView, ListItem, Static
+from textual.containers import Container, Horizontal
+from textual.widgets import Input, Button, Select, ListView, ListItem, Static
 from textual.message import Message
 from textual.reactive import reactive
-from textual import work
 from loguru import logger
 
 

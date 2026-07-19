@@ -4,10 +4,8 @@
 #
 # Imports
 import re
-from typing import Dict, Any, List, Optional, Tuple
-from datetime import datetime
+from typing import Dict, Any, List, Optional
 from urllib.parse import urlparse, parse_qs
-import html
 #
 # Third-party imports
 # Handle optional dependencies

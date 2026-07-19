@@ -9,12 +9,10 @@ import sys
 import threading
 import queue
 import time
-import weakref
 from typing import Optional, Callable, Dict, Any, List
 from dataclasses import dataclass
 from datetime import datetime
 from loguru import logger
-from contextlib import contextmanager
 
 # Optional numpy import for audio level calculation
 try:

@@ -2,7 +2,7 @@
 File extraction utilities for extracting code blocks and files from LLM responses.
 """
 import re
-from typing import List, Dict, Optional, Tuple
+from typing import List, Optional
 from dataclasses import dataclass
 from pathlib import Path
 import json

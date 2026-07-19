@@ -12,7 +12,7 @@ from textual import on
 from .shell_destinations import SHELL_DESTINATION_ORDER, get_shell_destination, resolve_shell_route
 
 if TYPE_CHECKING:
-    from tldw_chatbook.app import TldwCli
+    pass
 
 
 #: Hotkey digits for the nav keyboard layer: ctrl+1..ctrl+9 select the first

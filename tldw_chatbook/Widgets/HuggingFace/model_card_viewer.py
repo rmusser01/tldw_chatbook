@@ -6,11 +6,10 @@ Model card viewer for displaying HuggingFace model details and available files.
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 from textual.app import ComposeResult
-from textual.containers import Container, Vertical, Horizontal, VerticalScroll
-from textual.widgets import Label, Button, Markdown, Static, LoadingIndicator, TabbedContent, TabPane, ListView, ListItem
+from textual.containers import Container, VerticalScroll
+from textual.widgets import Label, Button, Markdown, Static, TabbedContent, TabPane, ListView, ListItem
 from textual.message import Message
 from textual.reactive import reactive
-from textual import work
 from loguru import logger
 
 

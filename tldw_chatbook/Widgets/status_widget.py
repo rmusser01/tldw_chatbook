@@ -5,10 +5,8 @@ Enhanced status widget with color-coded messages and Rich formatting.
 
 from typing import List, Optional, Literal
 from datetime import datetime
-from textual.app import RenderResult
 from textual.reactive import reactive
 from textual.widget import Widget
-from textual.widgets import Static
 from rich.console import RenderableType
 from rich.text import Text
 from rich.panel import Panel

@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from textual.widgets import Button, Input
 
-from Tests.textual_test_utils import widget_pilot
 from tldw_chatbook.UI.MediaWindowV88 import MediaWindowV88
 
 

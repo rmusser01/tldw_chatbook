@@ -2,12 +2,11 @@
 # Performance-optimized version of settings sidebar with lazy loading
 
 import logging
-from typing import Dict, Any
 from textual.app import ComposeResult
-from textual.containers import VerticalScroll, Horizontal, Container
+from textual.containers import VerticalScroll, Container
 from textual.widgets import Static, Select, TextArea, Input, Button, Checkbox, Label, Switch
 from ..config import get_cli_providers_and_models
-from .lazy_widgets import LazyCollapsible, VirtualListView
+from .lazy_widgets import LazyCollapsible
 
 logger = logging.getLogger(__name__)
 

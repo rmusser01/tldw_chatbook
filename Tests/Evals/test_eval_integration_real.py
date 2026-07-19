@@ -19,17 +19,11 @@ import tempfile
 import json
 import sqlite3
 from pathlib import Path
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch
 
 from tldw_chatbook.Evals.eval_orchestrator import EvaluationOrchestrator
 from tldw_chatbook.Evals.concurrency_manager import ConcurrentRunManager
 from tldw_chatbook.Evals.configuration_validator import ConfigurationValidator
-from tldw_chatbook.Evals.eval_errors import get_error_handler, EvaluationError
-from tldw_chatbook.Evals.specialized_runners import (
-    MultilingualEvaluationRunner,
-    CodeExecutionRunner,
-    SafetyEvaluationRunner
-)
 from tldw_chatbook.DB.Evals_DB import EvalsDB
 
 

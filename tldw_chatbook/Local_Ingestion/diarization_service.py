@@ -5,14 +5,11 @@ Implements speaker identification using vector embeddings approach.
 """
 
 import os
-import sys
 import time
 import threading
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Union, Callable, Tuple, TYPE_CHECKING, TypedDict
-import json
+from typing import Optional, Dict, Any, List, Callable, TYPE_CHECKING, TypedDict
 from loguru import logger
-from contextlib import contextmanager
 from enum import Enum
 
 # Type checking imports (not loaded at runtime)

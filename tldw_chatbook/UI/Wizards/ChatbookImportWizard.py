@@ -15,14 +15,12 @@ Implements the chatbook import workflow:
 
 import asyncio
 from pathlib import Path
-from datetime import datetime
 from typing import Dict, List, Any, Optional, TYPE_CHECKING
 
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, VerticalScroll
+from textual.containers import Container
 from textual.widgets import (
-    Static, Input, Button, Label, Tree, DataTable,
-    ProgressBar, RadioSet, RadioButton, Checkbox
+    Static, Button, Label, Tree, ProgressBar, RadioSet, RadioButton, Checkbox
 )
 from textual.worker import Worker
 from textual.reactive import reactive
@@ -45,7 +43,7 @@ from ..server_chatbook_service_lease import (
 from ...Widgets.enhanced_file_picker import EnhancedFileOpen
 
 if TYPE_CHECKING:
-    from ...app import TldwCli
+    pass
 
 
 class FileSelectionStep(WizardStep):

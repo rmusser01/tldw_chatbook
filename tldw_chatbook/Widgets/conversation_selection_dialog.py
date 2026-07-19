@@ -3,7 +3,6 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, ScrollableContainer
 from textual.widgets import Button, Label, Static, Input, RadioButton, RadioSet
 from textual.screen import ModalScreen
-from textual.reactive import reactive
 from typing import Optional, Dict, Any, List
 from loguru import logger
 

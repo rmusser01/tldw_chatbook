@@ -17,10 +17,9 @@ import subprocess
 from loguru import logger
 
 # Local imports
-from .audio_processing import LocalAudioProcessor, AudioProcessingError
+from .audio_processing import LocalAudioProcessor
 from ..config import get_cli_setting
 from ..DB.Client_Media_DB_v2 import MediaDatabase
-from ..Utils.text import sanitize_filename
 from ..Metrics.metrics_logger import log_counter, log_histogram
 
 # Optional imports

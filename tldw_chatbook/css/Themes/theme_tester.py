@@ -6,7 +6,7 @@ from textual.widgets import (
 # textual.theme.Theme is used in themes.py
 # No need to import Color or ColorSystem here for basic theme switching.
 
-from themes import MY_THEMES, ALL_THEMES  # This now imports a dictionary of {name: ThemeObject}
+from themes import ALL_THEMES  # This now imports a dictionary of {name: ThemeObject}
 
 class ThemeDemoApp(App):
     TITLE = "Textual Theme Demo"

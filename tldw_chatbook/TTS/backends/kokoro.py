@@ -37,8 +37,8 @@ except ImportError:
 # Local imports
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.base_backends import LocalTTSBackend
-from tldw_chatbook.TTS.audio_service import AudioService, get_audio_service
-from tldw_chatbook.TTS.text_processing import TextChunker, TextNormalizer, detect_language
+from tldw_chatbook.TTS.audio_service import get_audio_service
+from tldw_chatbook.TTS.text_processing import TextChunker, TextNormalizer
 from tldw_chatbook.config import get_cli_setting
 
 #######################################################################################################################

@@ -4,13 +4,9 @@ Tests the new module-based architecture and message passing system.
 """
 
 import pytest
-import asyncio
 from unittest.mock import Mock, MagicMock, AsyncMock, patch
 from pathlib import Path
 
-from textual.app import App
-from textual.widgets import Button, TextArea, Static
-from textual.message import Message
 
 
 class TestChatModulesIntegration:

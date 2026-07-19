@@ -13,14 +13,11 @@ import numpy as np
 import struct
 import threading
 import gc
-from pathlib import Path
 from unittest.mock import patch, MagicMock
-import time
 
 from tldw_chatbook.Local_Ingestion.transcription_service import (
     TranscriptionService,
-    TranscriptionError,
-    PARAKEET_MLX_AVAILABLE
+    TranscriptionError
 )
 
 # Skip all tests if not on macOS

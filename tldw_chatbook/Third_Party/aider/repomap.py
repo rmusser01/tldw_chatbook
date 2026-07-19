@@ -6,7 +6,6 @@ import os
 import random
 import shutil
 import sqlite3
-import sys
 import time
 import warnings
 from collections import Counter, defaultdict, namedtuple
@@ -27,7 +26,6 @@ except ImportError:
         return iterable
 #
 # Local Imports
-from tldw_chatbook.Third_Party.aider.dump import dump
 from tldw_chatbook.Third_Party.aider.special import filter_important_files
 from tldw_chatbook.Third_Party.aider.waiting import Spinner
 #

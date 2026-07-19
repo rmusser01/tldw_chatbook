@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from loguru import logger
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container, Horizontal
 from textual.reactive import reactive
 from textual.widgets import Static, Button, Label
 from textual.binding import Binding
@@ -22,7 +22,7 @@ from textual.screen import Screen
 logger = logger.bind(module="BaseWizard")
 
 if TYPE_CHECKING:
-    from textual.app import App
+    pass
 
 ########################################################################################################################
 #

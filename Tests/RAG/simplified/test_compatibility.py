@@ -6,8 +6,7 @@ with the new profile-based system.
 """
 
 import pytest
-from typing import Dict, Any
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 # Import optional dependency checker
 from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE

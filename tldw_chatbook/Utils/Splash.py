@@ -3,9 +3,8 @@
 # Updated to work with the new splash screen system as an additional ASCII art provider.
 #
 # Imports
-import os
 import time
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 #
 # 3rd-party Libraries
 #

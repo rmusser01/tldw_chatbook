@@ -4,7 +4,7 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, Input, ListView, Select, Static, TextArea
 
-from tldw_chatbook.UI.Screens.study_scope_models import StudyScopeContext, StudyScopeState, StudyScopeType
+from tldw_chatbook.UI.Screens.study_scope_models import StudyScopeContext, StudyScopeType
 from tldw_chatbook.UI.Screens.study_screen import StudyScreen
 from tldw_chatbook.UI.Study_Window import StudyWindow
 

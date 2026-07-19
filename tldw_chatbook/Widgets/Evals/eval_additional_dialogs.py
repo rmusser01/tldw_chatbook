@@ -15,13 +15,13 @@ Additional dialogs to complete the evaluation system:
 from typing import Dict, List, Any, Optional, Callable
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Container, Vertical, Horizontal, Grid
+from textual.containers import Container, Horizontal, Grid
 from textual.screen import ModalScreen
 from textual.widgets import (
     Button, Label, Input, Select, TextArea, Checkbox, 
-    Static, ListView, ListItem, Collapsible
+    ListView, ListItem, Collapsible
 )
-from textual.validation import Number, Length
+from textual.validation import Number
 from loguru import logger
 
 class FileUploadDialog(ModalScreen):

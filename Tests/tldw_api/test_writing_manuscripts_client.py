@@ -13,7 +13,6 @@ from tldw_chatbook.tldw_api import (
     ManuscriptCharacterUpdate,
     ManuscriptChapterCreate,
     ManuscriptChapterResponse,
-    ManuscriptChapterUpdate,
     ManuscriptCitationCreate,
     ManuscriptCitationResponse,
     ManuscriptPartCreate,

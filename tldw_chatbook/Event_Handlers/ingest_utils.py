@@ -4,7 +4,6 @@
 #
 # Imports
 from typing import Optional
-from pathlib import Path
 
 # 3rd-party Libraries
 from ..Third_Party.textual_fspicker import Filters

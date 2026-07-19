@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from tldw_chatbook.MCP.mcp_import import ImportCandidate, parse_mcp_servers_json
+from tldw_chatbook.MCP.mcp_import import parse_mcp_servers_json
 
 
 def test_parses_command_args_env_and_placeholder_passthrough():

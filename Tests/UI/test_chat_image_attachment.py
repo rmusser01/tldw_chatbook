@@ -2,7 +2,6 @@
 # Tests for chat file attachment behavior under the current modular contract.
 
 import asyncio
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 

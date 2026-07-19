@@ -13,7 +13,6 @@ from functools import lru_cache
 import logging
 
 # Local Imports
-from tldw_chatbook.config import get_cli_setting
 
 # Configure logger
 logger = logging.getLogger(__name__)

@@ -11,7 +11,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 from textual.widgets import Button, Checkbox, DataTable, Input, ListView, Select, Static
 
-from Tests.textual_test_utils import widget_pilot
 from tldw_chatbook.DB.search_history_db import SearchHistoryDB
 from tldw_chatbook.RAG_Search.ingestion_indexing import (
     ITEM_TYPE_CONVERSATION,

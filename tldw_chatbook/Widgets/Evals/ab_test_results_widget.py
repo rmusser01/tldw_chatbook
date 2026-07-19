@@ -12,14 +12,13 @@ Compact widget for displaying:
 - Visual indicators
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical, Grid
+from textual.containers import Container, Horizontal, Grid
 from textual.widgets import Static, Button, ProgressBar
 from textual.widget import Widget
 from textual.reactive import reactive
 from textual.message import Message
-from loguru import logger
 
 class ABTestResultsWidget(Widget):
     """Widget for displaying A/B test results."""

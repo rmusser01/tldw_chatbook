@@ -11,15 +11,12 @@ import os
 import tempfile
 import wave
 import numpy as np
-from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock, call
-from typing import Dict, Any, Optional
+from unittest.mock import Mock, patch, MagicMock
 
 # Import the transcription service and related classes
 from tldw_chatbook.Local_Ingestion.transcription_service import (
     TranscriptionService,
     TranscriptionError,
-    ConversionError,
     LIGHTNING_WHISPER_AVAILABLE
 )
 

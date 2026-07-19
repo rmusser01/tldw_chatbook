@@ -6,7 +6,7 @@ with graceful fallbacks when dependencies are not available.
 """
 
 import re
-from typing import List, Optional, Protocol
+from typing import List, Protocol
 from loguru import logger
 from ..Utils.optional_deps import get_safe_import, check_dependency
 

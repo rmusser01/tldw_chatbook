@@ -6,7 +6,7 @@ import json
 import tempfile
 from pathlib import Path
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 import io
 
 from tldw_chatbook.Character_Chat.Character_Chat_Lib import (

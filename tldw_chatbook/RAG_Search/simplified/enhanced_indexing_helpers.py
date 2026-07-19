@@ -24,7 +24,7 @@ except ImportError:
             pass
 
 from .data_models import IndexingResult
-from ..enhanced_chunking_service import EnhancedChunkingService, StructuredChunk
+from ..enhanced_chunking_service import EnhancedChunkingService
 
 # Constants
 CHUNK_PROGRESS_INTERVAL = 10

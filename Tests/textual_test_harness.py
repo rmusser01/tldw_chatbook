@@ -7,9 +7,7 @@ including fixtures, helpers, and patterns for common testing scenarios.
 """
 
 import asyncio
-import pytest
 import pytest_asyncio
-from loguru import logger
 from typing import Type, TypeVar, Optional, Any, Callable, List, Dict
 from contextlib import asynccontextmanager
 from unittest.mock import MagicMock, AsyncMock, patch
@@ -17,9 +15,8 @@ from unittest.mock import MagicMock, AsyncMock, patch
 from textual.app import App, ComposeResult
 from textual.widget import Widget
 from textual.pilot import Pilot
-from textual.widgets import Button, Input, TextArea, Label
+from textual.widgets import Button, Input, TextArea
 from textual.containers import Container
-from textual.events import Event
 from textual.message import Message
 
 

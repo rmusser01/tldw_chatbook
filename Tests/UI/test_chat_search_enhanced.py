@@ -1,13 +1,10 @@
 """Tests for enhanced chat search functionality."""
 
 import pytest
-from unittest.mock import Mock, patch, MagicMock, call
-from datetime import datetime
+from unittest.mock import Mock
 from typing import List, Dict, Any
 
-from textual.app import App
 from textual.widgets import Input, ListView, Button, Checkbox, Select
-from textual.containers import Container
 
 
 @pytest.fixture

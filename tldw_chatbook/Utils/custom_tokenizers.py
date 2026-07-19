@@ -5,7 +5,7 @@
 import json
 import os
 import time
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional, Any
 from pathlib import Path
 #
 # 3rd-Party Imports

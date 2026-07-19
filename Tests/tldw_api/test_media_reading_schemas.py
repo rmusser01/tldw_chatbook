@@ -27,7 +27,6 @@ from tldw_chatbook.tldw_api import (
     MediaMetadataSearchResponse,
     MediaNavigationContentResponse,
     MediaNavigationResponse,
-    MediaSearchRequest,
     MediaTrashEmptyResponse,
     MediaTranscriptionModelsResponse,
     MediaUpdateRequest,

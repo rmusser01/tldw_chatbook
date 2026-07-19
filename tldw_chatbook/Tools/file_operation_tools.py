@@ -4,10 +4,8 @@ File Operation Tools for LLM function calling.
 These tools allow LLMs to perform safe file operations with proper validation.
 """
 
-import os
-import json
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any
 from loguru import logger
 
 from . import Tool

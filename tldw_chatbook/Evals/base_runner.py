@@ -11,15 +11,13 @@ Provides abstract base class and common data structures for all evaluation runne
 import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Dict, List, Any, Optional, Union, AsyncIterator
+from typing import Dict, List, Any, Optional
 from datetime import datetime
-from pathlib import Path
 
 from loguru import logger
 
 from .eval_errors import (
-    get_error_handler, EvaluationError, ExecutionError,
-    ErrorContext, ErrorCategory, ErrorSeverity
+    get_error_handler
 )
 
 

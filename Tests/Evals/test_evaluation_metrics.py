@@ -3,7 +3,7 @@ Tests for custom evaluation metrics.
 Tests instruction_adherence, format_compliance, coherence_score, and dialogue_quality metrics.
 """
 import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 from tldw_chatbook.Evals.eval_runner import BaseEvalRunner, EvalSample, EvalSampleResult
 from tldw_chatbook.Evals.task_loader import TaskConfig

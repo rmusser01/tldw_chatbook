@@ -2,7 +2,6 @@
 
 from typing import TYPE_CHECKING, List, Dict, Any, Optional, Union
 from loguru import logger
-from textual.widgets import Static
 from textual import work
 
 from ...config import get_chachanotes_db_lazy
@@ -100,7 +99,6 @@ class CCPMessageManager:
             messages_view = self.window.query_one("#ccp-conversation-messages-view")
             
             # Import message widget here to avoid circular imports
-            from ...Widgets.chat_message_enhanced import ChatMessageEnhanced
             
             for msg in self.current_messages:
                 message_widget = self._create_message_widget(msg)

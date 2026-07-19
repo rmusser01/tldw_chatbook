@@ -9,7 +9,7 @@ import hashlib
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 import html
 #
 # Third-Party Imports

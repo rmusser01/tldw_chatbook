@@ -5,14 +5,13 @@ Uses existing encryption utilities from the project.
 """
 
 import json
-import os
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from dataclasses import dataclass, asdict
 from loguru import logger
 
-from ..config import get_cli_setting, save_setting_to_cli_config
+from ..config import get_cli_setting
 from ..Utils.config_encryption import ConfigEncryption
 
 

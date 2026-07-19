@@ -12,11 +12,9 @@ This module tests:
 
 import pytest
 import os
-import tempfile
-import json
 from pathlib import Path
 from typing import Dict, Any, Optional
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from hypothesis import given, strategies as st
 
 # Import configuration classes
@@ -32,7 +30,7 @@ try:
 except ImportError:
     CONFIG_AVAILABLE = False
     # Create placeholder implementation
-    from dataclasses import dataclass, field
+    from dataclasses import dataclass
     
     @dataclass
     class RAGConfig:

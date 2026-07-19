@@ -5,7 +5,7 @@ This module contains only the essential types needed for pipeline execution.
 No complex monads or effect systems - just simple Python.
 """
 
-from typing import Dict, List, Any, Optional, TypedDict
+from typing import Dict, List, Any, TypedDict
 from dataclasses import dataclass
 from enum import Enum
 

@@ -4,7 +4,6 @@
 # Imports
 from typing import Optional
 from textual.app import ComposeResult
-from textual.containers import Container
 from textual.widgets import Static
 from textual.widget import Widget
 from textual.reactive import reactive

@@ -12,13 +12,11 @@ This module manages state changes for various LLM server workers including:
 
 from typing import TYPE_CHECKING, Optional, Dict
 from textual.worker import Worker, WorkerState
-from textual.widgets import Button
-from textual.css.query import QueryError
 
 from .base_handler import BaseWorkerHandler
 
 if TYPE_CHECKING:
-    from tldw_chatbook.app import TldwCli
+    pass
 
 
 class ServerWorkerHandler(BaseWorkerHandler):

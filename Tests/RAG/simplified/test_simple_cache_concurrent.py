@@ -9,9 +9,8 @@ import asyncio
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from unittest.mock import patch, MagicMock
 
-from tldw_chatbook.RAG_Search.simplified.simple_cache import SimpleRAGCache, CacheEntry
+from tldw_chatbook.RAG_Search.simplified.simple_cache import SimpleRAGCache
 
 
 class TestConcurrentAccess:

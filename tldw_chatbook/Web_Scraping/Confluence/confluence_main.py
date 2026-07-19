@@ -16,7 +16,7 @@ from loguru import logger
 from .confluence_auth import ConfluenceAuth, create_confluence_auth
 from .confluence_scraper import ConfluenceScraper
 from .confluence_crawler import ConfluenceCrawler, create_page_filter
-from .confluence_utils import parse_confluence_url, format_page_hierarchy
+from .confluence_utils import format_page_hierarchy
 from ...DB.Client_Media_DB_v2 import ingest_article_to_db_new
 from ...config import load_cli_config_and_ensure_existence
 #

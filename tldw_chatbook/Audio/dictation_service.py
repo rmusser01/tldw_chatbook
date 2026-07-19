@@ -4,8 +4,6 @@ Live dictation service combining audio recording with real-time transcription.
 Provides a high-level interface for speech-to-text functionality.
 """
 
-import os
-import sys
 import threading
 import queue
 import time

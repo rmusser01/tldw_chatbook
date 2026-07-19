@@ -12,17 +12,16 @@ Provides an interactive dialog for:
 - Exporting validation reports
 """
 
-from typing import Dict, List, Any, Optional, Callable
+from typing import Optional, Callable
 from pathlib import Path
-from textual import on, work
+from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Vertical, Horizontal, ScrollableContainer, Grid
 from textual.screen import ModalScreen
 from textual.widgets import (
-    Button, Label, Static, DataTable, Tabs, Tab, TabPane,
-    ListView, ListItem, Collapsible, ProgressBar, Markdown
+    Button, Label, Static, Tabs, TabPane,
+    ListView, ListItem, Markdown
 )
-from textual.reactive import reactive
 from textual.binding import Binding
 from loguru import logger
 

@@ -3,7 +3,6 @@
 #
 # Imports
 from typing import TYPE_CHECKING, Optional, List, Dict, Any
-import os
 import shutil
 import json
 from datetime import datetime
@@ -15,10 +14,8 @@ from textual import work
 from textual.app import ComposeResult
 from textual.containers import Container, VerticalScroll, Horizontal
 from textual.css.query import QueryError
-from textual.widgets import Static, Button, TextArea, Label, Input, Select, Checkbox, TabbedContent, TabPane, Switch, ContentSwitcher, Collapsible, ListView, ListItem
+from textual.widgets import Static, Button, TextArea, Label, Input, Select, Checkbox, TabbedContent, TabPane, Switch, ContentSwitcher, Collapsible, ListView
 from textual.message import Message
-from textual.screen import Screen
-from textual.worker import Worker
 from textual.widgets import Markdown
 from textual import on
 # Local Imports
@@ -35,7 +32,6 @@ from ..DB.Prompts_DB import PromptsDatabase
 from .MCP_Modules.unified_mcp_panel import UnifiedMCPPanel
 from .Outputs_Panel import OutputsPanel
 from .Sharing_Panel import SharingPanel
-from ..Utils.path_validation import validate_path
 from .Theme_Editor_Window import ThemeEditorView
 from .Widgets import ConfigSearchResult, UIElementSearchEngine
 from ..Chat.provider_readiness import (
@@ -5135,7 +5131,6 @@ Thank you for using tldw-chatbook! 🎉
         """Import a chatbook."""
         from ..Widgets.file_picker_dialog import FilePickerDialog
         from ..Chatbooks.chatbook_importer import ChatbookImporter
-        from ..Chatbooks.conflict_resolver import ConflictResolution
         
         try:
             # Show file picker to select chatbook

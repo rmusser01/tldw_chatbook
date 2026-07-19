@@ -3,10 +3,9 @@
 #
 # Imports
 import re
-from typing import Dict, List, Tuple, Optional, Any
+from typing import List, Optional
 from dataclasses import dataclass
 from enum import Enum
-from loguru import logger
 
 # Third-party imports
 try:

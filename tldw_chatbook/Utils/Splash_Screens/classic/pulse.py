@@ -2,7 +2,7 @@
 
 import math
 import time
-from typing import Optional, Any, List, Tuple
+from typing import Optional, Any, Tuple
 
 from ..base_effect import BaseEffect, register_effect
 

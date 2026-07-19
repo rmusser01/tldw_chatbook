@@ -1,16 +1,13 @@
 # /tldw_chatbook/Event_Handlers/llm_management_events_transformers.py
 from __future__ import annotations
 
-import logging
 from loguru import logger as _loguru_fallback_logger
 import shlex
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Dict, Any, Optional
-import functools  # For download worker
+from typing import TYPE_CHECKING, List, Optional
 
 from textual.widgets import Input, RichLog, Button
-from textual.css.query import QueryError
 
 # For listing local models, you might need to interact with huggingface_hub or scan directories
 try:

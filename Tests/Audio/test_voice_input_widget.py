@@ -7,9 +7,9 @@ Tests UI component, event handling, and integration with dictation service.
 import pytest
 import pytest_asyncio
 import asyncio
-from unittest.mock import Mock, patch, MagicMock, AsyncMock, call
+from unittest.mock import Mock, patch
 from textual.app import App
-from textual.widgets import Button, Static, Select, TextArea
+from textual.widgets import Button, Static, Select
 
 from tldw_chatbook.Widgets.voice_input_widget import (
     VoiceInputWidget,
@@ -17,13 +17,8 @@ from tldw_chatbook.Widgets.voice_input_widget import (
 )
 from tldw_chatbook.Audio import DictationState
 from tldw_chatbook.Event_Handlers.Audio_Events import (
-    DictationStartedEvent,
-    DictationStoppedEvent,
-    PartialTranscriptEvent,
     FinalTranscriptEvent,
-    VoiceCommandEvent,
-    DictationErrorEvent,
-    AudioLevelUpdateEvent
+    VoiceCommandEvent
 )
 
 

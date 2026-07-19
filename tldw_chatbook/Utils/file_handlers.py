@@ -15,12 +15,11 @@ import yaml
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Literal, Union, TYPE_CHECKING
+from typing import List, Optional, Literal, Union, TYPE_CHECKING
 from loguru import logger
-from datetime import datetime
 
 if TYPE_CHECKING:
-    from ..DB.Client_Media_DB_v2 import MediaDatabase
+    pass
 
 
 @dataclass

@@ -1,10 +1,10 @@
 # swarmui_events.py
 # Description: Event handlers and messages for SwarmUI image generation
 
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, Optional
 from dataclasses import dataclass
 from textual.message import Message
-from textual import on, work
+from textual import on
 from loguru import logger
 
 from ...Media_Creation import ImageGenerationService, GenerationResult

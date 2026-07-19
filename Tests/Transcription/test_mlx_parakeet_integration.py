@@ -11,9 +11,7 @@ import os
 import tempfile
 import wave
 import numpy as np
-from pathlib import Path
 from unittest.mock import patch, MagicMock
-import time
 
 from tldw_chatbook.Local_Ingestion.transcription_service import (
     TranscriptionService,

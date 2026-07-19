@@ -9,9 +9,8 @@ through the Model Context Protocol.
 
 import asyncio
 import ast
-import os
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional, Any
 from datetime import datetime
 
 # Import MCP server components conditionally
@@ -478,7 +477,6 @@ class TldwMCPServer:
         """
         if transport == "stdio":
             # Run with stdio transport (for Claude Desktop)
-            import sys
             from mcp.server.stdio import stdio_server
             
             async with stdio_server() as (read_stream, write_stream):

@@ -11,14 +11,12 @@ Tests security measures including:
 import pytest
 import tempfile
 import os
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import patch
 import sqlite3
 
 from tldw_chatbook.Web_Scraping.cookie_scraping.cookie_cloner import (
     escape_sql_like_pattern,
-    get_chrome_cookies,
-    get_firefox_cookies,
-    get_edge_cookies
+    get_chrome_cookies
 )
 
 
@@ -281,7 +279,6 @@ class TestSecureDefaults:
     def test_request_timeouts(self):
         """Test that network requests have timeouts."""
         # Check that requests have reasonable timeouts to prevent DoS
-        import tldw_chatbook.Web_Scraping.Article_Extractor_Lib as extractor
         
         # This is a pattern check - ensure timeouts are used
         # In actual code, all requests.get() should have timeout parameter

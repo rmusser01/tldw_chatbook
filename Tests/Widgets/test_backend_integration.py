@@ -5,7 +5,7 @@ Unit tests for BackendIntegration component.
 
 import pytest
 from pathlib import Path
-from unittest.mock import Mock, patch, AsyncMock
+from unittest.mock import Mock, patch
 from textual.app import App
 from textual.widgets import Static
 

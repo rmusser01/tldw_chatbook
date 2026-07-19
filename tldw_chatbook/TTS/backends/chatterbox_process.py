@@ -24,7 +24,6 @@ import json
 import base64
 import io
 import traceback
-from pathlib import Path
 
 # Create a writer using the saved stdout file descriptor
 # This bypasses the Python-level redirection

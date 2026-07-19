@@ -1,7 +1,6 @@
 """Customize screen implementation."""
 
 from typing import TYPE_CHECKING
-from loguru import logger
 
 from textual.app import ComposeResult
 from textual.widgets import Button

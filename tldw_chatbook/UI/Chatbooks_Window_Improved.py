@@ -9,14 +9,14 @@ Improved UI for the chatbooks feature with better visual hierarchy,
 more features, and enhanced user experience.
 """
 
-from typing import Optional, List, Dict, Any, TYPE_CHECKING
+from typing import List, Dict, Any, TYPE_CHECKING
 from pathlib import Path
 from datetime import datetime
 
 from textual.app import ComposeResult
 from textual.screen import Screen
 from textual.containers import Container, Horizontal, VerticalScroll, Grid
-from textual.widgets import Static, Button, Label, Input, ListView, ListItem
+from textual.widgets import Static, Button, Input, ListView, ListItem
 from textual.reactive import reactive
 from loguru import logger
 

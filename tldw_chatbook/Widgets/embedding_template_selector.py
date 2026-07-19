@@ -3,12 +3,12 @@
 #
 # Imports
 from __future__ import annotations
-from typing import Optional, List, Dict, Any
+from typing import Optional, Dict, Any
 
 # Third-party imports
 from textual.app import ComposeResult
 from textual.containers import Container, Vertical, Horizontal, Grid
-from textual.widgets import Static, Button, RadioSet, RadioButton, Label
+from textual.widgets import Static, Button, RadioSet, Label
 from textual.widget import Widget
 from textual.reactive import reactive
 from textual.message import Message

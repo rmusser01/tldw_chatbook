@@ -5,7 +5,7 @@ Unit tests for UnifiedProcessor and related components.
 
 import pytest
 from pathlib import Path
-from unittest.mock import Mock, patch, AsyncMock
+from unittest.mock import Mock
 from textual.app import App
 from textual.widgets import Button, RadioButton, Static
 

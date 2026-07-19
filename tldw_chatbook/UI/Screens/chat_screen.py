@@ -273,7 +273,6 @@ from ..Views.RAGSearch.search_handoff import build_library_rag_console_live_work
 
 # Import the existing chat window to reuse its functionality
 from ..Chat_Window_Enhanced import ChatWindowEnhanced
-from ...Widgets.voice_input_widget import VoiceInputMessage
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli

@@ -4,7 +4,6 @@
 #
 import pytest
 from unittest.mock import MagicMock, patch
-from textual.command import Hit
 
 @pytest.mark.unit
 def test_command_palette_imports():

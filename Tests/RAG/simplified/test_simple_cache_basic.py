@@ -2,7 +2,6 @@
 Basic tests for the SimpleRAGCache that match its actual implementation.
 """
 
-import pytest
 import time
 from tldw_chatbook.RAG_Search.simplified.simple_cache import SimpleRAGCache
 

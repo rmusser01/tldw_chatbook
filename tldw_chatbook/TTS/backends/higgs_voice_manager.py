@@ -2,7 +2,6 @@
 # Description: Voice profile management utilities for Higgs Audio TTS
 #
 # Imports
-import os
 import json
 import shutil
 import asyncio

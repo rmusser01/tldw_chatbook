@@ -4,7 +4,6 @@
 # Imports
 from __future__ import annotations
 #
-import logging
 from typing import TYPE_CHECKING
 #
 # 3rd-Party Imports
@@ -16,7 +15,6 @@ from textual.widgets import Button
 if TYPE_CHECKING:
     from ..app import TldwCli  # pragma: no cover – runtime import only
 # Import the specific handler
-from tldw_chatbook.Event_Handlers.LLM_Management_Events.llm_management_events_ollama import handle_ollama_nav_button_pressed
 #
 #######################################################################################################################
 #

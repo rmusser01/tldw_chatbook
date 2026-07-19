@@ -5,8 +5,6 @@
 # Imports
 import asyncio
 from typing import Set, List, Dict, Any, Optional, Callable
-from urllib.parse import urljoin
-import time
 #
 # Third-party imports
 from loguru import logger

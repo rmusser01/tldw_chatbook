@@ -2,7 +2,6 @@
 # Description: Handlers for sidebar resize functionality in the chat tab
 #
 # Imports
-import logging
 from typing import TYPE_CHECKING
 #
 # 3rd-Party Imports

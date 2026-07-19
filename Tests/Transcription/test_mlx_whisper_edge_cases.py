@@ -12,8 +12,7 @@ import tempfile
 import wave
 import struct
 import numpy as np
-from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock, PropertyMock
+from unittest.mock import patch, MagicMock
 import concurrent.futures
 import threading
 import time
@@ -21,7 +20,6 @@ import time
 from tldw_chatbook.Local_Ingestion.transcription_service import (
     TranscriptionService,
     TranscriptionError,
-    ConversionError,
     protect_file_descriptors
 )
 

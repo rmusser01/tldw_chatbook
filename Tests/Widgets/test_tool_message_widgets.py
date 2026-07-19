@@ -2,11 +2,8 @@
 
 import json
 import pytest
-from typing import List, Dict, Any
 
 from textual.app import App
-from textual.widgets import Static
-from textual.css.query import QueryError
 
 from tldw_chatbook.Widgets.tool_message_widgets import (
     ToolCallMessage,

@@ -3,7 +3,6 @@
 # Unit tests for Confluence utility functions
 #
 import pytest
-from unittest.mock import MagicMock, patch
 from tldw_chatbook.Web_Scraping.Confluence.confluence_utils import (
     convert_confluence_to_markdown,
     extract_confluence_metadata,

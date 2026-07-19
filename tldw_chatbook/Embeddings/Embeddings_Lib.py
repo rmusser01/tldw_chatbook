@@ -45,7 +45,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator, HttpUrl
 
 # Optional dependencies with fallbacks
 from ..Utils.optional_deps import (
-    check_dependency, require_dependency, get_safe_import,
+    get_safe_import,
     DEPENDENCIES_AVAILABLE
 )
 

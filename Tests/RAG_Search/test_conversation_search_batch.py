@@ -8,7 +8,6 @@ module lived one package deeper, in ``simplified/``), which raised
 time; any end-to-end call below would resurface that class of break.
 """
 
-import asyncio
 
 import pytest
 

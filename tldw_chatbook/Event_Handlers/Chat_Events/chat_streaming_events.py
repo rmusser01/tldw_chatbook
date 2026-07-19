@@ -2,16 +2,13 @@
 #
 # Imports
 import json
-import logging
 import re
-import threading
 #
 # Third-party Imports
 from loguru import logger as _loguru_fallback_logger
-from rich.text import Text
 from textual.containers import VerticalScroll
 from textual.css.query import QueryError
-from textual.widgets import Static, TextArea, Label, Markdown
+from textual.widgets import TextArea, Label, Markdown
 from rich.markup import escape as escape_markup
 #
 # Local Imports

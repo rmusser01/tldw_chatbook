@@ -18,12 +18,9 @@ Each template includes task configuration, evaluation metrics, and sample data.
 """
 
 import json
-import math
 import random
-import re
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional
 from pathlib import Path
-from datetime import datetime
 
 from .task_loader import TaskConfig
 

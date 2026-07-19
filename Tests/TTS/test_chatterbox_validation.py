@@ -2,12 +2,11 @@
 Validation tests for Chatterbox TTS backend.
 Tests streaming, crossfade, and voice cloning functionality.
 """
-import asyncio
 import pytest
 import pytest_asyncio
 import tempfile
 import os
-from unittest.mock import Mock, patch, AsyncMock
+from unittest.mock import Mock, patch
 import numpy as np
 import torch
 

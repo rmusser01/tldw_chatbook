@@ -4,15 +4,14 @@ Reusable voice input widget for speech recording and live dictation.
 Provides visual feedback and controls for voice input across the application.
 """
 
-from typing import Optional, Callable, List, Dict, Any
+from typing import Optional
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Static, Select, ProgressBar
+from textual.widgets import Button, Static, Select
 from textual.widget import Widget
 from textual.reactive import reactive
 from textual.message import Message
 from textual import work
-from textual.worker import Worker, WorkerState
 import asyncio
 from loguru import logger
 
@@ -510,7 +509,6 @@ class VoiceInputWidget(Widget):
     def _initialize_dictation_service(self):
         """Initialize the dictation service."""
         try:
-            from ..config import get_cli_setting
             
             self.dictation_service = LazyLiveDictationService(
                 transcription_provider=self.transcription_provider,

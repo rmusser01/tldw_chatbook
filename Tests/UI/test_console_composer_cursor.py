@@ -7,7 +7,7 @@ and word boundaries.
 """
 
 import pytest
-from textual.widgets import Button, Static
+from textual.widgets import Static
 
 from Tests.UI.test_console_native_chat_flow import (
     CapturingGateway,

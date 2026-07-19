@@ -10,19 +10,13 @@ from __future__ import annotations
 import asyncio
 
 import json
-import logging
 from loguru import logger as _loguru_fallback_logger
-import shlex
-import subprocess
-import sys
-import time
-from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from textual.containers import Container
 from textual.css.query import QueryError
-from textual.widgets import Input, TextArea, RichLog
+from textual.widgets import Input, RichLog
 
 from tldw_chatbook.Event_Handlers.LLM_Management_Events.llm_management_events import (
     _make_path_update_callback,

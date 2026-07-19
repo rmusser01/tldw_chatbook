@@ -85,7 +85,7 @@ from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_HOME, TAB_L
     TAB_INGEST, TAB_LLM, TAB_MEDIA, TAB_SEARCH, TAB_EVALS, TAB_LIBRARY, TAB_ARTIFACTS, TAB_PERSONAS, TAB_WATCHLISTS_COLLECTIONS, \
     TAB_SCHEDULES, TAB_WORKFLOWS, TAB_MCP, TAB_ACP, TAB_SKILLS, TAB_SETTINGS, LLAMA_CPP_SERVER_ARGS_HELP_TEXT, \
     LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_STTS, TAB_STUDY, TAB_WRITING, TAB_RESEARCH, TAB_SUBSCRIPTIONS, TAB_CHATBOOKS, \
-    LIBRARY_NAV_CONTEXT_MODE, LIBRARY_NAV_CONTEXT_NOTE_ID, LIBRARY_NAV_CONTEXT_NOTES_CREATE, \
+    LIBRARY_NAV_CONTEXT_MODE, LIBRARY_NAV_CONTEXT_NOTES_CREATE, \
     LIBRARY_NAV_CONTEXT_INGEST, \
     get_tab_display_label
 from tldw_chatbook.Chat.chat_conversation_scope_service import ChatConversationScopeService
@@ -96,9 +96,7 @@ from tldw_chatbook.Chat.console_live_work import (
     ConsoleLiveWorkLaunch,
     resolve_console_live_work_primary_action,
 )
-from tldw_chatbook.Chat.chat_loop_scope_service import ServerChatLoopScopeService
 from tldw_chatbook.Chat.server_chat_conversation_service import ServerChatConversationService
-from tldw_chatbook.Chat.server_chat_loop_service import ServerChatLoopService
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
@@ -155,10 +153,8 @@ from .config import (
     set_encryption_password, )
 from .Event_Handlers import (
     conv_char_events as ccp_handlers,
-    notes_events as notes_handlers,
     worker_events, ingest_events,
-    llm_nav_events, media_events, notes_events, app_lifecycle, tab_events,
-    subscription_events,
+    llm_nav_events, media_events, app_lifecycle, subscription_events,
 )
 from .Event_Handlers.Chat_Events import chat_events as chat_handlers, chat_events_sidebar, chat_events_worldbooks
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events
@@ -236,8 +232,6 @@ USE_REBUILT_INGEST = True
 INGEST_NAV_BUTTON_IDS: list[str] = []
 INGEST_VIEW_IDS: list[str] = []
 from .UI.Tools_Settings_Window import ToolsSettingsWindow
-from .UI.LLM_Management_Window import LLMManagementWindow
-from .UI.Customize_Window import CustomizeWindow
 from .UI.console_command_provider import ConsoleCommandProvider
 from tldw_chatbook.Chat_Grammars_Interop import (
     ChatGrammarsScopeService,
@@ -5100,7 +5094,6 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                                 # Convert image bytes to PIL Image for display
                                 from PIL import Image
                                 import io
-                                import base64
                                 
                                 image_bytes = details["image"]
                                 img = Image.open(io.BytesIO(image_bytes))
@@ -6476,7 +6469,6 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         try:
             import threading
             import subprocess
-            import signal
             import platform
             
             # On macOS, force kill any afplay processes
@@ -6507,7 +6499,6 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                     
                     # Run in background to avoid blocking
                     self.run_worker(kill_afplay_processes, name="kill_afplay")
-            import concurrent.futures
             import asyncio
             
             # Shutdown thread pool executors
@@ -7825,7 +7816,6 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     async def handle_rag_pipeline_changed(self, event: Select.Changed) -> None:
         """Handles RAG pipeline selection."""
         try:
-            from .Widgets.settings_sidebar import get_pipeline_description
             
             pipeline_id = event.value
             
@@ -8217,7 +8207,6 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         # Try to save caches but don't let it block quitting
         try:
             # Import with timeout protection
-            import signal
             import threading
             
             def save_caches_with_timeout():
@@ -8490,8 +8479,6 @@ def get_app():
     """
     # Configure logging to suppress verbose debug messages early
     import logging
-    import os
-    import warnings
     
     # Suppress various verbose loggers
     logging.getLogger("torio._extension.utils").setLevel(logging.WARNING)

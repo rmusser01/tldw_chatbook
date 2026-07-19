@@ -15,15 +15,12 @@ Tests the EvalsDB class functionality including:
 """
 
 import pytest
-import sqlite3
 import threading
 import time
-import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 from loguru import logger
 
-from tldw_chatbook.DB.Evals_DB import EvalsDB, EvalsDBError, SchemaError, InputError, ConflictError
+from tldw_chatbook.DB.Evals_DB import EvalsDB, InputError
 
 class TestEvalsDBInitialization:
     """Test database initialization and schema creation."""

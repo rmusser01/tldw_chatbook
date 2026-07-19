@@ -81,7 +81,7 @@ def _ensure_nltk():
 
 #
 # Import Local
-from tldw_chatbook.config import load_settings, get_cli_setting
+from tldw_chatbook.config import get_cli_setting
 from .language_chunkers import LanguageChunkerFactory
 from .token_chunker import create_token_chunker
 from .chunking_templates import ChunkingTemplateManager, ChunkingPipeline, ChunkingTemplate

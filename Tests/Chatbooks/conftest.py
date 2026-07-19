@@ -11,13 +11,10 @@ Provides shared fixtures, utilities, and test data for chatbook testing.
 import pytest
 import tempfile
 import shutil
-import sqlite3
 import json
 import zipfile
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, Any, List, Optional
-from unittest.mock import Mock, MagicMock
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase

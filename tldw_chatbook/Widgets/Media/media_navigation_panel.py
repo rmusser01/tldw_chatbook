@@ -14,7 +14,6 @@ from textual.containers import Container, VerticalScroll
 from textual.reactive import reactive
 from textual.widgets import Static, Button
 from textual.message import Message
-from loguru import logger
 
 from ...Utils.text import slugify
 

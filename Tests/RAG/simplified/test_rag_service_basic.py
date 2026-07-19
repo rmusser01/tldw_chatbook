@@ -6,11 +6,7 @@ complex mocking, focusing on the actual implementation.
 """
 
 import pytest
-import asyncio
-from typing import List, Dict, Any, Optional
 import time
-from loguru import logger
-from unittest.mock import patch, MagicMock
 
 # Import optional dependency checker
 from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
@@ -27,9 +23,7 @@ from tldw_chatbook.RAG_Search.simplified import (
     create_rag_service_from_config,
     get_available_profiles,
     IndexingResult,
-    RAGConfig, EmbeddingConfig, VectorStoreConfig,
-    ChunkingConfig, SearchConfig,
-    SearchResultWithCitations
+    RAGConfig, SearchResultWithCitations
 )
 from tldw_chatbook.RAG_Search.simplified.enhanced_rag_service_v2 import EnhancedRAGServiceV2
 

@@ -16,7 +16,7 @@ Provides unified export functionality for all evaluation results:
 import csv
 import json
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Union
+from typing import Dict, Any, Optional, Union
 from datetime import datetime
 from loguru import logger
 

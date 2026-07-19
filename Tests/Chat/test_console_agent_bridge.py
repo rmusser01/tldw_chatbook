@@ -3,7 +3,6 @@ import asyncio
 import contextlib
 import json
 
-import pytest
 
 from tldw_chatbook.Chat.console_agent_bridge import (
     CONSOLE_AGENT_OPERATING_PROMPT, ConsoleAgentBridge, compose_agent_system_prompt,

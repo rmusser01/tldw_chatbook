@@ -17,7 +17,6 @@ worker thread, or ``asyncio.run`` re-entrancy concerns.
 
 from __future__ import annotations
 
-import pytest
 
 from tldw_chatbook.Chatbooks.chatbook_models import ContentType
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen

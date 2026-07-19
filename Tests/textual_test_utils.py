@@ -9,13 +9,11 @@ Provides standardized utilities and patterns for testing Textual widgets and app
 This module helps ensure consistent async testing patterns across the test suite.
 """
 
-import pytest
 import pytest_asyncio
-from typing import Type, TypeVar, Optional, Any, Callable
+from typing import Type, TypeVar, Optional, Callable
 from textual.app import App, ComposeResult
 from textual.widget import Widget
 from textual.pilot import Pilot
-from textual.containers import Container
 from unittest.mock import MagicMock, AsyncMock
 
 

@@ -9,18 +9,16 @@ Tests the complete evaluation pipeline with all refactored components.
 """
 
 import pytest
-import asyncio
 import json
 import yaml
 import csv
 from pathlib import Path
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
-from datetime import datetime
+from unittest.mock import patch
 
 # Import all refactored components
 from tldw_chatbook.Evals.eval_orchestrator import EvaluationOrchestrator
 from tldw_chatbook.Evals.eval_errors import get_error_handler, EvaluationError, BudgetMonitor
-from tldw_chatbook.Evals.base_runner import BaseEvalRunner, EvalSample, EvalSampleResult
+from tldw_chatbook.Evals.base_runner import BaseEvalRunner, EvalSampleResult
 from tldw_chatbook.Evals.metrics_calculator import MetricsCalculator
 from tldw_chatbook.Evals.dataset_loader import DatasetLoader
 from tldw_chatbook.Evals.exporters import EvaluationExporter

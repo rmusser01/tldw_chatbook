@@ -2,7 +2,7 @@
 # Empty state widget for lists and containers
 #
 # Imports
-from typing import Optional, Callable
+from typing import Optional
 from textual.app import ComposeResult
 from textual.containers import Vertical, Center
 from textual.widgets import Static, Button

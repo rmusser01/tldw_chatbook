@@ -6,21 +6,16 @@ import pytest
 
 # Skip this entire module since tldw_Server_API is not available in this codebase
 pytest.skip("tldw_Server_API not available in this codebase", allow_module_level=True)
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, status
 from fastapi.testclient import TestClient
-from unittest.mock import MagicMock, patch
-from typing import Optional, Dict, Any, List
+from unittest.mock import MagicMock
+from typing import Dict, Any
 from datetime import datetime, timezone
 import uuid
 #
 # Third-Party Imports
 #
 # Local Imports
-from tldw_Server_API.app.api.v1.schemas.notes_schemas import (
-    NoteCreate, NoteUpdate, NoteResponse,
-    KeywordCreate, KeywordResponse,
-    NoteKeywordLinkResponse, KeywordsForNoteResponse, NotesForKeywordResponse
-)
 from tldw_Server_API.app.api.v1.endpoints import notes as notes_router_module
 from tldw_Server_API.app.core.DB_Management.ChaChaNotes_DB import (
     CharactersRAGDBError as Actual_CharactersRAGDBError,

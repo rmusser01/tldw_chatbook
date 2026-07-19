@@ -3,7 +3,6 @@
 #
 # Imports
 import pytest
-from unittest.mock import MagicMock, patch
 #
 # Local Imports
 from tldw_chatbook.Utils.token_counter import (

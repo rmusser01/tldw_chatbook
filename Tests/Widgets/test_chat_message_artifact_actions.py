@@ -3,7 +3,6 @@
 import pytest
 from textual.widgets import Button
 
-from Tests.textual_test_utils import widget_pilot
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
 

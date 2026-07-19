@@ -2,23 +2,19 @@
 # Property-based tests for the simplified embeddings service using Hypothesis
 
 import pytest
-from hypothesis import given, strategies as st, settings, assume, HealthCheck
-from hypothesis.stateful import RuleBasedStateMachine, rule, precondition, invariant, Bundle
+from hypothesis import given, strategies as st, settings, HealthCheck
+from hypothesis.stateful import RuleBasedStateMachine, rule, invariant
 import threading
 import time
 import numpy as np
-from typing import List, Dict, Any, Set
-import hashlib
-from unittest.mock import patch, Mock, MagicMock
+from unittest.mock import patch, MagicMock
 
 from tldw_chatbook.RAG_Search.simplified import (
     EmbeddingsServiceWrapper,
-    InMemoryVectorStore,
-    create_embeddings_service
+    InMemoryVectorStore
 )
 
 # Import test utilities from conftest
-from .conftest import requires_numpy
 
 
 # Hypothesis settings for embeddings tests

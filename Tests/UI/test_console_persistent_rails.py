@@ -13,7 +13,6 @@ from Tests.UI.test_console_internals_decomposition import (
 )
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
-    _visible_text,
 )
 from tldw_chatbook.Chat import console_chat_store as console_chat_store_module
 from tldw_chatbook.Chat.console_chat_models import ConsoleWorkspaceContext

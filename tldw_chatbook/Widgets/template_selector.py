@@ -19,7 +19,7 @@ from textual.containers import Container, Vertical, Horizontal
 from textual.screen import ModalScreen
 from textual.widgets import (
     Button, Label, Input, ListView, ListItem, Static, 
-    Collapsible, Tree, Tabs, TabPane
+    Collapsible, Tabs, TabPane
 )
 from loguru import logger
 

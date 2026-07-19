@@ -17,7 +17,6 @@ sent (or the normalized response/stream returned).
 """
 
 import json
-import logging
 from unittest.mock import Mock, patch
 
 from tldw_chatbook.Chat.Chat_Functions import chat_api_call

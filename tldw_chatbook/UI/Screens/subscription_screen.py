@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from loguru import logger
 from textual.app import ComposeResult
 from textual.reactive import reactive
-from textual.widgets import Static
 
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..SubscriptionWindow import SubscriptionWindow

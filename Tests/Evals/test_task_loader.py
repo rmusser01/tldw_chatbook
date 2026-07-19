@@ -15,12 +15,10 @@ Tests the TaskLoader class functionality including:
 import pytest
 import json
 import yaml
-import tempfile
-from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 from tldw_chatbook.Evals.task_loader import (
-    TaskLoader, TaskConfig, TaskLoadError, ValidationError
+    TaskLoader, TaskConfig, TaskLoadError
 )
 
 class TestTaskConfig:

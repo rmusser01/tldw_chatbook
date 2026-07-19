@@ -11,11 +11,11 @@ Integrates mindmap functionality with existing tldw_chatbook features:
 - Sync with database content
 """
 
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Any
 from anytree import Node
 from loguru import logger
 
-from ...UI.Widgets.SmartContentTree import SmartContentTree, ContentNodeData
+from ...UI.Widgets.SmartContentTree import SmartContentTree
 from ...Chatbooks.chatbook_models import ContentType
 from ..Mind_Map.mermaid_parser import NodeShape
 

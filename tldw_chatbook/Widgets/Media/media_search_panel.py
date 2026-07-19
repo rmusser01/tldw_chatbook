@@ -15,7 +15,6 @@ from textual.containers import Container, Horizontal
 from textual.reactive import reactive
 from textual.widgets import Input, Label, Checkbox, Button, Static, Collapsible, Select
 from textual.message import Message
-from loguru import logger
 
 if TYPE_CHECKING:
     from ...app import TldwCli

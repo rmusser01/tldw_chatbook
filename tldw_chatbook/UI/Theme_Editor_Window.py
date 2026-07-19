@@ -4,24 +4,20 @@ Theme Editor Window for creating and modifying Textual themes.
 Allows users to customize colors, preview changes, and save custom themes.
 """
 
-from typing import Optional, Dict, Any, List, TYPE_CHECKING
+from typing import Optional, Dict, Any, TYPE_CHECKING
 from pathlib import Path
-import json
 import toml
-from functools import partial
 
-from textual import on, work
+from textual import on
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical, VerticalScroll, ScrollableContainer
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import (
-    Static, Button, Input, Label, Tree, Switch,
-    TabbedContent, TabPane, Collapsible
+    Static, Button, Input, Label, Tree, Switch
 )
 from textual.reactive import reactive
 from textual.theme import Theme
 from textual.color import Color
 from textual.message import Message
-from textual.binding import Binding
 
 from loguru import logger
 
@@ -29,7 +25,7 @@ from loguru import logger
 from ..css.Themes.themes import ALL_THEMES, create_theme_from_dict
 
 if TYPE_CHECKING:
-    from ..app import TldwCli
+    pass
 
 
 class ThemeModifiedMessage(Message):

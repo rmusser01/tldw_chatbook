@@ -2,9 +2,8 @@
 # Description: Integration tests for the ClientSyncEngine class using a real test server
 #
 # Imports
-from datetime import datetime, timedelta
+from datetime import datetime
 import pytest
-import pytest_asyncio
 import json
 import os
 import threading
@@ -17,7 +16,6 @@ import tempfile
 import requests
 
 # Local Imports
-from .test_media_db_v2 import get_entity_version
 from tldw_chatbook.DB.Sync_Client import ClientSyncEngine
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 

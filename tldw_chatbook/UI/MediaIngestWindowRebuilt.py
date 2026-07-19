@@ -8,13 +8,12 @@ from local files and from server-backed ingestion sources.
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Optional, Dict, Any, Union, Mapping
-from datetime import datetime
+from typing import TYPE_CHECKING, List, Optional, Dict, Any, Mapping
 
 from loguru import logger
 from textual import on, work
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical, ScrollableContainer
+from textual.containers import Container, Horizontal, ScrollableContainer
 from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import (
@@ -28,11 +27,8 @@ from textual.widgets import (
     TabPane,
     TextArea,
     Checkbox,
-    LoadingIndicator,
     RichLog,
     Collapsible,
-    RadioSet,
-    RadioButton,
     ProgressBar,
 )
 from textual.message import Message
@@ -41,11 +37,8 @@ from textual.validation import Number, URL
 # Import ingestion modules
 from ..Local_Ingestion import (
     ingest_local_file,
-    detect_file_type,
     get_supported_extensions,
-    FileIngestionError,
 )
-from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..Widgets.Media import MediaIngestionSourcePanel
 
 if TYPE_CHECKING:

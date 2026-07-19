@@ -2,8 +2,6 @@
 from datetime import datetime, timezone
 
 from tldw_chatbook.Library.library_notes_state import (
-    NOTES_SORT_MODES,
-    LibraryNoteEditorState,
     LibraryNotesListRow,
     build_library_note_editor_state,
     build_library_notes_list_state,

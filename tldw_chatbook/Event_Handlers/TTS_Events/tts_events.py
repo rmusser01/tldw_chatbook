@@ -3,20 +3,14 @@
 #
 # Imports
 import asyncio
-import os
-import platform
-import subprocess
-from typing import Optional, Dict, Any
+from typing import Optional, Dict
 from pathlib import Path
-import tempfile
 from datetime import datetime
 from dataclasses import dataclass
 from loguru import logger
 
 # Third-party imports
-from textual.app import App
 from textual.message import Message
-from textual.worker import Worker, WorkerState
 
 # Local imports
 from tldw_chatbook.TTS import get_tts_service, OpenAISpeechRequest

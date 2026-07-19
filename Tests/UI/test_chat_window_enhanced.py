@@ -2,13 +2,10 @@
 
 import pytest
 import asyncio
-from pathlib import Path
-from unittest.mock import Mock, patch, AsyncMock, MagicMock, call
-from typing import List, Dict, Any
+from unittest.mock import Mock, patch, AsyncMock, call
 
 from textual.app import App
-from textual.widgets import Input, Button, TextArea, Static, ListView, Switch
-from textual.containers import Container, Horizontal, VerticalScroll
+from textual.containers import Container, VerticalScroll
 
 from tldw_chatbook.Chat.chat_models import ChatSessionData
 from tldw_chatbook.UI.Chat_Window_Enhanced import ChatWindowEnhanced

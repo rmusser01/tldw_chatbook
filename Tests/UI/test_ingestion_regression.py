@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 import pytest
 from textual.widgets import Button, Label
 
-from Tests.textual_test_utils import widget_pilot
 from tldw_chatbook.UI.MediaIngestWindowRebuilt import LocalIngestionPanel
 
 

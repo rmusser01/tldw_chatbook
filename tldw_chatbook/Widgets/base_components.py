@@ -16,7 +16,7 @@ Provides reusable UI components for building consistent interfaces:
 from typing import List, Optional, Tuple, Callable, Any, Dict
 from dataclasses import dataclass
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container, Horizontal
 from textual.widgets import Button, Static, Input, Label, Select
 from textual.reactive import reactive
 from textual import on

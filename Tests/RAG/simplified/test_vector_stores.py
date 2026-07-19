@@ -14,11 +14,8 @@ This module tests:
 import pytest
 import numpy as np
 from typing import List, Dict, Any, Optional
-from unittest.mock import MagicMock, patch, Mock
+from unittest.mock import MagicMock, patch
 from hypothesis import given, strategies as st
-import tempfile
-import shutil
-from pathlib import Path
 
 # Import vector store implementations
 try:

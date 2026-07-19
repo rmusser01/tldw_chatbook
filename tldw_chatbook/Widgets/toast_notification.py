@@ -11,7 +11,6 @@ from textual.app import ComposeResult
 from textual.containers import Container, Vertical
 from textual.widgets import Static, Button
 from textual.widget import Widget
-from textual.reactive import reactive
 from textual.timer import Timer
 from textual.message import Message
 from loguru import logger

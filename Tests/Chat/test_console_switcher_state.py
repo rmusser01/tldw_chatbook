@@ -1,7 +1,6 @@
 """Pure Console session-switcher result contracts."""
 
 from tldw_chatbook.Chat.console_switcher_state import (
-    ConsoleSwitcherEntry,
     _matches,
     build_console_switcher_entries,
 )

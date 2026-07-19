@@ -1221,7 +1221,6 @@ class TTSPlaygroundWidget(Widget):
                     
                 if audio_path.exists():
                     # Get current player state before stopping
-                    from tldw_chatbook.TTS.audio_player import PlaybackState
                     current_state = await self.app.audio_player.get_state()
                     logger.debug(f"Current player state before play: {current_state}")
                     

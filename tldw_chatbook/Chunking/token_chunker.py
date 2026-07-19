@@ -5,9 +5,9 @@ This module provides token-based chunking with graceful fallbacks
 when transformers library is not available.
 """
 
-from typing import List, Optional, Protocol
+from typing import List, Protocol
 from loguru import logger
-from ..Utils.optional_deps import get_safe_import, require_dependency
+from ..Utils.optional_deps import get_safe_import
 
 
 class TokenizerProtocol(Protocol):

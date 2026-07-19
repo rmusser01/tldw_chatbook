@@ -6,19 +6,17 @@ Based on Textual testing best practices from the framework documentation.
 
 import pytest
 from pathlib import Path
-from unittest.mock import Mock, AsyncMock, patch
+from unittest.mock import Mock, patch
 import tempfile
-import asyncio
-from datetime import datetime
 
 from textual.app import App
-from textual.widgets import Button, Input, Static
+from textual.widgets import Static
 
 from tldw_chatbook.UI.NewIngestWindow import NewIngestWindow
 from tldw_chatbook.Widgets.NewIngest import (
     SmartFileDropZone, UnifiedProcessor, ProcessingDashboard,
-    get_processing_service, VideoConfig, AudioConfig, ProcessingState,
-    FilesSelected, ProcessingComplete, ProcessingJobResult
+    ProcessingState,
+    FilesSelected, ProcessingComplete
 )
 
 

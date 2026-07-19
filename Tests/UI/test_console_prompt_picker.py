@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import App
 from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Widgets.Console.console_prompt_picker_modal import (

@@ -1,17 +1,13 @@
 # tldw_Server_API/tests/Notes/test_notes_library_unit.py
 import unittest
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock
 from pathlib import Path
 import tempfile
-import re
 from loguru import logger
 import sqlite3
-from typing import Any, Optional, Dict
 
 from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDBError as Actual_CharactersRAGDBError,
-    SchemaError as Actual_SchemaError,
-    InputError as Actual_InputError,
     ConflictError as Actual_ConflictError, CharactersRAGDB
 )
 from tldw_chatbook.Notes.Notes_Library import NotesInteropService

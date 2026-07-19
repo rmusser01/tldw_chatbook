@@ -11,7 +11,6 @@ import os
 import time
 import hashlib
 import sys
-from urllib.parse import urlparse
 
 import httpx
 from loguru import logger

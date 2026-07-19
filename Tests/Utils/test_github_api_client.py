@@ -7,7 +7,6 @@ Tests the GitHubAPIClient in isolation with mocked HTTP responses.
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 import base64
-import json
 import httpx
 
 from tldw_chatbook.Utils.github_api_client import GitHubAPIClient, GitHubAPIError

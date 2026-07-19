@@ -1,7 +1,6 @@
 from anytree import Node
 from textual.app import App, ComposeResult
 from textual.widgets import Tree, Input, Button
-from textual import events
 
 class MindMapApp(App):
     def __init__(self):

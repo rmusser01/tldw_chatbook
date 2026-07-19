@@ -4,7 +4,6 @@
 # Imports
 import asyncio
 import json  # For export
-import logging
 import os
 import re
 from datetime import datetime

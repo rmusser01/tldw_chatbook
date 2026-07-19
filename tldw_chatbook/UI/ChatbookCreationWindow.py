@@ -9,21 +9,19 @@ Provides an interface for selecting content and creating chatbooks.
 """
 
 from pathlib import Path
-from typing import Dict, List, Set, Optional, TYPE_CHECKING
+from typing import Dict, Set, TYPE_CHECKING
 from datetime import datetime
 
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Static, Button, Input, TextArea, Label, Checkbox, Tree
-from textual.widgets.tree import TreeNode
 from loguru import logger
 
 from ..Chatbooks.chatbook_creator import ChatbookCreator
 from ..Chatbooks.chatbook_models import ContentType
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Prompts_DB import PromptsDatabase
-from ..DB.Client_Media_DB_v2 import MediaDatabase
 
 if TYPE_CHECKING:
     from ..app import TldwCli

@@ -1,14 +1,9 @@
 """Comprehensive tests for chat file attachment functionality including all file types."""
 
 import pytest
-import tempfile
 import os
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
-from io import BytesIO
 
-from textual.app import App
-from textual.widgets import Button
 
 # Note: Some imports may need adjustment based on actual module structure
 # These are based on the analysis of the codebase

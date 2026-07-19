@@ -3,12 +3,10 @@
 Unit tests for the speaker diarization service.
 """
 
-import os
 import sys
-import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 import numpy as np
 
 # Add parent directory to path

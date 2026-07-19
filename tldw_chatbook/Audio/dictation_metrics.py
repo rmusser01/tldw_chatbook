@@ -5,7 +5,7 @@ Tracks accuracy, performance, and usage patterns.
 """
 
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from collections import deque

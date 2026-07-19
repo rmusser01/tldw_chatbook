@@ -5,9 +5,7 @@ This module provides unified handling of database size calculations and
 status display updates for the application footer.
 """
 
-import asyncio
-from pathlib import Path
-from typing import Optional, Dict, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 from loguru import logger
 
 if TYPE_CHECKING:

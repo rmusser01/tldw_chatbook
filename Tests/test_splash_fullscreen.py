@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 """Test script to verify splash screens fill the entire terminal."""
 
-import asyncio
 from textual.app import App, ComposeResult
-from textual.containers import Container
-from textual.widgets import Static, Label
+from textual.widgets import Label
 from tldw_chatbook.Widgets.splash_screen import SplashScreen
 
 

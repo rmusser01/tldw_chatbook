@@ -1,26 +1,17 @@
 import pytest
 import pytest_asyncio
-import tempfile
 import os
-from pathlib import Path
 
 from textual.widgets import Button, TextArea, Input, Label, ListView, ListItem, Collapsible
-from rich.text import Text
 
 # Real app class for integration testing
 from tldw_chatbook.app import TldwCli
-from tldw_chatbook.Character_Chat import Character_Chat_Lib as ccl
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 # Event handlers to be tested
 from tldw_chatbook.Event_Handlers.Chat_Events.chat_events_sidebar import (
-    _clear_and_disable_media_display,
-    perform_media_sidebar_search,
-    handle_chat_media_copy_title_button_pressed,
-    handle_chat_media_copy_content_button_pressed,
-    handle_chat_media_copy_author_button_pressed,
-    handle_chat_media_copy_url_button_pressed
+    perform_media_sidebar_search
 )
 
 
@@ -378,7 +369,6 @@ async def test_media_copy_buttons(real_app_media_test: TldwCli, button_id, field
         
         # Import the handler directly and call it
         from tldw_chatbook.Event_Handlers.Chat_Events.chat_events_sidebar import CHAT_SIDEBAR_BUTTON_HANDLERS
-        from textual.events import Click
         
         # Create a mock event
         mock_event = Button.Pressed(copy_button)
@@ -485,7 +475,7 @@ async def test_media_search_input_debounced(real_app_media_test: TldwCli):
         results_listview = app.query_one("#chat-media-search-results-listview", ListView)
         
         # Mock the timer to track debounce
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import MagicMock
         mock_timer = MagicMock()
         
         # Type quickly and trigger the search manually after debounce

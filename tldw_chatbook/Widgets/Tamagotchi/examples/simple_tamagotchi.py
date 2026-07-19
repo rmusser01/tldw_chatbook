@@ -7,7 +7,7 @@ Run this file directly to see a working tamagotchi.
 """
 
 from textual.app import App, ComposeResult
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container, Horizontal
 from textual.widgets import Header, Footer, Button, Static, Label
 from textual.binding import Binding
 from textual import on

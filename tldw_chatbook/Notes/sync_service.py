@@ -14,7 +14,7 @@ from loguru import logger
 # Local Imports
 from .sync_engine import (
     NotesSyncEngine, SyncDirection, ConflictResolution, 
-    SyncProgress, SyncConflict, SyncStatus
+    SyncProgress
 )
 from .Notes_Library import NotesInteropService
 from ..DB.ChaChaNotes_DB import CharactersRAGDB

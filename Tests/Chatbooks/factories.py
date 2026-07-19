@@ -12,10 +12,9 @@ import uuid
 import random
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
-from pathlib import Path
 
 from tldw_chatbook.Chatbooks.chatbook_models import (
-    ContentType, ContentItem, Relationship, ChatbookManifest, ChatbookVersion
+    ContentType, ContentItem, ChatbookManifest, ChatbookVersion
 )
 
 

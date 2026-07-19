@@ -5,15 +5,14 @@ This module provides the tool implementations that expose tldw_chatbook's
 functionality through MCP.
 """
 
-from typing import Dict, List, Optional, Any, Union
-from datetime import datetime
+from typing import Dict, List, Optional, Any
 import asyncio
 import json
 
 from loguru import logger
 
 # Import tldw_chatbook components
-from ..config import get_cli_setting, CLI_APP_CLIENT_ID
+from ..config import get_cli_setting
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..RAG_Search.simplified.search_service import SimplifiedRAGSearchService

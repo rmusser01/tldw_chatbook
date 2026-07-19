@@ -6,9 +6,7 @@ Tests PNG-only support, size limits, and database storage.
 
 import pytest
 import io
-from pathlib import Path
 from PIL import Image
-import tempfile
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Character_Chat.Character_Chat_Lib import (

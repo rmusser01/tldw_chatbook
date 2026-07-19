@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from tldw_chatbook.MCP.hub_tool_catalog import (
-    HubTool,
     builtin_tools_from_inventory,
     filter_tools,
     local_tools_from_record,

@@ -1,9 +1,8 @@
 """PlasmaField splash screen effect."""
 import time
 
-from rich.color import Color
 import math
-from typing import Optional, Any, List, Tuple
+from typing import Optional
 
 from ..base_effect import BaseEffect, register_effect
 

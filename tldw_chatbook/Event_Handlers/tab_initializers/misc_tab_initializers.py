@@ -11,7 +11,7 @@ from textual.css.query import QueryError
 from .base_initializer import BaseTabInitializer
 
 if TYPE_CHECKING:
-    from tldw_chatbook.app import TldwCli
+    pass
 
 
 class CCPTabInitializer(BaseTabInitializer):

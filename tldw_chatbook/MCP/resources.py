@@ -4,11 +4,7 @@ MCP Resources implementation for tldw_chatbook
 This module provides resource access to tldw_chatbook's data through MCP.
 """
 
-from typing import Dict, List, Optional, Any, Union
-from datetime import datetime
-import json
-import base64
-from pathlib import Path
+from typing import Dict, List, Any
 
 from loguru import logger
 

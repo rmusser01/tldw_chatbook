@@ -1,8 +1,7 @@
 """TerminalBoot splash screen effect."""
 
-from rich.style import Style
 import time
-from typing import Optional, Any, Dict, List, Tuple
+from typing import Optional, Any, Dict, List
 from dataclasses import dataclass
 
 from ..base_effect import BaseEffect, register_effect

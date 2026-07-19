@@ -3,8 +3,7 @@ Test combined Send/Stop button functionality in Chat Window.
 """
 
 import pytest
-import pytest_asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 import time
 
 from textual.widgets import Button

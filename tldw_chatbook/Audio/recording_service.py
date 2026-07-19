@@ -4,16 +4,12 @@ Cross-platform audio recording service for live dictation and speech capture.
 Supports PyAudio as primary backend with sounddevice as fallback.
 """
 
-import os
-import sys
 import threading
 import queue
 import time
 import wave
-import tempfile
 from types import SimpleNamespace
-from typing import Optional, Callable, List, Dict, Any, Tuple
-from pathlib import Path
+from typing import Optional, Callable, List, Dict, Any
 from contextlib import contextmanager
 from loguru import logger
 

@@ -6,16 +6,11 @@ import asyncio
 import os
 import sys
 import time
-import io
 import json
-import wave
-import tempfile
 import shutil
-import hashlib
 import subprocess
-import base64
 from contextlib import contextmanager
-from typing import AsyncGenerator, Optional, Dict, Any, List, Tuple, Union
+from typing import AsyncGenerator, Optional, Dict, Any, List, Tuple
 from datetime import datetime
 from pathlib import Path
 from loguru import logger
@@ -64,7 +59,7 @@ except ImportError:
 # Local imports
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.base_backends import LocalTTSBackend
-from tldw_chatbook.TTS.audio_service import AudioService, get_audio_service
+from tldw_chatbook.TTS.audio_service import get_audio_service
 from tldw_chatbook.TTS.text_processing import TextChunker, TextNormalizer, detect_language
 from tldw_chatbook.config import get_cli_setting
 

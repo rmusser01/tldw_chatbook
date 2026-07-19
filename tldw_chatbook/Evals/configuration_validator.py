@@ -9,9 +9,8 @@ Validates task, model, and run configurations to ensure
 they meet requirements before evaluation execution.
 """
 
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any
 from pathlib import Path
-from loguru import logger
 
 from .eval_errors import ValidationError, ErrorContext, ErrorCategory, ErrorSeverity
 from tldw_chatbook.Utils.path_validation import validate_path_simple

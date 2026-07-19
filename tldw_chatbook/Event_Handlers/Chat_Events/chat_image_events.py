@@ -9,7 +9,7 @@ import mimetypes
 import re
 from io import BytesIO
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Tuple
 
 # 3rd-party Libraries
 from PIL import Image as PILImage

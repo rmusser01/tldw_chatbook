@@ -13,7 +13,7 @@ import requests
 from PIL import Image
 #
 # Local Imports
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError, InputError
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 import tldw_chatbook.Chat.Chat_Functions as chat_functions_module
 import tldw_chatbook.LLM_Calls.LLM_API_Calls as llm_api_calls_module
 from tldw_chatbook.Chat.Chat_Functions import (
@@ -25,14 +25,10 @@ from tldw_chatbook.Chat.Chat_Functions import (
     get_character_names,
     parse_user_dict_markdown_file,
     process_user_input,
-    ChatDictionary,
-    DEFAULT_CHARACTER_NAME
+    ChatDictionary
 )
 from tldw_chatbook.Chat.Chat_Deps import (
-    ChatBadRequestError,
     ChatAuthenticationError,
-    ChatRateLimitError,
-    ChatProviderError,
     ChatAPIError
 )
 #

@@ -8,7 +8,7 @@ to convert tabular data into more semantically meaningful text representations.
 import re
 import csv
 import json
-from typing import List, Dict, Any, Tuple, Optional, Union, Literal
+from typing import List, Dict, Any, Tuple, Optional, Literal
 from dataclasses import dataclass
 from enum import Enum
 import logging

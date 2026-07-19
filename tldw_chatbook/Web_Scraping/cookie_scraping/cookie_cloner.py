@@ -51,7 +51,6 @@ from datetime import datetime
 import base64
 import datetime
 import json
-import keyring
 import os
 import shutil
 import sqlite3
@@ -118,12 +117,10 @@ def get_chrome_cookies(domain_name):
     global win32crypt
     if sys.platform == 'win32':
         import win32crypt
-        from Cryptodome.Cipher import AES
         appdata_path = os.getenv('LOCALAPPDATA')
         cookie_path = os.path.join(appdata_path, r'Google\Chrome\User Data\Default\Cookies')
         local_state_path = os.path.join(appdata_path, r'Google\Chrome\User Data\Local State')
     elif sys.platform == 'darwin':
-        from Cryptodome.Cipher import AES
         import keyring
         cookie_path = os.path.expanduser('~/Library/Application Support/Google/Chrome/Default/Cookies')
         local_state_path = os.path.expanduser('~/Library/Application Support/Google/Chrome/Local State')
@@ -144,7 +141,6 @@ def get_chrome_cookies(domain_name):
         # Decrypt using Keychain
         from Cryptodome.Protocol.KDF import PBKDF2
         import keyring
-        import hashlib
 
         password = keyring.get_password("Chrome Safe Storage", "Chrome")
         if password is None:
@@ -155,7 +151,6 @@ def get_chrome_cookies(domain_name):
     else:  # Linux
         # On Linux, Chrome uses the 'peanuts' password by default
         from Cryptodome.Protocol.KDF import PBKDF2
-        import hashlib
 
         password = 'peanuts'
         iterations = 1

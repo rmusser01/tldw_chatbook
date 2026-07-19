@@ -3,8 +3,6 @@ from unittest.mock import AsyncMock
 import pytest
 
 from tldw_chatbook.tldw_api import (
-    BatchMediaEmbeddingsRequest,
-    BatchMediaEmbeddingsResponse,
     ChunkingTemplateApplyRequest,
     ChunkingTemplateApplyResponse,
     ChunkingTemplateCreateRequest,

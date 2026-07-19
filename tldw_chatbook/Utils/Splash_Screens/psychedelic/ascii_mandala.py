@@ -1,9 +1,8 @@
 """ASCIIMandala splash screen effect."""
 
-from rich.color import Color
 import math
 import time
-from typing import Optional, Any, List, Tuple
+from typing import Optional, Any
 
 from ..base_effect import BaseEffect, register_effect
 

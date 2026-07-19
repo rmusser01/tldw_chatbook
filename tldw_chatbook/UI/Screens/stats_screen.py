@@ -5,17 +5,15 @@
 # Imports
 import logging
 from typing import TYPE_CHECKING, Dict, Any, Optional
-from datetime import datetime
 
 from textual.app import ComposeResult
-from textual.widgets import Static, Label, LoadingIndicator, ProgressBar, Placeholder, Button
+from textual.widgets import Label, LoadingIndicator, Button
 from textual.containers import VerticalScroll, Horizontal, Container, Grid
 from textual.reactive import reactive
 from textual import work
 
 # Local imports
 from tldw_chatbook.Stats.user_statistics import UserStatistics
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Workbench.workbench_state import WorkbenchHeaderState, WorkbenchStatus
 from ..Workbench.workbench_widgets import DestinationHeader

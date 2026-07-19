@@ -1,12 +1,10 @@
 """Voice blend management dialog for Kokoro TTS"""
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, ScrollableContainer
-from textual.widgets import Button, Input, Label, Select, Static
+from textual.widgets import Button, Input, Label, Select
 from textual.screen import ModalScreen
-from textual.reactive import reactive
 from textual.message import Message
-from typing import List, Tuple, Dict, Optional, Any
-import json
+from typing import List, Dict, Optional, Any
 from loguru import logger
 
 

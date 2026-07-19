@@ -6,15 +6,12 @@ from typing import Any
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, DataTable, Input, ListItem, ListView, Select, Static, Switch, TextArea
+from textual.widgets import Button, DataTable, Input, ListView, Static, Switch, TextArea
 
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Persona_Widgets.personas_dictionary_detail import (
     DictionaryEntryAddRequested,
-    DictionaryEntryDeleteRequested,
-    DictionaryEntriesReorderRequested,
-    DictionaryEntryUpdateRequested,
     DictionarySettingsSaveRequested,
     PersonasDictionaryDetailWidget,
 )

@@ -13,15 +13,8 @@ from textual.widgets import Button
 from Tests.UI.test_screen_navigation import _build_test_app
 from Tests.UI.test_unified_shell_phase6_first_time_replay import (
     EXPECTED_NAV,
-    PHASE_6_PARENT_TASK,
-    PHASE_6_README,
-    ROADMAP,
-    _phase_evidence_row,
-    _phase_overview_row,
     _screen_text,
-    _status_line,
     _test_cli_setting,
-    _text,
     _wait_until,
 )
 

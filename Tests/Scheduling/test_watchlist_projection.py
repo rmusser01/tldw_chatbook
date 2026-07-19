@@ -1,6 +1,5 @@
 """Tests for the watchlist projection service."""
 
-import pytest
 
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.Scheduling.models import ScheduledTask, TaskStatus

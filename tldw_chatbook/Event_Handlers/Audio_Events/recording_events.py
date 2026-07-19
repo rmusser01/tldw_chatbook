@@ -5,7 +5,6 @@ Event handlers for audio recording functionality.
 
 from typing import Optional
 from textual.message import Message
-from loguru import logger
 
 
 class AudioRecordingEvent(Message):

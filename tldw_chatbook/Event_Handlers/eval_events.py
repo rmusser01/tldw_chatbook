@@ -31,7 +31,7 @@ from tldw_chatbook.Evals import EvaluationOrchestrator
 from tldw_chatbook.Evals import TaskLoader, TaskLoadError
 from tldw_chatbook.Evals.eval_runner import EvalProgress, EvalSampleResult
 # Use existing cost estimation from Utils
-from tldw_chatbook.Utils.cost_estimation import estimate_evaluation_cost, get_model_cost_per_1k_tokens
+from tldw_chatbook.Utils.cost_estimation import get_model_cost_per_1k_tokens
 from tldw_chatbook.Widgets.Evals.eval_config_dialogs import ModelConfigDialog, TaskConfigDialog, RunConfigDialog
 
 # File picker dialogs

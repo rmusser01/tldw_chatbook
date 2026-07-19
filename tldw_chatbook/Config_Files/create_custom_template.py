@@ -6,7 +6,6 @@ This will create/update the user's personal note_templates.json file.
 """
 
 import json
-import os
 from pathlib import Path
 
 def create_custom_template():

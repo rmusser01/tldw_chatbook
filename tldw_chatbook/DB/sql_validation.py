@@ -6,7 +6,7 @@ to ensure they match expected patterns and are safe to use in dynamic SQL constr
 """
 
 import re
-from typing import Dict, Set, Optional, Union
+from typing import Optional
 from loguru import logger
 
 # Define valid table names for each database

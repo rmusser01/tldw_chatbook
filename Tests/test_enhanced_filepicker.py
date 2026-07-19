@@ -6,7 +6,6 @@ Test script for the enhanced file picker
 from textual.app import App, ComposeResult
 from textual.containers import Container
 from textual.widgets import Button, Label, Footer
-from pathlib import Path
 
 # Import the enhanced file picker
 from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen, EnhancedFileSave

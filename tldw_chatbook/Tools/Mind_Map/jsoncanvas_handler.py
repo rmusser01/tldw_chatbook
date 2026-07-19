@@ -15,13 +15,11 @@ Supports:
 
 import json
 import uuid
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Tuple
 from pathlib import Path
 from anytree import Node, PreOrderIter
-from datetime import datetime
 from loguru import logger
 
-from .mermaid_parser import NodeShape
 
 
 class JSONCanvasHandler:

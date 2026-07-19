@@ -6,7 +6,7 @@ import tempfile
 import shutil
 from pathlib import Path
 from typing import Dict, List, Any, Optional
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, Mock
 import threading
 import time
 import numpy as np

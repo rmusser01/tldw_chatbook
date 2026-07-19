@@ -3,7 +3,7 @@
 import math
 import random
 import time
-from typing import Optional, Any, List, Tuple
+from typing import Optional, Any, List
 
 from ..base_effect import BaseEffect, register_effect, ESCAPED_OPEN_BRACKET
 

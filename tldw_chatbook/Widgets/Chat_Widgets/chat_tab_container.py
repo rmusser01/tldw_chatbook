@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Dict, Optional, Tuple
 # 3rd-Party Imports
 from loguru import logger
 from textual.app import ComposeResult
-from textual.containers import Container, Vertical
+from textual.containers import Container
 from textual.widgets import Static
 from textual.reactive import reactive
 from textual.binding import Binding

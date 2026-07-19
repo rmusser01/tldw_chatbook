@@ -6,8 +6,6 @@ This module contains useful debugging utilities for troubleshooting Textual UI i
 """
 
 from textual.widgets import Static
-from textual.containers import Container
-from textual.app import ComposeResult
 
 
 def add_debug_test_message(container_or_compose: bool = False) -> Static:

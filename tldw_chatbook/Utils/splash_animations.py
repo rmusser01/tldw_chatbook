@@ -20,7 +20,6 @@
 # MatrixRainEffect = get_effect_class("matrix_rain")
 #
 # For backward compatibility, you can import the base class:
-from tldw_chatbook.Utils.Splash_Screens.base_effect import BaseEffect
 
 # Import common constants
 ESCAPED_OPEN_BRACKET = r'\['

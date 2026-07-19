@@ -30,7 +30,6 @@ from pathlib import Path
 from typing import List, Dict, Optional, Any, Union, Tuple
 from loguru import logger
 
-from .sql_validation import validate_table_name, validate_column_name
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 
 # Database Schema Version
@@ -1387,7 +1386,6 @@ class EvalsDB:
     
     def update_ab_test_results(self, test_id: str, result: 'ABTestResult'):
         """Update A/B test with results."""
-        from ..Evals.ab_testing import ABTestResult
         
         conn = self._get_connection()
         result_data = {

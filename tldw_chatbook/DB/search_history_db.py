@@ -22,7 +22,7 @@ import json
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Dict, Optional, Any, Tuple, Union
+from typing import List, Dict, Optional, Any, Union
 from loguru import logger
 from ..Metrics.metrics_logger import log_counter, log_histogram
 

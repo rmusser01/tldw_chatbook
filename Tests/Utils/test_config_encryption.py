@@ -4,9 +4,8 @@ Comprehensive test suite for config_encryption module.
 Tests AES-256-GCM encryption with scrypt key derivation.
 """
 import base64
-import json
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from tldw_chatbook.Utils.config_encryption import ConfigEncryption, config_encryption
 

@@ -8,10 +8,10 @@ This module provides an enhanced sidebar widget with:
 - Improved accessibility
 """
 
-from typing import Optional, List, Dict, Any, Callable
+from typing import Optional, List, Any, Callable
 from textual.app import ComposeResult
 from textual.containers import Container, VerticalScroll
-from textual.widgets import Static, Button, Collapsible, LoadingIndicator
+from textual.widgets import Static, Collapsible, LoadingIndicator
 from textual.reactive import reactive
 from textual.binding import Binding
 from textual.message import Message

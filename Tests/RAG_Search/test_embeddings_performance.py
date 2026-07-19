@@ -8,17 +8,12 @@ import threading
 import psutil
 import gc
 import numpy as np
-from typing import List, Dict, Any
-from pathlib import Path
-import tempfile
-import shutil
-from unittest.mock import patch, Mock, MagicMock
+from unittest.mock import patch, MagicMock
 
 from tldw_chatbook.RAG_Search.simplified import (
     EmbeddingsServiceWrapper,
     InMemoryVectorStore,
-    ChromaVectorStore,
-    create_embeddings_service
+    ChromaVectorStore
 )
 
 # Import test utilities from conftest

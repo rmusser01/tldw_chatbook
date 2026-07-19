@@ -13,7 +13,7 @@ Provides intelligent suggestions for evaluation configuration:
 """
 
 from typing import Dict, Any, Optional, List, Tuple
-from datetime import datetime, timedelta
+from datetime import datetime
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from textual.app import ComposeResult

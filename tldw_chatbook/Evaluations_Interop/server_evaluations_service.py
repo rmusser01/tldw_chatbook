@@ -9,14 +9,6 @@ from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_co
 from ..runtime_policy.types import PolicyDeniedError
 if TYPE_CHECKING:
     from ..tldw_api import (
-        BatchEvaluationRequest,
-        EmbeddingsABTestConfig,
-        EmbeddingsABTestCreateRequest,
-        EmbeddingsABTestRunRequest,
-        EvaluationBenchmarkRunRequest,
-        EvaluationHistoryRequest,
-        EvaluationRecipeDatasetValidationRequest,
-        EvaluationRecipeRunCreateRequest,
         TLDWAPIClient,
     )
 

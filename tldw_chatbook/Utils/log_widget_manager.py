@@ -5,7 +5,7 @@ This module provides a unified interface for updating various log widgets
 throughout the application, reducing code duplication in app.py.
 """
 
-from typing import Optional, Dict, TYPE_CHECKING
+from typing import Dict, TYPE_CHECKING
 from textual.widgets import RichLog
 from textual.css.query import QueryError
 from loguru import logger

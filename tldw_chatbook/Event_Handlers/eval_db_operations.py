@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from loguru import logger
 
-from ..DB.Evals_DB import EvalsDB, EvalsDBError
+from ..DB.Evals_DB import EvalsDB
 
 
 class EvalDBOperations:

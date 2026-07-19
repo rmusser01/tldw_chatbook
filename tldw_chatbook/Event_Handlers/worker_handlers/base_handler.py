@@ -7,7 +7,7 @@ state changes in a modular, extensible way.
 
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Optional, List
-from textual.worker import Worker, WorkerState
+from textual.worker import Worker
 from loguru import logger
 
 if TYPE_CHECKING:

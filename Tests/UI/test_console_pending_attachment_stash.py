@@ -10,7 +10,6 @@ restore time. The stash is process-memory only: it never serializes, and it
 dies with the app (restart drops pendings, which is the accepted trade).
 """
 
-from types import SimpleNamespace
 
 import pytest
 

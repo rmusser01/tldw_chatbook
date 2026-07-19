@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from textual.app import App
-from textual.widgets import Input, Select, Static
+from textual.widgets import Input, Select
 
 from tldw_chatbook.UI.Evals.navigation.nav_bar import EvalStatus
 from tldw_chatbook.UI.Evals.screens.quick_test import QuickTestScreen

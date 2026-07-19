@@ -4,7 +4,6 @@ from PIL import Image as PILImage
 
 from tldw_chatbook.Chat import console_paste_attach as cpa
 from tldw_chatbook.Chat.console_paste_attach import (
-    ClipboardGrab,
     DroppedPaste,
     extract_dropped_path,
     grab_clipboard_image,

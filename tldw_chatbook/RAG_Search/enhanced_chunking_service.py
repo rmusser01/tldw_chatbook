@@ -9,15 +9,14 @@ This module provides sophisticated chunking capabilities including:
 - Structure-aware chunking
 """
 
-from typing import List, Dict, Any, Optional, Tuple, Union
+from typing import List, Dict, Any, Optional, Tuple
 import re
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
-import hashlib
 
-from .chunking_service import ChunkingService, ChunkingError
-from .table_serializer import TableProcessor, serialize_table
+from .chunking_service import ChunkingService
+from .table_serializer import TableProcessor
 
 logger = logging.getLogger(__name__)
 

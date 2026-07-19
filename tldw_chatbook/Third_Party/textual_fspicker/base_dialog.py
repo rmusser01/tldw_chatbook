@@ -13,8 +13,6 @@ try:
     from typing import TypeAlias
 except ImportError:
     from typing_extensions import TypeAlias
-import json
-from datetime import datetime
 
 ##############################################################################
 # Textual imports.
@@ -22,16 +20,12 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.dom import DOMNode
-from textual.events import Mount
-from textual.message import Message
-from textual.reactive import var, reactive
+from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Input, ListView, ListItem
 
 ##############################################################################
 # Local imports.
-from .path_filters import Filters
 from .parts import DirectoryNavigation, DriveNavigation
 
 

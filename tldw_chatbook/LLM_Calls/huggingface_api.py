@@ -4,12 +4,10 @@ HuggingFace API client for browsing and downloading GGUF models.
 """
 
 import os
-import asyncio
 from typing import Dict, List, Optional, Any, Callable
 from pathlib import Path
 import httpx
 from loguru import logger
-import json
 
 
 class HuggingFaceAPI:

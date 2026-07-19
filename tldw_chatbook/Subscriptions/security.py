@@ -12,7 +12,7 @@
 import ipaddress
 import re
 import socket
-from typing import Optional, List, Set
+from typing import Optional, List
 from urllib.parse import urlparse, urlunparse
 import hashlib
 import secrets

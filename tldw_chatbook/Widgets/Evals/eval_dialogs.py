@@ -12,21 +12,19 @@ Custom dialog widgets for the evaluation system:
 - ExportDialog: Export format and options selection
 """
 
-from typing import Optional, Dict, Any, List, Callable
+from typing import Optional, Dict, Any, Callable
 from pathlib import Path
 from textual import on
 from textual.app import ComposeResult
 from textual.screen import ModalScreen
 from textual.widgets import (
     Button, Static, Label, Select, Input,
-    ListView, ListItem, TextArea,
-    DataTable, Checkbox, RadioButton, RadioSet
+    ListView, ListItem, Checkbox, RadioButton, RadioSet
 )
 from textual.containers import (
-    Container, Horizontal, Vertical, VerticalScroll, Grid
+    Container, Horizontal, VerticalScroll, Grid
 )
 from textual.reactive import reactive
-from loguru import logger
 
 # Import existing enhanced file picker
 from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen, Filters

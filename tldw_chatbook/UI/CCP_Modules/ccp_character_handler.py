@@ -1,13 +1,10 @@
 """Handler for character-related operations in the Personas screen."""
 
-import base64
-import json
 from functools import partial
-from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Dict, Any, List, Union
 
 from loguru import logger
-from textual.widgets import Select, Button, Input, TextArea, Static
+from textual.widgets import Select, Input, TextArea, Static
 
 from .ccp_messages import CharacterMessage, ViewChangeMessage
 

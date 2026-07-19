@@ -1,18 +1,15 @@
 # image_generation_service.py
 # Description: High-level service for image generation with context integration
 
-import os
-import asyncio
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any
 from datetime import datetime
 from dataclasses import dataclass
 import aiofiles
 from loguru import logger
 
 from .swarmui_client import SwarmUIClient
-from .generation_templates import GenerationTemplate, get_template, BUILTIN_TEMPLATES
-from ..config import load_settings
+from .generation_templates import get_template
 from ..Utils.paths import get_user_data_dir
 
 

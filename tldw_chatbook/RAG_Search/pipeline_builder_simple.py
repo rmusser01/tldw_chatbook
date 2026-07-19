@@ -7,7 +7,6 @@ No complex error handling or effects - just execute steps in order.
 import asyncio
 from typing import Dict, Any, List, Tuple, Optional
 from loguru import logger
-import os
 import sys
 if sys.version_info < (3, 11):
     import tomli as tomllib
@@ -15,7 +14,7 @@ else:
     import tomllib
 from pathlib import Path
 
-from .pipeline_types import SearchResult, StepType, PipelineContext
+from .pipeline_types import SearchResult, PipelineContext
 from .pipeline_functions_simple import (
     RETRIEVAL_FUNCTIONS, PROCESSING_FUNCTIONS, FORMATTING_FUNCTIONS
 )

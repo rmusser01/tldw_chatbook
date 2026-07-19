@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from textual.widgets import Button, Input
 
-from Tests.textual_test_utils import widget_pilot
 from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
     FileIngestionError,
     detect_file_type,

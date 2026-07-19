@@ -9,7 +9,6 @@
 # - Ignore patterns and selectors
 #
 # Imports
-import os
 import json
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -24,7 +23,7 @@ from loguru import logger
 # Local Imports
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..Utils.config_encryption import ConfigEncryption
-from ..Metrics.metrics_logger import log_counter, log_histogram
+from ..Metrics.metrics_logger import log_counter
 from ..config import CLI_APP_CLIENT_ID, get_subscriptions_db_path
 #
 ########################################################################################################################

@@ -1,20 +1,16 @@
 """Enhanced CCP handlers with validation and loading indicators integration."""
 
-from typing import Optional, Dict, Any
 from loguru import logger
-from textual import work
 
 # Import the validation and loading decorators
 from .ccp_validation_decorators import (
     validate_input,
     validate_search,
     validate_file_import,
-    sanitize_output,
     require_selection
 )
 from .ccp_loading_indicators import (
     with_loading,
-    with_progress,
     LoadingManager
 )
 from .ccp_validators import (

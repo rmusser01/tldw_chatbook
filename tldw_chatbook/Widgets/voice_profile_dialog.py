@@ -2,14 +2,13 @@
 # Description: Dialog for creating/editing voice profiles
 #
 # Imports
-from typing import Optional, Dict, Any, List, Callable
+from typing import Optional, Dict, Any, Callable
 from pathlib import Path
 from textual.app import ComposeResult
 from textual.screen import ModalScreen
 from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Label, Input, TextArea, Select, Button, Static
 from textual.validation import Length, Regex
-from loguru import logger
 
 #######################################################################################################################
 #

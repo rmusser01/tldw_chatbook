@@ -14,12 +14,9 @@
 ####################
 # Import necessary libraries
 import os
-import gc
-import json
 import tempfile
-import hashlib
 from datetime import datetime
-from typing import Dict, Any, Optional, List, Union, Tuple, TYPE_CHECKING
+from typing import Dict, Any, Optional, List, Union, TYPE_CHECKING
 from pathlib import Path
 
 if TYPE_CHECKING:
@@ -49,9 +46,8 @@ except ImportError:
     CV2_AVAILABLE = False
 
 # Import Local
-from ..config import get_cli_setting, get_media_ingestion_defaults
+from ..config import get_media_ingestion_defaults
 from ..Metrics.metrics_logger import log_counter, log_histogram
-from ..Utils.optional_deps import get_safe_import
 from loguru import logger
 # NOTE: `analyze` (LLM_Calls.Summarization_General_Lib) and `ocr_manager`
 # (.OCR_Backends) are intentionally NOT imported at module level -- both

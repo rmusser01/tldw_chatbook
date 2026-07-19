@@ -8,15 +8,13 @@ Chatbook Templates Window
 Provides pre-configured chatbook templates for common use cases.
 """
 
-from pathlib import Path
-from typing import Optional, List, Dict, Any, TYPE_CHECKING
+from typing import Optional, List, TYPE_CHECKING
 
 from textual.app import ComposeResult
 from textual.screen import ModalScreen
-from textual.containers import Container, Horizontal, VerticalScroll, Grid
-from textual.widgets import Static, Button, RadioSet, RadioButton
+from textual.containers import Container, VerticalScroll, Grid
+from textual.widgets import Static, Button
 from textual.reactive import reactive
-from loguru import logger
 
 if TYPE_CHECKING:
     from ..app import TldwCli

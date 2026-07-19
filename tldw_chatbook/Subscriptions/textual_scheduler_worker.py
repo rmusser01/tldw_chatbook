@@ -6,20 +6,17 @@
 #
 # Imports
 import asyncio
-from datetime import datetime, timezone, timedelta
-from typing import Optional, Dict, Any, List, Callable
-import json
+from datetime import datetime, timezone
+from typing import Dict, Any, List
 import warnings
 #
 # Third-Party Imports
 from textual import work
 from textual.app import App
-from textual import events
 from loguru import logger
 #
 # Local Imports
-from .scheduler import SubscriptionScheduler, ScheduledTask, UpdatePattern
-from .monitoring_engine import FeedMonitor, URLMonitor
+from .scheduler import SubscriptionScheduler, ScheduledTask
 from .website_monitor import WebsiteMonitor
 from .aggregation_engine import AggregationEngine, AggregationConfig
 
@@ -39,7 +36,7 @@ from ..Event_Handlers.subscription_events import (
     NewSubscriptionItems,
     BriefingGenerated
 )
-from ..Metrics.metrics_logger import log_histogram, log_counter, log_gauge
+from ..Metrics.metrics_logger import log_histogram, log_gauge
 
 warnings.warn(
     "SubscriptionSchedulerWorker is deprecated; watchlist checks are migrating to the unified Scheduling scheduler (ADR-019).",

@@ -8,20 +8,18 @@ Model Management Window
 Provides interface for managing evaluation models and providers.
 """
 
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any
 from textual import on, work
 from textual.app import ComposeResult
 from textual.widgets import (
-    Button, Label, Static, Select, Input, Switch,
-    DataTable, ListView, ListItem, Collapsible
+    Button, Label, Static, Select, ListView, ListItem, Collapsible
 )
-from textual.containers import Container, Horizontal, Vertical, VerticalScroll, Grid
+from textual.containers import Container, Horizontal, VerticalScroll, Grid
 from textual.reactive import reactive
 from loguru import logger
 
 from .eval_shared_components import (
-    BaseEvaluationWindow, RefreshDataRequest,
-    format_model_display
+    BaseEvaluationWindow
 )
 from ..Event_Handlers.eval_events import (
     get_available_providers, get_available_models,

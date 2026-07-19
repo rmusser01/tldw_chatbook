@@ -6,12 +6,10 @@
 # Standard Library
 import pytest
 import tempfile
-from pathlib import Path
 from io import BytesIO
 
 # 3rd-party Libraries
 from hypothesis import given, strategies as st, assume, settings
-from hypothesis.extra.numpy import arrays
 import numpy as np
 from PIL import Image as PILImage
 

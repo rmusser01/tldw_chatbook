@@ -13,7 +13,6 @@ import json
 import base64
 import asyncio
 import subprocess
-import tempfile
 from typing import AsyncGenerator, Optional, Dict, Any
 from pathlib import Path
 from loguru import logger

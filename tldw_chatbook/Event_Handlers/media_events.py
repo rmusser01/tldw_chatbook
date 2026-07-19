@@ -9,14 +9,11 @@ from typing import TYPE_CHECKING, Dict, Any
 from loguru import logger
 #
 # 3rd-party Libraries
-from textual import on
-from textual.app import App, ComposeResult
-from textual.containers import Vertical, Horizontal
-from textual.widgets import ListView, Input, TextArea, Label, ListItem, Button, Markdown, Static  # Added ListItem
+from textual.app import App
+from textual.containers import Vertical
+from textual.widgets import ListView, Input, Label, ListItem, Button, Static  # Added ListItem
 from textual.css.query import QueryError
 from textual.message import Message
-from textual.screen import ModalScreen
-from rich.text import Text  # For formatting details
 #
 # Local Imports
 from ..DB.Client_Media_DB_v2 import fetch_keywords_for_media

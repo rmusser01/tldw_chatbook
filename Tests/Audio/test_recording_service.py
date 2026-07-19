@@ -6,9 +6,7 @@ Tests audio capture, device enumeration, and recording functionality.
 
 import pytest
 import time
-import threading
-import queue
-from unittest.mock import Mock, patch, MagicMock, call
+from unittest.mock import Mock, patch, MagicMock
 import numpy as np
 from pathlib import Path
 import tempfile
@@ -16,9 +14,7 @@ import wave
 
 from tldw_chatbook.Audio.recording_service import (
     AudioRecordingService,
-    AudioRecordingError,
-    NoAudioBackendError,
-    AudioDeviceError
+    NoAudioBackendError
 )
 
 

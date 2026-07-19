@@ -12,7 +12,7 @@ when providing thumbs up/down feedback on messages.
 from typing import Optional, Callable
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Container, Vertical, Horizontal
+from textual.containers import Container, Horizontal
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, TextArea, Static
 from loguru import logger

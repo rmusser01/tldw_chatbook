@@ -2,7 +2,7 @@
 
 from rich.color import Color
 import random
-from typing import Optional, Any, List, Tuple
+from typing import Optional, Any, List
 from dataclasses import dataclass
 
 from ..base_effect import BaseEffect, register_effect

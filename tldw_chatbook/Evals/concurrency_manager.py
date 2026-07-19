@@ -11,7 +11,7 @@ and proper resource utilization.
 
 import asyncio
 from datetime import datetime, timezone
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any
 from loguru import logger
 
 from .eval_errors import ValidationError, ErrorContext, ErrorCategory, ErrorSeverity

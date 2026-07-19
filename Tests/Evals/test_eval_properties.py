@@ -17,8 +17,6 @@ import pytest
 import string
 import json
 import tempfile
-from datetime import datetime, timezone
-from typing import Dict, List, Any
 from unittest.mock import AsyncMock
 
 try:
@@ -578,7 +576,6 @@ class TestConcurrencyProperties:
     @settings(max_examples=10, deadline=None)
     def test_concurrent_task_creation_uniqueness(self, task_names):
         """Test that concurrent task creation maintains uniqueness."""
-        import asyncio
         import threading
         import tempfile
         import os

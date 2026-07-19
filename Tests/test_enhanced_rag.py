@@ -10,10 +10,7 @@ This script demonstrates the new features:
 """
 
 import pytest
-import asyncio
 import logging
-from pathlib import Path
-from typing import List, Dict, Any
 
 # Import optional dependency checker
 from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE

@@ -17,8 +17,6 @@ from textual.containers import Container, Horizontal, Vertical
 # Test utilities
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from textual_test_utils import widget_pilot, app_pilot
-from textual_test_harness import TestApp, IsolatedWidgetTestApp, isolated_widget_pilot
 
 # Local Imports
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced

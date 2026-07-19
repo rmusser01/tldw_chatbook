@@ -12,24 +12,20 @@
 import json
 from pathlib import Path
 from datetime import datetime
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, Any, List
 from urllib.parse import urlparse
 #
 # Third-Party Imports
 from textual import on, work
 from textual.app import ComposeResult
 from textual.screen import Screen
-from textual.containers import Horizontal, Vertical, Container, ScrollableContainer, Center
+from textual.containers import Horizontal, Vertical, Container, ScrollableContainer
 from textual.widgets import (
     Static, Button, Input, Select, TextArea, Label, 
-    DataTable, TabbedContent, TabPane, ListView, ListItem,
-    LoadingIndicator, Collapsible
+    TabbedContent, TabPane, Collapsible
 )
 from textual.reactive import reactive
-from textual.worker import Worker, WorkerState
 from textual.binding import Binding
-from textual.events import Mount
-from rich.syntax import Syntax
 from rich.table import Table
 from rich.panel import Panel
 from rich import box
@@ -37,8 +33,6 @@ from loguru import logger
 #
 # Local Imports
 from ..Widgets.form_components import FormBuilder, FormField, FormFieldSet
-from ..Subscriptions.scrapers.custom_scraper import CustomScrapingPipeline
-from ..Subscriptions.web_scraping_pipelines import ScrapingConfig
 from ..Web_Scraping.Article_Extractor_Lib import scrape_article_sync as get_page_content
 #
 ########################################################################################################################
