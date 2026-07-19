@@ -1026,7 +1026,6 @@ class ConsoleContextModal(ModalScreen[None]):
                 yield Checkbox("Raw JSON", id="console-context-raw")
                 yield Button("Refresh", id="console-context-refresh", disabled=self.in_progress)
                 yield Button("Copy JSON", id="console-context-copy")
-                yield Button("Save to File", id="console-context-save")
                 yield Button("Close", id="console-context-close")
 
     def on_mount(self) -> None:
