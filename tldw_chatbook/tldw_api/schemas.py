@@ -91,15 +91,6 @@ class ProcessDocumentRequest(BaseMediaRequest):
     chunk_size: int = 1000
 
 
-class ProcessCodeRequest(BaseModel):
-    # Matches server ProcessCodeForm; this processing-only endpoint does not
-    # accept title/author/keywords metadata.
-    urls: Optional[List[str]] = None
-    perform_chunking: bool = True
-    chunk_method: Optional[CodeChunkMethod] = "code"
-    chunk_size: int = 4000
-    chunk_overlap: int = 200
-
 
 class ProcessEmailRequest(BaseMediaRequest):
     media_type: Literal["email"] = "email"

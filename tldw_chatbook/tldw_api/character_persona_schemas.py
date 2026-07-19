@@ -397,37 +397,6 @@ class CharacterExemplarDeletionResponse(BaseModel):
     exemplar_id: str
 
 
-class CharacterChatSessionCreate(BaseModel):
-    """Request body for server-backed character/persona chat session creation."""
-
-    character_id: int | None = Field(default=None, gt=0)
-    assistant_kind: CharacterChatAssistantKind | None = None
-    assistant_id: str | None = Field(default=None, min_length=1)
-    persona_memory_mode: CharacterChatPersonaMemoryMode | None = None
-    title: str | None = None
-    parent_conversation_id: str | None = None
-    forked_from_message_id: str | None = None
-    state: CharacterChatSessionState | None = None
-    topic_label: str | None = None
-    cluster_id: str | None = None
-    source: str | None = None
-    external_ref: str | None = None
-    scope_type: CharacterChatScopeType | None = None
-    workspace_id: str | None = None
-
-
-class CharacterChatSessionUpdate(BaseModel):
-    """Request body for server-backed character/persona chat session metadata updates."""
-
-    title: str | None = None
-    rating: int | None = Field(default=None, ge=1, le=5)
-    state: CharacterChatSessionState | None = None
-    topic_label: str | None = None
-    cluster_id: str | None = None
-    source: str | None = None
-    external_ref: str | None = None
-
-
 class CharacterChatSettingsUpdate(BaseModel):
     settings: dict[str, Any] = Field(default_factory=dict)
 

@@ -166,11 +166,6 @@ from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.config import CLI_APP_CLIENT_ID
-from tldw_chatbook.Chat import (
-    ChatConversationScopeService,
-    ChatConversationService,
-    ServerChatConversationService,
-)
 from tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService
 from tldw_chatbook.Library import LocalLibraryCollectionsService
 from tldw_chatbook.Library.library_ingest_jobs import (
@@ -418,11 +413,8 @@ from tldw_chatbook.Prompt_Studio_Interop import (  # noqa: E402
 )
 from tldw_chatbook.Research_Interop import (  # noqa: E402
     LocalResearchSearchService,
-    LocalResearchService,
     ResearchSearchScopeService,
-    ResearchScopeService,
     ServerResearchSearchService,
-    ServerResearchService,
 )
 from tldw_chatbook.Server_Runtime_Interop import (  # noqa: E402
     ServerRuntimeScopeService,
@@ -466,11 +458,6 @@ from tldw_chatbook.Web_Scraping_Interop import (  # noqa: E402
     WebScrapingScopeService,
 )
 from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService  # noqa: E402
-from tldw_chatbook.Writing_Interop import (  # noqa: E402
-    LocalWritingService,
-    ServerWritingService,
-    WritingScopeService,
-)
 from tldw_chatbook.Subscriptions import (  # noqa: E402
     LocalWatchlistsService,
     ServerWatchlistsService,
@@ -8724,80 +8711,6 @@ class TldwCli(
                     "Notes service not available in on_chat_notes_collapsible_toggle."
                 )
                 return
-
-    @on(Collapsible.Toggled, "#chat-active-character-info-collapsible")
-    async def on_chat_active_character_info_collapsible_toggle(
-        self, event: Collapsible.Toggled
-    ) -> None:
-        """Handles the expansion/collapse of the Active Character Info collapsible section in the chat sidebar."""
-        if not event.collapsible.collapsed:  # If the collapsible was just expanded
-            self.loguru_logger.info(
-                "Active Character Info collapsible opened in chat sidebar. Refreshing character list."
-            )
-
-            # Call the function to populate the character list
-            from tldw_chatbook.Event_Handlers.Chat_Events import chat_events
-
-            await chat_events._populate_chat_character_search_list(self)
-
-            try:
-                # 1. Clear ListView
-                notes_list_view = self.query_one("#chat-notes-listview", ListView)
-                await notes_list_view.clear()
-
-                # 2. Call self.notes_service.list_notes
-                # Limit to a reasonable number, e.g., 50, most recent first if service supports sorting
-                listed_notes = self.notes_service.list_notes(
-                    user_id=self.notes_user_id, limit=50
-                )
-
-                # 3. Populate ListView
-                if listed_notes:
-                    for note in listed_notes:
-                        note_title = note.get("title", "Untitled Note")
-                        note_id = note.get("id")
-                        if not note_id:
-                            self.loguru_logger.warning(
-                                f"Note found without an ID: {note_title}. Skipping."
-                            )
-                            continue
-
-                        list_item_label = Label(note_title)
-                        new_list_item = ListItem(list_item_label)
-                        # Store the actual note_id on the ListItem for retrieval.
-                        # Using a unique DOM ID for the ListItem itself.
-                        new_list_item.id = f"note-item-{note_id}"
-                        # A custom attribute to store data:
-                        # setattr(new_list_item, "_note_data", note) # Store whole note or just id/version
-
-                        await notes_list_view.append(new_list_item)
-                    self.notify("Notes list refreshed.", severity="information")
-                    self.loguru_logger.info(
-                        f"Populated notes list with {len(listed_notes)} items."
-                    )
-                else:
-                    self.notify("No notes found.", severity="information")
-                    self.loguru_logger.info("No notes found for user after refresh.")
-
-            except CharactersRAGDBError as e:  # Specific DB error
-                self.loguru_logger.opt(exception=True).error(
-                    f"Database error listing notes: {e}"
-                )
-                self.notify(f"DB error listing notes: {e}", severity="error")
-            except QueryError as e_query:  # If UI elements are not found
-                self.loguru_logger.opt(exception=True).error(
-                    f"UI element not found in notes toggle: {e_query}"
-                )
-                self.notify("UI error while refreshing notes.", severity="error")
-            except Exception as e:  # Catch-all for other unexpected errors
-                self.loguru_logger.opt(exception=True).error(
-                    f"Unexpected error listing notes: {e}"
-                )
-                self.notify(
-                    f"Error listing notes: {type(e).__name__}", severity="error"
-                )
-        else:
-            self.loguru_logger.info("Notes collapsible closed in chat sidebar.")
 
     @on(Collapsible.Toggled, "#chat-active-character-info-collapsible")
     async def on_chat_active_character_info_collapsible_toggle(

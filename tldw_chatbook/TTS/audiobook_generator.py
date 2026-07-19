@@ -370,7 +370,7 @@ class CharacterDetector:
         for group in match.groups():
             if group and group[0].isupper() and len(group) > 1:
                 # Check if it's likely a character name
-                if not group.lower() in {"the", "a", "an", "and", "or", "but"}:
+                if group.lower() not in {"the", "a", "an", "and", "or", "but"}:
                     return group
         return None
 

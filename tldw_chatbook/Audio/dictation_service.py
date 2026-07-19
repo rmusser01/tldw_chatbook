@@ -463,7 +463,7 @@ class LiveDictationService:
                 text = upper_first + text[1:]
 
         # Add period at end if missing
-        if text and not text[-1] in ".!?":
+        if text and text[-1] not in ".!?":
             text += "."
 
         return text

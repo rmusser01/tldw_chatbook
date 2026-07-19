@@ -113,32 +113,6 @@ class MediaReadingScopeService:
         except ValueError as exc:
             raise ValueError(f"Invalid media backend: {mode}") from exc
 
-    def get_read_it_later_context_capability(
-        self,
-        *,
-        mode: MediaReadingBackend | str | None = None,
-        media_type_slug: str | None = None,
-    ) -> ReadItLaterContextCapability:
-        normalized_mode = self._normalize_mode(mode)
-        normalized_type = (
-            str(media_type_slug or "all-media").strip().lower() or "all-media"
-        )
-
-        if normalized_mode == MediaReadingBackend.LOCAL:
-            return ReadItLaterContextCapability(
-                available=True, aggregate_only=False, reason=None
-            )
-
-        if normalized_type == "all-media":
-            return ReadItLaterContextCapability(
-                available=True, aggregate_only=True, reason=None
-            )
-
-        return ReadItLaterContextCapability(
-            available=False,
-            aggregate_only=True,
-            reason="Read-it-later is only available in server mode from All Media.",
-        )
 
     async def _maybe_await(self, value: Any) -> Any:
         if inspect.isawaitable(value):
@@ -1443,32 +1417,6 @@ class MediaReadingScopeService:
             await self._maybe_await(service.unlink_note(item_id, note_id))
         )
 
-    async def bulk_update_reading_items(
-        self,
-        *,
-        mode: MediaReadingBackend | str | None = None,
-        item_ids: list[int],
-        action: str,
-        status: str | None = None,
-        favorite: bool | None = None,
-        tags: list[str] | None = None,
-        hard: bool = False,
-    ) -> dict[str, Any]:
-        normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._reading_action_id(normalized_mode, "bulk_update"))
-        service = self._service_for_mode(normalized_mode)
-        return self._to_plain(
-            await self._maybe_await(
-                service.bulk_update_reading_items(
-                    item_ids=item_ids,
-                    action=action,
-                    status=status,
-                    favorite=favorite,
-                    tags=tags,
-                    hard=hard,
-                )
-            )
-        )
 
     async def create_reading_archive(
         self,
@@ -3189,24 +3137,6 @@ class MediaReadingScopeService:
             for item in list(items or [])
         ]
 
-    async def reattach_ingestion_source_item(
-        self,
-        *,
-        mode: MediaReadingBackend | str | None = None,
-        source_id: Any,
-        item_id: Any,
-    ) -> dict[str, Any]:
-        normalized_mode = self._normalize_mode(mode)
-        if normalized_mode == MediaReadingBackend.LOCAL:
-            raise ValueError("Local ingestion sources are not available yet.")
-        self._enforce_policy(
-            self._ingestion_source_action_id(normalized_mode, "update")
-        )
-        service = self._service_for_mode(normalized_mode)
-        item = await self._maybe_await(
-            service.reattach_ingestion_source_item(source_id, item_id)
-        )
-        return normalize_ingestion_source_item(item, backend=normalized_mode.value)
 
     async def trigger_ingestion_source_sync(
         self,

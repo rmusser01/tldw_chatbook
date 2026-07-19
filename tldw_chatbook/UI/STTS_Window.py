@@ -22,6 +22,7 @@ from textual.widgets import (
 from textual.widget import Widget
 from textual.reactive import reactive
 from textual.binding import Binding
+from textual import on
 from loguru import logger
 
 # Local imports
@@ -646,7 +647,8 @@ class TTSPlaygroundWidget(Widget):
         except Exception as e:
             logger.warning(f"Error initializing defaults: {e}")
 
-    def on_select_changed(self, event: Select.Changed) -> None:
+    @on(Select.Changed)
+    def on_tts_provider_select_changed(self, event: Select.Changed) -> None:
         """Handle provider/model selection changes"""
         if event.select.id == "tts-provider-select":
             # Get the provider select widget
@@ -2844,7 +2846,8 @@ class TTSSettingsWidget(Widget):
         """Check if a voice value is valid (not a separator)"""
         return bool(voice) and not str(voice).startswith("_separator")
 
-    def on_select_changed(self, event: Select.Changed) -> None:
+    @on(Select.Changed)
+    def on_default_selects_changed(self, event: Select.Changed) -> None:
         """Handle select widget changes"""
         if event.select.id == "default-provider-select":
             # Update voice and model options when provider changes
@@ -3758,7 +3761,8 @@ class TTSSettingsWidget(Widget):
             voices_input.value = str(dir_path)
             logger.info(f"Higgs voices directory selected: {dir_path}")
 
-    def on_select_changed(self, event: Select.Changed) -> None:
+    @on(Select.Changed)
+    def on_default_provider_select_changed(self, event: Select.Changed) -> None:
         """Handle select widget changes"""
         if event.select.id == "default-provider-select":
             # Update voice and model options when provider changes
@@ -4111,7 +4115,10 @@ class AudioBookGenerationWidget(Widget):
             self._export_audiobook()
             event.stop()
 
-    def on_select_changed(self, event: Select.Changed) -> None:
+    @on(Select.Changed)
+    def on_audiobook_provider_select_for_voice_widget_changed(
+        self, event: Select.Changed
+    ) -> None:
         """Handle select widget changes"""
         if event.select.id == "audiobook-provider-select":
             # Update character voice widget provider
@@ -4606,7 +4613,8 @@ class AudioBookGenerationWidget(Widget):
         """Check if a voice value is valid (not a separator)"""
         return bool(voice) and not str(voice).startswith("_separator")
 
-    def on_select_changed(self, event: Select.Changed) -> None:
+    @on(Select.Changed)
+    def on_audiobook_selects_changed(self, event: Select.Changed) -> None:
         """Handle select changes"""
         if event.select.id == "audiobook-provider-select":
             # Update narrator voice options based on provider

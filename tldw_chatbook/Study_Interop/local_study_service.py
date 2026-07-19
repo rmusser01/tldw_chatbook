@@ -90,24 +90,6 @@ class LocalStudyService:
     def get_deck(self, deck_id: str) -> Any:
         return self._require_db().get_deck(deck_id)
 
-    def update_deck(
-        self,
-        deck_id: str,
-        *,
-        name: Optional[str] = None,
-        description: Optional[str] = None,
-        expected_version: Optional[int] = None,
-        **_: Any,
-    ) -> Any:
-        updated = self._require_db().update_deck(
-            deck_id,
-            name=name,
-            description=description,
-            expected_version=expected_version,
-        )
-        if not updated:
-            return None
-        return self._require_db().get_deck(deck_id)
 
     def create_deck(
         self,
@@ -262,12 +244,7 @@ class LocalStudyService:
             return None
         return self._require_db().get_flashcard(card_id)
 
-    def get_flashcard_tags(self, card_id: str) -> dict[str, Any]:
-        card = self.get_flashcard(card_id)
-        return {"uuid": card_id, "tags": self._normalize_tags((card or {}).get("tags"))}
 
-    def set_flashcard_tags(self, card_id: str, *, tags: list[str]) -> Any:
-        return self.update_flashcard(card_id, tags=tags)
 
     def create_flashcards_bulk(self, cards: list[Mapping[str, Any]]) -> dict[str, Any]:
         created: list[Any] = []

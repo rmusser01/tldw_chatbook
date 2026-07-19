@@ -109,7 +109,7 @@ def main():
             {
                 "type": "error",
                 "message": f"Import failed: {str(e)}",
-                "traceback": traceback.format_exc(),
+                "traceback": traceback.format_exc(),  # noqa: F823
             }
         )
         return

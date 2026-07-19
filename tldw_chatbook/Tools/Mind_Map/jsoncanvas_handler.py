@@ -261,7 +261,7 @@ class JSONCanvasHandler:
             return node.canvas_id
 
         # Use node name if it looks like an ID
-        if node.name and not " " in node.name:
+        if node.name and " " not in node.name:
             return node.name
 
         # Generate a new UUID

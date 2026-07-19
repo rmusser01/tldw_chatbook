@@ -272,68 +272,10 @@ class ServerStudyService:
         response = await self._require_client().get_flashcard(card_id)
         return self._model_to_dict(response)
 
-    async def reset_flashcard_scheduling(
-        self,
-        card_id: str,
-        *,
-        expected_version: int,
-    ) -> dict[str, Any]:
-        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-        from ..tldw_api import FlashcardResetSchedulingRequest
 
-        self._enforce(self._flashcard_action_id("update"))
-        response = await self._require_client().reset_flashcard_scheduling(
-            card_id,
-            FlashcardResetSchedulingRequest(expected_version=expected_version),
-        )
-        return self._model_to_dict(response)
 
-    async def set_flashcard_tags(
-        self,
-        card_id: str,
-        *,
-        tags: list[str],
-    ) -> dict[str, Any]:
-        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-        from ..tldw_api import FlashcardTagsUpdate
 
-        self._enforce(self._flashcard_tags_action_id("update"))
-        response = await self._require_client().set_flashcard_tags(
-            card_id,
-            FlashcardTagsUpdate(tags=tags),
-        )
-        return self._model_to_dict(response)
 
-    async def get_flashcard_tags(self, card_id: str) -> dict[str, Any]:
-        self._enforce(self._flashcard_tags_action_id("list"))
-        return await self._require_client().get_flashcard_tags(card_id)
-
-    async def list_flashcard_tag_suggestions(
-        self,
-        *,
-        q: Optional[str] = None,
-        limit: int = 50,
-    ) -> dict[str, Any]:
-        self._enforce(self._flashcard_tags_action_id("list"))
-        response = await self._require_client().list_flashcard_tag_suggestions(
-            q=q, limit=limit
-        )
-        return self._model_to_dict(response)
-
-    async def get_flashcard_analytics_summary(
-        self,
-        *,
-        deck_id: Optional[int] = None,
-        workspace_id: Optional[str] = None,
-        include_workspace_items: Optional[bool] = None,
-    ) -> dict[str, Any]:
-        self._enforce(self._flashcard_analytics_action_id("observe"))
-        response = await self._require_client().get_flashcard_analytics_summary(
-            deck_id=self._coerce_deck_id(deck_id),
-            workspace_id=workspace_id,
-            include_workspace_items=include_workspace_items,
-        )
-        return self._model_to_dict(response)
 
     async def list_review_sessions(
         self,
@@ -413,16 +355,7 @@ class ServerStudyService:
         )
         return self._model_to_dict(response)
 
-    async def upload_flashcard_asset(
-        self, file: tuple[str, bytes, str]
-    ) -> dict[str, Any]:
-        self._enforce(self._flashcard_asset_action_id("create"))
-        response = await self._require_client().upload_flashcard_asset(file)
-        return self._model_to_dict(response)
 
-    async def get_flashcard_asset_content(self, asset_uuid: str) -> Any:
-        self._enforce(self._flashcard_asset_action_id("detail"))
-        return await self._require_client().get_flashcard_asset_content(asset_uuid)
 
     async def create_flashcards_bulk(
         self, cards: list[Mapping[str, Any]]
@@ -433,37 +366,7 @@ class ServerStudyService:
         )
         return self._model_to_dict(response)
 
-    async def update_flashcards_bulk(
-        self, updates: list[Mapping[str, Any]]
-    ) -> dict[str, Any]:
-        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-        from ..tldw_api import FlashcardBulkUpdateItem
 
-        self._enforce(self._flashcard_bulk_action_id("update"))
-        response = await self._require_client().update_flashcards_bulk(
-            [FlashcardBulkUpdateItem(**dict(update)) for update in updates]
-        )
-        return self._model_to_dict(response)
-
-    async def preview_structured_qa_import(
-        self,
-        content: str,
-        *,
-        max_lines: Optional[int] = None,
-        max_line_length: Optional[int] = None,
-        max_field_length: Optional[int] = None,
-    ) -> dict[str, Any]:
-        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-        from ..tldw_api import StructuredQaImportPreviewRequest
-
-        self._enforce(self._flashcard_import_action_id("preview"))
-        response = await self._require_client().preview_structured_qa_import(
-            StructuredQaImportPreviewRequest(content=content),
-            max_lines=max_lines,
-            max_line_length=max_line_length,
-            max_field_length=max_field_length,
-        )
-        return self._model_to_dict(response)
 
     async def import_flashcards(
         self,
@@ -504,130 +407,12 @@ class ServerStudyService:
             max_field_length=max_field_length,
         )
 
-    async def import_flashcards_apkg(
-        self,
-        file: tuple[str, bytes, str],
-        *,
-        max_items: Optional[int] = None,
-        max_field_length: Optional[int] = None,
-    ) -> dict[str, Any]:
-        self._enforce(self._flashcard_import_action_id("import"))
-        return await self._require_client().import_flashcards_apkg(
-            file,
-            max_items=max_items,
-            max_field_length=max_field_length,
-        )
 
-    async def export_flashcards(
-        self,
-        *,
-        deck_id: Optional[int] = None,
-        workspace_id: Optional[str] = None,
-        include_workspace_items: Optional[bool] = None,
-        tag: Optional[str] = None,
-        q: Optional[str] = None,
-        format: str = "csv",
-        include_reverse: Optional[bool] = None,
-        delimiter: Optional[str] = None,
-        include_header: Optional[bool] = None,
-        extended_header: Optional[bool] = None,
-    ) -> Any:
-        self._enforce(self._flashcard_export_action_id("export"))
-        return await self._require_client().export_flashcards(
-            deck_id=self._coerce_deck_id(deck_id),
-            workspace_id=workspace_id,
-            include_workspace_items=include_workspace_items,
-            tag=tag,
-            q=q,
-            format=format,
-            include_reverse=include_reverse,
-            delimiter=delimiter,
-            include_header=include_header,
-            extended_header=extended_header,
-        )
 
-    async def create_flashcard_template(
-        self,
-        *,
-        name: str,
-        front_template: str,
-        model_type: str = "basic",
-        back_template: Optional[str] = None,
-        notes_template: Optional[str] = None,
-        extra_template: Optional[str] = None,
-        placeholder_definitions: Optional[list[dict[str, Any]]] = None,
-    ) -> dict[str, Any]:
-        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-        from ..tldw_api import FlashcardTemplateCreateRequest
 
-        self._enforce(self._flashcard_template_action_id("create"))
-        response = await self._require_client().create_flashcard_template(
-            FlashcardTemplateCreateRequest(
-                name=name,
-                model_type=model_type,
-                front_template=front_template,
-                back_template=back_template,
-                notes_template=notes_template,
-                extra_template=extra_template,
-                placeholder_definitions=placeholder_definitions or [],
-            )
-        )
-        return self._model_to_dict(response)
 
-    async def list_flashcard_templates(
-        self, *, limit: int = 100, offset: int = 0
-    ) -> dict[str, Any]:
-        self._enforce(self._flashcard_template_action_id("list"))
-        response = await self._require_client().list_flashcard_templates(
-            limit=limit, offset=offset
-        )
-        return self._model_to_dict(response)
 
-    async def get_flashcard_template(self, template_id: int) -> dict[str, Any]:
-        self._enforce(self._flashcard_template_action_id("detail"))
-        response = await self._require_client().get_flashcard_template(int(template_id))
-        return self._model_to_dict(response)
 
-    async def update_flashcard_template(
-        self,
-        template_id: int,
-        *,
-        name: Optional[str] = None,
-        model_type: Optional[str] = None,
-        front_template: Optional[str] = None,
-        back_template: Optional[str] = None,
-        notes_template: Optional[str] = None,
-        extra_template: Optional[str] = None,
-        placeholder_definitions: Optional[list[dict[str, Any]]] = None,
-        expected_version: Optional[int] = None,
-    ) -> dict[str, Any]:
-        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-        from ..tldw_api import FlashcardTemplateUpdateRequest
-
-        self._enforce(self._flashcard_template_action_id("update"))
-        response = await self._require_client().update_flashcard_template(
-            int(template_id),
-            FlashcardTemplateUpdateRequest(
-                name=name,
-                model_type=model_type,
-                front_template=front_template,
-                back_template=back_template,
-                notes_template=notes_template,
-                extra_template=extra_template,
-                placeholder_definitions=placeholder_definitions,
-                expected_version=expected_version,
-            ),
-        )
-        return self._model_to_dict(response)
-
-    async def delete_flashcard_template(
-        self, template_id: int, *, expected_version: int
-    ) -> dict[str, Any]:
-        self._enforce(self._flashcard_template_action_id("delete"))
-        return await self._require_client().delete_flashcard_template(
-            int(template_id),
-            expected_version=expected_version,
-        )
 
     async def move_flashcard(
         self,

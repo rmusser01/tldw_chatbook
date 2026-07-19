@@ -2366,33 +2366,6 @@ class EvalRunner:
         """Run evaluation on a single sample."""
         return await self.runner.run_sample(sample)
 
-    async def run_evaluation(
-        self, max_samples: int = None, progress_callback: callable = None
-    ) -> List[EvalSampleResult]:
-        """Run evaluation on the task dataset."""
-        return await self.runner.run_evaluation(
-            max_samples=max_samples, progress_callback=progress_callback
-        )
-
-    def calculate_aggregate_metrics(
-        self, results: List[EvalSampleResult]
-    ) -> Dict[str, float]:
-        """Calculate aggregate metrics from results."""
-        if hasattr(self.runner, "calculate_aggregate_metrics"):
-            return self.runner.calculate_aggregate_metrics(results)
-
-        # Default implementation
-        if not results:
-            return {}
-
-        metrics = {}
-        for key in results[0].metrics.keys():
-            values = [r.metrics.get(key, 0) for r in results if not r.error_info]
-            if values:
-                metrics[f"{key}_mean"] = sum(values) / len(values)
-
-        return metrics
-
     def _create_basic_runner(
         self, task_config: TaskConfig, model_config: Dict[str, Any]
     ):

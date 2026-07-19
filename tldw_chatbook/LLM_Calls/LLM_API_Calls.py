@@ -3221,7 +3221,7 @@ def chat_with_google(
         # and an error occurred *before* entering `stream_generator`, it might need closing here.
         # The `nonlocal response` and assignment `response = session.post(...)` helps manage this.
         if (
-            not current_streaming and response and not response.connection == None
+            not current_streaming and response and response.connection is not None
         ):  # Check if response exists and not already closed
             # For non-streaming, response.close() is usually handled by requests Session context manager.
             # For streaming, it's handled in the generator's finally.

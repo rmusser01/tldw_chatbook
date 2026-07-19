@@ -13,8 +13,6 @@ from textual.css.query import QueryError
 
 #
 # Local Imports
-from tldw_chatbook.Event_Handlers.media_events import RESULTS_PER_PAGE
-
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli  # Assuming your app class is TldwCli
 #

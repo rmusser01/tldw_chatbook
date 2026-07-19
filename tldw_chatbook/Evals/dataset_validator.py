@@ -290,15 +290,15 @@ class DatasetValidator:
         # Check each sample
         for i, sample in enumerate(samples):
             # Check required fields
-            for field in required:
-                if field not in sample:
+            for field_name in required:
+                if field_name not in sample:
                     issues.append(
                         ValidationIssue(
                             severity="error",
                             category="schema",
-                            message=f"Missing required field: {field}",
+                            message=f"Missing required field: {field_name}",
                             sample_index=i,
-                            field_name=field,
+                            field_name=field_name,
                         )
                     )
 
@@ -368,15 +368,15 @@ class DatasetValidator:
 
             # Check string fields
             string_fields = ["question", "answer", "input", "expected_output"]
-            for field in string_fields:
-                if field in sample and not isinstance(sample[field], str):
+            for field_name in string_fields:
+                if field_name in sample and not isinstance(sample[field_name], str):
                     issues.append(
                         ValidationIssue(
                             severity="error",
                             category="data",
-                            message=f"{field} must be a string",
+                            message=f"{field_name} must be a string",
                             sample_index=i,
-                            field_name=field,
+                            field_name=field_name,
                         )
                     )
 
@@ -437,28 +437,28 @@ class DatasetValidator:
 
         for i, sample in enumerate(samples):
             # Check for empty values
-            for field, value in sample.items():
+            for field_name, value in sample.items():
                 if value == "" or value is None:
                     issues.append(
                         ValidationIssue(
                             severity="warning",
                             category="data",
-                            message=f"Empty value for field: {field}",
+                            message=f"Empty value for field: {field_name}",
                             sample_index=i,
-                            field_name=field,
+                            field_name=field_name,
                         )
                     )
 
             # Check for whitespace-only values
-            for field, value in sample.items():
+            for field_name, value in sample.items():
                 if isinstance(value, str) and value.strip() == "":
                     issues.append(
                         ValidationIssue(
                             severity="warning",
                             category="data",
-                            message=f"Whitespace-only value for field: {field}",
+                            message=f"Whitespace-only value for field: {field_name}",
                             sample_index=i,
-                            field_name=field,
+                            field_name=field_name,
                         )
                     )
 

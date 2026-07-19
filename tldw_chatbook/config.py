@@ -576,12 +576,12 @@ def _get_typed_value(
         return None
 
     try:
-        if target_type == bool:
+        if target_type is bool:
             if isinstance(value, bool):
                 return value
             # For bools from TOML strings (shouldn't happen if TOML is well-formed)
             return str(value).lower() in ["true", "1", "t", "y", "yes"]
-        if target_type == Path:
+        if target_type is Path:
             return Path(value) if value else default
         return target_type(value)
     except (ValueError, TypeError) as e:
@@ -3416,18 +3416,6 @@ except tomllib.TOMLDecodeError as e:
         f"FATAL: Could not parse internal DEFAULT_CONFIG_TOML_CONTENT: {e}. Application cannot start correctly."
     )
     DEFAULT_CONFIG_FROM_TOML = {}  # Should not happen with valid TOML string
-
-
-# --- Helper for deep merging dictionaries ---
-def deep_merge_dicts(base: Dict, update: Dict) -> Dict:
-    """Recursively merges update_dict into base_dict."""
-    merged = copy.deepcopy(base)
-    for key, value in update.items():
-        if isinstance(value, dict) and key in merged and isinstance(merged[key], dict):
-            merged[key] = deep_merge_dicts(merged[key], value)
-        else:
-            merged[key] = value
-    return merged
 
 
 # --- Primary Configuration Loading Logic for the CLI ---

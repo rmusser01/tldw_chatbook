@@ -393,7 +393,6 @@ async def handle_api_call_worker_state_changed(
                         f"NON-STREAMING RESULT for '{prefix}' (worker '{worker_name}'): {str(worker_result_content)[:200]}..."
                     )
 
-                    final_display_text_obj: Text
                     original_text_for_storage: str = ""
 
                     if (

@@ -247,18 +247,6 @@ class MediaUpdateRequest(BaseModel):
         ]
 
 
-class MediaKeywordsUpdateRequest(BaseModel):
-    keywords: list[str]
-    mode: MediaKeywordsUpdateMode = "add"
-
-    @field_validator("keywords", mode="before")
-    @classmethod
-    def _normalize_keywords(cls, value: Any) -> Any:
-        if not isinstance(value, list):
-            raise ValueError("keywords_must_be_list")
-        return [
-            _normalize_nonempty_string(entry, field_name="keyword") for entry in value
-        ]
 
 
 class MediaKeywordsResponse(BaseModel):
@@ -450,12 +438,6 @@ class AddMediaRequest(BaseModel):
     ocr_prompt_preset: str | None = None
 
 
-class MediaIngestJobItem(BaseModel):
-    id: int
-    uuid: str | None = None
-    source: str
-    source_kind: str
-    status: str
 
 
 class MediaIngestSubmitResponse(BaseModel):
@@ -464,59 +446,8 @@ class MediaIngestSubmitResponse(BaseModel):
     errors: list[str] = Field(default_factory=list)
 
 
-class IngestWebContentRequest(BaseModel):
-    urls: list[HttpUrl]
-    titles: list[str] | None = None
-    authors: list[str] | None = None
-    keywords: list[str] | None = None
-    scrape_method: WebContentScrapeMethod = "individual"
-    url_level: int | None = 2
-    max_pages: int | None = Field(default=None, ge=1)
-    max_depth: int | None = 3
-    custom_prompt: str | None = None
-    system_prompt: str | None = None
-    perform_translation: bool = False
-    translation_language: str = "en"
-    timestamp_option: bool = True
-    overwrite_existing: bool = False
-    perform_analysis: bool = True
-    perform_rolling_summarization: bool = False
-    api_name: str | None = None
-    api_key: str | None = None
-    perform_chunking: bool = True
-    chunk_method: str | None = None
-    use_adaptive_chunking: bool = False
-    use_multi_level_chunking: bool = False
-    chunk_language: str | None = None
-    chunk_size: int = Field(default=500, gt=0)
-    chunk_overlap: int = Field(default=200, ge=0)
-    hierarchical_chunking: bool | None = False
-    hierarchical_template: dict[str, Any] | None = None
-    use_cookies: bool = False
-    cookies: str | None = None
-    perform_confabulation_check_of_analysis: bool = False
-    custom_chapter_pattern: str | None = None
-    crawl_strategy: str | None = None
-    include_external: bool | None = None
-    score_threshold: float | None = None
 
 
-class WebScrapedItemResult(BaseModel):
-    model_config = ConfigDict(extra="allow")
-
-    url: str
-    title: str | None = None
-    author: str | None = None
-    content: str | None = None
-    keywords: str | list[str] | None = None
-    analysis: str | None = None
-    chunks: list[Any] | None = None
-    ingested_at: datetime | None = None
-    metadata: dict[str, Any] | None = None
-    extraction_successful: bool | None = None
-
-    def __getitem__(self, key: str) -> Any:
-        return getattr(self, key)
 
 
 class IngestWebContentResponse(BaseModel):
@@ -559,30 +490,8 @@ class MediaKeywordsUpdateRequest(BaseModel):
         ]
 
 
-class MediaIngestJobStatus(BaseModel):
-    id: int
-    uuid: str | None = None
-    status: str
-    job_type: str
-    owner_user_id: str | None = None
-    created_at: str | None = None
-    started_at: str | None = None
-    completed_at: str | None = None
-    cancelled_at: str | None = None
-    cancellation_reason: str | None = None
-    progress_percent: float | None = None
-    progress_message: str | None = None
-    result: ReadingImportResponse | None = None
-    error_message: str | None = None
-    media_type: str | None = None
-    source: str | None = None
-    source_kind: str | None = None
-    batch_id: str | None = None
 
 
-class MediaIngestJobListResponse(BaseModel):
-    batch_id: str
-    jobs: list[MediaIngestJobStatus] = Field(default_factory=list)
 
 
 class MediaIngestJobCancelResponse(BaseModel):
@@ -858,34 +767,12 @@ class WebProcessResponse(BaseModel):
     media_ids: list[int | str] | None = None
 
 
-class DocumentOutlineEntry(BaseModel):
-    level: int = Field(..., ge=1, le=6)
-    title: str
-    page: int = Field(..., ge=1)
 
 
-class DocumentOutlineResponse(BaseModel):
-    media_id: int
-    has_outline: bool
-    entries: list[DocumentOutlineEntry] = Field(default_factory=list)
-    total_pages: int = Field(..., ge=0)
 
 
-class DocumentFigure(BaseModel):
-    id: str
-    page: int = Field(..., ge=1)
-    width: int = Field(..., ge=1)
-    height: int = Field(..., ge=1)
-    format: str
-    data_url: str | None = None
-    caption: str | None = None
 
 
-class DocumentFiguresResponse(BaseModel):
-    media_id: int
-    has_figures: bool
-    figures: list[DocumentFigure] = Field(default_factory=list)
-    total_count: int = Field(..., ge=0)
 
 
 class DocumentAnnotationCreateRequest(BaseModel):
@@ -904,88 +791,22 @@ class DocumentAnnotationUpdateRequest(BaseModel):
     note: str | None = None
 
 
-class DocumentAnnotationResponse(BaseModel):
-    id: str
-    media_id: int
-    location: str
-    text: str
-    color: DocumentAnnotationColor
-    note: str | None = None
-    annotation_type: DocumentAnnotationType = "highlight"
-    chapter_title: str | None = None
-    percentage: float | None = None
-    created_at: datetime
-    updated_at: datetime
 
 
-class DocumentAnnotationListResponse(BaseModel):
-    media_id: int
-    annotations: list[DocumentAnnotationResponse] = Field(default_factory=list)
-    total_count: int = Field(..., ge=0)
 
 
-class DocumentAnnotationSyncRequest(BaseModel):
-    annotations: list[DocumentAnnotationCreateRequest]
-    client_ids: list[str] | None = None
 
 
-class DocumentAnnotationSyncResponse(BaseModel):
-    media_id: int
-    synced_count: int = Field(..., ge=0)
-    annotations: list[DocumentAnnotationResponse] = Field(default_factory=list)
-    id_mapping: dict[str, str] | None = None
 
 
-class DocumentInsightsRequest(BaseModel):
-    categories: list[DocumentInsightCategory] | None = None
-    model: str | None = None
-    max_content_length: int | None = Field(default=5000, ge=500, le=50_000)
-    force: bool | None = False
 
 
-class DocumentInsightItem(BaseModel):
-    category: DocumentInsightCategory
-    title: str
-    content: str
-    confidence: float | None = Field(default=None, ge=0, le=1)
 
 
-class DocumentInsightsResponse(BaseModel):
-    media_id: int
-    insights: list[DocumentInsightItem] = Field(default_factory=list)
-    model_used: str
-    cached: bool = False
 
 
-class DocumentReferenceEntry(BaseModel):
-    raw_text: str
-    title: str | None = None
-    authors: str | None = None
-    year: int | None = Field(default=None, ge=1000, le=2100)
-    venue: str | None = None
-    doi: str | None = None
-    arxiv_id: str | None = None
-    url: str | None = None
-    citation_count: int | None = Field(default=None, ge=0)
-    semantic_scholar_id: str | None = None
-    open_access_pdf: str | None = None
 
 
-class DocumentReferencesResponse(BaseModel):
-    media_id: int
-    has_references: bool
-    references: list[DocumentReferenceEntry] = Field(default_factory=list)
-    enrichment_source: str | None = None
-    enriched_count: int = Field(default=0, ge=0)
-    enrichment_limited: bool = False
-    total_detected: int = Field(default=0, ge=0)
-    truncated: bool = False
-    offset: int = Field(default=0, ge=0)
-    limit: int = Field(default=0, ge=0)
-    returned_count: int = Field(default=0, ge=0)
-    total_available: int = Field(default=0, ge=0)
-    has_more: bool = False
-    next_offset: int | None = Field(default=None, ge=0)
 
 
 class DocumentVersionCreateRequest(BaseModel):
@@ -1052,55 +873,14 @@ class MediaDetailResponse(BaseModel):
         ]
 
 
-class MediaNavigationNode(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    id: str
-    parent_id: str | None = None
-    level: int = Field(..., ge=0)
-    title: str
-    order: int = Field(..., ge=0)
-    path_label: str | None = None
-    target_type: MediaNavigationTargetType
-    target_start: float | None = None
-    target_end: float | None = None
-    target_href: str | None = None
-    source: str
-    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
-class MediaNavigationStats(BaseModel):
-    returned_node_count: int = Field(..., ge=0)
-    node_count: int = Field(..., ge=0)
-    max_depth: int = Field(..., ge=0)
-    truncated: bool = False
 
 
-class MediaNavigationResponse(BaseModel):
-    media_id: int = Field(..., ge=1)
-    available: bool = True
-    navigation_version: str
-    source_order_used: list[str] = Field(default_factory=list)
-    nodes: list[MediaNavigationNode] = Field(default_factory=list)
-    stats: MediaNavigationStats
 
 
-class MediaNavigationTarget(BaseModel):
-    target_type: MediaNavigationTargetType
-    target_start: float | None = None
-    target_end: float | None = None
-    target_href: str | None = None
 
 
-class MediaNavigationContentResponse(BaseModel):
-    media_id: int = Field(..., ge=1)
-    node_id: str
-    title: str
-    content_format: MediaNavigationFormat
-    available_formats: list[MediaNavigationFormat] = Field(default_factory=list)
-    content: str
-    alternate_content: dict[MediaNavigationFormat, str] | None = None
-    target: MediaNavigationTarget
 
 
 class ReadingUpdateRequest(BaseModel):
@@ -1143,65 +923,18 @@ class ReadingSaveRequest(BaseModel):
         return value
 
 
-class ReadingSavedSearchCreateRequest(BaseModel):
-    name: str = Field(..., min_length=1, max_length=255)
-    query: dict[str, Any] = Field(default_factory=dict)
-    sort: str | None = None
-
-    @field_validator("name")
-    @classmethod
-    def _strip_name(cls, value: str) -> str:
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("name cannot be blank")
-        return normalized
 
 
-class ReadingSavedSearchUpdateRequest(BaseModel):
-    name: str | None = Field(default=None, min_length=1, max_length=255)
-    query: dict[str, Any] | None = None
-    sort: str | None = None
-
-    @field_validator("name")
-    @classmethod
-    def _strip_name(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("name cannot be blank")
-        return normalized
 
 
-class ReadingSavedSearchResponse(BaseModel):
-    id: int
-    name: str
-    query: dict[str, Any] = Field(default_factory=dict)
-    sort: str | None = None
-    created_at: str | None = None
-    updated_at: str | None = None
 
 
-class ReadingSavedSearchListResponse(BaseModel):
-    items: list[ReadingSavedSearchResponse] = Field(default_factory=list)
-    total: int
-    limit: int
-    offset: int
 
 
-class ReadingNoteLinkCreateRequest(BaseModel):
-    note_id: str = Field(..., min_length=1, max_length=255)
 
 
-class ReadingNoteLinkResponse(BaseModel):
-    item_id: int
-    note_id: str
-    created_at: str | None = None
 
 
-class ReadingNoteLinksListResponse(BaseModel):
-    item_id: int
-    links: list[ReadingNoteLinkResponse] = Field(default_factory=list)
 
 
 class ItemsBulkRequest(BaseModel):
@@ -1269,49 +1002,14 @@ class UnifiedItemsListResponse(BaseModel):
     size: int | None = None
 
 
-class ReadingArchiveCreateRequest(BaseModel):
-    format: Literal["html", "md"] = "html"
-    source: Literal["auto", "clean_html", "text"] = "auto"
-    title: str | None = Field(default=None, max_length=200)
-    retention_days: int | None = Field(default=None, ge=0, le=3650)
-    retention_until: str | None = None
 
 
-class ReadingArchiveResponse(BaseModel):
-    output_id: int
-    title: str
-    format: Literal["html", "md"]
-    storage_path: str
-    created_at: str | None = None
-    retention_until: str | None = None
-    download_url: str
 
 
-class ReadingCitation(BaseModel):
-    item_id: int
-    url: str | None = None
-    canonical_url: str | None = None
-    title: str | None = None
-    source: str = "reading"
 
 
-class ReadingSummarizeRequest(BaseModel):
-    provider: str | None = None
-    model: str | None = None
-    prompt: str | None = None
-    system_prompt: str | None = None
-    temperature: float | None = Field(default=None, ge=0.0, le=2.0)
-    recursive: bool = False
-    chunked: bool = False
 
 
-class ReadingSummaryResponse(BaseModel):
-    item_id: int
-    summary: str
-    provider: str
-    model: str | None = None
-    citations: list[ReadingCitation] = Field(default_factory=list)
-    generated_at: str | None = None
 
 
 class ReadingExportResponse(BaseModel):
@@ -1333,14 +1031,6 @@ class MediaFileAvailabilityResponse(BaseModel):
     headers: dict[str, str] = Field(default_factory=dict)
 
 
-class ReadingTTSRequest(BaseModel):
-    model: str = Field(..., min_length=1)
-    voice: str = "af_heart"
-    response_format: Literal["mp3", "opus", "aac", "flac", "wav", "pcm"] = "mp3"
-    stream: bool = True
-    speed: float | None = Field(default=None, ge=0.25, le=4.0)
-    max_chars: int | None = Field(default=None, ge=1, le=200000)
-    text_source: Literal["text", "summary", "notes"] | None = None
 
 
 class ReadingTTSResponse(BaseModel):
@@ -1351,157 +1041,26 @@ class ReadingTTSResponse(BaseModel):
     filename: str | None = None
 
 
-class ReadingImportResponse(BaseModel):
-    source: str
-    imported: int
-    updated: int
-    skipped: int
-    errors: list[str] = Field(default_factory=list)
 
 
-class ReadingImportJobResponse(BaseModel):
-    job_id: int
-    job_uuid: str | None = None
-    status: ReadingImportJobState
 
 
-class ReadingImportJobStatus(BaseModel):
-    job_id: int
-    job_uuid: str | None = None
-    status: ReadingImportJobState
-    created_at: str | None = None
-    started_at: str | None = None
-    completed_at: str | None = None
-    progress_percent: float | None = None
-    progress_message: str | None = None
-    error_message: str | None = None
-    result: ReadingImportResponse | None = None
 
 
-class ReadingImportJobsListResponse(BaseModel):
-    jobs: list[ReadingImportJobStatus] = Field(default_factory=list)
-    total: int
-    limit: int | None = None
-    offset: int | None = None
 
 
-class ReadingDigestSuggestionsConfig(BaseModel):
-    enabled: bool = False
-    limit: int | None = Field(default=None, ge=1, le=200)
-    status: list[Literal["saved", "reading", "read", "archived"]] | None = None
-    exclude_tags: list[str] | None = None
-    max_age_days: int | None = Field(default=None, ge=1, le=3650)
-    include_read: bool = False
-    include_archived: bool = False
-
-    @field_validator("status", mode="before")
-    @classmethod
-    def _coerce_status(cls, value: Any) -> Any:
-        if isinstance(value, str):
-            return [value]
-        return value
-
-    @field_validator("exclude_tags", mode="before")
-    @classmethod
-    def _coerce_exclude_tags(cls, value: Any) -> Any:
-        if isinstance(value, str):
-            return [value.strip()]
-        if isinstance(value, list):
-            return [item.strip() if isinstance(item, str) else item for item in value]
-        return value
 
 
-class ReadingDigestScheduleFilters(BaseModel):
-    status: list[Literal["saved", "reading", "read", "archived"]] | None = None
-    tags: list[str] | None = None
-    favorite: bool | None = None
-    domain: str | None = None
-    q: str | None = None
-    date_from: str | None = None
-    date_to: str | None = None
-    sort: str | None = None
-    limit: int | None = Field(default=None, ge=1, le=500)
-    suggestions: ReadingDigestSuggestionsConfig | None = None
-
-    @field_validator("status", mode="before")
-    @classmethod
-    def _coerce_status(cls, value: Any) -> Any:
-        if isinstance(value, str):
-            return [value]
-        return value
-
-    @field_validator("tags", mode="before")
-    @classmethod
-    def _coerce_tags(cls, value: Any) -> Any:
-        if isinstance(value, str):
-            return [value.strip()]
-        if isinstance(value, list):
-            return [item.strip() if isinstance(item, str) else item for item in value]
-        return value
 
 
-class ReadingDigestScheduleCreateRequest(BaseModel):
-    name: str | None = None
-    cron: str
-    timezone: str | None = None
-    enabled: bool = True
-    require_online: bool = False
-    format: Literal["md", "html"] = "md"
-    template_id: int | None = None
-    template_name: str | None = None
-    retention_days: int | None = Field(default=None, ge=0, le=3650)
-    filters: ReadingDigestScheduleFilters | None = None
 
 
-class ReadingDigestScheduleUpdateRequest(BaseModel):
-    name: str | None = None
-    cron: str | None = None
-    timezone: str | None = None
-    enabled: bool | None = None
-    require_online: bool | None = None
-    format: Literal["md", "html"] | None = None
-    template_id: int | None = None
-    template_name: str | None = None
-    retention_days: int | None = Field(default=None, ge=0, le=3650)
-    filters: ReadingDigestScheduleFilters | None = None
 
 
-class ReadingDigestScheduleResponse(BaseModel):
-    id: str
-    name: str | None = None
-    cron: str
-    timezone: str | None = None
-    enabled: bool
-    require_online: bool
-    format: Literal["md", "html"]
-    template_id: int | None = None
-    template_name: str | None = None
-    retention_days: int | None = None
-    filters: ReadingDigestScheduleFilters | None = None
-    last_run_at: str | None = None
-    next_run_at: str | None = None
-    last_status: str | None = None
-    created_at: str | None = None
-    updated_at: str | None = None
 
 
-class ReadingDigestOutput(BaseModel):
-    output_id: int
-    title: str
-    format: Literal["md", "html"]
-    created_at: str | None = None
-    download_url: str
-    schedule_id: str | None = None
-    schedule_name: str | None = None
-    item_count: int | None = None
-    metadata: dict[str, Any] | None = None
 
 
-class ReadingDigestOutputsListResponse(BaseModel):
-    items: list[ReadingDigestOutput] = Field(default_factory=list)
-    total: int
-    limit: int | None = None
-    offset: int | None = None
 
 
 class ReadingItem(BaseModel):

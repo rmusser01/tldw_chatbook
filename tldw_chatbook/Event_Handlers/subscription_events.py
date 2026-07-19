@@ -108,7 +108,7 @@ class SubscriptionCheckComplete(SubscriptionEvent):
         self.timestamp = datetime.now()
 
 
-class SubscriptionError(SubscriptionEvent):
+class SubscriptionErrorEvent(SubscriptionEvent):
     """Subscription check failed with error."""
 
     def __init__(
@@ -513,10 +513,10 @@ async def check_all_subscriptions_worker(app: "TldwCli") -> None:
                 # Post error event
                 app.call_from_thread(
                     app.post_message,
-                    SubscriptionError(
-                        subscription["id"],
-                        subscription["name"],
-                        str(e),
+                    SubscriptionErrorEvent(
+                        subscription_id=subscription["id"],
+                        subscription_name=subscription["name"],
+                        error=str(e),
                         error_type="auth"
                         if isinstance(e, AuthenticationError)
                         else "general",

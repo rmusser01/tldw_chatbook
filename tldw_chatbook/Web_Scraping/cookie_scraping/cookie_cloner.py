@@ -48,7 +48,6 @@ Example:
 # Imports
 from Cryptodome.Cipher import AES
 from Cryptodome.Protocol.KDF import PBKDF2
-from datetime import datetime
 import base64
 import datetime
 import json

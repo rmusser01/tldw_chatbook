@@ -254,7 +254,6 @@ class FileExtractor:
         "feature": ".feature",
         "spec": ".spec",
         # Other development files
-        "env": ".env",
         "example": ".example",
         "sample": ".sample",
         "tmpl": ".tmpl",

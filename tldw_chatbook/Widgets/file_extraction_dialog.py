@@ -207,8 +207,6 @@ class FileExtractionDialog(ModalScreen):
             ".csv": "📊",
             ".tsv": "📊",
             ".json": "📋",
-            ".yaml": "📋",
-            ".yml": "📋",
             ".xml": "📄",
             ".sql": "🗃️",
             # Code files
@@ -231,13 +229,11 @@ class FileExtractionDialog(ModalScreen):
             # Script files
             ".sh": "🖥️",
             ".bash": "🖥️",
-            ".ps1": "🖥️",
             # Document files
             ".md": "📝",
             ".txt": "📄",
             ".ini": "⚙️",
             ".toml": "⚙️",
-            ".env": "🔐",
             # New types
             ".vcf": "👤",
             ".vcard": "👤",

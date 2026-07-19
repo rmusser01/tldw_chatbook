@@ -247,7 +247,7 @@ class FileImportInput(BaseModel):
             raise ValueError(f"File does not exist: {v}")
         if not v.is_file():
             raise ValueError(f"Path is not a file: {v}")
-        if not v.suffix in [
+        if v.suffix not in [
             ".json",
             ".yaml",
             ".yml",

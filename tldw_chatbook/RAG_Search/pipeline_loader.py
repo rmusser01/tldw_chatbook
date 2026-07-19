@@ -164,10 +164,10 @@ class PipelineLoader:
         valid_types = ["built-in", "custom", "composite", "wrapper", "functional"]
 
         # Check required fields
-        for field in required_fields:
-            if field not in config:
+        for field_name in required_fields:
+            if field_name not in config:
                 logger.error(
-                    f"Pipeline '{pipeline_id}' missing required field: {field}"
+                    f"Pipeline '{pipeline_id}' missing required field: {field_name}"
                 )
                 return False
 

@@ -28,7 +28,7 @@ from .vector_store import (
     create_vector_store,
 )
 
-from .rag_service import RAGService, RAGConfig, create_and_index, create_rag_service
+from .rag_service import RAGService, RAGConfig, create_and_index
 
 from .enhanced_rag_service import EnhancedRAGService, create_enhanced_rag_service
 

@@ -198,29 +198,6 @@ class ServerMediaReadingService:
             include_keywords=include_keywords,
         )
 
-    async def add_media(
-        self,
-        *,
-        media_type: str,
-        urls: list[str] | None = None,
-        file_paths: list[str] | None = None,
-        **options: Any,
-    ) -> Any:
-        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-        from ..tldw_api import AddMediaRequest
-
-        self._enforce(self._media_add_action_id("create"))
-        payload = {
-            "media_type": media_type,
-            "urls": urls,
-            **options,
-        }
-        request_data = AddMediaRequest(
-            **{key: value for key, value in payload.items() if value is not None}
-        )
-        return await self._require_client().add_media(
-            request_data, file_paths=file_paths
-        )
 
     async def create_file_artifact(
         self,
@@ -295,147 +272,22 @@ class ServerMediaReadingService:
         )
         return await self._require_client().purge_file_artifacts(payload)
 
-    async def list_media_keywords(
-        self, *, query: str | None = None, limit: int = 100
-    ) -> Any:
-        self._enforce(self._media_item_subresource_action_id("keywords", "list"))
-        return await self._require_client().list_media_keywords(
-            query=query, limit=limit
-        )
 
-    async def list_media_trash(
-        self,
-        *,
-        page: int = 1,
-        results_per_page: int = 10,
-        include_keywords: bool = False,
-    ) -> Any:
-        self._enforce(self._media_item_subresource_action_id("trash", "list"))
-        return await self._require_client().list_media_trash(
-            page=page,
-            results_per_page=results_per_page,
-            include_keywords=include_keywords,
-        )
 
-    async def empty_media_trash(self) -> Any:
-        self._enforce(self._media_item_subresource_action_id("trash", "delete"))
-        return await self._require_client().empty_media_trash()
 
-    async def get_media_item(
-        self,
-        media_id: Any,
-        *,
-        include_content: bool = True,
-        include_versions: bool = True,
-        include_version_content: bool = False,
-    ) -> Any:
-        self._enforce(self._media_item_action_id("detail"))
-        return await self._require_client().get_media_item(
-            int(media_id),
-            include_content=include_content,
-            include_versions=include_versions,
-            include_version_content=include_version_content,
-        )
 
-    async def update_media_item(self, media_id: Any, **fields: Any) -> Any:
-        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-        from ..tldw_api import MediaItemUpdateRequest
-
-        self._enforce(self._media_item_action_id("update"))
-        request_data = MediaItemUpdateRequest(
-            **{key: value for key, value in fields.items() if value is not None}
-        )
-        return await self._require_client().update_media_item(
-            int(media_id), request_data
-        )
 
     async def delete_media_item(self, media_id: Any) -> Any:
         self._enforce(self._media_item_action_id("delete"))
         return await self._require_client().delete_media_item(int(media_id))
 
-    async def restore_media_item(
-        self,
-        media_id: Any,
-        *,
-        include_content: bool = True,
-        include_versions: bool = True,
-        include_version_content: bool = False,
-    ) -> Any:
-        self._enforce(self._media_item_action_id("restore"))
-        return await self._require_client().restore_media_item(
-            int(media_id),
-            include_content=include_content,
-            include_versions=include_versions,
-            include_version_content=include_version_content,
-        )
 
-    async def permanently_delete_media_item(self, media_id: Any) -> Any:
-        self._enforce(self._media_item_subresource_action_id("permanent", "delete"))
-        return await self._require_client().permanently_delete_media_item(int(media_id))
 
-    async def update_media_keywords(
-        self,
-        media_id: Any,
-        *,
-        keywords: list[str],
-        mode: str = "add",
-    ) -> Any:
-        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-        from ..tldw_api import MediaKeywordsUpdateRequest
 
-        self._enforce(self._media_item_subresource_action_id("keywords", "update"))
-        request_data = MediaKeywordsUpdateRequest(keywords=keywords, mode=mode)
-        return await self._require_client().update_media_keywords(
-            int(media_id), request_data
-        )
 
-    async def search_media_metadata(self, **kwargs: Any) -> Any:
-        self._enforce(self._media_item_subresource_action_id("metadata_search", "list"))
-        return await self._require_client().search_media_metadata(
-            **{key: value for key, value in kwargs.items() if value is not None}
-        )
 
-    async def get_media_by_identifier(self, **kwargs: Any) -> Any:
-        self._enforce(
-            self._media_item_subresource_action_id("identifier_lookup", "detail")
-        )
-        return await self._require_client().get_media_by_identifier(
-            **{key: value for key, value in kwargs.items() if value is not None}
-        )
 
-    async def process_mediawiki_dump(self, *, dump_file_path: str, **options: Any):
-        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-        from ..tldw_api import ProcessMediaWikiRequest
 
-        self._enforce(self._processing_action_id("mediawiki", "process"))
-        request_data = ProcessMediaWikiRequest(
-            **{key: value for key, value in options.items() if value is not None}
-        )
-        async for item in self._require_client().process_mediawiki_dump(
-            request_data, dump_file_path
-        ):
-            yield item
-
-    async def ingest_mediawiki_dump(self, *, dump_file_path: str, **options: Any):
-        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-        from ..tldw_api import ProcessMediaWikiRequest
-
-        self._enforce(self._processing_action_id("mediawiki", "import"))
-        request_data = ProcessMediaWikiRequest(
-            **{key: value for key, value in options.items() if value is not None}
-        )
-        async for item in self._require_client().ingest_mediawiki_dump(
-            request_data, dump_file_path
-        ):
-            yield item
-
-    async def download_media_file(
-        self, media_id: Any, *, file_type: str = "original"
-    ) -> Any:
-        self._enforce(self._media_item_subresource_action_id("file", "detail"))
-        return await self._require_client().download_media_file(
-            int(media_id), file_type=file_type
-        )
 
     async def check_media_file(
         self, media_id: Any, *, file_type: str = "original"
@@ -542,14 +394,6 @@ class ServerMediaReadingService:
         self._enforce(self._transcription_models_action_id("list"))
         return await self._require_client().get_media_transcription_models()
 
-    async def reprocess_media(self, media_id: Any, **options: Any) -> Any:
-        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-        from ..tldw_api import ReprocessMediaRequest
-
-        request_data = ReprocessMediaRequest(
-            **{key: value for key, value in options.items() if value is not None}
-        )
-        return await self._require_client().reprocess_media(int(media_id), request_data)
 
     async def add_media(
         self,
@@ -578,13 +422,6 @@ class ServerMediaReadingService:
             else response
         )
 
-    async def save_reading_item(self, request_data: ReadingSaveRequest) -> Any:
-        response = await self._require_client().save_reading_item(request_data)
-        return (
-            response.model_dump(exclude_none=True, mode="json")
-            if hasattr(response, "model_dump")
-            else response
-        )
 
     async def list_unified_items(self, **filters: Any) -> Any:
         self._enforce(self._media_item_action_id("list"))
@@ -615,47 +452,11 @@ class ServerMediaReadingService:
             else response
         )
 
-    async def process_video(
-        self, request_data: ProcessVideoRequest, file_paths: list[str] | None = None
-    ) -> Any:
-        return await self._require_client().process_video(
-            request_data, file_paths=file_paths
-        )
 
-    async def process_audio(
-        self, request_data: ProcessAudioRequest, file_paths: list[str] | None = None
-    ) -> Any:
-        return await self._require_client().process_audio(
-            request_data, file_paths=file_paths
-        )
 
-    async def process_pdf(
-        self, request_data: ProcessPDFRequest, file_paths: list[str] | None = None
-    ) -> Any:
-        return await self._require_client().process_pdf(
-            request_data, file_paths=file_paths
-        )
 
-    async def process_ebook(
-        self, request_data: ProcessEbookRequest, file_paths: list[str] | None = None
-    ) -> Any:
-        return await self._require_client().process_ebook(
-            request_data, file_paths=file_paths
-        )
 
-    async def process_document(
-        self, request_data: ProcessDocumentRequest, file_paths: list[str] | None = None
-    ) -> Any:
-        return await self._require_client().process_document(
-            request_data, file_paths=file_paths
-        )
 
-    async def process_code(
-        self, request_data: ProcessCodeRequest, file_paths: list[str] | None = None
-    ) -> Any:
-        return await self._require_client().process_code(
-            request_data, file_paths=file_paths
-        )
 
     async def process_email(
         self, request_data: ProcessEmailRequest, file_paths: list[str] | None = None
@@ -736,28 +537,6 @@ class ServerMediaReadingService:
             int(media_id), request_data
         )
 
-    async def bulk_update_reading_items(
-        self,
-        *,
-        item_ids: list[int],
-        action: str,
-        status: str | None = None,
-        favorite: bool | None = None,
-        tags: list[str] | None = None,
-        hard: bool = False,
-    ) -> Any:
-        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-        from ..tldw_api import ItemsBulkRequest
-
-        request_data = ItemsBulkRequest(
-            item_ids=[int(item_id) for item_id in item_ids],
-            action=action,
-            status=status,
-            favorite=favorite,
-            tags=tags,
-            hard=hard,
-        )
-        return await self._require_client().bulk_update_reading_items(request_data)
 
     async def get_media_item(
         self,
@@ -838,39 +617,7 @@ class ServerMediaReadingService:
             int(media_id), file_type=file_type
         )
 
-    async def get_media_navigation(
-        self,
-        media_id: Any,
-        *,
-        include_generated_fallback: bool = False,
-        max_depth: int = 4,
-        max_nodes: int = 500,
-        parent_id: str | None = None,
-    ) -> Any:
-        self._enforce(self._navigation_action_id("detail"))
-        return await self._require_client().get_media_navigation(
-            int(media_id),
-            include_generated_fallback=include_generated_fallback,
-            max_depth=max_depth,
-            max_nodes=max_nodes,
-            parent_id=parent_id,
-        )
 
-    async def get_media_navigation_content(
-        self,
-        media_id: Any,
-        node_id: str,
-        *,
-        content_format: str = "auto",
-        include_alternates: bool = False,
-    ) -> Any:
-        self._enforce(self._navigation_action_id("detail"))
-        return await self._require_client().get_media_navigation_content(
-            int(media_id),
-            str(node_id),
-            content_format=content_format,
-            include_alternates=include_alternates,
-        )
 
     async def delete_media(self, media_id: Any) -> Any:
         self._enforce(self._reading_action_id("delete"))
@@ -2071,10 +1818,6 @@ class ServerMediaReadingService:
         self._enforce(self._ingestion_job_action_id("observe"))
         return await self._require_client().list_ingestion_source_items(int(source_id))
 
-    async def reattach_ingestion_source_item(self, source_id: Any, item_id: Any) -> Any:
-        return await self._require_client().reattach_ingestion_source_item(
-            int(source_id), int(item_id)
-        )
 
     async def trigger_ingestion_source_sync(self, source_id: Any) -> Any:
         self._enforce(self._ingestion_job_action_id("launch"))

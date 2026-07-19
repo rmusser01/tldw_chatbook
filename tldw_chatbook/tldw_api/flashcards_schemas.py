@@ -154,35 +154,12 @@ class FlashcardResponse(BaseModel):
         return data
 
 
-class FlashcardBulkUpdateError(BaseModel):
-    code: Literal["validation_error", "not_found", "conflict"]
-    message: str
-    invalid_fields: list[str] = Field(default_factory=list)
-    invalid_deck_ids: list[int] = Field(default_factory=list)
 
 
-class FlashcardBulkUpdateResult(BaseModel):
-    uuid: str
-    status: Literal["updated", "validation_error", "not_found", "conflict"]
-    flashcard: Optional[FlashcardResponse] = None
-    error: Optional[FlashcardBulkUpdateError] = None
 
 
-class FlashcardBulkUpdateResponse(BaseModel):
-    results: list[FlashcardBulkUpdateResult] = Field(default_factory=list)
 
 
-class FlashcardAssetMetadata(BaseModel):
-    asset_uuid: UUID
-    reference: str
-    markdown_snippet: str
-    mime_type: str
-    byte_size: int
-    width: Optional[int] = None
-    height: Optional[int] = None
-    original_filename: Optional[str] = None
-
-    model_config = ConfigDict(from_attributes=True)
 
 
 class FlashcardListResponse(BaseModel):
@@ -238,8 +215,6 @@ class FlashcardReviewSessionEndRequest(BaseModel):
     review_session_id: int
 
 
-class FlashcardResetSchedulingRequest(BaseModel):
-    expected_version: int = Field(..., ge=1)
 
 
 class FlashcardTagsUpdateRequest(BaseModel):
@@ -251,46 +226,18 @@ class FlashcardTagsResponse(BaseModel):
     count: int = 0
 
 
-class FlashcardTagSuggestionItem(BaseModel):
-    tag: str
-    count: int
 
 
-class FlashcardTagSuggestionsResponse(BaseModel):
-    items: list[FlashcardTagSuggestionItem] = Field(default_factory=list)
-    count: int
 
 
-class StructuredQaImportPreviewRequest(BaseModel):
-    content: str = Field(..., min_length=1)
 
 
-class StructuredQaImportPreviewDraft(BaseModel):
-    front: str
-    back: str
-    line_start: int
-    line_end: int
-    notes: Optional[str] = None
-    extra: Optional[str] = None
-    tags: list[str] = Field(default_factory=list)
 
 
-class StructuredQaImportPreviewError(BaseModel):
-    line: Optional[int] = None
-    error: str
 
 
-class StructuredQaImportPreviewResponse(BaseModel):
-    drafts: list[StructuredQaImportPreviewDraft] = Field(default_factory=list)
-    errors: list[StructuredQaImportPreviewError] = Field(default_factory=list)
-    detected_format: Literal["qa_labels"] = "qa_labels"
-    skipped_blocks: int = 0
 
 
-class FlashcardsImportRequest(BaseModel):
-    content: str
-    delimiter: Optional[str] = "\t"
-    has_header: Optional[bool] = False
 
 
 class FlashcardsImportItem(BaseModel):
@@ -315,84 +262,18 @@ StudyAssistantAction = Literal[
 ]
 
 
-class StudyAssistantThreadSummary(BaseModel):
-    id: int
-    context_type: Literal["flashcard", "quiz_attempt_question"]
-    flashcard_uuid: Optional[str] = None
-    quiz_attempt_id: Optional[int] = None
-    question_id: Optional[int] = None
-    last_message_at: Optional[str] = None
-    message_count: int = 0
-    deleted: bool
-    client_id: Optional[str] = None
-    version: int
-    created_at: Optional[str] = None
-    last_modified: Optional[str] = None
 
 
-class StudyAssistantMessage(BaseModel):
-    id: int
-    thread_id: int
-    role: Literal["user", "assistant"]
-    action_type: StudyAssistantAction
-    input_modality: Literal["text", "voice_transcript"]
-    content: str
-    structured_payload: dict[str, Any] = Field(default_factory=dict)
-    context_snapshot: dict[str, Any] = Field(default_factory=dict)
-    provider: Optional[str] = None
-    model: Optional[str] = None
-    created_at: Optional[str] = None
-    client_id: Optional[str] = None
 
 
-class StudyAssistantRespondRequest(BaseModel):
-    action: StudyAssistantAction
-    message: Optional[str] = None
-    input_modality: Literal["text", "voice_transcript"] = "text"
-    provider: Optional[str] = None
-    model: Optional[str] = None
-    expected_thread_version: Optional[int] = Field(None, ge=1)
 
 
-class StudyAssistantContextResponse(BaseModel):
-    thread: StudyAssistantThreadSummary
-    messages: list[StudyAssistantMessage] = Field(default_factory=list)
-    context_snapshot: dict[str, Any] = Field(default_factory=dict)
-    available_actions: list[StudyAssistantAction] = Field(default_factory=list)
-    citations: list[dict[str, Any]] = Field(default_factory=list)
-    primary_citation: Optional[dict[str, Any]] = None
-    deep_dive_target: Optional[dict[str, Any]] = None
-    study_pack: Optional[dict[str, Any]] = None
 
 
-class StudyAssistantRespondResponse(BaseModel):
-    thread: StudyAssistantThreadSummary
-    user_message: Optional[StudyAssistantMessage] = None
-    assistant_message: Optional[StudyAssistantMessage] = None
-    structured_payload: dict[str, Any] = Field(default_factory=dict)
-    context_snapshot: dict[str, Any] = Field(default_factory=dict)
 
 
-class FlashcardDeckProgress(BaseModel):
-    deck_id: int
-    deck_name: str
-    total: int
-    new: int
-    learning: int
-    due: int
-    mature: int
 
 
-class FlashcardAnalyticsSummaryResponse(BaseModel):
-    reviewed_today: int
-    retention_rate_today: Optional[float] = None
-    lapse_rate_today: Optional[float] = None
-    avg_answer_time_ms_today: Optional[float] = None
-    study_streak_days: int
-    generated_at: str
-    decks: list[FlashcardDeckProgress] = Field(default_factory=list)
-
-    model_config = ConfigDict(from_attributes=True)
 
 
 class FlashcardNextReviewResponse(BaseModel):
