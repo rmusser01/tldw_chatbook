@@ -520,6 +520,21 @@ class LocalLLMProviderCatalogService:
         Never raises for per-provider failures; each becomes a "failed" outcome.
         Write-through is append-only, computed against the pre-fetch cache entry,
         with a baseline guard for oversized first fetches (ADR-020).
+
+        Args:
+            catalog_settings: Parsed ``[model_catalog]`` settings (enable flag,
+                staleness threshold, opt-out and write-to-config provider sets).
+            disk_store: Disk-backed catalog store; consulted for staleness,
+                updated with fetched IDs, pruned to configured providers, and
+                saved in a finally block.
+            provider_list_keys: Provider list keys to consider for refresh.
+            merge_cap: Maximum catalog size written to config on a first fetch.
+            force: Refetch even when the disk entry is still fresh.
+            on_config_saved: Optional callback invoked after models are
+                appended to the saved config.
+
+        Returns:
+            RefreshReport: One outcome per requested provider key.
         """
         self._enforce("llm.catalog.models.discover.local")
         outcomes: list[ProviderRefreshOutcome] = []
@@ -661,7 +676,9 @@ class LocalLLMProviderCatalogService:
                         provider_list_key=list_key or requested_key,
                         status="failed", error_kind="unexpected"))
         finally:
-            disk_store.prune(set(catalog) | set(provider_list_keys))
+            # Keep-set is the configured catalog only: entries for providers no
+            # longer in [providers] are pruned even when still requested here.
+            disk_store.prune(set(catalog))
             try:
                 disk_store.save()
             except OSError as exc:

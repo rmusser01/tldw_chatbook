@@ -66,7 +66,12 @@ class _StubCatalogService:
     """Stands in for LocalLLMProviderCatalogService.refresh_stale_configured_providers."""
 
     def __init__(self, report=None, error=None):
+        from tldw_chatbook.LLM_Provider_Catalog.model_discovery_cache import (
+            ModelDiscoveryCache,
+        )
+
         self.calls = []
+        self.discovery_cache = ModelDiscoveryCache()
         self._report = report
         self._error = error
 
@@ -238,13 +243,87 @@ async def test_refresh_passes_config_saved_callback_and_disk_store(monkeypatch):
 async def test_refresh_swallows_and_logs_errors(monkeypatch):
     from loguru import logger
 
-    app, _service = _stub(monkeypatch, error=RuntimeError("boom"))
+    app, _service = _stub(monkeypatch, error=RuntimeError("boom-secret"))
     logged = []
-    sink_id = logger.add(
-        lambda message: logged.append(message.record["message"]), level="ERROR"
-    )
+    # str(message) renders the fully formatted record, including any traceback
+    # (the test sink, like the app's file sink, defaults to diagnose=True).
+    sink_id = logger.add(lambda message: logged.append(str(message)), level="ERROR")
     try:
         await TldwCli._refresh_model_catalogs(app)  # must not raise
     finally:
         logger.remove(sink_id)
-    assert any("Model catalog auto-refresh failed" in m for m in logged)
+    text = "".join(logged)
+    # Context: the provider list keys being refreshed + the exception type name.
+    assert (
+        "Model catalog auto-refresh failed "
+        "(OpenAI, Anthropic, MistralAI, Moonshot, OpenRouter, ZAI): RuntimeError"
+    ) in text
+    # No traceback (diagnose=True would dump frame locals) and no exception
+    # message, which may carry endpoint URLs or credentials.
+    assert "boom-secret" not in text
+    assert "Traceback" not in text
+
+
+# ---------------------------------------------------------------------------
+# Disk store init: TldwCli._init_model_catalog_disk_store against a stub self
+# ---------------------------------------------------------------------------
+
+
+def test_disk_store_builds_for_cache_path_inside_data_dir(tmp_path, monkeypatch):
+    monkeypatch.setattr("tldw_chatbook.app.get_user_data_dir", lambda: tmp_path)
+    app, _service = _stub(monkeypatch)
+    store = TldwCli._init_model_catalog_disk_store(app)
+    assert store is not None
+    assert store.path == tmp_path / "model_catalog_cache.json"
+
+
+def test_disk_store_rejected_when_cache_path_escapes_data_dir(tmp_path, monkeypatch):
+    from loguru import logger
+
+    monkeypatch.setattr("tldw_chatbook.app.get_user_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        "tldw_chatbook.Utils.path_validation.get_safe_relative_path",
+        lambda path, base: None,
+    )
+    app, _service = _stub(monkeypatch)
+    logged = []
+    sink_id = logger.add(lambda message: logged.append(str(message)), level="WARNING")
+    try:
+        store = TldwCli._init_model_catalog_disk_store(app)
+    finally:
+        logger.remove(sink_id)
+    assert store is None
+    text = "".join(logged)
+    assert "user data dir" in text
+    assert str(tmp_path / "model_catalog_cache.json") in text
+
+
+def test_disk_store_load_failure_logs_path_without_traceback(tmp_path, monkeypatch):
+    from loguru import logger
+
+    from tldw_chatbook.LLM_Provider_Catalog.model_discovery_disk_cache import (
+        ModelCatalogDiskStore,
+    )
+
+    monkeypatch.setattr("tldw_chatbook.app.get_user_data_dir", lambda: tmp_path)
+
+    def failing_load_into(self, cache):
+        raise RuntimeError("boom-secret")
+
+    monkeypatch.setattr(ModelCatalogDiskStore, "load_into", failing_load_into)
+    app, _service = _stub(monkeypatch)
+    logged = []
+    sink_id = logger.add(lambda message: logged.append(str(message)), level="ERROR")
+    try:
+        store = TldwCli._init_model_catalog_disk_store(app)
+    finally:
+        logger.remove(sink_id)
+    assert store is None
+    text = "".join(logged)
+    # Context: the cache file path + the exception type name.
+    assert str(tmp_path / "model_catalog_cache.json") in text
+    assert "RuntimeError" in text
+    # No traceback (diagnose=True would dump frame locals) and no exception
+    # message, which may carry sensitive details.
+    assert "boom-secret" not in text
+    assert "Traceback" not in text

@@ -4528,19 +4528,7 @@ class TldwCli(
             policy_enforcer=self.service_policy_enforcer,
         )
         # ADR-020: load the disk-backed model catalog cache before selectors build.
-        try:
-            from tldw_chatbook.LLM_Provider_Catalog.model_discovery_disk_cache import (
-                ModelCatalogDiskStore,
-            )
-            self.model_catalog_disk_store = ModelCatalogDiskStore(
-                get_user_data_dir() / "model_catalog_cache.json"
-            )
-            self.model_catalog_disk_store.load_into(
-                self.local_llm_provider_catalog_service.discovery_cache
-            )
-        except Exception:
-            logger.opt(exception=True).error("Failed to load model catalog disk cache")
-            self.model_catalog_disk_store = None
+        self.model_catalog_disk_store = self._init_model_catalog_disk_store()
         try:
             self.server_llm_provider_catalog_service = (
                 ServerLLMProviderCatalogService.from_config(
@@ -6907,6 +6895,47 @@ class TldwCli(
             group="model-catalog-refresh",
         )
 
+    def _init_model_catalog_disk_store(self) -> "ModelCatalogDiskStore | None":
+        """Build the disk-backed model catalog cache for startup (ADR-020).
+
+        Returns None (with a log line) when the cache path cannot be resolved,
+        fails validation against the user data dir, or the on-disk cache cannot
+        be loaded; startup continues without persistence in those cases.
+        """
+        from tldw_chatbook.LLM_Provider_Catalog.model_discovery_disk_cache import (
+            ModelCatalogDiskStore,
+        )
+        from tldw_chatbook.Utils.path_validation import get_safe_relative_path
+
+        try:
+            user_data_dir = get_user_data_dir()
+            cache_path = user_data_dir / "model_catalog_cache.json"
+        except Exception as exc:
+            logger.error(
+                f"Failed to resolve model catalog cache path: {type(exc).__name__}"
+            )
+            return None
+        # get_safe_relative_path (not is_safe_path): the default data dir lives
+        # under ~/.local, which validate_path's hidden-component rule rejects.
+        if get_safe_relative_path(cache_path, user_data_dir) is None:
+            logger.warning(
+                "Ignoring model catalog cache outside the user data dir: "
+                f"{cache_path}"
+            )
+            return None
+        try:
+            store = ModelCatalogDiskStore(cache_path)
+            store.load_into(self.local_llm_provider_catalog_service.discovery_cache)
+        except Exception as exc:
+            # No traceback: the log file sink runs with diagnose=True, which
+            # would dump frame locals (including the app's config) into the log.
+            logger.error(
+                f"Failed to load model catalog disk cache {cache_path}: "
+                f"{type(exc).__name__}"
+            )
+            return None
+        return store
+
     async def _refresh_model_catalogs(self) -> None:
         """ADR-020 startup auto-refresh; never blocks or crashes startup."""
         try:
@@ -6914,6 +6943,7 @@ class TldwCli(
                 format_refresh_notification,
             )
             from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import (
+                AUTO_REFRESH_PROVIDER_LIST_KEYS,
                 load_model_catalog_settings,
             )
             if self.model_catalog_disk_store is None:
@@ -6944,8 +6974,14 @@ class TldwCli(
                     title="Model catalog",
                     severity="warning" if has_failure else "information",
                 )
-        except Exception:
-            logger.opt(exception=True).error("Model catalog auto-refresh failed")
+        except Exception as exc:
+            # No traceback: the log file sink runs with diagnose=True, which
+            # would dump frame locals (potentially API keys) into the log file.
+            logger.error(
+                "Model catalog auto-refresh failed "
+                f"({', '.join(AUTO_REFRESH_PROVIDER_LIST_KEYS)}): "
+                f"{type(exc).__name__}"
+            )
 
     @on(ModelCatalogRefreshed)
     async def on_model_catalog_refreshed(self, event: ModelCatalogRefreshed) -> None:

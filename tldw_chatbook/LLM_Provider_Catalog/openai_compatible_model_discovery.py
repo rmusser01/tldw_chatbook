@@ -107,7 +107,16 @@ _ANTHROPIC_MAX_MODEL_PAGES = 10
 
 
 def build_discovery_auth_headers(provider_identity: str, api_key: str | None) -> dict[str, str]:
-    """Return provider-appropriate auth headers for a models request."""
+    """Return provider-appropriate auth headers for a models request.
+
+    Args:
+        provider_identity: Provider name/identity used to pick the auth scheme
+            (Anthropic gets x-api-key; everything else gets a Bearer token).
+        api_key: The provider API key, or None for unauthenticated access.
+
+    Returns:
+        dict[str, str]: Headers for the request; empty when no key is given.
+    """
     if not api_key:
         return {}
     if _normalized_provider_identity(provider_identity) == _ANTHROPIC_PROVIDER_KEY:

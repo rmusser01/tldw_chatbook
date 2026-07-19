@@ -7,7 +7,7 @@ from textual.app import ComposeResult
 from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Input, OptionList, Select
-from textual.widgets._option_list import Option
+from textual.widgets.option_list import Option
 
 
 class ModelSearchPicker(Widget):
@@ -33,6 +33,11 @@ class ModelSearchPicker(Widget):
         """Posted when the user picks a model from the search results."""
 
         def __init__(self, model_id: str) -> None:
+            """Store the picked model ID on the message.
+
+            Args:
+                model_id: The selected model identifier.
+            """
             super().__init__()
             self.model_id = model_id
 
@@ -42,15 +47,24 @@ class ModelSearchPicker(Widget):
         id: str | None = None,
         provider_select_id: str = "#chat-api-provider",
     ) -> None:
+        """Initialize the picker.
+
+        Args:
+            id: Optional Textual widget ID.
+            provider_select_id: Selector of the provider Select widget whose
+                current value scopes the search.
+        """
         super().__init__(id=id)
         self._provider_select_id = provider_select_id
         self._matches: list[str] = []
 
     def compose(self) -> ComposeResult:
+        """Yield the search input and the (initially hidden) results list."""
         yield Input(placeholder="Search all models…", id="model-search-picker-input")
         yield OptionList(id="model-search-picker-results")
 
     def on_mount(self) -> None:
+        """Hide the results list until a query produces matches."""
         self.query_one("#model-search-picker-results", OptionList).display = False
 
     def _current_provider(self) -> str | None:

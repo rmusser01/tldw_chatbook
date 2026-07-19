@@ -426,6 +426,33 @@ async def test_failed_refresh_leaves_disk_entry_unset(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_prune_drops_providers_no_longer_configured(tmp_path):
+    saved_calls = []
+    # Catalog holds only OpenAI; "Ghost" lingered in the disk cache from a
+    # past session where it was still present in [providers].
+    service = _service(
+        {"OpenAI": _discovered("OpenAI", "saved-1")},
+        saved_calls,
+        catalog_loader=lambda: {"OpenAI": ["saved-1"]},
+    )
+    store = ModelCatalogDiskStore(tmp_path / "cache.json")
+    fingerprint = fingerprint_endpoint("https://api.openai.com/v1")
+    store.record("Ghost", fingerprint, ["ghost-1"])
+    store.record("OpenAI", fingerprint, ["saved-1"], fetched_at=datetime.now(UTC))
+    report = await service.refresh_stale_configured_providers(
+        catalog_settings=ModelCatalogSettings(),
+        disk_store=store,
+        provider_list_keys=("OpenAI", "Ghost"),
+    )
+    assert report.outcomes[0].status == "skipped_fresh"  # fresh entry, no refetch
+    assert report.outcomes[1].status == "skipped_not_ready"  # Ghost not configured
+    # Prune keep-set is the configured catalog: Ghost is dropped even though it
+    # was requested, while the configured provider's entry is retained.
+    assert store.fetched_at("Ghost", fingerprint) is None
+    assert store.fetched_at("OpenAI", fingerprint) is not None
+
+
+@pytest.mark.asyncio
 async def test_unexpected_client_error_becomes_failed_outcome_and_loop_continues(tmp_path):
     async def raising_client(**kwargs):
         if kwargs["provider_list_key"] == "OpenAI":

@@ -46,6 +46,16 @@ class ModelCatalogDiskStore:
         self._fetched_at: dict[tuple[str, str], datetime] = {}
 
     def fetched_at(self, provider_list_key: str, endpoint_fingerprint: str) -> datetime | None:
+        """Return when the entry was fetched.
+
+        Args:
+            provider_list_key: Provider list key of the entry.
+            endpoint_fingerprint: Endpoint fingerprint of the entry.
+
+        Returns:
+            datetime | None: Timezone-aware UTC fetch time, or None when the
+            entry is absent.
+        """
         return self._fetched_at.get((str(provider_list_key), str(endpoint_fingerprint)))
 
     def is_stale(
@@ -60,6 +70,15 @@ class ModelCatalogDiskStore:
 
         A threshold of 0 (or less) means always-stale: refetch every launch.
         A future-dated fetched_at (clock skew) also counts as stale.
+
+        Args:
+            provider_list_key: Provider list key of the entry.
+            endpoint_fingerprint: Endpoint fingerprint of the entry.
+            stale_after_hours: Maximum entry age in hours before it is stale.
+            now: Reference time; defaults to the current UTC time.
+
+        Returns:
+            bool: True when the entry should be refetched.
         """
         if stale_after_hours <= 0:
             return True
@@ -80,6 +99,14 @@ class ModelCatalogDiskStore:
         *,
         fetched_at: datetime | None = None,
     ) -> None:
+        """Store a fetched model ID snapshot for a provider/endpoint pair.
+
+        Args:
+            provider_list_key: Provider list key of the entry.
+            endpoint_fingerprint: Endpoint fingerprint of the entry.
+            model_ids: Fetched model IDs to store.
+            fetched_at: Fetch time (naive treated as UTC); defaults to now.
+        """
         key = (str(provider_list_key), str(endpoint_fingerprint))
         self._model_ids[key] = tuple(str(model_id) for model_id in model_ids)
         stamp = fetched_at or _utc_now()
@@ -89,14 +116,24 @@ class ModelCatalogDiskStore:
         self._fetched_at[key] = stamp
 
     def prune(self, keep_provider_list_keys: set[str]) -> None:
-        """Drop entries for providers no longer configured."""
+        """Drop entries for providers no longer configured.
+
+        Args:
+            keep_provider_list_keys: Provider list keys whose entries survive;
+                everything else is removed from the in-memory store.
+        """
         for key in tuple(self._fetched_at):
             if key[0] not in keep_provider_list_keys:
                 self._fetched_at.pop(key, None)
                 self._model_ids.pop(key, None)
 
     def load_into(self, cache: ModelDiscoveryCache) -> None:
-        """Populate the in-memory cache from disk; missing/corrupt loads empty."""
+        """Populate the in-memory cache from disk; missing/corrupt loads empty.
+
+        Args:
+            cache: The runtime discovery cache to fill with entries decoded
+                from the JSON store file.
+        """
         self._model_ids.clear()
         self._fetched_at.clear()
         try:
