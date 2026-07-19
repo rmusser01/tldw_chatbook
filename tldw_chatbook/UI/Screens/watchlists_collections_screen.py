@@ -25,6 +25,16 @@ from ...runtime_policy.types import PolicyDeniedError
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
+from ..Watchlists_Modules.inspector_pane import (
+    CheckNowRequested,
+    DeleteRequested,
+    InspectorPane,
+    PreviewRequested,
+    StageInConsoleRequested,
+)
+from ..Watchlists_Modules.overview_pane import OverviewPane
+from ..Watchlists_Modules.runs_pane import CancelRunRequested, RerunRunRequested, RunsPane, RunSelected
+from ..Watchlists_Modules.sources_pane import CreateSourceRequested, SourceSelected, SourcesPane
 from ..Watchlists_Modules.watchlists_backend_controller import WatchlistsBackendController
 from ..Watchlists_Modules.watchlists_navigator import SectionSelected, WatchlistsNavigator
 from .destination_recovery import DestinationRecoveryState, policy_denied_recovery_state
@@ -45,6 +55,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     runtime_backend = reactive("local")
     selected_source = reactive(None)
     selected_run = reactive(None)
+    selected_entity = reactive(None)
     recovery_state = reactive(None)
 
     def __init__(self, app_instance: Any, **kwargs: Any) -> None:
@@ -380,6 +391,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                         f"Active section: {self.active_section}",
                         id="watchlists-active-section-label",
                     )
+                    if self.active_section == "overview":
+                        yield OverviewPane(id="watchlists-overview-pane")
+                    elif self.active_section == "sources":
+                        yield SourcesPane(id="watchlists-sources-pane")
+                    elif self.active_section == "runs":
+                        yield RunsPane(id="watchlists-runs-pane")
+                    elif self.active_section == "items":
+                        yield Static("Items pane not implemented yet.", id="watchlists-items-pane")
+                    elif self.active_section == "rules":
+                        yield Static("Alert rules pane not implemented yet.", id="watchlists-rules-pane")
                 yield self._column_divider("watchlists-detail-inspector-divider")
                 with Vertical(
                     id="watchlists-inspector-pane",
@@ -444,15 +465,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                             disabled=True,
                             tooltip="Unavailable until Watchlists has an active run with Console context.",
                         )
+                    yield InspectorPane(id="watchlists-entity-inspector")
 
     def watch_active_section(self) -> None:
-        if not self.is_mounted:
-            return
-        try:
-            label = self.query_one("#watchlists-active-section-label", Static)
-            label.update(f"Active section: {self.active_section}")
-        except Exception:
-            pass
+        self.selected_source = None
+        self.selected_run = None
+        self.selected_entity = None
+        if self.is_mounted:
+            self.refresh(recompose=True)
 
     def watch_runtime_backend(self) -> None:
         if not self.is_mounted:
@@ -460,6 +480,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         try:
             label = self.query_one("#watchlists-backend-label", Static)
             label.update(f"Backend: {self.runtime_backend}")
+        except Exception:
+            pass
+
+    def watch_selected_entity(self) -> None:
+        if not self.is_mounted:
+            return
+        try:
+            inspector = self.query_one("#watchlists-entity-inspector", InspectorPane)
+            inspector.selected_entity = self.selected_entity
         except Exception:
             pass
 
@@ -537,3 +566,144 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             target_id=target_id,
             target_route="chat",
         )
+
+    @on(SourceSelected)
+    def handle_source_selected(self, event: SourceSelected) -> None:
+        event.stop()
+        self.selected_source = event.source
+        self.selected_entity = event.source
+
+    @on(RunSelected)
+    def handle_run_selected(self, event: RunSelected) -> None:
+        event.stop()
+        self.selected_run = event.run
+        self.selected_entity = event.run
+
+    @on(CreateSourceRequested)
+    def handle_create_source_requested(self, event: CreateSourceRequested) -> None:
+        event.stop()
+        self.run_worker(self._create_source(event.payload), exclusive=True)
+
+    async def _create_source(self, payload: dict[str, Any]) -> None:
+        try:
+            await self._controller.create_source(
+                runtime_backend=self.runtime_backend,
+                payload=payload,
+            )
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Source created.", severity="information")
+        except Exception:
+            logger.opt(exception=True).debug("Failed to create source.")
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Failed to create source.", severity="error")
+        self._refresh_local_wc_snapshot()
+
+    @on(CancelRunRequested)
+    def handle_cancel_run_requested(self, event: CancelRunRequested) -> None:
+        event.stop()
+        self.run_worker(self._cancel_run(event.run_id), exclusive=True)
+
+    async def _cancel_run(self, run_id: Any) -> None:
+        try:
+            await self._controller.cancel_run(
+                runtime_backend=self.runtime_backend,
+                run_id=run_id,
+            )
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Run cancellation requested.", severity="information")
+        except Exception:
+            logger.opt(exception=True).debug("Failed to cancel run.")
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Failed to cancel run.", severity="error")
+
+    @on(RerunRunRequested)
+    def handle_rerun_run_requested(self, event: RerunRunRequested) -> None:
+        event.stop()
+        self.run_worker(self._rerun_run(event.source_id), exclusive=True)
+
+    async def _rerun_run(self, source_id: Any) -> None:
+        try:
+            await self._controller.launch_run(
+                runtime_backend=self.runtime_backend,
+                source_id=source_id,
+            )
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Run launched.", severity="information")
+        except Exception:
+            logger.opt(exception=True).debug("Failed to launch run.")
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Failed to launch run.", severity="error")
+
+    @on(PreviewRequested)
+    def handle_preview_requested(self, event: PreviewRequested) -> None:
+        event.stop()
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify("Preview is not implemented yet.", severity="information")
+
+    @on(CheckNowRequested)
+    def handle_check_now_requested(self, event: CheckNowRequested) -> None:
+        event.stop()
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify("Check now is not implemented yet.", severity="information")
+
+    @on(StageInConsoleRequested)
+    def handle_stage_in_console_requested(self, event: StageInConsoleRequested) -> None:
+        event.stop()
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify("Stage in Console is not implemented yet.", severity="information")
+
+    @on(DeleteRequested)
+    def handle_delete_requested(self, event: DeleteRequested) -> None:
+        event.stop()
+        entity = event.entity
+        if entity is None:
+            return
+        entity_type = InspectorPane._entity_type(entity)
+        if entity_type == "source":
+            self.run_worker(self._delete_source(entity.get("id")), exclusive=True)
+        elif entity_type == "run":
+            self.run_worker(self._delete_run(entity.get("id")), exclusive=True)
+
+    async def _delete_source(self, source_id: Any) -> None:
+        try:
+            await self._controller.delete_source(
+                runtime_backend=self.runtime_backend,
+                item_id=source_id,
+            )
+            self.selected_entity = None
+            self.selected_source = None
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Source deleted.", severity="information")
+        except Exception:
+            logger.opt(exception=True).debug("Failed to delete source.")
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Failed to delete source.", severity="error")
+        self._refresh_local_wc_snapshot()
+
+    async def _delete_run(self, run_id: Any) -> None:
+        try:
+            await self._controller.delete_source(
+                runtime_backend=self.runtime_backend,
+                item_id=run_id,
+            )
+            self.selected_entity = None
+            self.selected_run = None
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Run deleted.", severity="information")
+        except Exception:
+            logger.opt(exception=True).debug("Failed to delete run.")
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Failed to delete run.", severity="error")
