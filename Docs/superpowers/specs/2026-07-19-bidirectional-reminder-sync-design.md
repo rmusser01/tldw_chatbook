@@ -118,10 +118,16 @@ Key decisions:
 - Per-row actions:
   - **Use server** → calls `SyncEngine.resolve_conflict(id, "server")`, then synchronously refreshes the task list and conflicts table.
   - **Use local** → calls `SyncEngine.resolve_conflict(id, "local")`, then synchronously refreshes the task list and conflicts table.
+- `SyncEngine.resolve_conflict(conflict_id, resolution)` algorithm:
+  - Load conflict row; return `False` if not found or already resolved.
+  - If `resolution == "server"`:
+    - For server-deletion (`not server_state`): delete local row, `sync_mapping`, and any tombstone.
+    - Otherwise: apply `server_state` fields to the local row.
+  - If `resolution == "local"`:
+    - For server-deletion (`not server_state`): clear `server_id` from the local row, delete the stale `sync_mapping`, then re-queue the original pending mutation; if none exists, re-queue a `create` mutation with the local record fields.
+    - Otherwise: re-queue the exact original pending mutation (action + fields + idempotency_key). If no pending mutation was preserved, re-queue an `update` with the mutable fields from the local record.
+  - Mark the conflict resolved.
 - When recording a conflict, preserve the full original pending mutation in `local_state.pending_mutation` (including `action`, `fields`, and `idempotency_key`) so that "Use local" can re-queue the exact original intent.
-- For server-deletion conflicts (`not server_state`):
-  - **Use server** deletes the local row, removes its `sync_mapping`, and removes any related tombstone.
-  - **Use local** clears `server_id` from the local row, removes the stale `sync_mapping`, and re-queues the original pending mutation (or a `create` mutation carrying the local record fields if there was no pending mutation). The cleared `server_id` prevents the re-queued create from being misrouted as an update.
 
 ### 5. Owner / runtime-source switcher
 
@@ -159,7 +165,7 @@ On failure, post `SyncFailed(owner_id, error)` and surface the error.
 ```
 User changes mode switcher
   └─► SchedulesWorkbench._set_owner(new_owner)
-       ├─► await scheduling_service.set_owner(new_owner)
+       ├─► scheduling_service.set_owner(new_owner)  # synchronous
        ├─► Persist choice in app runtime-source state
        ├─► Refresh task list, sync status, conflicts tab
        └─► If new_owner is server: and no server_client, notify "No server connection"
@@ -205,18 +211,20 @@ SyncEngine.sync_now(owner_id)
   ├─► Phase 1 — network only (no DB transaction)
   │    ├─► list_reminders() → server_items
   │    ├─► push mutations one by one
-  │    │    ├── create: no retry; on failure stop phase
+  │    │    ├── create: no retry; on success stage push outcome
   │    │    ├── update/delete: retry transient; 404 → conflict
   │    └─► push tombstones one by one (retry transient; 404 → clean local)
   │
   └─► Phase 2 — single ScheduledTasksDB.transaction()
        ├─► Apply all pulled inserts/updates
        ├─► Apply all conflict records
-       ├─► Delete pushed mutations
+       ├─► Apply all staged push outcomes (server_id, sync_mapping, mutation deletion)
        ├─► Delete pushed tombstones
        ├─► Update sync_state (last_pull_at, last_push_at, sync_errors)
        └─► Rollback on any unhandled exception
 ```
+
+**Implementation note:** Most existing `ScheduledTasksDB` helpers open their own connection and commit. Phase 2 must therefore use raw SQL or new connection-aware helpers that accept the yielded `sqlite3.Connection` from `ScheduledTasksDB.transaction()`, so that all writes share one transaction.
 
 ## Error Handling
 
@@ -224,8 +232,10 @@ SyncEngine.sync_now(owner_id)
 - **`ServerClientValidationError` (400 / other 4xx)**: keep mutation, record error, stop sync phase.
 - **`ServerClientNotFoundError` (404) on update/delete**: record a conflict/tombstone so the user can decide, rather than retrying forever. On update, treat as server-deletion conflict. On delete, clean up the local tombstone and mapping because the server record is already gone.
 - **Sync error history**: `SyncEngine._record_sync_error` reads existing `sync_errors`, appends the new `{message, timestamp}`, and truncates to the last 10 before calling `db.update_sync_state`. Manual “Clear” button in the sync status widget calls `db.update_sync_state(owner_id, sync_errors=[])`.
+- **`last_push_at` semantics**: `last_push_at` is updated to the current timestamp whenever one or more mutations or tombstones are successfully pushed in a sync attempt. It does **not** imply that every queued mutation was pushed; a partial push is possible (e.g., a `create` failure stops the push phase early). The sync status widget can surface “Last push: <time>” plus the latest error to make partial state visible.
 - **Owner switch during sync**: owner switcher disabled while sync worker runs. `SchedulingService.sync_now(owner_id)` and `SyncEngine.sync_now(owner_id)` accept an explicit owner and use it for the entire call to avoid mid-flight races.
-- **Transaction / network boundary**: `SyncEngine.sync_now(owner_id)` must perform all network calls *outside* the SQLite transaction, collect their results and any server states, then open **one** `ScheduledTasksDB.transaction()` to atomically persist: pulled inserts/updates, resolved conflicts, pushed-mutation deletions, and tombstone cleanup. This avoids holding the SQLite connection (and blocking other DB operations) across async HTTP I/O. On any unhandled exception after the network phase begins, the single transaction is rolled back so the owner is never left in a partially synced state.
+- **Transaction / network boundary**: `SyncEngine.sync_now(owner_id)` must perform all network calls *outside* the SQLite transaction, collect their results and any server states, then open **one** `ScheduledTasksDB.transaction()` to atomically persist: pulled inserts/updates, resolved conflicts, staged push outcomes, and tombstone cleanup. This avoids holding the SQLite connection (and blocking other DB operations) across async HTTP I/O. On any unhandled exception after the network phase begins, the single transaction is rolled back so the owner is never left in a partially synced state.
+- **Crash-window safety**: To avoid duplicating server records when a crash occurs after a successful network `create` but before Phase 2 commits, `SyncEngine` stages each successful push outcome (server_id, local_id, mutation id) in memory during Phase 1 and applies them in Phase 2. If a crash occurs between Phase 1 and Phase 2, the pending `create` mutation remains queued and the next sync may create a duplicate server record. ADR-018 must document this accepted trade-off; a future upgrade can add per-push persistent staging or server-side idempotency to eliminate the window.
 
 ## Testing Plan
 
@@ -248,6 +258,7 @@ SyncEngine.sync_now(owner_id)
 - 404 on push records a conflict and removes the pending mutation.
 - Local-only reminders remain functional when sync fails.
 - All network calls complete before a single DB transaction is opened; no SQLite connection is held across HTTP I/O.
+- Crash-window regression: simulate a successful network `create` followed by a crash before Phase 2 commits; verify the spec behavior is implemented as documented (and duplicates if the accepted trade-off is in effect).
 
 ### Workbench UI tests
 
@@ -271,5 +282,5 @@ SyncEngine.sync_now(owner_id)
 ## Risks
 
 - **Owner identity interim fallback**: using URL-derived `active_server_id` as the server owner collides multi-account usage on the same server. ADR-018 must document this fallback and the migration path to `"server:<user_id>"` once the server exposes an account endpoint.
-- **Create duplication without server idempotency**: by design, `create_reminder` is not retried. Users may see pending creates remain queued after transient timeouts until the next manual sync. ADR-018 should record this trade-off.
-- **ADR-018 missing**: `backlog/decisions/018-local-server-hybrid-scheduled-tasks.md` should be created as part of this work. It should record: server-wins default, local-only idempotency keys, the owner-id/runtime-source mapping, the network-then-transaction boundary, and the create-no-retry decision.
+- **Create duplication without server idempotency / crash window**: by design, `create_reminder` is not retried. Additionally, a crash between successful network create and Phase 2 commit can leave a pending `create` mutation queued, causing the next sync to create a duplicate server record. ADR-018 must document this accepted trade-off. A future upgrade can add per-push persistent staging or server-side idempotency to close the window.
+- **ADR-018 missing**: `backlog/decisions/018-local-server-hybrid-scheduled-tasks.md` should be created as part of this work. It should record: server-wins default, local-only idempotency keys, the owner-id/runtime-source mapping, the network-then-transaction boundary, the create-no-retry decision, and the crash-window trade-off.
